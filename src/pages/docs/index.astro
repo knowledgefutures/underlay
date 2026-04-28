@@ -1,61 +1,35 @@
 ---
-import Base from "@/layouts/Base.astro";
+import Docs from "@/layouts/Docs.astro";
 ---
 
-<Base title="Documentation — Underlay">
-  <div class="max-w-2xl mx-auto px-4 py-10">
-    <h1 class="text-xl font-semibold tracking-tight font-sans mb-6">Documentation</h1>
+<Docs title="Documentation">
+  <p>Underlay has a small API surface. These docs are the SDK. Read them, point your LLM at them, or just curl the endpoints. For a machine-readable version, see <a href="/.well-known/ai.txt" class="text-link underline">ai.txt</a>.</p>
 
-    <p class="text-sm text-ink-muted mb-8">
-      Underlay has a small API surface. These docs are the SDK. Read them, point your LLM at them, or just curl the endpoints.
-    </p>
+  <nav class="space-y-5 text-sm">
+    <section>
+      <h2>Getting started</h2>
+      <ul class="space-y-1 pl-0.5">
+        <li><a href="/docs/concepts" class="text-link underline">Concepts</a> <span class="text-ink-muted text-xs">— Collections, versions, records, files</span></li>
+        <li><a href="/docs/quickstart" class="text-link underline">Quickstart</a> <span class="text-ink-muted text-xs">— Push your first version in 5 minutes</span></li>
+        <li><a href="/docs/integration" class="text-link underline">Integration Guide</a> <span class="text-ink-muted text-xs">— Push data from any app, no SDK</span></li>
+      </ul>
+    </section>
 
-    <nav class="space-y-6 text-sm">
-      <section>
-        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">Getting started</h2>
-        <div class="space-y-2">
-          <a href="/docs/concepts" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Concepts</span>
-            <p class="text-ink-muted text-xs mt-0.5">Collections, versions, records, files. The core model.</p>
-          </a>
-          <a href="/docs/quickstart" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Quickstart</span>
-            <p class="text-ink-muted text-xs mt-0.5">Push your first version in 5 minutes.</p>
-          </a>
-        </div>
-      </section>
+    <section>
+      <h2>API reference</h2>
+      <ul class="space-y-1 pl-0.5">
+        <li><a href="/docs/api/accounts" class="text-link underline">Accounts</a> <span class="text-ink-muted text-xs">— Signup, login, API keys</span></li>
+        <li><a href="/docs/api/collections" class="text-link underline">Collections</a> <span class="text-ink-muted text-xs">— Create, list, update, delete</span></li>
+        <li><a href="/docs/api/versions" class="text-link underline">Versions</a> <span class="text-ink-muted text-xs">— Push snapshots, browse history, diff</span></li>
+        <li><a href="/docs/api/files" class="text-link underline">Files</a> <span class="text-ink-muted text-xs">— Upload and download content-addressed files</span></li>
+      </ul>
+    </section>
 
-      <section>
-        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">API reference</h2>
-        <div class="space-y-2">
-          <a href="/docs/api/accounts" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Accounts</span>
-            <p class="text-ink-muted text-xs mt-0.5">Signup, login, API keys.</p>
-          </a>
-          <a href="/docs/api/collections" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Collections</span>
-            <p class="text-ink-muted text-xs mt-0.5">Create, list, update, delete collections.</p>
-          </a>
-          <a href="/docs/api/versions" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Versions</span>
-            <p class="text-ink-muted text-xs mt-0.5">Push snapshots, browse history, diff.</p>
-          </a>
-          <a href="/docs/api/files" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Files</span>
-            <p class="text-ink-muted text-xs mt-0.5">Upload and download content-addressed files.</p>
-          </a>
-        </div>
-      </section>
-
-      <section>
-        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">Self-hosting</h2>
-        <div class="space-y-2">
-          <a href="/docs/self-host" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <span class="font-semibold">Deploy your own instance</span>
-            <p class="text-ink-muted text-xs mt-0.5">Docker, Postgres, S3. Everything you need.</p>
-          </a>
-        </div>
-      </section>
-    </nav>
-  </div>
-</Base>
+    <section>
+      <h2>Infrastructure</h2>
+      <ul class="space-y-1 pl-0.5">
+        <li><a href="/docs/self-host" class="text-link underline">Self-hosting</a> <span class="text-ink-muted text-xs">— Docker, Postgres, S3</span></li>
+      </ul>
+    </section>
+  </nav>
+</Docs>

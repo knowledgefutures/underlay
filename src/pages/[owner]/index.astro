@@ -42,6 +42,26 @@ if (sessionCookie && account.type === "org") {
       <span class="inline-block text-xs text-ink-muted border border-rule px-2 py-0.5 mt-2">
         {account.type === "org" ? "Organization" : "User"}
       </span>
+
+      <div class="flex items-center gap-2 mt-3">
+        <div class="relative group">
+          <button class="flex items-center gap-1 border border-rule px-3 py-1.5 text-xs font-medium hover:bg-parchment-dark transition-colors">
+            Subscribe ▾
+          </button>
+          <div class="hidden group-hover:block absolute left-0 top-full mt-1 bg-parchment border border-rule shadow-sm z-10 min-w-[16rem]">
+            <div class="p-3 border-b border-rule">
+              <p class="text-xs font-medium mb-1">AT Protocol</p>
+              <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1">{`at://did:web:underlay.org:${owner}`}</code>
+              <p class="text-[10px] text-ink-muted mt-1">Follow in any AT Proto app</p>
+            </div>
+            <div class="p-3 border-b border-rule">
+              <p class="text-xs font-medium mb-1">API</p>
+              <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1">{`GET /api/accounts/${owner}/collections`}</code>
+              <p class="text-[10px] text-ink-muted mt-1">Poll for new collections and versions</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">

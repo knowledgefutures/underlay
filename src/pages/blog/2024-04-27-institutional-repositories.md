@@ -2,6 +2,7 @@
 layout: ../../layouts/BlogPost.astro
 title: "The IR of the Future Is a Reading List"
 subtitle: "Institutional repositories don't need to be monoliths. They need to be views."
+date: 2024-04-27
 ---
 
 Every university has an institutional repository. The software varies (DSpace, EPrints, Digital Commons) but the architecture is remarkably consistent. The IR defines a data model, usually Dublin Core or a local extension of it, provides a submission workflow where researchers upload a PDF and fill in metadata fields, stores everything in its own database and filesystem, and renders a search interface on top. The backend, the data structure, and the UI are all one application. You cannot swap the frontend without rebuilding the system. You cannot access the data except through the application. Connecting two IRs requires a harvesting protocol like OAI-PMH, designed in 2002 and showing its age.

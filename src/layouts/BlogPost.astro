@@ -9,6 +9,11 @@ const { frontmatter } = Astro.props;
     <header class="mb-8">
       <h1 class="text-2xl font-semibold tracking-tight font-sans mb-2">{frontmatter.title}</h1>
       <p class="text-ink-muted text-sm italic">{frontmatter.subtitle}</p>
+      {frontmatter.date && (
+        <time class="block text-xs text-ink-muted mt-2" datetime={new Date(frontmatter.date).toISOString().slice(0, 10)}>
+          {new Date(frontmatter.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+        </time>
+      )}
       <hr class="border-rule mt-4" />
     </header>
 
@@ -56,5 +61,26 @@ const { frontmatter } = Astro.props;
     background: var(--color-parchment-dark);
     padding: 0.125rem 0.25rem;
     border-radius: 0.25rem;
+  }
+  .prose :global(pre) {
+    background: var(--color-ink);
+    color: var(--color-parchment);
+    padding: 1rem;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+  .prose :global(pre code) {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+  .prose :global(pre code span) {
+    color: inherit !important;
+    background: none !important;
   }
 </style>

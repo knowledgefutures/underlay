@@ -1,0 +1,14 @@
+---
+const sessionCookie = Astro.cookies.get("session")?.value;
+if (sessionCookie) {
+  const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+  try {
+    await fetch(`${apiBase}/api/accounts/logout`, {
+      method: "POST",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+  } catch {}
+  Astro.cookies.delete("session", { path: "/" });
+}
+return Astro.redirect("/");
+---

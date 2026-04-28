@@ -8,33 +8,299 @@ interface Props {
 }
 
 const { title, description, breadcrumbs = [] } = Astro.props;
+
+const currentPath = Astro.url.pathname.replace(/\/$/, "");
+
+const nav = [
+  {
+    section: "Getting started",
+    items: [
+      { label: "Overview", href: "/docs" },
+      { label: "Concepts", href: "/docs/concepts" },
+      { label: "Quickstart", href: "/docs/quickstart" },
+      { label: "Integration Guide", href: "/docs/integration" },
+    ],
+  },
+  {
+    section: "API reference",
+    items: [
+      { label: "Accounts", href: "/docs/api/accounts" },
+      { label: "Collections", href: "/docs/api/collections" },
+      { label: "Versions", href: "/docs/api/versions" },
+      { label: "Files", href: "/docs/api/files" },
+    ],
+  },
+  {
+    section: "Infrastructure",
+    items: [
+      { label: "Self-hosting", href: "/docs/self-host" },
+    ],
+  },
+];
 ---
 
 <Base title={`${title} — Underlay`} description={description}>
-  <div class="max-w-2xl mx-auto px-4 py-10">
-    {breadcrumbs.length > 0 && (
-      <nav class="text-xs text-ink-muted mb-6">
-        <a href="/docs" class="hover:text-ink">Docs</a>
-        {breadcrumbs.map((crumb) => (
-          <>
-            <span class="mx-1">/</span>
-            {crumb.href
-              ? <a href={crumb.href} class="hover:text-ink">{crumb.label}</a>
-              : <span>{crumb.label}</span>}
-          </>
-        ))}
-      </nav>
-    )}
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-inner">
+        <div class="docs-search-box">
+          <input
+            type="text"
+            id="docs-search"
+            placeholder="Search docs..."
+            autocomplete="off"
+            class="w-full border border-rule bg-parchment px-2.5 py-1.5 text-xs placeholder:text-ink-muted/50 focus:outline-none focus:border-ink-muted"
+          />
+          <div id="docs-search-results" class="hidden"></div>
+        </div>
 
-    <h1 class="text-xl font-semibold tracking-tight font-sans mb-6">{title}</h1>
+        <nav class="docs-nav">
+          {nav.map((group) => (
+            <div class="docs-nav-group">
+              <p class="docs-nav-heading">{group.section}</p>
+              <ul>
+                {group.items.map((item) => (
+                  <li>
+                    <a
+                      href={item.href}
+                      class:list={["docs-nav-link", { active: currentPath === item.href }]}
+                    >
+                      {item.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </div>
+    </aside>
 
-    <div class="docs-prose">
-      <slot />
+    <div class="docs-main">
+      <h1 class="text-xl font-semibold tracking-tight font-sans mb-6">{title}</h1>
+      <div class="docs-prose">
+        <slot />
+      </div>
     </div>
   </div>
 </Base>
 
+<script>
+  const searchInput = document.getElementById("docs-search") as HTMLInputElement;
+  const resultsEl = document.getElementById("docs-search-results")!;
+
+  interface DocEntry {
+    title: string;
+    href: string;
+    headings: string[];
+  }
+
+  const docs: DocEntry[] = [
+    { title: "Overview", href: "/docs", headings: ["Getting started", "API reference", "Self-hosting"] },
+    { title: "Concepts", href: "/docs/concepts", headings: ["Collection", "Version", "Record", "File", "Accounts"] },
+    { title: "Quickstart", href: "/docs/quickstart", headings: ["Create an account", "Create an API key", "Create a collection", "Push a version", "Read it back", "Push an update", "Diff versions", "Working with files", "Next steps"] },
+    { title: "Integration Guide", href: "/docs/integration", headings: ["What is Underlay?", "Core Concepts", "Authentication", "The Push Flow", "Record Format", "First Push Example", "Mapping a SQL Database", "Versioning", "API Reference", "Error Handling", "Source Code"] },
+    { title: "Self-hosting", href: "/docs/self-host", headings: ["Requirements", "Quick start with Docker", "Environment variables", "Production deployment", "Secrets management", "CI/CD", "Backups", "Reverse proxy"] },
+    { title: "Accounts API", href: "/docs/api/accounts", headings: ["Authentication", "POST /api/accounts/signup", "POST /api/accounts/login", "POST /api/accounts/logout", "GET /api/accounts/me", "GET /api/accounts/:slug", "POST /api/accounts/keys", "GET /api/accounts/keys", "DELETE /api/accounts/keys/:id"] },
+    { title: "Collections API", href: "/docs/api/collections", headings: ["GET /api/collections", "POST /api/accounts/:owner/collections", "GET /api/collections/:owner/:slug", "PATCH /api/collections/:owner/:slug", "DELETE /api/collections/:owner/:slug", "GET /api/accounts/:owner/collections"] },
+    { title: "Versions API", href: "/docs/api/versions", headings: ["POST /api/collections/:owner/:slug/versions", "GET /api/collections/:owner/:slug/versions", "GET /api/collections/:owner/:slug/versions/latest", "GET /api/collections/:owner/:slug/versions/:n", "GET /api/collections/:owner/:slug/versions/:n/records", "GET /api/collections/:owner/:slug/versions/:n/manifest", "GET /api/collections/:owner/:slug/versions/:n/diff"] },
+    { title: "Files API", href: "/docs/api/files", headings: ["HEAD /api/collections/:owner/:slug/files/:hash", "GET /api/collections/:owner/:slug/files/:hash", "PUT /api/collections/:owner/:slug/files/:hash", "File references in records"] },
+  ];
+
+  searchInput.addEventListener("input", () => {
+    const q = searchInput.value.trim().toLowerCase();
+    if (!q) {
+      resultsEl.classList.add("hidden");
+      resultsEl.innerHTML = "";
+      return;
+    }
+
+    const matches: { title: string; href: string; context?: string }[] = [];
+    for (const doc of docs) {
+      const titleMatch = doc.title.toLowerCase().includes(q);
+      const headingMatches = doc.headings.filter((h) => h.toLowerCase().includes(q));
+      if (titleMatch) {
+        matches.push({ title: doc.title, href: doc.href });
+      }
+      for (const h of headingMatches) {
+        if (!titleMatch || headingMatches.length > 0) {
+          const slug = h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+          matches.push({ title: doc.title, href: `${doc.href}#${slug}`, context: h });
+        }
+      }
+    }
+
+    if (matches.length === 0) {
+      resultsEl.innerHTML = `<div class="docs-search-empty">No results</div>`;
+    } else {
+      resultsEl.innerHTML = matches
+        .slice(0, 12)
+        .map(
+          (m) =>
+            `<a href="${m.href}" class="docs-search-result">
+              <span class="docs-search-result-title">${m.title}</span>
+              ${m.context ? `<span class="docs-search-result-context">${m.context}</span>` : ""}
+            </a>`
+        )
+        .join("");
+    }
+    resultsEl.classList.remove("hidden");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!resultsEl.contains(e.target as Node) && e.target !== searchInput) {
+      resultsEl.classList.add("hidden");
+    }
+  });
+
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      resultsEl.classList.add("hidden");
+      searchInput.blur();
+    }
+  });
+</script>
+
 <style is:global>
+  /* Layout shell — match nav bar width (max-w-5xl = 64rem) */
+  .docs-shell {
+    display: flex;
+    gap: 0;
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 2.5rem 1rem 4rem;
+    align-items: flex-start;
+  }
+
+  /* Sidebar — compact, not full height */
+  .docs-sidebar {
+    width: 13rem;
+    flex-shrink: 0;
+  }
+  .docs-sidebar-inner {
+    position: sticky;
+    top: 2rem;
+  }
+
+  /* Search */
+  .docs-search-box {
+    position: relative;
+    margin-bottom: 1rem;
+  }
+  #docs-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--color-parchment);
+    border: 1px solid var(--color-rule);
+    border-top: none;
+    z-index: 50;
+    max-height: 20rem;
+    overflow-y: auto;
+  }
+  .docs-search-result {
+    display: block;
+    padding: 0.4rem 0.6rem;
+    text-decoration: none;
+    border-bottom: 1px solid var(--color-rule);
+    transition: background 0.1s;
+  }
+  .docs-search-result:hover {
+    background: var(--color-parchment-dark);
+  }
+  .docs-search-result:last-child {
+    border-bottom: none;
+  }
+  .docs-search-result-title {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .docs-search-result-context {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--color-ink-muted);
+    font-family: var(--font-mono);
+    margin-top: 0.1rem;
+  }
+  .docs-search-empty {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.75rem;
+    color: var(--color-ink-muted);
+  }
+
+  /* Nav — tab-like, border only alongside content */
+  .docs-nav {
+    border-right: 1px solid var(--color-rule);
+    padding-right: 1rem;
+  }
+  .docs-nav-group {
+    margin-bottom: 1rem;
+  }
+  .docs-nav-heading {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-ink-muted);
+    margin-bottom: 0.35rem;
+    padding-left: 0.5rem;
+  }
+  .docs-nav-group ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .docs-nav-link {
+    display: block;
+    font-size: 0.8rem;
+    padding: 0.2rem 0.5rem;
+    color: var(--color-ink-light);
+    text-decoration: none;
+    transition: color 0.1s;
+  }
+  .docs-nav-link:hover {
+    color: var(--color-ink);
+  }
+  .docs-nav-link.active {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+
+  /* Main content */
+  .docs-main {
+    flex: 1;
+    min-width: 0;
+    padding-left: 2rem;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .docs-shell {
+      flex-direction: column;
+      padding: 1.5rem 1rem 3rem;
+    }
+    .docs-sidebar {
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .docs-sidebar-inner {
+      position: static;
+    }
+    .docs-nav {
+      border-right: none;
+      border-bottom: 1px solid var(--color-rule);
+      padding-right: 0;
+      padding-bottom: 1rem;
+    }
+    .docs-main {
+      padding-left: 0;
+    }
+  }
+
+  /* Prose styles */
   .docs-prose h2 {
     font-family: var(--font-sans);
     font-size: 1.1rem;

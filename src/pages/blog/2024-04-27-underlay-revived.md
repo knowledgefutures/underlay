@@ -2,6 +2,7 @@
 layout: ../../layouts/BlogPost.astro
 title: "Underlay, Revived"
 subtitle: "The landscape changed. The project can finally be simple."
+date: 2024-04-27
 ---
 
 In 2018, we started the Underlay as a research project at MIT. We wanted to build a global, distributed graph of public knowledge: a decentralized knowledge base aggregating machine-readable assertions with their provenance, contestations, and chains of sourcing. We talked about IPFS-backed federation, RDF-style linked data, universities maintaining full nodes.
