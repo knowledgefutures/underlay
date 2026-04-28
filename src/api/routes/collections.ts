@@ -8,9 +8,9 @@ import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { downloadFromS3 } from "../../lib/s3.js";
 
-export async function corporaRoutes(app: FastifyInstance) {
-  // Browse public corpora
-  app.get("/corpora", async (request) => {
+export async function collectionsRoutes(app: FastifyInstance) {
+  // Browse public collections
+  app.get("/collections", async (request) => {
     const { q, limit, offset } = request.query as {
       q?: string;
       limit?: string;
@@ -19,40 +19,40 @@ export async function corporaRoutes(app: FastifyInstance) {
     const take = Math.min(parseInt(limit ?? "50", 10), 100);
     const skip = parseInt(offset ?? "0", 10);
 
-    const conditions = [eq(schema.corpora.public, true)];
+    const conditions = [eq(schema.collections.public, true)];
     if (q) {
       conditions.push(
         or(
-          ilike(schema.corpora.name, `%${q}%`),
-          ilike(schema.corpora.description, `%${q}%`),
+          ilike(schema.collections.name, `%${q}%`),
+          ilike(schema.collections.description, `%${q}%`),
         )!,
       );
     }
 
     const results = await db
       .select({
-        id: schema.corpora.id,
-        slug: schema.corpora.slug,
-        name: schema.corpora.name,
-        description: schema.corpora.description,
+        id: schema.collections.id,
+        slug: schema.collections.slug,
+        name: schema.collections.name,
+        description: schema.collections.description,
         ownerSlug: schema.accounts.slug,
         ownerName: schema.accounts.displayName,
-        createdAt: schema.corpora.createdAt,
-        updatedAt: schema.corpora.updatedAt,
+        createdAt: schema.collections.createdAt,
+        updatedAt: schema.collections.updatedAt,
       })
-      .from(schema.corpora)
-      .innerJoin(schema.accounts, eq(schema.corpora.accountId, schema.accounts.id))
+      .from(schema.collections)
+      .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
       .where(and(...conditions))
       .limit(take)
       .offset(skip)
-      .orderBy(schema.corpora.updatedAt);
+      .orderBy(schema.collections.updatedAt);
 
     return results;
   });
 
-  // Create corpus
+  // Create collection
   app.post(
-    "/accounts/:owner/corpora",
+    "/accounts/:owner/collections",
     { preHandler: [requireAuth("write")] },
     async (request, reply) => {
       const { owner } = request.params as { owner: string };
@@ -95,7 +95,7 @@ export async function corporaRoutes(app: FastifyInstance) {
       }
 
       const id = uuidv4();
-      await db.insert(schema.corpora).values({
+      await db.insert(schema.collections).values({
         id,
         accountId: account.id,
         slug,
@@ -108,30 +108,30 @@ export async function corporaRoutes(app: FastifyInstance) {
     },
   );
 
-  // Get corpus
-  app.get("/corpora/:owner/:slug", async (request, reply) => {
+  // Get collection
+  app.get("/collections/:owner/:slug", async (request, reply) => {
     const { owner, slug } = request.params as { owner: string; slug: string };
 
     const [result] = await db
       .select({
-        id: schema.corpora.id,
-        slug: schema.corpora.slug,
-        name: schema.corpora.name,
-        description: schema.corpora.description,
-        public: schema.corpora.public,
+        id: schema.collections.id,
+        slug: schema.collections.slug,
+        name: schema.collections.name,
+        description: schema.collections.description,
+        public: schema.collections.public,
         ownerSlug: schema.accounts.slug,
         ownerName: schema.accounts.displayName,
         ownerType: schema.accounts.type,
-        createdAt: schema.corpora.createdAt,
-        updatedAt: schema.corpora.updatedAt,
+        createdAt: schema.collections.createdAt,
+        updatedAt: schema.collections.updatedAt,
       })
-      .from(schema.corpora)
-      .innerJoin(schema.accounts, eq(schema.corpora.accountId, schema.accounts.id))
-      .where(and(eq(schema.accounts.slug, owner), eq(schema.corpora.slug, slug)))
+      .from(schema.collections)
+      .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+      .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
       .limit(1);
 
     if (!result) {
-      return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+      return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
     }
 
     if (!result.public && request.accountId !== result.id) {
@@ -143,7 +143,7 @@ export async function corporaRoutes(app: FastifyInstance) {
         .limit(1);
 
       if (!account || account.id !== request.accountId) {
-        return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+        return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
       }
     }
 
@@ -159,16 +159,16 @@ export async function corporaRoutes(app: FastifyInstance) {
         message: schema.versions.message,
       })
       .from(schema.versions)
-      .where(eq(schema.versions.corpusId, result.id))
+      .where(eq(schema.versions.collectionId, result.id))
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(1);
 
     return { ...result, latestVersion: latestVersion ?? null };
   });
 
-  // Update corpus
+  // Update collection
   app.patch(
-    "/corpora/:owner/:slug",
+    "/collections/:owner/:slug",
     { preHandler: [requireAuth("write")] },
     async (request, reply) => {
       const { owner, slug } = request.params as { owner: string; slug: string };
@@ -188,28 +188,28 @@ export async function corporaRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Not found", statusCode: 404 });
       }
 
-      const [corpus] = await db
+      const [collection] = await db
         .select()
-        .from(schema.corpora)
-        .where(and(eq(schema.corpora.accountId, account.id), eq(schema.corpora.slug, slug)))
+        .from(schema.collections)
+        .where(and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, slug)))
         .limit(1);
 
-      if (!corpus) {
+      if (!collection) {
         return reply.status(404).send({ error: "Not found", statusCode: 404 });
       }
 
       await db
-        .update(schema.corpora)
+        .update(schema.collections)
         .set({ ...updates, updatedAt: new Date() })
-        .where(eq(schema.corpora.id, corpus.id));
+        .where(eq(schema.collections.id, collection.id));
 
       return { ok: true };
     },
   );
 
-  // Delete corpus
+  // Delete collection
   app.delete(
-    "/corpora/:owner/:slug",
+    "/collections/:owner/:slug",
     { preHandler: [requireAuth("admin")] },
     async (request, reply) => {
       const { owner, slug } = request.params as { owner: string; slug: string };
@@ -224,23 +224,23 @@ export async function corporaRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "Not found", statusCode: 404 });
       }
 
-      const [corpus] = await db
+      const [collection] = await db
         .select()
-        .from(schema.corpora)
-        .where(and(eq(schema.corpora.accountId, account.id), eq(schema.corpora.slug, slug)))
+        .from(schema.collections)
+        .where(and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, slug)))
         .limit(1);
 
-      if (!corpus) {
+      if (!collection) {
         return reply.status(404).send({ error: "Not found", statusCode: 404 });
       }
 
-      await db.delete(schema.corpora).where(eq(schema.corpora.id, corpus.id));
+      await db.delete(schema.collections).where(eq(schema.collections.id, collection.id));
       return { ok: true };
     },
   );
 
-  // List corpora for an account
-  app.get("/accounts/:owner/corpora", async (request) => {
+  // List collections for an account
+  app.get("/accounts/:owner/collections", async (request) => {
     const { owner } = request.params as { owner: string };
 
     const [account] = await db
@@ -253,56 +253,56 @@ export async function corporaRoutes(app: FastifyInstance) {
 
     const isOwner = request.accountId === account.id;
 
-    const conditions = [eq(schema.corpora.accountId, account.id)];
+    const conditions = [eq(schema.collections.accountId, account.id)];
     if (!isOwner) {
-      conditions.push(eq(schema.corpora.public, true));
+      conditions.push(eq(schema.collections.public, true));
     }
 
     return db
       .select({
-        id: schema.corpora.id,
-        slug: schema.corpora.slug,
-        name: schema.corpora.name,
-        description: schema.corpora.description,
-        public: schema.corpora.public,
-        createdAt: schema.corpora.createdAt,
-        updatedAt: schema.corpora.updatedAt,
+        id: schema.collections.id,
+        slug: schema.collections.slug,
+        name: schema.collections.name,
+        description: schema.collections.description,
+        public: schema.collections.public,
+        createdAt: schema.collections.createdAt,
+        updatedAt: schema.collections.updatedAt,
       })
-      .from(schema.corpora)
+      .from(schema.collections)
       .where(and(...conditions))
-      .orderBy(schema.corpora.updatedAt);
+      .orderBy(schema.collections.updatedAt);
   });
 
-  // Export corpus as .tar.gz archive
-  app.get("/corpora/:owner/:slug/export", async (request, reply) => {
+  // Export collection as .tar.gz archive
+  app.get("/collections/:owner/:slug/export", async (request, reply) => {
     const { owner, slug } = request.params as { owner: string; slug: string };
     const { version: versionParam } = request.query as { version?: string };
 
-    // Resolve corpus
-    const [corpus] = await db
+    // Resolve collection
+    const [collection] = await db
       .select({
-        id: schema.corpora.id,
-        slug: schema.corpora.slug,
-        name: schema.corpora.name,
-        description: schema.corpora.description,
-        public: schema.corpora.public,
-        accountId: schema.corpora.accountId,
+        id: schema.collections.id,
+        slug: schema.collections.slug,
+        name: schema.collections.name,
+        description: schema.collections.description,
+        public: schema.collections.public,
+        accountId: schema.collections.accountId,
       })
-      .from(schema.corpora)
-      .innerJoin(schema.accounts, eq(schema.corpora.accountId, schema.accounts.id))
-      .where(and(eq(schema.accounts.slug, owner), eq(schema.corpora.slug, slug)))
+      .from(schema.collections)
+      .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+      .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
       .limit(1);
 
-    if (!corpus) {
-      return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    if (!collection) {
+      return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
     }
 
-    if (!corpus.public && request.accountId !== corpus.accountId) {
-      return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    if (!collection.public && request.accountId !== collection.accountId) {
+      return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
     }
 
     // Resolve version (latest if not specified)
-    const versionConditions = [eq(schema.versions.corpusId, corpus.id)];
+    const versionConditions = [eq(schema.versions.collectionId, collection.id)];
     if (versionParam) {
       versionConditions.push(eq(schema.versions.number, parseInt(versionParam, 10)));
     }
@@ -352,7 +352,7 @@ export async function corporaRoutes(app: FastifyInstance) {
 
     // Add manifest.json
     const manifest = {
-      corpus: { owner, slug, name: corpus.name, description: corpus.description },
+      collection: { owner, slug, name: collection.name, description: collection.description },
       version: {
         number: version.number,
         semver: version.semver,

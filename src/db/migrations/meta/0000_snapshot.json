@@ -1,5 +1,5 @@
 {
-  "id": "081a23f2-6647-421f-8702-93da32c8fc3a",
+  "id": "42b2042f-31a4-407b-ad0a-1d8eaa64758a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -86,8 +86,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "corpus_id": {
-          "name": "corpus_id",
+        "collection_id": {
+          "name": "collection_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -139,12 +139,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "api_keys_corpus_id_corpora_id_fk": {
-          "name": "api_keys_corpus_id_corpora_id_fk",
+        "api_keys_collection_id_collections_id_fk": {
+          "name": "api_keys_collection_id_collections_id_fk",
           "tableFrom": "api_keys",
-          "tableTo": "corpora",
+          "tableTo": "collections",
           "columnsFrom": [
-            "corpus_id"
+            "collection_id"
           ],
           "columnsTo": [
             "id"
@@ -159,8 +159,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.corpora": {
-      "name": "corpora",
+    "public.collections": {
+      "name": "collections",
       "schema": "",
       "columns": {
         "id": {
@@ -224,9 +224,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "corpora_account_id_accounts_id_fk": {
-          "name": "corpora_account_id_accounts_id_fk",
-          "tableFrom": "corpora",
+        "collections_account_id_accounts_id_fk": {
+          "name": "collections_account_id_accounts_id_fk",
+          "tableFrom": "collections",
           "tableTo": "accounts",
           "columnsFrom": [
             "account_id"
@@ -237,10 +237,10 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "corpora_forked_from_corpora_id_fk": {
-          "name": "corpora_forked_from_corpora_id_fk",
-          "tableFrom": "corpora",
-          "tableTo": "corpora",
+        "collections_forked_from_collections_id_fk": {
+          "name": "collections_forked_from_collections_id_fk",
+          "tableFrom": "collections",
+          "tableTo": "collections",
           "columnsFrom": [
             "forked_from"
           ],
@@ -253,8 +253,8 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "corpora_account_id_slug_unique": {
-          "name": "corpora_account_id_slug_unique",
+        "collections_account_id_slug_unique": {
+          "name": "collections_account_id_slug_unique",
           "nullsNotDistinct": false,
           "columns": [
             "account_id",
@@ -558,8 +558,8 @@
           "primaryKey": true,
           "notNull": true
         },
-        "corpus_id": {
-          "name": "corpus_id",
+        "collection_id": {
+          "name": "collection_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -646,12 +646,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "versions_corpus_id_corpora_id_fk": {
-          "name": "versions_corpus_id_corpora_id_fk",
+        "versions_collection_id_collections_id_fk": {
+          "name": "versions_collection_id_collections_id_fk",
           "tableFrom": "versions",
-          "tableTo": "corpora",
+          "tableTo": "collections",
           "columnsFrom": [
-            "corpus_id"
+            "collection_id"
           ],
           "columnsTo": [
             "id"
@@ -662,19 +662,19 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "versions_corpus_id_number_unique": {
-          "name": "versions_corpus_id_number_unique",
+        "versions_collection_id_number_unique": {
+          "name": "versions_collection_id_number_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "corpus_id",
+            "collection_id",
             "number"
           ]
         },
-        "versions_corpus_id_hash_unique": {
-          "name": "versions_corpus_id_hash_unique",
+        "versions_collection_id_hash_unique": {
+          "name": "versions_collection_id_hash_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "corpus_id",
+            "collection_id",
             "hash"
           ]
         }

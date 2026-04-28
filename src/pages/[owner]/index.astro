@@ -3,6 +3,7 @@ import Base from "@/layouts/Base.astro";
 
 const { owner } = Astro.params;
 const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch account profile
 const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`);
@@ -11,15 +12,32 @@ if (!accountRes.ok) {
 }
 const account = await accountRes.json();
 
-// Fetch their public corpora
-const corporaRes = await fetch(`${apiBase}/api/accounts/${owner}/corpora`);
-const corpora = corporaRes.ok ? await corporaRes.json() : [];
+// Fetch their public collections
+const collectionsRes = await fetch(`${apiBase}/api/accounts/${owner}/collections`);
+const collections = collectionsRes.ok ? await collectionsRes.json() : [];
+
+// Check if current user is an org member (for settings link)
+let isMember = false;
+if (sessionCookie && account.type === "org") {
+  try {
+    const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (meRes.ok) {
+      const me = await meRes.json();
+      isMember = me.orgs?.some((o: any) => o.slug === owner) ?? false;
+    }
+  } catch {}
+}
 ---
 
 <Base title={`${account.displayName} — Underlay`}>
   <div class="max-w-3xl mx-auto px-4 py-10">
     <div class="mb-8">
-      <h1 class="text-xl font-semibold tracking-tight mb-1">{account.displayName}</h1>
+      <div class="flex items-center justify-between">
+        <h1 class="text-xl font-semibold tracking-tight mb-1">{account.displayName}</h1>
+        {isMember && <a href={`/${owner}/settings`} class="text-sm text-ink-muted hover:text-ink transition-colors">Settings</a>}
+      </div>
       <p class="text-sm text-ink-muted font-mono">{account.slug}</p>
       <span class="inline-block text-xs text-ink-muted border border-rule px-2 py-0.5 mt-2">
         {account.type === "org" ? "Organization" : "User"}
@@ -27,14 +45,14 @@ const corpora = corporaRes.ok ? await corporaRes.json() : [];
     </div>
 
     <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
-      Corpora ({corpora.length})
+      Collections ({collections.length})
     </h2>
 
-    {corpora.length === 0 ? (
-      <p class="text-sm text-ink-muted">No public corpora yet.</p>
+    {collections.length === 0 ? (
+      <p class="text-sm text-ink-muted">No public collections yet.</p>
     ) : (
       <div class="space-y-2">
-        {corpora.map((c: any) => (
+        {collections.map((c: any) => (
           <a href={`/${owner}/${c.slug}`} class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
             <div class="flex items-center gap-2 mb-1">
               <span class="font-semibold text-sm">{c.name}</span>

@@ -1,6 +1,6 @@
 # Underlay
 
-A versioned, content-addressed registry for knowledge corpora. Apps publish snapshots of their data to Underlay; Underlay preserves them, deduplicates files, and exposes them via a stable HTTPS API.
+A versioned, content-addressed registry for knowledge collections. Apps publish snapshots of their data to Underlay; Underlay preserves them, deduplicates files, and exposes them via a stable HTTPS API.
 
 **Underlay is the archive underneath your app.**
 
@@ -49,7 +49,7 @@ The seed creates an admin account you can log in with:
 - **Email:** admin@underlay.org
 - **Password:** admin
 
-It also creates a "Knowledge Futures" org with three sample corpora.
+It also creates a "Knowledge Futures" org with three sample collections.
 
 ## Architecture
 
@@ -70,7 +70,7 @@ src/
 │   ├── plugins/auth.ts   # Authentication (API keys + sessions)
 │   ├── routes/           # API route handlers
 │   │   ├── accounts.ts   # Signup, login, API key CRUD
-│   │   ├── corpora.ts    # Corpus CRUD
+│   │   ├── collections.ts    # Collection CRUD
 │   │   ├── versions.ts   # Version push/pull/diff
 │   │   ├── files.ts      # Content-addressed file storage
 │   │   └── health.ts     # Health check
@@ -88,19 +88,19 @@ src/
 │   └── s3.ts             # S3 client utilities
 ├── pages/
 │   ├── index.astro       # Landing page
-│   ├── explore.astro     # Browse public corpora
+│   ├── explore.astro     # Browse public collections
 │   ├── connect.astro     # Integration guide (for devs and LLMs)
 │   ├── login.astro       # Login form
 │   ├── signup.astro      # Signup form
-│   ├── dashboard.astro   # Authenticated user's corpora
+│   ├── dashboard.astro   # Authenticated user's collections
 │   ├── settings/         # Account settings + API key management
 │   ├── blog/             # Blog posts
 │   ├── docs/             # Documentation (concepts, quickstart, API ref, self-hosting)
 │   └── [owner]/          # Dynamic routes
 │       ├── index.astro           # /:owner — account profile
-│       └── [corpus]/
-│           ├── index.astro       # /:owner/:corpus — corpus overview
-│           └── v/[n].astro       # /:owner/:corpus/v/:n — version detail
+│       └── [collection]/
+│           ├── index.astro       # /:owner/:collection — collection overview
+│           └── v/[n].astro       # /:owner/:collection/v/:n — version detail
 ├── styles/
 │   └── global.css        # Tailwind theme (parchment/ink palette)
 tools/
@@ -124,33 +124,33 @@ All endpoints are under `/api`. Auth via `Authorization: Bearer <api_key>` for w
 | GET | `/api/accounts/keys` | List API keys |
 | DELETE | `/api/accounts/keys/:id` | Revoke API key |
 
-### Corpora
+### Collections
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/corpora` | Browse public corpora |
-| POST | `/api/accounts/:owner/corpora` | Create corpus |
-| GET | `/api/corpora/:owner/:slug` | Corpus metadata |
-| PATCH | `/api/corpora/:owner/:slug` | Update corpus |
-| DELETE | `/api/corpora/:owner/:slug` | Delete corpus |
-| GET | `/api/accounts/:owner/corpora` | List owner's corpora |
+| GET | `/api/collections` | Browse public collections |
+| POST | `/api/accounts/:owner/collections` | Create collection |
+| GET | `/api/collections/:owner/:slug` | Collection metadata |
+| PATCH | `/api/collections/:owner/:slug` | Update collection |
+| DELETE | `/api/collections/:owner/:slug` | Delete collection |
+| GET | `/api/accounts/:owner/collections` | List owner's collections |
 
 ### Versions
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/corpora/:owner/:slug/versions` | Push a version |
-| GET | `/api/corpora/:owner/:slug/versions` | List versions |
-| GET | `/api/corpora/:owner/:slug/versions/latest` | Latest version |
-| GET | `/api/corpora/:owner/:slug/versions/:n` | Get version |
-| GET | `/api/corpora/:owner/:slug/versions/:n/records` | Get records |
-| GET | `/api/corpora/:owner/:slug/versions/:n/manifest` | Get manifest |
-| GET | `/api/corpora/:owner/:slug/versions/:n/diff` | Diff versions |
+| POST | `/api/collections/:owner/:slug/versions` | Push a version |
+| GET | `/api/collections/:owner/:slug/versions` | List versions |
+| GET | `/api/collections/:owner/:slug/versions/latest` | Latest version |
+| GET | `/api/collections/:owner/:slug/versions/:n` | Get version |
+| GET | `/api/collections/:owner/:slug/versions/:n/records` | Get records |
+| GET | `/api/collections/:owner/:slug/versions/:n/manifest` | Get manifest |
+| GET | `/api/collections/:owner/:slug/versions/:n/diff` | Diff versions |
 
 ### Files
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| HEAD | `/api/corpora/:owner/:slug/files/:hash` | Check existence |
-| GET | `/api/corpora/:owner/:slug/files/:hash` | Download |
-| PUT | `/api/corpora/:owner/:slug/files/:hash` | Upload |
+| HEAD | `/api/collections/:owner/:slug/files/:hash` | Check existence |
+| GET | `/api/collections/:owner/:slug/files/:hash` | Download |
+| PUT | `/api/collections/:owner/:slug/files/:hash` | Upload |
 
 ## Scripts
 

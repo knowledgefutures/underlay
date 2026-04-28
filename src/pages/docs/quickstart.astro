@@ -23,19 +23,19 @@ curl -X POST https://underlay.org/api/accounts/keys \\
   -d '{"label": "my-app", "scope": "write"}'
 # → {"id":"...","key":"ul_abc123...","label":"my-app","scope":"write"}`;
 
-const createCorpusCode = `export KEY="ul_abc123..."
+const createCollectionCode = `export KEY="ul_abc123..."
 
-curl -X POST https://underlay.org/api/accounts/yourname/corpora \\
+curl -X POST https://underlay.org/api/accounts/yourname/collections \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
     "slug": "my-dataset",
     "name": "My Dataset",
-    "description": "A test corpus",
+    "description": "A test collection",
     "public": true
   }'`;
 
-const pushCode = `curl -X POST https://underlay.org/api/corpora/yourname/my-dataset/versions \\
+const pushCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -64,16 +64,16 @@ const pushCode = `curl -X POST https://underlay.org/api/corpora/yourname/my-data
   }'
 # → {"version":1,"semver":"v1.0.0","hash":"...","recordCount":2,"fileCount":0}`;
 
-const readCode = `# Get corpus info
-curl https://underlay.org/api/corpora/yourname/my-dataset
+const readCode = `# Get collection info
+curl https://underlay.org/api/collections/yourname/my-dataset
 
 # Get version 1 records
-curl https://underlay.org/api/corpora/yourname/my-dataset/versions/1/records
+curl https://underlay.org/api/collections/yourname/my-dataset/versions/1/records
 
 # Get the manifest
-curl https://underlay.org/api/corpora/yourname/my-dataset/versions/1/manifest`;
+curl https://underlay.org/api/collections/yourname/my-dataset/versions/1/manifest`;
 
-const updateCode = `curl -X POST https://underlay.org/api/corpora/yourname/my-dataset/versions \\
+const updateCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -90,14 +90,14 @@ const updateCode = `curl -X POST https://underlay.org/api/corpora/yourname/my-da
   }'
 # → {"version":2,"semver":"v1.1.0","hash":"...","recordCount":3,"fileCount":0}`;
 
-const diffCode = `curl https://underlay.org/api/corpora/yourname/my-dataset/versions/2/diff?from=1
+const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/2/diff?from=1
 # → {"from":1,"to":2,"added":[...],"updated":[...],"removed":[]}`;
 
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
 # Upload
-curl -X PUT "https://underlay.org/api/corpora/yourname/my-dataset/files/sha256:$HASH" \\
+curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
@@ -117,8 +117,8 @@ curl -X PUT "https://underlay.org/api/corpora/yourname/my-dataset/files/sha256:$
       <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={loginCode} /></pre>
       <p>Save the <code>key</code> value — it's shown only once.</p>
 
-      <h2>3. Create a corpus</h2>
-      <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={createCorpusCode} /></pre>
+      <h2>3. Create a collection</h2>
+      <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={createCollectionCode} /></pre>
 
       <h2>4. Push a version</h2>
       <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushCode} /></pre>

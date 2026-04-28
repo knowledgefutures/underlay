@@ -1,7 +1,7 @@
 ---
 import Base from "@/layouts/Base.astro";
 
-const { owner, corpus } = Astro.params;
+const { owner, collection } = Astro.params;
 const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
@@ -18,18 +18,18 @@ if (!meRes.ok) {
 }
 const me = await meRes.json();
 
-// Fetch corpus
-const corpusRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+// Fetch collection
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, {
   headers: { Cookie: `session=${sessionCookie}` },
 });
-if (!corpusRes.ok) {
+if (!collectionRes.ok) {
   return Astro.redirect("/404");
 }
-const data = await corpusRes.json();
+const data = await collectionRes.json();
 
 // Basic ownership check (user must own the account or be an org member)
 if (me.slug !== owner) {
-  return Astro.redirect(`/${owner}/${corpus}`);
+  return Astro.redirect(`/${owner}/${collection}`);
 }
 
 let success = "";
@@ -45,7 +45,7 @@ if (Astro.request.method === "POST") {
     const description = form.get("description") as string;
     const isPublic = form.get("public") === "on";
 
-    const res = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+    const res = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -55,9 +55,9 @@ if (Astro.request.method === "POST") {
     });
 
     if (res.ok) {
-      success = "Corpus updated.";
+      success = "Collection updated.";
       // Refresh data
-      const refreshed = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+      const refreshed = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, {
         headers: { Cookie: `session=${sessionCookie}` },
       });
       if (refreshed.ok) {
@@ -74,10 +74,10 @@ if (Astro.request.method === "POST") {
 
   if (action === "delete") {
     const confirmSlug = form.get("confirmSlug") as string;
-    if (confirmSlug !== corpus) {
-      error = "Corpus name does not match. Deletion cancelled.";
+    if (confirmSlug !== collection) {
+      error = "Collection name does not match. Deletion cancelled.";
     } else {
-      const res = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+      const res = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, {
         method: "DELETE",
         headers: { Cookie: `session=${sessionCookie}` },
       });
@@ -101,12 +101,12 @@ if (deleted) {
     <nav class="text-xs text-ink-muted mb-6">
       <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
       <span class="mx-1">/</span>
-      <a href={`/${owner}/${corpus}`} class="hover:text-ink">{data.slug}</a>
+      <a href={`/${owner}/${collection}`} class="hover:text-ink">{data.slug}</a>
       <span class="mx-1">/</span>
       <span class="text-ink font-medium">settings</span>
     </nav>
 
-    <h1 class="text-xl font-semibold tracking-tight mb-6">Corpus Settings</h1>
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Collection Settings</h1>
 
     {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
     {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
@@ -162,7 +162,7 @@ if (deleted) {
         Download a <code class="bg-parchment-dark px-1">.tar.gz</code> archive containing the manifest, schema, records, and files for the latest version.
       </p>
       <a
-        href={`/api/corpora/${owner}/${corpus}/export`}
+        href={`/api/collections/${owner}/${collection}/export`}
         class="inline-block bg-parchment border border-rule px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors"
       >
         Download archive
@@ -173,10 +173,10 @@ if (deleted) {
     <div class="border border-red-200 p-4">
       <h2 class="text-sm font-semibold text-red-700 mb-2">Danger Zone</h2>
       <p class="text-sm text-ink-muted mb-3">
-        Permanently delete this corpus and all its versions, records, and files. This cannot be undone.
+        Permanently delete this collection and all its versions, records, and files. This cannot be undone.
       </p>
       <details class="group">
-        <summary class="text-sm text-red-700 cursor-pointer hover:underline">Delete this corpus…</summary>
+        <summary class="text-sm text-red-700 cursor-pointer hover:underline">Delete this collection…</summary>
         <form method="POST" class="mt-3 space-y-3">
           <input type="hidden" name="action" value="delete" />
           <div>
@@ -196,7 +196,7 @@ if (deleted) {
             type="submit"
             class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors"
           >
-            Delete corpus
+            Delete collection
           </button>
         </form>
       </details>

@@ -17,11 +17,27 @@ if (!meRes.ok) {
 }
 const me = await meRes.json();
 
-// Fetch user's corpora
-const corporaRes = await fetch(`${apiBase}/api/accounts/${me.slug}/corpora`, {
+// Fetch user's collections
+const collectionsRes = await fetch(`${apiBase}/api/accounts/${me.slug}/collections`, {
   headers: { Cookie: `session=${sessionCookie}` },
 });
-const corpora = corporaRes.ok ? await corporaRes.json() : [];
+const collections = collectionsRes.ok ? await collectionsRes.json() : [];
+
+// Fetch org collections
+const orgs: { slug: string; displayName: string; role: string; collections: any[] }[] = [];
+if (me.orgs?.length) {
+  for (const org of me.orgs) {
+    const orgCollectionsRes = await fetch(`${apiBase}/api/accounts/${org.slug}/collections`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    orgs.push({
+      slug: org.slug,
+      displayName: org.displayName,
+      role: org.role,
+      collections: orgCollectionsRes.ok ? await orgCollectionsRes.json() : [],
+    });
+  }
+}
 ---
 
 <Base title="Dashboard — Underlay">
@@ -33,18 +49,18 @@ const corpora = corporaRes.ok ? await corporaRes.json() : [];
 
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">
-        Your Corpora ({corpora.length})
+        Your Collections ({collections.length})
       </h2>
     </div>
 
-    {corpora.length === 0 ? (
+    {collections.length === 0 ? (
       <div class="border border-rule border-dashed p-6 text-center">
-        <p class="text-sm text-ink-muted mb-2">No corpora yet.</p>
-        <p class="text-xs text-ink-muted">Use the API to create and push your first corpus.</p>
+        <p class="text-sm text-ink-muted mb-2">No collections yet.</p>
+        <p class="text-xs text-ink-muted">Use the API to create and push your first collection.</p>
       </div>
     ) : (
       <div class="space-y-2">
-        {corpora.map((c: any) => (
+        {collections.map((c: any) => (
           <a href={`/${me.slug}/${c.slug}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
             <div>
               <span class="font-semibold text-sm">{me.slug}/{c.slug}</span>
@@ -58,11 +74,41 @@ const corpora = corporaRes.ok ? await corporaRes.json() : [];
       </div>
     )}
 
+    {orgs.map((org) => (
+      <div class="mt-8 pt-6 border-t border-rule">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">
+            <a href={`/${org.slug}`} class="hover:text-ink transition-colors">{org.displayName}</a>
+            <span class="ml-2 text-xs font-normal border border-rule px-1.5 py-0.5">{org.role}</span>
+          </h2>
+          <span class="text-xs text-ink-muted">{org.collections.length} collections</span>
+        </div>
+
+        {org.collections.length === 0 ? (
+          <p class="text-sm text-ink-muted">No collections in this organization yet.</p>
+        ) : (
+          <div class="space-y-2">
+            {org.collections.map((c: any) => (
+              <a href={`/${org.slug}/${c.slug}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
+                <div>
+                  <span class="font-semibold text-sm">{org.slug}/{c.slug}</span>
+                  <p class="text-xs text-ink-muted mt-0.5">{c.description ?? c.name}</p>
+                </div>
+                <div class="flex items-center gap-3 text-xs text-ink-muted">
+                  <span class="border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    ))}
+
     <div class="mt-8 pt-6 border-t border-rule">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Quick Reference</h2>
       <div class="text-xs text-ink-muted space-y-1">
-        <p>Create a corpus: <code class="bg-parchment-dark px-1">POST /api/accounts/{me.slug}/corpora</code></p>
-        <p>Push a version: <code class="bg-parchment-dark px-1">POST /api/corpora/{me.slug}/&lt;slug&gt;/versions</code></p>
+        <p>Create a collection: <code class="bg-parchment-dark px-1">POST /api/accounts/{me.slug}/collections</code></p>
+        <p>Push a version: <code class="bg-parchment-dark px-1">POST /api/collections/{me.slug}/&lt;slug&gt;/versions</code></p>
         <p><a href="/docs/quickstart" class="text-link underline">Quickstart guide →</a></p>
       </div>
     </div>

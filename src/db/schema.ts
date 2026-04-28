@@ -52,7 +52,7 @@ export const apiKeys = pgTable("api_keys", {
   accountId: uuid("account_id")
     .notNull()
     .references(() => accounts.id, { onDelete: "cascade" }),
-  corpusId: uuid("corpus_id").references(() => corpora.id, { onDelete: "cascade" }),
+  collectionId: uuid("collection_id").references(() => collections.id, { onDelete: "cascade" }),
   scope: text("scope", { enum: ["read", "write", "admin"] }).notNull(),
   keyHash: text("key_hash").notNull(),
   label: text("label").notNull(),
@@ -60,10 +60,10 @@ export const apiKeys = pgTable("api_keys", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
 });
 
-// --- Corpora ---
+// --- Collections ---
 
-export const corpora = pgTable(
-  "corpora",
+export const collections = pgTable(
+  "collections",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     accountId: uuid("account_id")
@@ -73,7 +73,7 @@ export const corpora = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     public: boolean("public").default(false).notNull(),
-    forkedFrom: uuid("forked_from").references((): any => corpora.id),
+    forkedFrom: uuid("forked_from").references((): any => collections.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -86,9 +86,9 @@ export const versions = pgTable(
   "versions",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    corpusId: uuid("corpus_id")
+    collectionId: uuid("collection_id")
       .notNull()
-      .references(() => corpora.id, { onDelete: "cascade" }),
+      .references(() => collections.id, { onDelete: "cascade" }),
     number: integer("number").notNull(),
     semver: text("semver").notNull(),
     hash: text("hash").notNull(),
@@ -104,8 +104,8 @@ export const versions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
-    unique().on(t.corpusId, t.number),
-    unique().on(t.corpusId, t.hash),
+    unique().on(t.collectionId, t.number),
+    unique().on(t.collectionId, t.hash),
   ],
 );
 

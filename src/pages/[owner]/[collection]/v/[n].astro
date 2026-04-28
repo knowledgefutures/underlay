@@ -1,7 +1,7 @@
 ---
 import Base from "@/layouts/Base.astro";
 
-const { owner, corpus, n } = Astro.params;
+const { owner, collection, n } = Astro.params;
 const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 
 function formatBytes(bytes: number): string {
@@ -13,14 +13,14 @@ function formatBytes(bytes: number): string {
 }
 
 // Fetch version
-const versionRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}/versions/${n}`);
+const versionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}`);
 if (!versionRes.ok) {
   return Astro.redirect("/404");
 }
 const version = await versionRes.json();
 
 // Fetch records (first page)
-const recordsRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}/versions/${n}/records?limit=100`);
+const recordsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/records?limit=100`);
 const records = recordsRes.ok ? await recordsRes.json() : [];
 
 // Group records by type
@@ -36,12 +36,12 @@ const schemaDoc = version.schema as Record<string, any>;
 const schemaProperties = schemaDoc?.properties ?? {};
 ---
 
-<Base title={`${version.semver} — ${owner}/${corpus} — Underlay`}>
+<Base title={`${version.semver} — ${owner}/${collection} — Underlay`}>
   <div class="max-w-5xl mx-auto px-4 py-10">
     <nav class="text-xs text-ink-muted mb-4">
       <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
       <span class="mx-1">/</span>
-      <a href={`/${owner}/${corpus}`} class="hover:text-ink">{corpus}</a>
+      <a href={`/${owner}/${collection}`} class="hover:text-ink">{collection}</a>
       <span class="mx-1">/</span>
       <span class="text-ink font-medium">{version.semver}</span>
     </nav>

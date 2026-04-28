@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 
 export async function fileRoutes(app: FastifyInstance) {
   // Check if file exists
-  app.head("/corpora/:owner/:slug/files/:hash", async (request, reply) => {
+  app.head("/collections/:owner/:slug/files/:hash", async (request, reply) => {
     const { hash } = request.params as { hash: string };
     const cleanHash = hash.replace("sha256:", "");
 
@@ -27,7 +27,7 @@ export async function fileRoutes(app: FastifyInstance) {
   });
 
   // Download file
-  app.get("/corpora/:owner/:slug/files/:hash", async (request, reply) => {
+  app.get("/collections/:owner/:slug/files/:hash", async (request, reply) => {
     const { hash } = request.params as { hash: string };
     const cleanHash = hash.replace("sha256:", "");
 
@@ -51,7 +51,7 @@ export async function fileRoutes(app: FastifyInstance) {
 
   // Upload file
   app.put(
-    "/corpora/:owner/:slug/files/:hash",
+    "/collections/:owner/:slug/files/:hash",
     { preHandler: [requireAuth("write")] },
     async (request, reply) => {
       const { owner, slug, hash } = request.params as {

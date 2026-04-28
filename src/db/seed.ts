@@ -34,7 +34,7 @@ async function seed() {
     await db.delete(schema.versionFiles);
     await db.delete(schema.files);
     await db.delete(schema.versions);
-    await db.delete(schema.corpora);
+    await db.delete(schema.collections);
     await db.delete(schema.apiKeys);
     await db.delete(schema.sessions);
     await db.delete(schema.orgMemberships);
@@ -70,9 +70,9 @@ async function seed() {
   console.log("[seed] Created admin user (admin@underlay.org / admin)");
   console.log("[seed] Created Knowledge Futures org");
 
-  // --- Corpus 1: PubPub Archive ---
+  // --- Collection 1: PubPub Archive ---
   const pubpubId = uuidv4();
-  await db.insert(schema.corpora).values({
+  await db.insert(schema.collections).values({
     id: pubpubId,
     accountId: kfId,
     slug: "pubpub-archive",
@@ -149,7 +149,7 @@ async function seed() {
   const [pubpubVersion] = await db
     .insert(schema.versions)
     .values({
-      corpusId: pubpubId,
+      collectionId: pubpubId,
       number: 1,
       semver: "v1.0.0",
       hash: pubpubHash,
@@ -173,11 +173,11 @@ async function seed() {
     })),
   );
 
-  console.log("[seed] Created corpus: knowledge-futures/pubpub-archive (17 records)");
+  console.log("[seed] Created collection: knowledge-futures/pubpub-archive (17 records)");
 
-  // --- Corpus 2: Open Grants ---
+  // --- Collection 2: Open Grants ---
   const grantsId = uuidv4();
-  await db.insert(schema.corpora).values({
+  await db.insert(schema.collections).values({
     id: grantsId,
     accountId: kfId,
     slug: "open-grants",
@@ -231,7 +231,7 @@ async function seed() {
   const [grantsVersion] = await db
     .insert(schema.versions)
     .values({
-      corpusId: grantsId,
+      collectionId: grantsId,
       number: 1,
       semver: "v1.0.0",
       hash: grantsHash,
@@ -255,11 +255,11 @@ async function seed() {
     })),
   );
 
-  console.log("[seed] Created corpus: knowledge-futures/open-grants (8 records)");
+  console.log("[seed] Created collection: knowledge-futures/open-grants (8 records)");
 
-  // --- Corpus 3: Climate Observations ---
+  // --- Collection 3: Climate Observations ---
   const climateId = uuidv4();
-  await db.insert(schema.corpora).values({
+  await db.insert(schema.collections).values({
     id: climateId,
     accountId: kfId,
     slug: "climate-observations",
@@ -315,7 +315,7 @@ async function seed() {
   const [climateVersion] = await db
     .insert(schema.versions)
     .values({
-      corpusId: climateId,
+      collectionId: climateId,
       number: 1,
       semver: "v1.0.0",
       hash: climateHash,
@@ -339,7 +339,7 @@ async function seed() {
     })),
   );
 
-  console.log("[seed] Created corpus: knowledge-futures/climate-observations (12 records)");
+  console.log("[seed] Created collection: knowledge-futures/climate-observations (12 records)");
   console.log("[seed] Done.");
   process.exit(0);
 }

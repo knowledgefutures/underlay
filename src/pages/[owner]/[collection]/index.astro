@@ -1,7 +1,7 @@
 ---
 import Base from "@/layouts/Base.astro";
 
-const { owner, corpus } = Astro.params;
+const { owner, collection } = Astro.params;
 const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
@@ -13,15 +13,15 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-// Fetch corpus
-const corpusRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`);
-if (!corpusRes.ok) {
+// Fetch collection
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) {
   return Astro.redirect("/404");
 }
-const data = await corpusRes.json();
+const data = await collectionRes.json();
 
 // Fetch versions
-const versionsRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}/versions?limit=20`);
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=20`);
 const versions = versionsRes.ok ? await versionsRes.json() : [];
 
 // Check if current user is the owner (for settings link)
@@ -53,7 +53,7 @@ if (sessionCookie) {
       <div class="flex items-center gap-3 mt-2 text-xs text-ink-muted">
         {data.public && <span class="border border-rule px-1.5 py-0.5">public</span>}
         <span>by <a href={`/${data.ownerSlug}`} class="text-link underline">{data.ownerName}</a></span>
-        {isOwner && <a href={`/${owner}/${corpus}/settings`} class="text-link underline">Settings</a>}
+        {isOwner && <a href={`/${owner}/${collection}/settings`} class="text-link underline">Settings</a>}
       </div>
     </div>
 
@@ -61,7 +61,7 @@ if (sessionCookie) {
       <div class="border border-rule p-4 mb-6 bg-parchment-dark">
         <div class="flex items-center justify-between mb-2">
           <span class="text-sm font-semibold">Latest: {data.latestVersion.semver} (#{data.latestVersion.number})</span>
-          <a href={`/${owner}/${corpus}/v/${data.latestVersion.number}`} class="text-xs text-link underline">View →</a>
+          <a href={`/${owner}/${collection}/v/${data.latestVersion.number}`} class="text-xs text-link underline">View →</a>
         </div>
         <div class="grid grid-cols-3 gap-4 text-xs text-ink-muted">
           <div>
@@ -92,7 +92,7 @@ if (sessionCookie) {
     ) : (
       <div class="space-y-1">
         {versions.map((v: any) => (
-          <a href={`/${owner}/${corpus}/v/${v.number}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors text-sm">
+          <a href={`/${owner}/${collection}/v/${v.number}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors text-sm">
             <div class="flex items-center gap-3">
               <span class="font-mono text-xs text-ink-muted">#{v.number}</span>
               <span class="font-medium">{v.semver}</span>

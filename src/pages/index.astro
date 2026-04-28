@@ -26,7 +26,7 @@ import Base from "@/layouts/Base.astro";
             href="/explore"
             class="inline-block border border-ink px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors"
           >
-            Explore corpora
+            Explore collections
           </a>
         </div>
       </div>
@@ -52,7 +52,7 @@ import Base from "@/layouts/Base.astro";
         <div>
           <h3 class="font-semibold mb-1 font-sans">3. Browse</h3>
           <p class="text-ink-muted">
-            Anyone can browse public corpora, view any version, diff between versions, and export full archives.
+            Anyone can browse public collections, view any version, diff between versions, and export full archives.
           </p>
         </div>
       </div>
@@ -63,7 +63,7 @@ import Base from "@/layouts/Base.astro";
       <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-5 font-semibold">Core concepts</h2>
       <div class="space-y-3 text-sm">
         <div class="flex gap-3">
-          <span class="text-ink-muted w-24 shrink-0 text-right">corpus</span>
+          <span class="text-ink-muted w-24 shrink-0 text-right">collection</span>
           <span>A named, versioned body of structured data plus its files. The unit of preservation.</span>
         </div>
         <div class="flex gap-3">
@@ -85,15 +85,15 @@ import Base from "@/layouts/Base.astro";
     <section class="py-8 border-b border-rule">
       <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-5 font-semibold">The API</h2>
       <p class="text-sm text-ink-muted mb-4">~13 endpoints. Each one does one thing.</p>
-      <pre class="bg-ink text-parchment p-4 text-xs overflow-x-auto leading-relaxed"><code>POST   /accounts/:owner/corpora            # create a corpus
-GET    /corpora/:owner/:slug               # corpus metadata
-POST   /corpora/:owner/:slug/versions      # push a version
-GET    /corpora/:owner/:slug/versions/:n   # read a version
+      <pre class="bg-ink text-parchment p-4 text-xs overflow-x-auto leading-relaxed"><code>POST   /accounts/:owner/collections            # create a collection
+GET    /collections/:owner/:slug               # collection metadata
+POST   /collections/:owner/:slug/versions      # push a version
+GET    /collections/:owner/:slug/versions/:n   # read a version
 GET    .../versions/:n/records             # browse records
 GET    .../versions/:n/diff?from=:m        # diff versions
-PUT    /corpora/:owner/:slug/files/:hash   # upload a file
-GET    /corpora/:owner/:slug/files/:hash   # download a file
-GET    /corpora/:owner/:slug/export        # full archive</code></pre>
+PUT    /collections/:owner/:slug/files/:hash   # upload a file
+GET    /collections/:owner/:slug/files/:hash   # download a file
+GET    /collections/:owner/:slug/export        # full archive</code></pre>
     </section>
 
     <!-- Bottom -->

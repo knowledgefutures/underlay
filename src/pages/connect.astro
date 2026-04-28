@@ -47,17 +47,17 @@ const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- The record id is the primary key value.`;
 
 const diffPush = `# 1. Get current state
-curl https://underlay.org/api/corpora/:owner/:slug/versions/latest
+curl https://underlay.org/api/collections/:owner/:slug/versions/latest
 
 # 2. Upload any new files
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
-curl -X PUT "https://underlay.org/api/corpora/:owner/:slug/files/sha256:$HASH" \\
+curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 
 # 3. Push changes (only what changed since base_version)
-curl -X POST https://underlay.org/api/corpora/:owner/:slug/versions \\
+curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -80,7 +80,7 @@ curl -X POST https://underlay.org/api/corpora/:owner/:slug/versions \\
 
   <h2>Core Concepts</h2>
   <ul>
-    <li><strong>Corpus</strong> — A named, versioned body of structured data. Identified by <code>:owner/:slug</code>.</li>
+    <li><strong>Collection</strong> — A named, versioned body of structured data. Identified by <code>:owner/:slug</code>.</li>
     <li><strong>Version</strong> — An immutable snapshot: JSON Schema + records + file references + metadata. Numbered sequentially.</li>
     <li><strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>, and a <code>data</code> payload conforming to the schema.</li>
     <li><strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced in records via <code set:text={fileRef} />.</li>
@@ -109,7 +109,7 @@ curl -X POST https://underlay.org/api/corpora/:owner/:slug/versions \\
   </ul>
 
   <h2>First Push Example</h2>
-  <p>To push the first version of a corpus (creates the initial snapshot):</p>
+  <p>To push the first version of a collection (creates the initial snapshot):</p>
   <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushExample} /></pre>
 
   <h2>Mapping a SQL Database</h2>
@@ -140,7 +140,7 @@ curl -X POST https://underlay.org/api/corpora/:owner/:slug/versions \\
     <tr><td><code>GET .../versions/latest</code></td><td>Get latest version</td></tr>
     <tr><td><code>GET .../versions/:n/records</code></td><td>Get records</td></tr>
     <tr><td><code>PUT .../files/:hash</code></td><td>Upload a file</td></tr>
-    <tr><td><code>GET /api/corpora</code></td><td>Browse public corpora</td></tr>
+    <tr><td><code>GET /api/collections</code></td><td>Browse public collections</td></tr>
   </table>
 
   <h2>Error Handling</h2>

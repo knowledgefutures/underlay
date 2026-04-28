@@ -43,7 +43,7 @@ const accountRes = `{
 const createKeyReq = `{
   "label": "my-sync-script",
   "scope": "write",
-  "corpusId": "uuid (optional — scope key to one corpus)"
+  "collectionId": "uuid (optional — scope key to one collection)"
 }`;
 
 const createKeyRes = `{
@@ -51,7 +51,7 @@ const createKeyRes = `{
   "key": "ul_a1b2c3d4e5...",
   "label": "my-sync-script",
   "scope": "write",
-  "corpusId": null
+  "collectionId": null
 }`;
 
 const deleteKeyRes = logoutRes;
@@ -66,7 +66,7 @@ const deleteKeyRes = logoutRes;
         <li><strong>Session cookies</strong> — set by login, used by the web UI</li>
         <li><strong>API keys</strong> — <code>Authorization: Bearer ul_...</code>, used by apps and scripts</li>
       </ul>
-      <p>API keys have three scopes: <code>read</code>, <code>write</code>, <code>admin</code>. A key can optionally be scoped to a single corpus.</p>
+      <p>API keys have three scopes: <code>read</code>, <code>write</code>, <code>admin</code>. A key can optionally be scoped to a single collection.</p>
 
       <hr class="border-rule my-6" />
 

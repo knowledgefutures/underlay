@@ -6,7 +6,7 @@ import multipart from "@fastify/multipart";
 import authPlugin from "./plugins/auth.js";
 import { healthRoutes } from "./routes/health.js";
 import { accountRoutes } from "./routes/accounts.js";
-import { corporaRoutes } from "./routes/corpora.js";
+import { collectionsRoutes } from "./routes/collections.js";
 import { versionRoutes } from "./routes/versions.js";
 import { fileRoutes } from "./routes/files.js";
 
@@ -37,7 +37,7 @@ export async function buildApp() {
   // Routes
   await app.register(healthRoutes, { prefix: "/api" });
   await app.register(accountRoutes, { prefix: "/api" });
-  await app.register(corporaRoutes, { prefix: "/api" });
+  await app.register(collectionsRoutes, { prefix: "/api" });
   await app.register(versionRoutes, { prefix: "/api" });
   await app.register(fileRoutes, { prefix: "/api" });
 

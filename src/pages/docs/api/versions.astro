@@ -77,12 +77,12 @@ const diffRes = `{
 ---
 
 <Docs title="Versions API" breadcrumbs={[{ label: "API" }, { label: "Versions" }]}>
-      <p>Versions are the core of Underlay. Each version is an immutable snapshot of a corpus: schema + records + file references.</p>
+      <p>Versions are the core of Underlay. Each version is an immutable snapshot of a collection: schema + records + file references.</p>
 
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>POST /api/corpora/:owner/:slug/versions</h2>
+        <h2>POST /api/collections/:owner/:slug/versions</h2>
         <p class="scope">Auth: write scope</p>
         <p>Push a new version. This is the primary write operation. You send a <code>base_version</code> for optimistic locking, an optional schema, and a set of changes (added, updated, removed records). The server computes the full snapshot from the previous version plus your changes.</p>
         <h3>Request</h3>
@@ -110,8 +110,8 @@ const diffRes = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions</h2>
+        <p class="scope">No auth for public collections</p>
         <p>List versions, newest first.</p>
         <h3>Query parameters</h3>
         <table>
@@ -125,24 +125,24 @@ const diffRes = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions/latest</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions/latest</h2>
+        <p class="scope">No auth for public collections</p>
         <p>Get the most recent version. Returns the full version object.</p>
       </div>
 
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions/:n</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions/:n</h2>
+        <p class="scope">No auth for public collections</p>
         <p>Get a specific version by number. Returns the full version object including schema.</p>
       </div>
 
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions/:n/records</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions/:n/records</h2>
+        <p class="scope">No auth for public collections</p>
         <p>Get records for a specific version.</p>
         <h3>Query parameters</h3>
         <table>
@@ -157,8 +157,8 @@ const diffRes = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions/:n/manifest</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions/:n/manifest</h2>
+        <p class="scope">No auth for public collections</p>
         <p>Get the manifest: a lightweight summary of what's in a version without the full record data.</p>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={manifestRes} /></pre>
@@ -167,8 +167,8 @@ const diffRes = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/versions/:n/diff</h2>
-        <p class="scope">No auth for public corpora</p>
+        <h2>GET /api/collections/:owner/:slug/versions/:n/diff</h2>
+        <p class="scope">No auth for public collections</p>
         <p>Diff two versions. By default compares version <code>:n</code> against <code>:n-1</code>.</p>
         <h3>Query parameters</h3>
         <table>

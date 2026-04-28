@@ -47,7 +47,7 @@ No knowledge graph. No RDF. No custom query language. No consensus protocol. Str
 
 ## What we dropped
 
-**The global knowledge graph.** The original Underlay imagined a single interconnected graph of all public knowledge. In practice, knowledge is produced in bounded contexts: a journal, a lab, a dataset, an institution. Underlay now stores these as independent **corpora**, each with its own schema. Cross-corpus linking and alignment happen at the application layer, handled by tools or language models that read from multiple corpora. Alignment no longer needs to be baked into the protocol for the data to be useful.
+**The global knowledge graph.** The original Underlay imagined a single interconnected graph of all public knowledge. In practice, knowledge is produced in bounded contexts: a journal, a lab, a dataset, an institution. Underlay now stores these as independent **collections**, each with its own schema. Cross-collection linking and alignment happen at the application layer, handled by tools or language models that read from multiple collections. Alignment no longer needs to be baked into the protocol for the data to be useful.
 
 **RDF and linked data.** We used RDF-style triples and named graphs because they were the most expressive way to represent arbitrary knowledge with provenance. But expressiveness came at the cost of accessibility. Almost no one outside the semantic web community produces RDF natively. JSON Schema and flat JSON records cover the vast majority of real-world publishing data, are understood by every developer and every language model, and map trivially to and from SQL databases.
 
@@ -57,11 +57,11 @@ No knowledge graph. No RDF. No custom query language. No consensus protocol. Str
 
 ## What this gives you
 
-For a single application: a versioned backup of everything it has produced. Full history, portable data. If the application is shut down, the archive survives. Export the corpus and go.
+For a single application: a versioned backup of everything it has produced. Full history, portable data. If the application is shut down, the archive survives. Export the collection and go.
 
-For Knowledge Futures: a service alongside custom application development. Every community, client, or project gets a corpus. A new engagement means a new application and a new corpus, not a new platform instance. We maintain the infrastructure; communities own their data.
+For Knowledge Futures: a service alongside custom application development. Every community, client, or project gets a collection. A new engagement means a new application and a new collection, not a new platform instance. We maintain the infrastructure; communities own their data.
 
-For the broader ecosystem: a public registry where anyone can browse, discover, and pull structured knowledge. A researcher finds a journal's full archive. A library mirrors public corpora for preservation. A developer builds a new tool that reads from existing corpora. A language model reads a corpus's schema and records and immediately understands the structure.
+For the broader ecosystem: a public registry where anyone can browse, discover, and pull structured knowledge. A researcher finds a journal's full archive. A library mirrors public collections for preservation. A developer builds a new tool that reads from existing collections. A language model reads a collection's schema and records and immediately understands the structure.
 
 ## The core of it
 

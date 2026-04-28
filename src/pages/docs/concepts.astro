@@ -18,12 +18,12 @@ const fileRef = '{"$file": "sha256:..."}';
 <Docs title="Concepts" breadcrumbs={[{ label: "Concepts" }]}>
       <p>Underlay has four core primitives. Everything else is built from these.</p>
 
-      <h2>Corpus</h2>
-      <p>A <strong>corpus</strong> (plural: <strong>corpora</strong>) is a named, versioned body of structured data. It belongs to an account (a user or an organization) and is identified by <code>:owner/:slug</code> — for example, <code>knowledge-futures/pubpub-archive</code>.</p>
-      <p>A corpus can be public (browsable by anyone) or private (visible only to the owner and org members). Each corpus has its own independent version history.</p>
+      <h2>Collection</h2>
+      <p>A <strong>collection</strong> (plural: <strong>collections</strong>) is a named, versioned body of structured data. It belongs to an account (a user or an organization) and is identified by <code>:owner/:slug</code> — for example, <code>knowledge-futures/pubpub-archive</code>.</p>
+      <p>A collection can be public (browsable by anyone) or private (visible only to the owner and org members). Each collection has its own independent version history.</p>
 
       <h2>Version</h2>
-      <p>A <strong>version</strong> is an immutable snapshot of a corpus at a point in time. Each version contains:</p>
+      <p>A <strong>version</strong> is an immutable snapshot of a collection at a point in time. Each version contains:</p>
       <ul>
         <li>A <strong>JSON Schema</strong> describing the structure of the records</li>
         <li>A set of <strong>records</strong> — the actual data</li>
@@ -54,5 +54,5 @@ const fileRef = '{"$file": "sha256:..."}';
         <li><strong>Users</strong> — individual accounts with email/password login</li>
         <li><strong>Organizations</strong> — group accounts with members who have roles (owner, admin, member)</li>
       </ul>
-      <p>Both can own corpora. API keys are scoped to an account and optionally to a specific corpus, with permission levels: <code>read</code>, <code>write</code>, or <code>admin</code>.</p>
+      <p>Both can own collections. API keys are scoped to an account and optionally to a specific collection, with permission levels: <code>read</code>, <code>write</code>, or <code>admin</code>.</p>
 </Docs>

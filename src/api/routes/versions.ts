@@ -36,12 +36,12 @@ function deriveSemver(
 
 export async function versionRoutes(app: FastifyInstance) {
   // List versions
-  app.get("/corpora/:owner/:slug/versions", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions", async (request, reply) => {
     const { owner, slug } = request.params as { owner: string; slug: string };
     const { limit, offset } = request.query as { limit?: string; offset?: string };
 
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     return db
       .select({
@@ -57,22 +57,22 @@ export async function versionRoutes(app: FastifyInstance) {
         createdAt: schema.versions.createdAt,
       })
       .from(schema.versions)
-      .where(eq(schema.versions.corpusId, corpus.id))
+      .where(eq(schema.versions.collectionId, collection.id))
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(Math.min(parseInt(limit ?? "50", 10), 100))
       .offset(parseInt(offset ?? "0", 10));
   });
 
   // Latest version
-  app.get("/corpora/:owner/:slug/versions/latest", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions/latest", async (request, reply) => {
     const { owner, slug } = request.params as { owner: string; slug: string };
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const [version] = await db
       .select()
       .from(schema.versions)
-      .where(eq(schema.versions.corpusId, corpus.id))
+      .where(eq(schema.versions.collectionId, collection.id))
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(1);
 
@@ -81,16 +81,16 @@ export async function versionRoutes(app: FastifyInstance) {
   });
 
   // Get version by number
-  app.get("/corpora/:owner/:slug/versions/:n", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions/:n", async (request, reply) => {
     const { owner, slug, n } = request.params as { owner: string; slug: string; n: string };
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const [version] = await db
       .select()
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.corpusId, corpus.id), eq(schema.versions.number, parseInt(n, 10))),
+        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, parseInt(n, 10))),
       )
       .limit(1);
 
@@ -99,7 +99,7 @@ export async function versionRoutes(app: FastifyInstance) {
   });
 
   // Get records for a version
-  app.get("/corpora/:owner/:slug/versions/:n/records", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions/:n/records", async (request, reply) => {
     const { owner, slug, n } = request.params as { owner: string; slug: string; n: string };
     const { type, limit, offset } = request.query as {
       type?: string;
@@ -107,14 +107,14 @@ export async function versionRoutes(app: FastifyInstance) {
       offset?: string;
     };
 
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const [version] = await db
       .select()
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.corpusId, corpus.id), eq(schema.versions.number, parseInt(n, 10))),
+        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, parseInt(n, 10))),
       )
       .limit(1);
 
@@ -136,16 +136,16 @@ export async function versionRoutes(app: FastifyInstance) {
   });
 
   // Get manifest for a version
-  app.get("/corpora/:owner/:slug/versions/:n/manifest", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions/:n/manifest", async (request, reply) => {
     const { owner, slug, n } = request.params as { owner: string; slug: string; n: string };
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const [version] = await db
       .select()
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.corpusId, corpus.id), eq(schema.versions.number, parseInt(n, 10))),
+        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, parseInt(n, 10))),
       )
       .limit(1);
 
@@ -172,7 +172,7 @@ export async function versionRoutes(app: FastifyInstance) {
 
   // Push a new version
   app.post(
-    "/corpora/:owner/:slug/versions",
+    "/collections/:owner/:slug/versions",
     { preHandler: [requireAuth("write")] },
     async (request, reply) => {
       const { owner, slug } = request.params as { owner: string; slug: string };
@@ -189,14 +189,14 @@ export async function versionRoutes(app: FastifyInstance) {
         };
       };
 
-      const corpus = await resolveCorpus(owner, slug);
-      if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+      const collection = await resolveCollection(owner, slug);
+      if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
       // Get latest version
       const [latest] = await db
         .select()
         .from(schema.versions)
-        .where(eq(schema.versions.corpusId, corpus.id))
+        .where(eq(schema.versions.collectionId, collection.id))
         .orderBy(sql`${schema.versions.number} desc`)
         .limit(1);
 
@@ -314,7 +314,7 @@ export async function versionRoutes(app: FastifyInstance) {
       const [version] = await db
         .insert(schema.versions)
         .values({
-          corpusId: corpus.id,
+          collectionId: collection.id,
           number: newNumber,
           semver,
           hash: versionHash,
@@ -351,11 +351,11 @@ export async function versionRoutes(app: FastifyInstance) {
         );
       }
 
-      // Update corpus timestamp
+      // Update collection timestamp
       await db
-        .update(schema.corpora)
+        .update(schema.collections)
         .set({ updatedAt: new Date() })
-        .where(eq(schema.corpora.id, corpus.id));
+        .where(eq(schema.collections.id, collection.id));
 
       return reply.status(201).send({
         version: newNumber,
@@ -368,12 +368,12 @@ export async function versionRoutes(app: FastifyInstance) {
   );
 
   // Diff between versions
-  app.get("/corpora/:owner/:slug/versions/:n/diff", async (request, reply) => {
+  app.get("/collections/:owner/:slug/versions/:n/diff", async (request, reply) => {
     const { owner, slug, n } = request.params as { owner: string; slug: string; n: string };
     const { from } = request.query as { from?: string };
 
-    const corpus = await resolveCorpus(owner, slug);
-    if (!corpus) return reply.status(404).send({ error: "Corpus not found", statusCode: 404 });
+    const collection = await resolveCollection(owner, slug);
+    if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const targetNum = parseInt(n, 10);
     const fromNum = from ? parseInt(from, 10) : targetNum - 1;
@@ -381,7 +381,7 @@ export async function versionRoutes(app: FastifyInstance) {
     const [targetVersion] = await db
       .select()
       .from(schema.versions)
-      .where(and(eq(schema.versions.corpusId, corpus.id), eq(schema.versions.number, targetNum)))
+      .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, targetNum)))
       .limit(1);
 
     if (!targetVersion) {
@@ -398,7 +398,7 @@ export async function versionRoutes(app: FastifyInstance) {
       const [fromVersion] = await db
         .select()
         .from(schema.versions)
-        .where(and(eq(schema.versions.corpusId, corpus.id), eq(schema.versions.number, fromNum)))
+        .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, fromNum)))
         .limit(1);
 
       if (fromVersion) {
@@ -429,16 +429,16 @@ export async function versionRoutes(app: FastifyInstance) {
   });
 }
 
-async function resolveCorpus(owner: string, slug: string) {
+async function resolveCollection(owner: string, slug: string) {
   const [result] = await db
     .select({
-      id: schema.corpora.id,
-      accountId: schema.corpora.accountId,
-      slug: schema.corpora.slug,
+      id: schema.collections.id,
+      accountId: schema.collections.accountId,
+      slug: schema.collections.slug,
     })
-    .from(schema.corpora)
-    .innerJoin(schema.accounts, eq(schema.corpora.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.corpora.slug, slug)))
+    .from(schema.collections)
+    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1);
   return result ?? null;
 }

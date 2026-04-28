@@ -8,7 +8,7 @@ declare module "fastify" {
   interface FastifyRequest {
     accountId?: string;
     apiKeyScope?: "read" | "write" | "admin";
-    apiKeyCorpusId?: string | null;
+    apiKeyCollectionId?: string | null;
     sessionUserId?: string;
   }
 }
@@ -17,7 +17,7 @@ async function authPlugin(app: FastifyInstance) {
   // API key auth via Bearer token
   app.decorateRequest("accountId", undefined);
   app.decorateRequest("apiKeyScope", undefined);
-  app.decorateRequest("apiKeyCorpusId", undefined);
+  app.decorateRequest("apiKeyCollectionId", undefined);
   app.decorateRequest("sessionUserId", undefined);
 
   app.addHook("onRequest", async (request: FastifyRequest) => {
@@ -30,7 +30,7 @@ async function authPlugin(app: FastifyInstance) {
         if (match) {
           request.accountId = key.accountId;
           request.apiKeyScope = key.scope as "read" | "write" | "admin";
-          request.apiKeyCorpusId = key.corpusId;
+          request.apiKeyCollectionId = key.collectionId;
           await db
             .update(schema.apiKeys)
             .set({ lastUsedAt: new Date() })

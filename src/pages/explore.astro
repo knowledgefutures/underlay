@@ -4,14 +4,14 @@ import Base from "@/layouts/Base.astro";
 
 <Base title="Explore — Underlay">
   <div class="max-w-5xl mx-auto px-4 py-10">
-    <h1 class="text-xl font-semibold tracking-tight font-sans mb-2">Explore corpora</h1>
-    <p class="text-sm text-ink-muted mb-6">Browse public knowledge corpora published to Underlay.</p>
+    <h1 class="text-xl font-semibold tracking-tight font-sans mb-2">Explore collections</h1>
+    <p class="text-sm text-ink-muted mb-6">Browse public knowledge collections published to Underlay.</p>
 
     <div class="flex gap-3 mb-6">
       <input
         type="search"
         id="search"
-        placeholder="Search corpora..."
+        placeholder="Search collections..."
         class="flex-1 bg-parchment border border-rule px-3 py-2 text-sm font-mono placeholder:text-ink-muted focus:outline-none focus:border-ink"
       />
     </div>
@@ -29,11 +29,11 @@ import Base from "@/layouts/Base.astro";
   async function load(q = "") {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
-    const res = await fetch(`/api/corpora?${params}`);
+    const res = await fetch(`/api/collections?${params}`);
     const data = await res.json();
 
     if (!data.length) {
-      results.innerHTML = `<p class="text-sm text-ink-muted">No corpora found.</p>`;
+      results.innerHTML = `<p class="text-sm text-ink-muted">No collections found.</p>`;
       return;
     }
 

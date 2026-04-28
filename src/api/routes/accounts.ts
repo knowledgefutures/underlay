@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import bcrypt from "bcrypt";
 import { v4 as uuidv4 } from "uuid";
@@ -135,7 +135,20 @@ export async function accountRoutes(app: FastifyInstance) {
       if (!account) {
         return reply.status(404).send({ error: "Account not found", statusCode: 404 });
       }
-      return account;
+
+      // Fetch org memberships
+      const memberships = await db
+        .select({
+          orgId: schema.orgMemberships.orgId,
+          role: schema.orgMemberships.role,
+          slug: schema.accounts.slug,
+          displayName: schema.accounts.displayName,
+        })
+        .from(schema.orgMemberships)
+        .innerJoin(schema.accounts, eq(schema.orgMemberships.orgId, schema.accounts.id))
+        .where(eq(schema.orgMemberships.userId, account.id));
+
+      return { ...account, orgs: memberships };
     },
   );
 
@@ -165,10 +178,10 @@ export async function accountRoutes(app: FastifyInstance) {
     "/accounts/keys",
     { preHandler: [requireAuth()] },
     async (request, reply) => {
-      const { label, scope, corpusId } = request.body as {
+      const { label, scope, collectionId } = request.body as {
         label: string;
         scope: "read" | "write" | "admin";
-        corpusId?: string;
+        collectionId?: string;
       };
 
       const rawKey = `ul_${uuidv4().replace(/-/g, "")}`;
@@ -181,7 +194,7 @@ export async function accountRoutes(app: FastifyInstance) {
           scope,
           keyHash,
           label,
-          corpusId: corpusId ?? null,
+          collectionId: collectionId ?? null,
         })
         .returning();
 
@@ -190,7 +203,7 @@ export async function accountRoutes(app: FastifyInstance) {
         key: rawKey, // shown once
         label,
         scope,
-        corpusId: corpusId ?? null,
+        collectionId: collectionId ?? null,
       });
     },
   );
@@ -205,7 +218,7 @@ export async function accountRoutes(app: FastifyInstance) {
           id: schema.apiKeys.id,
           label: schema.apiKeys.label,
           scope: schema.apiKeys.scope,
-          corpusId: schema.apiKeys.corpusId,
+          collectionId: schema.apiKeys.collectionId,
           createdAt: schema.apiKeys.createdAt,
           lastUsedAt: schema.apiKeys.lastUsedAt,
         })
@@ -232,6 +245,243 @@ export async function accountRoutes(app: FastifyInstance) {
       }
 
       await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
+      return { ok: true };
+    },
+  );
+
+  // --- Org Management ---
+
+  // List org members
+  app.get(
+    "/accounts/:slug/members",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug } = request.params as { slug: string };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be a member to view
+      const [membership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      if (!membership) return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+
+      const members = await db
+        .select({
+          userId: schema.orgMemberships.userId,
+          role: schema.orgMemberships.role,
+          slug: schema.accounts.slug,
+          displayName: schema.accounts.displayName,
+        })
+        .from(schema.orgMemberships)
+        .innerJoin(schema.accounts, eq(schema.orgMemberships.userId, schema.accounts.id))
+        .where(eq(schema.orgMemberships.orgId, org.id));
+
+      return members;
+    },
+  );
+
+  // Add org member
+  app.post(
+    "/accounts/:slug/members",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug } = request.params as { slug: string };
+      const { username, role } = request.body as { username: string; role: "owner" | "admin" | "member" };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be owner or admin
+      const [callerMembership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      if (!callerMembership || callerMembership.role === "member") {
+        return reply.status(403).send({ error: "Must be an owner or admin to add members", statusCode: 403 });
+      }
+
+      // Find user to add
+      const [user] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, username), eq(schema.accounts.type, "user")))
+        .limit(1);
+
+      if (!user) return reply.status(404).send({ error: "User not found", statusCode: 404 });
+
+      // Check not already a member
+      const [existing] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, user.id)))
+        .limit(1);
+
+      if (existing) return reply.status(409).send({ error: "Already a member", statusCode: 409 });
+
+      await db.insert(schema.orgMemberships).values({
+        orgId: org.id,
+        userId: user.id,
+        role: role ?? "member",
+      });
+
+      return reply.status(201).send({ ok: true, username, role });
+    },
+  );
+
+  // Update member role
+  app.patch(
+    "/accounts/:slug/members/:userId",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug, userId } = request.params as { slug: string; userId: string };
+      const { role } = request.body as { role: "owner" | "admin" | "member" };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be owner
+      const [callerMembership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      if (!callerMembership || callerMembership.role !== "owner") {
+        return reply.status(403).send({ error: "Must be an owner to change roles", statusCode: 403 });
+      }
+
+      await db
+        .update(schema.orgMemberships)
+        .set({ role })
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, userId)));
+
+      return { ok: true };
+    },
+  );
+
+  // Remove member
+  app.delete(
+    "/accounts/:slug/members/:userId",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug, userId } = request.params as { slug: string; userId: string };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be owner or admin (or removing yourself)
+      const [callerMembership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      const isSelf = request.accountId === userId;
+      if (!callerMembership || (callerMembership.role === "member" && !isSelf)) {
+        return reply.status(403).send({ error: "Forbidden", statusCode: 403 });
+      }
+
+      await db
+        .delete(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, userId)));
+
+      return { ok: true };
+    },
+  );
+
+  // Update org profile
+  app.patch(
+    "/accounts/:slug",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug } = request.params as { slug: string };
+      const { displayName } = request.body as { displayName?: string };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be owner
+      const [callerMembership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      if (!callerMembership || callerMembership.role !== "owner") {
+        return reply.status(403).send({ error: "Must be an owner to update the organization", statusCode: 403 });
+      }
+
+      const updates: Partial<{ displayName: string }> = {};
+      if (displayName) updates.displayName = displayName;
+
+      if (Object.keys(updates).length > 0) {
+        await db.update(schema.accounts).set(updates).where(eq(schema.accounts.id, org.id));
+      }
+
+      return { ok: true };
+    },
+  );
+
+  // Delete org
+  app.delete(
+    "/accounts/:slug",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug } = request.params as { slug: string };
+
+      const [org] = await db
+        .select()
+        .from(schema.accounts)
+        .where(and(eq(schema.accounts.slug, slug), eq(schema.accounts.type, "org")))
+        .limit(1);
+
+      if (!org) return reply.status(404).send({ error: "Organization not found", statusCode: 404 });
+
+      // Must be owner
+      const [callerMembership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, request.accountId!)))
+        .limit(1);
+
+      if (!callerMembership || callerMembership.role !== "owner") {
+        return reply.status(403).send({ error: "Must be an owner to delete the organization", statusCode: 403 });
+      }
+
+      // Cascade will handle memberships, collections, etc.
+      await db.delete(schema.accounts).where(eq(schema.accounts.id, org.id));
       return { ok: true };
     },
   );

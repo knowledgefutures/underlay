@@ -1,0 +1,268 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const { owner } = Astro.params;
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+if (!sessionCookie) {
+  return Astro.redirect("/login");
+}
+
+// Verify auth
+const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!meRes.ok) {
+  return Astro.redirect("/login");
+}
+const me = await meRes.json();
+
+// Check this is an org the user belongs to
+const org = me.orgs?.find((o: any) => o.slug === owner);
+if (!org) {
+  return Astro.redirect(`/${owner}`);
+}
+
+// Fetch org profile
+const orgRes = await fetch(`${apiBase}/api/accounts/${owner}`);
+if (!orgRes.ok) {
+  return Astro.redirect("/404");
+}
+const orgData = await orgRes.json();
+
+// Fetch members
+const membersRes = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const members = membersRes.ok ? await membersRes.json() : [];
+
+const isOwner = org.role === "owner";
+let success = "";
+let error = "";
+let deleted = false;
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action") as string;
+
+  if (action === "update-profile" && isOwner) {
+    const displayName = form.get("displayName") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `session=${sessionCookie}`,
+      },
+      body: JSON.stringify({ displayName }),
+    });
+    if (res.ok) {
+      success = "Organization updated.";
+      orgData.displayName = displayName;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Update failed.";
+    }
+  }
+
+  if (action === "add-member" && isOwner) {
+    const username = form.get("username") as string;
+    const role = form.get("role") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `session=${sessionCookie}`,
+      },
+      body: JSON.stringify({ username, role }),
+    });
+    if (res.ok) {
+      success = `Added ${username} as ${role}.`;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to add member.";
+    }
+  }
+
+  if (action === "remove-member" && isOwner) {
+    const userId = form.get("userId") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/members/${userId}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      success = "Member removed.";
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to remove member.";
+    }
+  }
+
+  if (action === "delete-org" && isOwner) {
+    const confirmSlug = form.get("confirmSlug") as string;
+    if (confirmSlug !== owner) {
+      error = "Organization name does not match. Deletion cancelled.";
+    } else {
+      const res = await fetch(`${apiBase}/api/accounts/${owner}`, {
+        method: "DELETE",
+        headers: { Cookie: `session=${sessionCookie}` },
+      });
+      if (res.ok) {
+        deleted = true;
+      } else {
+        const body = await res.json().catch(() => ({}));
+        error = body.error ?? "Delete failed.";
+      }
+    }
+  }
+
+  // Refresh members after mutations
+  if (!deleted && (action === "add-member" || action === "remove-member")) {
+    const refreshRes = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (refreshRes.ok) {
+      members.length = 0;
+      members.push(...await refreshRes.json());
+    }
+  }
+}
+
+if (deleted) {
+  return Astro.redirect("/dashboard");
+}
+---
+
+<Base title={`Settings — ${orgData.displayName} — Underlay`}>
+  <div class="max-w-xl mx-auto px-4 py-10">
+    <nav class="text-xs text-ink-muted mb-6">
+      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
+      <span class="mx-1">/</span>
+      <span class="text-ink font-medium">settings</span>
+    </nav>
+
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Organization Settings</h1>
+
+    {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <!-- Profile -->
+    {isOwner && (
+      <form method="POST" class="space-y-4 mb-10">
+        <input type="hidden" name="action" value="update-profile" />
+        <div>
+          <label for="displayName" class="block text-sm font-medium mb-1">Display Name</label>
+          <input
+            type="text"
+            id="displayName"
+            name="displayName"
+            value={orgData.displayName}
+            required
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Slug</label>
+          <p class="text-sm text-ink-muted font-mono">{owner}</p>
+          <p class="text-xs text-ink-muted mt-1">Slugs cannot be changed.</p>
+        </div>
+        <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+          Save
+        </button>
+      </form>
+    )}
+
+    <!-- Members -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">
+        Members ({members.length})
+      </h2>
+
+      <div class="space-y-2 mb-6">
+        {members.map((m: any) => (
+          <div class="flex items-center justify-between border border-rule p-3">
+            <div class="flex items-center gap-3">
+              <a href={`/${m.slug}`} class="font-semibold text-sm text-link underline">{m.slug}</a>
+              <span class="text-xs text-ink-muted">{m.displayName}</span>
+              <span class="text-xs border border-rule px-1.5 py-0.5">{m.role}</span>
+            </div>
+            {isOwner && m.userId !== me.id && (
+              <form method="POST" class="inline">
+                <input type="hidden" name="action" value="remove-member" />
+                <input type="hidden" name="userId" value={m.userId} />
+                <button type="submit" class="text-xs text-red-700 hover:underline">Remove</button>
+              </form>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {isOwner && (
+        <form method="POST" class="flex items-end gap-3">
+          <input type="hidden" name="action" value="add-member" />
+          <div class="flex-1">
+            <label for="username" class="block text-xs font-medium mb-1">Username</label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              required
+              placeholder="e.g. jsmith"
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+            />
+          </div>
+          <div>
+            <label for="role" class="block text-xs font-medium mb-1">Role</label>
+            <select
+              id="role"
+              name="role"
+              class="bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+              <option value="owner">Owner</option>
+            </select>
+          </div>
+          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap">
+            Add member
+          </button>
+        </form>
+      )}
+    </div>
+
+    <!-- Danger zone -->
+    {isOwner && (
+      <div class="border border-red-200 p-4">
+        <h2 class="text-sm font-semibold text-red-700 mb-2">Danger Zone</h2>
+        <p class="text-sm text-ink-muted mb-3">
+          Permanently delete this organization, all its collections, versions, records, and files. This cannot be undone.
+        </p>
+        <details class="group">
+          <summary class="text-sm text-red-700 cursor-pointer hover:underline">Delete this organization…</summary>
+          <form method="POST" class="mt-3 space-y-3">
+            <input type="hidden" name="action" value="delete-org" />
+            <div>
+              <label for="confirmSlug" class="block text-sm text-ink-muted mb-1">
+                Type <strong>{owner}</strong> to confirm:
+              </label>
+              <input
+                type="text"
+                id="confirmSlug"
+                name="confirmSlug"
+                required
+                autocomplete="off"
+                class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+              />
+            </div>
+            <button
+              type="submit"
+              class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors"
+            >
+              Delete organization
+            </button>
+          </form>
+        </details>
+      </div>
+    )}
+  </div>
+</Base>

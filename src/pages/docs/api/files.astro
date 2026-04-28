@@ -3,20 +3,20 @@ import Docs from "@/layouts/Docs.astro";
 
 const fileRefInline = '{"$file": "sha256:<hash>"}';
 
-const headExample = `curl -I https://underlay.org/api/corpora/kf/archive/files/sha256:a1b2c3...
+const headExample = `curl -I https://underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...
 # HTTP/2 200
 # Content-Length: 1048576
 # Content-Type: application/pdf`;
 
 const getExample = `curl -o paper.pdf \\
-  https://underlay.org/api/corpora/kf/archive/files/sha256:a1b2c3...`;
+  https://underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...`;
 
 const putExample = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
 # Upload
 curl -X PUT \\
-  "https://underlay.org/api/corpora/kf/archive/files/sha256:$HASH" \\
+  "https://underlay.org/api/collections/kf/archive/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf`;
@@ -52,7 +52,7 @@ const fileRefExample = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>HEAD /api/corpora/:owner/:slug/files/:hash</h2>
+        <h2>HEAD /api/collections/:owner/:slug/files/:hash</h2>
         <p class="scope">No auth required</p>
         <p>Check if a file exists. Returns headers only, no body.</p>
         <h3>Parameters</h3>
@@ -71,7 +71,7 @@ const fileRefExample = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug/files/:hash</h2>
+        <h2>GET /api/collections/:owner/:slug/files/:hash</h2>
         <p class="scope">No auth required</p>
         <p>Download a file. Returns the raw binary data with appropriate content type. Response is cacheable (immutable content).</p>
         <h3>Headers</h3>
@@ -87,7 +87,7 @@ const fileRefExample = `{
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>PUT /api/corpora/:owner/:slug/files/:hash</h2>
+        <h2>PUT /api/collections/:owner/:slug/files/:hash</h2>
         <p class="scope">Auth: write scope</p>
         <p>Upload a file. The server verifies the SHA-256 hash of the uploaded bytes matches the hash in the URL. If the file already exists, returns <code>200</code> without re-uploading.</p>
         <h3>Request</h3>

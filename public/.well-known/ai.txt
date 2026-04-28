@@ -23,7 +23,7 @@ There are two auth methods:
    POST /api/accounts/logout clears the session.
    GET /api/accounts/me returns the current user (works with either auth method).
 
-Public endpoints (browsing corpora, reading public versions) require no auth.
+Public endpoints (browsing collections, reading public versions) require no auth.
 Write endpoints require a key with "write" scope or an active session.
 Delete endpoints require "admin" scope.
 
@@ -31,7 +31,7 @@ Delete endpoints require "admin" scope.
 
 ## Core Concepts
 
-- Corpus: a named, versioned body of data owned by an account. Identified by :owner/:slug.
+- Collection: a named, versioned body of data owned by an account. Identified by :owner/:slug.
 - Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
 - Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
 - File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
@@ -41,27 +41,27 @@ Delete endpoints require "admin" scope.
 
 ## Reading Data
 
-### Browse corpora
-GET /api/corpora                                    → list public corpora (?q=search&limit=50&offset=0)
-GET /api/corpora/:owner/:slug                       → corpus metadata + latest version summary
+### Browse collections
+GET /api/collections                                    → list public collections (?q=search&limit=50&offset=0)
+GET /api/collections/:owner/:slug                       → collection metadata + latest version summary
 
 ### Read versions
-GET /api/corpora/:owner/:slug/versions              → list versions (newest first, ?limit=50&offset=0)
-GET /api/corpora/:owner/:slug/versions/latest       → latest version with full metadata
-GET /api/corpora/:owner/:slug/versions/:n            → specific version by number
+GET /api/collections/:owner/:slug/versions              → list versions (newest first, ?limit=50&offset=0)
+GET /api/collections/:owner/:slug/versions/latest       → latest version with full metadata
+GET /api/collections/:owner/:slug/versions/:n            → specific version by number
 
 ### Read records and files
-GET /api/corpora/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&offset=0)
-GET /api/corpora/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
-GET /api/corpora/:owner/:slug/files/:hash            → download a file by hash
-HEAD /api/corpora/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
+GET /api/collections/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&offset=0)
+GET /api/collections/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
+GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
+HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
 
 ### Diff
-GET /api/corpora/:owner/:slug/versions/:n/diff?from=:m → diff between version m and n (added, updated, removed records)
+GET /api/collections/:owner/:slug/versions/:n/diff?from=:m → diff between version m and n (added, updated, removed records)
 
 ### Export
-GET /api/corpora/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
-GET /api/corpora/:owner/:slug/export?version=3      → export a specific version
+GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
+GET /api/collections/:owner/:slug/export?version=3      → export a specific version
 
 ---
 
@@ -70,13 +70,13 @@ GET /api/corpora/:owner/:slug/export?version=3      → export a specific versio
 This is the canonical workflow for syncing an app's data to Underlay:
 
 ### Step 1: Get current state
-GET /api/corpora/:owner/:slug/versions/latest
+GET /api/collections/:owner/:slug/versions/latest
 
 Response includes { number, semver, hash, recordCount, fileCount }.
 If 404, no versions exist yet — your first push should use base_version: null.
 
 ### Step 2: Fetch the manifest (optional, for diffing)
-GET /api/corpora/:owner/:slug/versions/:n/manifest
+GET /api/collections/:owner/:slug/versions/:n/manifest
 
 Response:
 {
@@ -92,7 +92,7 @@ Compare this against your local data to determine what changed.
 ### Step 3: Upload new files (if any)
 For each file your app has that Underlay doesn't:
 
-PUT /api/corpora/:owner/:slug/files/sha256:<hex>
+PUT /api/collections/:owner/:slug/files/sha256:<hex>
 Content-Type: application/octet-stream
 Body: raw file bytes
 
@@ -100,7 +100,7 @@ The server verifies the SHA-256 hash matches the body. Existing hashes are idemp
 Check existence first with HEAD if you want to skip uploads.
 
 ### Step 4: Push the version
-POST /api/corpora/:owner/:slug/versions
+POST /api/collections/:owner/:slug/versions
 Content-Type: application/json
 Authorization: Bearer ul_<key>
 
@@ -173,7 +173,7 @@ Set base_version to null. Put all records in changes.added. Include the schema.
   }
 }
 
-- id: stable, unique within the corpus. Use your app's primary key or generate a deterministic one.
+- id: stable, unique within the collection. Use your app's primary key or generate a deterministic one.
 - type: groups records by kind (e.g. "Article", "Author", "Grant").
 - data: flat JSON object. Reference other records by id. Reference files with {"$file": "sha256:<hex>"}.
 
@@ -191,12 +191,12 @@ The schema declares which fields are references, so tools can resolve them at re
 
 ---
 
-## Corpus Management
+## Collection Management
 
-POST /api/accounts/:owner/corpora              → create corpus {"slug", "name", "description", "public"}
-PATCH /api/corpora/:owner/:slug                → update {"name", "description", "public"}
-DELETE /api/corpora/:owner/:slug               → delete corpus (requires admin scope)
-GET /api/accounts/:owner/corpora               → list corpora for an account
+POST /api/accounts/:owner/collections              → create collection {"slug", "name", "description", "public"}
+PATCH /api/collections/:owner/:slug                → update {"name", "description", "public"}
+DELETE /api/collections/:owner/:slug               → delete collection (requires admin scope)
+GET /api/accounts/:owner/collections               → list collections for an account
 
 ---
 
@@ -214,7 +214,7 @@ DELETE /api/accounts/keys/:id → revoke a key
 400 — Validation error (bad request body)
 401 — Authentication required
 403 — Insufficient scope (e.g. read key used for write)
-404 — Not found (or private corpus you can't access)
+404 — Not found (or private collection you can't access)
 409 — Version conflict (re-fetch and retry with new base_version)
 422 — Missing files (upload them first, then retry push)
 

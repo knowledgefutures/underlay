@@ -71,15 +71,15 @@ const listRes = `[
 ]`;
 ---
 
-<Docs title="Corpora API" breadcrumbs={[{ label: "API" }, { label: "Corpora" }]}>
-      <p>Create, browse, update, and delete corpora. A corpus is identified by <code>:owner/:slug</code>.</p>
+<Docs title="Collections API" breadcrumbs={[{ label: "API" }, { label: "Collections" }]}>
+      <p>Create, browse, update, and delete collections. A collection is identified by <code>:owner/:slug</code>.</p>
 
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora</h2>
+        <h2>GET /api/collections</h2>
         <p class="scope">No auth required</p>
-        <p>Browse public corpora with optional search.</p>
+        <p>Browse public collections with optional search.</p>
         <h3>Query parameters</h3>
         <table>
           <tr><td><code>q</code></td><td>Search name and description</td></tr>
@@ -93,9 +93,9 @@ const listRes = `[
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>POST /api/accounts/:owner/corpora</h2>
+        <h2>POST /api/accounts/:owner/collections</h2>
         <p class="scope">Auth: write scope</p>
-        <p>Create a new corpus under an account. You must own the account or be a member of the org.</p>
+        <p>Create a new collection under an account. You must own the account or be a member of the org.</p>
         <h3>Request</h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={createReq} /></pre>
         <h3>Response <span class="text-ink-muted font-normal">201</span></h3>
@@ -105,9 +105,9 @@ const listRes = `[
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/corpora/:owner/:slug</h2>
-        <p class="scope">No auth for public corpora</p>
-        <p>Get corpus metadata and latest version summary.</p>
+        <h2>GET /api/collections/:owner/:slug</h2>
+        <p class="scope">No auth for public collections</p>
+        <p>Get collection metadata and latest version summary.</p>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={getRes} /></pre>
       </div>
@@ -115,9 +115,9 @@ const listRes = `[
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>PATCH /api/corpora/:owner/:slug</h2>
+        <h2>PATCH /api/collections/:owner/:slug</h2>
         <p class="scope">Auth: write scope</p>
-        <p>Update corpus metadata. Pass only the fields to change.</p>
+        <p>Update collection metadata. Pass only the fields to change.</p>
         <h3>Request</h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={updateReq} /></pre>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
@@ -127,9 +127,9 @@ const listRes = `[
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>DELETE /api/corpora/:owner/:slug</h2>
+        <h2>DELETE /api/collections/:owner/:slug</h2>
         <p class="scope">Auth: admin scope</p>
-        <p>Delete a corpus and all its versions, records, and file references. Files themselves are not deleted (they may be referenced by other corpora).</p>
+        <p>Delete a collection and all its versions, records, and file references. Files themselves are not deleted (they may be referenced by other collections).</p>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={okRes} /></pre>
       </div>
@@ -137,9 +137,9 @@ const listRes = `[
       <hr class="border-rule my-6" />
 
       <div class="endpoint">
-        <h2>GET /api/accounts/:owner/corpora</h2>
+        <h2>GET /api/accounts/:owner/collections</h2>
         <p class="scope">No auth required</p>
-        <p>List all corpora belonging to an account. Non-owners see only public corpora.</p>
+        <p>List all collections belonging to an account. Non-owners see only public collections.</p>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={listRes} /></pre>
       </div>
