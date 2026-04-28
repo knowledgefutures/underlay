@@ -1,0 +1,205 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const { owner, corpus } = Astro.params;
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+if (!sessionCookie) {
+  return Astro.redirect("/login");
+}
+
+// Verify auth
+const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!meRes.ok) {
+  return Astro.redirect("/login");
+}
+const me = await meRes.json();
+
+// Fetch corpus
+const corpusRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!corpusRes.ok) {
+  return Astro.redirect("/404");
+}
+const data = await corpusRes.json();
+
+// Basic ownership check (user must own the account or be an org member)
+if (me.slug !== owner) {
+  return Astro.redirect(`/${owner}/${corpus}`);
+}
+
+let success = "";
+let error = "";
+let deleted = false;
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action") as string;
+
+  if (action === "update") {
+    const name = form.get("name") as string;
+    const description = form.get("description") as string;
+    const isPublic = form.get("public") === "on";
+
+    const res = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `session=${sessionCookie}`,
+      },
+      body: JSON.stringify({ name, description, public: isPublic }),
+    });
+
+    if (res.ok) {
+      success = "Corpus updated.";
+      // Refresh data
+      const refreshed = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+        headers: { Cookie: `session=${sessionCookie}` },
+      });
+      if (refreshed.ok) {
+        const updated = await refreshed.json();
+        data.name = updated.name;
+        data.description = updated.description;
+        data.public = updated.public;
+      }
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Update failed.";
+    }
+  }
+
+  if (action === "delete") {
+    const confirmSlug = form.get("confirmSlug") as string;
+    if (confirmSlug !== corpus) {
+      error = "Corpus name does not match. Deletion cancelled.";
+    } else {
+      const res = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}`, {
+        method: "DELETE",
+        headers: { Cookie: `session=${sessionCookie}` },
+      });
+      if (res.ok) {
+        deleted = true;
+      } else {
+        const body = await res.json().catch(() => ({}));
+        error = body.error ?? "Delete failed.";
+      }
+    }
+  }
+}
+
+if (deleted) {
+  return Astro.redirect("/dashboard");
+}
+---
+
+<Base title={`Settings — ${data.name} — Underlay`}>
+  <div class="max-w-xl mx-auto px-4 py-10">
+    <nav class="text-xs text-ink-muted mb-6">
+      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
+      <span class="mx-1">/</span>
+      <a href={`/${owner}/${corpus}`} class="hover:text-ink">{data.slug}</a>
+      <span class="mx-1">/</span>
+      <span class="text-ink font-medium">settings</span>
+    </nav>
+
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Corpus Settings</h1>
+
+    {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <!-- Update form -->
+    <form method="POST" class="space-y-4 mb-10">
+      <input type="hidden" name="action" value="update" />
+
+      <div>
+        <label for="name" class="block text-sm font-medium mb-1">Name</label>
+        <input
+          type="text"
+          id="name"
+          name="name"
+          value={data.name}
+          required
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+        />
+      </div>
+
+      <div>
+        <label for="description" class="block text-sm font-medium mb-1">Description</label>
+        <textarea
+          id="description"
+          name="description"
+          rows="3"
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+        >{data.description ?? ""}</textarea>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="public"
+          name="public"
+          checked={data.public}
+          class="accent-ink"
+        />
+        <label for="public" class="text-sm">Public — visible to everyone</label>
+      </div>
+
+      <div class="pt-2">
+        <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+          Save changes
+        </button>
+      </div>
+    </form>
+
+    <!-- Export -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Export</h2>
+      <p class="text-sm text-ink-muted mb-3">
+        Download a <code class="bg-parchment-dark px-1">.tar.gz</code> archive containing the manifest, schema, records, and files for the latest version.
+      </p>
+      <a
+        href={`/api/corpora/${owner}/${corpus}/export`}
+        class="inline-block bg-parchment border border-rule px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors"
+      >
+        Download archive
+      </a>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="border border-red-200 p-4">
+      <h2 class="text-sm font-semibold text-red-700 mb-2">Danger Zone</h2>
+      <p class="text-sm text-ink-muted mb-3">
+        Permanently delete this corpus and all its versions, records, and files. This cannot be undone.
+      </p>
+      <details class="group">
+        <summary class="text-sm text-red-700 cursor-pointer hover:underline">Delete this corpus…</summary>
+        <form method="POST" class="mt-3 space-y-3">
+          <input type="hidden" name="action" value="delete" />
+          <div>
+            <label for="confirmSlug" class="block text-sm text-ink-muted mb-1">
+              Type <strong>{data.slug}</strong> to confirm:
+            </label>
+            <input
+              type="text"
+              id="confirmSlug"
+              name="confirmSlug"
+              required
+              autocomplete="off"
+              class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400"
+            />
+          </div>
+          <button
+            type="submit"
+            class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors"
+          >
+            Delete corpus
+          </button>
+        </form>
+      </details>
+    </div>
+  </div>
+</Base>

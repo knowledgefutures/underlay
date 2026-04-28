@@ -1,0 +1,58 @@
+---
+import Docs from "@/layouts/Docs.astro";
+
+const recordExample = `{
+  "id": "pub-001",
+  "type": "Publication",
+  "data": {
+    "title": "The Structure of Scientific Revolutions",
+    "doi": "10.1234/example",
+    "authors": ["author-001", "author-002"],
+    "pdf": { "$file": "sha256:a1b2c3..." }
+  }
+}`;
+
+const fileRef = '{"$file": "sha256:..."}';
+---
+
+<Docs title="Concepts" breadcrumbs={[{ label: "Concepts" }]}>
+      <p>Underlay has four core primitives. Everything else is built from these.</p>
+
+      <h2>Corpus</h2>
+      <p>A <strong>corpus</strong> (plural: <strong>corpora</strong>) is a named, versioned body of structured data. It belongs to an account (a user or an organization) and is identified by <code>:owner/:slug</code> — for example, <code>knowledge-futures/pubpub-archive</code>.</p>
+      <p>A corpus can be public (browsable by anyone) or private (visible only to the owner and org members). Each corpus has its own independent version history.</p>
+
+      <h2>Version</h2>
+      <p>A <strong>version</strong> is an immutable snapshot of a corpus at a point in time. Each version contains:</p>
+      <ul>
+        <li>A <strong>JSON Schema</strong> describing the structure of the records</li>
+        <li>A set of <strong>records</strong> — the actual data</li>
+        <li>References to <strong>files</strong> — binary assets</li>
+        <li><strong>Metadata</strong> — who pushed it, when, from which app, with what message</li>
+      </ul>
+      <p>Versions are numbered sequentially (1, 2, 3…) and also carry a semver label. The semver is derived automatically:</p>
+      <ul>
+        <li>Schema changes → major bump</li>
+        <li>Record changes → minor bump</li>
+        <li>Metadata-only changes → patch bump</li>
+      </ul>
+      <p>Each version also has a <strong>hash</strong> — a SHA-256 digest of the canonical representation of the schema, records, and file references. Two versions with the same hash have identical content.</p>
+
+      <h2>Record</h2>
+      <p>A <strong>record</strong> is a flat JSON object with an <code>id</code> and a <code>type</code>. Records are the rows of your data.</p>
+      <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={recordExample} /></pre>
+      <p>Relationships between records are expressed as ID references — just strings. There are no joins, no foreign keys. An LLM or application can resolve references by reading the schema and records together.</p>
+      <p>Binary data is referenced via <code set:text={fileRef} /> — a pointer to a content-addressed file in the registry.</p>
+
+      <h2>File</h2>
+      <p>A <strong>file</strong> is a binary blob (PDF, image, dataset, anything) stored by its SHA-256 hash. Files are content-addressed: the same bytes always produce the same hash, so identical files are stored only once regardless of how many records reference them.</p>
+      <p>Files are uploaded before pushing a version. When you push, the registry verifies that every <code>$file</code> reference in your records points to an existing file.</p>
+
+      <h2>Accounts</h2>
+      <p>Underlay has two account types:</p>
+      <ul>
+        <li><strong>Users</strong> — individual accounts with email/password login</li>
+        <li><strong>Organizations</strong> — group accounts with members who have roles (owner, admin, member)</li>
+      </ul>
+      <p>Both can own corpora. API keys are scoped to an account and optionally to a specific corpus, with permission levels: <code>read</code>, <code>write</code>, or <code>admin</code>.</p>
+</Docs>

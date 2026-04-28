@@ -1,0 +1,82 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+if (!sessionCookie) {
+  return Astro.redirect("/login");
+}
+
+const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!meRes.ok) {
+  return Astro.redirect("/login");
+}
+const me = await meRes.json();
+
+// Handle logout
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action");
+
+  if (action === "logout") {
+    await fetch(`${apiBase}/api/accounts/logout`, {
+      method: "POST",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    Astro.cookies.delete("session", { path: "/" });
+    return Astro.redirect("/");
+  }
+}
+---
+
+<Base title="Settings — Underlay">
+  <div class="max-w-xl mx-auto px-4 py-10">
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Settings</h1>
+
+    <nav class="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
+      <a href="/settings" class="text-ink font-medium">Account</a>
+      <a href="/settings/keys" class="text-ink-muted hover:text-ink">API Keys</a>
+    </nav>
+
+    <div class="space-y-6">
+      <div class="border border-rule p-4">
+        <h2 class="text-sm font-semibold mb-3">Profile</h2>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-ink-muted">Username</span>
+            <span class="font-mono">{me.slug}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-ink-muted">Display Name</span>
+            <span>{me.displayName}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-ink-muted">Email</span>
+            <span class="font-mono">{me.email}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-ink-muted">Account Type</span>
+            <span>{me.type}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-ink-muted">Member since</span>
+            <span>{new Date(me.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="border border-rule p-4">
+        <h2 class="text-sm font-semibold mb-3">Session</h2>
+        <form method="POST">
+          <input type="hidden" name="action" value="logout" />
+          <button type="submit" class="text-sm text-red-700 hover:underline">
+            Log out
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</Base>

@@ -1,0 +1,138 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+if (!sessionCookie) {
+  return Astro.redirect("/login");
+}
+
+const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!meRes.ok) {
+  return Astro.redirect("/login");
+}
+
+let newKeyResult: { key: string; label: string } | null = null;
+let error = "";
+
+// Handle create / delete key
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action");
+
+  if (action === "create") {
+    const label = form.get("label") as string;
+    const scope = form.get("scope") as string;
+    const res = await fetch(`${apiBase}/api/accounts/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `session=${sessionCookie}`,
+      },
+      body: JSON.stringify({ label, scope }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      newKeyResult = { key: data.key, label: data.label };
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.message ?? "Failed to create key.";
+    }
+  }
+
+  if (action === "delete") {
+    const keyId = form.get("keyId") as string;
+    await fetch(`${apiBase}/api/accounts/keys/${keyId}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+  }
+}
+
+// Fetch keys
+const keysRes = await fetch(`${apiBase}/api/accounts/keys`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const keys = keysRes.ok ? await keysRes.json() : [];
+---
+
+<Base title="API Keys — Underlay">
+  <div class="max-w-xl mx-auto px-4 py-10">
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Settings</h1>
+
+    <nav class="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
+      <a href="/settings" class="text-ink-muted hover:text-ink">Account</a>
+      <a href="/settings/keys" class="text-ink font-medium">API Keys</a>
+    </nav>
+
+    {newKeyResult && (
+      <div class="border border-accent bg-green-50 p-4 mb-4">
+        <p class="text-sm font-semibold mb-1">Key created: {newKeyResult.label}</p>
+        <p class="text-xs text-ink-muted mb-2">Copy this key now — it won't be shown again.</p>
+        <code class="block text-xs font-mono bg-ink text-parchment p-2 break-all">{newKeyResult.key}</code>
+      </div>
+    )}
+
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <div class="border border-rule p-4 mb-6">
+      <h2 class="text-sm font-semibold mb-3">Create a new key</h2>
+      <form method="POST" class="flex gap-2 items-end">
+        <input type="hidden" name="action" value="create" />
+        <div class="flex-1">
+          <label for="label" class="block text-xs text-ink-muted mb-1">Label</label>
+          <input
+            type="text"
+            id="label"
+            name="label"
+            required
+            placeholder="my-sync-script"
+            class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-ink"
+          />
+        </div>
+        <div>
+          <label for="scope" class="block text-xs text-ink-muted mb-1">Scope</label>
+          <select name="scope" id="scope" class="bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+            <option value="read">read</option>
+            <option value="write" selected>write</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <button type="submit" class="bg-ink text-parchment px-3 py-1.5 text-sm font-medium hover:bg-ink-light transition-colors">
+          Create
+        </button>
+      </form>
+    </div>
+
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+      Active Keys ({keys.length})
+    </h2>
+
+    {keys.length === 0 ? (
+      <p class="text-sm text-ink-muted">No API keys yet.</p>
+    ) : (
+      <div class="space-y-2">
+        {keys.map((k: any) => (
+          <div class="flex items-center justify-between border border-rule p-3">
+            <div>
+              <span class="text-sm font-medium">{k.label}</span>
+              <div class="flex items-center gap-2 mt-0.5 text-xs text-ink-muted">
+                <span class="border border-rule px-1 py-0.5">{k.scope}</span>
+                <span>Created {new Date(k.createdAt).toLocaleDateString()}</span>
+                {k.lastUsedAt && <span>· Last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>}
+              </div>
+            </div>
+            <form method="POST">
+              <input type="hidden" name="action" value="delete" />
+              <input type="hidden" name="keyId" value={k.id} />
+              <button type="submit" class="text-xs text-red-700 hover:underline">Revoke</button>
+            </form>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</Base>

@@ -1,0 +1,49 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const { owner } = Astro.params;
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+
+// Fetch account profile
+const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`);
+if (!accountRes.ok) {
+  return Astro.redirect("/404");
+}
+const account = await accountRes.json();
+
+// Fetch their public corpora
+const corporaRes = await fetch(`${apiBase}/api/accounts/${owner}/corpora`);
+const corpora = corporaRes.ok ? await corporaRes.json() : [];
+---
+
+<Base title={`${account.displayName} — Underlay`}>
+  <div class="max-w-3xl mx-auto px-4 py-10">
+    <div class="mb-8">
+      <h1 class="text-xl font-semibold tracking-tight mb-1">{account.displayName}</h1>
+      <p class="text-sm text-ink-muted font-mono">{account.slug}</p>
+      <span class="inline-block text-xs text-ink-muted border border-rule px-2 py-0.5 mt-2">
+        {account.type === "org" ? "Organization" : "User"}
+      </span>
+    </div>
+
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+      Corpora ({corpora.length})
+    </h2>
+
+    {corpora.length === 0 ? (
+      <p class="text-sm text-ink-muted">No public corpora yet.</p>
+    ) : (
+      <div class="space-y-2">
+        {corpora.map((c: any) => (
+          <a href={`/${owner}/${c.slug}`} class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-semibold text-sm">{c.name}</span>
+              {c.public && <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">public</span>}
+            </div>
+            <p class="text-xs text-ink-muted">{c.description}</p>
+          </a>
+        ))}
+      </div>
+    )}
+  </div>
+</Base>

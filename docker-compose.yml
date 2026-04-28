@@ -1,0 +1,102 @@
+# Production compose.
+# SOPS decrypts .env.enc → .env before this runs (see deploy workflow).
+
+name: underlay
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-underlay}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-underlay}
+      POSTGRES_DB: ${POSTGRES_DB:-underlay}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
+          cpus: "0.1"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-underlay}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  app:
+    image: ${IMAGE:-underlay}:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=448"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-4321}:4321"
+      - "${API_PORT:-3000}:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 640m
+          cpus: "1.0"
+        reservations:
+          memory: 384m
+          cpus: "0.25"
+    tmpfs:
+      - /tmp:size=64m
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/api/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cron:
+    image: ${IMAGE:-underlay}:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=128"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [ "node", "--import", "tsx/esm", "tools/cron.ts" ]
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
+          cpus: "0.1"
+    tmpfs:
+      - /tmp:size=16m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  pgdata:

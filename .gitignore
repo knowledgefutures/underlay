@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.dev
+data/
+planning/
+.astro/
+*.db
+*.db-journal
+*.db-wal

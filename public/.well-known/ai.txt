@@ -1,0 +1,225 @@
+# Underlay — AI Integration Guide
+
+Underlay is a versioned, content-addressed registry for structured knowledge.
+Apps push snapshots of their data; Underlay preserves them and serves them via HTTPS API.
+Built by Knowledge Futures (501c3): https://www.knowledgefutures.org
+
+Base URL: https://underlay.org/api
+
+---
+
+## Authentication
+
+There are two auth methods:
+
+1. API Key (for programmatic access):
+   Header: Authorization: Bearer ul_<key>
+   Keys have scopes: read, write, admin.
+   Create keys at https://underlay.org/settings/keys or via POST /api/accounts/keys.
+
+2. Session cookie (for browser use):
+   POST /api/accounts/login with {"email": "...", "password": "..."} sets a session cookie.
+   POST /api/accounts/signup with {"email", "password", "username", "displayName"} creates an account.
+   POST /api/accounts/logout clears the session.
+   GET /api/accounts/me returns the current user (works with either auth method).
+
+Public endpoints (browsing corpora, reading public versions) require no auth.
+Write endpoints require a key with "write" scope or an active session.
+Delete endpoints require "admin" scope.
+
+---
+
+## Core Concepts
+
+- Corpus: a named, versioned body of data owned by an account. Identified by :owner/:slug.
+- Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
+- Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
+- File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
+- Schema: a JSON Schema document describing the record types in a version. Schema changes trigger a major version bump.
+
+---
+
+## Reading Data
+
+### Browse corpora
+GET /api/corpora                                    → list public corpora (?q=search&limit=50&offset=0)
+GET /api/corpora/:owner/:slug                       → corpus metadata + latest version summary
+
+### Read versions
+GET /api/corpora/:owner/:slug/versions              → list versions (newest first, ?limit=50&offset=0)
+GET /api/corpora/:owner/:slug/versions/latest       → latest version with full metadata
+GET /api/corpora/:owner/:slug/versions/:n            → specific version by number
+
+### Read records and files
+GET /api/corpora/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&offset=0)
+GET /api/corpora/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
+GET /api/corpora/:owner/:slug/files/:hash            → download a file by hash
+HEAD /api/corpora/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
+
+### Diff
+GET /api/corpora/:owner/:slug/versions/:n/diff?from=:m → diff between version m and n (added, updated, removed records)
+
+### Export
+GET /api/corpora/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
+GET /api/corpora/:owner/:slug/export?version=3      → export a specific version
+
+---
+
+## Writing Data: The Push Flow
+
+This is the canonical workflow for syncing an app's data to Underlay:
+
+### Step 1: Get current state
+GET /api/corpora/:owner/:slug/versions/latest
+
+Response includes { number, semver, hash, recordCount, fileCount }.
+If 404, no versions exist yet — your first push should use base_version: null.
+
+### Step 2: Fetch the manifest (optional, for diffing)
+GET /api/corpora/:owner/:slug/versions/:n/manifest
+
+Response:
+{
+  "version": 3,
+  "semver": "v1.2.0",
+  "hash": "abc123...",
+  "records": [{"id": "rec-1", "type": "Article"}, ...],
+  "files": ["deadbeef...", ...]
+}
+
+Compare this against your local data to determine what changed.
+
+### Step 3: Upload new files (if any)
+For each file your app has that Underlay doesn't:
+
+PUT /api/corpora/:owner/:slug/files/sha256:<hex>
+Content-Type: application/octet-stream
+Body: raw file bytes
+
+The server verifies the SHA-256 hash matches the body. Existing hashes are idempotent (200 OK).
+Check existence first with HEAD if you want to skip uploads.
+
+### Step 4: Push the version
+POST /api/corpora/:owner/:slug/versions
+Content-Type: application/json
+Authorization: Bearer ul_<key>
+
+{
+  "base_version": 3,
+  "message": "Daily archive 2026-04-27",
+  "app_id": "my-app",
+  "actor_id": "my-app:cron-job",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "Article": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "publishedAt": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  },
+  "changes": {
+    "added": [
+      {"id": "article-42", "type": "Article", "data": {"title": "New Paper", "body": "...", "publishedAt": "2026-04-27T00:00:00Z"}}
+    ],
+    "updated": [
+      {"id": "article-10", "type": "Article", "data": {"title": "Updated Title", "body": "...", "publishedAt": "2025-01-01T00:00:00Z"}}
+    ],
+    "removed": ["article-5"]
+  }
+}
+
+Field reference:
+- base_version: the version number you diffed against. null for first push. Used for optimistic locking.
+- schema: required on first push and whenever the schema changes. Omit if unchanged.
+- message: human-readable commit message (optional).
+- app_id: identifier for the pushing application (optional).
+- actor_id: identifier for the user or process that triggered the push (optional).
+- changes.added: new records to insert.
+- changes.updated: existing records to replace (full record, not a patch).
+- changes.removed: record ids to delete.
+
+### Step 5: Handle the response
+
+Success (201):
+{ "version": 4, "semver": "v1.3.0", "hash": "def456...", "recordCount": 100, "fileCount": 5 }
+
+Conflict (409 — someone pushed while you were diffing):
+{ "error": "Version conflict", "currentVersion": 4, "statusCode": 409 }
+→ Re-fetch latest, re-diff, re-push with the new base_version.
+
+Missing files (422 — records reference files not yet uploaded):
+{ "error": "Missing files", "filesNeeded": ["sha256:abc...", "sha256:def..."], "statusCode": 422 }
+→ Upload the listed files, then retry the push.
+
+### First push (no existing versions)
+Set base_version to null. Put all records in changes.added. Include the schema.
+
+---
+
+## Record Format
+
+{
+  "id": "unique-stable-id",
+  "type": "TypeName",
+  "data": {
+    "title": "Some value",
+    "authorId": "author-123",
+    "attachment": {"$file": "sha256:abc123def456..."}
+  }
+}
+
+- id: stable, unique within the corpus. Use your app's primary key or generate a deterministic one.
+- type: groups records by kind (e.g. "Article", "Author", "Grant").
+- data: flat JSON object. Reference other records by id. Reference files with {"$file": "sha256:<hex>"}.
+
+Records are flat — no nested joins. Relationships are expressed by storing the id of the related record.
+The schema declares which fields are references, so tools can resolve them at read time.
+
+---
+
+## Versioning
+
+- Versions are sequential integers (1, 2, 3, ...).
+- Semver is derived automatically: schema change → major, record change → minor, metadata-only → patch.
+- Each version has a content-addressed hash computed from schema + sorted records + sorted file hashes.
+- Versions are immutable once created.
+
+---
+
+## Corpus Management
+
+POST /api/accounts/:owner/corpora              → create corpus {"slug", "name", "description", "public"}
+PATCH /api/corpora/:owner/:slug                → update {"name", "description", "public"}
+DELETE /api/corpora/:owner/:slug               → delete corpus (requires admin scope)
+GET /api/accounts/:owner/corpora               → list corpora for an account
+
+---
+
+## API Key Management
+
+POST /api/accounts/keys    → create key {"label": "my-app", "scope": "write"}
+                              Response includes the key once: {"key": "ul_abc123...", "id": "..."}
+GET /api/accounts/keys     → list keys (id, label, scope, createdAt, lastUsedAt — not the key itself)
+DELETE /api/accounts/keys/:id → revoke a key
+
+---
+
+## Error Codes
+
+400 — Validation error (bad request body)
+401 — Authentication required
+403 — Insufficient scope (e.g. read key used for write)
+404 — Not found (or private corpus you can't access)
+409 — Version conflict (re-fetch and retry with new base_version)
+422 — Missing files (upload them first, then retry push)
+
+---
+
+Full documentation: https://underlay.org/docs
+Integration guide: https://underlay.org/connect
+Source code: https://github.com/knowledgefutures/underlay

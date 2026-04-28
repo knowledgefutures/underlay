@@ -1,0 +1,10 @@
+# SOPS configuration — specifies which age public keys can decrypt.
+# Generate a keypair: age-keygen -o key.txt
+# Add your public keys below.
+
+creation_rules:
+  - path_regex: \.env(\.dev)?(\.enc)?$
+    age: []
+    # Add age public keys here:
+    # - age1your_first_key_here
+    # - age1your_second_key_here

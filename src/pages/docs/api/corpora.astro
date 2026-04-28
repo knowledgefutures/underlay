@@ -1,0 +1,146 @@
+---
+import Docs from "@/layouts/Docs.astro";
+
+const browseRes = `[
+  {
+    "id": "uuid",
+    "slug": "pubpub-archive",
+    "name": "PubPub Archive",
+    "description": "Full archive of PubPub publications",
+    "ownerSlug": "knowledge-futures",
+    "ownerName": "Knowledge Futures",
+    "createdAt": "2026-01-15T00:00:00.000Z",
+    "updatedAt": "2026-04-01T00:00:00.000Z"
+  }
+]`;
+
+const createReq = `{
+  "slug": "my-dataset",
+  "name": "My Dataset",
+  "description": "Optional description",
+  "public": true
+}`;
+
+const createRes = `{
+  "id": "uuid",
+  "owner": "yourname",
+  "slug": "my-dataset",
+  "name": "My Dataset"
+}`;
+
+const getRes = `{
+  "id": "uuid",
+  "slug": "pubpub-archive",
+  "name": "PubPub Archive",
+  "description": "Full archive of PubPub publications",
+  "public": true,
+  "ownerSlug": "knowledge-futures",
+  "ownerName": "Knowledge Futures",
+  "ownerType": "org",
+  "createdAt": "2026-01-15T00:00:00.000Z",
+  "updatedAt": "2026-04-01T00:00:00.000Z",
+  "latestVersion": {
+    "number": 12,
+    "semver": "v3.2.0",
+    "recordCount": 4521,
+    "fileCount": 892,
+    "totalBytes": 1073741824,
+    "createdAt": "2026-04-01T00:00:00.000Z",
+    "message": "April sync"
+  }
+}`;
+
+const updateReq = `{
+  "name": "New Name",
+  "description": "Updated description",
+  "public": false
+}`;
+
+const okRes = `{"ok": true}`;
+
+const listRes = `[
+  {
+    "id": "uuid",
+    "slug": "pubpub-archive",
+    "name": "PubPub Archive",
+    "description": "...",
+    "public": true,
+    "createdAt": "2026-01-15T00:00:00.000Z",
+    "updatedAt": "2026-04-01T00:00:00.000Z"
+  }
+]`;
+---
+
+<Docs title="Corpora API" breadcrumbs={[{ label: "API" }, { label: "Corpora" }]}>
+      <p>Create, browse, update, and delete corpora. A corpus is identified by <code>:owner/:slug</code>.</p>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora</h2>
+        <p class="scope">No auth required</p>
+        <p>Browse public corpora with optional search.</p>
+        <h3>Query parameters</h3>
+        <table>
+          <tr><td><code>q</code></td><td>Search name and description</td></tr>
+          <tr><td><code>limit</code></td><td>Max results (default 50, max 100)</td></tr>
+          <tr><td><code>offset</code></td><td>Pagination offset</td></tr>
+        </table>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={browseRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>POST /api/accounts/:owner/corpora</h2>
+        <p class="scope">Auth: write scope</p>
+        <p>Create a new corpus under an account. You must own the account or be a member of the org.</p>
+        <h3>Request</h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={createReq} /></pre>
+        <h3>Response <span class="text-ink-muted font-normal">201</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={createRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Get corpus metadata and latest version summary.</p>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={getRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>PATCH /api/corpora/:owner/:slug</h2>
+        <p class="scope">Auth: write scope</p>
+        <p>Update corpus metadata. Pass only the fields to change.</p>
+        <h3>Request</h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={updateReq} /></pre>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={okRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>DELETE /api/corpora/:owner/:slug</h2>
+        <p class="scope">Auth: admin scope</p>
+        <p>Delete a corpus and all its versions, records, and file references. Files themselves are not deleted (they may be referenced by other corpora).</p>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={okRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/accounts/:owner/corpora</h2>
+        <p class="scope">No auth required</p>
+        <p>List all corpora belonging to an account. Non-owners see only public corpora.</p>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={listRes} /></pre>
+      </div>
+</Docs>

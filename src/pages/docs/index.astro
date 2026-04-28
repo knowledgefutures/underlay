@@ -1,0 +1,61 @@
+---
+import Base from "@/layouts/Base.astro";
+---
+
+<Base title="Documentation — Underlay">
+  <div class="max-w-2xl mx-auto px-4 py-10">
+    <h1 class="text-xl font-semibold tracking-tight font-sans mb-6">Documentation</h1>
+
+    <p class="text-sm text-ink-muted mb-8">
+      Underlay has a small API surface. These docs are the SDK. Read them, point your LLM at them, or just curl the endpoints.
+    </p>
+
+    <nav class="space-y-6 text-sm">
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">Getting started</h2>
+        <div class="space-y-2">
+          <a href="/docs/concepts" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Concepts</span>
+            <p class="text-ink-muted text-xs mt-0.5">Corpora, versions, records, files. The core model.</p>
+          </a>
+          <a href="/docs/quickstart" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Quickstart</span>
+            <p class="text-ink-muted text-xs mt-0.5">Push your first version in 5 minutes.</p>
+          </a>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">API reference</h2>
+        <div class="space-y-2">
+          <a href="/docs/api/accounts" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Accounts</span>
+            <p class="text-ink-muted text-xs mt-0.5">Signup, login, API keys.</p>
+          </a>
+          <a href="/docs/api/corpora" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Corpora</span>
+            <p class="text-ink-muted text-xs mt-0.5">Create, list, update, delete corpora.</p>
+          </a>
+          <a href="/docs/api/versions" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Versions</span>
+            <p class="text-ink-muted text-xs mt-0.5">Push snapshots, browse history, diff.</p>
+          </a>
+          <a href="/docs/api/files" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Files</span>
+            <p class="text-ink-muted text-xs mt-0.5">Upload and download content-addressed files.</p>
+          </a>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="text-xs uppercase tracking-widest text-ink-muted mb-3 font-semibold">Self-hosting</h2>
+        <div class="space-y-2">
+          <a href="/docs/self-host" class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+            <span class="font-semibold">Deploy your own instance</span>
+            <p class="text-ink-muted text-xs mt-0.5">Docker, Postgres, S3. Everything you need.</p>
+          </a>
+        </div>
+      </section>
+    </nav>
+  </div>
+</Base>

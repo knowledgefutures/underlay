@@ -1,0 +1,140 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const { owner, corpus, n } = Astro.params;
+const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+// Fetch version
+const versionRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}/versions/${n}`);
+if (!versionRes.ok) {
+  return Astro.redirect("/404");
+}
+const version = await versionRes.json();
+
+// Fetch records (first page)
+const recordsRes = await fetch(`${apiBase}/api/corpora/${owner}/${corpus}/versions/${n}/records?limit=100`);
+const records = recordsRes.ok ? await recordsRes.json() : [];
+
+// Group records by type
+const byType: Record<string, any[]> = {};
+for (const r of records) {
+  if (!byType[r.type]) byType[r.type] = [];
+  byType[r.type].push(r);
+}
+const types = Object.keys(byType).sort();
+
+// Parse schema to get field names per type
+const schemaDoc = version.schema as Record<string, any>;
+const schemaProperties = schemaDoc?.properties ?? {};
+---
+
+<Base title={`${version.semver} — ${owner}/${corpus} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-10">
+    <nav class="text-xs text-ink-muted mb-4">
+      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
+      <span class="mx-1">/</span>
+      <a href={`/${owner}/${corpus}`} class="hover:text-ink">{corpus}</a>
+      <span class="mx-1">/</span>
+      <span class="text-ink font-medium">{version.semver}</span>
+    </nav>
+
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight">
+          Version {version.number} <span class="text-ink-muted font-normal">({version.semver})</span>
+        </h1>
+        {version.message && <p class="text-sm text-ink-muted mt-1">"{version.message}"</p>}
+      </div>
+      <div class="text-right text-xs text-ink-muted">
+        <div>{new Date(version.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</div>
+        {version.appId && <div>via {version.appId}</div>}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-4 gap-4 mb-6 text-sm">
+      <div class="border border-rule p-3">
+        <span class="block text-ink font-medium text-lg">{version.recordCount.toLocaleString()}</span>
+        <span class="text-xs text-ink-muted">records</span>
+      </div>
+      <div class="border border-rule p-3">
+        <span class="block text-ink font-medium text-lg">{version.fileCount.toLocaleString()}</span>
+        <span class="text-xs text-ink-muted">files</span>
+      </div>
+      <div class="border border-rule p-3">
+        <span class="block text-ink font-medium text-lg">{formatBytes(version.totalBytes)}</span>
+        <span class="text-xs text-ink-muted">total size</span>
+      </div>
+      <div class="border border-rule p-3">
+        <span class="block text-ink font-medium text-lg">{types.length}</span>
+        <span class="text-xs text-ink-muted">record types</span>
+      </div>
+    </div>
+
+    <div class="border border-rule p-3 mb-6">
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">Hash</h2>
+      <code class="text-xs font-mono break-all">{version.hash}</code>
+    </div>
+
+    <!-- Schema viewer -->
+    <details class="border border-rule mb-6">
+      <summary class="p-3 cursor-pointer text-sm font-semibold hover:bg-parchment-dark">
+        Schema
+      </summary>
+      <pre class="p-3 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(version.schema, null, 2)} /></pre>
+    </details>
+
+    <!-- Records by type -->
+    {types.map((type) => {
+      const typeRecords = byType[type];
+      const fields = schemaProperties[type]?.properties
+        ? Object.keys(schemaProperties[type].properties)
+        : typeRecords.length > 0
+          ? Object.keys(typeRecords[0].data ?? {})
+          : [];
+
+      return (
+        <div class="mb-6">
+          <h2 class="text-sm font-semibold mb-2">
+            {type} <span class="text-ink-muted font-normal">({typeRecords.length})</span>
+          </h2>
+          <div class="overflow-x-auto border border-rule">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="bg-parchment-dark">
+                  <th class="text-left p-2 font-medium">id</th>
+                  {fields.map((f: string) => (
+                    <th class="text-left p-2 font-medium">{f}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {typeRecords.map((r: any) => (
+                  <tr class="border-t border-rule hover:bg-parchment-dark">
+                    <td class="p-2 font-mono text-ink-muted">{r.id}</td>
+                    {fields.map((f: string) => {
+                      const val = r.data?.[f];
+                      const display = val === null || val === undefined
+                        ? ""
+                        : typeof val === "object"
+                          ? JSON.stringify(val)
+                          : String(val);
+                      return <td class="p-2 max-w-[16rem] truncate">{display}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</Base>

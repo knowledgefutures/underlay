@@ -1,0 +1,180 @@
+---
+import Docs from "@/layouts/Docs.astro";
+
+const pushReq = `{
+  "base_version": 1,
+  "message": "Add new publications",
+  "app_id": "pubpub-sync",
+  "actor_id": "user-42",
+  "schema": { ... },
+  "changes": {
+    "added": [
+      {"id": "rec-1", "type": "Publication", "data": {"title": "..."}}
+    ],
+    "updated": [
+      {"id": "rec-0", "type": "Publication", "data": {"title": "Updated"}}
+    ],
+    "removed": ["rec-old"]
+  }
+}`;
+
+const pushRes = `{
+  "version": 2,
+  "semver": "v1.1.0",
+  "hash": "a1b2c3d4...",
+  "recordCount": 150,
+  "fileCount": 12
+}`;
+
+const listRes = `[
+  {
+    "number": 2,
+    "semver": "v1.1.0",
+    "hash": "a1b2c3d4...",
+    "message": "Add new publications",
+    "appId": "pubpub-sync",
+    "actorId": "user-42",
+    "recordCount": 150,
+    "fileCount": 12,
+    "totalBytes": 52428800,
+    "createdAt": "2026-04-01T00:00:00.000Z"
+  }
+]`;
+
+const recordsRes = `[
+  {
+    "id": "pub-001",
+    "type": "Publication",
+    "data": {
+      "title": "Example Paper",
+      "doi": "10.1234/example"
+    }
+  }
+]`;
+
+const manifestRes = `{
+  "version": 2,
+  "semver": "v1.1.0",
+  "hash": "a1b2c3d4...",
+  "records": [
+    {"id": "pub-001", "type": "Publication"},
+    {"id": "pub-002", "type": "Publication"}
+  ],
+  "files": ["a1b2c3...", "d4e5f6..."]
+}`;
+
+const diffRes = `{
+  "from": 1,
+  "to": 2,
+  "added": [
+    {"id": "pub-003", "type": "Publication", "data": {...}}
+  ],
+  "updated": [
+    {"id": "pub-001", "type": "Publication", "data": {...}}
+  ],
+  "removed": ["pub-old"]
+}`;
+---
+
+<Docs title="Versions API" breadcrumbs={[{ label: "API" }, { label: "Versions" }]}>
+      <p>Versions are the core of Underlay. Each version is an immutable snapshot of a corpus: schema + records + file references.</p>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>POST /api/corpora/:owner/:slug/versions</h2>
+        <p class="scope">Auth: write scope</p>
+        <p>Push a new version. This is the primary write operation. You send a <code>base_version</code> for optimistic locking, an optional schema, and a set of changes (added, updated, removed records). The server computes the full snapshot from the previous version plus your changes.</p>
+        <h3>Request</h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushReq} /></pre>
+        <h3>Fields</h3>
+        <table>
+          <tr><td><code>base_version</code></td><td><strong>Required.</strong> The version number this push is based on. Use <code>null</code> for the first version. If the current version doesn't match, returns <code>409 Conflict</code>.</td></tr>
+          <tr><td><code>message</code></td><td>Human-readable commit message.</td></tr>
+          <tr><td><code>app_id</code></td><td>Identifier for the application that pushed this version.</td></tr>
+          <tr><td><code>actor_id</code></td><td>Identifier for the user or process that triggered the push.</td></tr>
+          <tr><td><code>schema</code></td><td>JSON Schema for the records. If omitted, the previous version's schema is reused.</td></tr>
+          <tr><td><code>changes.added</code></td><td>New records to add.</td></tr>
+          <tr><td><code>changes.updated</code></td><td>Existing records to replace (by id).</td></tr>
+          <tr><td><code>changes.removed</code></td><td>Record IDs to remove.</td></tr>
+        </table>
+        <h3>Response <span class="text-ink-muted font-normal">201</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushRes} /></pre>
+        <h3>Errors</h3>
+        <table>
+          <tr><td><code>409</code></td><td>Version conflict — someone pushed since your <code>base_version</code>. Re-fetch and retry.</td></tr>
+          <tr><td><code>422</code></td><td>Missing files — records reference files that haven't been uploaded yet. Response includes <code>filesNeeded</code> array.</td></tr>
+        </table>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>List versions, newest first.</p>
+        <h3>Query parameters</h3>
+        <table>
+          <tr><td><code>limit</code></td><td>Max results (default 50, max 100)</td></tr>
+          <tr><td><code>offset</code></td><td>Pagination offset</td></tr>
+        </table>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={listRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions/latest</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Get the most recent version. Returns the full version object.</p>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions/:n</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Get a specific version by number. Returns the full version object including schema.</p>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions/:n/records</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Get records for a specific version.</p>
+        <h3>Query parameters</h3>
+        <table>
+          <tr><td><code>type</code></td><td>Filter by record type</td></tr>
+          <tr><td><code>limit</code></td><td>Max results (default 100, max 1000)</td></tr>
+          <tr><td><code>offset</code></td><td>Pagination offset</td></tr>
+        </table>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={recordsRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions/:n/manifest</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Get the manifest: a lightweight summary of what's in a version without the full record data.</p>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={manifestRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>GET /api/corpora/:owner/:slug/versions/:n/diff</h2>
+        <p class="scope">No auth for public corpora</p>
+        <p>Diff two versions. By default compares version <code>:n</code> against <code>:n-1</code>.</p>
+        <h3>Query parameters</h3>
+        <table>
+          <tr><td><code>from</code></td><td>Version number to diff from (default: n-1)</td></tr>
+        </table>
+        <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={diffRes} /></pre>
+      </div>
+</Docs>

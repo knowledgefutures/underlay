@@ -1,0 +1,142 @@
+name: Deploy
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: production
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          ENV_FILE: ${{ vars.ENV_FILE || '.env.enc' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/underlay' }}
+        run: |
+          ssh "${SSH_USER}@${SSH_HOST}" \
+            "env GHCR_USER='${GHCR_USER}' GHCR_TOKEN='${GHCR_TOKEN}' IMAGE='${IMAGE}' IMAGE_TAG='${IMAGE_TAG}' ENV_FILE='${ENV_FILE}' bash -s -- '${REPO}' '${BRANCH}' '${DEPLOY_PATH}'" <<'EOS'
+          set -euo pipefail
+
+          REPO="${1:?missing repo}"
+          BRANCH="${2:-main}"
+          APP_DIR="${3:-/opt/underlay}"
+
+          : "${IMAGE:?missing IMAGE}"
+          : "${IMAGE_TAG:?missing IMAGE_TAG}"
+          : "${GHCR_USER:?missing GHCR_USER}"
+          : "${GHCR_TOKEN:?missing GHCR_TOKEN}"
+
+          REPO_SSH="git@github.com:${REPO}.git"
+
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+
+          if [[ ! -d "${APP_DIR}/.git" ]]; then
+            sudo mkdir -p "${APP_DIR}"
+            sudo chown -R "$USER:$USER" "${APP_DIR}"
+            git clone --branch "${BRANCH}" "${REPO_SSH}" "${APP_DIR}"
+          fi
+
+          cd "${APP_DIR}"
+          git fetch --prune origin
+          git checkout "${BRANCH}"
+          git pull origin "${BRANCH}"
+
+          : "${ENV_FILE:?missing ENV_FILE}"
+          sops -d --input-type dotenv --output-type dotenv "$ENV_FILE" > .env
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          export IMAGE IMAGE_TAG
+          docker compose pull
+          docker compose up -d --remove-orphans
+
+          wait_healthy() {
+            local timeout="${1:-120}"
+            local end=$((SECONDS + timeout))
+            while (( SECONDS < end )); do
+              if ! docker compose ps | grep -qiE 'starting|unhealthy|restarting'; then
+                echo "All services running"
+                docker compose ps
+                return 0
+              fi
+              echo "Waiting for services..."
+              sleep 5
+            done
+            echo "Rollout timeout"
+            docker compose ps
+            return 1
+          }
+          wait_healthy 120
+
+          docker image prune -a --filter "until=72h" -f
+
+          echo "Deployed to $(hostname)"
+          EOS

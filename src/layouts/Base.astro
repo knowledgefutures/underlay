@@ -1,0 +1,94 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "A public registry for structured knowledge." } = Astro.props;
+
+// Check auth state via API
+let currentUser: { slug: string; displayName: string } | null = null;
+const sessionCookie = Astro.cookies.get("session")?.value;
+if (sessionCookie) {
+  try {
+    const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      currentUser = await res.json();
+    }
+  } catch {
+    // API unavailable — treat as logged out
+  }
+}
+---
+
+<!doctype html>
+<html lang="en" class="bg-parchment text-ink">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="min-h-screen font-sans text-[15px] leading-relaxed">
+    <header class="border-b border-rule">
+      <nav class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <a href="/" class="flex items-center gap-2.5 no-underline">
+          <img
+            src="https://docs.underlay.org/logoLight.svg"
+            alt="Underlay"
+            class="h-6"
+          />
+          <span class="font-semibold text-ink tracking-tight text-base">Underlay</span>
+        </a>
+        <div class="flex items-center gap-5 text-sm text-ink-muted">
+          <a href="/explore" class="hover:text-ink transition-colors">Explore</a>
+          <a href="/docs" class="hover:text-ink transition-colors">Docs</a>
+          <a href="/connect" class="hover:text-ink transition-colors">Connect</a>
+          <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
+          {currentUser ? (
+            <>
+              <a href="/dashboard" class="hover:text-ink transition-colors">Dashboard</a>
+              <a href={`/${currentUser.slug}`} class="hover:text-ink transition-colors font-medium text-ink">{currentUser.slug}</a>
+            </>
+          ) : (
+            <>
+              <a href="/login" class="hover:text-ink transition-colors">Log in</a>
+              <a href="/signup" class="hover:text-ink transition-colors font-medium text-ink">Sign up</a>
+            </>
+          )}
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="border-t border-rule mt-16">
+      <div class="max-w-5xl mx-auto px-4 py-6 flex items-center justify-between text-xs text-ink-muted">
+        <div class="flex items-center gap-1.5">
+          <span>&copy; {new Date().getFullYear()}</span>
+          <a href="https://www.knowledgefutures.org" class="underline hover:text-ink">Knowledge Futures</a>
+        </div>
+        <div class="flex items-center gap-4">
+          <a href="https://github.com/knowledgefutures/underlay" class="hover:text-ink">GitHub</a>
+          <span class="text-rule">·</span>
+          <span class="font-mono">v0.1.0</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  @import "../styles/global.css";
+</style>

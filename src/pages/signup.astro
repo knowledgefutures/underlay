@@ -1,0 +1,104 @@
+---
+import Base from "@/layouts/Base.astro";
+
+let error = "";
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const email = form.get("email") as string;
+  const password = form.get("password") as string;
+  const username = form.get("username") as string;
+  const displayName = form.get("displayName") as string;
+
+  const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+  const res = await fetch(`${apiBase}/api/accounts/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, username, displayName }),
+  });
+
+  if (res.ok) {
+    const setCookie = res.headers.get("set-cookie");
+    if (setCookie) {
+      const match = setCookie.match(/session=([^;]+)/);
+      if (match) {
+        Astro.cookies.set("session", match[1], {
+          path: "/",
+          httpOnly: true,
+          secure: import.meta.env.PROD,
+          sameSite: "lax",
+          maxAge: 30 * 24 * 60 * 60,
+        });
+      }
+    }
+    return Astro.redirect("/dashboard");
+  } else {
+    const body = await res.json().catch(() => ({}));
+    error = body.error ?? body.message ?? "Signup failed. Please try again.";
+  }
+}
+---
+
+<Base title="Sign up — Underlay">
+  <div class="max-w-sm mx-auto px-4 py-16">
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Create an account</h1>
+
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <form method="POST" class="space-y-4">
+      <div>
+        <label for="displayName" class="block text-sm font-medium mb-1">Name</label>
+        <input
+          type="text"
+          id="displayName"
+          name="displayName"
+          required
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+        />
+      </div>
+      <div>
+        <label for="username" class="block text-sm font-medium mb-1">Username</label>
+        <input
+          type="text"
+          id="username"
+          name="username"
+          required
+          pattern="[a-z0-9\-]+"
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink"
+        />
+        <p class="text-xs text-ink-muted mt-1">Lowercase letters, numbers, and hyphens only.</p>
+      </div>
+      <div>
+        <label for="email" class="block text-sm font-medium mb-1">Email</label>
+        <input
+          type="email"
+          id="email"
+          name="email"
+          required
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink"
+        />
+      </div>
+      <div>
+        <label for="password" class="block text-sm font-medium mb-1">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          required
+          minlength="8"
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink"
+        />
+      </div>
+      <button
+        type="submit"
+        class="w-full bg-ink text-parchment py-2 text-sm font-medium hover:bg-ink-light transition-colors"
+      >
+        Create account
+      </button>
+    </form>
+
+    <p class="text-sm text-ink-muted mt-4">
+      Already have an account? <a href="/login" class="text-link underline">Log in</a>
+    </p>
+  </div>
+</Base>
