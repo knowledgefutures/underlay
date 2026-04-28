@@ -14,3 +14,13 @@
   --color-accent-light: #3a7433;
   --color-link: #1a4a6e;
 }
+
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  a:visited {
+    color: inherit;
+  }
+}

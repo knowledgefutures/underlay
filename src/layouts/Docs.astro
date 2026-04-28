@@ -1,5 +1,6 @@
 ---
 import Base from "./Base.astro";
+import DocsSearch from "@/components/DocsSearch";
 
 interface Props {
   title: string;
@@ -43,16 +44,7 @@ const nav = [
   <div class="docs-shell">
     <aside class="docs-sidebar">
       <div class="docs-sidebar-inner">
-        <div class="docs-search-box">
-          <input
-            type="text"
-            id="docs-search"
-            placeholder="Search docs..."
-            autocomplete="off"
-            class="w-full border border-rule bg-parchment px-2.5 py-1.5 text-xs placeholder:text-ink-muted/50 focus:outline-none focus:border-ink-muted"
-          />
-          <div id="docs-search-results" class="hidden"></div>
-        </div>
+        <DocsSearch client:load />
 
         <nav class="docs-nav">
           {nav.map((group) => (
@@ -84,82 +76,6 @@ const nav = [
     </div>
   </div>
 </Base>
-
-<script>
-  const searchInput = document.getElementById("docs-search") as HTMLInputElement;
-  const resultsEl = document.getElementById("docs-search-results")!;
-
-  interface DocEntry {
-    title: string;
-    href: string;
-    headings: string[];
-  }
-
-  const docs: DocEntry[] = [
-    { title: "Overview", href: "/docs", headings: ["Getting started", "API reference", "Self-hosting"] },
-    { title: "Concepts", href: "/docs/concepts", headings: ["Collection", "Version", "Record", "File", "Accounts"] },
-    { title: "Quickstart", href: "/docs/quickstart", headings: ["Create an account", "Create an API key", "Create a collection", "Push a version", "Read it back", "Push an update", "Diff versions", "Working with files", "Next steps"] },
-    { title: "Integration Guide", href: "/docs/integration", headings: ["What is Underlay?", "Core Concepts", "Authentication", "The Push Flow", "Record Format", "First Push Example", "Mapping a SQL Database", "Versioning", "API Reference", "Error Handling", "Source Code"] },
-    { title: "Self-hosting", href: "/docs/self-host", headings: ["Requirements", "Quick start with Docker", "Environment variables", "Production deployment", "Secrets management", "CI/CD", "Backups", "Reverse proxy"] },
-    { title: "Accounts API", href: "/docs/api/accounts", headings: ["Authentication", "POST /api/accounts/signup", "POST /api/accounts/login", "POST /api/accounts/logout", "GET /api/accounts/me", "GET /api/accounts/:slug", "POST /api/accounts/keys", "GET /api/accounts/keys", "DELETE /api/accounts/keys/:id"] },
-    { title: "Collections API", href: "/docs/api/collections", headings: ["GET /api/collections", "POST /api/accounts/:owner/collections", "GET /api/collections/:owner/:slug", "PATCH /api/collections/:owner/:slug", "DELETE /api/collections/:owner/:slug", "GET /api/accounts/:owner/collections"] },
-    { title: "Versions API", href: "/docs/api/versions", headings: ["POST /api/collections/:owner/:slug/versions", "GET /api/collections/:owner/:slug/versions", "GET /api/collections/:owner/:slug/versions/latest", "GET /api/collections/:owner/:slug/versions/:n", "GET /api/collections/:owner/:slug/versions/:n/records", "GET /api/collections/:owner/:slug/versions/:n/manifest", "GET /api/collections/:owner/:slug/versions/:n/diff"] },
-    { title: "Files API", href: "/docs/api/files", headings: ["HEAD /api/collections/:owner/:slug/files/:hash", "GET /api/collections/:owner/:slug/files/:hash", "PUT /api/collections/:owner/:slug/files/:hash", "File references in records"] },
-  ];
-
-  searchInput.addEventListener("input", () => {
-    const q = searchInput.value.trim().toLowerCase();
-    if (!q) {
-      resultsEl.classList.add("hidden");
-      resultsEl.innerHTML = "";
-      return;
-    }
-
-    const matches: { title: string; href: string; context?: string }[] = [];
-    for (const doc of docs) {
-      const titleMatch = doc.title.toLowerCase().includes(q);
-      const headingMatches = doc.headings.filter((h) => h.toLowerCase().includes(q));
-      if (titleMatch) {
-        matches.push({ title: doc.title, href: doc.href });
-      }
-      for (const h of headingMatches) {
-        if (!titleMatch || headingMatches.length > 0) {
-          const slug = h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-          matches.push({ title: doc.title, href: `${doc.href}#${slug}`, context: h });
-        }
-      }
-    }
-
-    if (matches.length === 0) {
-      resultsEl.innerHTML = `<div class="docs-search-empty">No results</div>`;
-    } else {
-      resultsEl.innerHTML = matches
-        .slice(0, 12)
-        .map(
-          (m) =>
-            `<a href="${m.href}" class="docs-search-result">
-              <span class="docs-search-result-title">${m.title}</span>
-              ${m.context ? `<span class="docs-search-result-context">${m.context}</span>` : ""}
-            </a>`
-        )
-        .join("");
-    }
-    resultsEl.classList.remove("hidden");
-  });
-
-  document.addEventListener("click", (e) => {
-    if (!resultsEl.contains(e.target as Node) && e.target !== searchInput) {
-      resultsEl.classList.add("hidden");
-    }
-  });
-
-  searchInput.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      resultsEl.classList.add("hidden");
-      searchInput.blur();
-    }
-  });
-</script>
 
 <style is:global>
   /* Layout shell — match nav bar width (max-w-5xl = 64rem) */

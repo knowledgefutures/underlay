@@ -1,4 +1,6 @@
 ---
+import UserMenu from "@/components/UserMenu";
+
 interface Props {
   title: string;
   description?: string | undefined;
@@ -37,7 +39,7 @@ if (sessionCookie) {
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <style>@import "../styles/global.css";</style>
+    <style is:global>@import "../styles/global.css";</style>
   </head>
   <body class="min-h-screen font-sans text-[15px] leading-relaxed">
     <header class="border-b border-rule">
@@ -55,28 +57,9 @@ if (sessionCookie) {
           <a href="/docs" class="hover:text-ink transition-colors">Docs</a>
           <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
           {currentUser ? (
-            <div class="relative" id="user-menu">
-              <button
-                class="hover:text-ink transition-colors font-medium text-ink cursor-pointer"
-                id="user-menu-btn"
-                type="button"
-              >
-                {currentUser.slug} ▾
-              </button>
-              <div class="hidden absolute right-0 top-full pt-1 z-50" id="user-menu-popover">
-                <div class="bg-parchment border border-rule shadow-sm min-w-40">
-                  <a href={`/${currentUser.slug}`} class="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors">Your Profile</a>
-                  <a href="/dashboard" class="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors">Dashboard</a>
-                  <hr class="border-rule" />
-                  <a href="/logout" class="block px-3 py-2 text-sm text-ink-muted hover:bg-parchment-dark transition-colors">Sign out</a>
-                </div>
-              </div>
-            </div>
+            <UserMenu slug={currentUser.slug} client:load />
           ) : (
-            <>
-              <a href="/login" class="hover:text-ink transition-colors">Log in</a>
-              <a href="/signup" class="hover:text-ink transition-colors font-medium text-ink">Sign up</a>
-            </>
+            <a href="/login" class="hover:text-ink transition-colors">Log in</a>
           )}
         </div>
       </nav>
@@ -102,35 +85,3 @@ if (sessionCookie) {
   </body>
 </html>
 
-<script>
-  const menuBtn = document.getElementById("user-menu-btn");
-  const menuPopover = document.getElementById("user-menu-popover");
-  const menuRoot = document.getElementById("user-menu");
-
-  if (menuBtn && menuPopover && menuRoot) {
-    let hideTimeout: ReturnType<typeof setTimeout>;
-
-    function show() {
-      clearTimeout(hideTimeout);
-      menuPopover!.classList.remove("hidden");
-    }
-
-    function scheduleHide() {
-      hideTimeout = setTimeout(() => {
-        menuPopover!.classList.add("hidden");
-      }, 150);
-    }
-
-    menuRoot.addEventListener("mouseenter", show);
-    menuRoot.addEventListener("mouseleave", scheduleHide);
-    menuBtn.addEventListener("click", () => {
-      menuPopover!.classList.toggle("hidden");
-    });
-
-    document.addEventListener("click", (e) => {
-      if (!menuRoot.contains(e.target as Node)) {
-        menuPopover!.classList.add("hidden");
-      }
-    });
-  }
-</script>
