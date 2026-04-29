@@ -337,6 +337,57 @@ export async function versionRoutes(app: FastifyInstance) {
       const newRecords = Array.from(recordMap.values());
       const schemaDoc = body.schema ?? latest?.schema ?? {};
       const schemaChanged = body.schema != null;
+
+      // Resolve schema_sources before hashing so x-source ends up in versions.schema
+      // slug → { id, xSource: "owner/collection@vN/slug" }
+      const resolvedSources = new Map<string, { id: string; xSource: string }>();
+      if (schemaChanged && body.schema_sources) {
+        for (const [typeSlug, externalSchemaId] of Object.entries(body.schema_sources)) {
+          const [extSchema] = await db
+            .select({
+              id: schema.schemas.id,
+              slug: schema.schemas.slug,
+              semver: schema.versions.semver,
+              collectionSlug: schema.collections.slug,
+              ownerSlug: schema.accounts.slug,
+              public: schema.collections.public,
+            })
+            .from(schema.schemas)
+            .innerJoin(schema.versions, eq(schema.schemas.versionId, schema.versions.id))
+            .innerJoin(schema.collections, eq(schema.schemas.collectionId, schema.collections.id))
+            .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+            .where(eq(schema.schemas.id, externalSchemaId))
+            .limit(1);
+
+          if (!extSchema) {
+            return reply.status(422).send({
+              error: `schema_sources: no schema found with id "${externalSchemaId}" for type "${typeSlug}"`,
+              statusCode: 422,
+            });
+          }
+
+          if (!extSchema.public) {
+            return reply.status(422).send({
+              error: `schema_sources: source schema "${externalSchemaId}" belongs to a private collection`,
+              statusCode: 422,
+            });
+          }
+
+          resolvedSources.set(typeSlug, {
+            id: extSchema.id,
+            xSource: `${extSchema.ownerSlug}/${extSchema.collectionSlug}@${extSchema.semver.split(".")[0]}/${extSchema.slug}`,
+          });
+        }
+
+        // Inject x-source into schemaDoc so the stored schema carries provenance
+        const props = (schemaDoc as Record<string, any>);
+        if (!props.properties) props.properties = {};
+        for (const [typeSlug, { xSource }] of resolvedSources) {
+          if (props.properties[typeSlug] && typeof props.properties[typeSlug] === "object") {
+            props.properties[typeSlug] = { ...props.properties[typeSlug], "x-source": xSource };
+          }
+        }
+      }
       const recordsChanged =
         (body.changes.added?.length ?? 0) > 0 ||
         (body.changes.updated?.length ?? 0) > 0 ||
@@ -527,43 +578,6 @@ export async function versionRoutes(app: FastifyInstance) {
         >;
 
         // Validate schema_sources references exist and are public
-        const resolvedSources = new Map<string, string>(); // slug → schemas.id
-        if (body.schema_sources) {
-          for (const [typeSlug, externalSchemaId] of Object.entries(body.schema_sources)) {
-            const [extSchema] = await db
-              .select({
-                id: schema.schemas.id,
-                collectionId: schema.schemas.collectionId,
-              })
-              .from(schema.schemas)
-              .where(eq(schema.schemas.id, externalSchemaId))
-              .limit(1);
-
-            if (!extSchema) {
-              return reply.status(422).send({
-                error: `schema_sources: no schema found with id "${externalSchemaId}" for type "${typeSlug}"`,
-                statusCode: 422,
-              });
-            }
-
-            // Ensure the source collection is public
-            const [srcCollection] = await db
-              .select({ public: schema.collections.public })
-              .from(schema.collections)
-              .where(eq(schema.collections.id, extSchema.collectionId))
-              .limit(1);
-
-            if (!srcCollection?.public) {
-              return reply.status(422).send({
-                error: `schema_sources: source schema "${externalSchemaId}" belongs to a private collection`,
-                statusCode: 422,
-              });
-            }
-
-            resolvedSources.set(typeSlug, extSchema.id);
-          }
-        }
-
         if (Object.keys(typeSchemas).length > 0) {
           await db.insert(schema.schemas).values(
             Object.entries(typeSchemas).map(([typeSlug, typeSchema]) => ({
@@ -572,7 +586,7 @@ export async function versionRoutes(app: FastifyInstance) {
               slug: typeSlug,
               schema: typeSchema as any,
               schemaHash: hashTypeSchema(typeSchema),
-              sourceSchemaId: resolvedSources.get(typeSlug) ?? null,
+              sourceSchemaId: resolvedSources.get(typeSlug)?.id ?? null,
             })),
           );
         }

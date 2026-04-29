@@ -11,6 +11,8 @@ if (q) params.set("q", q);
 if (slug) params.set("slug", slug);
 params.set("page", String(page));
 
+function majorVersion(semver: string) { return semver.split(".")[0]; }
+
 const schemasRes = await fetch(`${apiBase}/api/schemas?${params}`);
 const result = schemasRes.ok ? await schemasRes.json() : { schemas: [], page: 1, pageSize: 50 };
 const schemas: any[] = result.schemas ?? [];
@@ -57,7 +59,6 @@ function buildPageUrl(p: number) {
       <div class="border border-rule rounded overflow-hidden mb-6">
         {schemas.map((s: any, i: number) => {
           const fields = Object.keys((s.schema as any)?.properties ?? {});
-          const path = `${s.ownerSlug}/${s.collectionSlug}@${s.semver}/${s.slug}`;
           return (
             <div class={`px-4 py-3 hover:bg-parchment-dark/50 transition-colors ${i < schemas.length - 1 ? "border-b border-rule" : ""}`}>
               <div class="flex items-start justify-between gap-4">
@@ -75,7 +76,7 @@ function buildPageUrl(p: number) {
                     <a
                       href={`/${s.ownerSlug}/${s.collectionSlug}/schemas`}
                       class="text-xs text-ink-muted hover:text-link hover:underline"
-                    >{s.ownerSlug}/{s.collectionSlug}@{s.semver}</a>
+                    >{s.ownerSlug}/{s.collectionSlug}@{majorVersion(s.semver)}</a>
                   </div>
                   {fields.length > 0 && (
                     <p class="text-xs text-ink-muted mt-1">{fields.join(", ")}</p>
@@ -87,7 +88,7 @@ function buildPageUrl(p: number) {
                         <a
                           href={`/${u.ownerSlug}/${u.collectionSlug}/schemas`}
                           class="text-[11px] text-link hover:underline"
-                        >{u.ownerSlug}/{u.collectionSlug}@{u.semver}{j < s.usedBy.length - 1 ? ", " : ""}</a>
+                        >{u.ownerSlug}/{u.collectionSlug}@{majorVersion(u.semver)}{j < s.usedBy.length - 1 ? ", " : ""}</a>
                       ))}
                     </div>
                   )}

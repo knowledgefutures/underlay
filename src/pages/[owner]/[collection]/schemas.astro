@@ -15,13 +15,16 @@ const allSchemas: any[] = schemasRes.ok ? await schemasRes.json() : [];
 
 const isOwner = await checkOwnership(sessionCookie, owner!);
 
-// Group by semver (version that introduced the schema)
+function majorVersion(semver: string) { return semver.split(".")[0]; }
+
+// Group by major version (the only granularity at which schemas change)
 const bySemver = new Map<string, { semver: string; versionId: number; schemas: any[] }>();
 for (const s of allSchemas) {
-  if (!bySemver.has(s.semver)) {
-    bySemver.set(s.semver, { semver: s.semver, versionId: s.versionId, schemas: [] });
+  const key = majorVersion(s.semver);
+  if (!bySemver.has(key)) {
+    bySemver.set(key, { semver: key, versionId: s.versionId, schemas: [] });
   }
-  bySemver.get(s.semver)!.schemas.push(s);
+  bySemver.get(key)!.schemas.push(s);
 }
 const groups = Array.from(bySemver.values());
 ---
@@ -85,7 +88,7 @@ const groups = Array.from(bySemver.values());
                           <a
                             href={`/${u.ownerSlug}/${u.collectionSlug}/schemas`}
                             class="text-[11px] text-link hover:underline"
-                          >{u.ownerSlug}/{u.collectionSlug}@{u.semver}{j < s.usedBy.length - 1 ? ", " : ""}</a>
+                          >{u.ownerSlug}/{u.collectionSlug}@{u.semver.split(".")[0]}{j < s.usedBy.length - 1 ? ", " : ""}</a>
                         ))}
                       </div>
                     )}

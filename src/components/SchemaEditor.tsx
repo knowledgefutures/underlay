@@ -234,7 +234,7 @@ export default function SchemaEditor({ owner, collection }: Props) {
                     >
                       <div>
                         <span className="text-xs font-medium">{s.slug}</span>
-                        <span className="text-xs text-ink-muted ml-2">{s.ownerSlug}/{s.collectionSlug}@{s.semver}</span>
+                        <span className="text-xs text-ink-muted ml-2">{s.ownerSlug}/{s.collectionSlug}@{s.semver.split(".")[0]}</span>
                       </div>
                       <button
                         onClick={() => adoptSuggestion(active, s)}
@@ -259,7 +259,7 @@ export default function SchemaEditor({ owner, collection }: Props) {
                       >
                         <div>
                           <span className="text-xs font-medium">{s.slug}</span>
-                          <span className="text-xs text-ink-muted ml-2">{s.ownerSlug}/{s.collectionSlug}@{s.semver}</span>
+                          <span className="text-xs text-ink-muted ml-2">{s.ownerSlug}/{s.collectionSlug}@{s.semver.split(".")[0]}</span>
                           {fields.length > 0 && (
                             <span className="text-[11px] text-ink-muted ml-2">{fields.join(", ")}</span>
                           )}

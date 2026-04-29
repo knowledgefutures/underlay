@@ -397,6 +397,7 @@ async function seed() {
     type: "object",
     properties: {
       Author: {
+        "x-source": "knowledge-futures/pubpub-archive@v1/Author",
         type: "object",
         properties: {
           name: { type: "string" },

@@ -8,6 +8,8 @@ const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`);
 if (!accountRes.ok) return Astro.redirect("/404");
 const account = await accountRes.json();
 
+function majorVersion(semver: string) { return semver.split(".")[0]; }
+
 const schemasRes = await fetch(`${apiBase}/api/accounts/${owner}/schemas`);
 const allSchemas: any[] = schemasRes.ok ? await schemasRes.json() : [];
 
@@ -66,7 +68,7 @@ const groups = Array.from(byCollection.values());
                       <div class="min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
                           <span class="font-medium text-sm">{s.slug}</span>
-                          <span class="text-xs text-ink-muted font-mono">{s.semver}</span>
+                          <span class="text-xs text-ink-muted font-mono">{majorVersion(s.semver)}</span>
                           {s.sourceSchemaId && (
                             <span class="text-[11px] border border-rule px-1.5 py-0.5 text-ink-muted">adopted</span>
                           )}
@@ -81,7 +83,7 @@ const groups = Array.from(byCollection.values());
                               <a
                                 href={`/${u.ownerSlug}/${u.collectionSlug}/schemas`}
                                 class="text-[11px] text-link hover:underline"
-                              >{u.ownerSlug}/{u.collectionSlug}@{u.semver}{j < s.usedBy.length - 1 ? ", " : ""}</a>
+                              >{u.ownerSlug}/{u.collectionSlug}@{majorVersion(u.semver)}{j < s.usedBy.length - 1 ? ", " : ""}</a>
                             ))}
                           </div>
                         )}
