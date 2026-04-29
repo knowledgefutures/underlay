@@ -51,7 +51,7 @@ if (sessionCookie) {
       <h1 class="text-xl font-semibold tracking-tight mb-1">{data.name}</h1>
       {data.description && <p class="text-sm text-ink-muted">{data.description}</p>}
       <div class="flex items-center gap-3 mt-2 text-xs text-ink-muted">
-        {data.public && <span class="border border-rule px-1.5 py-0.5">public</span>}
+        <span class="border border-rule px-1.5 py-0.5">{data.public ? "public" : "private"}</span>
         <span>by <a href={`/${data.ownerSlug}`} class="text-link underline">{data.ownerName}</a></span>
         {isOwner && <a href={`/${owner}/${collection}/settings`} class="text-link underline">Settings</a>}
       </div>
@@ -103,7 +103,7 @@ if (sessionCookie) {
           </div>
         </div>
         {data.latestVersion.message && (
-          <p class="text-xs text-ink-muted mt-2 italic">"{data.latestVersion.message}"</p>
+          <p class="text-xs text-ink-muted mt-2 italic">{data.latestVersion.message}</p>
         )}
       </div>
     )}

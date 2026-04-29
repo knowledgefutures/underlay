@@ -15,6 +15,7 @@ export async function buildApp() {
     logger: {
       level: process.env.NODE_ENV === "production" ? "info" : "debug",
     },
+    bodyLimit: 100 * 1024 * 1024, // 100 MB — version pushes and file uploads can be large
   });
 
   // Core plugins
@@ -29,6 +30,14 @@ export async function buildApp() {
 
   await app.register(multipart, {
     limits: { fileSize: 500 * 1024 * 1024 }, // 500MB for large files
+  });
+
+  // Allow raw binary uploads (PDFs, etc.)
+  app.addContentTypeParser("application/pdf", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
+  });
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
   });
 
   // Auth

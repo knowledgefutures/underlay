@@ -73,14 +73,19 @@ export async function fileRoutes(app: FastifyInstance) {
       }
 
       // Read the request body as a buffer
-      const data = await request.file();
+      const data = await request.file().catch(() => null);
       if (!data) {
-        // Raw binary body
-        const chunks: Buffer[] = [];
-        for await (const chunk of request.raw) {
-          chunks.push(Buffer.from(chunk));
+        // Raw binary body — may already be parsed by content type parser
+        let buffer: Buffer;
+        if (Buffer.isBuffer(request.body)) {
+          buffer = request.body;
+        } else {
+          const chunks: Buffer[] = [];
+          for await (const chunk of request.raw) {
+            chunks.push(Buffer.from(chunk));
+          }
+          buffer = Buffer.concat(chunks);
         }
-        const buffer = Buffer.concat(chunks);
 
         // Verify hash
         const computedHash = createHash("sha256").update(buffer).digest("hex");

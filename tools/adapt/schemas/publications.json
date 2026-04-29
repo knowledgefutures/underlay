@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "publication": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "authors": { "type": "string" },
+        "venue": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string" },
+        "url": { "type": "string" },
+        "source_url": { "type": "string", "format": "uri" },
+        "pdf": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "$file": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+              },
+              "required": ["$file"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "pdf_size": { "type": "integer" }
+      },
+      "required": ["title", "slug"]
+    }
+  }
+}

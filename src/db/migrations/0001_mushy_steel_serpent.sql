@@ -1,0 +1,2 @@
+ALTER TABLE "versions" ADD COLUMN "pushed_by" uuid;--> statement-breakpoint
+ALTER TABLE "versions" ADD CONSTRAINT "versions_pushed_by_accounts_id_fk" FOREIGN KEY ("pushed_by") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;

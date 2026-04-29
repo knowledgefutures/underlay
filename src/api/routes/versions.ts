@@ -3,6 +3,11 @@ import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import { requireAuth } from "../plugins/auth.js";
 import { createHash } from "node:crypto";
+import Ajv from "ajv";
+import addFormats from "ajv-formats";
+
+const ajv = new Ajv({ allErrors: true, strict: false });
+addFormats(ajv);
 
 function computeVersionHash(
   schemaDoc: unknown,
@@ -35,6 +40,42 @@ function deriveSemver(
 }
 
 export async function versionRoutes(app: FastifyInstance) {
+  // Lazily backfill totalBytes for versions that were created before we tracked it
+  async function backfillTotalBytes(version: { id: string; totalBytes: number; recordCount: number }) {
+    if (version.totalBytes > 0 || version.recordCount === 0) return version.totalBytes;
+
+    const records = await db
+      .select({ data: schema.records.data })
+      .from(schema.records)
+      .where(eq(schema.records.versionId, version.id));
+
+    let totalBytes = 0;
+    for (const r of records) {
+      totalBytes += Buffer.byteLength(JSON.stringify(r.data), "utf-8");
+    }
+
+    const fileRows = await db
+      .select({ hash: schema.versionFiles.fileHash })
+      .from(schema.versionFiles)
+      .where(eq(schema.versionFiles.versionId, version.id));
+
+    for (const f of fileRows) {
+      const [file] = await db
+        .select({ size: schema.files.size })
+        .from(schema.files)
+        .where(eq(schema.files.hash, f.hash))
+        .limit(1);
+      totalBytes += file?.size ?? 0;
+    }
+
+    // Persist so we don't recompute next time
+    await db
+      .update(schema.versions)
+      .set({ totalBytes })
+      .where(eq(schema.versions.id, version.id));
+
+    return totalBytes;
+  }
   // List versions
   app.get("/collections/:owner/:slug/versions", async (request, reply) => {
     const { owner, slug } = request.params as { owner: string; slug: string };
@@ -77,6 +118,7 @@ export async function versionRoutes(app: FastifyInstance) {
       .limit(1);
 
     if (!version) return reply.status(404).send({ error: "No versions", statusCode: 404 });
+    version.totalBytes = await backfillTotalBytes(version);
     return version;
   });
 
@@ -95,6 +137,7 @@ export async function versionRoutes(app: FastifyInstance) {
       .limit(1);
 
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
+    version.totalBytes = await backfillTotalBytes(version);
     return version;
   });
 
@@ -245,6 +288,43 @@ export async function versionRoutes(app: FastifyInstance) {
         (body.changes.updated?.length ?? 0) > 0 ||
         (body.changes.removed?.length ?? 0) > 0;
 
+      // Validate records against the JSON Schema
+      // The schema's top-level "properties" keys are record type names.
+      // Each record is validated against the sub-schema for its type.
+      const schemaObj = schemaDoc as Record<string, unknown>;
+      const typeSchemas = (schemaObj.properties ?? {}) as Record<string, unknown>;
+      const validationErrors: { recordId: string; type: string; errors: string[] }[] = [];
+
+      for (const rec of newRecords) {
+        const typeSchema = typeSchemas[rec.type];
+        if (!typeSchema) {
+          validationErrors.push({
+            recordId: rec.recordId,
+            type: rec.type,
+            errors: [`No schema defined for record type "${rec.type}"`],
+          });
+          continue;
+        }
+        const validate = ajv.compile(typeSchema as object);
+        if (!validate(rec.data)) {
+          validationErrors.push({
+            recordId: rec.recordId,
+            type: rec.type,
+            errors: (validate.errors ?? []).map(
+              (e) => `${e.instancePath || "/"} ${e.message ?? "validation failed"}`,
+            ),
+          });
+        }
+      }
+
+      if (validationErrors.length > 0) {
+        return reply.status(422).send({
+          error: "Schema validation failed",
+          validationErrors,
+          statusCode: 422,
+        });
+      }
+
       // Get file hashes from existing version + any new references
       let existingFileHashes: string[] = [];
       if (latest) {
@@ -297,8 +377,15 @@ export async function versionRoutes(app: FastifyInstance) {
       const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged);
       const newNumber = currentNumber + 1;
 
-      // Compute total bytes
+      // Compute total bytes (records JSON + files)
       let totalBytes = 0;
+
+      // Size of all record data
+      for (const rec of newRecords) {
+        totalBytes += Buffer.byteLength(JSON.stringify(rec.data), "utf-8");
+      }
+
+      // Size of all referenced files
       if (allFileHashes.length > 0) {
         for (const hash of allFileHashes) {
           const [file] = await db
@@ -321,6 +408,7 @@ export async function versionRoutes(app: FastifyInstance) {
           baseNumber: body.base_version,
           schema: schemaDoc as any,
           message: body.message ?? null,
+          pushedBy: request.accountId ?? null,
           appId: body.app_id ?? null,
           actorId: body.actor_id ?? null,
           recordCount: newRecords.length,

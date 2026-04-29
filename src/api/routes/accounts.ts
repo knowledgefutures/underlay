@@ -251,6 +251,55 @@ export async function accountRoutes(app: FastifyInstance) {
 
   // --- Org Management ---
 
+  // Create organization
+  app.post(
+    "/accounts/orgs",
+    { preHandler: [requireAuth()] },
+    async (request, reply) => {
+      const { slug, displayName } = request.body as {
+        slug: string;
+        displayName: string;
+      };
+
+      if (RESERVED_SLUGS.has(slug.toLowerCase())) {
+        return reply.status(422).send({ error: "That name is reserved", statusCode: 422 });
+      }
+
+      if (!/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/.test(slug) || slug.length < 2) {
+        return reply
+          .status(422)
+          .send({ error: "Slug must be lowercase alphanumeric with hyphens, at least 2 characters", statusCode: 422 });
+      }
+
+      const existing = await db
+        .select()
+        .from(schema.accounts)
+        .where(eq(schema.accounts.slug, slug))
+        .limit(1);
+
+      if (existing.length > 0) {
+        return reply.status(409).send({ error: "Name already taken", statusCode: 409 });
+      }
+
+      const id = uuidv4();
+      await db.insert(schema.accounts).values({
+        id,
+        slug,
+        type: "org",
+        displayName,
+      });
+
+      // Add the creating user as owner
+      await db.insert(schema.orgMemberships).values({
+        orgId: id,
+        userId: request.accountId!,
+        role: "owner",
+      });
+
+      return reply.status(201).send({ id, slug, displayName, type: "org" });
+    },
+  );
+
   // List org members
   app.get(
     "/accounts/:slug/members",

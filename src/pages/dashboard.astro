@@ -8,6 +8,26 @@ if (!sessionCookie) {
   return Astro.redirect("/login");
 }
 
+// Handle org creation form POST
+let orgError = "";
+if (Astro.request.method === "POST") {
+  const formData = await Astro.request.formData();
+  const orgSlug = formData.get("orgSlug")?.toString();
+  const orgDisplayName = formData.get("orgDisplayName")?.toString();
+  if (orgSlug && orgDisplayName) {
+    const res = await fetch(`${apiBase}/api/accounts/orgs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ slug: orgSlug, displayName: orgDisplayName }),
+    });
+    if (res.ok) {
+      return Astro.redirect("/dashboard");
+    }
+    const err = await res.json();
+    orgError = err.error ?? "Failed to create organization";
+  }
+}
+
 // Fetch current user
 const meRes = await fetch(`${apiBase}/api/accounts/me`, {
   headers: { Cookie: `session=${sessionCookie}` },
@@ -103,6 +123,26 @@ if (me.orgs?.length) {
         )}
       </div>
     ))}
+
+    <div class="mt-8 pt-6 border-t border-rule">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Create Organization</h2>
+      {orgError && <p class="text-red-600 text-sm mb-2">{orgError}</p>}
+      <form method="POST" class="flex items-end gap-3">
+        <div>
+          <label class="block text-xs text-ink-muted mb-1">Slug</label>
+          <input type="text" name="orgSlug" required pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]" minlength="2"
+            placeholder="my-org" class="border border-rule px-2 py-1.5 text-sm bg-parchment w-40" />
+        </div>
+        <div>
+          <label class="block text-xs text-ink-muted mb-1">Display Name</label>
+          <input type="text" name="orgDisplayName" required
+            placeholder="My Organization" class="border border-rule px-2 py-1.5 text-sm bg-parchment w-48" />
+        </div>
+        <button type="submit" class="border border-ink bg-ink text-parchment px-3 py-1.5 text-sm hover:bg-ink-muted transition-colors">
+          Create
+        </button>
+      </form>
+    </div>
 
     <div class="mt-8 pt-6 border-t border-rule">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Quick Reference</h2>

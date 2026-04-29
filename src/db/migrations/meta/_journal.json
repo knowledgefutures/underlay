@@ -8,6 +8,13 @@
       "when": 1777351571597,
       "tag": "0000_plain_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777423790913,
+      "tag": "0001_mushy_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

@@ -95,6 +95,7 @@ export const versions = pgTable(
     baseNumber: integer("base_number"),
     schema: jsonb("schema").notNull(),
     message: text("message"),
+    pushedBy: uuid("pushed_by").references(() => accounts.id),
     appId: text("app_id"),
     actorId: text("actor_id"),
     signature: text("signature"),

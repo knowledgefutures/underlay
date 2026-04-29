@@ -94,6 +94,22 @@ export async function collectionsRoutes(app: FastifyInstance) {
         }
       }
 
+      // Check for existing collection with same slug under this owner
+      const [existing] = await db
+        .select({ id: schema.collections.id })
+        .from(schema.collections)
+        .where(
+          and(
+            eq(schema.collections.accountId, account.id),
+            eq(schema.collections.slug, slug),
+          ),
+        )
+        .limit(1);
+
+      if (existing) {
+        return reply.status(409).send({ error: "Collection already exists", statusCode: 409 });
+      }
+
       const id = uuidv4();
       await db.insert(schema.collections).values({
         id,
@@ -135,14 +151,33 @@ export async function collectionsRoutes(app: FastifyInstance) {
     }
 
     if (!result.public && request.accountId !== result.id) {
-      // Check if user owns or is member
+      // Check if user owns or is member of the owning account
       const [account] = await db
         .select()
         .from(schema.accounts)
         .where(eq(schema.accounts.slug, owner))
         .limit(1);
 
-      if (!account || account.id !== request.accountId) {
+      if (!account) {
+        return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
+      }
+
+      let hasAccess = account.id === request.accountId;
+      if (!hasAccess && account.type === "org") {
+        const [membership] = await db
+          .select()
+          .from(schema.orgMemberships)
+          .where(
+            and(
+              eq(schema.orgMemberships.orgId, account.id),
+              eq(schema.orgMemberships.userId, request.accountId!),
+            ),
+          )
+          .limit(1);
+        hasAccess = !!membership;
+      }
+
+      if (!hasAccess) {
         return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
       }
     }
