@@ -2,6 +2,7 @@ import { db, schema } from "./index.js";
 import { v4 as uuidv4 } from "uuid";
 import bcrypt from "bcrypt";
 import { createHash } from "node:crypto";
+import { eq, and } from "drizzle-orm";
 
 function computeVersionHash(
   schemaDoc: unknown,
@@ -16,6 +17,28 @@ function computeVersionHash(
     files: fileHashes.sort(),
   });
   return createHash("sha256").update(canonical).digest("hex");
+}
+
+function hashTypeSchema(typeSchema: unknown): string {
+  return createHash("sha256").update(JSON.stringify(typeSchema)).digest("hex");
+}
+
+function insertSchemas(
+  versionId: number,
+  collectionId: string,
+  schemaDoc: { type: string; properties: Record<string, unknown> },
+  sources: Record<string, string | undefined> = {},
+) {
+  return db.insert(schema.schemas).values(
+    Object.entries(schemaDoc.properties).map(([slug, typeSchema]) => ({
+      collectionId,
+      versionId,
+      slug,
+      schema: typeSchema as any,
+      schemaHash: hashTypeSchema(typeSchema),
+      sourceSchemaId: sources[slug] ?? null,
+    })),
+  );
 }
 
 async function seed() {
@@ -33,6 +56,7 @@ async function seed() {
     await db.delete(schema.records);
     await db.delete(schema.versionFiles);
     await db.delete(schema.files);
+    await db.delete(schema.schemas);
     await db.delete(schema.versions);
     await db.delete(schema.collections);
     await db.delete(schema.apiKeys);
@@ -176,6 +200,8 @@ async function seed() {
     })),
   );
 
+  await insertSchemas(pubpubVersion!.id, pubpubId, pubpubSchema as any);
+
   console.log("[seed] Created collection: knowledge-futures/pubpub-archive (17 records)");
 
   // --- Collection 2: Open Grants ---
@@ -260,6 +286,8 @@ async function seed() {
       data: r.data,
     })),
   );
+
+  await insertSchemas(grantsVersion!.id, grantsId, grantsSchema as any);
 
   console.log("[seed] Created collection: knowledge-futures/open-grants (8 records)");
 
@@ -348,7 +376,104 @@ async function seed() {
     })),
   );
 
+  await insertSchemas(climateVersion!.id, climateId, climateSchema as any);
+
   console.log("[seed] Created collection: knowledge-futures/climate-observations (12 records)");
+
+  // --- Collection 4: pubNotes — demonstrates cross-collection schema reference ---
+  // The Author type here uses the same schema as pubpub-archive's Author type.
+  // We look up the pubpub Author schema row and set sourceSchemaId accordingly.
+  const pubnotesId = uuidv4();
+  await db.insert(schema.collections).values({
+    id: pubnotesId,
+    accountId: kfId,
+    slug: "pub-notes",
+    name: "Pub Notes",
+    description: "Personal research notes linked to known authors from the PubPub Archive.",
+    public: true,
+  });
+
+  const pubnotesSchema = {
+    type: "object",
+    properties: {
+      Author: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          orcid: { type: "string" },
+          affiliation: { type: "string" },
+        },
+      },
+      Note: {
+        type: "object",
+        properties: {
+          authorId: { type: "string" },
+          title: { type: "string" },
+          content: { type: "string" },
+        },
+      },
+    },
+  };
+
+  const pubnotesRecords = [
+    { recordId: "author-001", type: "Author", data: { name: "Sean Devine", orcid: "0000-0002-1234-5678", affiliation: "McGill University" } },
+    { recordId: "author-002", type: "Author", data: { name: "Maha Bali", orcid: "0000-0003-9876-5432", affiliation: "American University in Cairo" } },
+    { recordId: "note-001", type: "Note", data: { authorId: "author-001", title: "On null results", content: "Sean's work highlights that failure is generative." } },
+    { recordId: "note-002", type: "Note", data: { authorId: "author-002", title: "Equity in open ed", content: "Maha's framing of equity in open education is essential reading." } },
+    { recordId: "note-003", type: "Note", data: { authorId: "author-001", title: "Replication follow-up", content: "A follow-up note on the replication study ideas from the JOTE article." } },
+  ];
+
+  const pubnotesHash = computeVersionHash(pubnotesSchema, pubnotesRecords, []);
+  const pubnotesTotalBytes = pubnotesRecords.reduce(
+    (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"),
+    0,
+  );
+  const [pubnotesVersion] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: pubnotesId,
+      number: 1,
+      semver: "v1.0.0",
+      hash: pubnotesHash,
+      baseNumber: null,
+      schema: pubnotesSchema,
+      message: "Initial notes import",
+      readme: `# Pub Notes\n\nPersonal research notes linked to authors from the [PubPub Archive](./pubpub-archive).\n\nThe **Author** type in this collection uses the same schema as \`knowledge-futures/pubpub-archive\`, demonstrating cross-collection schema reuse.`,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
+      actorId: "admin",
+      recordCount: pubnotesRecords.length,
+      fileCount: 0,
+      totalBytes: pubnotesTotalBytes,
+    })
+    .returning();
+
+  await db.insert(schema.records).values(
+    pubnotesRecords.map((r) => ({
+      versionId: pubnotesVersion!.id,
+      recordId: r.recordId,
+      type: r.type,
+      data: r.data,
+    })),
+  );
+
+  // Find the pubpub Author schema row to set as sourceSchemaId for pubNotes' Author type
+  const [pubpubAuthorSchemaRow] = await db
+    .select({ id: schema.schemas.id })
+    .from(schema.schemas)
+    .where(
+      and(
+        eq(schema.schemas.versionId, pubpubVersion!.id),
+        eq(schema.schemas.slug, "Author"),
+      ),
+    )
+    .limit(1);
+
+  await insertSchemas(pubnotesVersion!.id, pubnotesId, pubnotesSchema as any, {
+    Author: pubpubAuthorSchemaRow?.id,
+  });
+
+  console.log("[seed] Created collection: knowledge-futures/pub-notes (5 records, Author schema from pubpub-archive)");
   console.log("[seed] Done.");
   process.exit(0);
 }

@@ -26,6 +26,10 @@ function computeVersionHash(
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+function hashTypeSchema(typeSchema: unknown): string {
+  return createHash("sha256").update(JSON.stringify(typeSchema)).digest("hex");
+}
+
 function deriveSemver(
   prevSemver: string | null,
   schemaChanged: boolean,
@@ -274,6 +278,7 @@ export async function versionRoutes(app: FastifyInstance) {
         app_id?: string;
         actor_id?: string;
         schema?: unknown;
+        schema_sources?: Record<string, string>; // slug → external schema UUID
         changes: {
           added?: { id: string; type: string; data: unknown }[];
           updated?: { id: string; type: string; data: unknown }[];
@@ -512,6 +517,65 @@ export async function versionRoutes(app: FastifyInstance) {
             fileHash: hash,
           })),
         );
+      }
+
+      // Populate schemas table on major version bump (schema changed)
+      if (schemaChanged) {
+        const typeSchemas = ((schemaDoc as Record<string, unknown>).properties ?? {}) as Record<
+          string,
+          unknown
+        >;
+
+        // Validate schema_sources references exist and are public
+        const resolvedSources = new Map<string, string>(); // slug → schemas.id
+        if (body.schema_sources) {
+          for (const [typeSlug, externalSchemaId] of Object.entries(body.schema_sources)) {
+            const [extSchema] = await db
+              .select({
+                id: schema.schemas.id,
+                collectionId: schema.schemas.collectionId,
+              })
+              .from(schema.schemas)
+              .where(eq(schema.schemas.id, externalSchemaId))
+              .limit(1);
+
+            if (!extSchema) {
+              return reply.status(422).send({
+                error: `schema_sources: no schema found with id "${externalSchemaId}" for type "${typeSlug}"`,
+                statusCode: 422,
+              });
+            }
+
+            // Ensure the source collection is public
+            const [srcCollection] = await db
+              .select({ public: schema.collections.public })
+              .from(schema.collections)
+              .where(eq(schema.collections.id, extSchema.collectionId))
+              .limit(1);
+
+            if (!srcCollection?.public) {
+              return reply.status(422).send({
+                error: `schema_sources: source schema "${externalSchemaId}" belongs to a private collection`,
+                statusCode: 422,
+              });
+            }
+
+            resolvedSources.set(typeSlug, extSchema.id);
+          }
+        }
+
+        if (Object.keys(typeSchemas).length > 0) {
+          await db.insert(schema.schemas).values(
+            Object.entries(typeSchemas).map(([typeSlug, typeSchema]) => ({
+              collectionId: collection.id,
+              versionId: version!.id,
+              slug: typeSlug,
+              schema: typeSchema as any,
+              schemaHash: hashTypeSchema(typeSchema),
+              sourceSchemaId: resolvedSources.get(typeSlug) ?? null,
+            })),
+          );
+        }
       }
 
       // Update collection timestamp + optional name/description

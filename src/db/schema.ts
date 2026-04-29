@@ -10,6 +10,7 @@ import {
   bigserial,
   primaryKey,
   unique,
+  index,
 } from "drizzle-orm/pg-core";
 
 // --- Accounts ---
@@ -147,4 +148,29 @@ export const versionFiles = pgTable(
       .references(() => files.hash),
   },
   (t) => [primaryKey({ columns: [t.versionId, t.fileHash] })],
+);
+
+// --- Schemas ---
+
+export const schemas = pgTable(
+  "schemas",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    versionId: bigint("version_id", { mode: "number" })
+      .notNull()
+      .references(() => versions.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    schema: jsonb("schema").notNull(),
+    schemaHash: text("schema_hash").notNull(),
+    sourceSchemaId: uuid("source_schema_id").references((): any => schemas.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique().on(t.collectionId, t.versionId, t.slug),
+    index("schemas_schema_hash_idx").on(t.schemaHash),
+    index("schemas_slug_idx").on(t.slug),
+  ],
 );

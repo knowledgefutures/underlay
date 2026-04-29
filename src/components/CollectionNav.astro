@@ -4,7 +4,7 @@ interface Props {
   collection: string;
   isPublic?: boolean;
   isOwner?: boolean;
-  active: "overview" | "versions" | "settings";
+  active: "overview" | "versions" | "schemas" | "settings";
   versionLabel?: string; // e.g. "6.0.0" — shown as an extra tab between Versions and Settings
 }
 
@@ -34,6 +34,7 @@ const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text
   {versionLabel && (
     <span class={activeClass}>{versionLabel}</span>
   )}
+  <a href={`/${owner}/${collection}/schemas`} class={active === "schemas" ? activeClass : inactiveClass}>Schemas</a>
   {isOwner && (
     <a href={`/${owner}/${collection}/settings`} class={`${active === "settings" ? activeClass : inactiveClass} ml-auto`}>Settings</a>
   )}

@@ -1,0 +1,100 @@
+---
+import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
+
+const { owner } = Astro.params;
+
+const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`);
+if (!accountRes.ok) return Astro.redirect("/404");
+const account = await accountRes.json();
+
+const schemasRes = await fetch(`${apiBase}/api/accounts/${owner}/schemas`);
+const allSchemas: any[] = schemasRes.ok ? await schemasRes.json() : [];
+
+// Group by collection
+const byCollection = new Map<string, { collectionSlug: string; schemas: any[] }>();
+for (const s of allSchemas) {
+  if (!byCollection.has(s.collectionSlug)) {
+    byCollection.set(s.collectionSlug, { collectionSlug: s.collectionSlug, schemas: [] });
+  }
+  byCollection.get(s.collectionSlug)!.schemas.push(s);
+}
+const groups = Array.from(byCollection.values());
+---
+
+<Base title={`Schemas — ${account.displayName} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <!-- Owner header with nav tabs -->
+    <div class="mb-8">
+      <div class="flex items-center justify-between mb-2">
+        <nav class="flex items-center gap-1.5 text-lg">
+          <a href={`/${owner}`} class="font-semibold hover:underline">{account.displayName}</a>
+        </nav>
+      </div>
+      <div class="flex items-center gap-0 border-b border-rule mb-6">
+        <a href={`/${owner}`} class="px-3 py-2 text-sm font-medium border-b-2 border-transparent text-ink-muted hover:text-ink hover:border-rule -mb-px transition-colors">Collections</a>
+        <a href={`/${owner}/schemas`} class="px-3 py-2 text-sm font-medium border-b-2 border-ink text-ink -mb-px transition-colors">Schemas</a>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold text-ink-muted">
+        {allSchemas.length} schema{allSchemas.length !== 1 ? "s" : ""} across {groups.length} collection{groups.length !== 1 ? "s" : ""}
+      </h2>
+      <a href="/schemas" class="text-xs text-link hover:underline">Browse all schemas →</a>
+    </div>
+
+    {groups.length === 0 ? (
+      <p class="text-sm text-ink-muted py-8 text-center">No published schemas yet.</p>
+    ) : (
+      <div class="space-y-6">
+        {groups.map((group) => (
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <a
+                href={`/${owner}/${group.collectionSlug}/schemas`}
+                class="text-sm font-medium text-link hover:underline"
+              >{group.collectionSlug}</a>
+              <span class="text-xs text-ink-muted">{group.schemas.length} type{group.schemas.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div class="border border-rule rounded overflow-hidden">
+              {group.schemas.map((s: any, i: number) => {
+                const fields = Object.keys((s.schema as any)?.properties ?? {});
+                return (
+                  <div class={`px-4 py-3 hover:bg-parchment-dark/50 transition-colors ${i < group.schemas.length - 1 ? "border-b border-rule" : ""}`}>
+                    <div class="flex items-start justify-between gap-4">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <span class="font-medium text-sm">{s.slug}</span>
+                          <span class="text-xs text-ink-muted font-mono">{s.semver}</span>
+                          {s.sourceSchemaId && (
+                            <span class="text-[11px] border border-rule px-1.5 py-0.5 text-ink-muted">adopted</span>
+                          )}
+                        </div>
+                        {fields.length > 0 && (
+                          <p class="text-xs text-ink-muted mt-1">{fields.join(", ")}</p>
+                        )}
+                        {s.usedBy && s.usedBy.length > 0 && (
+                          <div class="mt-1">
+                            <span class="text-[11px] text-ink-muted">Also used by: </span>
+                            {s.usedBy.map((u: any, j: number) => (
+                              <a
+                                href={`/${u.ownerSlug}/${u.collectionSlug}/schemas`}
+                                class="text-[11px] text-link hover:underline"
+                              >{u.ownerSlug}/{u.collectionSlug}@{u.semver}{j < s.usedBy.length - 1 ? ", " : ""}</a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div class="text-xs text-ink-muted shrink-0">{fields.length} field{fields.length !== 1 ? "s" : ""}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</Base>

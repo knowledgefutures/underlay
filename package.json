@@ -13,6 +13,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
+    "db:backfill-schemas": "tsx src/db/backfill-schemas.ts",
     "tool:backup": "tsx tools/backupDb.ts",
     "tool:restore": "tsx tools/restore.ts",
     "tool:pruneBackups": "tsx tools/pruneBackups.ts",

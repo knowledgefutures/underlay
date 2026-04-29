@@ -1,0 +1,113 @@
+---
+import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, checkOwnership } from "@/lib/page-utils";
+
+const { owner, collection } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) return Astro.redirect("/404");
+const collectionData = await collectionRes.json();
+
+const schemasRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/schemas`);
+const allSchemas: any[] = schemasRes.ok ? await schemasRes.json() : [];
+
+const isOwner = await checkOwnership(sessionCookie, owner!);
+
+// Group by semver (version that introduced the schema)
+const bySemver = new Map<string, { semver: string; versionId: number; schemas: any[] }>();
+for (const s of allSchemas) {
+  if (!bySemver.has(s.semver)) {
+    bySemver.set(s.semver, { semver: s.semver, versionId: s.versionId, schemas: [] });
+  }
+  bySemver.get(s.semver)!.schemas.push(s);
+}
+const groups = Array.from(bySemver.values());
+---
+
+<Base title={`Schemas — ${owner}/${collection} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={collectionData.public} isOwner={isOwner} active="schemas" />
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold text-ink-muted">{allSchemas.length} schema{allSchemas.length !== 1 ? "s" : ""} across {groups.length} major version{groups.length !== 1 ? "s" : ""}</h2>
+      {isOwner && (
+        <a href={`/${owner}/${collection}/schemas/edit`} class="text-xs border border-rule px-3 py-1.5 hover:bg-parchment-dark transition-colors">
+          Edit schemas
+        </a>
+      )}
+    </div>
+
+    {groups.length === 0 ? (
+      <p class="text-sm text-ink-muted py-8 text-center">No schemas published yet.</p>
+    ) : (
+      <div class="space-y-6">
+        {groups.map((group) => (
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-xs font-mono bg-parchment-dark border border-rule px-1.5 py-0.5 rounded">{group.semver}</span>
+              <span class="text-xs text-ink-muted">{group.schemas.length} type{group.schemas.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div class="border border-rule rounded overflow-hidden">
+              {group.schemas.map((s: any, i: number) => {
+                const fields = Object.keys((s.schema as any)?.properties ?? {});
+                const path = `${owner}/${collection}@${group.semver}/${s.slug}`;
+                return (
+                  <div class={`px-4 py-3 ${i < group.schemas.length - 1 ? "border-b border-rule" : ""}`}>
+                    <div class="flex items-start justify-between gap-4">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <span class="font-medium text-sm">{s.slug}</span>
+                          {s.sourceSchemaId && (
+                            <span class="text-[11px] border border-rule px-1.5 py-0.5 text-ink-muted">adopted</span>
+                          )}
+                        </div>
+                        <div class="flex items-center gap-2 mt-1 flex-wrap">
+                          <code class="text-[11px] text-ink-muted font-mono">{path}</code>
+                          <button
+                            class="text-[11px] text-link hover:underline copy-path"
+                            data-path={path}
+                          >copy</button>
+                        </div>
+                        {fields.length > 0 && (
+                          <p class="text-xs text-ink-muted mt-1">{fields.join(", ")}</p>
+                        )}
+                      </div>
+                      <div class="text-xs text-ink-muted shrink-0">
+                        {fields.length} field{fields.length !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                    {s.usedBy && s.usedBy.length > 0 && (
+                      <div class="mt-2 pt-2 border-t border-rule">
+                        <span class="text-[11px] text-ink-muted">Also used by: </span>
+                        {s.usedBy.map((u: any, j: number) => (
+                          <a
+                            href={`/${u.ownerSlug}/${u.collectionSlug}/schemas`}
+                            class="text-[11px] text-link hover:underline"
+                          >{u.ownerSlug}/{u.collectionSlug}@{u.semver}{j < s.usedBy.length - 1 ? ", " : ""}</a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</Base>
+
+<script>
+  document.querySelectorAll(".copy-path").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const path = (btn as HTMLElement).dataset.path ?? "";
+      navigator.clipboard.writeText(path).then(() => {
+        btn.textContent = "copied!";
+        setTimeout(() => { btn.textContent = "copy"; }, 1500);
+      });
+    });
+  });
+</script>
