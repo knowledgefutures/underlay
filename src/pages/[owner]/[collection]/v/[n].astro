@@ -32,6 +32,19 @@ const selectedType = Astro.url.searchParams.get("type") ?? null;
 const schemaDoc = version.schema as Record<string, any>;
 const schemaProperties = schemaDoc?.properties ?? {};
 const allTypes = Object.keys(schemaProperties).sort();
+// Provenance map: keyed by alias slug → { ref, hash } for imported types.
+const importMeta = (schemaDoc?.["x-underlay-types"] ?? {}) as Record<
+  string,
+  { ref: string; hash: string }
+>;
+function importLink(slug: string): string | null {
+  const meta = importMeta[slug];
+  if (!meta) return null;
+  // ref format: <owner>/<collection>@<n>/<slug>
+  const m = /^([^/@]+)\/([^/@]+)@(\d+)\/[^/]+$/.exec(meta.ref);
+  if (!m) return null;
+  return `/${m[1]}/${m[2]}/v/${m[3]}/types/${slug}`;
+}
 
 // Fetch records only on records tab
 let records: any[] = [];
@@ -158,7 +171,10 @@ function tabUrl(t: string, extra?: Record<string, string>) {
               href={`/${owner}/${collection}/v/${n}?type=${t}`}
               class={`block px-3 py-1.5 text-sm rounded transition-colors ${t === currentType ? "bg-ink text-parchment font-medium" : "text-ink-muted hover:bg-parchment-dark hover:text-ink"}`}
             >
-              {t}
+              <span>{t}</span>
+              {importMeta[t] && (
+                <span class={`ml-1 text-[10px] ${t === currentType ? "text-parchment/70" : "text-ink-muted"}`} title={`Imported from ${importMeta[t].ref}`}>↪</span>
+              )}
             </a>
           ))}
         </nav>
@@ -258,8 +274,31 @@ function tabUrl(t: string, extra?: Record<string, string>) {
 
     <!-- Schema tab -->
     {tab === "schema" && (
-      <div class="border border-rule rounded overflow-hidden">
-        <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(version.schema, null, 2)} /></pre>
+      <div>
+        {Object.keys(importMeta).length > 0 && (
+          <div class="mb-4 border border-rule rounded p-3 text-xs bg-parchment-dark">
+            <div class="text-ink-muted uppercase tracking-wide font-semibold mb-2">Imported types</div>
+            <ul class="space-y-1">
+              {Object.entries(importMeta).map(([slug, meta]) => {
+                const href = importLink(slug);
+                return (
+                  <li class="flex items-center gap-2">
+                    <span class="font-mono text-ink">{slug}</span>
+                    <span class="text-ink-muted">↪</span>
+                    {href ? (
+                      <a href={href} class="text-link hover:underline font-mono">{meta.ref}</a>
+                    ) : (
+                      <span class="font-mono text-ink-muted">{meta.ref}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+        <div class="border border-rule rounded overflow-hidden">
+          <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(version.schema, null, 2)} /></pre>
+        </div>
       </div>
     )}
 

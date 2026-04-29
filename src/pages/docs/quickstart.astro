@@ -93,6 +93,38 @@ const updateCode = `curl -X POST https://underlay.org/api/collections/yourname/m
 const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/2/diff?from=1
 # → {"from":1,"to":2,"added":[...],"updated":[...],"removed":[]}`;
 
+const importCode = `# Reuse another collection's record-type schema via $ref.
+# The pin attaches to the collection (the thing that has versions),
+# not the type:
+#   yourname/my-dataset           — pin to the LATEST version that defines the type
+#   yourname/my-dataset@3         — pin to collection version 3
+#   yourname/my-dataset@sha256:…  — pin to a content hash
+curl -X POST https://underlay.org/api/collections/yourname/my-notes/versions \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer $KEY" \\
+  -d '{
+    "base_version": null,
+    "message": "Notes that import the Book schema",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "Book":  { "$ref": "yourname/my-dataset@1/Book" },
+        "Note":  {
+          "type": "object",
+          "properties": {
+            "bookId": {"type": "string"},
+            "body":   {"type": "string"}
+          }
+        }
+      }
+    },
+    "changes": {
+      "added": [
+        {"id": "n-1", "type": "Note", "data": {"bookId": "book-1", "body": "Reread chapter 3"}}
+      ]
+    }
+  }'`;
+
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
@@ -131,6 +163,17 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 
       <h2>7. Diff versions</h2>
       <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={diffCode} /></pre>
+
+      <h2>Sharing schemas with $ref</h2>
+      <p>
+        Each entry under <code>schema.properties</code> can either define a record type inline
+        (as above) or reference one defined by another collection version via a Underlay-internal
+        <code>$ref</code> string. Refs are resolved and the sub-schema is inlined into your
+        version at push time, so the version stays reproducible even if the source is later
+        deleted. Imports show up in <a href={`/yourname/my-notes/types`}>the Types tab</a> with
+        an <code>↪</code> badge linking back to the source.
+      </p>
+      <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={importCode} /></pre>
 
       <h2>Working with files</h2>
       <p>To attach files (PDFs, images, etc.) to records, upload them first by hash:</p>

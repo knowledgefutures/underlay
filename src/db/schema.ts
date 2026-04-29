@@ -111,6 +111,46 @@ export const versions = pgTable(
   ],
 );
 
+// --- Record Types ---
+// Stable identity per (collection, slug). Schemas live on collection versions
+// (`versions.schema.properties[slug]`) — there is no parallel record-type version
+// sequence. `version_record_types` records which types a collection version uses
+// and (for cross-collection imports) which source version supplied the schema.
+
+export const recordTypes = pgTable(
+  "record_types",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    displayName: text("display_name").notNull(),
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [unique().on(t.collectionId, t.slug)],
+);
+
+export const versionRecordTypes = pgTable(
+  "version_record_types",
+  {
+    versionId: bigint("version_id", { mode: "number" })
+      .notNull()
+      .references(() => versions.id, { onDelete: "cascade" }),
+    recordTypeId: uuid("record_type_id")
+      .notNull()
+      .references(() => recordTypes.id, { onDelete: "restrict" }),
+    // Null = locally defined inline this version. Non-null = imported via $ref;
+    // the schema is also inlined into versions.schema, so SET NULL on source
+    // deletion just loses provenance metadata, not the schema itself.
+    sourceVersionId: bigint("source_version_id", { mode: "number" })
+      .references(() => versions.id, { onDelete: "set null" }),
+  },
+  (t) => [primaryKey({ columns: [t.versionId, t.recordTypeId] })],
+);
+
 // --- Records ---
 
 export const records = pgTable(
@@ -120,7 +160,9 @@ export const records = pgTable(
       .notNull()
       .references(() => versions.id, { onDelete: "cascade" }),
     recordId: text("record_id").notNull(),
-    type: text("type").notNull(),
+    recordTypeId: uuid("record_type_id")
+      .notNull()
+      .references(() => recordTypes.id, { onDelete: "restrict" }),
     data: jsonb("data").notNull(),
   },
   (t) => [primaryKey({ columns: [t.versionId, t.recordId] })],

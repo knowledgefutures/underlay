@@ -1,0 +1,51 @@
+---
+import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, checkOwnership } from "@/lib/page-utils";
+
+const { owner, collection, n, slug: typeSlug } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) return Astro.redirect("/404");
+const collectionData = await collectionRes.json();
+
+const typeRes = await fetch(
+  `${apiBase}/api/collections/${owner}/${collection}/versions/${n}/types/${typeSlug}`,
+);
+if (!typeRes.ok) return Astro.redirect("/404");
+const type = await typeRes.json();
+
+const isOwner = await checkOwnership(sessionCookie, owner!);
+---
+
+<Base title={`${typeSlug} @ v${n} — ${owner}/${collection} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={collectionData.public} isOwner={isOwner} active="versions" versionLabel={`v${n}`} />
+
+    <nav class="text-sm text-ink-muted mb-3">
+      <a href={`/${owner}/${collection}/v/${n}`} class="hover:underline">v{n}</a>
+      <span class="mx-1">/</span>
+      <a href={`/${owner}/${collection}/types/${typeSlug}`} class="hover:underline">types</a>
+      <span class="mx-1">/</span>
+      <span class="font-mono text-ink">{typeSlug}</span>
+    </nav>
+
+    <h2 class="text-lg font-semibold mb-2">
+      <code class="font-mono">{typeSlug}</code>
+      <span class="text-ink-muted text-sm font-normal ml-2">at v{n}</span>
+    </h2>
+
+    {type.isImport && (
+      <div class="mb-4 border border-rule rounded p-3 text-xs bg-parchment-dark">
+        <div class="text-ink-muted uppercase tracking-wide font-semibold mb-1">Imported</div>
+        <div class="font-mono text-sm">↪ <a href={`/${type.ref.split("/")[0]}/${type.ref.split("/")[1].split("@")[0]}/v/${type.ref.split("@")[1].split("/")[0]}/types/${typeSlug}`} class="text-link hover:underline">{type.ref}</a></div>
+        <div class="text-[11px] text-ink-muted mt-1">{type.hash}</div>
+      </div>
+    )}
+
+    <div class="border border-rule rounded overflow-hidden">
+      <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(type.schema, null, 2)} /></pre>
+    </div>
+  </div>
+</Base>

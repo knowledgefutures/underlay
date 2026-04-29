@@ -8,6 +8,7 @@ import { healthRoutes } from "./routes/health.js";
 import { accountRoutes } from "./routes/accounts.js";
 import { collectionsRoutes } from "./routes/collections.js";
 import { versionRoutes } from "./routes/versions.js";
+import { recordTypeRoutes } from "./routes/recordTypes.js";
 import { fileRoutes } from "./routes/files.js";
 
 export async function buildApp() {
@@ -51,6 +52,7 @@ export async function buildApp() {
   await app.register(accountRoutes, { prefix: "/api" });
   await app.register(collectionsRoutes, { prefix: "/api" });
   await app.register(versionRoutes, { prefix: "/api" });
+  await app.register(recordTypeRoutes, { prefix: "/api" });
   await app.register(fileRoutes, { prefix: "/api" });
 
   return app;

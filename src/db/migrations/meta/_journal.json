@@ -22,6 +22,20 @@
       "when": 1777428576945,
       "tag": "0002_silly_grey_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777471416603,
+      "tag": "0003_robust_calypso",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777472643086,
+      "tag": "0004_condemned_switch",
+      "breakpoints": true
     }
   ]
 }

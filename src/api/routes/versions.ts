@@ -1,49 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import { alias as aliasedTable } from "drizzle-orm/pg-core";
 import { db, schema } from "../../db/index.js";
 import { requireAuth } from "../plugins/auth.js";
-import { createHash } from "node:crypto";
-import Ajv from "ajv";
-import addFormats from "ajv-formats";
-
-const ajv = new Ajv({ allErrors: true, strict: false });
-addFormats(ajv);
-
-function computeVersionHash(
-  schemaDoc: unknown,
-  recordRows: { recordId: string; type: string; data: unknown }[],
-  fileHashes: string[],
-  readme: string | null,
-): string {
-  const canonical = JSON.stringify({
-    schema: schemaDoc,
-    records: recordRows
-      .sort((a, b) => a.recordId.localeCompare(b.recordId))
-      .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
-    files: fileHashes.sort(),
-    readme: readme ?? null,
-  });
-  return createHash("sha256").update(canonical).digest("hex");
-}
-
-function deriveSemver(
-  prevSemver: string | null,
-  schemaChanged: boolean,
-  recordsChanged: boolean,
-): string {
-  if (!prevSemver) return "v1.0.0";
-
-  const parts = prevSemver.replace(/^v/, "").split(".").map(Number);
-  const [major, minor, patch] = [parts[0] ?? 1, parts[1] ?? 0, parts[2] ?? 0];
-
-  if (schemaChanged) return `v${major + 1}.0.0`;
-  if (recordsChanged) return `v${major}.${minor + 1}.0`;
-  return `v${major}.${minor}.${patch + 1}`;
-}
+import { pushVersion } from "../lib/pushVersion.js";
 
 export async function versionRoutes(app: FastifyInstance) {
   // Lazily backfill totalBytes for versions that were created before we tracked it
-  async function backfillTotalBytes(version: { id: string; totalBytes: number; recordCount: number }) {
+  async function backfillTotalBytes(version: { id: number; totalBytes: number; recordCount: number }) {
     if (version.totalBytes > 0 || version.recordCount === 0) return version.totalBytes;
 
     const records = await db
@@ -159,15 +123,16 @@ export async function versionRoutes(app: FastifyInstance) {
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
 
     const conditions = [eq(schema.records.versionId, version.id)];
-    if (type) conditions.push(eq(schema.records.type, type));
+    if (type) conditions.push(eq(schema.recordTypes.slug, type));
 
     return db
       .select({
         id: schema.records.recordId,
-        type: schema.records.type,
+        type: schema.recordTypes.slug,
         data: schema.records.data,
       })
       .from(schema.records)
+      .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
       .where(and(...conditions))
       .limit(Math.min(parseInt(limit ?? "100", 10), 1000))
       .offset(parseInt(offset ?? "0", 10));
@@ -202,8 +167,13 @@ export async function versionRoutes(app: FastifyInstance) {
 
     // Build file→record reference map by scanning record data for $file refs
     const allRecords = await db
-      .select({ recordId: schema.records.recordId, type: schema.records.type, data: schema.records.data })
+      .select({
+        recordId: schema.records.recordId,
+        type: schema.recordTypes.slug,
+        data: schema.records.data,
+      })
       .from(schema.records)
+      .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
       .where(eq(schema.records.versionId, version.id));
 
     const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>();
@@ -241,8 +211,9 @@ export async function versionRoutes(app: FastifyInstance) {
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
 
     const recordIds = await db
-      .select({ id: schema.records.recordId, type: schema.records.type })
+      .select({ id: schema.records.recordId, type: schema.recordTypes.slug })
       .from(schema.records)
+      .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
       .where(eq(schema.records.versionId, version.id));
 
     const fileHashes = await db
@@ -250,12 +221,49 @@ export async function versionRoutes(app: FastifyInstance) {
       .from(schema.versionFiles)
       .where(eq(schema.versionFiles.versionId, version.id));
 
+    // Pin metadata for each record type used in this version. sourceVersionId
+    // is null for locally-defined types; for imports it points to the source
+    // collection version whose schema was inlined.
+    const sourceVersions = aliasedTable(schema.versions, "src_versions");
+    const sourceCollections = aliasedTable(schema.collections, "src_collections");
+    const sourceAccounts = aliasedTable(schema.accounts, "src_accounts");
+
+    const typePins = await db
+      .select({
+        slug: schema.recordTypes.slug,
+        sourceVersionId: schema.versionRecordTypes.sourceVersionId,
+        sourceVersionNumber: sourceVersions.number,
+        sourceVersionHash: sourceVersions.hash,
+        sourceCollSlug: sourceCollections.slug,
+        sourceOwnerSlug: sourceAccounts.slug,
+      })
+      .from(schema.versionRecordTypes)
+      .innerJoin(
+        schema.recordTypes,
+        eq(schema.versionRecordTypes.recordTypeId, schema.recordTypes.id),
+      )
+      .leftJoin(sourceVersions, eq(schema.versionRecordTypes.sourceVersionId, sourceVersions.id))
+      .leftJoin(sourceCollections, eq(sourceVersions.collectionId, sourceCollections.id))
+      .leftJoin(sourceAccounts, eq(sourceCollections.accountId, sourceAccounts.id))
+      .where(eq(schema.versionRecordTypes.versionId, version.id));
+
+    const types = typePins.map((t) => ({
+      slug: t.slug,
+      isImport: t.sourceVersionId !== null,
+      ref:
+        t.sourceVersionId !== null
+          ? `${t.sourceOwnerSlug}/${t.sourceCollSlug}@${t.sourceVersionNumber}/${t.slug}`
+          : null,
+      hash: t.sourceVersionId !== null ? `sha256:${t.sourceVersionHash}` : null,
+    }));
+
     return {
       version: version.number,
       semver: version.semver,
       hash: version.hash,
       records: recordIds,
       files: fileHashes.map((f) => f.hash),
+      types,
     };
   });
 
@@ -284,251 +292,33 @@ export async function versionRoutes(app: FastifyInstance) {
       const collection = await resolveCollection(owner, slug);
       if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
-      // Get latest version
-      const [latest] = await db
-        .select()
-        .from(schema.versions)
-        .where(eq(schema.versions.collectionId, collection.id))
-        .orderBy(sql`${schema.versions.number} desc`)
-        .limit(1);
-
-      const currentNumber = latest?.number ?? 0;
-
-      // Optimistic lock
-      if (body.base_version !== null && body.base_version !== currentNumber) {
-        return reply.status(409).send({
-          error: "Version conflict",
-          currentVersion: currentNumber,
-          statusCode: 409,
-        });
-      }
-
-      // Build the full record set for this version
-      let existingRecords: { recordId: string; type: string; data: unknown }[] = [];
-      if (latest) {
-        existingRecords = await db
-          .select({
-            recordId: schema.records.recordId,
-            type: schema.records.type,
-            data: schema.records.data,
-          })
-          .from(schema.records)
-          .where(eq(schema.records.versionId, latest.id));
-      }
-
-      // Apply changes
-      const recordMap = new Map(existingRecords.map((r) => [r.recordId, r]));
-
-      for (const rec of body.changes.added ?? []) {
-        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data });
-      }
-      for (const rec of body.changes.updated ?? []) {
-        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data });
-      }
-      for (const id of body.changes.removed ?? []) {
-        recordMap.delete(id);
-      }
-
-      const newRecords = Array.from(recordMap.values());
-      const schemaDoc = body.schema ?? latest?.schema ?? {};
-      const schemaChanged = body.schema != null;
-      const recordsChanged =
-        (body.changes.added?.length ?? 0) > 0 ||
-        (body.changes.updated?.length ?? 0) > 0 ||
-        (body.changes.removed?.length ?? 0) > 0;
-
-      // Validate records against the JSON Schema
-      // The schema's top-level "properties" keys are record type names.
-      // Each record is validated against the sub-schema for its type.
-      const schemaObj = schemaDoc as Record<string, unknown>;
-      const typeSchemas = (schemaObj.properties ?? {}) as Record<string, unknown>;
-      const validationErrors: { recordId: string; type: string; errors: string[] }[] = [];
-
-      // Pre-compile validators per type (avoid recompiling for each record)
-      const validators = new Map<string, ReturnType<typeof ajv.compile>>();
-      for (const [typeName, typeSchema] of Object.entries(typeSchemas)) {
-        validators.set(typeName, ajv.compile(typeSchema as object));
-      }
-
-      for (const rec of newRecords) {
-        const validate = validators.get(rec.type);
-        if (!validate) {
-          validationErrors.push({
-            recordId: rec.recordId,
-            type: rec.type,
-            errors: [`No schema defined for record type "${rec.type}"`],
-          });
-          continue;
-        }
-        if (!validate(rec.data)) {
-          validationErrors.push({
-            recordId: rec.recordId,
-            type: rec.type,
-            errors: (validate.errors ?? []).map(
-              (e) => `${e.instancePath || "/"} ${e.message ?? "validation failed"}`,
-            ),
-          });
-        }
-      }
-
-      if (validationErrors.length > 0) {
-        return reply.status(422).send({
-          error: "Schema validation failed",
-          validationErrors,
-          statusCode: 422,
-        });
-      }
-
-      // Get file hashes from existing version + any new references
-      let existingFileHashes: string[] = [];
-      if (latest) {
-        const vf = await db
-          .select({ hash: schema.versionFiles.fileHash })
-          .from(schema.versionFiles)
-          .where(eq(schema.versionFiles.versionId, latest.id));
-        existingFileHashes = vf.map((f) => f.hash);
-      }
-
-      // Scan new records for $file references
-      const referencedHashes = new Set(existingFileHashes);
-      for (const rec of newRecords) {
-        const data = rec.data as Record<string, unknown>;
-        for (const val of Object.values(data)) {
-          if (
-            typeof val === "object" &&
-            val !== null &&
-            "$file" in val &&
-            typeof (val as { $file: string }).$file === "string"
-          ) {
-            const hash = (val as { $file: string }).$file.replace("sha256:", "");
-            referencedHashes.add(hash);
-          }
-        }
-      }
-
-      // Check all referenced files exist (single query instead of N+1)
-      const allFileHashes = Array.from(referencedHashes);
-      if (allFileHashes.length > 0) {
-        const existingFiles = await db
-          .select({ hash: schema.files.hash })
-          .from(schema.files)
-          .where(inArray(schema.files.hash, allFileHashes));
-        const existingSet = new Set(existingFiles.map((f) => f.hash));
-        const filesNeeded = allFileHashes.filter((h) => !existingSet.has(h));
-
-        if (filesNeeded.length > 0) {
-          return reply.status(422).send({
-            error: "Missing files",
-            filesNeeded: filesNeeded.map((h) => `sha256:${h}`),
-            statusCode: 422,
-          });
-        }
-      }
-
-      // Resolve readme (carry forward from base version if not provided)
-      const readmeValue = body.readme !== undefined ? body.readme : (latest?.readme ?? null);
-      const readmeChanged = readmeValue !== (latest?.readme ?? null);
-
-      // Compute hash (includes readme) and semver
-      const versionHash = computeVersionHash(schemaDoc, newRecords, allFileHashes, readmeValue);
-      const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged);
-      const newNumber = currentNumber + 1;
-
-      // Check for duplicate hash (truly no changes at all)
-      const [existingHash] = await db
-        .select({ number: schema.versions.number })
-        .from(schema.versions)
-        .where(
-          and(
-            eq(schema.versions.collectionId, collection.id),
-            eq(schema.versions.hash, versionHash),
-          ),
-        )
-        .limit(1);
-      if (existingHash) {
-        return reply.status(409).send({
-          error: "No changes detected",
-          message: `Version ${existingHash.number} already has identical content (hash: ${versionHash.slice(0, 12)}...)`,
-          existingVersion: existingHash.number,
-        });
-      }
-
-      // Compute total bytes (records JSON + files)
-      let totalBytes = 0;
-
-      // Size of all record data
-      for (const rec of newRecords) {
-        totalBytes += Buffer.byteLength(JSON.stringify(rec.data), "utf-8");
-      }
-
-      // Size of all referenced files (single query)
-      if (allFileHashes.length > 0) {
-        const [fileSizeSum] = await db
-          .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
-          .from(schema.files)
-          .where(inArray(schema.files.hash, allFileHashes));
-        totalBytes += fileSizeSum?.total ?? 0;
-      }
-
-      // Insert version
-
-      const [version] = await db
-        .insert(schema.versions)
-        .values({
+      const result = await pushVersion(
+        {
           collectionId: collection.id,
-          number: newNumber,
-          semver,
-          hash: versionHash,
-          baseNumber: body.base_version,
-          schema: schemaDoc as any,
+          baseVersion: body.base_version,
+          name: body.name,
+          description: body.description,
           message: body.message ?? null,
-          readme: readmeValue,
-          pushedBy: request.accountId ?? null,
+          readme: body.readme,
           appId: body.app_id ?? null,
           actorId: body.actor_id ?? null,
-          recordCount: newRecords.length,
-          fileCount: allFileHashes.length,
-          totalBytes,
-        })
-        .returning();
+          schema: body.schema,
+          changes: body.changes,
+          pushedBy: request.accountId ?? null,
+        },
+        { accountId: request.accountId ?? null },
+      );
 
-      // Insert records
-      if (newRecords.length > 0) {
-        await db.insert(schema.records).values(
-          newRecords.map((r) => ({
-            versionId: version!.id,
-            recordId: r.recordId,
-            type: r.type,
-            data: r.data as any,
-          })),
-        );
+      if (!result.ok) {
+        return reply.status(result.status).send(result.body);
       }
-
-      // Insert version_files
-      if (allFileHashes.length > 0) {
-        await db.insert(schema.versionFiles).values(
-          allFileHashes.map((hash) => ({
-            versionId: version!.id,
-            fileHash: hash,
-          })),
-        );
-      }
-
-      // Update collection timestamp + optional name/description
-      const collectionUpdates: Record<string, unknown> = { updatedAt: new Date() };
-      if (body.name) collectionUpdates.name = body.name;
-      if (body.description !== undefined) collectionUpdates.description = body.description;
-      await db
-        .update(schema.collections)
-        .set(collectionUpdates)
-        .where(eq(schema.collections.id, collection.id));
 
       return reply.status(201).send({
-        version: newNumber,
-        semver,
-        hash: versionHash,
-        recordCount: newRecords.length,
-        fileCount: allFileHashes.length,
+        version: result.version,
+        semver: result.semver,
+        hash: result.hash,
+        recordCount: result.recordCount,
+        fileCount: result.fileCount,
       });
     },
   );
@@ -555,8 +345,13 @@ export async function versionRoutes(app: FastifyInstance) {
     }
 
     const targetRecords = await db
-      .select()
+      .select({
+        recordId: schema.records.recordId,
+        type: schema.recordTypes.slug,
+        data: schema.records.data,
+      })
       .from(schema.records)
+      .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
       .where(eq(schema.records.versionId, targetVersion.id));
 
     let fromVersion: typeof targetVersion | null = null;
@@ -571,8 +366,13 @@ export async function versionRoutes(app: FastifyInstance) {
       if (fv) {
         fromVersion = fv;
         fromRecords = await db
-          .select()
+          .select({
+            recordId: schema.records.recordId,
+            type: schema.recordTypes.slug,
+            data: schema.records.data,
+          })
           .from(schema.records)
+          .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
           .where(eq(schema.records.versionId, fv.id));
       }
     }

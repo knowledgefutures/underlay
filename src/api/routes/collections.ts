@@ -206,12 +206,13 @@ export async function collectionsRoutes(app: FastifyInstance) {
     if (latestVersion) {
       const rows = await db
         .select({
-          type: schema.records.type,
+          type: schema.recordTypes.slug,
           count: sql<number>`count(*)::int`,
         })
         .from(schema.records)
+        .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
         .where(eq(schema.records.versionId, latestVersion.id))
-        .groupBy(schema.records.type);
+        .groupBy(schema.recordTypes.slug);
       typeCounts = rows.map((r) => ({ type: r.type, count: r.count }));
     }
 
@@ -389,10 +390,11 @@ export async function collectionsRoutes(app: FastifyInstance) {
     const records = await db
       .select({
         recordId: schema.records.recordId,
-        type: schema.records.type,
+        type: schema.recordTypes.slug,
         data: schema.records.data,
       })
       .from(schema.records)
+      .innerJoin(schema.recordTypes, eq(schema.records.recordTypeId, schema.recordTypes.id))
       .where(eq(schema.records.versionId, version.id));
 
     const versionFiles = await db

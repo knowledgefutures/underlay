@@ -1,0 +1,80 @@
+---
+import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, checkOwnership } from "@/lib/page-utils";
+
+const { owner, collection, slug: typeSlug } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) return Astro.redirect("/404");
+const collectionData = await collectionRes.json();
+
+const typeRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/types/${typeSlug}`);
+if (!typeRes.ok) return Astro.redirect("/404");
+const type = await typeRes.json();
+
+const isOwner = await checkOwnership(sessionCookie, owner!);
+---
+
+<Base title={`${typeSlug} — ${owner}/${collection} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={collectionData.public} isOwner={isOwner} active="overview" />
+
+    <nav class="text-sm text-ink-muted mb-2">
+      <a href={`/${owner}/${collection}/types`} class="hover:underline">types</a>
+      <span class="mx-1">/</span>
+      <span class="font-mono text-ink">{typeSlug}</span>
+    </nav>
+
+    <h2 class="text-lg font-semibold mb-1">{type.displayName ?? typeSlug}</h2>
+    {type.description && <p class="text-sm text-ink-muted mb-4">{type.description}</p>}
+
+    <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mt-8 mb-3">Appearances</h3>
+    <p class="text-xs text-ink-muted mb-3">Collection versions that use this type. "↪" indicates the schema was imported from another collection at that version.</p>
+    {type.appearances.length === 0 ? (
+      <p class="text-sm text-ink-muted">Not yet used in any version.</p>
+    ) : (
+      <div class="border border-rule rounded overflow-hidden">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-parchment-dark border-b border-rule">
+              <th class="text-left p-3 font-medium">Version</th>
+              <th class="text-left p-3 font-medium">Source</th>
+              <th class="text-left p-3 font-medium">Hash</th>
+            </tr>
+          </thead>
+          <tbody>
+            {type.appearances.map((a: any) => (
+              <tr class="border-t border-rule hover:bg-parchment-dark/50">
+                <td class="p-3">
+                  <a href={`/${owner}/${collection}/v/${a.versionNumber}/types/${typeSlug}`} class="text-link hover:underline">v{a.versionNumber}</a>
+                </td>
+                <td class="p-3 text-xs text-ink-muted">
+                  {a.isImport ? <>↪ from source v{a.sourceVersionNumber}</> : "local"}
+                </td>
+                <td class="p-3 font-mono text-[11px] text-ink-muted">sha256:{a.versionHash.slice(0, 12)}…</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    {type.importedBy.length > 0 && (
+      <>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mt-8 mb-3">Imported by</h3>
+        <p class="text-xs text-ink-muted mb-3">Other collections that import this type via <code class="font-mono">$ref</code>.</p>
+        <ul class="space-y-1.5 text-sm">
+          {type.importedBy.map((i: any) => (
+            <li>
+              <a href={`/${i.owner}/${i.collection}/v/${i.version}`} class="text-link hover:underline font-mono">
+                {i.owner}/{i.collection}@{i.version}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </>
+    )}
+  </div>
+</Base>

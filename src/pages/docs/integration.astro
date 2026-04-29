@@ -82,7 +82,8 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   <ul>
     <li><strong>Collection</strong> — A named, versioned body of structured data. Identified by <code>:owner/:slug</code>.</li>
     <li><strong>Version</strong> — An immutable snapshot: JSON Schema + records + file references + metadata. Numbered sequentially.</li>
-    <li><strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>, and a <code>data</code> payload conforming to the schema.</li>
+    <li><strong>Record type</strong> — A schema for one kind of record, owned by a collection and identified by <code>:owner/:collection/:type</code>. Other collections can reuse the schema via <code>$ref</code> (see below) without having to agree on a whole collection-level schema.</li>
+    <li><strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>, and a <code>data</code> payload conforming to the type's schema.</li>
     <li><strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced in records via <code set:text={fileRef} />.</li>
   </ul>
 
@@ -111,6 +112,24 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   <h2>First Push Example</h2>
   <p>To push the first version of a collection (creates the initial snapshot):</p>
   <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushExample} /></pre>
+
+  <h2>Sharing Types Across Collections</h2>
+  <p>
+    Each entry under <code>schema.properties</code> can either define a record type inline or
+    reference one defined by another collection version using a Underlay-internal <code>$ref</code>.
+    The pin attaches to the <em>collection</em> (the thing that has versions), not the type:
+  </p>
+  <ul>
+    <li><code>"$ref": "owner/collection/Type"</code> — pin to the LATEST version of <code>owner/collection</code> that defines <code>Type</code></li>
+    <li><code>"$ref": "owner/collection@5/Type"</code> — pin to collection version 5</li>
+    <li><code>"$ref": "owner/collection@sha256:&lt;hex&gt;/Type"</code> — pin to a content hash</li>
+  </ul>
+  <p>
+    Refs are resolved at push time and the sub-schema is inlined into the new version, so the
+    snapshot stays reproducible even if the source is later deleted. A push with a <code>$ref</code>
+    that mixes sibling JSON-Schema keys, points at a missing type, or names a private collection
+    you can't read fails with <code>422 Unknown $ref</code>.
+  </p>
 
   <h2>Mapping a SQL Database</h2>
   <p>Most apps store data in SQL. Here's how to map it to Underlay records:</p>
