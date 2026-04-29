@@ -1,8 +1,9 @@
 ---
 import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase } from "@/lib/page-utils";
 
 const { owner, collection } = Astro.params;
-const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 if (!sessionCookie) {
@@ -28,7 +29,8 @@ if (!collectionRes.ok) {
 const data = await collectionRes.json();
 
 // Basic ownership check (user must own the account or be an org member)
-if (me.slug !== owner) {
+const isOrgMember = me.orgs?.some((o: any) => o.slug === owner);
+if (me.slug !== owner && !isOrgMember) {
   return Astro.redirect(`/${owner}/${collection}`);
 }
 
@@ -97,17 +99,10 @@ if (deleted) {
 ---
 
 <Base title={`Settings — ${data.name} — Underlay`}>
-  <div class="max-w-xl mx-auto px-4 py-10">
-    <nav class="text-xs text-ink-muted mb-6">
-      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
-      <span class="mx-1">/</span>
-      <a href={`/${owner}/${collection}`} class="hover:text-ink">{data.slug}</a>
-      <span class="mx-1">/</span>
-      <span class="text-ink font-medium">settings</span>
-    </nav>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={data.public} isOwner={true} active="settings" />
 
-    <h1 class="text-xl font-semibold tracking-tight mb-6">Collection Settings</h1>
-
+    <div class="max-w-xl">
     {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
     {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
 
@@ -200,6 +195,7 @@ if (deleted) {
           </button>
         </form>
       </details>
+    </div>
     </div>
   </div>
 </Base>

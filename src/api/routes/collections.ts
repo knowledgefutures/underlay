@@ -185,20 +185,38 @@ export async function collectionsRoutes(app: FastifyInstance) {
     // Get latest version info
     const [latestVersion] = await db
       .select({
+        id: schema.versions.id,
         number: schema.versions.number,
         semver: schema.versions.semver,
+        schema: schema.versions.schema,
         recordCount: schema.versions.recordCount,
         fileCount: schema.versions.fileCount,
         totalBytes: schema.versions.totalBytes,
         createdAt: schema.versions.createdAt,
         message: schema.versions.message,
+        readme: schema.versions.readme,
       })
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, result.id))
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(1);
 
-    return { ...result, latestVersion: latestVersion ?? null };
+    // Get per-type record counts for latest version
+    let typeCounts: { type: string; count: number }[] = [];
+    if (latestVersion) {
+      const rows = await db
+        .select({
+          type: schema.records.type,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(schema.records)
+        .where(eq(schema.records.versionId, latestVersion.id))
+        .groupBy(schema.records.type);
+      typeCounts = rows.map((r) => ({ type: r.type, count: r.count }));
+    }
+
+    const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined };
+    return { ...result, latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null };
   });
 
   // Update collection
@@ -286,10 +304,24 @@ export async function collectionsRoutes(app: FastifyInstance) {
 
     if (!account) return [];
 
-    const isOwner = request.accountId === account.id;
+    // Check if the requester owns this account or is an org member
+    let hasFullAccess = request.accountId === account.id;
+    if (!hasFullAccess && account.type === "org" && request.accountId) {
+      const [membership] = await db
+        .select()
+        .from(schema.orgMemberships)
+        .where(
+          and(
+            eq(schema.orgMemberships.orgId, account.id),
+            eq(schema.orgMemberships.userId, request.accountId),
+          ),
+        )
+        .limit(1);
+      hasFullAccess = !!membership;
+    }
 
     const conditions = [eq(schema.collections.accountId, account.id)];
-    if (!isOwner) {
+    if (!hasFullAccess) {
       conditions.push(eq(schema.collections.public, true));
     }
 

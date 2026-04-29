@@ -15,6 +15,13 @@
       "when": 1777423790913,
       "tag": "0001_mushy_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777428576945,
+      "tag": "0002_silly_grey_gargoyle",
+      "breakpoints": true
     }
   ]
 }

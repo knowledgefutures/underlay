@@ -1,12 +1,12 @@
 ---
 import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
 
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const email = form.get("email") as string;
   const password = form.get("password") as string;
 
-  const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
   const res = await fetch(`${apiBase}/api/accounts/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -1,8 +1,8 @@
 ---
 import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
 
 const { owner } = Astro.params;
-const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 if (!sessionCookie) {

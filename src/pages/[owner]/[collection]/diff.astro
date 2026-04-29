@@ -1,0 +1,319 @@
+---
+import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, checkOwnership } from "@/lib/page-utils";
+
+const { owner, collection } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+// Parse query params: ?from=1&to=2
+const toNum = Astro.url.searchParams.get("to");
+const fromNum = Astro.url.searchParams.get("from");
+
+// Fetch collection
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) return Astro.redirect("/404");
+const data = await collectionRes.json();
+
+// Fetch all versions for the dropdown selectors
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=100`);
+const versions: any[] = versionsRes.ok ? await versionsRes.json() : [];
+
+// Default: latest version diff'd against its predecessor
+const latestNum = versions.length > 0 ? versions[0].number : null;
+const targetNum = toNum ? parseInt(toNum, 10) : latestNum;
+const baseNum = fromNum ? parseInt(fromNum, 10) : (targetNum ? targetNum - 1 : null);
+
+// Fetch diff
+let diff: any = null;
+let diffError: string | null = null;
+if (targetNum && targetNum > 0) {
+  const fromParam = baseNum !== null && baseNum >= 0 ? `?from=${baseNum}` : "";
+  const diffRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${targetNum}/diff${fromParam}`);
+  if (diffRes.ok) {
+    diff = await diffRes.json();
+  } else {
+    const body = await diffRes.json().catch(() => ({}));
+    diffError = body.error ?? "Failed to load diff";
+  }
+}
+
+// Fetch version metadata for from/to
+const targetVersion = versions.find((v: any) => v.number === targetNum);
+const baseVersion = versions.find((v: any) => v.number === baseNum);
+
+// Check if current user is owner
+const isOwner = await checkOwnership(sessionCookie, owner!);
+
+// Group changes by type
+function groupByType(records: any[]) {
+  const groups: Record<string, any[]> = {};
+  for (const r of records) {
+    if (!groups[r.type]) groups[r.type] = [];
+    groups[r.type].push(r);
+  }
+  return groups;
+}
+
+const addedByType = diff ? groupByType(diff.added) : {};
+const updatedByType = diff ? groupByType(diff.updated) : {};
+// removed is just IDs, so group differently
+const removedCount = diff?.removed?.length ?? 0;
+
+const totalAdded = diff?.added?.length ?? 0;
+const totalUpdated = diff?.updated?.length ?? 0;
+const totalRemoved = removedCount;
+const totalChanges = totalAdded + totalUpdated + totalRemoved;
+
+const meta = diff?.meta ?? {};
+const hasMetaChanges = meta.schemaChanged || meta.readmeChanged || meta.filesAdded > 0 || meta.filesRemoved > 0;
+---
+
+<Base title={`Diff — ${owner}/${collection} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={data.public} isOwner={isOwner} active="versions" />
+
+    <!-- Version selector -->
+    <div class="flex items-center gap-3 mb-6">
+      <form method="get" class="flex items-center gap-2 text-sm">
+        <label class="text-ink-muted">Comparing</label>
+        <select name="from" class="border border-rule rounded px-2 py-1 text-sm bg-parchment">
+          <option value="0" selected={baseNum === 0}>∅ (empty)</option>
+          {versions.map((v: any) => (
+            <option value={v.number} selected={v.number === baseNum}>
+              v{v.number} ({v.semver})
+            </option>
+          ))}
+        </select>
+        <span class="text-ink-muted">→</span>
+        <select name="to" class="border border-rule rounded px-2 py-1 text-sm bg-parchment">
+          {versions.map((v: any) => (
+            <option value={v.number} selected={v.number === targetNum}>
+              v{v.number} ({v.semver})
+            </option>
+          ))}
+        </select>
+        <button type="submit" class="bg-ink text-parchment px-3 py-1 rounded text-sm font-medium hover:opacity-90 transition-opacity">
+          Compare
+        </button>
+      </form>
+    </div>
+
+    {diffError && (
+      <div class="border border-red-200 bg-red-50 text-red-700 text-sm px-4 py-3 rounded mb-6">
+        {diffError}
+      </div>
+    )}
+
+    {diff && (
+      <div>
+        <!-- Summary bar -->
+        <div class="flex items-center gap-4 text-sm py-2.5 px-4 border border-rule rounded bg-parchment-dark mb-6">
+          <span class="text-ink-muted">
+            {baseVersion ? `v${baseVersion.number}` : "∅"} → v{targetVersion?.number}
+          </span>
+          <span class="text-ink-muted">·</span>
+          <span><strong class="text-ink">{totalChanges.toLocaleString()}</strong> changes</span>
+          {totalAdded > 0 && (
+            <span class="text-green-700">+{totalAdded.toLocaleString()} added</span>
+          )}
+          {totalUpdated > 0 && (
+            <span class="text-amber-700">~{totalUpdated.toLocaleString()} updated</span>
+          )}
+          {totalRemoved > 0 && (
+            <span class="text-red-700">-{totalRemoved.toLocaleString()} removed</span>
+          )}
+          {meta.schemaChanged && (
+            <span class="text-purple-700">schema</span>
+          )}
+          {meta.readmeChanged && (
+            <span class="text-blue-700">readme</span>
+          )}
+          {meta.filesAdded > 0 && (
+            <span class="text-green-700">+{meta.filesAdded} files</span>
+          )}
+          {meta.filesRemoved > 0 && (
+            <span class="text-red-700">-{meta.filesRemoved} files</span>
+          )}
+        </div>
+
+        <!-- Metadata changes -->
+        {hasMetaChanges && (
+          <div class="mb-8">
+            <h3 class="flex items-center gap-2 text-sm font-semibold mb-3">
+              <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+              Metadata changes
+            </h3>
+            <div class="border border-rule rounded overflow-hidden">
+              <table class="w-full text-sm">
+                <tbody>
+                  {meta.schemaChanged && (
+                    <tr class="border-b border-rule">
+                      <td class="p-3 font-medium text-ink-muted w-32">Schema</td>
+                      <td class="p-3 text-purple-700">Modified</td>
+                    </tr>
+                  )}
+                  {meta.readmeChanged && (
+                    <tr class="border-b border-rule">
+                      <td class="p-3 font-medium text-ink-muted w-32">README</td>
+                      <td class="p-3">
+                        {!meta.readmeFrom && meta.readmeTo ? (
+                          <span class="text-green-700">Added</span>
+                        ) : meta.readmeFrom && !meta.readmeTo ? (
+                          <span class="text-red-700">Removed</span>
+                        ) : (
+                          <span class="text-blue-700">Modified</span>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  {meta.filesAdded > 0 && (
+                    <tr class="border-b border-rule">
+                      <td class="p-3 font-medium text-ink-muted w-32">Files added</td>
+                      <td class="p-3 text-green-700">+{meta.filesAdded}</td>
+                    </tr>
+                  )}
+                  {meta.filesRemoved > 0 && (
+                    <tr class="border-b border-rule last:border-b-0">
+                      <td class="p-3 font-medium text-ink-muted w-32">Files removed</td>
+                      <td class="p-3 text-red-700">-{meta.filesRemoved}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {totalChanges === 0 && !hasMetaChanges && (
+          <p class="text-sm text-ink-muted py-8 text-center">No changes between these versions.</p>
+        )}
+
+        <!-- Added records -->
+        {totalAdded > 0 && (
+          <div class="mb-8">
+            <h3 class="flex items-center gap-2 text-sm font-semibold mb-3">
+              <span class="w-2 h-2 rounded-full bg-green-600"></span>
+              Added ({totalAdded.toLocaleString()})
+            </h3>
+            {Object.entries(addedByType).map(([type, records]: [string, any[]]) => (
+              <div class="mb-4">
+                <div class="text-xs font-medium text-ink-muted mb-1.5">{type} ({records.length})</div>
+                <div class="border border-rule rounded overflow-hidden">
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="bg-green-50 border-b border-rule">
+                        <th class="text-left p-2 font-medium w-48">ID</th>
+                        <th class="text-left p-2 font-medium">Data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {records.slice(0, 50).map((r: any) => (
+                        <tr class="border-t border-rule hover:bg-green-50/50">
+                          <td class="p-2 font-mono text-[11px] text-ink-muted align-top">
+                            {r.id.length > 30 ? r.id.slice(0, 30) + "…" : r.id}
+                          </td>
+                          <td class="p-2">
+                            <pre class="text-[11px] font-mono whitespace-pre-wrap break-all max-h-24 overflow-y-auto">{JSON.stringify(r.data, null, 2)}</pre>
+                          </td>
+                        </tr>
+                      ))}
+                      {records.length > 50 && (
+                        <tr class="border-t border-rule">
+                          <td colspan="2" class="p-2 text-center text-ink-muted">
+                            … and {records.length - 50} more
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <!-- Updated records -->
+        {totalUpdated > 0 && (
+          <div class="mb-8">
+            <h3 class="flex items-center gap-2 text-sm font-semibold mb-3">
+              <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+              Updated ({totalUpdated.toLocaleString()})
+            </h3>
+            {Object.entries(updatedByType).map(([type, records]: [string, any[]]) => (
+              <div class="mb-4">
+                <div class="text-xs font-medium text-ink-muted mb-1.5">{type} ({records.length})</div>
+                <div class="border border-rule rounded overflow-hidden">
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="bg-amber-50 border-b border-rule">
+                        <th class="text-left p-2 font-medium w-48">ID</th>
+                        <th class="text-left p-2 font-medium">New data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {records.slice(0, 50).map((r: any) => (
+                        <tr class="border-t border-rule hover:bg-amber-50/50">
+                          <td class="p-2 font-mono text-[11px] text-ink-muted align-top">
+                            {r.id.length > 30 ? r.id.slice(0, 30) + "…" : r.id}
+                          </td>
+                          <td class="p-2">
+                            <pre class="text-[11px] font-mono whitespace-pre-wrap break-all max-h-24 overflow-y-auto">{JSON.stringify(r.data, null, 2)}</pre>
+                          </td>
+                        </tr>
+                      ))}
+                      {records.length > 50 && (
+                        <tr class="border-t border-rule">
+                          <td colspan="2" class="p-2 text-center text-ink-muted">
+                            … and {records.length - 50} more
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <!-- Removed records -->
+        {totalRemoved > 0 && (
+          <div class="mb-8">
+            <h3 class="flex items-center gap-2 text-sm font-semibold mb-3">
+              <span class="w-2 h-2 rounded-full bg-red-600"></span>
+              Removed ({totalRemoved.toLocaleString()})
+            </h3>
+            <div class="border border-rule rounded overflow-hidden">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="bg-red-50 border-b border-rule">
+                    <th class="text-left p-2 font-medium">Record ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diff.removed.slice(0, 100).map((id: string) => (
+                    <tr class="border-t border-rule hover:bg-red-50/50">
+                      <td class="p-2 font-mono text-[11px] text-ink-muted">{id}</td>
+                    </tr>
+                  ))}
+                  {diff.removed.length > 100 && (
+                    <tr class="border-t border-rule">
+                      <td class="p-2 text-center text-ink-muted">
+                        … and {diff.removed.length - 100} more
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+    {!diff && !diffError && (
+      <p class="text-sm text-ink-muted py-8 text-center">Select versions to compare.</p>
+    )}
+  </div>
+</Base>

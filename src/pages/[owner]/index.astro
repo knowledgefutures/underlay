@@ -1,8 +1,8 @@
 ---
 import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
 
 const { owner } = Astro.params;
-const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch account profile
@@ -32,16 +32,18 @@ if (sessionCookie && account.type === "org") {
 ---
 
 <Base title={`${account.displayName} — Underlay`}>
-  <div class="max-w-3xl mx-auto px-4 py-10">
+  <div class="max-w-5xl mx-auto px-4 py-8">
     <div class="mb-8">
       <div class="flex items-center justify-between">
         <h1 class="text-xl font-semibold tracking-tight mb-1">{account.displayName}</h1>
         {isMember && <a href={`/${owner}/settings`} class="text-sm text-ink-muted hover:text-ink transition-colors">Settings</a>}
       </div>
-      <p class="text-sm text-ink-muted font-mono">{account.slug}</p>
-      <span class="inline-block text-xs text-ink-muted border border-rule px-2 py-0.5 mt-2">
-        {account.type === "org" ? "Organization" : "User"}
-      </span>
+      <div class="flex items-center gap-3 mt-1">
+        <p class="text-sm text-ink-muted font-mono">{account.slug}</p>
+        <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">
+          {account.type === "org" ? "Organization" : "User"}
+        </span>
+      </div>
 
       <div class="flex items-center gap-2 mt-3">
         <div class="relative group">
@@ -71,14 +73,14 @@ if (sessionCookie && account.type === "org") {
     {collections.length === 0 ? (
       <p class="text-sm text-ink-muted">No public collections yet.</p>
     ) : (
-      <div class="space-y-2">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         {collections.map((c: any) => (
-          <a href={`/${owner}/${c.slug}`} class="block border border-rule p-3 hover:bg-parchment-dark transition-colors">
+          <a href={`/${owner}/${c.slug}`} class="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors">
             <div class="flex items-center gap-2 mb-1">
-              <span class="font-semibold text-sm">{c.name}</span>
-              {c.public && <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">public</span>}
+              <span class="font-semibold text-sm text-link">{c.name}</span>
+              <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
             </div>
-            <p class="text-xs text-ink-muted">{c.description}</p>
+            {c.description && <p class="text-xs text-ink-muted mt-1 line-clamp-2">{c.description}</p>}
           </a>
         ))}
       </div>

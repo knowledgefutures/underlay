@@ -146,6 +146,7 @@ async function seed() {
   ];
 
   const pubpubHash = computeVersionHash(pubpubSchema, pubpubRecords, []);
+  const pubpubTotalBytes = pubpubRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [pubpubVersion] = await db
     .insert(schema.versions)
     .values({
@@ -156,11 +157,13 @@ async function seed() {
       baseNumber: null,
       schema: pubpubSchema,
       message: "Initial PubPub archive import",
-      appId: "seed",
+      readme: `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
       actorId: "admin",
       recordCount: pubpubRecords.length,
       fileCount: 0,
-      totalBytes: 0,
+      totalBytes: pubpubTotalBytes,
     })
     .returning();
 
@@ -228,6 +231,7 @@ async function seed() {
   ];
 
   const grantsHash = computeVersionHash(grantsSchema, grantsRecords, []);
+  const grantsTotalBytes = grantsRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [grantsVersion] = await db
     .insert(schema.versions)
     .values({
@@ -238,11 +242,13 @@ async function seed() {
       baseNumber: null,
       schema: grantsSchema,
       message: "Initial grants dataset",
-      appId: "seed",
+      readme: `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
       actorId: "admin",
       recordCount: grantsRecords.length,
       fileCount: 0,
-      totalBytes: 0,
+      totalBytes: grantsTotalBytes,
     })
     .returning();
 
@@ -312,6 +318,7 @@ async function seed() {
   ];
 
   const climateHash = computeVersionHash(climateSchema, climateRecords, []);
+  const climateTotalBytes = climateRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [climateVersion] = await db
     .insert(schema.versions)
     .values({
@@ -322,11 +329,13 @@ async function seed() {
       baseNumber: null,
       schema: climateSchema,
       message: "Initial climate observations — 4 stations, 2023-2024 data",
-      appId: "seed",
+      readme: `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
       actorId: "admin",
       recordCount: climateRecords.length,
       fileCount: 0,
-      totalBytes: 0,
+      totalBytes: climateTotalBytes,
     })
     .returning();
 

@@ -15,6 +15,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE = "https://www.adaptcentre.ie/wp-json/wp/v2";
@@ -210,6 +211,137 @@ async function scrapePublications(lookup: Awaited<ReturnType<typeof loadTaxonomi
   return records;
 }
 
+// --- Case Studies ---
+
+const SITE_BASE = "https://www.adaptcentre.ie";
+
+async function scrapeCaseStudies() {
+  console.log("\n📝 Scraping case studies...");
+
+  // Step 1: Crawl all paginated listing pages to collect links
+  const caseStudyLinks: { url: string; title: string }[] = [];
+  const seenUrls = new Set<string>();
+
+  for (let page = 1; page <= 20; page++) {
+    const listUrl = page === 1
+      ? `${SITE_BASE}/case-studies/`
+      : `${SITE_BASE}/case-studies/page/${page}/`;
+    console.log(`  Fetching listing page ${page}...`);
+
+    const res = await fetch(listUrl);
+    if (!res.ok) {
+      console.log(`    Page ${page}: ${res.status}, stopping`);
+      break;
+    }
+    const html = await res.text();
+
+    const linkRegex = /href="(https:\/\/www\.adaptcentre\.ie\/case-studies\/[^"\/]+\/)"[^>]*title="([^"]+)"/g;
+    let match;
+    let pageCount = 0;
+    while ((match = linkRegex.exec(html)) !== null) {
+      const url = match[1];
+      const title = match[2];
+      if (!seenUrls.has(url)) {
+        seenUrls.add(url);
+        caseStudyLinks.push({ url, title });
+        pageCount++;
+      }
+    }
+
+    if (pageCount === 0) break;
+    console.log(`    Found ${pageCount} case studies`);
+    await sleep(DELAY_MS);
+  }
+
+  console.log(`  Total: ${caseStudyLinks.length} case studies found`);
+
+  // Step 2: Scrape each case study page and save raw HTML
+  const records: { id: string; type: string; data: Record<string, unknown> }[] = [];
+  const htmlDir = join(OUT_DIR, "publications", "html");
+  mkdirSync(htmlDir, { recursive: true });
+  const htmlManifest: { slug: string; hash: string; size: number }[] = [];
+
+  for (const { url, title } of caseStudyLinks) {
+    console.log(`  Scraping: ${title}...`);
+    await sleep(DELAY_MS);
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.log(`    ⚠ ${res.status}, skipping`);
+        continue;
+      }
+      const html = await res.text();
+
+      // Save raw HTML as content-addressed file
+      const htmlBuffer = Buffer.from(html, "utf-8");
+      const htmlHash = createHash("sha256").update(htmlBuffer).digest("hex");
+      writeFileSync(join(htmlDir, `${htmlHash}.html`), htmlBuffer);
+
+      // Extract slug from URL
+      const slug = url.replace(/\/$/, "").split("/").pop() ?? "";
+
+      // Extract section content by h2 headings
+      const sections: Record<string, string> = {};
+      const sectionRegex = /<h2[^>]*>(.*?)<\/h2>\s*([\s\S]*?)(?=<h2|<footer|<div class="module module-case-studies"|$)/gi;
+      let sMatch;
+      while ((sMatch = sectionRegex.exec(html)) !== null) {
+        const heading = sMatch[1].replace(/<[^>]+>/g, "").trim();
+        const body = sMatch[2]
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&amp;/g, "&")
+          .replace(/&#038;/g, "&")
+          .replace(/&#8217;/g, "'")
+          .replace(/&#8216;/g, "'")
+          .replace(/&#8220;/g, '"')
+          .replace(/&#8221;/g, '"')
+          .replace(/&nbsp;/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (heading && body && !["Newsletter"].includes(heading)) {
+          sections[heading] = body;
+        }
+      }
+
+      // Extract subtitle (first h2 that's descriptive)
+      const subtitleMatch = html.match(/<h2[^>]*class="[^"]*subtitle[^"]*"[^>]*>(.*?)<\/h2>/i);
+      const firstH2 = Object.keys(sections)[0] ?? "";
+
+      // Extract images
+      const imgRegex = /<img[^>]+src="([^"]+adaptcentre\.ie\/wp-content\/uploads[^"]+)"[^>]*>/g;
+      const images: string[] = [];
+      let iMatch;
+      while ((iMatch = imgRegex.exec(html)) !== null) {
+        if (!images.includes(iMatch[1])) images.push(iMatch[1]);
+      }
+
+      htmlManifest.push({ slug, hash: htmlHash, size: htmlBuffer.length });
+
+      records.push({
+        id: `case_study_${slug}`,
+        type: "case_study",
+        data: {
+          title,
+          slug,
+          subtitle: subtitleMatch ? subtitleMatch[1].replace(/<[^>]+>/g, "").trim() : (firstH2 || ""),
+          url,
+          sections,
+          images,
+          html: { $file: `sha256:${htmlHash}` },
+          html_size: htmlBuffer.length,
+        },
+      });
+    } catch (err) {
+      console.log(`    ⚠ Error: ${err}`);
+    }
+  }
+
+  writeJson("publications", "case-studies.json", records);
+  writeJson("publications", "html-manifest.json", htmlManifest);
+  console.log(`  📄 ${htmlManifest.length} HTML files saved (${(htmlManifest.reduce((s, f) => s + f.size, 0) / 1024 / 1024).toFixed(1)} MB)`);
+  return records;
+}
+
 // --- Main ---
 
 async function main() {
@@ -220,10 +352,12 @@ async function main() {
   const lookup = await loadTaxonomies();
   const team = await scrapeTeam(lookup);
   const pubs = await scrapePublications(lookup);
+  const caseStudies = await scrapeCaseStudies();
 
   console.log("\n✅ Done!");
   console.log(`   Team:         ${team.length} records`);
   console.log(`   Publications: ${pubs.length} records`);
+  console.log(`   Case studies: ${caseStudies.length} records`);
   console.log(`\n   Run 'npx tsx tools/adapt/push.ts' to push to Underlay.`);
 }
 

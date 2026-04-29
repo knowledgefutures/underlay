@@ -1,17 +1,11 @@
 ---
 import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, formatBytes, checkOwnership } from "@/lib/page-utils";
+import { marked } from "marked";
 
 const { owner, collection } = Astro.params;
-const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
 const sessionCookie = Astro.cookies.get("session")?.value;
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
 
 // Fetch collection
 const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
@@ -20,116 +14,148 @@ if (!collectionRes.ok) {
 }
 const data = await collectionRes.json();
 
-// Fetch versions
-const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=20`);
-const versions = versionsRes.ok ? await versionsRes.json() : [];
+// Count total versions (just need the count, not the list)
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=1`);
+const versionsData = versionsRes.ok ? await versionsRes.json() : [];
+const totalVersions = versionsData.length > 0 ? data.latestVersion?.number ?? 0 : 0;
 
 // Check if current user is the owner (for settings link)
-let isOwner = false;
-if (sessionCookie) {
-  try {
-    const meRes = await fetch(`${apiBase}/api/accounts/me`, {
-      headers: { Cookie: `session=${sessionCookie}` },
-    });
-    if (meRes.ok) {
-      const me = await meRes.json();
-      isOwner = me.slug === owner;
-    }
-  } catch {}
-}
+const isOwner = await checkOwnership(sessionCookie, owner!);
+
+// Render readme markdown
+const readmeSource = data.latestVersion?.readme || data.latestVersion?.message || null;
+const readmeHtml = readmeSource ? marked.parse(readmeSource) : null;
+
+// Parse type counts for TOC
+const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? [];
+const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type));
 ---
 
 <Base title={`${data.name} — Underlay`} description={data.description}>
-  <div class="max-w-3xl mx-auto px-4 py-10">
-    <nav class="text-xs text-ink-muted mb-4">
-      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
-      <span class="mx-1">/</span>
-      <span class="text-ink font-medium">{data.slug}</span>
-    </nav>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={data.public} isOwner={isOwner} active="overview" />
 
-    <div class="mb-6">
-      <h1 class="text-xl font-semibold tracking-tight mb-1">{data.name}</h1>
-      {data.description && <p class="text-sm text-ink-muted">{data.description}</p>}
-      <div class="flex items-center gap-3 mt-2 text-xs text-ink-muted">
-        <span class="border border-rule px-1.5 py-0.5">{data.public ? "public" : "private"}</span>
-        <span>by <a href={`/${data.ownerSlug}`} class="text-link underline">{data.ownerName}</a></span>
-        {isOwner && <a href={`/${owner}/${collection}/settings`} class="text-link underline">Settings</a>}
-      </div>
-
-      {versions.length > 0 && (
-        <div class="flex items-center gap-2 mt-3">
-          <div class="relative group">
-            <button class="flex items-center gap-1 border border-rule px-3 py-1.5 text-xs font-medium hover:bg-parchment-dark transition-colors">
-              Subscribe ▾
-            </button>
-            <div class="hidden group-hover:block absolute left-0 top-full mt-1 bg-parchment border border-rule shadow-sm z-10 min-w-[16rem]">
-              <div class="p-3 border-b border-rule">
-                <p class="text-xs font-medium mb-1">AT Protocol</p>
-                <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1">{`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}</code>
-                <p class="text-[10px] text-ink-muted mt-1">Follow in any AT Proto app</p>
-              </div>
-              <div class="p-3 border-b border-rule">
-                <p class="text-xs font-medium mb-1">API</p>
-                <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1">{`GET /api/collections/${owner}/${collection}/versions`}</code>
-                <p class="text-[10px] text-ink-muted mt-1">Poll for new versions</p>
-              </div>
-              <a href={`/api/collections/${owner}/${collection}/export`} class="block p-3 text-xs font-medium hover:bg-parchment-dark transition-colors">
-                Download .tar.gz
+    <!-- Two-column layout -->
+    <div class="grid grid-cols-[1fr_260px] gap-8">
+      <!-- Main column -->
+      <div class="min-w-0">
+        <!-- Latest version bar -->
+        {data.latestVersion && (
+          <div class="flex items-center justify-between border border-rule rounded px-4 py-2.5 bg-parchment-dark mb-6">
+            <div class="flex items-center gap-3 text-sm">
+              <a href={`/${owner}/${collection}/v/${data.latestVersion.number}`} class="font-medium text-link hover:underline">
+                {data.latestVersion.semver}
+              </a>
+              <span class="text-ink-muted">·</span>
+              <span class="text-ink-muted">{data.latestVersion.recordCount.toLocaleString()} records</span>
+              <span class="text-ink-muted">·</span>
+              <span class="text-ink-muted">{data.latestVersion.fileCount.toLocaleString()} files</span>
+              <span class="text-ink-muted">·</span>
+              <span class="text-ink-muted">{formatBytes(data.latestVersion.totalBytes)}</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-ink-muted">
+                {new Date(data.latestVersion.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </span>
+              <a href={`/${owner}/${collection}/versions`} class="flex items-center gap-1 text-xs text-ink-muted hover:text-ink transition-colors" title="Version history">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span>{totalVersions}</span>
               </a>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
 
-    {data.latestVersion && (
-      <div class="border border-rule p-4 mb-6 bg-parchment-dark">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-semibold">Latest: {data.latestVersion.semver} (#{data.latestVersion.number})</span>
-          <a href={`/${owner}/${collection}/v/${data.latestVersion.number}`} class="text-xs text-link underline">View →</a>
-        </div>
-        <div class="grid grid-cols-3 gap-4 text-xs text-ink-muted">
-          <div>
-            <span class="block text-ink font-medium">{data.latestVersion.recordCount.toLocaleString()}</span>
-            records
+        <!-- Type TOC (like GitHub file list) -->
+        {allTypes.length > 0 && (
+          <div class="border border-rule rounded overflow-hidden mb-6">
+            {allTypes.map((t: any, i: number) => (
+              <a
+                href={`/${owner}/${collection}/v/${data.latestVersion.number}?type=${t.type}`}
+                class={`flex items-center justify-between px-4 py-2.5 text-sm hover:bg-parchment-dark/50 transition-colors ${i < allTypes.length - 1 ? "border-b border-rule" : ""}`}
+              >
+                <div class="flex items-center gap-2.5">
+                  <svg class="w-4 h-4 text-ink-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                  <span class="font-medium">{t.type}</span>
+                </div>
+                <span class="text-xs text-ink-muted">{t.count.toLocaleString()} records</span>
+              </a>
+            ))}
           </div>
-          <div>
-            <span class="block text-ink font-medium">{data.latestVersion.fileCount.toLocaleString()}</span>
-            files
+        )}
+
+        <!-- README -->
+        {readmeHtml ? (
+          <div class="border border-rule rounded overflow-hidden mb-6">
+            <div class="px-4 py-2.5 bg-parchment-dark border-b border-rule text-xs font-medium text-ink-muted">
+              README
+            </div>
+            <div class="px-6 py-5 prose prose-sm max-w-none" set:html={readmeHtml} />
           </div>
-          <div>
-            <span class="block text-ink font-medium">{formatBytes(data.latestVersion.totalBytes)}</span>
-            total
+        ) : (
+          <div class="border border-rule rounded px-4 py-8 mb-6 text-center text-sm text-ink-muted">
+            No README yet.
           </div>
-        </div>
-        {data.latestVersion.message && (
-          <p class="text-xs text-ink-muted mt-2 italic">{data.latestVersion.message}</p>
         )}
       </div>
-    )}
 
-    <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
-      Version History ({versions.length})
-    </h2>
+      <!-- Sidebar -->
+      <aside class="text-sm">
+        <!-- About -->
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">About</h3>
+          <p class="text-sm text-ink leading-relaxed">
+            {data.description || "No description."}
+          </p>
+          <div class="mt-2 text-xs text-ink-muted">
+            by <a href={`/${data.ownerSlug}`} class="text-link hover:underline">{data.ownerName}</a>
+          </div>
+        </div>
 
-    {versions.length === 0 ? (
-      <p class="text-sm text-ink-muted">No versions yet.</p>
-    ) : (
-      <div class="space-y-1">
-        {versions.map((v: any) => (
-          <a href={`/${owner}/${collection}/v/${v.number}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors text-sm">
-            <div class="flex items-center gap-3">
-              <span class="font-mono text-xs text-ink-muted">#{v.number}</span>
-              <span class="font-medium">{v.semver}</span>
-              {v.message && <span class="text-xs text-ink-muted truncate max-w-[20rem]">{v.message}</span>}
+        <!-- Stats -->
+        {data.latestVersion && (
+          <div class="mb-6">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">Stats</h3>
+            <div class="space-y-1.5 text-xs">
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                <span><strong class="text-ink">{totalVersions}</strong> versions</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z" /></svg>
+                <span><strong class="text-ink">{data.latestVersion.recordCount.toLocaleString()}</strong> records</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                <span><strong class="text-ink">{data.latestVersion.fileCount.toLocaleString()}</strong> files</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z" /></svg>
+                <span><strong class="text-ink">{formatBytes(data.latestVersion.totalBytes)}</strong> total</span>
+              </div>
             </div>
-            <div class="flex items-center gap-4 text-xs text-ink-muted">
-              <span>{v.recordCount} records</span>
-              <span>{new Date(v.createdAt).toLocaleDateString()}</span>
+          </div>
+        )}
+
+        <!-- Subscribe / Export -->
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">Subscribe</h3>
+          <div class="space-y-2 text-xs">
+            <div>
+              <p class="font-medium mb-0.5">AT Protocol</p>
+              <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1 rounded">{`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}</code>
             </div>
-          </a>
-        ))}
-      </div>
-    )}
+            <div>
+              <p class="font-medium mb-0.5">API</p>
+              <code class="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1 rounded">{`GET /api/collections/${owner}/${collection}/versions`}</code>
+            </div>
+            {data.latestVersion && (
+              <a href={`/api/collections/${owner}/${collection}/export`} class="inline-block text-link hover:underline">
+                Download .tar.gz
+              </a>
+            )}
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
 </Base>

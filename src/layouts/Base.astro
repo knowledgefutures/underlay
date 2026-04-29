@@ -1,5 +1,6 @@
 ---
 import UserMenu from "@/components/UserMenu";
+import { apiBase } from "@/lib/page-utils";
 
 interface Props {
   title: string;
@@ -13,7 +14,6 @@ let currentUser: { slug: string; displayName: string } | null = null;
 const sessionCookie = Astro.cookies.get("session")?.value;
 if (sessionCookie) {
   try {
-    const apiBase = import.meta.env.DEV ? "http://localhost:3000" : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
     const res = await fetch(`${apiBase}/api/accounts/me`, {
       headers: { Cookie: `session=${sessionCookie}` },
     });

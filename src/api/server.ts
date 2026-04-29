@@ -32,11 +32,14 @@ export async function buildApp() {
     limits: { fileSize: 500 * 1024 * 1024 }, // 500MB for large files
   });
 
-  // Allow raw binary uploads (PDFs, etc.)
+  // Allow raw binary uploads (PDFs, HTML, etc.)
   app.addContentTypeParser("application/pdf", { parseAs: "buffer" }, (_req, body, done) => {
     done(null, body);
   });
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => {
+    done(null, body);
+  });
+  app.addContentTypeParser("text/html", { parseAs: "buffer" }, (_req, body, done) => {
     done(null, body);
   });
 
