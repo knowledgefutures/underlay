@@ -8,8 +8,11 @@ import {
 } from "@aws-sdk/client-s3";
 import type { Readable } from "node:stream";
 
+// Works with AWS S3, Cloudflare R2, MinIO, or any S3-compatible service.
+// For R2: S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+// For MinIO (dev): S3_ENDPOINT=http://minio:9000
 const s3 = new S3Client({
-  region: process.env.S3_REGION ?? "us-east-1",
+  region: process.env.S3_REGION ?? "auto",
   endpoint: process.env.S3_ENDPOINT,
   forcePathStyle: true,
   credentials: {

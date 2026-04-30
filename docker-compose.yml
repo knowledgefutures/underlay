@@ -1,9 +1,82 @@
-# Production compose.
+# Stack file — deploy with: docker stack deploy -c docker-compose.yml <stack-name>
 # SOPS decrypts .env.enc → .env before this runs (see deploy workflow).
-
-name: underlay
+# Caddy runs on the host (not in Docker) — see infra/Caddyfile.
 
 services:
+  app:
+    image: ${IMAGE:-ghcr.io/knowledgefutures/underlay}:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=448"
+    ports:
+      - "${APP_PORT:-4322}:4321"
+      - "${API_PORT:-3001}:3000"
+    networks:
+      - appnet
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 640m
+          cpus: "1.0"
+        reservations:
+          memory: 384m
+          cpus: "0.25"
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: start-first
+      restart_policy:
+        condition: on-failure
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/api/health', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1));\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cron:
+    image: ${IMAGE:-ghcr.io/knowledgefutures/underlay}:${IMAGE_TAG:-latest}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=128"
+    command: ["node", "--import", "tsx/esm", "tools/cron.ts"]
+    networks:
+      - appnet
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 192m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
+          cpus: "0.1"
+      restart_policy:
+        condition: any
+    tmpfs:
+      - /tmp:size=16m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
   postgres:
     image: postgres:16-alpine
     env_file:
@@ -12,19 +85,38 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-underlay}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-underlay}
       POSTGRES_DB: ${POSTGRES_DB:-underlay}
+    command: >
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c work_mem=32MB
+      -c maintenance_work_mem=256MB
+      -c max_connections=200
+      -c max_wal_size=2GB
+      -c min_wal_size=256MB
+      -c wal_buffers=32MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - appnet
+      - dbaccess
+    stop_grace_period: 60s
     deploy:
+      replicas: 1
       resources:
         limits:
-          memory: 256m
-          cpus: "0.5"
+          memory: 4g
+          cpus: "2.0"
         reservations:
-          memory: 128m
-          cpus: "0.1"
-    restart: unless-stopped
+          memory: 1g
+          cpus: "0.5"
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: any
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-underlay}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-underlay}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,69 +126,12 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  app:
-    image: ${IMAGE:-underlay}:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      NODE_OPTIONS: "--max-old-space-size=448"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "${APP_PORT:-4322}:4321"
-      - "${API_PORT:-3001}:3000"
-    deploy:
-      resources:
-        limits:
-          memory: 640m
-          cpus: "1.0"
-        reservations:
-          memory: 384m
-          cpus: "0.25"
-    tmpfs:
-      - /tmp:size=64m
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:3000/api/health" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  cron:
-    image: ${IMAGE:-underlay}:${IMAGE_TAG:-latest}
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      NODE_OPTIONS: "--max-old-space-size=128"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: [ "node", "--import", "tsx/esm", "tools/cron.ts" ]
-    deploy:
-      resources:
-        limits:
-          memory: 192m
-          cpus: "0.5"
-        reservations:
-          memory: 64m
-          cpus: "0.1"
-    tmpfs:
-      - /tmp:size=16m
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "3"
+networks:
+  appnet:
+    driver: overlay
+  dbaccess:
+    driver: overlay
+    attachable: true
 
 volumes:
   pgdata:

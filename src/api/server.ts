@@ -24,7 +24,7 @@ export async function buildApp() {
   });
 
   await app.register(cors, {
-    origin: process.env.APP_URL ?? "http://localhost:4321",
+    origin: true,
     credentials: true,
   });
 
