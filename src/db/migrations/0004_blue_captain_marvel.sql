@@ -1,0 +1,1 @@
+ALTER TABLE "versions" ADD COLUMN "public_hash" text;

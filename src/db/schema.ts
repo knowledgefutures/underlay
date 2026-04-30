@@ -92,6 +92,7 @@ export const versions = pgTable(
     number: integer("number").notNull(),
     semver: text("semver").notNull(),
     hash: text("hash").notNull(),
+    publicHash: text("public_hash"),
     baseNumber: integer("base_number"),
     schema: jsonb("schema").notNull(),
     message: text("message"),
@@ -122,6 +123,7 @@ export const records = pgTable(
     recordId: text("record_id").notNull(),
     type: text("type").notNull(),
     data: jsonb("data").notNull(),
+    private: boolean("private").default(false).notNull(),
   },
   (t) => [primaryKey({ columns: [t.versionId, t.recordId] })],
 );

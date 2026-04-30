@@ -9,6 +9,75 @@ import addFormats from "ajv-formats";
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 
+// --- Visibility helpers ---
+
+/** Get the set of private type names from a schema document */
+function getPrivateTypes(schemaDoc: Record<string, unknown>): Set<string> {
+  const types = new Set<string>();
+  const props = schemaDoc?.properties as Record<string, any> | undefined;
+  if (!props) return types;
+  for (const [typeName, typeDef] of Object.entries(props)) {
+    if (typeDef?.private === true) types.add(typeName);
+  }
+  return types;
+}
+
+/** Get the set of private field names for a given type from a schema document */
+function getPrivateFields(schemaDoc: Record<string, unknown>, typeName: string): Set<string> {
+  const fields = new Set<string>();
+  const props = (schemaDoc?.properties as Record<string, any>)?.[typeName]?.properties as
+    | Record<string, any>
+    | undefined;
+  if (!props) return fields;
+  for (const [fieldName, fieldDef] of Object.entries(props)) {
+    if (fieldDef?.private === true) fields.add(fieldName);
+  }
+  return fields;
+}
+
+/** Strip private fields from a record's data */
+function filterRecordData(data: unknown, privateFields: Set<string>): unknown {
+  if (privateFields.size === 0 || typeof data !== "object" || data === null) return data;
+  const filtered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (!privateFields.has(key)) filtered[key] = value;
+  }
+  return filtered;
+}
+
+/** Strip private types and private fields from a schema doc for public view */
+function filterSchema(schemaDoc: Record<string, unknown>): Record<string, unknown> {
+  const props = schemaDoc?.properties as Record<string, any> | undefined;
+  if (!props) return schemaDoc;
+
+  const filtered: Record<string, unknown> = {};
+  for (const [typeName, typeDef] of Object.entries(props)) {
+    if (typeDef?.private === true) continue; // hide entire private types
+    // Strip private fields within the type
+    const typeProps = typeDef?.properties as Record<string, any> | undefined;
+    if (!typeProps) {
+      filtered[typeName] = typeDef;
+      continue;
+    }
+    const publicProps: Record<string, unknown> = {};
+    for (const [fieldName, fieldDef] of Object.entries(typeProps)) {
+      if ((fieldDef as any)?.private === true) continue;
+      publicProps[fieldName] = fieldDef;
+    }
+    // Also filter "required" array to remove private fields
+    const required = (typeDef.required as string[] | undefined)?.filter(
+      (f: string) => !((typeProps[f] as any)?.private === true),
+    );
+    filtered[typeName] = { ...typeDef, properties: publicProps, required };
+  }
+  return { ...schemaDoc, properties: filtered };
+}
+
+/** Check if requester is the owner of a collection */
+function isOwner(request: any, collectionAccountId: string): boolean {
+  return request.accountId != null && request.accountId === collectionAccountId;
+}
+
 function computeVersionHash(
   schemaDoc: unknown,
   recordRows: { recordId: string; type: string; data: unknown }[],
@@ -23,7 +92,38 @@ function computeVersionHash(
     files: fileHashes.sort(),
     readme: readme ?? null,
   });
-  return createHash("sha256").update(canonical).digest("hex");
+  return "private:" + createHash("sha256").update(canonical).digest("hex");
+}
+
+/** Compute a public hash that only covers non-private content */
+function computePublicHash(
+  schemaDoc: Record<string, unknown>,
+  recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
+  fileHashes: string[],
+  readme: string | null,
+): string {
+  const privateTypes = getPrivateTypes(schemaDoc);
+  const publicSchema = filterSchema(schemaDoc);
+
+  // Filter to public records only, and strip private fields
+  const publicRecords = recordRows
+    .filter((r) => !r.private && !privateTypes.has(r.type))
+    .map((r) => {
+      const privateFields = getPrivateFields(schemaDoc, r.type);
+      const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data;
+      return { id: r.recordId, type: r.type, data };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  // Only include file hashes referenced by public records
+  // (for now include all — file gating filters on serve, not on hash)
+  const canonical = JSON.stringify({
+    schema: publicSchema,
+    records: publicRecords,
+    files: fileHashes.sort(),
+    readme: readme ?? null,
+  });
+  return "public:" + createHash("sha256").update(canonical).digest("hex");
 }
 
 function deriveSemver(
@@ -79,11 +179,14 @@ export async function versionRoutes(app: FastifyInstance) {
     const collection = await resolveCollection(owner, slug);
     if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
-    return db
+    const ownerAccess = isOwner(request, collection.accountId);
+
+    const rows = await db
       .select({
         number: schema.versions.number,
         semver: schema.versions.semver,
         hash: schema.versions.hash,
+        publicHash: schema.versions.publicHash,
         message: schema.versions.message,
         appId: schema.versions.appId,
         actorId: schema.versions.actorId,
@@ -97,6 +200,19 @@ export async function versionRoutes(app: FastifyInstance) {
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(Math.min(parseInt(limit ?? "50", 10), 100))
       .offset(parseInt(offset ?? "0", 10));
+
+    return rows.map((row) => ({
+      number: row.number,
+      semver: row.semver,
+      hash: ownerAccess ? row.hash : (row.publicHash ?? row.hash),
+      message: row.message,
+      appId: row.appId,
+      actorId: row.actorId,
+      recordCount: row.recordCount,
+      fileCount: row.fileCount,
+      totalBytes: row.totalBytes,
+      createdAt: row.createdAt,
+    }));
   });
 
   // Latest version
@@ -114,6 +230,15 @@ export async function versionRoutes(app: FastifyInstance) {
 
     if (!version) return reply.status(404).send({ error: "No versions", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
+
+    // Filter for non-owners: swap hash, strip schema
+    if (!isOwner(request, collection.accountId)) {
+      if (version.publicHash) version.hash = version.publicHash;
+      if (version.schema) {
+        version.schema = filterSchema(version.schema as Record<string, unknown>) as any;
+      }
+    }
+
     return version;
   });
 
@@ -133,6 +258,15 @@ export async function versionRoutes(app: FastifyInstance) {
 
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
+
+    // Filter for non-owners: swap hash, strip schema
+    if (!isOwner(request, collection.accountId)) {
+      if (version.publicHash) version.hash = version.publicHash;
+      if (version.schema) {
+        version.schema = filterSchema(version.schema as Record<string, unknown>) as any;
+      }
+    }
+
     return version;
   });
 
@@ -161,7 +295,26 @@ export async function versionRoutes(app: FastifyInstance) {
     const conditions = [eq(schema.records.versionId, version.id)];
     if (type) conditions.push(eq(schema.records.type, type));
 
-    return db
+    // Determine visibility
+    const ownerAccess = isOwner(request, collection.accountId);
+    const schemaDoc = (version.schema ?? {}) as Record<string, unknown>;
+    const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaDoc);
+
+    // Exclude private types and private records from query if not owner
+    if (!ownerAccess) {
+      if (privateTypes.size > 0) {
+        if (type && privateTypes.has(type)) {
+          return []; // requesting a private type as non-owner
+        }
+        for (const pt of privateTypes) {
+          conditions.push(sql`${schema.records.type} != ${pt}`);
+        }
+      }
+      // Exclude record-level private records
+      conditions.push(eq(schema.records.private, false));
+    }
+
+    const records = await db
       .select({
         id: schema.records.recordId,
         type: schema.records.type,
@@ -171,6 +324,22 @@ export async function versionRoutes(app: FastifyInstance) {
       .where(and(...conditions))
       .limit(Math.min(parseInt(limit ?? "100", 10), 1000))
       .offset(parseInt(offset ?? "0", 10));
+
+    // Strip private fields if not owner
+    if (!ownerAccess) {
+      const fieldCache = new Map<string, Set<string>>();
+      return records.map((rec) => {
+        if (!fieldCache.has(rec.type)) {
+          fieldCache.set(rec.type, getPrivateFields(schemaDoc, rec.type));
+        }
+        const privateFields = fieldCache.get(rec.type)!;
+        return privateFields.size > 0
+          ? { ...rec, data: filterRecordData(rec.data, privateFields) }
+          : rec;
+      });
+    }
+
+    return records;
   });
 
   // List files for a version
@@ -275,8 +444,8 @@ export async function versionRoutes(app: FastifyInstance) {
         actor_id?: string;
         schema?: unknown;
         changes: {
-          added?: { id: string; type: string; data: unknown }[];
-          updated?: { id: string; type: string; data: unknown }[];
+          added?: { id: string; type: string; data: unknown; private?: boolean }[];
+          updated?: { id: string; type: string; data: unknown; private?: boolean }[];
           removed?: string[];
         };
       };
@@ -304,13 +473,14 @@ export async function versionRoutes(app: FastifyInstance) {
       }
 
       // Build the full record set for this version
-      let existingRecords: { recordId: string; type: string; data: unknown }[] = [];
+      let existingRecords: { recordId: string; type: string; data: unknown; private: boolean }[] = [];
       if (latest) {
         existingRecords = await db
           .select({
             recordId: schema.records.recordId,
             type: schema.records.type,
             data: schema.records.data,
+            private: schema.records.private,
           })
           .from(schema.records)
           .where(eq(schema.records.versionId, latest.id));
@@ -320,10 +490,10 @@ export async function versionRoutes(app: FastifyInstance) {
       const recordMap = new Map(existingRecords.map((r) => [r.recordId, r]));
 
       for (const rec of body.changes.added ?? []) {
-        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data });
+        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data, private: rec.private ?? false });
       }
       for (const rec of body.changes.updated ?? []) {
-        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data });
+        recordMap.set(rec.id, { recordId: rec.id, type: rec.type, data: rec.data, private: rec.private ?? false });
       }
       for (const id of body.changes.removed ?? []) {
         recordMap.delete(id);
@@ -429,8 +599,14 @@ export async function versionRoutes(app: FastifyInstance) {
       const readmeValue = body.readme !== undefined ? body.readme : (latest?.readme ?? null);
       const readmeChanged = readmeValue !== (latest?.readme ?? null);
 
-      // Compute hash (includes readme) and semver
+      // Compute hashes (private = full content, public = filtered view) and semver
       const versionHash = computeVersionHash(schemaDoc, newRecords, allFileHashes, readmeValue);
+      const publicHash = computePublicHash(
+        schemaDoc as Record<string, unknown>,
+        newRecords,
+        allFileHashes,
+        readmeValue,
+      );
       const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged);
       const newNumber = currentNumber + 1;
 
@@ -479,6 +655,7 @@ export async function versionRoutes(app: FastifyInstance) {
           number: newNumber,
           semver,
           hash: versionHash,
+          publicHash,
           baseNumber: body.base_version,
           schema: schemaDoc as any,
           message: body.message ?? null,
@@ -492,16 +669,21 @@ export async function versionRoutes(app: FastifyInstance) {
         })
         .returning();
 
-      // Insert records
+      // Insert records (in batches to avoid oversized SQL statements)
       if (newRecords.length > 0) {
-        await db.insert(schema.records).values(
-          newRecords.map((r) => ({
-            versionId: version!.id,
-            recordId: r.recordId,
-            type: r.type,
-            data: r.data as any,
-          })),
-        );
+        const RECORD_BATCH = 1000;
+        for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
+          const batch = newRecords.slice(i, i + RECORD_BATCH);
+          await db.insert(schema.records).values(
+            batch.map((r) => ({
+              versionId: version!.id,
+              recordId: r.recordId,
+              type: r.type,
+              data: r.data as any,
+              private: r.private,
+            })),
+          );
+        }
       }
 
       // Insert version_files

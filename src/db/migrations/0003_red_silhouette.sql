@@ -1,0 +1,1 @@
+ALTER TABLE "records" ADD COLUMN "private" boolean DEFAULT false NOT NULL;
