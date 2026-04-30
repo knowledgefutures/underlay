@@ -94,10 +94,38 @@ const diffRes = `{
           <tr><td><code>app_id</code></td><td>Identifier for the application that pushed this version.</td></tr>
           <tr><td><code>actor_id</code></td><td>Identifier for the user or process that triggered the push.</td></tr>
           <tr><td><code>schema</code></td><td>JSON Schema for the records. If omitted, the previous version's schema is reused.</td></tr>
-          <tr><td><code>changes.added</code></td><td>New records to add.</td></tr>
-          <tr><td><code>changes.updated</code></td><td>Existing records to replace (by id).</td></tr>
+          <tr><td><code>changes.added</code></td><td>New records to add. Each record can include <code>"private": true</code> to hide it from public readers.</td></tr>
+          <tr><td><code>changes.updated</code></td><td>Existing records to replace (by id). Can include <code>"private": true</code>.</td></tr>
           <tr><td><code>changes.removed</code></td><td>Record IDs to remove.</td></tr>
         </table>
+
+        <h3>Schema privacy</h3>
+        <p>You can add <code>"private": true</code> at two levels in the schema:</p>
+        <ul>
+          <li><strong>Type-level:</strong> Add <code>"private": true</code> to a type definition to hide all records of that type from public readers. The type is also stripped from the public schema response.</li>
+          <li><strong>Field-level:</strong> Add <code>"private": true</code> to a field definition to strip that field from records returned to public readers. The field is also removed from the public schema.</li>
+        </ul>
+        <p>Example schema with privacy:</p>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "type": "object",
+  "properties": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "internalScore": {"type": "number", "private": true}
+      }
+    },
+    "InternalNote": {
+      "type": "object",
+      "private": true,
+      "properties": {
+        "note": {"type": "string"}
+      }
+    }
+  }
+}`}</code></pre>
         <h3>Response <span class="text-ink-muted font-normal">201</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={pushRes} /></pre>
         <h3>Errors</h3>

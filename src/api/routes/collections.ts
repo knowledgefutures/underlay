@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { eq, and, ilike, or, sql } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
-import { getSchemasAsOf } from "../../db/queries.js";
 import { requireAuth } from "../plugins/auth.js";
 import { v4 as uuidv4 } from "uuid";
 import { pack as tarPack } from "tar-stream";
@@ -189,6 +188,7 @@ export async function collectionsRoutes(app: FastifyInstance) {
         id: schema.versions.id,
         number: schema.versions.number,
         semver: schema.versions.semver,
+        schema: schema.versions.schema,
         recordCount: schema.versions.recordCount,
         fileCount: schema.versions.fileCount,
         totalBytes: schema.versions.totalBytes,
@@ -201,9 +201,8 @@ export async function collectionsRoutes(app: FastifyInstance) {
       .orderBy(sql`${schema.versions.number} desc`)
       .limit(1);
 
-    // Get per-type record counts and schemas for latest version
+    // Get per-type record counts for latest version
     let typeCounts: { type: string; count: number }[] = [];
-    let latestSchemas: { slug: string; schema: unknown; schemaHash: string; sourceSchemaId: string | null }[] = [];
     if (latestVersion) {
       const rows = await db
         .select({
@@ -214,16 +213,10 @@ export async function collectionsRoutes(app: FastifyInstance) {
         .where(eq(schema.records.versionId, latestVersion.id))
         .groupBy(schema.records.type);
       typeCounts = rows.map((r) => ({ type: r.type, count: r.count }));
-      latestSchemas = [...(await getSchemasAsOf(result.id, latestVersion.number)).values()];
     }
 
     const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined };
-    return {
-      ...result,
-      latestVersion: latestVersion
-        ? { ...latestVersionData, typeCounts, schemas: latestSchemas }
-        : null,
-    };
+    return { ...result, latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null };
   });
 
   // Update collection
@@ -392,9 +385,6 @@ export async function collectionsRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "No versions found", statusCode: 404 });
     }
 
-    // Fetch schemas for this version
-    const exportSchemas = [...(await getSchemasAsOf(collection.id, version.number)).values()];
-
     // Fetch records and files for this version
     const records = await db
       .select({
@@ -440,7 +430,7 @@ export async function collectionsRoutes(app: FastifyInstance) {
         totalBytes: version.totalBytes,
         createdAt: version.createdAt,
       },
-      schemas: exportSchemas,
+      schema: version.schema,
     };
     const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2));
     pack.entry({ name: "manifest.json", size: manifestBuf.length }, manifestBuf);

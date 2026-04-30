@@ -9,7 +9,6 @@ import { accountRoutes } from "./routes/accounts.js";
 import { collectionsRoutes } from "./routes/collections.js";
 import { versionRoutes } from "./routes/versions.js";
 import { fileRoutes } from "./routes/files.js";
-import { schemaRoutes } from "./routes/schemas.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -25,7 +24,7 @@ export async function buildApp() {
   });
 
   await app.register(cors, {
-    origin: process.env.APP_URL ?? "http://localhost:4321",
+    origin: true,
     credentials: true,
   });
 
@@ -53,7 +52,6 @@ export async function buildApp() {
   await app.register(collectionsRoutes, { prefix: "/api" });
   await app.register(versionRoutes, { prefix: "/api" });
   await app.register(fileRoutes, { prefix: "/api" });
-  await app.register(schemaRoutes, { prefix: "/api" });
 
   return app;
 }
@@ -63,6 +61,5 @@ const isMain =
 
 if (isMain) {
   const app = await buildApp();
-  const port = Number(process.env.API_PORT ?? 3000);
-  await app.listen({ port, host: "0.0.0.0" });
+  await app.listen({ port: 3000, host: "0.0.0.0" });
 }

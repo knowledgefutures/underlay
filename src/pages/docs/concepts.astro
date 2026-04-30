@@ -55,4 +55,21 @@ const fileRef = '{"$file": "sha256:..."}';
         <li><strong>Organizations</strong> — group accounts with members who have roles (owner, admin, member)</li>
       </ul>
       <p>Both can own collections. API keys are scoped to an account and optionally to a specific collection, with permission levels: <code>read</code>, <code>write</code>, or <code>admin</code>.</p>
+
+      <h2>Privacy & Visibility</h2>
+      <p>Underlay supports fine-grained privacy at three levels, allowing you to store sensitive data alongside public data in the same collection.</p>
+
+      <h3>Collection-level</h3>
+      <p>A collection can be <strong>public</strong> (listed in browse, readable by anyone) or <strong>private</strong> (visible only to the owner and org members).</p>
+
+      <h3>Type-level</h3>
+      <p>Mark an entire record type as private in the schema by adding <code>"private": true</code> to the type definition. All records of that type are hidden from public readers, and the type is stripped from the schema response.</p>
+
+      <h3>Field-level</h3>
+      <p>Mark individual fields within a type as private by adding <code>"private": true</code> to the field definition. The type remains visible, but those fields are stripped from records returned to public readers.</p>
+
+      <h3>Record-level</h3>
+      <p>Mark individual records as private by including <code>"private": true</code> in the record when pushing. The record is hidden from public queries but visible to the collection owner.</p>
+
+      <p>Private content is excluded from the <strong>public hash</strong> (used for verifying publicly-visible content) but included in the <strong>private hash</strong> (used by owners for full integrity verification).</p>
 </Docs>

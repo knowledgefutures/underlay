@@ -1,0 +1,44 @@
+# Host-level Caddy — manages TLS for all domains.
+# Deploy to /etc/caddy/Caddyfile on the server.
+# Reload with: systemctl reload caddy
+# NOTE: Use 127.0.0.1 (not localhost) — Docker Swarm publishes on IPv4 only.
+
+www.underlay.org {
+    tls internal
+
+    # API routes → Fastify (prod)
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+    handle /assets/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+    handle /uploads/* {
+        reverse_proxy 127.0.0.1:3001
+    }
+
+    # Everything else → Astro SSR (prod)
+    handle {
+        reverse_proxy 127.0.0.1:4322
+    }
+}
+
+dev.underlay.org {
+    tls internal
+
+    # API routes → Fastify (dev)
+    handle /api/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+    handle /assets/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+    handle /uploads/* {
+        reverse_proxy 127.0.0.1:3000
+    }
+
+    # Everything else → Astro SSR (dev)
+    handle {
+        reverse_proxy 127.0.0.1:4321
+    }
+}

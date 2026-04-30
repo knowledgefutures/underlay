@@ -2,9 +2,11 @@ node_modules/
 dist/
 .env
 .env.dev
+.env.local
 data/
 planning/
 .astro/
 *.db
 *.db-journal
 *.db-wal
+_scriptsRepo/

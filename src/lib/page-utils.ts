@@ -2,11 +2,8 @@
  * Shared utilities for Astro pages (server-side).
  */
 
-/** Internal API base URL */
-export const apiBase =
-  import.meta.env.DEV
-    ? "http://localhost:3000"
-    : `http://localhost:${import.meta.env.API_PORT ?? 3000}`;
+/** Internal API base URL (Astro and Fastify are co-located in the same container) */
+export const apiBase = "http://localhost:3000";
 
 /** Format bytes into human-readable size */
 export function formatBytes(bytes: number): string {

@@ -11,7 +11,6 @@
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
     "db:generate": "drizzle-kit generate",
-    "db:drop": "drizzle-kit drop",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "tool:backup": "tsx tools/backupDb.ts",

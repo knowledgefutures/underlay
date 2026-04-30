@@ -1,8 +1,6 @@
 # Underlay
 
-A versioned, content-addressed registry for knowledge collections. Apps publish snapshots of their data to Underlay; Underlay preserves them, deduplicates files, and exposes them via a stable HTTPS API.
-
-**Underlay is the archive underneath your app.**
+A versioned, content-addressed registry for structured knowledge. Apps publish snapshots of their data to Underlay; Underlay preserves them, deduplicates files, and exposes them via a stable HTTPS API.
 
 Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) nonprofit.
 
@@ -16,28 +14,24 @@ Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) nonp
 ### Development
 
 ```bash
-# Clone and start everything (Postgres, MinIO, app)
 git clone https://github.com/knowledgefutures/underlay.git
 cd underlay
 ./dev.sh
 ```
 
 This starts:
-- **PostgreSQL 16** on port 5432
+- **PostgreSQL 16** on port 5433 (host) → 5432 (container)
 - **MinIO** (S3-compatible storage) on ports 9000/9001
-- **Underlay** on port 4321 (frontend) and port 3000 (API)
+- **Underlay** on port 4321 (Astro SSR) and port 3000 (Fastify API)
 
-The dev script auto-creates `.env.dev` from defaults if one doesn't exist.
+The dev script auto-creates `.env.local` from `.env.test` defaults if one doesn't exist.
 
 ### Without Docker
 
 ```bash
 npm install
-
-# Set up your own Postgres and S3, then:
-cp .env.test .env.dev
-# Edit .env.dev with your connection strings
-
+cp .env.test .env.local
+# Edit .env.local with your Postgres and S3 connection strings
 npm run db:migrate
 npm run db:seed
 npm run dev:server
@@ -45,152 +39,112 @@ npm run dev:server
 
 ### Default Seed User
 
-The seed creates an admin account you can log in with:
 - **Email:** admin@underlay.org
 - **Password:** admin
 
-It also creates a "Knowledge Futures" org with three sample collections.
+Also creates a "Knowledge Futures" org with sample collections.
 
 ## Architecture
 
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Astro 6 SSR + React 19 islands + Tailwind CSS 4 |
-| API | Fastify 5 (TypeScript) |
+| API | Fastify 5 (TypeScript), always binds to port 3000 |
 | Database | PostgreSQL 16 + Drizzle ORM |
-| File Storage | S3-compatible (AWS S3 / MinIO / R2) |
+| File Storage | Cloudflare R2 (prod) / MinIO (dev) — S3-compatible |
 | Auth | Session cookies (web) + API keys (programmatic) |
-| Deployment | Docker (Alpine), multi-stage build |
+| Deployment | Docker Swarm on Hetzner, Caddy reverse proxy, Cloudflare DNS |
+| CI/CD | GitHub Actions → GHCR → SSH → `docker stack deploy` |
+| Secrets | SOPS + age encryption |
 
 ## Project Structure
 
 ```
 src/
-├── api/                  # Fastify API server
-│   ├── plugins/auth.ts   # Authentication (API keys + sessions)
-│   ├── routes/           # API route handlers
-│   │   ├── accounts.ts   # Signup, login, API key CRUD
+├── api/                  # Fastify API server (port 3000)
+│   ├── plugins/auth.ts   # Auth (API keys + session cookies)
+│   ├── routes/
+│   │   ├── accounts.ts   # Signup, login, API key CRUD, orgs
 │   │   ├── collections.ts    # Collection CRUD
-│   │   ├── versions.ts   # Version push/pull/diff
+│   │   ├── versions.ts   # Version push/pull/diff + privacy filtering
 │   │   ├── files.ts      # Content-addressed file storage
 │   │   └── health.ts     # Health check
 │   └── server.ts         # Fastify entry point
 ├── db/
 │   ├── schema.ts         # Drizzle table definitions
 │   ├── index.ts          # Database client
-│   ├── migrate.ts        # Migration runner
-│   ├── seed.ts           # Seed data (--force to re-seed)
+│   ├── migrate.ts        # Migration runner (retries on DNS failures)
+│   ├── seed.ts           # Seed data
 │   └── migrations/       # Generated SQL migrations
-├── layouts/
-│   ├── Base.astro        # Root HTML layout
-│   └── Docs.astro        # Documentation page layout
+├── layouts/              # Astro layouts (Base, Docs, BlogPost)
+├── components/           # React islands + Astro components
 ├── lib/
-│   └── s3.ts             # S3 client utilities
+│   ├── s3.ts             # S3 client (upload, download, head, list, delete)
+│   └── page-utils.ts     # SSR utilities
 ├── pages/
 │   ├── index.astro       # Landing page
 │   ├── explore.astro     # Browse public collections
-│   ├── connect.astro     # Integration guide (for devs and LLMs)
-│   ├── login.astro       # Login form
-│   ├── signup.astro      # Signup form
-│   ├── dashboard.astro   # Authenticated user's collections
+│   ├── login/signup.astro
+│   ├── dashboard.astro   # User's collections
 │   ├── settings/         # Account settings + API key management
-│   ├── blog/             # Blog posts
+│   ├── blog/             # Markdown blog posts
 │   ├── docs/             # Documentation (concepts, quickstart, API ref, self-hosting)
 │   └── [owner]/          # Dynamic routes
-│       ├── index.astro           # /:owner — account profile
+│       ├── index.astro           # Profile page
+│       ├── settings.astro        # Account/org settings
 │       └── [collection]/
-│           ├── index.astro       # /:owner/:collection — collection overview
-│           └── v/[n].astro       # /:owner/:collection/v/:n — version detail
-├── styles/
-│   └── global.css        # Tailwind theme (parchment/ink palette)
+│           ├── index.astro       # Collection overview
+│           ├── versions.astro    # Version history
+│           ├── diff.astro        # Version diff viewer
+│           ├── settings.astro    # Collection settings
+│           └── v/[n].astro       # Version detail
+├── styles/global.css     # Tailwind theme (parchment/ink palette)
+public/
+├── .well-known/ai.txt   # Machine-readable API docs (for LLMs/bots)
 tools/
-├── backupDb.ts           # Postgres backup → S3
-└── cron.ts               # Scheduled task runner
-```
-
-## API
-
-All endpoints are under `/api`. Auth via `Authorization: Bearer <api_key>` for writes.
-
-### Accounts
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/accounts/signup` | Create account |
-| POST | `/api/accounts/login` | Log in (sets session cookie) |
-| POST | `/api/accounts/logout` | Log out |
-| GET | `/api/accounts/me` | Current user |
-| GET | `/api/accounts/:slug` | Public profile |
-| POST | `/api/accounts/keys` | Create API key |
-| GET | `/api/accounts/keys` | List API keys |
-| DELETE | `/api/accounts/keys/:id` | Revoke API key |
-
-### Collections
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/collections` | Browse public collections |
-| POST | `/api/accounts/:owner/collections` | Create collection |
-| GET | `/api/collections/:owner/:slug` | Collection metadata |
-| PATCH | `/api/collections/:owner/:slug` | Update collection |
-| DELETE | `/api/collections/:owner/:slug` | Delete collection |
-| GET | `/api/accounts/:owner/collections` | List owner's collections |
-
-### Versions
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/collections/:owner/:slug/versions` | Push a version |
-| GET | `/api/collections/:owner/:slug/versions` | List versions |
-| GET | `/api/collections/:owner/:slug/versions/latest` | Latest version |
-| GET | `/api/collections/:owner/:slug/versions/:n` | Get version |
-| GET | `/api/collections/:owner/:slug/versions/:n/records` | Get records |
-| GET | `/api/collections/:owner/:slug/versions/:n/manifest` | Get manifest |
-| GET | `/api/collections/:owner/:slug/versions/:n/diff` | Diff versions |
-
-### Files
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| HEAD | `/api/collections/:owner/:slug/files/:hash` | Check existence |
-| GET | `/api/collections/:owner/:slug/files/:hash` | Download |
-| PUT | `/api/collections/:owner/:slug/files/:hash` | Upload |
-
-## Scripts
-
-```bash
-npm run dev              # Start full dev environment (Docker)
-npm run dev:server       # Start Astro + API (no Docker)
-npm run build            # Build for production
-npm run start            # Start production server
-
-npm run db:generate      # Generate Drizzle migrations
-npm run db:migrate       # Run migrations
-npm run db:seed          # Seed database (--force to re-seed)
-
-npm run tool:backup      # Manual database backup to S3
-
-npm run secrets:encrypt  # Encrypt .env with SOPS
-npm run secrets:decrypt  # Decrypt .env.enc with SOPS
+├── backupDb.ts           # Postgres backup → S3 (_backups/ prefix)
+└── cron.ts               # Scheduled task runner (daily backups)
 ```
 
 ## Deployment
 
-### Docker
+### Infrastructure
 
-```bash
-docker build -t underlay .
-docker compose up -d
-```
+- **Hetzner** — Single box (8 vCPU, 16GB RAM) running Docker Swarm
+- **Caddy** — Host-level reverse proxy, TLS via `tls internal` (Cloudflare Full mode)
+- **Cloudflare** — DNS + CDN + DDoS protection
+- **R2** — Object storage (zero egress fees), single bucket with prefixes:
+  - `files/` — Content-addressed immutable uploads
+  - `_backups/` — Compressed Postgres dumps
 
-The production `docker-compose.yml` runs three services:
-- **postgres** — PostgreSQL 16 with persistent volume
-- **app** — Migrations + Astro SSR + Fastify API
-- **cron** — Scheduled database backups
+### Stacks
 
-### CI/CD
+Two Docker Swarm stacks run on the same box:
 
-Push to `main` triggers the GitHub Actions workflow:
-1. Build Docker image → push to GHCR
-2. SSH to server → pull → decrypt secrets → `docker compose up`
+| Stack | Domain | Host Ports | Purpose |
+|-------|--------|-----------|---------|
+| `underlay-prod` | www.underlay.org | 4322 (SSR), 3001 (API) | Production |
+| `underlay-dev` | dev.underlay.org | 4321 (SSR), 3000 (API) | Staging |
 
-Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
+Container-internal ports are always fixed: 4321 (Astro) and 3000 (Fastify).
+Host ports are configured via `APP_PORT` and `API_PORT` in .env files (compose-only variables).
+
+### CI/CD Flow
+
+1. Push to `main` → deploys to `dev.underlay.org`
+2. Create a release/tag → deploys to `www.underlay.org`
+3. Manual dispatch → choose environment
+
+The workflow: build Docker image → push to GHCR → SSH to server → decrypt secrets → `docker stack deploy` → wait for healthy rollout.
+
+Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST_DEV`, `SSH_HOST_PROD`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
+
+### Docker Compose Files
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Deployed stacks (prod & dev via Swarm) |
+| `docker-compose.local.yml` | Local development (source-mounted, MinIO, hot reload) |
 
 ## Environment Variables
 
@@ -198,13 +152,62 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`, `GHCR_USER`,
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `SESSION_SECRET` | Secret for signing session cookies |
-| `APP_URL` | Public frontend URL (for CORS) |
-| `API_PORT` | Fastify API port (default: 3000) |
+| `APP_PORT` | Host-published port for Astro SSR (compose only, default: 4322) |
+| `API_PORT` | Host-published port for Fastify API (compose only, default: 3001) |
 | `S3_BUCKET` | S3 bucket name |
-| `S3_REGION` | S3 region |
-| `S3_ENDPOINT` | S3 endpoint (for MinIO, R2, etc.) |
+| `S3_REGION` | S3 region (`auto` for R2) |
+| `S3_ENDPOINT` | S3 endpoint URL |
 | `S3_ACCESS_KEY` | S3 access key |
 | `S3_SECRET_KEY` | S3 secret key |
+
+`NODE_ENV` is set in `docker-compose.yml` `environment:` block (not in .env files).
+
+## Scripts
+
+```bash
+# Development
+npm run dev              # Start full local stack (Docker)
+npm run dev:server       # Start Astro + API without Docker
+npm run build            # Build for production
+
+# Database
+npm run db:generate      # Generate Drizzle migrations from schema changes
+npm run db:migrate       # Run pending migrations
+npm run db:seed          # Seed database
+
+# Tools
+npm run tool:backup      # Manual database backup to S3
+
+# Secrets (SOPS + age)
+npm run secrets:encrypt      # Encrypt .env → .env.enc
+npm run secrets:encrypt:dev  # Encrypt .env.dev → .env.dev.enc
+npm run secrets:decrypt      # Decrypt .env.enc → .env
+npm run secrets:decrypt:dev  # Decrypt .env.dev.enc → .env.dev
+```
+
+## Maintenance Checklist
+
+When adding or changing features, update these locations:
+
+| What | Where | Purpose |
+|------|-------|---------|
+| API documentation | `public/.well-known/ai.txt` | Machine-readable docs for LLMs and bots |
+| Concepts | `src/pages/docs/concepts.astro` | Core concepts explanation |
+| API reference | `src/pages/docs/api/*.astro` | Endpoint-level docs with examples |
+| Integration guide | `src/pages/docs/integration.astro` | Developer onboarding guide |
+| Quick start | `src/pages/docs/quickstart.astro` | Getting started tutorial |
+| Self-hosting | `src/pages/docs/self-host.astro` | Deployment instructions |
+| DB schema | `src/db/schema.ts` → `npm run db:generate` | Schema changes need a migration |
+| Encrypted secrets | `.env.enc` / `.env.dev.enc` | Re-encrypt after changing .env files |
+
+### Privacy features
+
+The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations. When changing how privacy works, update:
+- `src/api/routes/versions.ts` — filtering logic
+- `src/api/routes/files.ts` — file access checks
+- `public/.well-known/ai.txt` — Privacy section
+- `src/pages/docs/concepts.astro` — Privacy section
+- `src/pages/docs/api/versions.astro` — Push endpoint docs
 
 ## License
 

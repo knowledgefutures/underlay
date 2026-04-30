@@ -41,8 +41,8 @@ npm run tool:backup
       <table>
         <tr><td><code>DATABASE_URL</code></td><td>PostgreSQL connection string</td></tr>
         <tr><td><code>SESSION_SECRET</code></td><td>Secret for signing session cookies</td></tr>
-        <tr><td><code>APP_URL</code></td><td>Public URL of the frontend (for CORS)</td></tr>
-        <tr><td><code>API_PORT</code></td><td>Port for the Fastify API server (default: 3000)</td></tr>
+        <tr><td><code>APP_PORT</code></td><td>Host-published port for Astro SSR (Docker only, default: 4322)</td></tr>
+        <tr><td><code>API_PORT</code></td><td>Host-published port for Fastify API (Docker only, default: 3001)</td></tr>
         <tr><td><code>S3_BUCKET</code></td><td>S3 bucket name</td></tr>
         <tr><td><code>S3_REGION</code></td><td>S3 region</td></tr>
         <tr><td><code>S3_ENDPOINT</code></td><td>S3 endpoint URL (for MinIO, R2, etc.)</td></tr>
