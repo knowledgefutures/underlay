@@ -1,5 +1,5 @@
 {
-  "id": "42b2042f-31a4-407b-ad0a-1d8eaa64758a",
+  "id": "1c352149-7929-45b2-b5bd-d35ebb3c6c4e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -403,6 +403,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "private": {
+          "name": "private",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},
@@ -431,6 +438,131 @@
         }
       },
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.schema_labels": {
+      "name": "schema_labels",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "schema_id": {
+          "name": "schema_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "schema_labels_label_idx": {
+          "name": "schema_labels_label_idx",
+          "columns": [
+            {
+              "expression": "label",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "schema_labels_schema_id_schemas_id_fk": {
+          "name": "schema_labels_schema_id_schemas_id_fk",
+          "tableFrom": "schema_labels",
+          "tableTo": "schemas",
+          "columnsFrom": [
+            "schema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "schema_labels_schema_id_label_unique": {
+          "name": "schema_labels_schema_id_label_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "schema_id",
+            "label"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.schemas": {
+      "name": "schemas",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "schema": {
+          "name": "schema",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_hash": {
+          "name": "schema_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "schemas_schema_hash_unique": {
+          "name": "schemas_schema_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "schema_hash"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -548,6 +680,88 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.version_schemas": {
+      "name": "version_schemas",
+      "schema": "",
+      "columns": {
+        "version_id": {
+          "name": "version_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_id": {
+          "name": "schema_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "version_schemas_schema_id_idx": {
+          "name": "version_schemas_schema_id_idx",
+          "columns": [
+            {
+              "expression": "schema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "version_schemas_version_id_versions_id_fk": {
+          "name": "version_schemas_version_id_versions_id_fk",
+          "tableFrom": "version_schemas",
+          "tableTo": "versions",
+          "columnsFrom": [
+            "version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "version_schemas_schema_id_schemas_id_fk": {
+          "name": "version_schemas_schema_id_schemas_id_fk",
+          "tableFrom": "version_schemas",
+          "tableTo": "schemas",
+          "columnsFrom": [
+            "schema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "version_schemas_version_id_slug_pk": {
+          "name": "version_schemas_version_id_slug_pk",
+          "columns": [
+            "version_id",
+            "slug"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.versions": {
       "name": "versions",
       "schema": "",
@@ -582,21 +796,33 @@
           "primaryKey": false,
           "notNull": true
         },
+        "public_hash": {
+          "name": "public_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "base_number": {
           "name": "base_number",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "schema": {
-          "name": "schema",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
         "message": {
           "name": "message",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "readme": {
+          "name": "readme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pushed_by": {
+          "name": "pushed_by",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -657,6 +883,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "versions_pushed_by_accounts_id_fk": {
+          "name": "versions_pushed_by_accounts_id_fk",
+          "tableFrom": "versions",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "pushed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },

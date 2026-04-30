@@ -188,7 +188,6 @@ export async function collectionsRoutes(app: FastifyInstance) {
         id: schema.versions.id,
         number: schema.versions.number,
         semver: schema.versions.semver,
-        schema: schema.versions.schema,
         recordCount: schema.versions.recordCount,
         fileCount: schema.versions.fileCount,
         totalBytes: schema.versions.totalBytes,
@@ -417,6 +416,20 @@ export async function collectionsRoutes(app: FastifyInstance) {
     // Pipe tar → gzip → response
     const outputStream = pack.pipe(gzip);
 
+    // Load schemas for this version
+    const versionSchemaEntries = await db
+      .select({
+        slug: schema.versionSchemas.slug,
+        schemaBody: schema.schemas.schema,
+      })
+      .from(schema.versionSchemas)
+      .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
+      .where(eq(schema.versionSchemas.versionId, version.id));
+
+    const schemasMap = Object.fromEntries(
+      versionSchemaEntries.map((e) => [e.slug, e.schemaBody]),
+    );
+
     // Add manifest.json
     const manifest = {
       collection: { owner, slug, name: collection.name, description: collection.description },
@@ -430,7 +443,7 @@ export async function collectionsRoutes(app: FastifyInstance) {
         totalBytes: version.totalBytes,
         createdAt: version.createdAt,
       },
-      schema: version.schema,
+      schemas: schemasMap,
     };
     const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2));
     pack.entry({ name: "manifest.json", size: manifestBuf.length }, manifestBuf);

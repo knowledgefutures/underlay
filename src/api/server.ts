@@ -9,6 +9,7 @@ import { accountRoutes } from "./routes/accounts.js";
 import { collectionsRoutes } from "./routes/collections.js";
 import { versionRoutes } from "./routes/versions.js";
 import { fileRoutes } from "./routes/files.js";
+import { schemaRoutes } from "./routes/schemas.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -52,6 +53,7 @@ export async function buildApp() {
   await app.register(collectionsRoutes, { prefix: "/api" });
   await app.register(versionRoutes, { prefix: "/api" });
   await app.register(fileRoutes, { prefix: "/api" });
+  await app.register(schemaRoutes, { prefix: "/api" });
 
   return app;
 }

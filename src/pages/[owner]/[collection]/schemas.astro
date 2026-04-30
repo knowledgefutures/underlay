@@ -1,0 +1,116 @@
+---
+import Base from "@/layouts/Base.astro";
+import CollectionNav from "@/components/CollectionNav.astro";
+import { apiBase, checkOwnership } from "@/lib/page-utils";
+
+const { owner, collection } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+// Fetch collection metadata
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+if (!collectionRes.ok) return Astro.redirect("/404");
+const data = await collectionRes.json();
+
+const isOwner = await checkOwnership(sessionCookie, owner!);
+
+// Fetch schemas for this collection (uses latest version by default)
+const versionParam = Astro.url.searchParams.get("version");
+const schemasUrl = `${apiBase}/api/collections/${owner}/${collection}/schemas${versionParam ? `?version=${versionParam}` : ""}`;
+const schemasRes = await fetch(schemasUrl);
+const schemasData = schemasRes.ok ? await schemasRes.json() : { schemas: [], version: null, semver: null };
+const schemas: any[] = schemasData.schemas ?? [];
+---
+
+<Base title={`Schemas — ${owner}/${collection} — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <CollectionNav owner={owner!} collection={collection!} isPublic={data.public} isOwner={isOwner} active="schemas" />
+
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold text-ink-muted">
+        {schemas.length} type{schemas.length !== 1 ? "s" : ""}
+        {schemasData.semver && <span class="font-normal ml-1">in {schemasData.semver}</span>}
+      </h2>
+    </div>
+
+    {schemas.length === 0 ? (
+      <p class="text-sm text-ink-muted py-8 text-center">No schemas in this version.</p>
+    ) : (
+      <div class="space-y-4">
+        {schemas.map((s: any) => {
+          const properties = (s.schema as any)?.properties ?? {};
+          const fields = Object.entries(properties);
+          const isPrivate = (s.schema as any)?.private === true;
+          const labels: string[] = (s.schema as any)?.["x-underlay-labels"] ?? [];
+
+          return (
+            <div class="border border-rule rounded overflow-hidden">
+              {/* Header */}
+              <div class="flex items-center justify-between px-4 py-3 bg-parchment-dark border-b border-rule">
+                <div class="flex items-center gap-3">
+                  <svg class="w-4 h-4 text-ink-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                  <span class="font-medium text-sm">{s.slug}</span>
+                  {isPrivate && <span class="text-[11px] border border-rule px-1.5 py-0.5 text-ink-muted">private</span>}
+                </div>
+                <div class="flex items-center gap-3">
+                  {labels.length > 0 && (
+                    <div class="flex items-center gap-1">
+                      {labels.map((label: string) => (
+                        <span class="text-[11px] bg-parchment border border-rule px-1.5 py-0.5 rounded text-ink-muted">{label}</span>
+                      ))}
+                    </div>
+                  )}
+                  <a
+                    href={`/schemas/${s.schemaId}`}
+                    class="text-[11px] text-link hover:underline"
+                    title="View global schema detail"
+                  >
+                    {s.schemaHash.slice(0, 10)}…
+                  </a>
+                </div>
+              </div>
+
+              {/* Fields table */}
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-rule">
+                    <th class="text-left p-2.5 font-medium w-48">Field</th>
+                    <th class="text-left p-2.5 font-medium w-32">Type</th>
+                    <th class="text-left p-2.5 font-medium">Annotations</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fields.map(([name, def]: [string, any]) => {
+                    const fieldType = def.type ?? "unknown";
+                    const format = def.format ? ` (${def.format})` : "";
+                    const refType = def["x-ref-type"];
+                    const isFieldPrivate = def.private === true;
+
+                    return (
+                      <tr class="border-t border-rule hover:bg-parchment-dark/50">
+                        <td class="p-2.5 font-mono">{name}</td>
+                        <td class="p-2.5 text-ink-muted">{fieldType}{format}</td>
+                        <td class="p-2.5">
+                          <div class="flex items-center gap-2">
+                            {refType && (
+                              <span class="inline-flex items-center gap-1 text-[11px] bg-parchment-dark border border-rule px-1.5 py-0.5 rounded">
+                                <svg class="w-3 h-3 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                                → {refType}
+                              </span>
+                            )}
+                            {isFieldPrivate && (
+                              <span class="text-[11px] border border-rule px-1.5 py-0.5 rounded text-ink-muted">private</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+</Base>

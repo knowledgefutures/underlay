@@ -35,7 +35,8 @@ Delete endpoints require "admin" scope.
 - Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
 - Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
 - File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
-- Schema: a JSON Schema document describing the record types in a version. Schema changes trigger a major version bump.
+- Schema: a JSON Schema document for a single record type, stored as a global, immutable, content-addressed entity. Each type gets its own schema. Schema changes trigger a major version bump.
+- Schema labeling: schemas can be labeled post-hoc with URIs or names (e.g. "schema.org/Person") for cross-collection discovery.
 
 ---
 
@@ -109,25 +110,30 @@ Authorization: Bearer ul_<key>
   "message": "Daily archive 2026-04-27",
   "app_id": "my-app",
   "actor_id": "my-app:cron-job",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "Article": {
-        "type": "object",
-        "properties": {
-          "title": {"type": "string"},
-          "body": {"type": "string"},
-          "publishedAt": {"type": "string", "format": "date-time"}
-        }
+  "schemas": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "publishedAt": {"type": "string", "format": "date-time"},
+        "authorId": {"type": "string", "x-ref-type": "Author"}
+      }
+    },
+    "Author": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "email": {"type": "string", "private": true}
       }
     }
   },
   "changes": {
     "added": [
-      {"id": "article-42", "type": "Article", "data": {"title": "New Paper", "body": "...", "publishedAt": "2026-04-27T00:00:00Z"}}
+      {"id": "article-42", "type": "Article", "data": {"title": "New Paper", "body": "...", "publishedAt": "2026-04-27T00:00:00Z", "authorId": "author-1"}}
     ],
     "updated": [
-      {"id": "article-10", "type": "Article", "data": {"title": "Updated Title", "body": "...", "publishedAt": "2025-01-01T00:00:00Z"}}
+      {"id": "article-10", "type": "Article", "data": {"title": "Updated Title", "body": "...", "publishedAt": "2025-01-01T00:00:00Z", "authorId": "author-2"}}
     ],
     "removed": ["article-5"]
   }
@@ -135,7 +141,8 @@ Authorization: Bearer ul_<key>
 
 Field reference:
 - base_version: the version number you diffed against. null for first push. Used for optimistic locking.
-- schema: required on first push and whenever the schema changes. Omit if unchanged.
+- schemas: per-type JSON Schema map. Required on first push. If omitted on subsequent pushes and records validate against carried-forward schemas, they are carried forward automatically.
+- schemas[TypeName]: JSON Schema for that record type. Use "x-ref-type" to annotate foreign key fields.
 - message: human-readable commit message (optional).
 - app_id: identifier for the pushing application (optional).
 - actor_id: identifier for the user or process that triggered the push (optional).
@@ -157,7 +164,7 @@ Missing files (422 — records reference files not yet uploaded):
 → Upload the listed files, then retry the push.
 
 ### First push (no existing versions)
-Set base_version to null. Put all records in changes.added. Include the schema.
+Set base_version to null. Put all records in changes.added. Include schemas for all types.
 
 ---
 
@@ -182,11 +189,26 @@ The schema declares which fields are references, so tools can resolve them at re
 
 ---
 
+## Schema Discovery
+
+Schemas are globally deduplicated by content hash. If two collections use the same type shape, they share the same schema row. This enables cross-collection discovery.
+
+GET /api/schemas                                        → search schemas (?q=text&slug=TypeName&label=uri&schema_hash=sha256:...&limit=50&offset=0)
+GET /api/schemas/:id                                    → single schema with labels and usage info
+GET /api/collections/:owner/:slug/schemas               → schemas for latest version (?version=N for specific, ?raw=true to skip label enrichment)
+POST /api/schemas/:id/labels                            → add label {"label": "schema.org/Person"} (requires write scope)
+DELETE /api/schemas/:id/labels/:label                   → remove label (requires admin scope)
+
+When schemas are returned via the collection schemas endpoint, known labels are injected as "x-underlay-labels" on the schema body (opt-out with ?raw=true).
+
+---
+
 ## Versioning
 
 - Versions are sequential integers (1, 2, 3, ...).
 - Semver is derived automatically: schema change → major, record change → minor, metadata-only → patch.
-- Each version has a content-addressed hash computed from schema + sorted records + sorted file hashes.
+- Schema change = any type's schema_id changed, or types added/removed between versions.
+- Each version has a content-addressed hash computed from sorted type→schema_hash map + sorted records + sorted file hashes.
 - Versions are immutable once created.
 
 ---
@@ -206,27 +228,24 @@ Underlay supports fine-grained privacy at three levels: types, fields, and indiv
 Private data is stored alongside public data in the same version but is only visible to the collection owner.
 
 ### Private Types
-Mark an entire type as private in the schema. All records of that type are hidden from public readers.
+Mark an entire type as private in its schema. All records of that type are hidden from public readers.
 
-"schema": {
-  "type": "object",
-  "properties": {
-    "Article": {
-      "type": "object",
-      "properties": { "title": {"type": "string"} }
-    },
-    "InternalNote": {
-      "type": "object",
-      "private": true,
-      "properties": { "note": {"type": "string"}, "articleId": {"type": "string"} }
-    }
+"schemas": {
+  "Article": {
+    "type": "object",
+    "properties": { "title": {"type": "string"} }
+  },
+  "InternalNote": {
+    "type": "object",
+    "private": true,
+    "properties": { "note": {"type": "string"}, "articleId": {"type": "string"} }
   }
 }
 
 Public readers see only the Article type. InternalNote is completely hidden (including from the schema response).
 
 ### Private Fields
-Mark individual fields as private within a type. The type itself is visible, but those fields are stripped for public readers.
+Mark individual fields as private within a type's schema. The type itself is visible, but those fields are stripped for public readers.
 
 "Author": {
   "type": "object",

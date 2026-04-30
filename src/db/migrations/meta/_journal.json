@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1777351571597,
-      "tag": "0000_plain_prima",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1777423790913,
-      "tag": "0001_mushy_steel_serpent",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1777428576945,
-      "tag": "0002_silly_grey_gargoyle",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1777510052369,
-      "tag": "0003_red_silhouette",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1777510411242,
-      "tag": "0004_blue_captain_marvel",
+      "when": 1777578810241,
+      "tag": "0000_military_machine_man",
       "breakpoints": true
     }
   ]

@@ -10,6 +10,7 @@ import {
   bigserial,
   primaryKey,
   unique,
+  index,
 } from "drizzle-orm/pg-core";
 
 // --- Accounts ---
@@ -94,7 +95,6 @@ export const versions = pgTable(
     hash: text("hash").notNull(),
     publicHash: text("public_hash"),
     baseNumber: integer("base_number"),
-    schema: jsonb("schema").notNull(),
     message: text("message"),
     readme: text("readme"),
     pushedBy: uuid("pushed_by").references(() => accounts.id),
@@ -149,4 +149,48 @@ export const versionFiles = pgTable(
       .references(() => files.hash),
   },
   (t) => [primaryKey({ columns: [t.versionId, t.fileHash] })],
+);
+
+// --- Schemas (globally deduplicated, content-addressed) ---
+
+export const schemas = pgTable("schemas", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  schema: jsonb("schema").notNull(),
+  schemaHash: text("schema_hash").unique().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const versionSchemas = pgTable(
+  "version_schemas",
+  {
+    versionId: bigint("version_id", { mode: "number" })
+      .notNull()
+      .references(() => versions.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    schemaId: uuid("schema_id")
+      .notNull()
+      .references(() => schemas.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.versionId, t.slug] }),
+    index("version_schemas_schema_id_idx").on(t.schemaId),
+  ],
+);
+
+// --- Schema Labels (post-hoc naming of content-addressed schemas) ---
+
+export const schemaLabels = pgTable(
+  "schema_labels",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    schemaId: uuid("schema_id")
+      .notNull()
+      .references(() => schemas.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique().on(t.schemaId, t.label),
+    index("schema_labels_label_idx").on(t.label),
+  ],
 );

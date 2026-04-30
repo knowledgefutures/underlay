@@ -1,0 +1,129 @@
+---
+import Base from "@/layouts/Base.astro";
+import SchemaLabelManager from "@/components/SchemaLabelManager";
+import { apiBase } from "@/lib/page-utils";
+
+const { id } = Astro.params;
+
+// Fetch schema detail (includes labels + usage)
+const res = await fetch(`${apiBase}/api/schemas/${id}`);
+if (!res.ok) return Astro.redirect("/404");
+const schema = await res.json();
+
+const properties = (schema.schema as any)?.properties ?? {};
+const fields = Object.entries(properties);
+const isPrivate = (schema.schema as any)?.private === true;
+const labels: { label: string; createdAt: string }[] = schema.labels ?? [];
+const usage: { slug: string; semver: string; versionNumber: number; collection: string }[] = schema.usage ?? [];
+---
+
+<Base title={`Schema ${schema.schemaHash.slice(0, 12)}… — Underlay`}>
+  <div class="max-w-5xl mx-auto px-4 py-10">
+    {/* Header */}
+    <div class="mb-6">
+      <div class="flex items-center gap-3 mb-2">
+        <h1 class="text-lg font-semibold font-mono">{schema.schemaHash.slice(0, 16)}…</h1>
+        {isPrivate && <span class="text-xs border border-rule px-1.5 py-0.5 text-ink-muted">private type</span>}
+      </div>
+      <div class="flex items-center gap-4 text-xs text-ink-muted">
+        <span>Created {new Date(schema.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+        <span>{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
+        <span>{usage.length} collection{usage.length !== 1 ? "s" : ""} using this schema</span>
+      </div>
+    </div>
+
+    {/* Labels (interactive) */}
+    <SchemaLabelManager schemaId={schema.id} initialLabels={labels} client:load />
+
+    {/* Two-column layout: fields + JSON */}
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      {/* Fields table */}
+      <div>
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">Fields</h2>
+        <div class="border border-rule rounded overflow-hidden">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="bg-parchment-dark border-b border-rule">
+                <th class="text-left p-2.5 font-medium">Name</th>
+                <th class="text-left p-2.5 font-medium">Type</th>
+                <th class="text-left p-2.5 font-medium">Info</th>
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map(([name, def]: [string, any]) => {
+                const fieldType = def.type ?? "unknown";
+                const format = def.format ? ` (${def.format})` : "";
+                const refType = def["x-ref-type"];
+                const isFieldPrivate = def.private === true;
+
+                return (
+                  <tr class="border-t border-rule">
+                    <td class="p-2.5 font-mono font-medium">{name}</td>
+                    <td class="p-2.5 text-ink-muted">{fieldType}{format}</td>
+                    <td class="p-2.5">
+                      <div class="flex items-center gap-2">
+                        {refType && (
+                          <span class="inline-flex items-center gap-1 text-[11px] bg-parchment-dark border border-rule px-1.5 py-0.5 rounded">
+                            → {refType}
+                          </span>
+                        )}
+                        {isFieldPrivate && (
+                          <span class="text-[11px] border border-rule px-1.5 py-0.5 rounded text-ink-muted">private</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Raw JSON */}
+      <div>
+        <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">JSON Schema</h2>
+        <div class="border border-rule rounded overflow-hidden">
+          <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment max-h-96"><code set:text={JSON.stringify(schema.schema, null, 2)} /></pre>
+        </div>
+      </div>
+    </div>
+
+    {/* Usage: which collections reference this schema */}
+    <div>
+      <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">
+        Used by {usage.length} collection{usage.length !== 1 ? "s" : ""}
+      </h2>
+      {usage.length === 0 ? (
+        <p class="text-sm text-ink-muted py-4">No public collections reference this schema yet.</p>
+      ) : (
+        <div class="border border-rule rounded overflow-hidden">
+          {usage.map((u, i) => (
+            <a
+              href={`/${u.collection}/v/${u.versionNumber}?type=${u.slug}`}
+              class={`flex items-center justify-between px-4 py-2.5 text-sm hover:bg-parchment-dark/50 transition-colors ${i < usage.length - 1 ? "border-b border-rule" : ""}`}
+            >
+              <div class="flex items-center gap-3">
+                <span class="font-medium">{u.collection}</span>
+                <span class="text-ink-muted text-xs">as <code class="font-mono">{u.slug}</code></span>
+              </div>
+              <span class="text-xs text-ink-muted">{u.semver}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+
+    {/* Full hash */}
+    <div class="mt-8 pt-4 border-t border-rule">
+      <p class="text-xs text-ink-muted">
+        <span class="font-medium">Full hash:</span>
+        <code class="font-mono ml-2">{schema.schemaHash}</code>
+      </p>
+      <p class="text-xs text-ink-muted mt-1">
+        <span class="font-medium">ID:</span>
+        <code class="font-mono ml-2">{schema.id}</code>
+      </p>
+    </div>
+  </div>
+</Base>

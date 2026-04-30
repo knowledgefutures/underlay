@@ -1,21 +1,57 @@
 import { db, schema } from "./index.js";
+import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import bcrypt from "bcrypt";
 import { createHash } from "node:crypto";
 
+function hashSchema(schemaBody: unknown): string {
+  return createHash("sha256").update(JSON.stringify(schemaBody)).digest("hex");
+}
+
 function computeVersionHash(
-  schemaDoc: unknown,
+  schemaSet: { slug: string; schemaHash: string }[],
   records: { recordId: string; type: string; data: unknown }[],
   fileHashes: string[],
+  readme: string | null,
 ): string {
   const canonical = JSON.stringify({
-    schema: schemaDoc,
+    schemas: Object.fromEntries(
+      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
+    ),
     records: records
       .sort((a, b) => a.recordId.localeCompare(b.recordId))
       .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
     files: fileHashes.sort(),
+    readme: readme ?? null,
   });
-  return createHash("sha256").update(canonical).digest("hex");
+  return "private:" + createHash("sha256").update(canonical).digest("hex");
+}
+
+/** Insert schemas into global table, returning schema IDs. Deduplicates by hash. */
+async function upsertSchemas(schemasMap: Record<string, object>): Promise<{ slug: string; schemaId: string; schemaHash: string }[]> {
+  const results: { slug: string; schemaId: string; schemaHash: string }[] = [];
+  for (const [slug, body] of Object.entries(schemasMap)) {
+    const hash = hashSchema(body);
+    // Check if exists
+    const existing = await db
+      .select({ id: schema.schemas.id })
+      .from(schema.schemas)
+      .where(eq(schema.schemas.schemaHash, hash))
+      .limit(1);
+
+    let schemaId: string;
+    if (existing.length > 0) {
+      schemaId = existing[0]!.id;
+    } else {
+      const [inserted] = await db
+        .insert(schema.schemas)
+        .values({ schema: body as any, schemaHash: hash })
+        .returning({ id: schema.schemas.id });
+      schemaId = inserted!.id;
+    }
+    results.push({ slug, schemaId, schemaHash: hash });
+  }
+  return results;
 }
 
 async function seed() {
@@ -31,8 +67,11 @@ async function seed() {
   if (existing.length > 0 && force) {
     console.log("[seed] --force: clearing existing data...");
     await db.delete(schema.records);
+    await db.delete(schema.versionSchemas);
     await db.delete(schema.versionFiles);
     await db.delete(schema.files);
+    await db.delete(schema.schemaLabels);
+    await db.delete(schema.schemas);
     await db.delete(schema.versions);
     await db.delete(schema.collections);
     await db.delete(schema.apiKeys);
@@ -83,44 +122,41 @@ async function seed() {
   });
 
   const pubpubSchema = {
-    type: "object",
-    properties: {
-      Community: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          subdomain: { type: "string" },
-          description: { type: "string" },
-          createdAt: { type: "string", format: "date-time" },
-        },
+    Community: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        subdomain: { type: "string" },
+        description: { type: "string" },
+        createdAt: { type: "string", format: "date-time" },
       },
-      Pub: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          slug: { type: "string" },
-          communityId: { type: "string" },
-          doi: { type: "string" },
-          description: { type: "string" },
-          publishedAt: { type: "string", format: "date-time" },
-          license: { type: "string" },
-        },
+    },
+    Pub: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        slug: { type: "string" },
+        communityId: { type: "string", "x-ref-type": "Community" },
+        doi: { type: "string" },
+        description: { type: "string" },
+        publishedAt: { type: "string", format: "date-time" },
+        license: { type: "string" },
       },
-      Author: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          orcid: { type: "string" },
-          affiliation: { type: "string" },
-        },
+    },
+    Author: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        orcid: { type: "string" },
+        affiliation: { type: "string" },
       },
-      PubAuthor: {
-        type: "object",
-        properties: {
-          pubId: { type: "string" },
-          authorId: { type: "string" },
-          order: { type: "integer" },
-        },
+    },
+    PubAuthor: {
+      type: "object",
+      properties: {
+        pubId: { type: "string", "x-ref-type": "Pub" },
+        authorId: { type: "string", "x-ref-type": "Author" },
+        order: { type: "integer" },
       },
     },
   };
@@ -145,7 +181,8 @@ async function seed() {
     { recordId: "pubauthor-005", type: "PubAuthor", data: { pubId: "pub-004", authorId: "author-005", order: 1 } },
   ];
 
-  const pubpubHash = computeVersionHash(pubpubSchema, pubpubRecords, []);
+  const pubpubSchemaEntries = await upsertSchemas(pubpubSchema);
+  const pubpubHash = computeVersionHash(pubpubSchemaEntries, pubpubRecords, [], `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`);
   const pubpubTotalBytes = pubpubRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [pubpubVersion] = await db
     .insert(schema.versions)
@@ -155,7 +192,6 @@ async function seed() {
       semver: "v1.0.0",
       hash: pubpubHash,
       baseNumber: null,
-      schema: pubpubSchema,
       message: "Initial PubPub archive import",
       readme: `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`,
       pushedBy: adminId,
@@ -166,6 +202,14 @@ async function seed() {
       totalBytes: pubpubTotalBytes,
     })
     .returning();
+
+  await db.insert(schema.versionSchemas).values(
+    pubpubSchemaEntries.map((e) => ({
+      versionId: pubpubVersion!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  );
 
   await db.insert(schema.records).values(
     pubpubRecords.map((r) => ({
@@ -191,30 +235,27 @@ async function seed() {
   });
 
   const grantsSchema = {
-    type: "object",
-    properties: {
-      Funder: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          country: { type: "string" },
-          url: { type: "string" },
-        },
+    Funder: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        country: { type: "string" },
+        url: { type: "string" },
       },
-      Grant: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          funderId: { type: "string" },
-          piName: { type: "string" },
-          institution: { type: "string" },
-          amount: { type: "number" },
-          currency: { type: "string" },
-          startDate: { type: "string", format: "date" },
-          endDate: { type: "string", format: "date" },
-          abstract: { type: "string" },
-          topics: { type: "array", items: { type: "string" } },
-        },
+    },
+    Grant: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        funderId: { type: "string", "x-ref-type": "Funder" },
+        piName: { type: "string" },
+        institution: { type: "string" },
+        amount: { type: "number" },
+        currency: { type: "string" },
+        startDate: { type: "string", format: "date" },
+        endDate: { type: "string", format: "date" },
+        abstract: { type: "string" },
+        topics: { type: "array", items: { type: "string" } },
       },
     },
   };
@@ -230,7 +271,8 @@ async function seed() {
     { recordId: "grant-005", type: "Grant", data: { title: "Community-Owned Publishing Platforms", funderId: "funder-003", piName: "Travis Rich", institution: "Knowledge Futures", amount: 500000, currency: "USD", startDate: "2024-03-01", endDate: "2026-02-28", abstract: "Developing open-source tools for community-owned scholarly publishing and archiving.", topics: ["publishing", "open source", "community ownership"] } },
   ];
 
-  const grantsHash = computeVersionHash(grantsSchema, grantsRecords, []);
+  const grantsSchemaEntries = await upsertSchemas(grantsSchema);
+  const grantsHash = computeVersionHash(grantsSchemaEntries, grantsRecords, [], `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`);
   const grantsTotalBytes = grantsRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [grantsVersion] = await db
     .insert(schema.versions)
@@ -240,7 +282,6 @@ async function seed() {
       semver: "v1.0.0",
       hash: grantsHash,
       baseNumber: null,
-      schema: grantsSchema,
       message: "Initial grants dataset",
       readme: `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`,
       pushedBy: adminId,
@@ -251,6 +292,14 @@ async function seed() {
       totalBytes: grantsTotalBytes,
     })
     .returning();
+
+  await db.insert(schema.versionSchemas).values(
+    grantsSchemaEntries.map((e) => ({
+      versionId: grantsVersion!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  );
 
   await db.insert(schema.records).values(
     grantsRecords.map((r) => ({
@@ -276,28 +325,25 @@ async function seed() {
   });
 
   const climateSchema = {
-    type: "object",
-    properties: {
-      Station: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          country: { type: "string" },
-          latitude: { type: "number" },
-          longitude: { type: "number" },
-          elevation: { type: "number" },
-        },
+    Station: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        country: { type: "string" },
+        latitude: { type: "number" },
+        longitude: { type: "number" },
+        elevation: { type: "number" },
       },
-      Observation: {
-        type: "object",
-        properties: {
-          stationId: { type: "string" },
-          year: { type: "integer" },
-          meanTempC: { type: "number" },
-          precipitationMm: { type: "number" },
-          daysAbove30C: { type: "integer" },
-          daysBelow0C: { type: "integer" },
-        },
+    },
+    Observation: {
+      type: "object",
+      properties: {
+        stationId: { type: "string", "x-ref-type": "Station" },
+        year: { type: "integer" },
+        meanTempC: { type: "number" },
+        precipitationMm: { type: "number" },
+        daysAbove30C: { type: "integer" },
+        daysBelow0C: { type: "integer" },
       },
     },
   };
@@ -317,7 +363,8 @@ async function seed() {
     { recordId: "obs-008", type: "Observation", data: { stationId: "station-004", year: 2024, meanTempC: 10.9, precipitationMm: 278, daysAbove30C: 8, daysBelow0C: 18 } },
   ];
 
-  const climateHash = computeVersionHash(climateSchema, climateRecords, []);
+  const climateSchemaEntries = await upsertSchemas(climateSchema);
+  const climateHash = computeVersionHash(climateSchemaEntries, climateRecords, [], `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`);
   const climateTotalBytes = climateRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
   const [climateVersion] = await db
     .insert(schema.versions)
@@ -327,7 +374,6 @@ async function seed() {
       semver: "v1.0.0",
       hash: climateHash,
       baseNumber: null,
-      schema: climateSchema,
       message: "Initial climate observations — 4 stations, 2023-2024 data",
       readme: `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`,
       pushedBy: adminId,
@@ -339,6 +385,14 @@ async function seed() {
     })
     .returning();
 
+  await db.insert(schema.versionSchemas).values(
+    climateSchemaEntries.map((e) => ({
+      versionId: climateVersion!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  );
+
   await db.insert(schema.records).values(
     climateRecords.map((r) => ({
       versionId: climateVersion!.id,
@@ -349,6 +403,93 @@ async function seed() {
   );
 
   console.log("[seed] Created collection: knowledge-futures/climate-observations (12 records)");
+
+  // --- Collection 4: Pub Notes (demonstrates cross-collection schema reuse) ---
+  const pubnotesId = uuidv4();
+  await db.insert(schema.collections).values({
+    id: pubnotesId,
+    accountId: kfId,
+    slug: "pub-notes",
+    name: "Pub Notes",
+    description:
+      "Personal research notes linked to authors from the PubPub archive. Author schema shared with pubpub-archive via content-addressing.",
+    public: true,
+  });
+
+  const pubnotesSchema = {
+    Author: {
+      // Identical body to pubpub-archive Author → upsertSchemas returns the same schemaId
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        orcid: { type: "string" },
+        affiliation: { type: "string" },
+      },
+    },
+    Note: {
+      type: "object",
+      properties: {
+        authorId: { type: "string", "x-ref-type": "Author" },
+        title: { type: "string" },
+        body: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        createdAt: { type: "string", format: "date-time" },
+      },
+    },
+  };
+
+  const pubnotesRecords = [
+    { recordId: "author-001", type: "Author", data: { name: "Sean Devine", orcid: "0000-0002-1234-5678", affiliation: "McGill University" } },
+    { recordId: "author-002", type: "Author", data: { name: "Maha Bali", orcid: "0000-0003-9876-5432", affiliation: "American University in Cairo" } },
+    { recordId: "author-003", type: "Author", data: { name: "Catherine D'Ignazio", orcid: "0000-0002-8888-7777", affiliation: "MIT" } },
+    { recordId: "note-001", type: "Note", data: { authorId: "author-001", title: "Notes on failure as a scientific method", body: "The Journal of Trial and Error piece makes a compelling case that failure is not noise to be filtered out but signal to be amplified. Key insight: null results constrain the hypothesis space just as strongly as positive results.", tags: ["philosophy of science", "open science", "failure"], createdAt: "2024-03-10T14:22:00.000Z" } },
+    { recordId: "note-002", type: "Note", data: { authorId: "author-002", title: "Reflections on open pedagogy", body: "Maha Bali's work on equity in open education keeps returning to a core tension: openness can democratize access while simultaneously exposing vulnerable learners to extractive platforms. Worth revisiting with the new data governance lens.", tags: ["open education", "equity", "pedagogy"], createdAt: "2024-04-02T09:15:00.000Z" } },
+    { recordId: "note-003", type: "Note", data: { authorId: "author-003", title: "Data feminism and knowledge infrastructure", body: "D'Ignazio's framing of data as always already political maps well onto our underlay design questions. Who decides what counts as a record type? What gets schematized vs. left as freetext? These are power questions.", tags: ["data feminism", "knowledge graphs", "infrastructure"], createdAt: "2024-04-18T16:45:00.000Z" } },
+    { recordId: "note-004", type: "Note", data: { authorId: "author-001", title: "Follow-up: collective memory paper", body: "The collective memory piece draws on Halbwachs in ways I hadn't expected. The argument that online communities form memory through repetition rather than storage resonates with how underlay versions work — it's the diff, not the snapshot, that carries meaning.", tags: ["collective intelligence", "memory", "versioning"], createdAt: "2024-05-05T11:30:00.000Z" } },
+  ];
+
+  const pubnotesReadme = `# Pub Notes\n\nPersonal research notes linked to authors from the [PubPub Archive](../pubpub-archive) collection.\n\n## What's included\n\n- **Author** — Researcher profiles (schema shared with pubpub-archive via content-addressing)\n- **Note** — Annotated reading notes with tags and timestamps\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Authors | 3 |\n| Notes | 4 |\n\n## Schema reuse\n\nThe Author schema in this collection is identical to the one in pubpub-archive. Because schemas are content-addressed by hash, both collections reference the same underlying schema row — no duplication.`;
+
+  const pubnotesSchemaEntries = await upsertSchemas(pubnotesSchema);
+  const pubnotesHash = computeVersionHash(pubnotesSchemaEntries, pubnotesRecords, [], pubnotesReadme);
+  const pubnotesTotalBytes = pubnotesRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
+  const [pubnotesVersion] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: pubnotesId,
+      number: 1,
+      semver: "v1.0.0",
+      hash: pubnotesHash,
+      baseNumber: null,
+      message: "Initial pub notes",
+      readme: pubnotesReadme,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
+      actorId: "admin",
+      recordCount: pubnotesRecords.length,
+      fileCount: 0,
+      totalBytes: pubnotesTotalBytes,
+    })
+    .returning();
+
+  await db.insert(schema.versionSchemas).values(
+    pubnotesSchemaEntries.map((e) => ({
+      versionId: pubnotesVersion!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  );
+
+  await db.insert(schema.records).values(
+    pubnotesRecords.map((r) => ({
+      versionId: pubnotesVersion!.id,
+      recordId: r.recordId,
+      type: r.type,
+      data: r.data,
+    })),
+  );
+
+  console.log("[seed] Created collection: knowledge-futures/pub-notes (7 records)");
   console.log("[seed] Done.");
   process.exit(0);
 }
