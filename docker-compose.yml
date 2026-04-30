@@ -38,11 +38,11 @@ services:
     tmpfs:
       - /tmp:size=64m
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/api/health', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1));\""]
+      test: ["CMD-SHELL", "node -e \"const h=require('http'),check=(port,path)=>new Promise((res,rej)=>{h.get('http://127.0.0.1:'+port+path,r=>r.statusCode<400?res():rej()).on('error',rej)});Promise.all([check(3000,'/api/health'),check(4321,'/')]).then(()=>process.exit(0)).catch(()=>process.exit(1));\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 30s
     logging:
       driver: json-file
       options:
