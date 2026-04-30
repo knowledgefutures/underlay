@@ -403,6 +403,93 @@ async function seed() {
   );
 
   console.log("[seed] Created collection: knowledge-futures/climate-observations (12 records)");
+
+  // --- Collection 4: Pub Notes (demonstrates cross-collection schema reuse) ---
+  const pubnotesId = uuidv4();
+  await db.insert(schema.collections).values({
+    id: pubnotesId,
+    accountId: kfId,
+    slug: "pub-notes",
+    name: "Pub Notes",
+    description:
+      "Personal research notes linked to authors from the PubPub archive. Author schema shared with pubpub-archive via content-addressing.",
+    public: true,
+  });
+
+  const pubnotesSchema = {
+    Author: {
+      // Identical body to pubpub-archive Author → upsertSchemas returns the same schemaId
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        orcid: { type: "string" },
+        affiliation: { type: "string" },
+      },
+    },
+    Note: {
+      type: "object",
+      properties: {
+        authorId: { type: "string", "x-ref-type": "Author" },
+        title: { type: "string" },
+        body: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        createdAt: { type: "string", format: "date-time" },
+      },
+    },
+  };
+
+  const pubnotesRecords = [
+    { recordId: "author-001", type: "Author", data: { name: "Sean Devine", orcid: "0000-0002-1234-5678", affiliation: "McGill University" } },
+    { recordId: "author-002", type: "Author", data: { name: "Maha Bali", orcid: "0000-0003-9876-5432", affiliation: "American University in Cairo" } },
+    { recordId: "author-003", type: "Author", data: { name: "Catherine D'Ignazio", orcid: "0000-0002-8888-7777", affiliation: "MIT" } },
+    { recordId: "note-001", type: "Note", data: { authorId: "author-001", title: "Notes on failure as a scientific method", body: "The Journal of Trial and Error piece makes a compelling case that failure is not noise to be filtered out but signal to be amplified. Key insight: null results constrain the hypothesis space just as strongly as positive results.", tags: ["philosophy of science", "open science", "failure"], createdAt: "2024-03-10T14:22:00.000Z" } },
+    { recordId: "note-002", type: "Note", data: { authorId: "author-002", title: "Reflections on open pedagogy", body: "Maha Bali's work on equity in open education keeps returning to a core tension: openness can democratize access while simultaneously exposing vulnerable learners to extractive platforms. Worth revisiting with the new data governance lens.", tags: ["open education", "equity", "pedagogy"], createdAt: "2024-04-02T09:15:00.000Z" } },
+    { recordId: "note-003", type: "Note", data: { authorId: "author-003", title: "Data feminism and knowledge infrastructure", body: "D'Ignazio's framing of data as always already political maps well onto our underlay design questions. Who decides what counts as a record type? What gets schematized vs. left as freetext? These are power questions.", tags: ["data feminism", "knowledge graphs", "infrastructure"], createdAt: "2024-04-18T16:45:00.000Z" } },
+    { recordId: "note-004", type: "Note", data: { authorId: "author-001", title: "Follow-up: collective memory paper", body: "The collective memory piece draws on Halbwachs in ways I hadn't expected. The argument that online communities form memory through repetition rather than storage resonates with how underlay versions work — it's the diff, not the snapshot, that carries meaning.", tags: ["collective intelligence", "memory", "versioning"], createdAt: "2024-05-05T11:30:00.000Z" } },
+  ];
+
+  const pubnotesReadme = `# Pub Notes\n\nPersonal research notes linked to authors from the [PubPub Archive](../pubpub-archive) collection.\n\n## What's included\n\n- **Author** — Researcher profiles (schema shared with pubpub-archive via content-addressing)\n- **Note** — Annotated reading notes with tags and timestamps\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Authors | 3 |\n| Notes | 4 |\n\n## Schema reuse\n\nThe Author schema in this collection is identical to the one in pubpub-archive. Because schemas are content-addressed by hash, both collections reference the same underlying schema row — no duplication.`;
+
+  const pubnotesSchemaEntries = await upsertSchemas(pubnotesSchema);
+  const pubnotesHash = computeVersionHash(pubnotesSchemaEntries, pubnotesRecords, [], pubnotesReadme);
+  const pubnotesTotalBytes = pubnotesRecords.reduce((sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), "utf-8"), 0);
+  const [pubnotesVersion] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: pubnotesId,
+      number: 1,
+      semver: "v1.0.0",
+      hash: pubnotesHash,
+      baseNumber: null,
+      message: "Initial pub notes",
+      readme: pubnotesReadme,
+      pushedBy: adminId,
+      appId: "underlay-seed/1.0",
+      actorId: "admin",
+      recordCount: pubnotesRecords.length,
+      fileCount: 0,
+      totalBytes: pubnotesTotalBytes,
+    })
+    .returning();
+
+  await db.insert(schema.versionSchemas).values(
+    pubnotesSchemaEntries.map((e) => ({
+      versionId: pubnotesVersion!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  );
+
+  await db.insert(schema.records).values(
+    pubnotesRecords.map((r) => ({
+      versionId: pubnotesVersion!.id,
+      recordId: r.recordId,
+      type: r.type,
+      data: r.data,
+    })),
+  );
+
+  console.log("[seed] Created collection: knowledge-futures/pub-notes (7 records)");
   console.log("[seed] Done.");
   process.exit(0);
 }
