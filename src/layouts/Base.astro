@@ -10,7 +10,7 @@ interface Props {
 const { title, description = "A public registry for structured knowledge." } = Astro.props;
 
 // Check auth state via API
-let currentUser: { slug: string; displayName: string } | null = null;
+let currentUser: { slug: string; displayName: string; orgs?: { slug: string; displayName: string }[] } | null = null;
 const sessionCookie = Astro.cookies.get("session")?.value;
 if (sessionCookie) {
   try {
@@ -59,7 +59,7 @@ if (sessionCookie) {
           <a href="/docs" class="hover:text-ink transition-colors">Docs</a>
           <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
           {currentUser ? (
-            <UserMenu slug={currentUser.slug} client:load />
+            <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} client:load />
           ) : (
             <a href="/login" class="hover:text-ink transition-colors">Log in</a>
           )}

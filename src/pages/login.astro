@@ -2,6 +2,8 @@
 import Base from "@/layouts/Base.astro";
 import { apiBase } from "@/lib/page-utils";
 
+let loginError = "";
+
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const email = form.get("email") as string;
@@ -28,6 +30,9 @@ if (Astro.request.method === "POST") {
       }
     }
     return Astro.redirect("/dashboard");
+  } else {
+    const err = await res.json().catch(() => null);
+    loginError = err?.error ?? "Invalid email or password.";
   }
 }
 ---
@@ -35,6 +40,12 @@ if (Astro.request.method === "POST") {
 <Base title="Log in — Underlay">
   <div class="max-w-sm mx-auto px-4 py-16">
     <h1 class="text-xl font-semibold tracking-tight mb-6">Log in</h1>
+
+    {loginError && (
+      <div class="border border-red-300 bg-red-50 text-red-800 px-3 py-2 text-sm mb-4">
+        {loginError}
+      </div>
+    )}
 
     <form method="POST" class="space-y-4">
       <div>
@@ -65,8 +76,11 @@ if (Astro.request.method === "POST") {
       </button>
     </form>
 
-    <p class="text-sm text-ink-muted mt-4">
-      Don't have an account? <a href="/signup" class="text-link underline">Sign up</a>
-    </p>
+    <div class="flex items-center justify-between mt-4">
+      <p class="text-sm text-ink-muted">
+        Don't have an account? <a href="/signup" class="text-link underline">Sign up</a>
+      </p>
+      <a href="/forgot-password" class="text-sm text-link hover:underline">Forgot password?</a>
+    </div>
   </div>
 </Base>

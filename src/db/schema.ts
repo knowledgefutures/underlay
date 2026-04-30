@@ -22,6 +22,12 @@ export const accounts = pgTable("accounts", {
   displayName: text("display_name").notNull(),
   email: text("email"),
   passwordHash: text("password_hash"),
+  bio: text("bio"),
+  website: text("website"),
+  location: text("location"),
+  avatarUrl: text("avatar_url"),
+  emailVerified: boolean("email_verified").default(false).notNull(),
+  notificationPrefs: jsonb("notification_prefs"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -44,6 +50,8 @@ export const sessions = pgTable("sessions", {
   userId: uuid("user_id")
     .notNull()
     .references(() => accounts.id, { onDelete: "cascade" }),
+  userAgent: text("user_agent"),
+  ipAddress: text("ip_address"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
@@ -56,7 +64,9 @@ export const apiKeys = pgTable("api_keys", {
   collectionId: uuid("collection_id").references(() => collections.id, { onDelete: "cascade" }),
   scope: text("scope", { enum: ["read", "write", "admin"] }).notNull(),
   keyHash: text("key_hash").notNull(),
+  keyPrefix: text("key_prefix"),
   label: text("label").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
 });
@@ -194,3 +204,34 @@ export const schemaLabels = pgTable(
     index("schema_labels_label_idx").on(t.label),
   ],
 );
+
+// --- Org Invitations ---
+
+export const orgInvitations = pgTable("org_invitations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: text("role", { enum: ["owner", "admin", "member"] }).notNull(),
+  invitedBy: uuid("invited_by")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// --- Password Reset Tokens ---
+
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});

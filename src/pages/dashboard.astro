@@ -67,6 +67,16 @@ if (me.orgs?.length) {
       <a href="/settings" class="text-sm text-ink-muted hover:text-ink transition-colors">Settings</a>
     </div>
 
+    <!-- Search/filter -->
+    <div class="mb-6">
+      <input
+        type="text"
+        id="collection-filter"
+        placeholder="Filter collections…"
+        class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+      />
+    </div>
+
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">
         Your Collections ({collections.length})
@@ -81,7 +91,7 @@ if (me.orgs?.length) {
     ) : (
       <div class="space-y-2">
         {collections.map((c: any) => (
-          <a href={`/${me.slug}/${c.slug}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
+          <a href={`/${me.slug}/${c.slug}`} data-collection={`${me.slug}/${c.slug} ${c.name} ${c.description ?? ""}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
             <div>
               <span class="font-semibold text-sm">{me.slug}/{c.slug}</span>
               <p class="text-xs text-ink-muted mt-0.5">{c.description ?? c.name}</p>
@@ -109,7 +119,7 @@ if (me.orgs?.length) {
         ) : (
           <div class="space-y-2">
             {org.collections.map((c: any) => (
-              <a href={`/${org.slug}/${c.slug}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
+              <a href={`/${org.slug}/${c.slug}`} data-collection={`${org.slug}/${c.slug} ${c.name} ${c.description ?? ""}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
                 <div>
                   <span class="font-semibold text-sm">{org.slug}/{c.slug}</span>
                   <p class="text-xs text-ink-muted mt-0.5">{c.description ?? c.name}</p>
@@ -153,4 +163,17 @@ if (me.orgs?.length) {
       </div>
     </div>
   </div>
+
+  <script>
+    const filterInput = document.getElementById("collection-filter") as HTMLInputElement;
+    if (filterInput) {
+      filterInput.addEventListener("input", () => {
+        const q = filterInput.value.toLowerCase();
+        document.querySelectorAll("[data-collection]").forEach((el) => {
+          const text = (el as HTMLElement).dataset.collection ?? "";
+          (el as HTMLElement).style.display = text.includes(q) ? "" : "none";
+        });
+      });
+    }
+  </script>
 </Base>
