@@ -73,6 +73,9 @@ services:
       - .env.local
     environment:
       NODE_ENV: development
+    ports:
+      - "4321:4321"
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
