@@ -198,8 +198,8 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST`, `SSH_USER`, `GHCR_USER`,
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `SESSION_SECRET` | Secret for signing session cookies |
-| `APP_URL` | Public frontend URL (for CORS) |
-| `API_PORT` | Fastify API port (default: 3000) |
+| `APP_PORT` | Host-published port for Astro SSR (compose only, default: 4322) |
+| `API_PORT` | Host-published port for Fastify API (compose only, default: 3001) |
 | `S3_BUCKET` | S3 bucket name |
 | `S3_REGION` | S3 region |
 | `S3_ENDPOINT` | S3 endpoint (for MinIO, R2, etc.) |

@@ -15,8 +15,6 @@ case "$MODE" in
                 echo "Creating .env.local from .env.test defaults (with Docker hostnames)"
                 sed -e 's|@localhost:5432|@postgres:5432|' \
                     -e 's|http://localhost:9000|http://minio:9000|' \
-                    -e '/^APP_URL=/d' \
-                    -e '/^API_PORT=/d' \
                     .env.test > .env.local
             else
                 echo "No .env.test found — create .env.local manually"

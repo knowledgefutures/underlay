@@ -10,6 +10,7 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: "--max-old-space-size=448"
+    # Host ports (left) are set via .env; container ports (right) are fixed
     ports:
       - "${APP_PORT:-4322}:4321"
       - "${API_PORT:-3001}:3000"
