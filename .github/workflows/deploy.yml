@@ -155,8 +155,10 @@ jobs:
 
           sudo docker pull "ghcr.io/${REPO}:${IMAGE_TAG}"
 
-          # Deploy/update stack
-          sudo env IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
+          # Deploy/update stack — export .env vars for compose interpolation
+          # (docker stack deploy does NOT read .env files automatically)
+          sudo env $(grep -v '^#' .env | grep -v '^$' | xargs) \
+            IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
             docker stack deploy -c docker-compose.yml \
             --with-registry-auth --resolve-image always --prune "${STACK_NAME}"
 
