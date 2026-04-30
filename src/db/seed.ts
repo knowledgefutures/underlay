@@ -70,6 +70,7 @@ async function seed() {
     await db.delete(schema.versionSchemas);
     await db.delete(schema.versionFiles);
     await db.delete(schema.files);
+    await db.delete(schema.schemaLabels);
     await db.delete(schema.schemas);
     await db.delete(schema.versions);
     await db.delete(schema.collections);
