@@ -133,6 +133,15 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   </ul>
   <p>Version 1 is always <code>v1.0.0</code>.</p>
 
+  <h2>Privacy</h2>
+  <p>You can control what's publicly visible at three levels:</p>
+  <ul>
+    <li><strong>Private types:</strong> Add <code>"private": true</code> to a type in the schema. All records of that type are hidden from public readers.</li>
+    <li><strong>Private fields:</strong> Add <code>"private": true</code> to a field in the schema. That field is stripped from public responses.</li>
+    <li><strong>Private records:</strong> Add <code>"private": true</code> to individual records when pushing. Those records are hidden from public queries.</li>
+  </ul>
+  <p>Private content is stored in the same version — the owner always sees everything. Public readers see only the filtered view. The public content hash excludes private data, so verifiers can confirm integrity of the public subset.</p>
+
   <h2>API Reference</h2>
   <p>Full API docs are at <a href="/docs">/docs</a>. The key endpoints:</p>
   <table>

@@ -9,3 +9,4 @@ planning/
 *.db
 *.db-journal
 *.db-wal
+_scriptsRepo/
