@@ -51,7 +51,7 @@ jobs:
             echo "image_tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
             echo "host=${{ secrets.SSH_HOST_PROD }}" >> $GITHUB_OUTPUT
             echo "env_file=.env.enc" >> $GITHUB_OUTPUT
-            echo "stack_name=underlay" >> $GITHUB_OUTPUT
+            echo "stack_name=underlay-prod" >> $GITHUB_OUTPUT
           else
             echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
             echo "host=${{ secrets.SSH_HOST_DEV }}" >> $GITHUB_OUTPUT
