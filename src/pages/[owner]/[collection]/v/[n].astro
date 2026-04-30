@@ -29,9 +29,8 @@ const tab = Astro.url.searchParams.get("tab") ?? "records";
 const selectedType = Astro.url.searchParams.get("type") ?? null;
 
 // Parse schema to get type info
-const schemaDoc = version.schema as Record<string, any>;
-const schemaProperties = schemaDoc?.properties ?? {};
-const allTypes = Object.keys(schemaProperties).sort();
+const schemasMap = (version.schemas ?? {}) as Record<string, any>;
+const allTypes = Object.keys(schemasMap).sort();
 
 // Fetch records only on records tab
 let records: any[] = [];
@@ -166,8 +165,8 @@ function tabUrl(t: string, extra?: Record<string, string>) {
         <!-- Table area -->
         <div class="min-w-0">
           {currentType && records.length > 0 && (() => {
-            const fields = schemaProperties[currentType]?.properties
-              ? Object.keys(schemaProperties[currentType].properties)
+            const fields = schemasMap[currentType]?.properties
+              ? Object.keys(schemasMap[currentType].properties)
               : records.length > 0
                 ? Object.keys(records[0].data ?? {})
                 : [];
@@ -259,7 +258,7 @@ function tabUrl(t: string, extra?: Record<string, string>) {
     <!-- Schema tab -->
     {tab === "schema" && (
       <div class="border border-rule rounded overflow-hidden">
-        <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(version.schema, null, 2)} /></pre>
+        <pre class="p-4 text-xs font-mono overflow-x-auto bg-ink text-parchment"><code set:text={JSON.stringify(version.schemas, null, 2)} /></pre>
       </div>
     )}
 

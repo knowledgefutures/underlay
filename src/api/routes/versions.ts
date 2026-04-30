@@ -9,25 +9,43 @@ import addFormats from "ajv-formats";
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 
+// --- Schema helpers ---
+
+type SchemaEntry = { slug: string; schemaId: string; schema: Record<string, unknown>; schemaHash: string };
+
+/** Load the full schema set for a version (slug → schema body + metadata) */
+async function loadVersionSchemas(versionId: number): Promise<SchemaEntry[]> {
+  const rows = await db
+    .select({
+      slug: schema.versionSchemas.slug,
+      schemaId: schema.versionSchemas.schemaId,
+      schema: schema.schemas.schema,
+      schemaHash: schema.schemas.schemaHash,
+    })
+    .from(schema.versionSchemas)
+    .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
+    .where(eq(schema.versionSchemas.versionId, versionId));
+
+  return rows as SchemaEntry[];
+}
+
 // --- Visibility helpers ---
 
-/** Get the set of private type names from a schema document */
-function getPrivateTypes(schemaDoc: Record<string, unknown>): Set<string> {
+/** Get the set of private type slugs from a version's schemas */
+function getPrivateTypes(schemaEntries: SchemaEntry[]): Set<string> {
   const types = new Set<string>();
-  const props = schemaDoc?.properties as Record<string, any> | undefined;
-  if (!props) return types;
-  for (const [typeName, typeDef] of Object.entries(props)) {
-    if (typeDef?.private === true) types.add(typeName);
+  for (const entry of schemaEntries) {
+    if ((entry.schema as any)?.private === true) {
+      types.add(entry.slug);
+    }
   }
   return types;
 }
 
-/** Get the set of private field names for a given type from a schema document */
-function getPrivateFields(schemaDoc: Record<string, unknown>, typeName: string): Set<string> {
+/** Get the set of private field names for a given type schema */
+function getPrivateFields(typeSchema: Record<string, unknown>): Set<string> {
   const fields = new Set<string>();
-  const props = (schemaDoc?.properties as Record<string, any>)?.[typeName]?.properties as
-    | Record<string, any>
-    | undefined;
+  const props = typeSchema?.properties as Record<string, any> | undefined;
   if (!props) return fields;
   for (const [fieldName, fieldDef] of Object.entries(props)) {
     if (fieldDef?.private === true) fields.add(fieldName);
@@ -45,32 +63,32 @@ function filterRecordData(data: unknown, privateFields: Set<string>): unknown {
   return filtered;
 }
 
-/** Strip private types and private fields from a schema doc for public view */
-function filterSchema(schemaDoc: Record<string, unknown>): Record<string, unknown> {
-  const props = schemaDoc?.properties as Record<string, any> | undefined;
-  if (!props) return schemaDoc;
+/** Filter a type schema for public view: strip private fields from properties */
+function filterTypeSchema(typeSchema: Record<string, unknown>): Record<string, unknown> {
+  const props = typeSchema?.properties as Record<string, any> | undefined;
+  if (!props) return typeSchema;
 
-  const filtered: Record<string, unknown> = {};
-  for (const [typeName, typeDef] of Object.entries(props)) {
-    if (typeDef?.private === true) continue; // hide entire private types
-    // Strip private fields within the type
-    const typeProps = typeDef?.properties as Record<string, any> | undefined;
-    if (!typeProps) {
-      filtered[typeName] = typeDef;
-      continue;
-    }
-    const publicProps: Record<string, unknown> = {};
-    for (const [fieldName, fieldDef] of Object.entries(typeProps)) {
-      if ((fieldDef as any)?.private === true) continue;
-      publicProps[fieldName] = fieldDef;
-    }
-    // Also filter "required" array to remove private fields
-    const required = (typeDef.required as string[] | undefined)?.filter(
-      (f: string) => !((typeProps[f] as any)?.private === true),
-    );
-    filtered[typeName] = { ...typeDef, properties: publicProps, required };
+  const publicProps: Record<string, unknown> = {};
+  for (const [fieldName, fieldDef] of Object.entries(props)) {
+    if ((fieldDef as any)?.private === true) continue;
+    publicProps[fieldName] = fieldDef;
   }
-  return { ...schemaDoc, properties: filtered };
+
+  const required = (typeSchema.required as string[] | undefined)?.filter(
+    (f: string) => !((props[f] as any)?.private === true),
+  );
+
+  return { ...typeSchema, properties: publicProps, required };
+}
+
+/** Build a public-facing schemas map (excluding private types, stripping private fields) */
+function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const entry of schemaEntries) {
+    if ((entry.schema as any)?.private === true) continue;
+    result[entry.slug] = filterTypeSchema(entry.schema);
+  }
+  return result;
 }
 
 /** Check if requester is the owner of a collection */
@@ -78,14 +96,21 @@ function isOwner(request: any, collectionAccountId: string): boolean {
   return request.accountId != null && request.accountId === collectionAccountId;
 }
 
+/** Compute SHA-256 hash of a schema JSON body (canonical stringified) */
+function hashSchema(schemaBody: unknown): string {
+  return createHash("sha256").update(JSON.stringify(schemaBody)).digest("hex");
+}
+
 function computeVersionHash(
-  schemaDoc: unknown,
+  schemaSet: { slug: string; schemaHash: string }[],
   recordRows: { recordId: string; type: string; data: unknown }[],
   fileHashes: string[],
   readme: string | null,
 ): string {
   const canonical = JSON.stringify({
-    schema: schemaDoc,
+    schemas: Object.fromEntries(
+      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
+    ),
     records: recordRows
       .sort((a, b) => a.recordId.localeCompare(b.recordId))
       .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
@@ -97,28 +122,36 @@ function computeVersionHash(
 
 /** Compute a public hash that only covers non-private content */
 function computePublicHash(
-  schemaDoc: Record<string, unknown>,
+  schemaEntries: SchemaEntry[],
   recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
   fileHashes: string[],
   readme: string | null,
 ): string {
-  const privateTypes = getPrivateTypes(schemaDoc);
-  const publicSchema = filterSchema(schemaDoc);
+  const privateTypes = getPrivateTypes(schemaEntries);
+
+  // Build public schema set (non-private types, with private fields stripped)
+  const publicSchemaSet: { slug: string; schemaHash: string }[] = [];
+  for (const entry of schemaEntries) {
+    if (privateTypes.has(entry.slug)) continue;
+    const filtered = filterTypeSchema(entry.schema);
+    publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) });
+  }
 
   // Filter to public records only, and strip private fields
   const publicRecords = recordRows
     .filter((r) => !r.private && !privateTypes.has(r.type))
     .map((r) => {
-      const privateFields = getPrivateFields(schemaDoc, r.type);
+      const entry = schemaEntries.find((e) => e.slug === r.type);
+      const privateFields = entry ? getPrivateFields(entry.schema) : new Set<string>();
       const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data;
       return { id: r.recordId, type: r.type, data };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
 
-  // Only include file hashes referenced by public records
-  // (for now include all — file gating filters on serve, not on hash)
   const canonical = JSON.stringify({
-    schema: publicSchema,
+    schemas: Object.fromEntries(
+      publicSchemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
+    ),
     records: publicRecords,
     files: fileHashes.sort(),
     readme: readme ?? null,
@@ -143,7 +176,7 @@ function deriveSemver(
 
 export async function versionRoutes(app: FastifyInstance) {
   // Lazily backfill totalBytes for versions that were created before we tracked it
-  async function backfillTotalBytes(version: { id: string; totalBytes: number; recordCount: number }) {
+  async function backfillTotalBytes(version: { id: number; totalBytes: number; recordCount: number }) {
     if (version.totalBytes > 0 || version.recordCount === 0) return version.totalBytes;
 
     const records = await db
@@ -231,15 +264,18 @@ export async function versionRoutes(app: FastifyInstance) {
     if (!version) return reply.status(404).send({ error: "No versions", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
 
-    // Filter for non-owners: swap hash, strip schema
-    if (!isOwner(request, collection.accountId)) {
-      if (version.publicHash) version.hash = version.publicHash;
-      if (version.schema) {
-        version.schema = filterSchema(version.schema as Record<string, unknown>) as any;
-      }
-    }
+    const schemaEntries = await loadVersionSchemas(version.id);
+    const ownerAccess = isOwner(request, collection.accountId);
 
-    return version;
+    const schemasMap = ownerAccess
+      ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
+      : filterSchemasForPublic(schemaEntries);
+
+    return {
+      ...version,
+      hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
+      schemas: schemasMap,
+    };
   });
 
   // Get version by number
@@ -259,15 +295,18 @@ export async function versionRoutes(app: FastifyInstance) {
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
 
-    // Filter for non-owners: swap hash, strip schema
-    if (!isOwner(request, collection.accountId)) {
-      if (version.publicHash) version.hash = version.publicHash;
-      if (version.schema) {
-        version.schema = filterSchema(version.schema as Record<string, unknown>) as any;
-      }
-    }
+    const schemaEntries = await loadVersionSchemas(version.id);
+    const ownerAccess = isOwner(request, collection.accountId);
 
-    return version;
+    const schemasMap = ownerAccess
+      ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
+      : filterSchemasForPublic(schemaEntries);
+
+    return {
+      ...version,
+      hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
+      schemas: schemasMap,
+    };
   });
 
   // Get records for a version
@@ -297,11 +336,13 @@ export async function versionRoutes(app: FastifyInstance) {
 
     // Determine visibility
     const ownerAccess = isOwner(request, collection.accountId);
-    const schemaDoc = (version.schema ?? {}) as Record<string, unknown>;
-    const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaDoc);
 
-    // Exclude private types and private records from query if not owner
+    let privateTypes = new Set<string>();
+    let schemaEntries: SchemaEntry[] = [];
     if (!ownerAccess) {
+      schemaEntries = await loadVersionSchemas(version.id);
+      privateTypes = getPrivateTypes(schemaEntries);
+
       if (privateTypes.size > 0) {
         if (type && privateTypes.has(type)) {
           return []; // requesting a private type as non-owner
@@ -330,7 +371,8 @@ export async function versionRoutes(app: FastifyInstance) {
       const fieldCache = new Map<string, Set<string>>();
       return records.map((rec) => {
         if (!fieldCache.has(rec.type)) {
-          fieldCache.set(rec.type, getPrivateFields(schemaDoc, rec.type));
+          const entry = schemaEntries.find((e) => e.slug === rec.type);
+          fieldCache.set(rec.type, entry ? getPrivateFields(entry.schema) : new Set());
         }
         const privateFields = fieldCache.get(rec.type)!;
         return privateFields.size > 0
@@ -419,10 +461,13 @@ export async function versionRoutes(app: FastifyInstance) {
       .from(schema.versionFiles)
       .where(eq(schema.versionFiles.versionId, version.id));
 
+    const schemaEntries = await loadVersionSchemas(version.id);
+
     return {
       version: version.number,
       semver: version.semver,
       hash: version.hash,
+      schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
       records: recordIds,
       files: fileHashes.map((f) => f.hash),
     };
@@ -442,7 +487,7 @@ export async function versionRoutes(app: FastifyInstance) {
         readme?: string;
         app_id?: string;
         actor_id?: string;
-        schema?: unknown;
+        schemas?: Record<string, object>;
         changes: {
           added?: { id: string; type: string; data: unknown; private?: boolean }[];
           updated?: { id: string; type: string; data: unknown; private?: boolean }[];
@@ -500,24 +545,70 @@ export async function versionRoutes(app: FastifyInstance) {
       }
 
       const newRecords = Array.from(recordMap.values());
-      const schemaDoc = body.schema ?? latest?.schema ?? {};
-      const schemaChanged = body.schema != null;
-      const recordsChanged =
-        (body.changes.added?.length ?? 0) > 0 ||
-        (body.changes.updated?.length ?? 0) > 0 ||
-        (body.changes.removed?.length ?? 0) > 0;
 
-      // Validate records against the JSON Schema
-      // The schema's top-level "properties" keys are record type names.
-      // Each record is validated against the sub-schema for its type.
-      const schemaObj = schemaDoc as Record<string, unknown>;
-      const typeSchemas = (schemaObj.properties ?? {}) as Record<string, unknown>;
+      // --- Resolve schemas ---
+      let prevSchemaEntries: SchemaEntry[] = [];
+      if (latest) {
+        prevSchemaEntries = await loadVersionSchemas(latest.id);
+      }
+
+      // Determine the schema set for this version
+      let schemasInput: Record<string, object>;
+      if (body.schemas && Object.keys(body.schemas).length > 0) {
+        schemasInput = body.schemas;
+      } else if (prevSchemaEntries.length > 0) {
+        // Carry forward previous schemas
+        schemasInput = Object.fromEntries(prevSchemaEntries.map((e) => [e.slug, e.schema]));
+      } else {
+        return reply.status(422).send({
+          error: "Schemas required",
+          message: "First version must include a `schemas` map with at least one type definition.",
+          statusCode: 422,
+        });
+      }
+
+      // Ensure every record type has a schema
+      const recordTypes = new Set(newRecords.map((r) => r.type));
+      const missingSchemas = [...recordTypes].filter((t) => !(t in schemasInput));
+      if (missingSchemas.length > 0) {
+        return reply.status(422).send({
+          error: "Missing schemas for record types",
+          types: missingSchemas,
+          message: `Every record type must have a corresponding schema. Missing: ${missingSchemas.join(", ")}`,
+          statusCode: 422,
+        });
+      }
+
+      // Hash and upsert each schema into the global schemas table
+      const newSchemaSet: { slug: string; schemaId: string; schemaHash: string; schema: Record<string, unknown> }[] = [];
+      for (const [typeSlug, typeSchema] of Object.entries(schemasInput)) {
+        const hash = hashSchema(typeSchema);
+
+        const [existing] = await db
+          .select({ id: schema.schemas.id })
+          .from(schema.schemas)
+          .where(eq(schema.schemas.schemaHash, hash))
+          .limit(1);
+
+        let schemaId: string;
+        if (existing) {
+          schemaId = existing.id;
+        } else {
+          const [inserted] = await db
+            .insert(schema.schemas)
+            .values({ schema: typeSchema as any, schemaHash: hash })
+            .returning({ id: schema.schemas.id });
+          schemaId = inserted!.id;
+        }
+
+        newSchemaSet.push({ slug: typeSlug, schemaId, schemaHash: hash, schema: typeSchema as Record<string, unknown> });
+      }
+
+      // Validate records against their type's schema
       const validationErrors: { recordId: string; type: string; errors: string[] }[] = [];
-
-      // Pre-compile validators per type (avoid recompiling for each record)
       const validators = new Map<string, ReturnType<typeof ajv.compile>>();
-      for (const [typeName, typeSchema] of Object.entries(typeSchemas)) {
-        validators.set(typeName, ajv.compile(typeSchema as object));
+      for (const entry of newSchemaSet) {
+        validators.set(entry.slug, ajv.compile(entry.schema as object));
       }
 
       for (const rec of newRecords) {
@@ -549,6 +640,24 @@ export async function versionRoutes(app: FastifyInstance) {
         });
       }
 
+      // Determine if schema set changed
+      const prevSchemaMap = new Map(prevSchemaEntries.map((e) => [e.slug, e.schemaHash]));
+      const newSchemaMap = new Map(newSchemaSet.map((e) => [e.slug, e.schemaHash]));
+      let schemaChanged = prevSchemaMap.size !== newSchemaMap.size;
+      if (!schemaChanged) {
+        for (const [s, hash] of newSchemaMap) {
+          if (prevSchemaMap.get(s) !== hash) {
+            schemaChanged = true;
+            break;
+          }
+        }
+      }
+
+      const recordsChanged =
+        (body.changes.added?.length ?? 0) > 0 ||
+        (body.changes.updated?.length ?? 0) > 0 ||
+        (body.changes.removed?.length ?? 0) > 0;
+
       // Get file hashes from existing version + any new references
       let existingFileHashes: string[] = [];
       if (latest) {
@@ -576,7 +685,7 @@ export async function versionRoutes(app: FastifyInstance) {
         }
       }
 
-      // Check all referenced files exist (single query instead of N+1)
+      // Check all referenced files exist
       const allFileHashes = Array.from(referencedHashes);
       if (allFileHashes.length > 0) {
         const existingFiles = await db
@@ -597,20 +706,23 @@ export async function versionRoutes(app: FastifyInstance) {
 
       // Resolve readme (carry forward from base version if not provided)
       const readmeValue = body.readme !== undefined ? body.readme : (latest?.readme ?? null);
-      const readmeChanged = readmeValue !== (latest?.readme ?? null);
 
-      // Compute hashes (private = full content, public = filtered view) and semver
-      const versionHash = computeVersionHash(schemaDoc, newRecords, allFileHashes, readmeValue);
-      const publicHash = computePublicHash(
-        schemaDoc as Record<string, unknown>,
-        newRecords,
-        allFileHashes,
-        readmeValue,
-      );
+      // Compute hashes and semver
+      const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }));
+      const versionHash = computeVersionHash(schemaSetForHash, newRecords, allFileHashes, readmeValue);
+
+      const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
+        slug: e.slug,
+        schemaId: e.schemaId,
+        schema: e.schema,
+        schemaHash: e.schemaHash,
+      }));
+      const publicHash = computePublicHash(schemaEntriesForPublicHash, newRecords, allFileHashes, readmeValue);
+
       const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged);
       const newNumber = currentNumber + 1;
 
-      // Check for duplicate hash (truly no changes at all)
+      // Check for duplicate hash
       const [existingHash] = await db
         .select({ number: schema.versions.number })
         .from(schema.versions)
@@ -629,15 +741,11 @@ export async function versionRoutes(app: FastifyInstance) {
         });
       }
 
-      // Compute total bytes (records JSON + files)
+      // Compute total bytes
       let totalBytes = 0;
-
-      // Size of all record data
       for (const rec of newRecords) {
         totalBytes += Buffer.byteLength(JSON.stringify(rec.data), "utf-8");
       }
-
-      // Size of all referenced files (single query)
       if (allFileHashes.length > 0) {
         const [fileSizeSum] = await db
           .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
@@ -647,7 +755,6 @@ export async function versionRoutes(app: FastifyInstance) {
       }
 
       // Insert version
-
       const [version] = await db
         .insert(schema.versions)
         .values({
@@ -657,7 +764,6 @@ export async function versionRoutes(app: FastifyInstance) {
           hash: versionHash,
           publicHash,
           baseNumber: body.base_version,
-          schema: schemaDoc as any,
           message: body.message ?? null,
           readme: readmeValue,
           pushedBy: request.accountId ?? null,
@@ -669,7 +775,7 @@ export async function versionRoutes(app: FastifyInstance) {
         })
         .returning();
 
-      // Insert records (in batches to avoid oversized SQL statements)
+      // Insert records (in batches)
       if (newRecords.length > 0) {
         const RECORD_BATCH = 1000;
         for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
@@ -695,6 +801,15 @@ export async function versionRoutes(app: FastifyInstance) {
           })),
         );
       }
+
+      // Insert version_schemas
+      await db.insert(schema.versionSchemas).values(
+        newSchemaSet.map((entry) => ({
+          versionId: version!.id,
+          slug: entry.slug,
+          schemaId: entry.schemaId,
+        })),
+      );
 
       // Update collection timestamp + optional name/description
       const collectionUpdates: Record<string, unknown> = { updatedAt: new Date() };
@@ -769,8 +884,21 @@ export async function versionRoutes(app: FastifyInstance) {
       return prev && JSON.stringify(prev.data) !== JSON.stringify(r.data);
     });
 
-    // Compare metadata changes
-    const schemaChanged = JSON.stringify(targetVersion.schema) !== JSON.stringify(fromVersion?.schema ?? {});
+    // Compare schema sets
+    const targetSchemas = await loadVersionSchemas(targetVersion.id);
+    const fromSchemas = fromVersion ? await loadVersionSchemas(fromVersion.id) : [];
+    const targetSchemaMap = new Map(targetSchemas.map((e) => [e.slug, e.schemaHash]));
+    const fromSchemaMap = new Map(fromSchemas.map((e) => [e.slug, e.schemaHash]));
+    let schemaChanged = targetSchemaMap.size !== fromSchemaMap.size;
+    if (!schemaChanged) {
+      for (const [s, hash] of targetSchemaMap) {
+        if (fromSchemaMap.get(s) !== hash) {
+          schemaChanged = true;
+          break;
+        }
+      }
+    }
+
     const readmeChanged = (targetVersion.readme ?? null) !== (fromVersion?.readme ?? null);
 
     // Compare file sets

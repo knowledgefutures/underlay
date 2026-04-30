@@ -68,6 +68,7 @@ src/
 │   │   ├── collections.ts    # Collection CRUD
 │   │   ├── versions.ts   # Version push/pull/diff + privacy filtering
 │   │   ├── files.ts      # Content-addressed file storage
+│   │   ├── schemas.ts    # Schema discovery, search, labeling
 │   │   └── health.ts     # Health check
 │   └── server.ts         # Fastify entry point
 ├── db/
@@ -185,6 +186,56 @@ npm run secrets:decrypt      # Decrypt .env.enc → .env
 npm run secrets:decrypt:dev  # Decrypt .env.dev.enc → .env.dev
 ```
 
+## Schema System
+
+Underlay uses **globally deduplicated, content-addressed schemas** for record validation and interoperability.
+
+### How it works
+
+- Each record type in a collection has its own JSON Schema, stored as an immutable, content-addressed row in the global `schemas` table.
+- A version declares its full set of type→schema bindings via the `version_schemas` join table.
+- If two collections define the same fields and types for a record type, they produce the same schema hash — alignment is automatic.
+- Schemas are never modified. Evolving a type produces a new hash and a new row.
+
+### Push payload
+
+```json
+{
+  "schemas": {
+    "Author": { "type": "object", "properties": { "name": { "type": "string" } } },
+    "Pub": { "type": "object", "properties": { "title": { "type": "string" }, "authorId": { "type": "string", "x-ref-type": "Author" } } }
+  },
+  "changes": { "added": [...] }
+}
+```
+
+### Relationship annotations
+
+Fields that hold record IDs of another type use `"x-ref-type": "TypeName"` to document the relationship. This enables linked-record navigation in the UI and helps LLMs understand the relational graph.
+
+### Schema labeling
+
+Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.org/Person`, `dc.author.v1`). Labels enable discovery across collections without upfront coordination.
+
+- `POST /api/schemas/:id/labels` — Add a label
+- `DELETE /api/schemas/:id/labels/:label` — Remove a label
+- `GET /api/schemas?label=...` — Search by label
+- Labels are injected as `x-underlay-labels` in schema exports (opt-out via `?raw=true`)
+
+### Schema discovery API
+
+| Endpoint | Purpose |
+|----------|--------|
+| `GET /api/schemas` | Global search (filter by `q`, `slug`, `label`, `schema_hash`) |
+| `GET /api/schemas/:id` | Single schema with labels + usage info |
+| `GET /api/collections/:owner/:slug/schemas` | Collection's schemas (with label enrichment) |
+
+### Versioning semantics
+
+- **Major bump**: Schema set changed (type added, removed, or schema modified)
+- **Minor bump**: Records changed, schema set identical
+- **Patch bump**: Only metadata changed (readme, message)
+
 ## Maintenance Checklist
 
 When adding or changing features, update these locations:
@@ -198,13 +249,15 @@ When adding or changing features, update these locations:
 | Quick start | `src/pages/docs/quickstart.astro` | Getting started tutorial |
 | Self-hosting | `src/pages/docs/self-host.astro` | Deployment instructions |
 | DB schema | `src/db/schema.ts` → `npm run db:generate` | Schema changes need a migration |
+| Schema discovery | `src/api/routes/schemas.ts` | Schema search, labeling, cross-referencing |
 | Encrypted secrets | `.env.enc` / `.env.dev.enc` | Re-encrypt after changing .env files |
 
 ### Privacy features
 
-The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations. When changing how privacy works, update:
-- `src/api/routes/versions.ts` — filtering logic
+The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations in per-type schemas. When changing how privacy works, update:
+- `src/api/routes/versions.ts` — filtering logic (reads from `version_schemas` JOIN `schemas`)
 - `src/api/routes/files.ts` — file access checks
+- `src/api/routes/schemas.ts` — public schema filtering
 - `public/.well-known/ai.txt` — Privacy section
 - `src/pages/docs/concepts.astro` — Privacy section
 - `src/pages/docs/api/versions.astro` — Push endpoint docs

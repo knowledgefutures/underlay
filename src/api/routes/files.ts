@@ -35,7 +35,7 @@ async function isFilePubliclyAccessible(
 
   // Get the latest version
   const [latest] = await db
-    .select({ id: schema.versions.id, schema: schema.versions.schema })
+    .select({ id: schema.versions.id })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
     .orderBy(sql`${schema.versions.number} desc`)
@@ -54,14 +54,22 @@ async function isFilePubliclyAccessible(
 
   if (!vf) return false;
 
-  // Get schema to determine private types and fields
-  const schemaDoc = (latest.schema ?? {}) as Record<string, any>;
+  // Load version schemas to determine private types and fields
+  const schemaEntries = await db
+    .select({
+      slug: schema.versionSchemas.slug,
+      schemaBody: schema.schemas.schema,
+    })
+    .from(schema.versionSchemas)
+    .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
+    .where(eq(schema.versionSchemas.versionId, latest.id));
+
   const privateTypes = new Set<string>();
-  const props = schemaDoc?.properties as Record<string, any> | undefined;
-  if (props) {
-    for (const [typeName, typeDef] of Object.entries(props)) {
-      if (typeDef?.private === true) privateTypes.add(typeName);
-    }
+  const typeSchemaMap = new Map<string, Record<string, any>>();
+  for (const entry of schemaEntries) {
+    const body = entry.schemaBody as Record<string, any>;
+    typeSchemaMap.set(entry.slug, body);
+    if (body?.private === true) privateTypes.add(entry.slug);
   }
 
   // Find public records that reference this file hash
@@ -83,7 +91,8 @@ async function isFilePubliclyAccessible(
     if (privateTypes.has(rec.type)) continue;
 
     // Get private fields for this type
-    const typeProps = props?.[rec.type]?.properties as Record<string, any> | undefined;
+    const typeSchema = typeSchemaMap.get(rec.type);
+    const typeProps = typeSchema?.properties as Record<string, any> | undefined;
     if (!typeProps) return true; // no schema constraints, allow
 
     const privateFields = new Set<string>();
