@@ -94,7 +94,6 @@ export const versions = pgTable(
     semver: text("semver").notNull(),
     hash: text("hash").notNull(),
     baseNumber: integer("base_number"),
-    schema: jsonb("schema").notNull(),
     message: text("message"),
     readme: text("readme"),
     pushedBy: uuid("pushed_by").references(() => accounts.id),

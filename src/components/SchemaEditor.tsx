@@ -118,7 +118,7 @@ export default function SchemaEditor({ owner, collection }: Props) {
 
     const body = {
       base_version: null,
-      schema: { type: "object", properties: typeSchemas },
+      schemas: typeSchemas,
       schema_sources: Object.keys(schemaSources).length > 0 ? schemaSources : undefined,
       changes: {},
     };

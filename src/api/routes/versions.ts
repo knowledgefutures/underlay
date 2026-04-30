@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
+import { getSchemasAsOf } from "../../db/queries.js";
 import { requireAuth } from "../plugins/auth.js";
 import { createHash } from "node:crypto";
 import Ajv from "ajv";
@@ -10,13 +11,13 @@ const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 
 function computeVersionHash(
-  schemaDoc: unknown,
+  typeHashes: Record<string, string>,
   recordRows: { recordId: string; type: string; data: unknown }[],
   fileHashes: string[],
   readme: string | null,
 ): string {
   const canonical = JSON.stringify({
-    schema: schemaDoc,
+    schemas: Object.fromEntries(Object.entries(typeHashes).sort()),
     records: recordRows
       .sort((a, b) => a.recordId.localeCompare(b.recordId))
       .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
@@ -118,7 +119,8 @@ export async function versionRoutes(app: FastifyInstance) {
 
     if (!version) return reply.status(404).send({ error: "No versions", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
-    return version;
+    const schemas = [...(await getSchemasAsOf(collection.id, version.number)).values()];
+    return { ...version, schemas };
   });
 
   // Get version by number
@@ -137,7 +139,8 @@ export async function versionRoutes(app: FastifyInstance) {
 
     if (!version) return reply.status(404).send({ error: "Version not found", statusCode: 404 });
     version.totalBytes = await backfillTotalBytes(version);
-    return version;
+    const schemas = [...(await getSchemasAsOf(collection.id, version.number)).values()];
+    return { ...version, schemas };
   });
 
   // Get records for a version
@@ -277,7 +280,7 @@ export async function versionRoutes(app: FastifyInstance) {
         readme?: string;
         app_id?: string;
         actor_id?: string;
-        schema?: unknown;
+        schemas?: Record<string, unknown | null>; // slug → type schema (null = remove type)
         schema_sources?: Record<string, string>; // slug → external schema UUID
         changes: {
           added?: { id: string; type: string; data: unknown }[];
@@ -335,18 +338,42 @@ export async function versionRoutes(app: FastifyInstance) {
       }
 
       const newRecords = Array.from(recordMap.values());
-      const schemaDoc = body.schema ?? latest?.schema ?? {};
-      const schemaChanged = body.schema != null;
+      const recordsChanged =
+        (body.changes.added?.length ?? 0) > 0 ||
+        (body.changes.updated?.length ?? 0) > 0 ||
+        (body.changes.removed?.length ?? 0) > 0;
 
-      // Resolve schema_sources before hashing so x-source ends up in versions.schema
-      // slug → { id, xSource: "owner/collection@vN/slug" }
-      const resolvedSources = new Map<string, { id: string; xSource: string }>();
-      if (schemaChanged && body.schema_sources) {
+      // Build effective schema set: start from previous version's schemas, apply overrides
+      type EffectiveSchema = { schema: unknown; schemaHash: string; sourceSchemaId: string | null };
+      const prevSchemasMap = await getSchemasAsOf(collection.id, currentNumber);
+      const effectiveSchemas = new Map<string, EffectiveSchema>(
+        [...prevSchemasMap.entries()].map(([slug, row]) => [
+          slug,
+          { schema: row.schema, schemaHash: row.schemaHash, sourceSchemaId: row.sourceSchemaId },
+        ]),
+      );
+
+      // Apply body.schemas overrides (null = remove type)
+      for (const [typeSlug, typeSchema] of Object.entries(body.schemas ?? {})) {
+        if (typeSchema === null) {
+          effectiveSchemas.delete(typeSlug);
+        } else {
+          effectiveSchemas.set(typeSlug, {
+            schema: typeSchema,
+            schemaHash: hashTypeSchema(typeSchema),
+            sourceSchemaId: null,
+          });
+        }
+      }
+
+      // Resolve schema_sources — fetches external schema body, injects x-source, takes precedence
+      if (body.schema_sources) {
         for (const [typeSlug, externalSchemaId] of Object.entries(body.schema_sources)) {
           const [extSchema] = await db
             .select({
               id: schema.schemas.id,
               slug: schema.schemas.slug,
+              schema: schema.schemas.schema,
               semver: schema.versions.semver,
               collectionSlug: schema.collections.slug,
               ownerSlug: schema.accounts.slug,
@@ -365,7 +392,6 @@ export async function versionRoutes(app: FastifyInstance) {
               statusCode: 422,
             });
           }
-
           if (!extSchema.public) {
             return reply.status(422).send({
               error: `schema_sources: source schema "${externalSchemaId}" belongs to a private collection`,
@@ -373,37 +399,26 @@ export async function versionRoutes(app: FastifyInstance) {
             });
           }
 
-          resolvedSources.set(typeSlug, {
-            id: extSchema.id,
-            xSource: `${extSchema.ownerSlug}/${extSchema.collectionSlug}@${extSchema.semver.split(".")[0]}/${extSchema.slug}`,
+          const xSource = `${extSchema.ownerSlug}/${extSchema.collectionSlug}@${extSchema.semver.split(".")[0]}/${extSchema.slug}`;
+          const enrichedSchema = { ...(extSchema.schema as Record<string, unknown>), "x-source": xSource };
+          effectiveSchemas.set(typeSlug, {
+            schema: enrichedSchema,
+            schemaHash: hashTypeSchema(enrichedSchema),
+            sourceSchemaId: extSchema.id,
           });
         }
-
-        // Inject x-source into schemaDoc so the stored schema carries provenance
-        const props = (schemaDoc as Record<string, any>);
-        if (!props.properties) props.properties = {};
-        for (const [typeSlug, { xSource }] of resolvedSources) {
-          if (props.properties[typeSlug] && typeof props.properties[typeSlug] === "object") {
-            props.properties[typeSlug] = { ...props.properties[typeSlug], "x-source": xSource };
-          }
-        }
       }
-      const recordsChanged =
-        (body.changes.added?.length ?? 0) > 0 ||
-        (body.changes.updated?.length ?? 0) > 0 ||
-        (body.changes.removed?.length ?? 0) > 0;
 
-      // Validate records against the JSON Schema
-      // The schema's top-level "properties" keys are record type names.
-      // Each record is validated against the sub-schema for its type.
-      const schemaObj = schemaDoc as Record<string, unknown>;
-      const typeSchemas = (schemaObj.properties ?? {}) as Record<string, unknown>;
+      // Detect schema change by comparing sorted slug→hash maps
+      const toHashStr = (m: Map<string, { schemaHash: string }>) =>
+        JSON.stringify(Object.fromEntries([...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, v.schemaHash])));
+      const schemaChanged = toHashStr(prevSchemasMap) !== toHashStr(effectiveSchemas);
+
+      // Validate records against effective schemas
       const validationErrors: { recordId: string; type: string; errors: string[] }[] = [];
-
-      // Pre-compile validators per type (avoid recompiling for each record)
       const validators = new Map<string, ReturnType<typeof ajv.compile>>();
-      for (const [typeName, typeSchema] of Object.entries(typeSchemas)) {
-        validators.set(typeName, ajv.compile(typeSchema as object));
+      for (const [slug, entry] of effectiveSchemas) {
+        validators.set(slug, ajv.compile(entry.schema as object));
       }
 
       for (const rec of newRecords) {
@@ -486,7 +501,10 @@ export async function versionRoutes(app: FastifyInstance) {
       const readmeChanged = readmeValue !== (latest?.readme ?? null);
 
       // Compute hash (includes readme) and semver
-      const versionHash = computeVersionHash(schemaDoc, newRecords, allFileHashes, readmeValue);
+      const typeHashes = Object.fromEntries(
+        [...effectiveSchemas.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, v.schemaHash]),
+      );
+      const versionHash = computeVersionHash(typeHashes, newRecords, allFileHashes, readmeValue);
       const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged);
       const newNumber = currentNumber + 1;
 
@@ -536,7 +554,6 @@ export async function versionRoutes(app: FastifyInstance) {
           semver,
           hash: versionHash,
           baseNumber: body.base_version,
-          schema: schemaDoc as any,
           message: body.message ?? null,
           readme: readmeValue,
           pushedBy: request.accountId ?? null,
@@ -570,25 +587,23 @@ export async function versionRoutes(app: FastifyInstance) {
         );
       }
 
-      // Populate schemas table on major version bump (schema changed)
+      // Insert schemas rows for types whose hash changed (or are new) this version
       if (schemaChanged) {
-        const typeSchemas = ((schemaDoc as Record<string, unknown>).properties ?? {}) as Record<
-          string,
-          unknown
-        >;
-
-        // Validate schema_sources references exist and are public
-        if (Object.keys(typeSchemas).length > 0) {
-          await db.insert(schema.schemas).values(
-            Object.entries(typeSchemas).map(([typeSlug, typeSchema]) => ({
+        const schemaInserts = [];
+        for (const [typeSlug, entry] of effectiveSchemas) {
+          if (prevSchemasMap.get(typeSlug)?.schemaHash !== entry.schemaHash) {
+            schemaInserts.push({
               collectionId: collection.id,
               versionId: version!.id,
               slug: typeSlug,
-              schema: typeSchema as any,
-              schemaHash: hashTypeSchema(typeSchema),
-              sourceSchemaId: resolvedSources.get(typeSlug)?.id ?? null,
-            })),
-          );
+              schema: entry.schema as any,
+              schemaHash: entry.schemaHash,
+              sourceSchemaId: entry.sourceSchemaId,
+            });
+          }
+        }
+        if (schemaInserts.length > 0) {
+          await db.insert(schema.schemas).values(schemaInserts);
         }
       }
 
@@ -665,8 +680,12 @@ export async function versionRoutes(app: FastifyInstance) {
       return prev && JSON.stringify(prev.data) !== JSON.stringify(r.data);
     });
 
-    // Compare metadata changes
-    const schemaChanged = JSON.stringify(targetVersion.schema) !== JSON.stringify(fromVersion?.schema ?? {});
+    // Compare schemas via the schemas table
+    const targetSchemas = await getSchemasAsOf(collection.id, targetNum);
+    const fromSchemas = fromVersion ? await getSchemasAsOf(collection.id, fromNum) : new Map();
+    const toHashStr = (m: Map<string, { schemaHash: string }>) =>
+      JSON.stringify(Object.fromEntries([...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, v.schemaHash])));
+    const schemaChanged = toHashStr(targetSchemas) !== toHashStr(fromSchemas);
     const readmeChanged = (targetVersion.readme ?? null) !== (fromVersion?.readme ?? null);
 
     // Compare file sets
