@@ -12,7 +12,7 @@ import { uploadToS3 } from "../src/lib/s3.js";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgresql://underlay:underlay@localhost:5432/underlay";
 const BACKUP_TMP = "./data/backup-tmp";
-const S3_PREFIX = process.env.BACKUP_S3_PREFIX ?? "backups/";
+const S3_PREFIX = "_backups/";
 
 async function backup(): Promise<void> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
