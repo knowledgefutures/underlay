@@ -27,7 +27,7 @@ This starts:
 - **MinIO** (S3-compatible storage) on ports 9000/9001
 - **Underlay** on port 4321 (frontend) and port 3000 (API)
 
-The dev script auto-creates `.env.dev` from defaults if one doesn't exist.
+The dev script auto-creates `.env.local` from defaults if one doesn't exist.
 
 ### Without Docker
 
@@ -35,8 +35,8 @@ The dev script auto-creates `.env.dev` from defaults if one doesn't exist.
 npm install
 
 # Set up your own Postgres and S3, then:
-cp .env.test .env.dev
-# Edit .env.dev with your connection strings
+cp .env.test .env.local
+# Edit .env.local with your connection strings
 
 npm run db:migrate
 npm run db:seed

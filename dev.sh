@@ -7,23 +7,25 @@ MODE="${1:-dev}"
 
 case "$MODE" in
     dev)
-        COMPOSE_FILE=docker-compose.dev.yml
+        COMPOSE_FILE=docker-compose.local.yml
 
-        # Only create .env.dev if it doesn't exist yet
-        if [[ ! -f .env.dev ]]; then
-            if [[ -f .env.dev.enc ]]; then
-                echo "Decrypting dev secrets → .env.dev"
-                sops -d --input-type dotenv --output-type dotenv .env.dev.enc > .env.dev
-            else
-                echo "No .env.dev found — copying .env.test defaults (with Docker hostnames)"
+        # Only create .env.local if it doesn't exist yet
+        if [[ ! -f .env.local ]]; then
+            if [[ -f .env.test ]]; then
+                echo "Creating .env.local from .env.test defaults (with Docker hostnames)"
                 sed -e 's|@localhost:5432|@postgres:5432|' \
                     -e 's|http://localhost:9000|http://minio:9000|' \
-                    .env.test > .env.dev
+                    -e '/^APP_URL=/d' \
+                    -e '/^API_PORT=/d' \
+                    .env.test > .env.local
+            else
+                echo "No .env.test found — create .env.local manually"
+                exit 1
             fi
-            echo "Edit .env.dev to customize. Re-decrypt with: npm run secrets:decrypt:dev"
+            echo "Edit .env.local to customize."
         fi
 
-        echo "Starting development environment (source mounted, fast reload)..."
+        echo "Starting local development environment (source mounted, fast reload)..."
         ;;
     prod|build)
         COMPOSE_FILE=docker-compose.yml

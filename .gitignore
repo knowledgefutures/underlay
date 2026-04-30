@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.dev
+.env.local
 data/
 planning/
 .astro/

@@ -1,8 +1,8 @@
-# Development compose — source-mounted for fast reload.
+# Local development compose — source-mounted for fast reload.
 # Start with: ./dev.sh
 # Access directly at localhost:4321 (Astro) and localhost:3000 (API).
 
-name: underlay-dev
+name: underlay-local
 
 services:
   postgres:
@@ -70,7 +70,7 @@ services:
       dockerfile: Dockerfile
       target: dev
     env_file:
-      - .env.dev
+      - .env.local
     environment:
       NODE_ENV: development
     depends_on:
