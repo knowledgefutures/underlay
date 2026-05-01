@@ -10,6 +10,8 @@ planning/
 *.db-journal
 *.db-wal
 _scriptsRepo/
+pubstarExample/
+pubstarExample2/
 
 # OS files
 .DS_Store
