@@ -78,10 +78,6 @@ function hashSchema(schemaBody: unknown): string {
   return createHash("sha256").update(JSON.stringify(schemaBody)).digest("hex");
 }
 
-function hashSchema(schemaBody: unknown): string {
-  return createHash("sha256").update(JSON.stringify(schemaBody)).digest("hex");
-}
-
 function deriveSemver(
   prevSemver: string | null,
   schemaChanged: boolean,
