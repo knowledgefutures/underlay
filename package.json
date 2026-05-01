@@ -32,6 +32,7 @@
     "@fastify/cookie": "^11.0.0",
     "@fastify/cors": "^11.0.0",
     "@fastify/multipart": "^10.0.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@lucide/astro": "^1.11.0",
     "@sinclair/typebox": "^0.34.0",
     "ajv": "^8.17.0",

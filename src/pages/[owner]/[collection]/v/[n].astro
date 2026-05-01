@@ -1,21 +1,22 @@
 ---
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
-import { apiBase, formatBytes, checkOwnership } from "@/lib/page-utils";
+import { apiBase, apiHeaders, formatBytes, checkOwnership } from "@/lib/page-utils";
 import { marked } from "marked";
 
 const { owner, collection, n } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
+const headers = apiHeaders(sessionCookie);
 
 // Fetch version
-const versionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}`);
+const versionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}`, { headers });
 if (!versionRes.ok) {
   return Astro.redirect("/404");
 }
 const version = await versionRes.json();
 
 // Fetch collection metadata (for public badge, etc.)
-const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers });
 const collectionData = collectionRes.ok ? await collectionRes.json() : null;
 
 // Check if current user is the owner (for settings link)
@@ -47,12 +48,12 @@ if (tab === "records" && currentType) {
   page = parseInt(Astro.url.searchParams.get("page") ?? "1", 10);
   pageSize = 100;
   offset = (page - 1) * pageSize;
-  const recordsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`);
+  const recordsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`, { headers });
   records = recordsRes.ok ? await recordsRes.json() : [];
 
   // We need the total count for this type — get all records count per type from schema
   // For now, use the records returned and version.recordCount
-  const allRecordsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/records?limit=1&offset=0&type=${currentType}`);
+  const allRecordsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/records?limit=1&offset=0&type=${currentType}`, { headers });
   // We'll use the version recordCount as an approximation; for type-specific counts we need to check
   // Actually, let's fetch a count per type from the full page
   totalPages = Math.ceil(records.length < pageSize ? 1 : totalRecords / pageSize);
@@ -79,7 +80,7 @@ if (tab === "records" && currentType) {
 // Fetch files only on files tab
 let files: any[] = [];
 if (tab === "files") {
-  const filesRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/files`);
+  const filesRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${n}/files`, { headers });
   files = filesRes.ok ? await filesRes.json() : [];
 }
 

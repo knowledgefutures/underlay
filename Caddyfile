@@ -10,9 +10,6 @@ www.underlay.org {
     handle /api/* {
         reverse_proxy 127.0.0.1:3001
     }
-    handle /assets/* {
-        reverse_proxy 127.0.0.1:3001
-    }
     handle /uploads/* {
         reverse_proxy 127.0.0.1:3001
     }
@@ -28,9 +25,6 @@ dev.underlay.org {
 
     # API routes → Fastify (dev)
     handle /api/* {
-        reverse_proxy 127.0.0.1:3000
-    }
-    handle /assets/* {
         reverse_proxy 127.0.0.1:3000
     }
     handle /uploads/* {

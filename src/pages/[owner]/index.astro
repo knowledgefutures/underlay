@@ -1,19 +1,19 @@
 ---
 import Base from "@/layouts/Base.astro";
-import { apiBase } from "@/lib/page-utils";
+import { apiBase, apiHeaders } from "@/lib/page-utils";
 
 const { owner } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch account profile
-const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`);
+const accountRes = await fetch(`${apiBase}/api/accounts/${owner}`, { headers: apiHeaders(sessionCookie) });
 if (!accountRes.ok) {
   return Astro.redirect("/404");
 }
 const account = await accountRes.json();
 
 // Fetch their public collections
-const collectionsRes = await fetch(`${apiBase}/api/accounts/${owner}/collections`);
+const collectionsRes = await fetch(`${apiBase}/api/accounts/${owner}/collections`, { headers: apiHeaders(sessionCookie) });
 const collections = collectionsRes.ok ? await collectionsRes.json() : [];
 
 // Fetch members for orgs (requires auth — only members can view member list)
@@ -116,38 +116,66 @@ for (const c of collections) {
     </div>
 
     {/* Public member list for orgs */}
-    {account.type === "org" && members.length > 0 && (
-      <div class="mb-8">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Members</h2>
-        <div class="flex flex-wrap gap-2">
-          {members.map((m: any) => (
-            <a href={`/${m.slug}`} class="flex items-center gap-2 border border-rule px-3 py-1.5 hover:bg-parchment-dark transition-colors" title={m.displayName}>
-              <span class="text-sm font-medium">{m.slug}</span>
-              <span class="text-xs text-ink-muted border border-rule px-1 py-0.5">{m.role}</span>
-            </a>
-          ))}
+    {account.type === "org" && members.length > 0 ? (
+      <div class="flex flex-col md:flex-row gap-8">
+        {/* Collections - main column */}
+        <div class="flex-1 min-w-0">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+            Collections ({collections.length})
+          </h2>
+
+          {collections.length === 0 ? (
+            <p class="text-sm text-ink-muted">No public collections yet.</p>
+          ) : (
+            <div class="space-y-2">
+              {collections.map((c: any) => (
+                <a href={`/${owner}/${c.slug}`} class="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="font-semibold text-sm text-link">{c.name}</span>
+                    <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
+                  </div>
+                  {c.description && <p class="text-xs text-ink-muted mt-1 line-clamp-2">{c.description}</p>}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Members - right sidebar */}
+        <div class="md:w-56 flex-shrink-0">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Members</h2>
+          <div class="space-y-1.5">
+            {members.map((m: any) => (
+              <a href={`/${m.slug}`} class="flex items-center gap-2 px-2 py-1.5 hover:bg-parchment-dark transition-colors rounded" title={m.displayName}>
+                <span class="text-sm font-medium">{m.slug}</span>
+                <span class="text-[10px] text-ink-muted border border-rule px-1 py-0.5">{m.role}</span>
+              </a>
+            ))}
+          </div>
         </div>
       </div>
-    )}
-
-    <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
-      Collections ({collections.length})
-    </h2>
-
-    {collections.length === 0 ? (
-      <p class="text-sm text-ink-muted">No public collections yet.</p>
     ) : (
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {collections.map((c: any) => (
-          <a href={`/${owner}/${c.slug}`} class="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="font-semibold text-sm text-link">{c.name}</span>
-              <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
-            </div>
-            {c.description && <p class="text-xs text-ink-muted mt-1 line-clamp-2">{c.description}</p>}
-          </a>
-        ))}
-      </div>
+      <>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+          Collections ({collections.length})
+        </h2>
+
+        {collections.length === 0 ? (
+          <p class="text-sm text-ink-muted">No public collections yet.</p>
+        ) : (
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {collections.map((c: any) => (
+              <a href={`/${owner}/${c.slug}`} class="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors">
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="font-semibold text-sm text-link">{c.name}</span>
+                  <span class="text-xs text-ink-muted border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
+                </div>
+                {c.description && <p class="text-xs text-ink-muted mt-1 line-clamp-2">{c.description}</p>}
+              </a>
+            ))}
+          </div>
+        )}
+      </>
     )}
   </div>
 </Base>

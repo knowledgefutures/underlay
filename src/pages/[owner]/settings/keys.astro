@@ -2,41 +2,56 @@
 import Base from "@/layouts/Base.astro";
 import { apiBase } from "@/lib/page-utils";
 
+const { owner } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
-if (!sessionCookie) {
-  return Astro.redirect("/login");
-}
+if (!sessionCookie) return Astro.redirect("/login");
 
 const meRes = await fetch(`${apiBase}/api/accounts/me`, {
   headers: { Cookie: `session=${sessionCookie}` },
 });
-if (!meRes.ok) {
-  return Astro.redirect("/login");
-}
+if (!meRes.ok) return Astro.redirect("/login");
 const me = await meRes.json();
 
-// Fetch user collections for scoping
-const collectionsRes = await fetch(`${apiBase}/api/accounts/${me.slug}/collections`, {
+const org = me.orgs?.find((o: any) => o.slug === owner);
+if (!org) return Astro.redirect(`/${owner}`);
+
+const orgRes = await fetch(`${apiBase}/api/accounts/${owner}`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!orgRes.ok) return Astro.redirect("/404");
+const orgData = await orgRes.json();
+
+const isOwner = org.role === "owner";
+const isAdmin = org.role === "admin" || isOwner;
+
+// Fetch org API keys
+const keysRes = await fetch(`${apiBase}/api/accounts/${owner}/keys`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const keys = keysRes.ok ? await keysRes.json() : [];
+
+// Fetch org collections (for key scoping + playground)
+const collectionsRes = await fetch(`${apiBase}/api/accounts/${owner}/collections`, {
   headers: { Cookie: `session=${sessionCookie}` },
 });
 const collections = collectionsRes.ok ? await collectionsRes.json() : [];
 
-let newKeyResult: { key: string; label: string } | null = null;
+let success = "";
 let error = "";
+let newKeyResult: { key: string; label: string } | null = null;
 
-// Handle create / delete key
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
-  const action = form.get("action");
+  const action = form.get("action") as string;
 
-  if (action === "create") {
+  if (action === "create-key" && isAdmin) {
     const label = form.get("label") as string;
     const scope = form.get("scope") as string;
     const collectionId = form.get("collectionId") as string || undefined;
     const expiresIn = form.get("expiresIn") as string;
 
-    const res = await fetch(`${apiBase}/api/accounts/keys`, {
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/keys`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
       body: JSON.stringify({
@@ -55,20 +70,26 @@ if (Astro.request.method === "POST") {
     }
   }
 
-  if (action === "delete") {
+  if (action === "delete-key" && isAdmin) {
     const keyId = form.get("keyId") as string;
-    await fetch(`${apiBase}/api/accounts/keys/${keyId}`, {
+    await fetch(`${apiBase}/api/accounts/${owner}/keys/${keyId}`, {
       method: "DELETE",
       headers: { Cookie: `session=${sessionCookie}` },
     });
+    success = "Key revoked.";
   }
 }
 
-// Fetch keys
-const keysRes = await fetch(`${apiBase}/api/accounts/keys`, {
-  headers: { Cookie: `session=${sessionCookie}` },
-});
-const keys = keysRes.ok ? await keysRes.json() : [];
+// Refresh keys after mutations
+if (Astro.request.method === "POST" && !newKeyResult) {
+  const refreshRes = await fetch(`${apiBase}/api/accounts/${owner}/keys`, {
+    headers: { Cookie: `session=${sessionCookie}` },
+  });
+  if (refreshRes.ok) {
+    keys.length = 0;
+    keys.push(...await refreshRes.json());
+  }
+}
 
 function isExpiringSoon(expiresAt: string | null): boolean {
   if (!expiresAt) return false;
@@ -82,15 +103,24 @@ function isExpired(expiresAt: string | null): boolean {
 }
 ---
 
-<Base title="API Keys — Underlay">
+<Base title={`API Keys — ${orgData.displayName} — Underlay`}>
   <div class="max-w-4xl mx-auto px-4 py-10">
-    <h1 class="text-xl font-semibold tracking-tight mb-6">Settings</h1>
+    <nav class="text-xs text-ink-muted mb-6">
+      <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
+      <span class="mx-1">/</span>
+      <span class="text-ink font-medium">settings</span>
+    </nav>
+
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Organization Settings</h1>
 
     <nav class="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-      <a href="/settings" class="text-ink-muted hover:text-ink">Account</a>
-      <a href="/settings/keys" class="text-ink font-medium">API Keys</a>
-      <a href="/settings/sessions" class="text-ink-muted hover:text-ink">Sessions</a>
+      <a href={`/${owner}/settings`} class="text-ink-muted hover:text-ink">Profile</a>
+      <a href={`/${owner}/settings/members`} class="text-ink-muted hover:text-ink">Members</a>
+      <a href={`/${owner}/settings/keys`} class="text-ink font-medium">API Keys</a>
     </nav>
+
+    {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
 
     {newKeyResult && (
       <div class="border border-green-300 bg-green-50 p-4 mb-4">
@@ -100,29 +130,27 @@ function isExpired(expiresAt: string | null): boolean {
       </div>
     )}
 
-    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
-
-    <div class="border border-rule p-4 mb-6">
-      <h2 class="text-sm font-semibold mb-3">Create a new key</h2>
-      <form method="POST" class="space-y-3">
-        <input type="hidden" name="action" value="create" />
+    {isAdmin && (
+      <form method="POST" class="border border-rule p-4 mb-6 space-y-3">
+        <h2 class="text-sm font-semibold mb-1">Create a new key</h2>
+        <input type="hidden" name="action" value="create-key" />
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label for="label" class="block text-xs text-ink-muted mb-1">Label</label>
-            <input type="text" id="label" name="label" required placeholder="my-sync-script"
+            <label for="keyLabel" class="block text-xs text-ink-muted mb-1">Label</label>
+            <input type="text" id="keyLabel" name="label" required placeholder="ci-deploy"
               class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-ink" />
           </div>
           <div>
-            <label for="scope" class="block text-xs text-ink-muted mb-1">Scope</label>
-            <select name="scope" id="scope" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+            <label for="keyScope" class="block text-xs text-ink-muted mb-1">Scope</label>
+            <select name="scope" id="keyScope" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
               <option value="read">read — list and download</option>
               <option value="write" selected>write — push versions</option>
               <option value="admin">admin — full access</option>
             </select>
           </div>
           <div>
-            <label for="collectionId" class="block text-xs text-ink-muted mb-1">Scope to collection (optional)</label>
-            <select name="collectionId" id="collectionId" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+            <label for="keyCollection" class="block text-xs text-ink-muted mb-1">Collection (optional)</label>
+            <select name="collectionId" id="keyCollection" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
               <option value="">All collections</option>
               {collections.map((c: any) => (
                 <option value={c.id}>{c.slug}</option>
@@ -130,10 +158,9 @@ function isExpired(expiresAt: string | null): boolean {
             </select>
           </div>
           <div>
-            <label for="expiresIn" class="block text-xs text-ink-muted mb-1">Expiration (optional)</label>
-            <select name="expiresIn" id="expiresIn" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
-              <option value="">Never expires</option>
-              <option value="7">7 days</option>
+            <label for="keyExpiry" class="block text-xs text-ink-muted mb-1">Expiration</label>
+            <select name="expiresIn" id="keyExpiry" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+              <option value="">Never</option>
               <option value="30">30 days</option>
               <option value="90">90 days</option>
               <option value="365">1 year</option>
@@ -144,14 +171,19 @@ function isExpired(expiresAt: string | null): boolean {
           Create key
         </button>
       </form>
-    </div>
+    )}
 
     <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
       Active Keys ({keys.length})
     </h2>
 
+    <div class="text-xs text-ink-muted bg-parchment border border-rule px-3 py-2 mb-4">
+      <strong class="text-ink">Rate limits:</strong> Authenticated requests get 5,000 req/min. Without a key, the API allows 60 req/min per IP.
+      <a href="/docs/api" class="text-link underline ml-1">Learn more →</a>
+    </div>
+
     {keys.length === 0 ? (
-      <p class="text-sm text-ink-muted">No API keys yet.</p>
+      <p class="text-sm text-ink-muted">No API keys for this organization.</p>
     ) : (
       <div class="space-y-2 mb-8">
         {keys.map((k: any) => (
@@ -173,11 +205,13 @@ function isExpired(expiresAt: string | null): boolean {
                 {isExpired(k.expiresAt) && <span class="text-red-700 font-medium">· Expired</span>}
               </div>
             </div>
-            <form method="POST">
-              <input type="hidden" name="action" value="delete" />
-              <input type="hidden" name="keyId" value={k.id} />
-              <button type="submit" class="text-xs text-red-700 hover:underline">Revoke</button>
-            </form>
+            {isAdmin && (
+              <form method="POST">
+                <input type="hidden" name="action" value="delete-key" />
+                <input type="hidden" name="keyId" value={k.id} />
+                <button type="submit" class="text-xs text-red-700 hover:underline">Revoke</button>
+              </form>
+            )}
           </div>
         ))}
       </div>
@@ -186,9 +220,9 @@ function isExpired(expiresAt: string | null): boolean {
     <!-- API Playground -->
     <div class="border-t border-rule pt-8">
       <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">API Playground</h2>
-      <p class="text-xs text-ink-muted mb-4">Test API calls using your session. Select an endpoint to get started.</p>
+      <p class="text-xs text-ink-muted mb-4">Test API calls using your session. Select an example to get started.</p>
       <div id="api-playground"
-        data-slug={me.slug}
+        data-slug={owner}
         data-collections={JSON.stringify(collections.map((c: any) => ({ id: c.id, slug: c.slug })))}
       ></div>
     </div>

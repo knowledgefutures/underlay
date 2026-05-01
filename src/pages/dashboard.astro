@@ -61,105 +61,126 @@ if (me.orgs?.length) {
 ---
 
 <Base title="Dashboard — Underlay">
-  <div class="max-w-3xl mx-auto px-4 py-10">
+  <div class="max-w-5xl mx-auto px-4 py-10">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-xl font-semibold tracking-tight">Dashboard</h1>
       <a href="/settings" class="text-sm text-ink-muted hover:text-ink transition-colors">Settings</a>
     </div>
 
-    <!-- Search/filter -->
-    <div class="mb-6">
-      <input
-        type="text"
-        id="collection-filter"
-        placeholder="Filter collections…"
-        class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
-      />
-    </div>
+    <div class="flex flex-col lg:flex-row gap-8">
+      {/* Main content area */}
+      <div class="flex-1 min-w-0">
+        <!-- Search/filter -->
+        <div class="mb-4">
+          <input
+            type="text"
+            id="collection-filter"
+            placeholder="Filter collections…"
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+          />
+        </div>
 
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">
-        Your Collections ({collections.length})
-      </h2>
-    </div>
+        {/* Personal collections */}
+        <div class="mb-6">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">
+            Your Collections ({collections.length})
+          </h2>
 
-    {collections.length === 0 ? (
-      <div class="border border-rule border-dashed p-6 text-center">
-        <p class="text-sm text-ink-muted mb-2">No collections yet.</p>
-        <p class="text-xs text-ink-muted">Use the API to create and push your first collection.</p>
-      </div>
-    ) : (
-      <div class="space-y-2">
-        {collections.map((c: any) => (
-          <a href={`/${me.slug}/${c.slug}`} data-collection={`${me.slug}/${c.slug} ${c.name} ${c.description ?? ""}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
-            <div>
-              <span class="font-semibold text-sm">{me.slug}/{c.slug}</span>
-              <p class="text-xs text-ink-muted mt-0.5">{c.description ?? c.name}</p>
+          {collections.length === 0 ? (
+            <div class="border border-rule border-dashed p-4 text-center">
+              <p class="text-sm text-ink-muted mb-1">No collections yet.</p>
+              <p class="text-xs text-ink-muted">Use the API to create your first collection.</p>
             </div>
-            <div class="flex items-center gap-3 text-xs text-ink-muted">
-              <span class="border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
+          ) : (
+            <div class="space-y-1">
+              {collections.map((c: any) => (
+                <a href={`/${me.slug}/${c.slug}`} data-collection={`${me.slug}/${c.slug} ${c.name} ${c.description ?? ""}`.toLowerCase()} class="flex items-center justify-between border border-rule px-3 py-2 hover:bg-parchment-dark transition-colors">
+                  <div class="min-w-0">
+                    <span class="font-medium text-sm">{me.slug}/{c.slug}</span>
+                    {c.description && <p class="text-xs text-ink-muted mt-0.5 truncate">{c.description}</p>}
+                  </div>
+                  <span class="text-[10px] text-ink-muted border border-rule px-1.5 py-0.5 ml-2 flex-shrink-0">{c.public ? "public" : "private"}</span>
+                </a>
+              ))}
             </div>
-          </a>
+          )}
+        </div>
+
+        {/* Org collections */}
+        {orgs.map((org) => (
+          <div class="mb-6">
+            <div class="flex items-center justify-between mb-2">
+              <h2 class="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                <a href={`/${org.slug}`} class="hover:text-ink transition-colors">{org.displayName}</a>
+                <span class="ml-1.5 text-[10px] font-normal border border-rule px-1 py-0.5 normal-case">{org.role}</span>
+              </h2>
+              <a href={`/${org.slug}/settings`} class="text-[10px] text-ink-muted hover:text-ink">settings</a>
+            </div>
+
+            {org.collections.length === 0 ? (
+              <p class="text-xs text-ink-muted pl-1">No collections yet.</p>
+            ) : (
+              <div class="space-y-1">
+                {org.collections.map((c: any) => (
+                  <a href={`/${org.slug}/${c.slug}`} data-collection={`${org.slug}/${c.slug} ${c.name} ${c.description ?? ""}`.toLowerCase()} class="flex items-center justify-between border border-rule px-3 py-2 hover:bg-parchment-dark transition-colors">
+                    <div class="min-w-0">
+                      <span class="font-medium text-sm">{org.slug}/{c.slug}</span>
+                      {c.description && <p class="text-xs text-ink-muted mt-0.5 truncate">{c.description}</p>}
+                    </div>
+                    <span class="text-[10px] text-ink-muted border border-rule px-1.5 py-0.5 ml-2 flex-shrink-0">{c.public ? "public" : "private"}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </div>
-    )}
 
-    {orgs.map((org) => (
-      <div class="mt-8 pt-6 border-t border-rule">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">
-            <a href={`/${org.slug}`} class="hover:text-ink transition-colors">{org.displayName}</a>
-            <span class="ml-2 text-xs font-normal border border-rule px-1.5 py-0.5">{org.role}</span>
-          </h2>
-          <span class="text-xs text-ink-muted">{org.collections.length} collections</span>
-        </div>
-
-        {org.collections.length === 0 ? (
-          <p class="text-sm text-ink-muted">No collections in this organization yet.</p>
-        ) : (
-          <div class="space-y-2">
-            {org.collections.map((c: any) => (
-              <a href={`/${org.slug}/${c.slug}`} data-collection={`${org.slug}/${c.slug} ${c.name} ${c.description ?? ""}`} class="flex items-center justify-between border border-rule p-3 hover:bg-parchment-dark transition-colors">
-                <div>
-                  <span class="font-semibold text-sm">{org.slug}/{c.slug}</span>
-                  <p class="text-xs text-ink-muted mt-0.5">{c.description ?? c.name}</p>
-                </div>
-                <div class="flex items-center gap-3 text-xs text-ink-muted">
-                  <span class="border border-rule px-1.5 py-0.5">{c.public ? "public" : "private"}</span>
-                </div>
-              </a>
-            ))}
+      {/* Right sidebar */}
+      <div class="lg:w-64 flex-shrink-0 space-y-6">
+        {/* Quick reference */}
+        <div class="border border-rule p-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">Quick Reference</h3>
+          <div class="text-xs text-ink-muted space-y-2">
+            <div>
+              <p class="font-medium text-ink text-[11px] mb-0.5">Create collection</p>
+              <code class="block bg-parchment-dark px-1.5 py-1 text-[10px] break-all">POST /api/accounts/{me.slug}/collections</code>
+            </div>
+            <div>
+              <p class="font-medium text-ink text-[11px] mb-0.5">Push version</p>
+              <code class="block bg-parchment-dark px-1.5 py-1 text-[10px] break-all">POST /api/collections/{me.slug}/&lt;slug&gt;/versions</code>
+            </div>
+            <a href="/docs/quickstart" class="block text-link text-[11px] hover:underline mt-2">Quickstart guide →</a>
           </div>
-        )}
-      </div>
-    ))}
-
-    <div class="mt-8 pt-6 border-t border-rule">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Create Organization</h2>
-      {orgError && <p class="text-red-600 text-sm mb-2">{orgError}</p>}
-      <form method="POST" class="flex items-end gap-3">
-        <div>
-          <label class="block text-xs text-ink-muted mb-1">Slug</label>
-          <input type="text" name="orgSlug" required pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]" minlength="2"
-            placeholder="my-org" class="border border-rule px-2 py-1.5 text-sm bg-parchment w-40" />
         </div>
-        <div>
-          <label class="block text-xs text-ink-muted mb-1">Display Name</label>
-          <input type="text" name="orgDisplayName" required
-            placeholder="My Organization" class="border border-rule px-2 py-1.5 text-sm bg-parchment w-48" />
-        </div>
-        <button type="submit" class="border border-ink bg-ink text-parchment px-3 py-1.5 text-sm hover:bg-ink-muted transition-colors">
-          Create
-        </button>
-      </form>
-    </div>
 
-    <div class="mt-8 pt-6 border-t border-rule">
-      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">Quick Reference</h2>
-      <div class="text-xs text-ink-muted space-y-1">
-        <p>Create a collection: <code class="bg-parchment-dark px-1">POST /api/accounts/{me.slug}/collections</code></p>
-        <p>Push a version: <code class="bg-parchment-dark px-1">POST /api/collections/{me.slug}/&lt;slug&gt;/versions</code></p>
-        <p><a href="/docs/quickstart" class="text-link underline">Quickstart guide →</a></p>
+        {/* Create org */}
+        <div class="border border-rule p-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">New Organization</h3>
+          {orgError && <p class="text-red-600 text-xs mb-2">{orgError}</p>}
+          <form method="POST" class="space-y-2">
+            <div>
+              <label class="block text-[10px] text-ink-muted mb-0.5">Slug</label>
+              <input type="text" name="orgSlug" required pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]" minlength="2"
+                placeholder="my-org" class="w-full border border-rule px-2 py-1 text-xs bg-parchment focus:outline-none focus:border-ink" />
+            </div>
+            <div>
+              <label class="block text-[10px] text-ink-muted mb-0.5">Display Name</label>
+              <input type="text" name="orgDisplayName" required
+                placeholder="My Organization" class="w-full border border-rule px-2 py-1 text-xs bg-parchment focus:outline-none focus:border-ink" />
+            </div>
+            <button type="submit" class="w-full bg-ink text-parchment px-3 py-1 text-xs font-medium hover:opacity-90 transition-opacity">
+              Create
+            </button>
+          </form>
+        </div>
+
+        {/* Links */}
+        <div class="text-xs space-y-1.5">
+          <a href={`/${me.slug}`} class="block text-ink-muted hover:text-ink transition-colors">Your profile →</a>
+          <a href="/settings/keys" class="block text-ink-muted hover:text-ink transition-colors">API keys →</a>
+          <a href="/explore" class="block text-ink-muted hover:text-ink transition-colors">Explore collections →</a>
+        </div>
       </div>
     </div>
   </div>

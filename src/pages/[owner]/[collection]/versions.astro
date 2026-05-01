@@ -1,18 +1,18 @@
 ---
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
-import { apiBase, formatBytes, checkOwnership } from "@/lib/page-utils";
+import { apiBase, apiHeaders, formatBytes, checkOwnership } from "@/lib/page-utils";
 
 const { owner, collection } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch collection
-const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers: apiHeaders(sessionCookie) });
 if (!collectionRes.ok) return Astro.redirect("/404");
 const data = await collectionRes.json();
 
 // Fetch all versions
-const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=100`);
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=100`, { headers: apiHeaders(sessionCookie) });
 const versions = versionsRes.ok ? await versionsRes.json() : [];
 
 // Check if current user is owner

@@ -14,17 +14,36 @@ declare module "fastify" {
 }
 
 async function authPlugin(app: FastifyInstance) {
-  // API key auth via Bearer token
   app.decorateRequest("accountId", undefined);
   app.decorateRequest("apiKeyScope", undefined);
   app.decorateRequest("apiKeyCollectionId", undefined);
   app.decorateRequest("sessionUserId", undefined);
 
-  app.addHook("onRequest", async (request: FastifyRequest) => {
+  // Paths that never require auth (even for POST)
+  const publicPaths = new Set([
+    "/api/health",
+    "/api/accounts/signup",
+    "/api/accounts/login",
+    "/api/accounts/forgot-password",
+    "/api/accounts/reset-password",
+  ]);
+
+  const internalToken = process.env.INTERNAL_API_TOKEN ?? "internal-dev-token";
+
+  app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
+    // Internal service calls from Astro SSR
+    const internalHeader = request.headers["x-internal-token"];
+    if (internalHeader === internalToken) {
+      request.apiKeyScope = "read";
+      return;
+    }
+
+    // API key auth via Bearer token
     const auth = request.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
       const token = auth.slice(7);
       const keys = await db.select().from(schema.apiKeys);
+      let matched = false;
       for (const key of keys) {
         const match = await bcrypt.compare(token, key.keyHash);
         if (match) {
@@ -35,9 +54,14 @@ async function authPlugin(app: FastifyInstance) {
             .update(schema.apiKeys)
             .set({ lastUsedAt: new Date() })
             .where(eq(schema.apiKeys.id, key.id));
-          return;
+          matched = true;
+          break;
         }
       }
+      if (!matched) {
+        return reply.status(401).send({ error: "Invalid API key", statusCode: 401 });
+      }
+      return;
     }
 
     // Session cookie auth
@@ -61,6 +85,16 @@ async function authPlugin(app: FastifyInstance) {
       } catch {
         // Invalid or expired cookie — ignore silently
       }
+    }
+
+    // Public GETs are allowed without auth (rate-limited by IP)
+    if (request.method === "GET") return;
+
+    // All writes (POST/PATCH/PUT/DELETE) require auth, except public paths
+    if (!request.accountId) {
+      const path = request.url.split("?")[0];
+      if (publicPaths.has(path)) return;
+      return reply.status(401).send({ error: "Authentication required", statusCode: 401 });
     }
   });
 }

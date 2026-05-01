@@ -1,0 +1,97 @@
+---
+import Docs from "@/layouts/Docs.astro";
+---
+
+<Docs title="API Overview" breadcrumbs={[{ label: "API" }, { label: "Overview" }]}>
+  <p>The Underlay API is a JSON REST API served at <code>/api</code>. All request and response bodies are JSON (except file uploads/downloads). A machine-readable reference is available at <a href="/.well-known/ai.txt" class="text-link underline">/.well-known/ai.txt</a>.</p>
+
+  <h2>Base URL</h2>
+  <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>https://underlay.org/api</code></pre>
+
+  <hr class="border-rule my-6" />
+
+  <h2>Authentication</h2>
+  <p>All <code>GET</code> requests are <strong>public</strong> — no authentication required to read public data. All write requests (<code>POST</code>, <code>PATCH</code>, <code>PUT</code>, <code>DELETE</code>) require authentication.</p>
+
+  <p>There are two authentication methods:</p>
+
+  <h3>API Keys (recommended for scripts &amp; apps)</h3>
+  <p>Pass your key as a Bearer token:</p>
+  <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>Authorization: Bearer ul_a1b2c3d4e5...</code></pre>
+  <p>Keys have three scopes:</p>
+  <ul>
+    <li><code>read</code> — list and download data</li>
+    <li><code>write</code> — push versions, upload files</li>
+    <li><code>admin</code> — delete collections, manage keys</li>
+  </ul>
+  <p>Keys can optionally be scoped to a single collection. Create keys in your <a href="/settings" class="text-link underline">organization settings</a> or via <code>POST /api/accounts/keys</code>.</p>
+
+  <h3>Session Cookies (browser)</h3>
+  <p>The web UI authenticates via signed session cookies set by <code>POST /api/accounts/login</code>. Sessions expire after 30 days.</p>
+
+  <h3>Invalid Credentials</h3>
+  <p>If a <code>Bearer</code> token is provided but does not match any key, the request is <strong>immediately rejected</strong> with <code>401</code> — it will not fall through to anonymous access.</p>
+
+  <hr class="border-rule my-6" />
+
+  <h2>Rate Limits</h2>
+  <p>All requests are rate-limited. Authenticated requests get a significantly higher allowance:</p>
+
+  <table class="text-sm w-full border-collapse">
+    <thead>
+      <tr class="border-b border-rule text-left">
+        <th class="py-2 pr-4">Auth status</th>
+        <th class="py-2">Limit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="border-b border-rule">
+        <td class="py-2 pr-4">Unauthenticated (by IP)</td>
+        <td class="py-2 font-mono">60 requests / minute</td>
+      </tr>
+      <tr class="border-b border-rule">
+        <td class="py-2 pr-4">Authenticated (by account)</td>
+        <td class="py-2 font-mono">5,000 requests / minute</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="mt-3">Every response includes rate limit headers:</p>
+  <ul>
+    <li><code>X-RateLimit-Limit</code> — max requests in the current window</li>
+    <li><code>X-RateLimit-Remaining</code> — requests remaining</li>
+    <li><code>X-RateLimit-Reset</code> — seconds until the window resets</li>
+  </ul>
+  <p>When you exceed the limit, you'll receive a <code>429 Too Many Requests</code> response with a <code>Retry-After</code> header indicating how long to wait.</p>
+  <p>For any automated or scripted access, <strong>always use an API key</strong> to get the higher rate limit.</p>
+
+  <hr class="border-rule my-6" />
+
+  <h2>Error Responses</h2>
+  <p>Errors return a JSON body with <code>error</code> and <code>statusCode</code>:</p>
+  <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "error": "Authentication required",
+  "statusCode": 401
+}`}</code></pre>
+
+  <p>Common status codes:</p>
+  <ul>
+    <li><code>400</code> — Bad request (invalid input)</li>
+    <li><code>401</code> — Authentication required or invalid credentials</li>
+    <li><code>403</code> — Insufficient permissions (wrong scope)</li>
+    <li><code>404</code> — Resource not found</li>
+    <li><code>409</code> — Version conflict (re-fetch and retry)</li>
+    <li><code>422</code> — Validation error (e.g. missing files)</li>
+    <li><code>429</code> — Rate limited (wait and retry)</li>
+  </ul>
+
+  <hr class="border-rule my-6" />
+
+  <h2>Endpoints</h2>
+  <nav class="space-y-2 text-sm">
+    <div><a href="/docs/api/accounts" class="text-link underline">Accounts</a> — signup, login, API keys, profiles</div>
+    <div><a href="/docs/api/collections" class="text-link underline">Collections</a> — create, list, update, delete</div>
+    <div><a href="/docs/api/versions" class="text-link underline">Versions</a> — push snapshots, browse history, diff</div>
+    <div><a href="/docs/api/files" class="text-link underline">Files</a> — upload and download content-addressed files</div>
+  </nav>
+</Docs>

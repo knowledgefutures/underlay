@@ -1,13 +1,13 @@
 ---
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
-import { apiBase, checkOwnership } from "@/lib/page-utils";
+import { apiBase, apiHeaders, checkOwnership } from "@/lib/page-utils";
 
 const { owner, collection } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch collection metadata
-const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers: apiHeaders(sessionCookie) });
 if (!collectionRes.ok) return Astro.redirect("/404");
 const data = await collectionRes.json();
 
@@ -16,7 +16,7 @@ const isOwner = await checkOwnership(sessionCookie, owner!);
 // Fetch schemas for this collection (uses latest version by default)
 const versionParam = Astro.url.searchParams.get("version");
 const schemasUrl = `${apiBase}/api/collections/${owner}/${collection}/schemas${versionParam ? `?version=${versionParam}` : ""}`;
-const schemasRes = await fetch(schemasUrl);
+const schemasRes = await fetch(schemasUrl, { headers: apiHeaders(sessionCookie) });
 const schemasData = schemasRes.ok ? await schemasRes.json() : { schemas: [], version: null, semver: null };
 const schemas: any[] = schemasData.schemas ?? [];
 ---

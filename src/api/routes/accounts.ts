@@ -7,6 +7,9 @@ import { requireAuth } from "../plugins/auth.js";
 import { uploadToS3, deleteS3Objects, listS3Objects } from "../../lib/s3.js";
 import { sendEmail } from "../../lib/email.js";
 
+/** Base URL for public assets (avatars, etc.) */
+const ASSETS_BASE_URL = process.env.ASSETS_BASE_URL ?? "https://assets.underlay.org";
+
 const RESERVED_SLUGS = new Set([
   "explore", "docs", "connect", "blog", "dashboard", "settings",
   "api", "login", "signup", "admin", "about", "help", "support",
@@ -323,13 +326,12 @@ export async function accountRoutes(app: FastifyInstance) {
 
       await uploadToS3(key, buffer, data.mimetype);
 
-      const avatarUrl = `/api/files/avatars/${request.accountId}/${key.split("/").pop()}`;
       await db
         .update(schema.accounts)
-        .set({ avatarUrl })
+        .set({ avatarUrl: `${ASSETS_BASE_URL}/${key}` })
         .where(eq(schema.accounts.id, request.accountId!));
 
-      return { ok: true, avatarUrl };
+      return { ok: true, avatarUrl: `${ASSETS_BASE_URL}/${key}` };
     },
   );
 
@@ -1070,10 +1072,9 @@ export async function accountRoutes(app: FastifyInstance) {
 
       await uploadToS3(key, buffer, data.mimetype);
 
-      const avatarUrl = `/api/files/avatars/${org.id}/${key.split("/").pop()}`;
-      await db.update(schema.accounts).set({ avatarUrl }).where(eq(schema.accounts.id, org.id));
+      await db.update(schema.accounts).set({ avatarUrl: `${ASSETS_BASE_URL}/${key}` }).where(eq(schema.accounts.id, org.id));
 
-      return { ok: true, avatarUrl };
+      return { ok: true, avatarUrl: `${ASSETS_BASE_URL}/${key}` };
     },
   );
 

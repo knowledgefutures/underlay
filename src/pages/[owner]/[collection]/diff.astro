@@ -1,7 +1,7 @@
 ---
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
-import { apiBase, checkOwnership } from "@/lib/page-utils";
+import { apiBase, apiHeaders, checkOwnership } from "@/lib/page-utils";
 
 const { owner, collection } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
@@ -11,12 +11,12 @@ const toNum = Astro.url.searchParams.get("to");
 const fromNum = Astro.url.searchParams.get("from");
 
 // Fetch collection
-const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers: apiHeaders(sessionCookie) });
 if (!collectionRes.ok) return Astro.redirect("/404");
 const data = await collectionRes.json();
 
 // Fetch all versions for the dropdown selectors
-const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=100`);
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=100`, { headers: apiHeaders(sessionCookie) });
 const versions: any[] = versionsRes.ok ? await versionsRes.json() : [];
 
 // Default: latest version diff'd against its predecessor
@@ -29,7 +29,7 @@ let diff: any = null;
 let diffError: string | null = null;
 if (targetNum && targetNum > 0) {
   const fromParam = baseNum !== null && baseNum >= 0 ? `?from=${baseNum}` : "";
-  const diffRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${targetNum}/diff${fromParam}`);
+  const diffRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions/${targetNum}/diff${fromParam}`, { headers: apiHeaders(sessionCookie) });
   if (diffRes.ok) {
     diff = await diffRes.json();
   } else {
