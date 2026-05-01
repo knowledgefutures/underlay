@@ -69,7 +69,7 @@ GET /api/collections/:owner/:slug/versions/latest       → latest version with 
 GET /api/collections/:owner/:slug/versions/:n            → specific version by number
 
 ### Read records and files
-GET /api/collections/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&offset=0)
+GET /api/collections/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&after=recordId)
 GET /api/collections/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
 GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
 HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
@@ -182,6 +182,119 @@ Missing files (422 — records reference files not yet uploaded):
 
 ### First push (no existing versions)
 Set base_version to null. Put all records in changes.added. Include schemas for all types.
+
+---
+
+## Chunked Push: Large Uploads
+
+For pushes exceeding 100MB (or millions of records), use the chunked upload protocol. This avoids
+body size limits and memory pressure by streaming changes in batches.
+
+### Step 1: Start an upload session
+POST /api/collections/:owner/:slug/versions/upload
+Authorization: Bearer ul_<key>
+
+{
+  "base_version": 3,
+  "message": "Bulk import 2M records",
+  "app_id": "my-app",
+  "schemas": { ... }
+}
+
+Response (201):
+{
+  "sessionId": "uuid-of-session",
+  "expiresAt": "2026-04-30T01:00:00.000Z"
+}
+
+Sessions expire after 1 hour.
+
+### Step 2: Append batches (repeat as needed)
+PUT /api/collections/:owner/:slug/versions/upload/:sessionId
+Authorization: Bearer ul_<key>
+
+{
+  "changes": {
+    "added": [ ...up to 10,000 records... ],
+    "updated": [ ... ],
+    "removed": ["id-1", "id-2"]
+  }
+}
+
+Response:
+{
+  "received": { "added": 5000, "updated": 0, "removed": 0 },
+  "totalStaged": 15000
+}
+
+Each batch can contain up to 10,000 records. Call this endpoint as many times as needed.
+If a record ID is sent more than once, the last write wins (upsert semantics).
+
+### Step 3: Finalize the version
+POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize
+Authorization: Bearer ul_<key>
+
+Response (201): same as regular push
+{
+  "version": 4,
+  "semver": "v1.3.0",
+  "hash": "...",
+  "recordCount": 2000000,
+  "fileCount": 5
+}
+
+Finalize applies all staged changes to the base version, validates against schemas,
+computes hashes, and creates the new immutable version.
+
+### Errors during finalize
+- 409 Version conflict: someone pushed since your base_version. Start a new session.
+- 422 Schema validation failed: one or more records don't match. Fix and re-upload.
+- 422 Missing files: records reference files not yet uploaded. Upload them and retry finalize.
+- 410 Session expired: the 1-hour window elapsed. Start a new session.
+
+### Cancel a session
+DELETE /api/collections/:owner/:slug/versions/upload/:sessionId
+Response: 204 (staged records are discarded)
+
+### Check session status
+GET /api/collections/:owner/:slug/versions/upload/:sessionId
+Response: { sessionId, status, recordCount, baseVersion, expiresAt, createdAt }
+
+Status values: open, finalizing, completed, failed, expired.
+
+Note: On successful finalize, the session and all staged records are deleted from the database.
+There is no need to manually clean up completed sessions.
+
+---
+
+## Pagination (Records Endpoint)
+
+The records endpoint uses cursor-based pagination for efficient traversal of large collections.
+
+GET /api/collections/:owner/:slug/versions/:n/records?limit=100&after=record-id-42
+
+Response:
+{
+  "records": [ ...up to `limit` records... ],
+  "pagination": {
+    "limit": 100,
+    "hasMore": true,
+    "nextCursor": "record-id-142",
+    "total": 2000000
+  }
+}
+
+Parameters:
+- limit: max records per page (default 100, max 1000)
+- after: cursor (record ID) — return records with IDs lexicographically after this value
+- offset: legacy offset-based pagination (still supported, but cursor is preferred for large sets)
+- type: filter by record type
+
+To paginate through all records:
+1. First request: GET .../records?limit=1000
+2. If pagination.hasMore is true, use pagination.nextCursor for the next request:
+   GET .../records?limit=1000&after=<nextCursor>
+3. Repeat until hasMore is false.
 
 ---
 

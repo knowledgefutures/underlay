@@ -145,12 +145,22 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   <h2>API Reference</h2>
   <p>Full API docs are at <a href="/docs">/docs</a>. The key endpoints:</p>
   <table>
-    <tr><td><code>POST .../versions</code></td><td>Push a new version</td></tr>
+    <tr><td><code>POST .../versions</code></td><td>Push a new version (up to 100MB)</td></tr>
+    <tr><td><code>POST .../versions/upload</code></td><td>Start chunked upload (for large pushes)</td></tr>
     <tr><td><code>GET .../versions/latest</code></td><td>Get latest version</td></tr>
     <tr><td><code>GET .../versions/:n/records</code></td><td>Get records</td></tr>
     <tr><td><code>PUT .../files/:hash</code></td><td>Upload a file</td></tr>
     <tr><td><code>GET /api/collections</code></td><td>Browse public collections</td></tr>
   </table>
+
+  <h2>Large Pushes (Chunked Upload)</h2>
+  <p>For pushes exceeding 100MB or containing hundreds of thousands of records, use the chunked upload protocol:</p>
+  <ol>
+    <li><strong>Start session:</strong> <code>POST .../versions/upload</code> with metadata (base_version, schemas, message). Returns a <code>sessionId</code>.</li>
+    <li><strong>Append batches:</strong> <code>PUT .../versions/upload/:sessionId</code> with up to 10,000 records per batch. Repeat as needed.</li>
+    <li><strong>Finalize:</strong> <code>POST .../versions/upload/:sessionId/finalize</code> to validate and create the version.</li>
+  </ol>
+  <p>Sessions expire after 1 hour. If the same record ID appears in multiple batches, last write wins. See the <a href="/docs/api/versions">Versions API docs</a> for full details.</p>
 
   <h2>Error Handling</h2>
   <ul>

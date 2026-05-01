@@ -88,7 +88,10 @@ export const collections = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique().on(t.accountId, t.slug)],
+  (t) => [
+    unique().on(t.accountId, t.slug),
+    index("collections_account_id_idx").on(t.accountId),
+  ],
 );
 
 // --- Versions ---
@@ -135,7 +138,10 @@ export const records = pgTable(
     data: jsonb("data").notNull(),
     private: boolean("private").default(false).notNull(),
   },
-  (t) => [primaryKey({ columns: [t.versionId, t.recordId] })],
+  (t) => [
+    primaryKey({ columns: [t.versionId, t.recordId] }),
+    index("records_version_id_type_idx").on(t.versionId, t.type),
+  ],
 );
 
 // --- Files ---
@@ -158,7 +164,10 @@ export const versionFiles = pgTable(
       .notNull()
       .references(() => files.hash),
   },
-  (t) => [primaryKey({ columns: [t.versionId, t.fileHash] })],
+  (t) => [
+    primaryKey({ columns: [t.versionId, t.fileHash] }),
+    index("version_files_file_hash_idx").on(t.fileHash),
+  ],
 );
 
 // --- Schemas (globally deduplicated, content-addressed) ---
@@ -222,6 +231,45 @@ export const orgInvitations = pgTable("org_invitations", {
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// --- Upload Sessions (chunked push) ---
+
+export const uploadSessions = pgTable("upload_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  collectionId: uuid("collection_id")
+    .notNull()
+    .references(() => collections.id, { onDelete: "cascade" }),
+  accountId: uuid("account_id")
+    .notNull()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  baseVersion: integer("base_version"),
+  message: text("message"),
+  readme: text("readme"),
+  appId: text("app_id"),
+  actorId: text("actor_id"),
+  schemas: jsonb("schemas"),
+  status: text("status", { enum: ["open", "finalizing", "completed", "failed", "expired"] })
+    .notNull()
+    .default("open"),
+  recordCount: integer("record_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+export const uploadRecords = pgTable(
+  "upload_records",
+  {
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => uploadSessions.id, { onDelete: "cascade" }),
+    recordId: text("record_id").notNull(),
+    type: text("type"),
+    data: jsonb("data"),
+    private: boolean("private").default(false),
+    operation: text("operation", { enum: ["add", "update", "remove"] }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.recordId] })],
+);
 
 // --- Password Reset Tokens ---
 
