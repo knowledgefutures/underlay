@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import { requireAuth } from "../plugins/auth.js";
-import { uploadToS3, downloadFromS3, headS3Object } from "../../lib/s3.js";
+import { uploadToS3 } from "../../lib/s3.js";
 import { createHash } from "node:crypto";
 
 /**
@@ -166,12 +166,9 @@ export async function fileRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "File not found", statusCode: 404 });
     }
 
-    const buffer = await downloadFromS3(file.storageKey);
-    reply.header("Content-Type", file.mimeType);
-    reply.header("Content-Length", file.size);
-    reply.header("Cache-Control", "public, max-age=31536000, immutable");
-    reply.header("ETag", `"${cleanHash}"`);
-    return reply.send(buffer);
+    // Redirect to CDN
+    const cdnUrl = `https://assets.underlay.org/files/${cleanHash.slice(0, 2)}/${cleanHash.slice(2, 4)}/${cleanHash}`;
+    return reply.redirect(301, cdnUrl);
   });
 
   // Upload file

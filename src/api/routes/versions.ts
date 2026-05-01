@@ -312,10 +312,11 @@ export async function versionRoutes(app: FastifyInstance) {
   // Get records for a version
   app.get("/collections/:owner/:slug/versions/:n/records", async (request, reply) => {
     const { owner, slug, n } = request.params as { owner: string; slug: string; n: string };
-    const { type, limit, offset } = request.query as {
+    const { type, limit, offset, after } = request.query as {
       type?: string;
       limit?: string;
       offset?: string;
+      after?: string;
     };
 
     const collection = await resolveCollection(owner, slug);
@@ -333,6 +334,11 @@ export async function versionRoutes(app: FastifyInstance) {
 
     const conditions = [eq(schema.records.versionId, version.id)];
     if (type) conditions.push(eq(schema.records.type, type));
+
+    // Cursor-based pagination: ?after=recordId (keyset pagination)
+    if (after) {
+      conditions.push(sql`${schema.records.recordId} > ${after}`);
+    }
 
     // Determine visibility
     const ownerAccess = isOwner(request, collection.accountId);
@@ -355,6 +361,8 @@ export async function versionRoutes(app: FastifyInstance) {
       conditions.push(eq(schema.records.private, false));
     }
 
+    const pageLimit = Math.min(parseInt(limit ?? "100", 10), 1000);
+
     const records = await db
       .select({
         id: schema.records.recordId,
@@ -363,13 +371,20 @@ export async function versionRoutes(app: FastifyInstance) {
       })
       .from(schema.records)
       .where(and(...conditions))
-      .limit(Math.min(parseInt(limit ?? "100", 10), 1000))
-      .offset(parseInt(offset ?? "0", 10));
+      .orderBy(schema.records.recordId)
+      .limit(pageLimit + 1)
+      .offset(after ? 0 : parseInt(offset ?? "0", 10));
+
+    // Determine if there's a next page
+    const hasMore = records.length > pageLimit;
+    const page = hasMore ? records.slice(0, pageLimit) : records;
+    const nextCursor = hasMore ? page[page.length - 1]!.id : null;
 
     // Strip private fields if not owner
+    let resultRecords = page;
     if (!ownerAccess) {
       const fieldCache = new Map<string, Set<string>>();
-      return records.map((rec) => {
+      resultRecords = page.map((rec) => {
         if (!fieldCache.has(rec.type)) {
           const entry = schemaEntries.find((e) => e.slug === rec.type);
           fieldCache.set(rec.type, entry ? getPrivateFields(entry.schema) : new Set());
@@ -381,7 +396,15 @@ export async function versionRoutes(app: FastifyInstance) {
       });
     }
 
-    return records;
+    return {
+      records: resultRecords,
+      pagination: {
+        limit: pageLimit,
+        hasMore,
+        nextCursor,
+        total: version.recordCount,
+      },
+    };
   });
 
   // List files for a version

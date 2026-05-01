@@ -41,16 +41,24 @@ const listRes = `[
   }
 ]`;
 
-const recordsRes = `[
-  {
-    "id": "pub-001",
-    "type": "Publication",
-    "data": {
-      "title": "Example Paper",
-      "doi": "10.1234/example"
+const recordsRes = `{
+  "records": [
+    {
+      "id": "pub-001",
+      "type": "Publication",
+      "data": {
+        "title": "Example Paper",
+        "doi": "10.1234/example"
+      }
     }
+  ],
+  "pagination": {
+    "limit": 100,
+    "hasMore": true,
+    "nextCursor": "pub-002",
+    "total": 150
   }
-]`;
+}`;
 
 const manifestRes = `{
   "version": 2,
@@ -171,15 +179,17 @@ const diffRes = `{
       <div class="endpoint">
         <h2>GET /api/collections/:owner/:slug/versions/:n/records</h2>
         <p class="scope">No auth for public collections</p>
-        <p>Get records for a specific version.</p>
+        <p>Get records for a specific version. Supports cursor-based pagination for efficient traversal of large collections.</p>
         <h3>Query parameters</h3>
         <table>
           <tr><td><code>type</code></td><td>Filter by record type</td></tr>
           <tr><td><code>limit</code></td><td>Max results (default 100, max 1000)</td></tr>
-          <tr><td><code>offset</code></td><td>Pagination offset</td></tr>
+          <tr><td><code>after</code></td><td>Cursor: return records with IDs after this value (preferred for large sets)</td></tr>
+          <tr><td><code>offset</code></td><td>Legacy offset-based pagination (still supported)</td></tr>
         </table>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={recordsRes} /></pre>
+        <p>Use <code>pagination.nextCursor</code> as the <code>after</code> parameter in the next request. When <code>hasMore</code> is false, you've reached the end.</p>
       </div>
 
       <hr class="border-rule my-6" />
@@ -204,5 +214,76 @@ const diffRes = `{
         </table>
         <h3>Response <span class="text-ink-muted font-normal">200</span></h3>
         <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code set:text={diffRes} /></pre>
+      </div>
+
+      <hr class="border-rule my-6" />
+
+      <div class="endpoint">
+        <h2>Chunked Upload (Large Pushes)</h2>
+        <p>For pushes exceeding 100MB or containing millions of records, use the chunked upload protocol instead of the single-request push. This streams changes in batches to avoid body size limits and server memory pressure.</p>
+
+        <h3>Flow</h3>
+        <ol>
+          <li><strong>Start session</strong> — POST metadata (base_version, schemas, message)</li>
+          <li><strong>Append batches</strong> — PUT changes in chunks of up to 10,000 records each</li>
+          <li><strong>Finalize</strong> — POST to create the immutable version from all staged records</li>
+        </ol>
+
+        <h3>POST /api/collections/:owner/:slug/versions/upload</h3>
+        <p class="scope">Auth: write scope</p>
+        <p>Start a new upload session. Returns a session ID valid for 1 hour.</p>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "base_version": 3,
+  "message": "Bulk import",
+  "app_id": "my-app",
+  "schemas": { "Article": { "type": "object", "properties": { ... } } }
+}`}</code></pre>
+        <h4>Response <span class="text-ink-muted font-normal">201</span></h4>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "sessionId": "uuid",
+  "expiresAt": "2026-04-30T01:00:00.000Z"
+}`}</code></pre>
+
+        <h3>PUT /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
+        <p class="scope">Auth: write scope</p>
+        <p>Append a batch of changes to the session. Call as many times as needed. Max 10,000 records per batch. If the same record ID appears in multiple batches, last write wins.</p>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "changes": {
+    "added": [{"id": "rec-1", "type": "Article", "data": {...}}],
+    "updated": [...],
+    "removed": ["rec-old"]
+  }
+}`}</code></pre>
+        <h4>Response <span class="text-ink-muted font-normal">200</span></h4>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "received": { "added": 5000, "updated": 0, "removed": 0 },
+  "totalStaged": 15000
+}`}</code></pre>
+
+        <h3>POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize</h3>
+        <p class="scope">Auth: write scope</p>
+        <p>Finalize the session: applies all staged changes to the base version, validates records against schemas, computes hashes, and creates the new immutable version.</p>
+        <h4>Response <span class="text-ink-muted font-normal">201</span></h4>
+        <pre class="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{`{
+  "version": 4,
+  "semver": "v1.3.0",
+  "hash": "...",
+  "recordCount": 2000000,
+  "fileCount": 5
+}`}</code></pre>
+        <h4>Errors</h4>
+        <table>
+          <tr><td><code>409</code></td><td>Version conflict — someone pushed since your base_version. Start a new session.</td></tr>
+          <tr><td><code>410</code></td><td>Session expired — the 1-hour window elapsed.</td></tr>
+          <tr><td><code>422</code></td><td>Schema validation failed or missing files.</td></tr>
+        </table>
+
+        <h3>GET /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
+        <p class="scope">Auth: read scope</p>
+        <p>Check session status. Returns status (<code>open</code>, <code>finalizing</code>, <code>completed</code>, <code>failed</code>, <code>expired</code>), record count, and expiry.</p>
+
+        <h3>DELETE /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
+        <p class="scope">Auth: write scope</p>
+        <p>Cancel and discard a session. Staged records are deleted. Returns 204.</p>
       </div>
 </Docs>
