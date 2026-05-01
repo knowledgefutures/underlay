@@ -16,10 +16,110 @@ if (!meRes.ok) {
 }
 const me = await meRes.json();
 
-// Handle logout
+let success = "";
+let error = "";
+
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const action = form.get("action");
+
+  if (action === "update-profile") {
+    const displayName = form.get("displayName") as string;
+    const bio = form.get("bio") as string;
+    const website = form.get("website") as string;
+    const location = form.get("location") as string;
+
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ displayName, bio, website, location }),
+    });
+    if (res.ok) {
+      success = "Profile updated.";
+      me.displayName = displayName;
+      me.bio = bio;
+      me.website = website;
+      me.location = location;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Update failed.";
+    }
+  }
+
+  if (action === "change-email") {
+    const newEmail = form.get("newEmail") as string;
+    const password = form.get("password") as string;
+
+    const res = await fetch(`${apiBase}/api/accounts/me/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ newEmail, password }),
+    });
+    if (res.ok) {
+      success = "Email updated.";
+      me.email = newEmail;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to update email.";
+    }
+  }
+
+  if (action === "change-password") {
+    const currentPassword = form.get("currentPassword") as string;
+    const newPassword = form.get("newPassword") as string;
+    const confirmPassword = form.get("confirmPassword") as string;
+
+    if (newPassword !== confirmPassword) {
+      error = "New passwords do not match.";
+    } else {
+      const res = await fetch(`${apiBase}/api/accounts/me/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      if (res.ok) {
+        success = "Password changed.";
+      } else {
+        const body = await res.json().catch(() => ({}));
+        error = body.error ?? "Failed to change password.";
+      }
+    }
+  }
+
+  if (action === "update-notifications") {
+    const collectionActivity = form.has("collectionActivity");
+    const orgInvitations = form.has("orgInvitations");
+    const securityAlerts = form.has("securityAlerts");
+
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ notificationPrefs: { collectionActivity, orgInvitations, securityAlerts } }),
+    });
+    if (res.ok) {
+      success = "Notification preferences saved.";
+    } else {
+      error = "Failed to save preferences.";
+    }
+  }
+
+  if (action === "delete-account") {
+    const confirmSlug = form.get("confirmSlug") as string;
+    const password = form.get("password") as string;
+
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ confirmSlug, password }),
+    });
+    if (res.ok) {
+      Astro.cookies.delete("session", { path: "/" });
+      return Astro.redirect("/");
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to delete account.";
+    }
+  }
 
   if (action === "logout") {
     await fetch(`${apiBase}/api/accounts/logout`, {
@@ -30,53 +130,184 @@ if (Astro.request.method === "POST") {
     return Astro.redirect("/");
   }
 }
+
+const notifPrefs = (me.notificationPrefs as Record<string, boolean>) ?? {};
 ---
 
 <Base title="Settings — Underlay">
-  <div class="max-w-xl mx-auto px-4 py-10">
+  <div class="max-w-4xl mx-auto px-4 py-10">
     <h1 class="text-xl font-semibold tracking-tight mb-6">Settings</h1>
 
     <nav class="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
       <a href="/settings" class="text-ink font-medium">Account</a>
       <a href="/settings/keys" class="text-ink-muted hover:text-ink">API Keys</a>
+      <a href="/settings/sessions" class="text-ink-muted hover:text-ink">Sessions</a>
     </nav>
 
-    <div class="space-y-6">
-      <div class="border border-rule p-4">
-        <h2 class="text-sm font-semibold mb-3">Profile</h2>
-        <div class="space-y-2 text-sm">
-          <div class="flex justify-between">
-            <span class="text-ink-muted">Username</span>
-            <span class="font-mono">{me.slug}</span>
+    {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <!-- Profile -->
+    <form method="POST" class="space-y-4 mb-10">
+      <input type="hidden" name="action" value="update-profile" />
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">Profile</h2>
+
+      <div class="flex items-center gap-4 mb-4">
+        {me.avatarUrl ? (
+          <img src={me.avatarUrl} alt="Avatar" class="w-16 h-16 rounded-full object-cover border border-rule" />
+        ) : (
+          <div class="w-16 h-16 rounded-full bg-parchment-dark border border-rule flex items-center justify-center text-ink-muted text-lg font-semibold">
+            {me.displayName?.charAt(0)?.toUpperCase() ?? "?"}
           </div>
-          <div class="flex justify-between">
-            <span class="text-ink-muted">Display Name</span>
-            <span>{me.displayName}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-ink-muted">Email</span>
-            <span class="font-mono">{me.email}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-ink-muted">Account Type</span>
-            <span>{me.type}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-ink-muted">Member since</span>
-            <span>{new Date(me.createdAt).toLocaleDateString()}</span>
-          </div>
+        )}
+        <div>
+          <p class="text-sm font-medium">{me.displayName}</p>
+          <p class="text-xs text-ink-muted font-mono">@{me.slug}</p>
+          <a href="/settings/avatar" class="text-xs text-link hover:underline mt-1 inline-block">Change avatar</a>
         </div>
       </div>
 
-      <div class="border border-rule p-4">
-        <h2 class="text-sm font-semibold mb-3">Session</h2>
-        <form method="POST">
-          <input type="hidden" name="action" value="logout" />
-          <button type="submit" class="text-sm text-red-700 hover:underline">
-            Log out
+      <div>
+        <label for="displayName" class="block text-sm font-medium mb-1">Display Name</label>
+        <input type="text" id="displayName" name="displayName" value={me.displayName} required
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+      </div>
+      <div>
+        <label for="bio" class="block text-sm font-medium mb-1">Bio</label>
+        <textarea id="bio" name="bio" rows="3" placeholder="A short bio..."
+          class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink resize-none">{me.bio ?? ""}</textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="website" class="block text-sm font-medium mb-1">Website</label>
+          <input type="url" id="website" name="website" value={me.website ?? ""} placeholder="https://..."
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+        </div>
+        <div>
+          <label for="location" class="block text-sm font-medium mb-1">Location</label>
+          <input type="text" id="location" name="location" value={me.location ?? ""} placeholder="City, Country"
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Username</label>
+        <p class="text-sm text-ink-muted font-mono">{me.slug}</p>
+        <p class="text-xs text-ink-muted mt-1">Usernames cannot be changed.</p>
+      </div>
+      <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+        Save profile
+      </button>
+    </form>
+
+    <!-- Change Email -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">Email</h2>
+      <p class="text-sm text-ink-muted mb-3">Current: <span class="font-mono">{me.email}</span></p>
+      <details class="group">
+        <summary class="text-sm text-link cursor-pointer hover:underline">Change email address</summary>
+        <form method="POST" class="mt-3 space-y-3">
+          <input type="hidden" name="action" value="change-email" />
+          <div>
+            <label for="newEmail" class="block text-xs font-medium mb-1">New email</label>
+            <input type="email" id="newEmail" name="newEmail" required
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink" />
+          </div>
+          <div>
+            <label for="emailPassword" class="block text-xs font-medium mb-1">Current password</label>
+            <input type="password" id="emailPassword" name="password" required
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
+          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+            Update email
           </button>
         </form>
-      </div>
+      </details>
+    </div>
+
+    <!-- Change Password -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">Password</h2>
+      <details class="group">
+        <summary class="text-sm text-link cursor-pointer hover:underline">Change password</summary>
+        <form method="POST" class="mt-3 space-y-3">
+          <input type="hidden" name="action" value="change-password" />
+          <div>
+            <label for="currentPassword" class="block text-xs font-medium mb-1">Current password</label>
+            <input type="password" id="currentPassword" name="currentPassword" required
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
+          <div>
+            <label for="newPassword" class="block text-xs font-medium mb-1">New password</label>
+            <input type="password" id="newPassword" name="newPassword" required minlength="8"
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
+          <div>
+            <label for="confirmPassword" class="block text-xs font-medium mb-1">Confirm new password</label>
+            <input type="password" id="confirmPassword" name="confirmPassword" required minlength="8"
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
+          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+            Change password
+          </button>
+        </form>
+      </details>
+    </div>
+
+    <!-- Notifications -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">Notifications</h2>
+      <p class="text-xs text-ink-muted mb-3">Email notifications (requires SMTP configuration).</p>
+      <form method="POST" class="space-y-3">
+        <input type="hidden" name="action" value="update-notifications" />
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="collectionActivity" checked={notifPrefs.collectionActivity ?? true}
+            class="accent-ink" />
+          Collection activity (new versions pushed)
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="orgInvitations" checked={notifPrefs.orgInvitations ?? true}
+            class="accent-ink" />
+          Organization invitations
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="securityAlerts" checked={notifPrefs.securityAlerts ?? true}
+            class="accent-ink" />
+          Security alerts (new logins, password changes)
+        </label>
+        <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+          Save preferences
+        </button>
+      </form>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="border border-red-200 p-4">
+      <h2 class="text-sm font-semibold text-red-700 mb-2">Danger Zone</h2>
+      <p class="text-sm text-ink-muted mb-3">
+        Permanently delete your account. You must first transfer or delete all your collections.
+      </p>
+      <details class="group">
+        <summary class="text-sm text-red-700 cursor-pointer hover:underline">Delete my account…</summary>
+        <form method="POST" class="mt-3 space-y-3">
+          <input type="hidden" name="action" value="delete-account" />
+          <div>
+            <label for="confirmSlug" class="block text-sm text-ink-muted mb-1">
+              Type <strong>{me.slug}</strong> to confirm:
+            </label>
+            <input type="text" id="confirmSlug" name="confirmSlug" required autocomplete="off"
+              class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400" />
+          </div>
+          <div>
+            <label for="deletePassword" class="block text-sm text-ink-muted mb-1">Password:</label>
+            <input type="password" id="deletePassword" name="password" required
+              class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400" />
+          </div>
+          <button type="submit"
+            class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors">
+            Delete my account
+          </button>
+        </form>
+      </details>
     </div>
   </div>
 </Base>

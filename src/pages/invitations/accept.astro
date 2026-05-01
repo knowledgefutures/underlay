@@ -1,0 +1,89 @@
+---
+import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
+
+const token = Astro.url.searchParams.get("token") ?? "";
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+let success = false;
+let error = "";
+let orgSlug = "";
+
+if (!token) {
+  error = "Invalid or missing invitation token.";
+}
+
+if (Astro.request.method === "POST" && token && sessionCookie) {
+  const res = await fetch(`${apiBase}/api/accounts/invitations/accept`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: `session=${sessionCookie}`,
+    },
+    body: JSON.stringify({ token }),
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    orgSlug = data.orgSlug ?? "";
+    success = true;
+  } else {
+    const data = await res.json().catch(() => null);
+    error = data?.error ?? "Invitation is invalid or expired.";
+  }
+}
+---
+
+<Base title="Accept Invitation — Underlay">
+  <div class="max-w-sm mx-auto px-4 py-16">
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Organization Invitation</h1>
+
+    {success ? (
+      <div class="border border-rule bg-parchment-dark px-4 py-3 text-sm">
+        <p class="font-medium mb-1">You've joined the organization!</p>
+        <p class="text-ink-muted text-xs mb-3">You now have access to the organization's collections.</p>
+        {orgSlug ? (
+          <a href={`/${orgSlug}`} class="text-sm text-link hover:underline">Go to organization →</a>
+        ) : (
+          <a href="/dashboard" class="text-sm text-link hover:underline">Go to dashboard →</a>
+        )}
+      </div>
+    ) : error ? (
+      <div class="border border-red-300 bg-red-50 text-red-800 px-3 py-2 text-sm">
+        <p>{error}</p>
+        {!sessionCookie && token && (
+          <p class="mt-2 text-xs">
+            You may need to <a href={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} class="underline">log in</a> or
+            <a href={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} class="underline ml-1">sign up</a> first.
+          </p>
+        )}
+      </div>
+    ) : (
+      <>
+        {!sessionCookie ? (
+          <div class="space-y-3">
+            <p class="text-sm text-ink-muted">You've been invited to join an organization. Please log in or sign up to accept.</p>
+            <div class="flex gap-3">
+              <a href={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} class="flex-1 text-center bg-ink text-parchment py-2 text-sm font-medium hover:bg-ink-light transition-colors">
+                Log in
+              </a>
+              <a href={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} class="flex-1 text-center border border-ink py-2 text-sm font-medium hover:bg-parchment-dark transition-colors">
+                Sign up
+              </a>
+            </div>
+          </div>
+        ) : (
+          <form method="POST" class="space-y-4">
+            <p class="text-sm text-ink-muted">Click below to accept the invitation and join the organization.</p>
+            <button
+              type="submit"
+              class="w-full bg-ink text-parchment py-2 text-sm font-medium hover:bg-ink-light transition-colors"
+            >
+              Accept invitation
+            </button>
+          </form>
+        )}
+      </>
+    )}
+  </div>
+</Base>

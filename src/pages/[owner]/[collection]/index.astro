@@ -1,21 +1,21 @@
 ---
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
-import { apiBase, formatBytes, checkOwnership } from "@/lib/page-utils";
+import { apiBase, apiHeaders, formatBytes, checkOwnership } from "@/lib/page-utils";
 import { marked } from "marked";
 
 const { owner, collection } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch collection
-const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`);
+const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers: apiHeaders(sessionCookie) });
 if (!collectionRes.ok) {
   return Astro.redirect("/404");
 }
 const data = await collectionRes.json();
 
 // Count total versions (just need the count, not the list)
-const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=1`);
+const versionsRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/versions?limit=1`, { headers: apiHeaders(sessionCookie) });
 const versionsData = versionsRes.ok ? await versionsRes.json() : [];
 const totalVersions = versionsData.length > 0 ? data.latestVersion?.number ?? 0 : 0;
 

@@ -1,10 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 
-interface UserMenuProps {
+interface Org {
   slug: string;
+  displayName: string;
 }
 
-export default function UserMenu({ slug }: UserMenuProps) {
+interface UserMenuProps {
+  slug: string;
+  orgs?: Org[];
+}
+
+export default function UserMenu({ slug, orgs = [] }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const hideTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -44,7 +50,7 @@ export default function UserMenu({ slug }: UserMenuProps) {
       </button>
       {open && (
         <div className="absolute right-0 top-full pt-1 z-50">
-          <div className="bg-parchment border border-rule shadow-sm min-w-40">
+          <div className="bg-parchment border border-rule shadow-sm min-w-48">
             <a
               href={`/${slug}`}
               className="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
@@ -57,6 +63,29 @@ export default function UserMenu({ slug }: UserMenuProps) {
             >
               Dashboard
             </a>
+            <a
+              href="/settings"
+              className="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
+            >
+              Settings
+            </a>
+            {orgs.length > 0 && (
+              <>
+                <hr className="border-rule" />
+                <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-ink-muted font-semibold">
+                  Your organizations
+                </p>
+                {orgs.map((org) => (
+                  <a
+                    key={org.slug}
+                    href={`/${org.slug}`}
+                    className="block px-3 py-1.5 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
+                  >
+                    {org.displayName}
+                  </a>
+                ))}
+              </>
+            )}
             <hr className="border-rule" />
             <a
               href="/logout"

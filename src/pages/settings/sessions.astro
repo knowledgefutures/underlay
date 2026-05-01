@@ -1,0 +1,105 @@
+---
+import Base from "@/layouts/Base.astro";
+import { apiBase } from "@/lib/page-utils";
+
+const sessionCookie = Astro.cookies.get("session")?.value;
+
+if (!sessionCookie) {
+  return Astro.redirect("/login");
+}
+
+const meRes = await fetch(`${apiBase}/api/accounts/me`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+if (!meRes.ok) {
+  return Astro.redirect("/login");
+}
+
+let success = "";
+let error = "";
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action");
+
+  if (action === "revoke") {
+    const sessionId = form.get("sessionId") as string;
+    const res = await fetch(`${apiBase}/api/accounts/me/sessions/${sessionId}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      success = "Session revoked.";
+    } else {
+      error = "Failed to revoke session.";
+    }
+  }
+}
+
+// Fetch sessions
+const sessionsRes = await fetch(`${apiBase}/api/accounts/me/sessions`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const sessions = sessionsRes.ok ? await sessionsRes.json() : [];
+
+function parseUserAgent(ua: string | null): string {
+  if (!ua) return "Unknown device";
+  if (ua.includes("Firefox")) return "Firefox";
+  if (ua.includes("Chrome") && !ua.includes("Edg")) return "Chrome";
+  if (ua.includes("Edg")) return "Edge";
+  if (ua.includes("Safari") && !ua.includes("Chrome")) return "Safari";
+  if (ua.includes("curl")) return "curl";
+  return "Unknown browser";
+}
+---
+
+<Base title="Sessions — Underlay">
+  <div class="max-w-4xl mx-auto px-4 py-10">
+    <h1 class="text-xl font-semibold tracking-tight mb-6">Settings</h1>
+
+    <nav class="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
+      <a href="/settings" class="text-ink-muted hover:text-ink">Account</a>
+      <a href="/settings/keys" class="text-ink-muted hover:text-ink">API Keys</a>
+      <a href="/settings/sessions" class="text-ink font-medium">Sessions</a>
+    </nav>
+
+    {success && <p class="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
+    {error && <p class="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-4">{error}</p>}
+
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+      Active Sessions ({sessions.length})
+    </h2>
+    <p class="text-xs text-ink-muted mb-4">
+      These are the devices currently logged into your account. Revoke any session you don't recognize.
+    </p>
+
+    {sessions.length === 0 ? (
+      <p class="text-sm text-ink-muted">No active sessions.</p>
+    ) : (
+      <div class="space-y-2">
+        {sessions.map((s: any) => (
+          <div class="flex items-center justify-between border border-rule p-3">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium">{parseUserAgent(s.userAgent)}</span>
+                {s.current && <span class="text-xs bg-green-100 text-green-800 px-1.5 py-0.5 border border-green-200">Current</span>}
+              </div>
+              <div class="flex items-center gap-2 mt-0.5 text-xs text-ink-muted">
+                {s.ipAddress && <span>{s.ipAddress}</span>}
+                <span>Created {new Date(s.createdAt).toLocaleDateString()}</span>
+                <span>· Expires {new Date(s.expiresAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+            {!s.current && (
+              <form method="POST">
+                <input type="hidden" name="action" value="revoke" />
+                <input type="hidden" name="sessionId" value={s.id} />
+                <button type="submit" class="text-xs text-red-700 hover:underline">Revoke</button>
+              </form>
+            )}
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</Base>

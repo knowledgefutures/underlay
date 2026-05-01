@@ -23,9 +23,26 @@ There are two auth methods:
    POST /api/accounts/logout clears the session.
    GET /api/accounts/me returns the current user (works with either auth method).
 
-Public endpoints (browsing collections, reading public versions) require no auth.
-Write endpoints require a key with "write" scope or an active session.
-Delete endpoints require "admin" scope.
+All GET requests are public — no auth required to read public data.
+All write requests (POST, PATCH, PUT, DELETE) require authentication.
+If a Bearer token is provided but invalid, the request is rejected immediately (401).
+
+## Rate Limits
+
+Requests are rate-limited per IP (unauthenticated) or per account (authenticated).
+
+| Auth status       | Limit         |
+|-------------------|---------------|
+| Unauthenticated   | 60 req/min    |
+| Authenticated     | 5,000 req/min |
+
+Rate limit headers are included on every response:
+- X-RateLimit-Limit: max requests in the window
+- X-RateLimit-Remaining: requests left
+- X-RateLimit-Reset: seconds until the window resets
+
+When exceeded, you'll get a 429 response with a Retry-After header.
+To get the higher limit, authenticate with an API key (recommended for any automated access).
 
 ---
 

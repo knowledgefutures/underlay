@@ -37,10 +37,30 @@ const membersRes = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
 });
 const members = membersRes.ok ? await membersRes.json() : [];
 
+// Fetch invitations
+const invitationsRes = await fetch(`${apiBase}/api/accounts/${owner}/invitations`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const invitations = invitationsRes.ok ? await invitationsRes.json() : [];
+
+// Fetch org API keys
+const keysRes = await fetch(`${apiBase}/api/accounts/${owner}/keys`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const keys = keysRes.ok ? await keysRes.json() : [];
+
+// Fetch org collections (for key scoping)
+const collectionsRes = await fetch(`${apiBase}/api/accounts/${owner}/collections`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+const collections = collectionsRes.ok ? await collectionsRes.json() : [];
+
 const isOwner = org.role === "owner";
+const isAdmin = org.role === "admin" || isOwner;
 let success = "";
 let error = "";
 let deleted = false;
+let newKeyResult: { key: string; label: string } | null = null;
 
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
@@ -48,32 +68,33 @@ if (Astro.request.method === "POST") {
 
   if (action === "update-profile" && isOwner) {
     const displayName = form.get("displayName") as string;
+    const bio = form.get("bio") as string;
+    const website = form.get("website") as string;
+    const location = form.get("location") as string;
+
     const res = await fetch(`${apiBase}/api/accounts/${owner}`, {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: `session=${sessionCookie}`,
-      },
-      body: JSON.stringify({ displayName }),
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ displayName, bio, website, location }),
     });
     if (res.ok) {
       success = "Organization updated.";
       orgData.displayName = displayName;
+      orgData.bio = bio;
+      orgData.website = website;
+      orgData.location = location;
     } else {
       const body = await res.json().catch(() => ({}));
       error = body.error ?? "Update failed.";
     }
   }
 
-  if (action === "add-member" && isOwner) {
+  if (action === "add-member" && isAdmin) {
     const username = form.get("username") as string;
     const role = form.get("role") as string;
     const res = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: `session=${sessionCookie}`,
-      },
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
       body: JSON.stringify({ username, role }),
     });
     if (res.ok) {
@@ -84,7 +105,23 @@ if (Astro.request.method === "POST") {
     }
   }
 
-  if (action === "remove-member" && isOwner) {
+  if (action === "change-role" && isOwner) {
+    const userId = form.get("userId") as string;
+    const role = form.get("role") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/members/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ role }),
+    });
+    if (res.ok) {
+      success = "Role updated.";
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to update role.";
+    }
+  }
+
+  if (action === "remove-member" && isAdmin) {
     const userId = form.get("userId") as string;
     const res = await fetch(`${apiBase}/api/accounts/${owner}/members/${userId}`, {
       method: "DELETE",
@@ -96,6 +133,82 @@ if (Astro.request.method === "POST") {
       const body = await res.json().catch(() => ({}));
       error = body.error ?? "Failed to remove member.";
     }
+  }
+
+  if (action === "leave-org") {
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/members/${me.id}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      return Astro.redirect("/dashboard");
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to leave organization.";
+    }
+  }
+
+  if (action === "invite-member" && isAdmin) {
+    const email = form.get("email") as string;
+    const role = form.get("role") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/invitations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ email, role }),
+    });
+    if (res.ok) {
+      success = `Invitation sent to ${email}.`;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to send invitation.";
+    }
+  }
+
+  if (action === "cancel-invitation" && isAdmin) {
+    const invitationId = form.get("invitationId") as string;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/invitations/${invitationId}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      success = "Invitation cancelled.";
+    } else {
+      error = "Failed to cancel invitation.";
+    }
+  }
+
+  if (action === "create-key" && isAdmin) {
+    const label = form.get("label") as string;
+    const scope = form.get("scope") as string;
+    const collectionId = form.get("collectionId") as string || undefined;
+    const expiresIn = form.get("expiresIn") as string;
+
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({
+        label,
+        scope,
+        collectionId: collectionId || undefined,
+        expiresIn: expiresIn ? parseInt(expiresIn) : undefined,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      newKeyResult = { key: data.key, label: data.label };
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to create key.";
+    }
+  }
+
+  if (action === "delete-key" && isAdmin) {
+    const keyId = form.get("keyId") as string;
+    await fetch(`${apiBase}/api/accounts/${owner}/keys/${keyId}`, {
+      method: "DELETE",
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    success = "Key revoked.";
   }
 
   if (action === "delete-org" && isOwner) {
@@ -117,7 +230,7 @@ if (Astro.request.method === "POST") {
   }
 
   // Refresh members after mutations
-  if (!deleted && (action === "add-member" || action === "remove-member")) {
+  if (!deleted && (action === "add-member" || action === "remove-member" || action === "change-role")) {
     const refreshRes = await fetch(`${apiBase}/api/accounts/${owner}/members`, {
       headers: { Cookie: `session=${sessionCookie}` },
     });
@@ -134,7 +247,7 @@ if (deleted) {
 ---
 
 <Base title={`Settings — ${orgData.displayName} — Underlay`}>
-  <div class="max-w-xl mx-auto px-4 py-10">
+  <div class="max-w-3xl mx-auto px-4 py-10">
     <nav class="text-xs text-ink-muted mb-6">
       <a href={`/${owner}`} class="hover:text-ink">{owner}</a>
       <span class="mx-1">/</span>
@@ -150,16 +263,43 @@ if (deleted) {
     {isOwner && (
       <form method="POST" class="space-y-4 mb-10">
         <input type="hidden" name="action" value="update-profile" />
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted">Profile</h2>
+
+        <div class="flex items-center gap-4 mb-4">
+          {orgData.avatarUrl ? (
+            <img src={orgData.avatarUrl} alt="Avatar" class="w-16 h-16 rounded-full object-cover border border-rule" />
+          ) : (
+            <div class="w-16 h-16 rounded-full bg-parchment-dark border border-rule flex items-center justify-center text-ink-muted text-lg font-semibold">
+              {orgData.displayName?.charAt(0)?.toUpperCase() ?? "?"}
+            </div>
+          )}
+          <div>
+            <p class="text-sm font-medium">{orgData.displayName}</p>
+            <p class="text-xs text-ink-muted font-mono">@{owner}</p>
+          </div>
+        </div>
+
         <div>
           <label for="displayName" class="block text-sm font-medium mb-1">Display Name</label>
-          <input
-            type="text"
-            id="displayName"
-            name="displayName"
-            value={orgData.displayName}
-            required
-            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
-          />
+          <input type="text" id="displayName" name="displayName" value={orgData.displayName} required
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+        </div>
+        <div>
+          <label for="bio" class="block text-sm font-medium mb-1">Description</label>
+          <textarea id="bio" name="bio" rows="3" placeholder="What does this organization do?"
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink resize-none">{orgData.bio ?? ""}</textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="website" class="block text-sm font-medium mb-1">Website</label>
+            <input type="url" id="website" name="website" value={orgData.website ?? ""} placeholder="https://..."
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
+          <div>
+            <label for="location" class="block text-sm font-medium mb-1">Location</label>
+            <input type="text" id="location" name="location" value={orgData.location ?? ""} placeholder="City, Country"
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium mb-1">Slug</label>
@@ -184,49 +324,200 @@ if (deleted) {
             <div class="flex items-center gap-3">
               <a href={`/${m.slug}`} class="font-semibold text-sm text-link underline">{m.slug}</a>
               <span class="text-xs text-ink-muted">{m.displayName}</span>
-              <span class="text-xs border border-rule px-1.5 py-0.5">{m.role}</span>
+              {isOwner && m.userId !== me.id ? (
+                <form method="POST" class="inline">
+                  <input type="hidden" name="action" value="change-role" />
+                  <input type="hidden" name="userId" value={m.userId} />
+                  <select name="role" onchange="this.form.submit()"
+                    class="text-xs bg-parchment border border-rule px-1.5 py-0.5 cursor-pointer">
+                    <option value="member" selected={m.role === "member"}>Member</option>
+                    <option value="admin" selected={m.role === "admin"}>Admin</option>
+                    <option value="owner" selected={m.role === "owner"}>Owner</option>
+                  </select>
+                </form>
+              ) : (
+                <span class="text-xs border border-rule px-1.5 py-0.5">{m.role}</span>
+              )}
             </div>
-            {isOwner && m.userId !== me.id && (
-              <form method="POST" class="inline">
-                <input type="hidden" name="action" value="remove-member" />
-                <input type="hidden" name="userId" value={m.userId} />
-                <button type="submit" class="text-xs text-red-700 hover:underline">Remove</button>
-              </form>
-            )}
+            <div class="flex items-center gap-2">
+              {isAdmin && m.userId !== me.id && (
+                <form method="POST" class="inline">
+                  <input type="hidden" name="action" value="remove-member" />
+                  <input type="hidden" name="userId" value={m.userId} />
+                  <button type="submit" class="text-xs text-red-700 hover:underline">Remove</button>
+                </form>
+              )}
+            </div>
           </div>
         ))}
       </div>
 
-      {isOwner && (
-        <form method="POST" class="flex items-end gap-3">
-          <input type="hidden" name="action" value="add-member" />
-          <div class="flex-1">
-            <label for="username" class="block text-xs font-medium mb-1">Username</label>
-            <input
-              type="text"
-              id="username"
-              name="username"
-              required
-              placeholder="e.g. jsmith"
-              class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
-            />
+      {isAdmin && (
+        <div class="space-y-4">
+          <h3 class="text-xs font-semibold text-ink-muted">Add by username</h3>
+          <form method="POST" class="flex items-end gap-3">
+            <input type="hidden" name="action" value="add-member" />
+            <div class="flex-1">
+              <label for="username" class="block text-xs font-medium mb-1">Username</label>
+              <input type="text" id="username" name="username" required placeholder="e.g. jsmith"
+                class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+            </div>
+            <div>
+              <label for="addRole" class="block text-xs font-medium mb-1">Role</label>
+              <select id="addRole" name="role" class="bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink">
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                {isOwner && <option value="owner">Owner</option>}
+              </select>
+            </div>
+            <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap">
+              Add
+            </button>
+          </form>
+
+          <h3 class="text-xs font-semibold text-ink-muted mt-4">Invite by email</h3>
+          <form method="POST" class="flex items-end gap-3">
+            <input type="hidden" name="action" value="invite-member" />
+            <div class="flex-1">
+              <label for="inviteEmail" class="block text-xs font-medium mb-1">Email</label>
+              <input type="email" id="inviteEmail" name="email" required placeholder="user@example.com"
+                class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink" />
+            </div>
+            <div>
+              <label for="inviteRole" class="block text-xs font-medium mb-1">Role</label>
+              <select id="inviteRole" name="role" class="bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink">
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                {isOwner && <option value="owner">Owner</option>}
+              </select>
+            </div>
+            <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap">
+              Invite
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Pending invitations */}
+      {invitations.filter((i: any) => !i.acceptedAt).length > 0 && (
+        <div class="mt-6">
+          <h3 class="text-xs font-semibold text-ink-muted mb-2">Pending Invitations</h3>
+          <div class="space-y-2">
+            {invitations.filter((i: any) => !i.acceptedAt).map((inv: any) => (
+              <div class="flex items-center justify-between border border-rule border-dashed p-3">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm font-mono">{inv.email}</span>
+                  <span class="text-xs border border-rule px-1.5 py-0.5">{inv.role}</span>
+                  <span class="text-xs text-ink-muted">
+                    Expires {new Date(inv.expiresAt).toLocaleDateString()}
+                  </span>
+                </div>
+                {isAdmin && (
+                  <form method="POST" class="inline">
+                    <input type="hidden" name="action" value="cancel-invitation" />
+                    <input type="hidden" name="invitationId" value={inv.id} />
+                    <button type="submit" class="text-xs text-red-700 hover:underline">Cancel</button>
+                  </form>
+                )}
+              </div>
+            ))}
           </div>
-          <div>
-            <label for="role" class="block text-xs font-medium mb-1">Role</label>
-            <select
-              id="role"
-              name="role"
-              class="bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
-            >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-              <option value="owner">Owner</option>
-            </select>
+        </div>
+      )}
+
+      {/* Leave org */}
+      {!isOwner && (
+        <div class="mt-6 pt-4 border-t border-rule">
+          <form method="POST">
+            <input type="hidden" name="action" value="leave-org" />
+            <button type="submit" class="text-sm text-red-700 hover:underline">Leave this organization</button>
+          </form>
+        </div>
+      )}
+    </div>
+
+    <!-- Org API Keys -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">API Keys</h2>
+
+      {newKeyResult && (
+        <div class="border border-green-300 bg-green-50 p-4 mb-4">
+          <p class="text-sm font-semibold mb-1">Key created: {newKeyResult.label}</p>
+          <p class="text-xs text-ink-muted mb-2">Copy this key now — it won't be shown again.</p>
+          <code class="block text-xs font-mono bg-ink text-parchment p-2 break-all">{newKeyResult.key}</code>
+        </div>
+      )}
+
+      {isAdmin && (
+        <form method="POST" class="border border-rule p-4 mb-4 space-y-3">
+          <input type="hidden" name="action" value="create-key" />
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label for="keyLabel" class="block text-xs text-ink-muted mb-1">Label</label>
+              <input type="text" id="keyLabel" name="label" required placeholder="ci-deploy"
+                class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm font-mono focus:outline-none focus:border-ink" />
+            </div>
+            <div>
+              <label for="keyScope" class="block text-xs text-ink-muted mb-1">Scope</label>
+              <select name="scope" id="keyScope" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+                <option value="read">read</option>
+                <option value="write" selected>write</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+            <div>
+              <label for="keyCollection" class="block text-xs text-ink-muted mb-1">Collection (optional)</label>
+              <select name="collectionId" id="keyCollection" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+                <option value="">All collections</option>
+                {collections.map((c: any) => (
+                  <option value={c.id}>{c.slug}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label for="keyExpiry" class="block text-xs text-ink-muted mb-1">Expiration</label>
+              <select name="expiresIn" id="keyExpiry" class="w-full bg-parchment border border-rule px-2 py-1.5 text-sm focus:outline-none focus:border-ink">
+                <option value="">Never</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">1 year</option>
+              </select>
+            </div>
           </div>
-          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity whitespace-nowrap">
-            Add member
+          <button type="submit" class="bg-ink text-parchment px-4 py-1.5 text-sm font-medium hover:opacity-90 transition-opacity">
+            Create key
           </button>
         </form>
+      )}
+
+      {keys.length === 0 ? (
+        <p class="text-sm text-ink-muted">No API keys for this organization.</p>
+      ) : (
+        <div class="space-y-2">
+          {keys.map((k: any) => (
+            <div class="flex items-center justify-between border border-rule p-3">
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">{k.label}</span>
+                  {k.keyPrefix && <span class="text-xs font-mono text-ink-muted">{k.keyPrefix}…</span>}
+                </div>
+                <div class="flex items-center gap-2 mt-0.5 text-xs text-ink-muted">
+                  <span class="border border-rule px-1 py-0.5">{k.scope}</span>
+                  <span>Created {new Date(k.createdAt).toLocaleDateString()}</span>
+                  {k.lastUsedAt && <span>· Last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>}
+                  {k.expiresAt && <span>· Expires {new Date(k.expiresAt).toLocaleDateString()}</span>}
+                </div>
+              </div>
+              {isAdmin && (
+                <form method="POST">
+                  <input type="hidden" name="action" value="delete-key" />
+                  <input type="hidden" name="keyId" value={k.id} />
+                  <button type="submit" class="text-xs text-red-700 hover:underline">Revoke</button>
+                </form>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
 
@@ -245,19 +536,11 @@ if (deleted) {
               <label for="confirmSlug" class="block text-sm text-ink-muted mb-1">
                 Type <strong>{owner}</strong> to confirm:
               </label>
-              <input
-                type="text"
-                id="confirmSlug"
-                name="confirmSlug"
-                required
-                autocomplete="off"
-                class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400"
-              />
+              <input type="text" id="confirmSlug" name="confirmSlug" required autocomplete="off"
+                class="w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400" />
             </div>
-            <button
-              type="submit"
-              class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors"
-            >
+            <button type="submit"
+              class="bg-red-700 text-white px-4 py-2 text-sm font-medium hover:bg-red-800 transition-colors">
               Delete organization
             </button>
           </form>

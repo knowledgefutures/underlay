@@ -1,12 +1,13 @@
 ---
 import Base from "@/layouts/Base.astro";
 import SchemaLabelManager from "@/components/SchemaLabelManager";
-import { apiBase } from "@/lib/page-utils";
+import { apiBase, apiHeaders } from "@/lib/page-utils";
 
 const { id } = Astro.params;
+const sessionCookie = Astro.cookies.get("session")?.value;
 
 // Fetch schema detail (includes labels + usage)
-const res = await fetch(`${apiBase}/api/schemas/${id}`);
+const res = await fetch(`${apiBase}/api/schemas/${id}`, { headers: apiHeaders(sessionCookie) });
 if (!res.ok) return Astro.redirect("/404");
 const schema = await res.json();
 

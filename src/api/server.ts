@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
 
 import authPlugin from "./plugins/auth.js";
 import { healthRoutes } from "./routes/health.js";
@@ -27,6 +28,23 @@ export async function buildApp() {
   await app.register(cors, {
     origin: true,
     credentials: true,
+  });
+
+  // Rate limiting: unauthenticated gets 60/min, authenticated gets 5000/min
+  await app.register(rateLimit, {
+    max: (request) => request.accountId ? 5000 : 60,
+    timeWindow: "1 minute",
+    keyGenerator: (request) => {
+      if (request.accountId) return `acct:${request.accountId}`;
+      return request.ip;
+    },
+    hook: "preHandler", // runs after onRequest (auth), so accountId is set
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      error: "Too Many Requests",
+      message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
+      retryAfter: Math.ceil(context.ttl / 1000),
+    }),
   });
 
   await app.register(multipart, {
