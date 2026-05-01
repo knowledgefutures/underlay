@@ -8,6 +8,7 @@
     "dev:server": "astro dev --host 0.0.0.0 & tsx --watch src/api/server.ts & wait",
     "dev:api": "tsx --watch src/api/server.ts",
     "build": "astro build",
+    "typecheck": "tsc --noEmit",
     "preview": "astro preview",
     "start": "node ./dist/server/entry.mjs",
     "db:generate": "drizzle-kit generate",

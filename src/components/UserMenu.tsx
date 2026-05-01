@@ -13,7 +13,7 @@ interface UserMenuProps {
 export default function UserMenu({ slug, orgs = [] }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const hideTimeout = useRef<ReturnType<typeof setTimeout>>();
+  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   function show() {
     clearTimeout(hideTimeout.current);

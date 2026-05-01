@@ -168,7 +168,7 @@ export async function fileRoutes(app: FastifyInstance) {
 
     // Redirect to CDN
     const cdnUrl = `https://assets.underlay.org/files/${cleanHash.slice(0, 2)}/${cleanHash.slice(2, 4)}/${cleanHash}`;
-    return reply.redirect(301, cdnUrl);
+    return reply.redirect(cdnUrl);
   });
 
   // Upload file

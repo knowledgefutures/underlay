@@ -75,6 +75,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
+      - name: Install and typecheck
+        run: |
+          npm ci
+          npm run typecheck
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

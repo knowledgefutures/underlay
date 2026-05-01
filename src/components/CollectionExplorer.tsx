@@ -11,7 +11,7 @@ export default function CollectionExplorer() {
   const [query, setQuery] = useState("");
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   async function load(q = "") {
     const params = new URLSearchParams();

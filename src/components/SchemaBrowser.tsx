@@ -13,7 +13,7 @@ export default function SchemaBrowser() {
   const [filterType, setFilterType] = useState<"q" | "label" | "slug">("q");
   const [schemas, setSchemas] = useState<SchemaResult[]>([]);
   const [loading, setLoading] = useState(true);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   async function load(q = "", type = filterType) {
     setLoading(true);

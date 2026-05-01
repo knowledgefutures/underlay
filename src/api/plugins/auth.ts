@@ -92,7 +92,7 @@ async function authPlugin(app: FastifyInstance) {
 
     // All writes (POST/PATCH/PUT/DELETE) require auth, except public paths
     if (!request.accountId) {
-      const path = request.url.split("?")[0];
+      const path = request.url.split("?")[0] ?? "";
       if (publicPaths.has(path)) return;
       return reply.status(401).send({ error: "Authentication required", statusCode: 401 });
     }

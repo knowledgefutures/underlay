@@ -13,7 +13,7 @@ import type { Readable } from "node:stream";
 // For MinIO (dev): S3_ENDPOINT=http://minio:9000
 const s3 = new S3Client({
   region: process.env.S3_REGION ?? "auto",
-  endpoint: process.env.S3_ENDPOINT,
+  ...(process.env.S3_ENDPOINT && { endpoint: process.env.S3_ENDPOINT }),
   forcePathStyle: true,
   credentials: {
     accessKeyId: process.env.S3_ACCESS_KEY ?? "",
