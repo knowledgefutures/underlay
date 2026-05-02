@@ -8,6 +8,8 @@ import {
   syncEvents,
   stopSync,
   isSyncRunning,
+  getActiveRunId,
+  getActiveRunLogs,
   type SyncProgressEvent,
 } from "../../lib/mirror-sync.js";
 
@@ -51,7 +53,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return { stopped };
   });
 
-  // SSE endpoint for live sync progress
+  // SSE endpoint for live sync progress (replays buffered logs on connect)
   app.get("/admin/mirror/sync/progress", async (request, reply) => {
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -59,10 +61,24 @@ export async function adminRoutes(app: FastifyInstance) {
       Connection: "keep-alive",
     });
 
+    // Replay buffered logs so reconnects/refreshes don't lose history
+    const buffered = getActiveRunLogs();
+    if (buffered.length > 0) {
+      for (const msg of buffered) {
+        const replayEvent: SyncProgressEvent = { type: "collection", message: msg, progress: { collectionsTotal: 0, collectionsProcessed: 0, versionsPulled: 0, filesDownloaded: 0, filesSkipped: 0, errors: 0 } };
+        reply.raw.write(`data: ${JSON.stringify(replayEvent)}\n\n`);
+      }
+    }
+
+    // If no sync is running, close immediately
+    if (!isSyncRunning()) {
+      reply.raw.end();
+      return;
+    }
+
     function onProgress(event: SyncProgressEvent) {
       reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
       if (event.type === "done") {
-        // Give client a moment to process, then close
         setTimeout(() => reply.raw.end(), 100);
       }
     }
@@ -72,6 +88,15 @@ export async function adminRoutes(app: FastifyInstance) {
     request.raw.on("close", () => {
       syncEvents.off("progress", onProgress);
     });
+  });
+
+  // Get current sync running state (for page refresh reconnection)
+  app.get("/admin/mirror/sync/active", async () => {
+    return {
+      running: isSyncRunning(),
+      runId: getActiveRunId(),
+      logs: getActiveRunLogs(),
+    };
   });
 
   // Sync history

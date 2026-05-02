@@ -286,6 +286,7 @@ export const syncRuns = pgTable("sync_runs", {
   filesDownloaded: integer("files_downloaded").default(0).notNull(),
   filesSkipped: integer("files_skipped").default(0).notNull(),
   errors: jsonb("errors").$type<string[]>().default([]).notNull(),
+  logs: jsonb("logs").$type<string[]>().default([]).notNull(),
 });
 
 // --- Password Reset Tokens ---

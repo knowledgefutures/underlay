@@ -46,9 +46,25 @@ syncEvents.setMaxListeners(20);
 /** Abort controller for the current sync — null if no sync running */
 let activeSyncAbort: AbortController | null = null;
 
+/** ID of the currently running sync_run row */
+let activeRunId: string | null = null;
+
+/** Buffered log messages for the current sync — survives SSE reconnects */
+let activeRunLogs: string[] = [];
+
 /** Whether a sync is currently running */
 export function isSyncRunning(): boolean {
   return activeSyncAbort !== null;
+}
+
+/** Get the active run ID (for fetching logs on reconnect) */
+export function getActiveRunId(): string | null {
+  return activeRunId;
+}
+
+/** Get buffered logs for the current run (for SSE replay) */
+export function getActiveRunLogs(): string[] {
+  return activeRunLogs;
 }
 
 /** Stop the current sync (gracefully — finishes current item then stops) */
@@ -263,6 +279,8 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
     .returning({ id: schema.syncRuns.id });
 
   const runId = syncRun!.id;
+  activeRunId = runId;
+  activeRunLogs = [];
 
   const progress: SyncProgressEvent["progress"] = {
     collectionsTotal: 0,
@@ -274,6 +292,7 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
   };
 
   function emit(type: SyncProgressEvent["type"], message: string) {
+    activeRunLogs.push(message);
     const event: SyncProgressEvent = { type, message, progress: { ...progress } };
     syncEvents.emit("progress", event);
   }
@@ -340,6 +359,7 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
   }
 
   activeSyncAbort = null;
+  activeRunId = null;
   result.finishedAt = new Date().toISOString();
   const finalStatus = signal.aborted ? "failed" : "completed";
   await finishSyncRun(runId, finalStatus, result);
@@ -363,6 +383,7 @@ async function finishSyncRun(runId: string, status: "completed" | "failed", resu
       filesDownloaded: result.files.downloaded,
       filesSkipped: result.files.skipped,
       errors: result.errors,
+      logs: activeRunLogs,
     })
     .where(eq(schema.syncRuns.id, runId));
 }
@@ -743,6 +764,7 @@ export async function getSyncHistory(limit = 20): Promise<
     filesDownloaded: number;
     filesSkipped: number;
     errors: string[];
+    logs: string[];
   }[]
 > {
   const rows = await db
@@ -764,5 +786,6 @@ export async function getSyncHistory(limit = 20): Promise<
     filesDownloaded: r.filesDownloaded,
     filesSkipped: r.filesSkipped,
     errors: (r.errors as string[]) ?? [],
+    logs: (r.logs as string[]) ?? [],
   }));
 }

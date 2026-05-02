@@ -54,6 +54,7 @@ interface SyncHistoryEntry {
   filesDownloaded: number;
   filesSkipped: number;
   errors: string[];
+  logs: string[];
 }
 
 const PAGE_SIZE = 10;
@@ -126,11 +127,18 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
   const [progressEvents, setProgressEvents] = useState<SyncProgressEvent[]>([]);
   const [latestProgress, setLatestProgress] = useState<SyncProgressEvent | null>(null);
   const [history, setHistory] = useState<SyncHistoryEntry[]>([]);
+  const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const evtSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     fetchStatus();
     fetchHistory();
+    // Check if a sync is already running (e.g. page refresh)
+    checkActiveSync();
+    return () => {
+      evtSourceRef.current?.close();
+    };
   }, []);
 
   // Auto-scroll log
@@ -139,6 +147,29 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [progressEvents]);
+
+  async function checkActiveSync() {
+    try {
+      const res = await fetch("/api/admin/mirror/sync/active");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.running) {
+        setSyncing(true);
+        // Populate buffered logs
+        if (data.logs?.length) {
+          setProgressEvents(data.logs.map((msg: string) => ({
+            type: "collection" as const,
+            message: msg,
+            progress: { collectionsTotal: 0, collectionsProcessed: 0, versionsPulled: 0, filesDownloaded: 0, filesSkipped: 0, errors: 0 },
+          })));
+        }
+        // Connect to SSE
+        connectSSE();
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   async function fetchStatus() {
     try {
@@ -170,6 +201,31 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
     setLoading(null);
   }
 
+  function connectSSE() {
+    const evtSource = new EventSource("/api/admin/mirror/sync/progress");
+    evtSourceRef.current = evtSource;
+    evtSource.onmessage = (event) => {
+      const data: SyncProgressEvent = JSON.parse(event.data);
+      setProgressEvents((prev) => [...prev, data]);
+      setLatestProgress(data);
+
+      if (data.type === "done") {
+        evtSource.close();
+        evtSourceRef.current = null;
+        setSyncing(false);
+        fetchStatus();
+        fetchHistory();
+      }
+    };
+    evtSource.onerror = () => {
+      evtSource.close();
+      evtSourceRef.current = null;
+      setSyncing(false);
+      fetchStatus();
+      fetchHistory();
+    };
+  }
+
   async function handleSync() {
     setSyncing(true);
     setProgressEvents([]);
@@ -179,25 +235,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
     await fetch("/api/admin/mirror/sync", { method: "POST" });
 
     // Connect to SSE for progress
-    const evtSource = new EventSource("/api/admin/mirror/sync/progress");
-    evtSource.onmessage = (event) => {
-      const data: SyncProgressEvent = JSON.parse(event.data);
-      setProgressEvents((prev) => [...prev, data]);
-      setLatestProgress(data);
-
-      if (data.type === "done") {
-        evtSource.close();
-        setSyncing(false);
-        fetchStatus();
-        fetchHistory();
-      }
-    };
-    evtSource.onerror = () => {
-      evtSource.close();
-      setSyncing(false);
-      fetchStatus();
-      fetchHistory();
-    };
+    connectSSE();
   }
 
   async function handleStop() {
@@ -256,7 +294,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
         )}
       </section>
 
-      {/* Sync Controls */}
+      {/* Sync Controls + History */}
       <section className="border border-rule rounded-lg p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
           Sync
@@ -324,11 +362,11 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
           </div>
         )}
 
-        {/* Event log */}
+        {/* Event log (live) */}
         {progressEvents.length > 0 && (
           <div
             ref={logRef}
-            className="text-xs font-mono bg-parchment-dark border border-rule rounded p-3 max-h-48 overflow-y-auto space-y-0.5"
+            className="text-xs font-mono bg-parchment-dark border border-rule rounded p-3 max-h-48 overflow-y-auto space-y-0.5 mb-4"
           >
             {progressEvents.map((evt, i) => (
               <div
@@ -346,6 +384,107 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             ))}
           </div>
         )}
+
+        {/* History table */}
+        {history.length > 0 && (
+          <div className="mt-4 border-t border-rule pt-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">
+              History
+            </h3>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-rule text-left text-ink-muted">
+                  <th className="pb-2 font-medium">When</th>
+                  <th className="pb-2 font-medium">Trigger</th>
+                  <th className="pb-2 font-medium">Status</th>
+                  <th className="pb-2 font-medium">Duration</th>
+                  <th className="pb-2 font-medium">Summary</th>
+                  <th className="pb-2 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((h) => {
+                  const duration =
+                    h.finishedAt
+                      ? Math.round(
+                          (new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()) / 1000,
+                        )
+                      : null;
+                  return (
+                    <tr key={h.id} className="border-b border-rule/50 align-top">
+                      <td className="py-2 text-ink-muted text-xs">
+                        {new Date(h.startedAt).toLocaleString()}
+                      </td>
+                      <td className="py-2">
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
+                            h.trigger === "cron"
+                              ? "bg-blue-50 text-blue-700 border border-blue-200"
+                              : "bg-purple-50 text-purple-700 border border-purple-200"
+                          }`}
+                        >
+                          {h.trigger}
+                        </span>
+                      </td>
+                      <td className="py-2">
+                        <span
+                          className={`text-xs font-medium ${
+                            h.status === "completed"
+                              ? "text-green-700"
+                              : h.status === "running"
+                                ? "text-amber-600"
+                                : "text-red-700"
+                          }`}
+                        >
+                          {h.status}
+                        </span>
+                      </td>
+                      <td className="py-2 font-mono text-xs">
+                        {duration !== null ? `${duration}s` : "—"}
+                      </td>
+                      <td className="py-2 text-xs">
+                        {h.collectionsSynced} synced, {h.versionsPulled} ver, {h.filesDownloaded}↓ {h.filesSkipped}✓
+                        {h.collectionsFailed > 0 && (
+                          <span className="text-red-600 ml-1">({h.collectionsFailed} failed)</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-xs text-right space-x-2">
+                        {h.status === "running" && (
+                          <button
+                            onClick={handleStop}
+                            className="px-2 py-0.5 text-xs bg-red-600 text-white rounded hover:bg-red-700"
+                          >
+                            Stop
+                          </button>
+                        )}
+                        {h.logs && h.logs.length > 0 && (
+                          <button
+                            onClick={() => setExpandedRun(expandedRun === h.id ? null : h.id)}
+                            className="px-2 py-0.5 text-xs border border-rule rounded hover:bg-parchment-dark"
+                          >
+                            {expandedRun === h.id ? "Hide" : "Logs"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {/* Expanded logs for a history entry */}
+            {expandedRun && (() => {
+              const run = history.find((h) => h.id === expandedRun);
+              if (!run?.logs?.length) return null;
+              return (
+                <div className="mt-2 text-xs font-mono bg-parchment-dark border border-rule rounded p-3 max-h-48 overflow-y-auto space-y-0.5">
+                  {run.logs.map((msg, i) => (
+                    <div key={i} className="text-ink-muted">{msg}</div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
       </section>
 
       {/* Mirrored Collections */}
@@ -361,85 +500,6 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
           </p>
         ) : (
           <p className="text-sm text-ink-muted">Loading...</p>
-        )}
-      </section>
-
-      {/* Sync History */}
-      <section className="border border-rule rounded-lg p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
-          Sync History
-        </h2>
-        {history.length > 0 ? (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-rule text-left text-ink-muted">
-                <th className="pb-2 font-medium">When</th>
-                <th className="pb-2 font-medium">Trigger</th>
-                <th className="pb-2 font-medium">Status</th>
-                <th className="pb-2 font-medium">Duration</th>
-                <th className="pb-2 font-medium">Collections</th>
-                <th className="pb-2 font-medium">Versions</th>
-                <th className="pb-2 font-medium">Files</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.map((h) => {
-                const duration =
-                  h.finishedAt
-                    ? Math.round(
-                        (new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()) / 1000,
-                      )
-                    : null;
-                return (
-                  <tr key={h.id} className="border-b border-rule/50">
-                    <td className="py-2 text-ink-muted">
-                      {new Date(h.startedAt).toLocaleString()}
-                    </td>
-                    <td className="py-2">
-                      <span
-                        className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
-                          h.trigger === "cron"
-                            ? "bg-blue-50 text-blue-700 border border-blue-200"
-                            : "bg-purple-50 text-purple-700 border border-purple-200"
-                        }`}
-                      >
-                        {h.trigger}
-                      </span>
-                    </td>
-                    <td className="py-2">
-                      <span
-                        className={`text-xs font-medium ${
-                          h.status === "completed"
-                            ? "text-green-700"
-                            : h.status === "running"
-                              ? "text-amber-600"
-                              : "text-red-700"
-                        }`}
-                      >
-                        {h.status}
-                      </span>
-                    </td>
-                    <td className="py-2 font-mono text-xs">
-                      {duration !== null ? `${duration}s` : "—"}
-                    </td>
-                    <td className="py-2 text-xs">
-                      {h.collectionsSynced} synced
-                      {h.collectionsCreated > 0 && `, ${h.collectionsCreated} new`}
-                      {h.collectionsFailed > 0 && (
-                        <span className="text-red-600"> ({h.collectionsFailed} failed)</span>
-                      )}
-                    </td>
-                    <td className="py-2 font-mono text-xs">{h.versionsPulled}</td>
-                    <td className="py-2 text-xs">
-                      {h.filesDownloaded} ↓ / {h.filesSkipped} ✓
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <p className="text-sm text-ink-muted">No sync runs recorded yet.</p>
         )}
       </section>
 
