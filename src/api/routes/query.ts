@@ -177,7 +177,10 @@ export async function queryRoutes(app: FastifyInstance) {
           const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version);
           if (!result) return reply.status(404).send({ error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found` });
           const prefix = ref.slug.replace(/-/g, "_");
-          const ddlPrefixed = result.ddlWithSamples.replace(/CREATE TABLE "([^"]+)"/g, `CREATE TABLE "${prefix}__$1"`);
+          // Prefix table names and add _source column to DDL
+          const ddlPrefixed = result.ddlWithSamples
+            .replace(/CREATE TABLE "([^"]+)"/g, `CREATE TABLE "${prefix}__$1"`)
+            .replace(/\);/g, `,\n  "_source" TEXT\n);`);
           parts.push(`-- Collection: ${ref.owner}/${ref.slug} v${ref.version}\n` + ddlPrefixed);
         }
         combinedDdl = parts.join("\n\n");
@@ -196,6 +199,7 @@ REASONING:
 Important rules:
 - Examine the "Example row" comments in the schema — they show the ACTUAL data format stored in each column.
 - When multiple collections are loaded, consider ALL of them in your answer unless the question specifies otherwise.
+- Every table has a "_source" column containing the collection identifier (e.g. "adapt/archive"). Include _source in SELECT when results come from multiple tables so the user can see provenance.
 - When counting across multiple tables, use UNION ALL to combine rows, not JOIN.
 - Only use JOIN when the question asks about relationships between tables.
 - COUNT(*) counts rows. Use UNION ALL to combine rows from separate tables before counting.

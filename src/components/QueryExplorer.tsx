@@ -186,7 +186,7 @@ export default function QueryExplorer() {
           if (db) db.close();
           setDb(newDb);
         } else {
-          // Multi-collection: create merged db with prefixed tables
+          // Multi-collection: create merged db with prefixed tables + _source column
           const newDb = new sqlJs.Database();
           if (db) db.close();
 
@@ -204,19 +204,22 @@ export default function QueryExplorer() {
                 const tableName = row[0] as string;
                 const createSql = row[1] as string;
                 const prefix = lc.slug.replace(/-/g, "_");
-                const prefixedCreate = createSql.replace(
-                  `CREATE TABLE "${tableName}"`,
-                  `CREATE TABLE "${prefix}__${tableName}"`,
-                );
+                const prefixedCreate = createSql
+                  .replace(
+                    `CREATE TABLE "${tableName}"`,
+                    `CREATE TABLE "${prefix}__${tableName}"`,
+                  )
+                  .replace(/\)$/, `,\n  "_source" TEXT\n)`);
                 try { newDb.exec(prefixedCreate); } catch { continue; }
 
                 const data = tempDb.exec(`SELECT * FROM "${tableName}"`);
                 if (data.length > 0 && data[0].values.length > 0) {
-                  const cols = data[0].columns;
+                  const cols = [...data[0].columns, "_source"];
                   const placeholders = cols.map(() => "?").join(", ");
                   const insertSql = `INSERT INTO "${prefix}__${tableName}" (${cols.map((c: string) => `"${c}"`).join(", ")}) VALUES (${placeholders})`;
+                  const sourceLabel = `${lc.ownerSlug}/${lc.slug}`;
                   const stmt = newDb.prepare(insertSql);
-                  for (const r of data[0].values) { stmt.run(r); }
+                  for (const r of data[0].values) { stmt.run([...r, sourceLabel]); }
                   stmt.free();
                 }
               }
@@ -283,14 +286,17 @@ export default function QueryExplorer() {
               const tableName = row[0] as string;
               const createSql = row[1] as string;
               const prefix = lc.slug.replace(/-/g, "_");
-              const prefixedCreate = createSql.replace(`CREATE TABLE "${tableName}"`, `CREATE TABLE "${prefix}__${tableName}"`);
+              const prefixedCreate = createSql
+                .replace(`CREATE TABLE "${tableName}"`, `CREATE TABLE "${prefix}__${tableName}"`)
+                .replace(/\)$/, `,\n  "_source" TEXT\n)`);
               try { newDb.exec(prefixedCreate); } catch { continue; }
               const data = tempDb.exec(`SELECT * FROM "${tableName}"`);
               if (data.length > 0 && data[0].values.length > 0) {
-                const cols = data[0].columns;
+                const cols = [...data[0].columns, "_source"];
                 const placeholders = cols.map(() => "?").join(", ");
+                const sourceLabel = `${lc.ownerSlug}/${lc.slug}`;
                 const stmt = newDb.prepare(`INSERT INTO "${prefix}__${tableName}" (${cols.map((c: string) => `"${c}"`).join(", ")}) VALUES (${placeholders})`);
-                for (const r of data[0].values) stmt.run(r);
+                for (const r of data[0].values) stmt.run([...r, sourceLabel]);
                 stmt.free();
               }
             }
