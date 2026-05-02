@@ -137,7 +137,7 @@ jobs:
           : "${STACK_NAME:?missing STACK_NAME}"
 
           REPO_NAME="${REPO##*/}"
-          APP_DIR="/srv/${REPO_NAME}"
+          APP_DIR="/srv/${STACK_NAME}"
           REPO_SSH="git@github.com:${REPO}.git"
 
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null

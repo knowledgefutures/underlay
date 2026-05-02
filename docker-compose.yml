@@ -17,7 +17,7 @@ services:
     networks:
       - appnet
     deploy:
-      replicas: 2
+      replicas: ${APP_REPLICAS:-2}
       resources:
         limits:
           memory: 640m
