@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { Lock } from "lucide-react";
 
 type SqlJsDatabase = any;
 type SqlJs = any;
@@ -8,7 +9,9 @@ interface CollectionInfo {
   slug: string;
   name: string;
   description?: string;
+  public: boolean;
   latestVersion: number | null;
+  latestSemver: string | null;
   recordCount: number;
 }
 
@@ -17,7 +20,9 @@ interface LoadedCollection {
   ownerSlug: string;
   slug: string;
   version: number;
+  semver: string;
   name: string;
+  public: boolean;
   ddl: string;
   recordCount: number;
 }
@@ -77,7 +82,10 @@ export default function QueryExplorer() {
   const [db, setDb] = useState<SqlJsDatabase | null>(null);
   const [sqlJsReady, setSqlJsReady] = useState(false);
   const [sqlJsError, setSqlJsError] = useState("");
-  const [collections, setCollections] = useState<CollectionInfo[]>([]);
+  const [searchResults, setSearchResults] = useState<CollectionInfo[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedForVersion, setSelectedForVersion] = useState<CollectionInfo | null>(null);
+  const [availableVersions, setAvailableVersions] = useState<{ number: number; semver: string; recordCount: number; message?: string }[]>([]);
   const [loadedCollections, setLoadedCollections] = useState<LoadedCollection[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
@@ -100,7 +108,22 @@ export default function QueryExplorer() {
   const [collectionSearch, setCollectionSearch] = useState("");
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const searchPanelRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
+
+  // Close search panel on click outside
+  useEffect(() => {
+    if (!showCollections) return;
+    function handleClick(e: MouseEvent) {
+      if (searchPanelRef.current && !searchPanelRef.current.contains(e.target as Node)) {
+        setShowCollections(false);
+        setCollectionSearch("");
+        setSelectedForVersion(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showCollections]);
 
   // Sync nextId with loaded history
   useEffect(() => {
@@ -140,20 +163,51 @@ export default function QueryExplorer() {
     initSqlJs();
   }, []);
 
-  // Load available collections
+  // Debounced server-side collection search
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    fetch("/api/query/collections")
-      .then((r) => r.json())
-      .then(setCollections)
-      .catch(() => {});
-  }, []);
+    if (!collectionSearch || collectionSearch.trim().length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/query/collections/search?q=${encodeURIComponent(collectionSearch.trim())}`);
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data);
+        }
+      } catch { /* ignore */ }
+      setSearchLoading(false);
+    }, 250);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [collectionSearch]);
+
+  // Fetch versions when a collection is selected for version picking
+  useEffect(() => {
+    if (!selectedForVersion) { setAvailableVersions([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/query/collections/${selectedForVersion.ownerSlug}/${selectedForVersion.slug}/versions`);
+        if (res.ok && !cancelled) {
+          setAvailableVersions(await res.json());
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedForVersion]);
 
   // Load a collection into the workspace
   const loadCollection = useCallback(
-    async (c: CollectionInfo, version?: number) => {
+    async (c: CollectionInfo, version?: number, semver?: string) => {
       if (!sqlJs) return;
       const v = version ?? c.latestVersion;
       if (v === null) return;
+      const sv = semver ?? c.latestSemver ?? `${v}.0.0`;
 
       const key = `${c.ownerSlug}/${c.slug}:${v}`;
       if (loadedCollections.some((lc) => lc.key === key)) return;
@@ -174,7 +228,9 @@ export default function QueryExplorer() {
           ownerSlug: c.ownerSlug,
           slug: c.slug,
           version: v,
+          semver: sv,
           name: c.name,
+          public: c.public,
           ddl,
           recordCount: c.recordCount,
         };
@@ -230,7 +286,6 @@ export default function QueryExplorer() {
         }
 
         setLoadedCollections(allLoaded);
-        setShowCollections(false);
       } catch (e: any) {
         console.error("Load collection error:", e);
       } finally {
@@ -362,6 +417,7 @@ export default function QueryExplorer() {
         setInput("");
       } else {
         // Natural language → LLM generates SQL (server handles DDL + sample assembly)
+        setSelectedEntry(null);
         const collectionRefs = loadedCollections.map((lc) => ({
           owner: lc.ownerSlug,
           slug: lc.slug,
@@ -418,13 +474,6 @@ export default function QueryExplorer() {
     [db, loadedCollections, executeSql],
   );
 
-  const filteredCollections = collections.filter(
-    (c) =>
-      !collectionSearch ||
-      `${c.ownerSlug}/${c.slug}`.toLowerCase().includes(collectionSearch.toLowerCase()) ||
-      c.name.toLowerCase().includes(collectionSearch.toLowerCase()),
-  );
-
   const placeholder = loadedCollections.length === 0
     ? "Add a collection to start querying..."
     : loadedCollections.length === 1
@@ -437,15 +486,16 @@ export default function QueryExplorer() {
       <div className="w-[420px] min-w-[360px] border-r border-rule flex flex-col bg-parchment overflow-hidden">
         {/* Input area */}
         <div className="p-3 border-b border-rule">
-          {/* Collection pills + add button */}
+          {/* Collection search + add */}
           <div className="flex items-center gap-1.5 flex-wrap mb-2">
             {loadedCollections.map((lc) => (
               <span
                 key={lc.key}
                 className="inline-flex items-center gap-1 bg-parchment-dark border border-rule px-1.5 py-0.5 text-[11px] font-mono"
               >
-                {lc.slug}
-                <span className="text-ink-muted">v{lc.version}</span>
+                {!lc.public && <Lock size={9} className="text-ink-muted" />}
+                {lc.ownerSlug}/{lc.slug}
+                <span className="text-ink-muted">{lc.semver}</span>
                 <button
                   onClick={() => removeCollection(lc.key)}
                   className="text-ink-muted hover:text-ink leading-none"
@@ -454,43 +504,115 @@ export default function QueryExplorer() {
                 </button>
               </span>
             ))}
-            <button
-              onClick={() => setShowCollections(!showCollections)}
-              className="text-[11px] border border-rule px-1.5 py-0.5 hover:bg-parchment-dark font-mono text-ink-muted"
-            >
-              +
-            </button>
+            {!showCollections && (
+              <button
+                onClick={() => { setShowCollections(true); setCollectionSearch(""); }}
+                className="text-[11px] border border-rule px-1.5 py-0.5 hover:bg-parchment-dark font-mono text-ink-muted"
+              >
+                + add collection
+              </button>
+            )}
           </div>
 
-          {/* Collection selector dropdown */}
+          {/* Collection search input */}
           {showCollections && (
-            <div className="mb-2 border border-rule bg-parchment p-2">
-              <input
-                type="search"
-                placeholder="Search collections..."
-                className="w-full bg-parchment-dark border border-rule px-2 py-1 text-xs font-mono placeholder:text-ink-muted focus:outline-none focus:border-ink mb-1.5"
-                value={collectionSearch}
-                onChange={(e) => setCollectionSearch(e.target.value)}
-                autoFocus
-              />
-              <div className="max-h-32 overflow-y-auto space-y-0.5">
-                {filteredCollections.map((c) => {
-                  const alreadyLoaded = loadedCollections.some((lc) => lc.key === `${c.ownerSlug}/${c.slug}:${c.latestVersion}`);
-                  return (
-                    <button
-                      key={`${c.ownerSlug}/${c.slug}`}
-                      onClick={() => loadCollection(c)}
-                      disabled={loading || alreadyLoaded}
-                      className="w-full text-left px-2 py-1 text-xs hover:bg-parchment-dark disabled:opacity-40 disabled:cursor-not-allowed font-mono"
-                    >
-                      <span className="font-medium">{c.ownerSlug}/{c.slug}</span>
-                      {c.latestVersion !== null && (
-                        <span className="text-ink-muted ml-1">v{c.latestVersion} · {c.recordCount}r</span>
+            <div ref={searchPanelRef} className="mb-2 border border-rule bg-parchment p-2">
+              {!selectedForVersion ? (
+                <>
+                  <input
+                    type="search"
+                    placeholder="Search by owner or collection name..."
+                    className="w-full bg-parchment-dark border border-rule px-2 py-1 text-xs font-mono placeholder:text-ink-muted focus:outline-none focus:border-ink"
+                    value={collectionSearch}
+                    onChange={(e) => setCollectionSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { setShowCollections(false); setCollectionSearch(""); }
+                    }}
+                    autoFocus
+                  />
+                  {searchLoading && (
+                    <div className="text-[11px] text-ink-muted font-mono mt-1 px-1">Searching...</div>
+                  )}
+                  {collectionSearch.length >= 2 && !searchLoading && (
+                    <div className="mt-1.5 max-h-40 overflow-y-auto space-y-0.5">
+                      {searchResults.length === 0 ? (
+                        <div className="text-xs text-ink-muted px-2 py-1 font-mono">No matches</div>
+                      ) : (
+                        searchResults.map((c) => {
+                          const alreadyLoaded = loadedCollections.some((lc) => lc.ownerSlug === c.ownerSlug && lc.slug === c.slug);
+                          return (
+                            <div
+                              key={`${c.ownerSlug}/${c.slug}`}
+                              className={`flex items-stretch text-xs font-mono ${alreadyLoaded ? 'opacity-40' : ''}`}
+                            >
+                              <button
+                                onClick={() => { loadCollection(c); }}
+                                disabled={loading || alreadyLoaded}
+                                className="flex-1 min-w-0 text-left px-2 py-1 hover:bg-parchment-dark disabled:cursor-not-allowed"
+                              >
+                                <div className="font-medium truncate">
+                                  {!c.public && <Lock size={10} className="inline-block mr-1 text-ink-muted" />}
+                                  {c.ownerSlug}/{c.slug}
+                                </div>
+                                <div className="text-ink-muted truncate">
+                                  {c.recordCount}r{c.name && c.name !== c.slug ? ` · ${c.name}` : ''}
+                                </div>
+                              </button>
+                              <button
+                                onClick={() => setSelectedForVersion(c)}
+                                disabled={loading || alreadyLoaded}
+                                className="shrink-0 w-16 flex items-center justify-center border-l border-rule text-ink-muted hover:bg-parchment-dark hover:text-ink disabled:cursor-not-allowed text-[11px]"
+                                title="Choose specific version"
+                              >
+                                {c.latestSemver ?? `v${c.latestVersion}`}
+                              </button>
+                            </div>
+                          );
+                        })
                       )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-mono font-medium">{selectedForVersion.ownerSlug}/{selectedForVersion.slug}</span>
+                    <button
+                      onClick={() => setSelectedForVersion(null)}
+                      className="text-[11px] text-ink-muted hover:text-ink font-mono"
+                    >
+                      ← back
                     </button>
-                  );
-                })}
-              </div>
+                  </div>
+                  <div className="text-[10px] text-ink-muted font-mono mb-1">Select version:</div>
+                  <div className="max-h-40 overflow-y-auto space-y-0.5">
+                    {availableVersions.length === 0 ? (
+                      <div className="text-xs text-ink-muted px-2 py-1 font-mono">Loading versions...</div>
+                    ) : (
+                      availableVersions.map((v) => {
+                        const alreadyLoaded = loadedCollections.some(
+                          (lc) => lc.ownerSlug === selectedForVersion.ownerSlug && lc.slug === selectedForVersion.slug && lc.version === v.number,
+                        );
+                        return (
+                          <button
+                            key={v.number}
+                            onClick={() => {
+                              loadCollection(selectedForVersion, v.number, v.semver);
+                              setSelectedForVersion(null);
+                            }}
+                            disabled={loading || alreadyLoaded}
+                            className="w-full text-left px-2 py-1 text-xs hover:bg-parchment-dark disabled:opacity-40 disabled:cursor-not-allowed font-mono"
+                          >
+                            <span className="font-medium">{v.semver}</span>
+                            <span className="text-ink-muted ml-1">({v.recordCount}r)</span>
+                            {v.message && <span className="text-ink-muted ml-1">— {v.message}</span>}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -585,7 +707,11 @@ export default function QueryExplorer() {
 
       {/* Right panel: results */}
       <div className="flex-1 flex flex-col overflow-hidden bg-parchment min-h-0">
-        {!selectedEntry ? (
+        {isRunning && !selectedEntry ? (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-sm text-ink-muted font-mono animate-pulse">Generating query...</p>
+          </div>
+        ) : !selectedEntry ? (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-ink-muted font-mono">Results will appear here</p>
           </div>
@@ -594,11 +720,11 @@ export default function QueryExplorer() {
             {/* Result header: full context */}
             <div className="px-4 py-3 border-b border-rule space-y-2">
               {/* Collections row */}
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-mono text-ink-muted">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-mono text-ink-muted truncate min-w-0">
                   {selectedEntry.collections.join(" · ")}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   {selectedEntry.durationMs !== undefined && (
                     <span className="text-[11px] font-mono text-ink-muted">
                       {selectedEntry.durationMs >= 1000
