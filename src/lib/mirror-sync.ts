@@ -43,6 +43,23 @@ export interface SyncProgressEvent {
 export const syncEvents = new EventEmitter();
 syncEvents.setMaxListeners(20);
 
+/** Abort controller for the current sync — null if no sync running */
+let activeSyncAbort: AbortController | null = null;
+
+/** Whether a sync is currently running */
+export function isSyncRunning(): boolean {
+  return activeSyncAbort !== null;
+}
+
+/** Stop the current sync (gracefully — finishes current item then stops) */
+export function stopSync(): boolean {
+  if (activeSyncAbort) {
+    activeSyncAbort.abort();
+    return true;
+  }
+  return false;
+}
+
 /** Ensure a system account exists for mirrored content */
 async function ensureMirrorAccount(ownerSlug: string): Promise<string> {
   const [existing] = await db
@@ -261,6 +278,17 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
     syncEvents.emit("progress", event);
   }
 
+  // Set up abort controller
+  activeSyncAbort = new AbortController();
+  const signal = activeSyncAbort.signal;
+
+  // Log auth mode
+  if (config.apiKey) {
+    emit("start", `Using API key (${config.apiKey.slice(0, 6)}…) — authenticated sync with higher rate limits`);
+  } else {
+    emit("start", `No API key configured — using public API (stricter rate limiting)`);
+  }
+
   const upstream = config.upstream;
 
   // 1. Fetch all public collections from upstream
@@ -284,13 +312,25 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
 
   // 2. For each upstream collection, sync it locally
   for (const uc of upstreamCollections) {
+    // Check for abort between collections
+    if (signal.aborted) {
+      emit("error", "Sync stopped by user");
+      result.errors.push("Sync stopped by user");
+      break;
+    }
+
     progress.currentCollection = `${uc.ownerSlug}/${uc.slug}`;
     emit("collection", `Syncing ${uc.ownerSlug}/${uc.slug}...`);
 
     try {
-      await syncCollection(upstream, uc, result, progress, emit);
+      await syncCollection(upstream, uc, result, progress, emit, signal);
       result.collections.synced++;
     } catch (err) {
+      if (signal.aborted) {
+        emit("error", "Sync stopped by user");
+        result.errors.push("Sync stopped by user");
+        break;
+      }
       result.collections.failed++;
       result.errors.push(`${uc.ownerSlug}/${uc.slug}: ${err}`);
       progress.errors++;
@@ -299,9 +339,13 @@ export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Prom
     progress.collectionsProcessed++;
   }
 
+  activeSyncAbort = null;
   result.finishedAt = new Date().toISOString();
-  await finishSyncRun(runId, "completed", result);
-  emit("done", `Sync complete — ${result.collections.synced} synced, ${result.versions.pulled} versions, ${result.files.downloaded} files`);
+  const finalStatus = signal.aborted ? "failed" : "completed";
+  await finishSyncRun(runId, finalStatus, result);
+  emit("done", signal.aborted
+    ? `Sync stopped — ${result.collections.synced} synced before stop`
+    : `Sync complete — ${result.collections.synced} synced, ${result.versions.pulled} versions, ${result.files.downloaded} files`);
   return result;
 }
 
@@ -329,6 +373,7 @@ async function syncCollection(
   result: SyncResult,
   progress: SyncProgressEvent["progress"],
   emit: (type: SyncProgressEvent["type"], message: string) => void,
+  signal: AbortSignal,
 ): Promise<void> {
   // Ensure the owner account exists locally
   const accountId = await ensureMirrorAccount(uc.ownerSlug);
@@ -393,6 +438,7 @@ async function syncCollection(
 
   // Pull each new version
   for (const uv of newVersions) {
+    if (signal.aborted) return;
     await pullVersion(upstream, uc, collectionId, uv, result, progress, emit);
     result.versions.pulled++;
     progress.versionsPulled++;
@@ -437,18 +483,20 @@ async function pullVersion(
     // Check if file already exists in our S3
     const exists = await headS3Object(storageKey);
     if (exists) {
-      // Also ensure it's in the files table
-      const [existingFile] = await db
-        .select({ hash: schema.files.hash })
-        .from(schema.files)
-        .where(eq(schema.files.hash, fileHash))
-        .limit(1);
+      // File is in S3 — just ensure the DB row exists
+      await db
+        .insert(schema.files)
+        .values({
+          hash: fileHash,
+          size: 0, // will be correct from S3 metadata if needed
+          mimeType: "application/octet-stream",
+          storageKey,
+        })
+        .onConflictDoNothing();
 
-      if (existingFile) {
-        result.files.skipped++;
-        progress.filesSkipped++;
-        continue;
-      }
+      result.files.skipped++;
+      progress.filesSkipped++;
+      continue;
     }
 
     // Download from upstream

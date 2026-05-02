@@ -200,6 +200,10 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
     };
   }
 
+  async function handleStop() {
+    await fetch("/api/admin/mirror/sync/stop", { method: "POST" });
+  }
+
   return (
     <div className="space-y-8">
       {/* Server Identity */}
@@ -268,13 +272,23 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
               </span>
             )}
           </div>
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="px-3 py-1.5 text-sm bg-ink text-parchment rounded hover:bg-ink/90 disabled:opacity-50"
-          >
-            {syncing ? "Syncing..." : "Sync Now"}
-          </button>
+          <div className="flex items-center gap-2">
+            {syncing && (
+              <button
+                onClick={handleStop}
+                className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+              >
+                Stop
+              </button>
+            )}
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="px-3 py-1.5 text-sm bg-ink text-parchment rounded hover:bg-ink/90 disabled:opacity-50"
+            >
+              {syncing ? "Syncing..." : "Sync Now"}
+            </button>
+          </div>
         </div>
 
         {/* Live progress */}

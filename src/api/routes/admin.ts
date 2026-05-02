@@ -6,6 +6,8 @@ import {
   getMirrorStatus,
   getSyncHistory,
   syncEvents,
+  stopSync,
+  isSyncRunning,
   type SyncProgressEvent,
 } from "../../lib/mirror-sync.js";
 
@@ -33,11 +35,20 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // Trigger a sync manually (fire-and-forget, client uses SSE for progress)
   app.post("/admin/mirror/sync", async () => {
+    if (isSyncRunning()) {
+      return { started: false, error: "A sync is already running" };
+    }
     // Start sync in background — don't await
     runMirrorSync("manual").catch((err) => {
       console.error("[mirror-sync] Unhandled sync error:", err);
     });
     return { started: true };
+  });
+
+  // Stop a running sync
+  app.post("/admin/mirror/sync/stop", async () => {
+    const stopped = stopSync();
+    return { stopped };
   });
 
   // SSE endpoint for live sync progress
