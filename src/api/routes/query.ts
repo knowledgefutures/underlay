@@ -186,6 +186,8 @@ export async function queryRoutes(app: FastifyInstance) {
         combinedDdl = parts.join("\n\n");
       }
 
+      const isMultiCollection = collectionRefs.length > 1;
+
       const systemPrompt = `You are a SQL assistant for SQLite databases. Given a schema and a user's question, produce a single SELECT query that answers it.
 
 Respond in EXACTLY this format (two sections separated by the marker):
@@ -197,13 +199,14 @@ REASONING:
 <brief explanation of table/column choices, any assumptions made, and how you interpreted ambiguous terms>
 
 Important rules:
-- Examine the "Example row" comments in the schema — they show the ACTUAL data format stored in each column.
+- Examine the "Example row" comments in the schema — they show the ACTUAL data format stored in each column.${isMultiCollection ? `
 - When multiple collections are loaded, consider ALL of them in your answer unless the question specifies otherwise.
-- Every table has a "_source" column containing the collection identifier (e.g. "account/collection"). When querying across multiple tables, always include provenance. For row-level results, include _source as a column. For aggregations, include GROUP_CONCAT(DISTINCT _source) as _source so the user can see which collections contributed to the result.
-- When counting across multiple tables, use UNION ALL to combine rows, not JOIN.
+- Every table has a "_source" column containing the collection identifier (e.g. "account/collection"). For row-level results, include _source as a column. For aggregations, include GROUP_CONCAT(DISTINCT _source) as _source so the user can see which collections contributed to the result.
+- When counting across multiple tables, use UNION ALL to combine rows, not JOIN.` : ""}
 - Only use JOIN when the question asks about relationships between tables.
-- COUNT(*) counts rows. Use UNION ALL to combine rows from separate tables before counting.
-- When tables have a prefix like "collection__TableName", always use that full prefixed name.`;
+- COUNT(*) counts rows.${isMultiCollection ? " Use UNION ALL to combine rows from separate tables before counting." : ""}
+- When tables have a prefix like "collection__TableName", always use that full prefixed name.
+- Do NOT include columns that don't exist in the schema.`;
 
       const userPrompt = `Schema:\n${combinedDdl}\n\nQuestion: ${question}`;
 

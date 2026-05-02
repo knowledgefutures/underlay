@@ -1,5 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Lock } from "lucide-react";
+import { EditorView, keymap, placeholder as cmPlaceholder } from "@codemirror/view";
+import { EditorState, Compartment } from "@codemirror/state";
+import { defaultKeymap, history as cmHistory, historyKeymap } from "@codemirror/commands";
+import { sql, SQLite } from "@codemirror/lang-sql";
+import { autocompletion, type Completion, type CompletionContext } from "@codemirror/autocomplete";
 
 type SqlJsDatabase = any;
 type SqlJs = any;
@@ -91,7 +96,6 @@ export default function QueryExplorer() {
   const [loadingMessage, setLoadingMessage] = useState("");
 
   // Input
-  const [input, setInput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
 
   // History + results
@@ -107,7 +111,10 @@ export default function QueryExplorer() {
   const [showCollections, setShowCollections] = useState(false);
   const [collectionSearch, setCollectionSearch] = useState("");
 
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const editorViewRef = useRef<EditorView | null>(null);
+  const sqlCompartment = useRef(new Compartment());
+  const completionCompartment = useRef(new Compartment());
   const searchPanelRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
 
@@ -161,6 +168,135 @@ export default function QueryExplorer() {
       }
     }
     initSqlJs();
+  }, []);
+
+  // Build schema map for CodeMirror SQL autocomplete
+  // Build completions with collection labels as detail
+  const completionData = useMemo(() => {
+    const items: Completion[] = [];
+    const searchTerms: string[] = [];
+    for (const lc of loadedCollections) {
+      const tableRegex = /CREATE TABLE "([^"]+)"\s*\(([\s\S]*?)\);/g;
+      let match;
+      while ((match = tableRegex.exec(lc.ddl)) !== null) {
+        const rawName = match[1]!;
+        const tableName = loadedCollections.length > 1
+          ? `${lc.slug.replace(/-/g, "_")}__${rawName}`
+          : rawName;
+        const detail = `${lc.ownerSlug}/${lc.slug}`;
+        items.push({ label: tableName, type: "keyword", detail });
+        searchTerms.push(`${tableName} ${lc.slug} ${lc.ownerSlug} ${rawName}`.toLowerCase());
+        const colDefs = match[2]!;
+        for (const col of colDefs.split(",")) {
+          const colMatch = col.trim().match(/^"([^"]+)"/);
+          if (colMatch) {
+            const colName = colMatch[1]!;
+            items.push({ label: colName, type: "property", detail: `· ${tableName}` });
+            searchTerms.push(`${colName} ${tableName} ${lc.slug}`.toLowerCase());
+          }
+        }
+      }
+    }
+    return { items, searchTerms };
+  }, [loadedCollections]);
+
+  // Initialize CodeMirror editor
+  useEffect(() => {
+    if (!editorContainerRef.current || editorViewRef.current) return;
+
+    const submitHandler = keymap.of([{
+      key: "Enter",
+      run: (view) => {
+        const val = view.state.doc.toString();
+        if (val.trim()) {
+          // Dispatch a custom event the component can listen for
+          editorContainerRef.current?.dispatchEvent(new CustomEvent("cm-submit", { detail: val }));
+        }
+        return true;
+      },
+    }, {
+      key: "Shift-Enter",
+      run: () => false, // Let default (newline) happen
+    }]);
+
+    const state = EditorState.create({
+      doc: "",
+      extensions: [
+        submitHandler,
+        defaultKeymap.filter((k) => k.key !== "Enter").length ? keymap.of(defaultKeymap) : keymap.of(defaultKeymap),
+        keymap.of(historyKeymap),
+        cmHistory(),
+        sqlCompartment.current.of(sql({ dialect: SQLite })),
+        completionCompartment.current.of(autocompletion({ icons: false, override: [] })),
+        cmPlaceholder("SELECT * FROM ..."),
+        EditorView.lineWrapping,
+        EditorView.theme({
+          "&": { fontSize: "13px", maxHeight: "80px", fontFamily: "ui-monospace, monospace" },
+          ".cm-content": { padding: "8px 10px", minHeight: "42px" },
+          ".cm-editor": { borderRadius: "0" },
+          ".cm-focused": { outline: "none" },
+          "&.cm-focused .cm-cursor": { borderLeftColor: "var(--color-ink)" },
+          ".cm-scroller": { overflow: "auto" },
+        }),
+        EditorView.baseTheme({
+          "&.cm-editor": { backgroundColor: "var(--color-parchment, #fff)" },
+        }),
+        EditorView.theme({
+          ".cm-tooltip-autocomplete": {
+            border: "1px solid var(--color-rule, #e5e2db)",
+            backgroundColor: "var(--color-parchment, #fff)",
+            fontFamily: "ui-monospace, monospace",
+            fontSize: "12px",
+          },
+          ".cm-tooltip-autocomplete ul li": {
+            padding: "2px 8px",
+          },
+          ".cm-tooltip-autocomplete ul li[aria-selected]": {
+            backgroundColor: "var(--color-parchment-dark, #f5f0e8)",
+            color: "var(--color-ink, #1a1a1a)",
+          },
+          ".cm-completionDetail": {
+            fontStyle: "normal",
+            opacity: "0.5",
+            marginLeft: "8px",
+            fontSize: "11px",
+          },
+        }),
+      ],
+    });
+
+    const view = new EditorView({ state, parent: editorContainerRef.current });
+    editorViewRef.current = view;
+
+    return () => { view.destroy(); editorViewRef.current = null; };
+  }, []); // Only mount once
+
+  // Update SQL language + completions when schema changes
+  useEffect(() => {
+    if (!editorViewRef.current) return;
+    const { items, searchTerms } = completionData;
+    const completer = (ctx: CompletionContext) => {
+      const word = ctx.matchBefore(/\w*/);
+      if (!word || (word.from === word.to && !ctx.explicit)) return null;
+      const typed = word.text.toLowerCase();
+      const filtered = typed
+        ? items.filter((_, i) => searchTerms[i]!.includes(typed))
+        : items;
+      return { from: word.from, options: filtered, filter: false };
+    };
+    editorViewRef.current.dispatch({
+      effects: [
+        sqlCompartment.current.reconfigure(sql({ dialect: SQLite })),
+        completionCompartment.current.reconfigure(autocompletion({ icons: false, override: [completer] })),
+      ],
+    });
+  }, [completionData]);
+
+  // Clear editor content
+  const clearEditor = useCallback(() => {
+    const view = editorViewRef.current;
+    if (!view) return;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
   }, []);
 
   // Debounced server-side collection search
@@ -414,7 +550,7 @@ export default function QueryExplorer() {
       if (isSqlQuery(trimmed)) {
         // Direct SQL execution
         executeSql(trimmed);
-        setInput("");
+        clearEditor();
       } else {
         // Natural language → LLM generates SQL (server handles DDL + sample assembly)
         setSelectedEntry(null);
@@ -466,19 +602,80 @@ export default function QueryExplorer() {
           setHistory((prev) => [entry, ...prev]);
           setSelectedEntry(entry);
         }
-        setInput("");
+        clearEditor();
       }
 
       setIsRunning(false);
     },
-    [db, loadedCollections, executeSql],
+    [db, loadedCollections, executeSql, clearEditor],
   );
+
+  // Listen for CodeMirror submit events
+  useEffect(() => {
+    const container = editorContainerRef.current;
+    if (!container) return;
+    const handler = (e: Event) => {
+      const val = (e as CustomEvent).detail;
+      if (val && !isRunning) handleSubmit(val);
+    };
+    container.addEventListener("cm-submit", handler);
+    return () => container.removeEventListener("cm-submit", handler);
+  }, [isRunning, handleSubmit]);
 
   const placeholder = loadedCollections.length === 0
     ? "Add a collection to start querying..."
     : loadedCollections.length === 1
       ? `SELECT * FROM "${Object.keys(JSON.parse('{}'))[0] || '...'}" LIMIT 10`
-      : "SELECT * FROM ... or ask a question in plain English";
+      : "SELECT * FROM ...";
+
+  // Share: encode current state to URL hash
+  const [copied, setCopied] = useState(false);
+  const shareQuery = useCallback((sqlText: string) => {
+    const payload = {
+      c: loadedCollections.map((lc) => ({ o: lc.ownerSlug, s: lc.slug, v: lc.version })),
+      q: sqlText,
+    };
+    const hash = btoa(JSON.stringify(payload));
+    const url = `${window.location.origin}${window.location.pathname}#${hash}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [loadedCollections]);
+
+  // Load shared state from URL hash once sql.js is ready
+  useEffect(() => {
+    if (!sqlJs) return;
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    try {
+      const payload = JSON.parse(atob(hash));
+      if (!payload.c || !Array.isArray(payload.c)) return;
+      // Load each collection from the hash
+      for (const ref of payload.c) {
+        const info: CollectionInfo = {
+          ownerSlug: ref.o,
+          slug: ref.s,
+          name: `${ref.o}/${ref.s}`,
+          public: true,
+          latestVersion: ref.v,
+          latestSemver: "",
+          recordCount: 0,
+        };
+        loadCollection(info, ref.v);
+      }
+      // Set the query in the editor after a short delay for CM to mount
+      if (payload.q) {
+        setTimeout(() => {
+          const view = editorViewRef.current;
+          if (view) {
+            view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: payload.q } });
+          }
+        }, 500);
+      }
+      // Clear the hash so it doesn't reload on refresh
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch { /* invalid hash, ignore */ }
+  }, [sqlJs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -621,25 +818,11 @@ export default function QueryExplorer() {
             <div className="text-[11px] font-mono text-ink-muted animate-pulse mb-2">{loadingMessage}</div>
           )}
 
-          {/* SQL / natural language input */}
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (input.trim() && !isRunning) handleSubmit(input);
-              }
-            }}
-            placeholder={
-              loadedCollections.length === 0
-                ? "Add a collection to start querying..."
-                : "SELECT * FROM ... "
-            }
-            disabled={loadedCollections.length === 0 || isRunning}
-            className="w-full bg-parchment border border-rule px-2.5 py-2 text-sm font-mono placeholder:text-ink-muted focus:outline-none focus:border-ink resize-none disabled:opacity-50"
-            rows={3}
+          {/* SQL / natural language input (CodeMirror) */}
+          <div
+            ref={editorContainerRef}
+            className={`w-full border border-rule text-sm font-mono ${loadedCollections.length === 0 || isRunning ? 'opacity-50 pointer-events-none' : ''}`}
+            onSubmit={(e) => e.preventDefault()}
           />
           {isRunning && (
             <div className="text-[11px] font-mono text-ink-muted mt-1 animate-pulse">Generating query...</div>
@@ -716,9 +899,9 @@ export default function QueryExplorer() {
             <p className="text-sm text-ink-muted font-mono">Results will appear here</p>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto min-h-0">
-            {/* Result header: full context */}
-            <div className="px-4 py-3 border-b border-rule space-y-2">
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+            {/* Result header: full context (fixed) */}
+            <div className="px-4 py-3 border-b border-rule space-y-2 shrink-0">
               {/* Collections row */}
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[11px] font-mono text-ink-muted truncate min-w-0">
@@ -743,6 +926,14 @@ export default function QueryExplorer() {
                       className="text-[11px] font-mono border border-rule px-2 py-0.5 hover:bg-parchment-dark text-ink-muted hover:text-ink"
                     >
                       ↓ CSV
+                    </button>
+                  )}
+                  {selectedEntry.sql && (
+                    <button
+                      onClick={() => shareQuery(selectedEntry.sql)}
+                      className="text-[11px] font-mono border border-rule px-2 py-0.5 hover:bg-parchment-dark text-ink-muted hover:text-ink"
+                    >
+                      {copied ? "✓ Copied" : "Share"}
                     </button>
                   )}
                 </div>
@@ -770,6 +961,8 @@ export default function QueryExplorer() {
               )}
             </div>
 
+            {/* Scrollable results area */}
+            <div className="flex-1 overflow-auto min-h-0">
             {/* Error display */}
             {selectedEntry.error && (
               <div className="px-4 py-3 bg-red-50 border-b border-red-200 text-sm text-red-800 font-mono">
@@ -829,6 +1022,7 @@ export default function QueryExplorer() {
                 <p className="text-sm text-ink-muted font-mono">Query returned no results.</p>
               </div>
             )}
+            </div>
           </div>
         )}
       </div>
