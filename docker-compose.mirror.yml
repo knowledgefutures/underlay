@@ -21,6 +21,8 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-underlay}
+      # Upstream API key (for authenticated sync — higher rate limit)
+      UNDERLAY_UPSTREAM_API_KEY: ${UNDERLAY_UPSTREAM_API_KEY:-}
       # Session (for admin login)
       SESSION_SECRET: ${SESSION_SECRET:-mirror-secret-change-me}
     ports:
@@ -73,6 +75,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-underlay}
+      UNDERLAY_UPSTREAM_API_KEY: ${UNDERLAY_UPSTREAM_API_KEY:-}
     command: ["node", "--import", "tsx/esm", "tools/cron.ts"]
     networks:
       - mirrornet

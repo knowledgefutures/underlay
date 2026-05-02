@@ -66,16 +66,38 @@ async function ensureSchema(schemaBody: unknown): Promise<string> {
   return created!.id;
 }
 
-/** Fetch JSON from the upstream server */
+/** Sleep for a given number of milliseconds */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Fetch JSON from the upstream server with retry on 429 */
 async function fetchUpstream<T>(upstream: string, path: string): Promise<T> {
+  const config = getMirrorConfig();
   const url = `${upstream.replace(/\/$/, "")}${path}`;
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) {
-    throw new Error(`Upstream ${url} returned ${res.status}: ${await res.text()}`);
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (config.apiKey) {
+    headers["Authorization"] = `Bearer ${config.apiKey}`;
   }
-  return res.json() as Promise<T>;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(url, { headers });
+
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
+      const waitSec = Math.min(retryAfter + 2, 120);
+      console.log(`[mirror-sync] Rate limited, waiting ${waitSec}s before retry (attempt ${attempt + 1}/5)`);
+      await sleep(waitSec * 1000);
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`Upstream ${url} returned ${res.status}: ${await res.text()}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  throw new Error(`Upstream ${url} rate limited after 5 retries`);
 }
 
 /** Download a file from upstream by hash */
@@ -85,14 +107,32 @@ async function downloadUpstreamFile(
   collSlug: string,
   fileHash: string,
 ): Promise<Buffer> {
+  const config = getMirrorConfig();
   const url = `${upstream.replace(/\/$/, "")}/api/collections/${owner}/${collSlug}/files/${fileHash}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`File download failed: ${url} → ${res.status}`);
+  const headers: Record<string, string> = {};
+  if (config.apiKey) {
+    headers["Authorization"] = `Bearer ${config.apiKey}`;
   }
-  // Follow redirect to CDN or get bytes directly
-  const arrayBuffer = await res.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const res = await fetch(url, { headers });
+
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
+      const waitSec = Math.min(retryAfter + 2, 120);
+      console.log(`[mirror-sync] Rate limited on file download, waiting ${waitSec}s`);
+      await sleep(waitSec * 1000);
+      continue;
+    }
+
+    if (!res.ok) {
+      throw new Error(`File download failed: ${url} → ${res.status}`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  throw new Error(`File download rate limited after 5 retries: ${url}`);
 }
 
 interface UpstreamCollection {

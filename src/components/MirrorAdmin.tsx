@@ -36,6 +36,68 @@ interface SyncResult {
   errors: string[];
 }
 
+const PAGE_SIZE = 10;
+
+function PaginatedCollections({ collections }: { collections: MirrorStatus["collections"] }) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(collections.length / PAGE_SIZE);
+  const visible = collections.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  return (
+    <div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-rule text-left text-ink-muted">
+            <th className="pb-2 font-medium">Collection</th>
+            <th className="pb-2 font-medium">Version</th>
+            <th className="pb-2 font-medium">Last Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((c) => (
+            <tr key={`${c.ownerSlug}/${c.slug}`} className="border-b border-rule/50">
+              <td className="py-2">
+                <a href={`/${c.ownerSlug}/${c.slug}`} className="text-ink hover:underline">
+                  {c.ownerSlug}/{c.slug}
+                </a>
+                <span className="text-ink-muted ml-2">— {c.name}</span>
+              </td>
+              <td className="py-2 font-mono">v{c.localVersion}</td>
+              <td className="py-2 text-ink-muted">
+                {new Date(c.updatedAt).toLocaleDateString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-3 text-xs text-ink-muted">
+          <span>{collections.length} collections</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="px-2 py-1 border border-rule rounded disabled:opacity-30 hover:bg-parchment-dark"
+            >
+              ← Prev
+            </button>
+            <span>
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page >= totalPages - 1}
+              className="px-2 py-1 border border-rule rounded disabled:opacity-30 hover:bg-parchment-dark"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props) {
   const [status, setStatus] = useState<MirrorStatus | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
@@ -206,34 +268,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
           Mirrored Collections
         </h2>
         {status && status.collections.length > 0 ? (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-rule text-left text-ink-muted">
-                <th className="pb-2 font-medium">Collection</th>
-                <th className="pb-2 font-medium">Version</th>
-                <th className="pb-2 font-medium">Last Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.collections.map((c) => (
-                <tr key={`${c.ownerSlug}/${c.slug}`} className="border-b border-rule/50">
-                  <td className="py-2">
-                    <a
-                      href={`/${c.ownerSlug}/${c.slug}`}
-                      className="text-ink hover:underline"
-                    >
-                      {c.ownerSlug}/{c.slug}
-                    </a>
-                    <span className="text-ink-muted ml-2">— {c.name}</span>
-                  </td>
-                  <td className="py-2 font-mono">v{c.localVersion}</td>
-                  <td className="py-2 text-ink-muted">
-                    {new Date(c.updatedAt).toLocaleDateString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <PaginatedCollections collections={status.collections} />
         ) : status ? (
           <p className="text-sm text-ink-muted">
             No collections mirrored yet. Click "Sync Now" to pull from upstream.
