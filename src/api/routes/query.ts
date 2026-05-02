@@ -199,7 +199,7 @@ REASONING:
 Important rules:
 - Examine the "Example row" comments in the schema — they show the ACTUAL data format stored in each column.
 - When multiple collections are loaded, consider ALL of them in your answer unless the question specifies otherwise.
-- Every table has a "_source" column containing the collection identifier (e.g. "adapt/archive"). Include _source in SELECT when results come from multiple tables so the user can see provenance.
+- Every table has a "_source" column containing the collection identifier (e.g. "account/collection"). When querying across multiple tables, always include provenance. For row-level results, include _source as a column. For aggregations, include GROUP_CONCAT(DISTINCT _source) as _source so the user can see which collections contributed to the result.
 - When counting across multiple tables, use UNION ALL to combine rows, not JOIN.
 - Only use JOIN when the question asks about relationships between tables.
 - COUNT(*) counts rows. Use UNION ALL to combine rows from separate tables before counting.
