@@ -102,7 +102,6 @@ jobs:
           STACK_NAME="underlay-mirror"
           REPO_NAME="${REPO##*/}"
           APP_DIR="/srv/${REPO_NAME}-mirror"
-          PROD_DIR="/srv/${REPO_NAME}"
           REPO_SSH="git@github.com:${REPO}.git"
 
           ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
@@ -119,16 +118,12 @@ jobs:
           git checkout "${BRANCH}"
           git pull origin "${BRANCH}"
 
-          # Load secrets from prod's .env (already decrypted on the server)
-          # This gives us S3_*, UNDERLAY_UPSTREAM_API_KEY, etc.
-          if [[ -f "${PROD_DIR}/.env" ]]; then
-            set -a
-            source <(grep -v '^#' "${PROD_DIR}/.env" | grep -v '^$')
-            set +a
-          else
-            echo "ERROR: ${PROD_DIR}/.env not found — run a prod deploy first"
-            exit 1
-          fi
+          # Decrypt .env.enc into this directory (self-contained, no dependency on prod)
+          umask 077
+          sops -d --input-type dotenv --output-type dotenv .env.enc > .env
+          set -a
+          source <(grep -v '^#' .env | grep -v '^$')
+          set +a
 
           # Init swarm if not already active
           if ! sudo docker info --format '{{.Swarm.LocalNodeState}}' | grep -qx active; then

@@ -7,6 +7,7 @@ import {
   getSyncHistory,
   syncEvents,
   stopSync,
+  cleanupStaleRuns,
   isSyncRunning,
   getActiveRunId,
   getActiveRunLogs,
@@ -47,10 +48,15 @@ export async function adminRoutes(app: FastifyInstance) {
     return { started: true };
   });
 
-  // Stop a running sync
+  // Stop a running sync (also cleans up stale DB rows from crashed processes)
   app.post("/admin/mirror/sync/stop", async () => {
     const stopped = stopSync();
-    return { stopped };
+    if (!stopped) {
+      // No active sync in this process — clean up stale DB rows
+      const cleaned = await cleanupStaleRuns();
+      return { stopped: false, cleaned };
+    }
+    return { stopped: true };
   });
 
   // SSE endpoint for live sync progress (replays buffered logs on connect)

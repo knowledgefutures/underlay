@@ -76,6 +76,23 @@ export function stopSync(): boolean {
   return false;
 }
 
+/**
+ * Mark any "running" sync_runs as failed (stale from crashed processes).
+ * Returns the number of rows cleaned up.
+ */
+export async function cleanupStaleRuns(): Promise<number> {
+  const rows = await db
+    .update(schema.syncRuns)
+    .set({
+      status: "failed",
+      finishedAt: new Date(),
+      errors: ["Process terminated — marked as failed on cleanup"],
+    })
+    .where(eq(schema.syncRuns.status, "running"))
+    .returning({ id: schema.syncRuns.id });
+  return rows.length;
+}
+
 /** Ensure a system account exists for mirrored content */
 async function ensureMirrorAccount(ownerSlug: string): Promise<string> {
   const [existing] = await db

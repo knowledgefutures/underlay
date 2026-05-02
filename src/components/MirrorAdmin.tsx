@@ -240,6 +240,8 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
 
   async function handleStop() {
     await fetch("/api/admin/mirror/sync/stop", { method: "POST" });
+    // Refresh history to reflect status change (stale rows get cleaned up server-side)
+    await fetchHistory();
   }
 
   return (
