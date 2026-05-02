@@ -17,6 +17,7 @@
     "tool:backup": "tsx tools/backupDb.ts",
     "tool:restore": "tsx tools/restore.ts",
     "tool:pruneBackups": "tsx tools/pruneBackups.ts",
+    "tool:seed-mirror": "tsx tools/seedMirror.ts",
     "secrets:encrypt": "sops -e --input-type dotenv --output-type dotenv --output .env.enc .env",
     "secrets:encrypt:dev": "sops -e --input-type dotenv --output-type dotenv --output .env.dev.enc .env.dev",
     "secrets:decrypt": "sops -d --input-type dotenv --output-type dotenv --output .env .env.enc",

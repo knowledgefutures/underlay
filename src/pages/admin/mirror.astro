@@ -2,12 +2,31 @@
 import Base from "@/layouts/Base.astro";
 import MirrorAdmin from "@/components/MirrorAdmin";
 import { getMirrorConfig } from "@/lib/mirror-config";
+import { apiBase } from "@/lib/page-utils";
 
 const config = getMirrorConfig();
 
 // Redirect if not in mirror mode
 if (!config.enabled) {
   return Astro.redirect("/");
+}
+
+// Require authentication
+const sessionCookie = Astro.cookies.get("session")?.value;
+let authenticated = false;
+if (sessionCookie) {
+  try {
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    authenticated = res.ok;
+  } catch {
+    // API unavailable
+  }
+}
+
+if (!authenticated) {
+  return Astro.redirect("/login");
 }
 ---
 

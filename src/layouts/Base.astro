@@ -55,16 +55,22 @@ if (sessionCookie) {
           />
           <span class="font-semibold text-ink tracking-tight text-base">Underlay</span>
           {mirrorConfig.enabled && (
-            <span class="text-xs text-ink-muted font-normal tracking-normal">&middot; {mirrorConfig.nodeName}</span>
+            <span class="text-sm font-medium text-ink-muted self-center ml-1">&middot; {mirrorConfig.nodeName}</span>
           )}
         </a>
         <div class="flex items-center gap-5 text-sm text-ink-muted">
           <a href="/explore" class="hover:text-ink transition-colors">Explore</a>
           <a href="/schemas" class="hover:text-ink transition-colors">Schemas</a>
           <a href="/docs" class="hover:text-ink transition-colors">Docs</a>
-          <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
+          {!mirrorConfig.enabled && (
+            <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
+          )}
           {mirrorConfig.enabled ? (
-            <a href="/admin/mirror" class="hover:text-ink transition-colors">Admin</a>
+            currentUser ? (
+              <a href="/admin/mirror" class="hover:text-ink transition-colors">Admin</a>
+            ) : (
+              <a href="/login" class="hover:text-ink transition-colors">Log in</a>
+            )
           ) : currentUser ? (
             <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} client:load />
           ) : (
