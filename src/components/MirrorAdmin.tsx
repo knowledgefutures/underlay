@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface Props {
   upstream: string;
@@ -14,7 +14,7 @@ interface MirrorStatus {
     ownerSlug: string;
     slug: string;
     name: string;
-    localVersion: number;
+    localVersion: string;
     updatedAt: string;
   }[];
   lastSyncAt: string | null;
@@ -27,12 +27,32 @@ interface TestResult {
   error?: string;
 }
 
-interface SyncResult {
+interface SyncProgressEvent {
+  type: "start" | "collection" | "version" | "file" | "error" | "done";
+  message: string;
+  progress: {
+    collectionsTotal: number;
+    collectionsProcessed: number;
+    currentCollection?: string;
+    versionsPulled: number;
+    filesDownloaded: number;
+    filesSkipped: number;
+    errors: number;
+  };
+}
+
+interface SyncHistoryEntry {
+  id: string;
+  trigger: string;
+  status: string;
   startedAt: string;
-  finishedAt: string;
-  collections: { synced: number; created: number; failed: number };
-  versions: { pulled: number };
-  files: { downloaded: number; skipped: number };
+  finishedAt: string | null;
+  collectionsSynced: number;
+  collectionsCreated: number;
+  collectionsFailed: number;
+  versionsPulled: number;
+  filesDownloaded: number;
+  filesSkipped: number;
   errors: string[];
 }
 
@@ -62,7 +82,7 @@ function PaginatedCollections({ collections }: { collections: MirrorStatus["coll
                 </a>
                 <span className="text-ink-muted ml-2">— {c.name}</span>
               </td>
-              <td className="py-2 font-mono">v{c.localVersion}</td>
+              <td className="py-2 font-mono">{c.localVersion}</td>
               <td className="py-2 text-ink-muted">
                 {new Date(c.updatedAt).toLocaleDateString()}
               </td>
@@ -101,17 +121,38 @@ function PaginatedCollections({ collections }: { collections: MirrorStatus["coll
 export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props) {
   const [status, setStatus] = useState<MirrorStatus | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [progressEvents, setProgressEvents] = useState<SyncProgressEvent[]>([]);
+  const [latestProgress, setLatestProgress] = useState<SyncProgressEvent | null>(null);
+  const [history, setHistory] = useState<SyncHistoryEntry[]>([]);
+  const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchStatus();
+    fetchHistory();
   }, []);
+
+  // Auto-scroll log
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [progressEvents]);
 
   async function fetchStatus() {
     try {
       const res = await fetch("/api/admin/mirror/status");
       if (res.ok) setStatus(await res.json());
+    } catch {
+      // ignore
+    }
+  }
+
+  async function fetchHistory() {
+    try {
+      const res = await fetch("/api/admin/mirror/history");
+      if (res.ok) setHistory(await res.json());
     } catch {
       // ignore
     }
@@ -130,23 +171,33 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
   }
 
   async function handleSync() {
-    setLoading("sync");
-    setSyncResult(null);
-    try {
-      const res = await fetch("/api/admin/mirror/sync", { method: "POST" });
-      setSyncResult(await res.json());
-      await fetchStatus();
-    } catch (err) {
-      setSyncResult({
-        startedAt: new Date().toISOString(),
-        finishedAt: new Date().toISOString(),
-        collections: { synced: 0, created: 0, failed: 0 },
-        versions: { pulled: 0 },
-        files: { downloaded: 0, skipped: 0 },
-        errors: [String(err)],
-      });
-    }
-    setLoading(null);
+    setSyncing(true);
+    setProgressEvents([]);
+    setLatestProgress(null);
+
+    // Fire the sync POST (fire-and-forget on server)
+    await fetch("/api/admin/mirror/sync", { method: "POST" });
+
+    // Connect to SSE for progress
+    const evtSource = new EventSource("/api/admin/mirror/sync/progress");
+    evtSource.onmessage = (event) => {
+      const data: SyncProgressEvent = JSON.parse(event.data);
+      setProgressEvents((prev) => [...prev, data]);
+      setLatestProgress(data);
+
+      if (data.type === "done") {
+        evtSource.close();
+        setSyncing(false);
+        fetchStatus();
+        fetchHistory();
+      }
+    };
+    evtSource.onerror = () => {
+      evtSource.close();
+      setSyncing(false);
+      fetchStatus();
+      fetchHistory();
+    };
   }
 
   return (
@@ -211,53 +262,74 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             <span className="text-ink-muted">Schedule: </span>
             <span className="font-mono">{syncSchedule}</span>
             <span className="text-ink-muted ml-2">(weekly)</span>
+            {status?.lastSyncAt && (
+              <span className="text-ink-muted ml-4">
+                Last sync: {new Date(status.lastSyncAt).toLocaleString()}
+              </span>
+            )}
           </div>
           <button
             onClick={handleSync}
-            disabled={loading === "sync"}
+            disabled={syncing}
             className="px-3 py-1.5 text-sm bg-ink text-parchment rounded hover:bg-ink/90 disabled:opacity-50"
           >
-            {loading === "sync" ? "Syncing..." : "Sync Now"}
+            {syncing ? "Syncing..." : "Sync Now"}
           </button>
         </div>
-        {syncResult && (
-          <div className="text-sm border border-rule rounded p-3 space-y-1">
-            <p>
-              <span className="text-ink-muted">Duration:</span>{" "}
-              {Math.round(
-                (new Date(syncResult.finishedAt).getTime() -
-                  new Date(syncResult.startedAt).getTime()) /
-                  1000,
+
+        {/* Live progress */}
+        {syncing && latestProgress && (
+          <div className="mb-4">
+            <div className="flex items-center gap-3 text-sm mb-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="font-medium">
+                {latestProgress.progress.collectionsProcessed} / {latestProgress.progress.collectionsTotal} collections
+              </span>
+              {latestProgress.progress.currentCollection && (
+                <span className="text-ink-muted font-mono text-xs">
+                  {latestProgress.progress.currentCollection}
+                </span>
               )}
-              s
-            </p>
-            <p>
-              <span className="text-ink-muted">Collections:</span>{" "}
-              {syncResult.collections.synced} synced, {syncResult.collections.created}{" "}
-              new, {syncResult.collections.failed} failed
-            </p>
-            <p>
-              <span className="text-ink-muted">Versions pulled:</span>{" "}
-              {syncResult.versions.pulled}
-            </p>
-            <p>
-              <span className="text-ink-muted">Files:</span>{" "}
-              {syncResult.files.downloaded} downloaded, {syncResult.files.skipped}{" "}
-              skipped (already had)
-            </p>
-            {syncResult.errors.length > 0 && (
-              <div className="mt-2 text-red-700">
-                <p className="font-medium">Errors:</p>
-                <ul className="list-disc list-inside">
-                  {syncResult.errors.slice(0, 5).map((e, i) => (
-                    <li key={i}>{e}</li>
-                  ))}
-                </ul>
+            </div>
+            <div className="w-full bg-parchment-dark rounded-full h-2 mb-2">
+              <div
+                className="bg-ink h-2 rounded-full transition-all duration-300"
+                style={{
+                  width: `${latestProgress.progress.collectionsTotal > 0
+                    ? (latestProgress.progress.collectionsProcessed / latestProgress.progress.collectionsTotal) * 100
+                    : 0}%`,
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-xs text-ink-muted">
+              <span>Versions: {latestProgress.progress.versionsPulled}</span>
+              <span>Files ↓: {latestProgress.progress.filesDownloaded}</span>
+              <span>Files ✓: {latestProgress.progress.filesSkipped}</span>
+              <span>Errors: {latestProgress.progress.errors}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Event log */}
+        {progressEvents.length > 0 && (
+          <div
+            ref={logRef}
+            className="text-xs font-mono bg-parchment-dark border border-rule rounded p-3 max-h-48 overflow-y-auto space-y-0.5"
+          >
+            {progressEvents.map((evt, i) => (
+              <div
+                key={i}
+                className={
+                  evt.type === "error"
+                    ? "text-red-700"
+                    : evt.type === "done"
+                      ? "text-green-700 font-semibold"
+                      : "text-ink-muted"
+                }
+              >
+                {evt.message}
               </div>
-            )}
-            {syncResult.errors.length === 0 && (
-              <p className="text-green-700 font-medium mt-1">✓ Up to date</p>
-            )}
+            ))}
           </div>
         )}
       </section>
@@ -275,6 +347,85 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
           </p>
         ) : (
           <p className="text-sm text-ink-muted">Loading...</p>
+        )}
+      </section>
+
+      {/* Sync History */}
+      <section className="border border-rule rounded-lg p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
+          Sync History
+        </h2>
+        {history.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-rule text-left text-ink-muted">
+                <th className="pb-2 font-medium">When</th>
+                <th className="pb-2 font-medium">Trigger</th>
+                <th className="pb-2 font-medium">Status</th>
+                <th className="pb-2 font-medium">Duration</th>
+                <th className="pb-2 font-medium">Collections</th>
+                <th className="pb-2 font-medium">Versions</th>
+                <th className="pb-2 font-medium">Files</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => {
+                const duration =
+                  h.finishedAt
+                    ? Math.round(
+                        (new Date(h.finishedAt).getTime() - new Date(h.startedAt).getTime()) / 1000,
+                      )
+                    : null;
+                return (
+                  <tr key={h.id} className="border-b border-rule/50">
+                    <td className="py-2 text-ink-muted">
+                      {new Date(h.startedAt).toLocaleString()}
+                    </td>
+                    <td className="py-2">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${
+                          h.trigger === "cron"
+                            ? "bg-blue-50 text-blue-700 border border-blue-200"
+                            : "bg-purple-50 text-purple-700 border border-purple-200"
+                        }`}
+                      >
+                        {h.trigger}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      <span
+                        className={`text-xs font-medium ${
+                          h.status === "completed"
+                            ? "text-green-700"
+                            : h.status === "running"
+                              ? "text-amber-600"
+                              : "text-red-700"
+                        }`}
+                      >
+                        {h.status}
+                      </span>
+                    </td>
+                    <td className="py-2 font-mono text-xs">
+                      {duration !== null ? `${duration}s` : "—"}
+                    </td>
+                    <td className="py-2 text-xs">
+                      {h.collectionsSynced} synced
+                      {h.collectionsCreated > 0 && `, ${h.collectionsCreated} new`}
+                      {h.collectionsFailed > 0 && (
+                        <span className="text-red-600"> ({h.collectionsFailed} failed)</span>
+                      )}
+                    </td>
+                    <td className="py-2 font-mono text-xs">{h.versionsPulled}</td>
+                    <td className="py-2 text-xs">
+                      {h.filesDownloaded} ↓ / {h.filesSkipped} ✓
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-ink-muted">No sync runs recorded yet.</p>
         )}
       </section>
 

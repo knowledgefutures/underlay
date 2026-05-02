@@ -4,6 +4,9 @@ import {
   runMirrorSync,
   testUpstreamConnection,
   getMirrorStatus,
+  getSyncHistory,
+  syncEvents,
+  type SyncProgressEvent,
 } from "../../lib/mirror-sync.js";
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -28,9 +31,44 @@ export async function adminRoutes(app: FastifyInstance) {
     return result;
   });
 
-  // Trigger a sync manually
+  // Trigger a sync manually (fire-and-forget, client uses SSE for progress)
   app.post("/admin/mirror/sync", async () => {
-    const result = await runMirrorSync();
-    return result;
+    // Start sync in background — don't await
+    runMirrorSync("manual").catch((err) => {
+      console.error("[mirror-sync] Unhandled sync error:", err);
+    });
+    return { started: true };
+  });
+
+  // SSE endpoint for live sync progress
+  app.get("/admin/mirror/sync/progress", async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    function onProgress(event: SyncProgressEvent) {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (event.type === "done") {
+        // Give client a moment to process, then close
+        setTimeout(() => reply.raw.end(), 100);
+      }
+    }
+
+    syncEvents.on("progress", onProgress);
+
+    request.raw.on("close", () => {
+      syncEvents.off("progress", onProgress);
+    });
+  });
+
+  // Sync history
+  app.get("/admin/mirror/history", async (request) => {
+    const limit = Math.min(
+      Number((request.query as any)?.limit) || 20,
+      100,
+    );
+    return getSyncHistory(limit);
   });
 }

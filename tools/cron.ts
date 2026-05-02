@@ -38,7 +38,7 @@ if (process.env.NODE_ENV === "production") {
       async () => {
         log("Starting: Mirror sync");
         try {
-          const result = await runMirrorSync();
+          const result = await runMirrorSync("cron");
           log(
             `Completed: Mirror sync — ${result.collections.synced} collections, ${result.versions.pulled} versions pulled`,
           );

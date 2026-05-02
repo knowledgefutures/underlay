@@ -271,6 +271,23 @@ export const uploadRecords = pgTable(
   (t) => [primaryKey({ columns: [t.sessionId, t.recordId] })],
 );
 
+// --- Sync Runs (mirror mode) ---
+
+export const syncRuns = pgTable("sync_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  trigger: text("trigger", { enum: ["manual", "cron"] }).notNull(),
+  status: text("status", { enum: ["running", "completed", "failed"] }).notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  collectionsSync: integer("collections_synced").default(0).notNull(),
+  collectionsCreated: integer("collections_created").default(0).notNull(),
+  collectionsFailed: integer("collections_failed").default(0).notNull(),
+  versionsPulled: integer("versions_pulled").default(0).notNull(),
+  filesDownloaded: integer("files_downloaded").default(0).notNull(),
+  filesSkipped: integer("files_skipped").default(0).notNull(),
+  errors: jsonb("errors").$type<string[]>().default([]).notNull(),
+});
+
 // --- Password Reset Tokens ---
 
 export const passwordResetTokens = pgTable("password_reset_tokens", {

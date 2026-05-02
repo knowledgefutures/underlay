@@ -6,10 +6,11 @@
  */
 
 import { db, schema } from "../db/index.js";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { uploadToS3, headS3Object } from "./s3.js";
 import { createHash } from "node:crypto";
 import { getMirrorConfig } from "./mirror-config.js";
+import { EventEmitter } from "node:events";
 
 export interface SyncResult {
   startedAt: string;
@@ -19,6 +20,28 @@ export interface SyncResult {
   files: { downloaded: number; skipped: number };
   errors: string[];
 }
+
+export interface SyncProgressEvent {
+  type: "start" | "collection" | "version" | "file" | "error" | "done";
+  message: string;
+  /** Current progress counters */
+  progress: {
+    collectionsTotal: number;
+    collectionsProcessed: number;
+    currentCollection?: string;
+    versionsPulled: number;
+    filesDownloaded: number;
+    filesSkipped: number;
+    errors: number;
+  };
+}
+
+/**
+ * Global event emitter for sync progress.
+ * SSE endpoint subscribes to this.
+ */
+export const syncEvents = new EventEmitter();
+syncEvents.setMaxListeners(20);
 
 /** Ensure a system account exists for mirrored content */
 async function ensureMirrorAccount(ownerSlug: string): Promise<string> {
@@ -94,7 +117,28 @@ async function fetchUpstream<T>(upstream: string, path: string): Promise<T> {
     if (!res.ok) {
       throw new Error(`Upstream ${url} returned ${res.status}: ${await res.text()}`);
     }
-    return res.json() as Promise<T>;
+
+    const contentType = res.headers.get("content-type") ?? "";
+    const body = await res.text();
+
+    if (!contentType.includes("application/json")) {
+      // Some endpoints may still return JSON without the header — try parsing
+      try {
+        return JSON.parse(body) as T;
+      } catch {
+        throw new Error(
+          `Upstream ${url} returned non-JSON (content-type: ${contentType}): ${body.slice(0, 200)}`,
+        );
+      }
+    }
+
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      throw new Error(
+        `Upstream ${url} returned invalid JSON: ${body.slice(0, 200)}`,
+      );
+    }
   }
 
   throw new Error(`Upstream ${url} rate limited after 5 retries`);
@@ -176,7 +220,7 @@ interface UpstreamRecordsResponse {
 /**
  * Run a full mirror sync from the configured upstream.
  */
-export async function runMirrorSync(): Promise<SyncResult> {
+export async function runMirrorSync(trigger: "manual" | "cron" = "manual"): Promise<SyncResult> {
   const config = getMirrorConfig();
   if (!config.enabled || !config.upstream) {
     throw new Error("Mirror mode is not configured");
@@ -191,6 +235,32 @@ export async function runMirrorSync(): Promise<SyncResult> {
     errors: [],
   };
 
+  // Create a sync_run record
+  const [syncRun] = await db
+    .insert(schema.syncRuns)
+    .values({
+      trigger,
+      status: "running",
+      startedAt: new Date(),
+    })
+    .returning({ id: schema.syncRuns.id });
+
+  const runId = syncRun!.id;
+
+  const progress: SyncProgressEvent["progress"] = {
+    collectionsTotal: 0,
+    collectionsProcessed: 0,
+    versionsPulled: 0,
+    filesDownloaded: 0,
+    filesSkipped: 0,
+    errors: 0,
+  };
+
+  function emit(type: SyncProgressEvent["type"], message: string) {
+    const event: SyncProgressEvent = { type, message, progress: { ...progress } };
+    syncEvents.emit("progress", event);
+  }
+
   const upstream = config.upstream;
 
   // 1. Fetch all public collections from upstream
@@ -203,28 +273,62 @@ export async function runMirrorSync(): Promise<SyncResult> {
   } catch (err) {
     result.errors.push(`Failed to fetch collections: ${err}`);
     result.finishedAt = new Date().toISOString();
+    emit("error", `Failed to fetch collections: ${err}`);
+    await finishSyncRun(runId, "failed", result);
+    emit("done", "Sync failed");
     return result;
   }
 
+  progress.collectionsTotal = upstreamCollections.length;
+  emit("start", `Starting sync of ${upstreamCollections.length} collections from ${upstream}`);
+
   // 2. For each upstream collection, sync it locally
   for (const uc of upstreamCollections) {
+    progress.currentCollection = `${uc.ownerSlug}/${uc.slug}`;
+    emit("collection", `Syncing ${uc.ownerSlug}/${uc.slug}...`);
+
     try {
-      await syncCollection(upstream, uc, result);
+      await syncCollection(upstream, uc, result, progress, emit);
       result.collections.synced++;
     } catch (err) {
       result.collections.failed++;
       result.errors.push(`${uc.ownerSlug}/${uc.slug}: ${err}`);
+      progress.errors++;
+      emit("error", `${uc.ownerSlug}/${uc.slug}: ${err}`);
     }
+    progress.collectionsProcessed++;
   }
 
   result.finishedAt = new Date().toISOString();
+  await finishSyncRun(runId, "completed", result);
+  emit("done", `Sync complete — ${result.collections.synced} synced, ${result.versions.pulled} versions, ${result.files.downloaded} files`);
   return result;
+}
+
+/** Persist final sync results to the sync_runs row */
+async function finishSyncRun(runId: string, status: "completed" | "failed", result: SyncResult) {
+  await db
+    .update(schema.syncRuns)
+    .set({
+      status,
+      finishedAt: new Date(),
+      collectionsSync: result.collections.synced,
+      collectionsCreated: result.collections.created,
+      collectionsFailed: result.collections.failed,
+      versionsPulled: result.versions.pulled,
+      filesDownloaded: result.files.downloaded,
+      filesSkipped: result.files.skipped,
+      errors: result.errors,
+    })
+    .where(eq(schema.syncRuns.id, runId));
 }
 
 async function syncCollection(
   upstream: string,
   uc: UpstreamCollection,
   result: SyncResult,
+  progress: SyncProgressEvent["progress"],
+  emit: (type: SyncProgressEvent["type"], message: string) => void,
 ): Promise<void> {
   // Ensure the owner account exists locally
   const accountId = await ensureMirrorAccount(uc.ownerSlug);
@@ -285,10 +389,13 @@ async function syncCollection(
 
   if (newVersions.length === 0) return;
 
+  emit("version", `${uc.ownerSlug}/${uc.slug}: pulling ${newVersions.length} new version(s)`);
+
   // Pull each new version
   for (const uv of newVersions) {
-    await pullVersion(upstream, uc, collectionId, uv, result);
+    await pullVersion(upstream, uc, collectionId, uv, result, progress, emit);
     result.versions.pulled++;
+    progress.versionsPulled++;
   }
 }
 
@@ -298,6 +405,8 @@ async function pullVersion(
   collectionId: string,
   uv: UpstreamVersion,
   result: SyncResult,
+  progress: SyncProgressEvent["progress"],
+  emit: (type: SyncProgressEvent["type"], message: string) => void,
 ): Promise<void> {
   // Get the version manifest (schemas + file list)
   const manifest = await fetchUpstream<UpstreamManifest>(
@@ -337,6 +446,7 @@ async function pullVersion(
 
       if (existingFile) {
         result.files.skipped++;
+        progress.filesSkipped++;
         continue;
       }
     }
@@ -369,8 +479,11 @@ async function pullVersion(
         .onConflictDoNothing();
 
       result.files.downloaded++;
+      progress.filesDownloaded++;
+      emit("file", `Downloaded file ${fileHash.slice(0, 8)}… (${buffer.length} bytes)`);
     } catch (err) {
       result.errors.push(`File ${fileHash}: ${err}`);
+      progress.errors++;
     }
   }
 
@@ -499,7 +612,7 @@ export async function getMirrorStatus(): Promise<{
     ownerSlug: string;
     slug: string;
     name: string;
-    localVersion: number;
+    localVersion: string;
     updatedAt: string;
   }[];
   lastSyncAt: string | null;
@@ -521,7 +634,7 @@ export async function getMirrorStatus(): Promise<{
   const collsWithVersions = await Promise.all(
     collections.map(async (c) => {
       const [latest] = await db
-        .select({ number: schema.versions.number })
+        .select({ semver: schema.versions.semver })
         .from(schema.versions)
         .innerJoin(
           schema.collections,
@@ -541,7 +654,7 @@ export async function getMirrorStatus(): Promise<{
         ownerSlug: c.ownerSlug,
         slug: c.slug,
         name: c.name,
-        localVersion: latest?.number ?? 0,
+        localVersion: latest?.semver ?? "0.0.0",
         updatedAt: c.updatedAt.toISOString(),
       };
     }),
@@ -552,6 +665,56 @@ export async function getMirrorStatus(): Promise<{
     nodeName: config.nodeName,
     syncSchedule: config.syncSchedule,
     collections: collsWithVersions,
-    lastSyncAt: null, // TODO: track this in a simple kv table or file
+    lastSyncAt: await getLastSyncAt(),
   };
+}
+
+/** Get the most recent completed sync timestamp */
+async function getLastSyncAt(): Promise<string | null> {
+  const [row] = await db
+    .select({ finishedAt: schema.syncRuns.finishedAt })
+    .from(schema.syncRuns)
+    .where(eq(schema.syncRuns.status, "completed"))
+    .orderBy(desc(schema.syncRuns.startedAt))
+    .limit(1);
+  return row?.finishedAt?.toISOString() ?? null;
+}
+
+/** Get sync run history (most recent first) */
+export async function getSyncHistory(limit = 20): Promise<
+  {
+    id: string;
+    trigger: string;
+    status: string;
+    startedAt: string;
+    finishedAt: string | null;
+    collectionsSynced: number;
+    collectionsCreated: number;
+    collectionsFailed: number;
+    versionsPulled: number;
+    filesDownloaded: number;
+    filesSkipped: number;
+    errors: string[];
+  }[]
+> {
+  const rows = await db
+    .select()
+    .from(schema.syncRuns)
+    .orderBy(desc(schema.syncRuns.startedAt))
+    .limit(limit);
+
+  return rows.map((r) => ({
+    id: r.id,
+    trigger: r.trigger,
+    status: r.status,
+    startedAt: r.startedAt.toISOString(),
+    finishedAt: r.finishedAt?.toISOString() ?? null,
+    collectionsSynced: r.collectionsSync,
+    collectionsCreated: r.collectionsCreated,
+    collectionsFailed: r.collectionsFailed,
+    versionsPulled: r.versionsPulled,
+    filesDownloaded: r.filesDownloaded,
+    filesSkipped: r.filesSkipped,
+    errors: (r.errors as string[]) ?? [],
+  }));
 }
