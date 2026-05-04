@@ -2,10 +2,12 @@
 import Base from "@/layouts/Base.astro";
 import CollectionNav from "@/components/CollectionNav.astro";
 import { apiBase, apiHeaders, formatBytes, checkOwnership } from "@/lib/page-utils";
+import { getMirrorConfig } from "@/lib/mirror-config";
 import { marked } from "marked";
 
 const { owner, collection } = Astro.params;
 const sessionCookie = Astro.cookies.get("session")?.value;
+const mirrorConfig = getMirrorConfig();
 
 // Fetch collection
 const collectionRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}`, { headers: apiHeaders(sessionCookie) });
@@ -34,6 +36,13 @@ const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type
 <Base title={`${data.name} — Underlay`} description={data.description}>
   <div class="max-w-5xl mx-auto px-4 py-8">
     <CollectionNav owner={owner!} collection={collection!} isPublic={data.public} isOwner={isOwner} active="overview" />
+
+    {mirrorConfig.enabled && (
+      <div class="flex items-center gap-2 text-xs text-ink-muted bg-parchment-dark border border-rule rounded px-3 py-2 mb-4">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+        <span>Mirrored from <a href={`${mirrorConfig.upstream}/${owner}/${collection}`} class="underline hover:text-ink">{mirrorConfig.upstream.replace(/^https?:\/\//, '')}</a></span>
+      </div>
+    )}
 
     <!-- Two-column layout -->
     <div class="grid grid-cols-[1fr_260px] gap-8">

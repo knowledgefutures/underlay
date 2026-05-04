@@ -1,0 +1,1 @@
+ALTER TABLE "sync_runs" ADD COLUMN "logs" jsonb DEFAULT '[]'::jsonb NOT NULL;
