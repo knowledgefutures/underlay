@@ -9,9 +9,19 @@ const SITE_URL = "https://underlay.org";
 export const BETANUMERIC = "bcdfghjkmnpqrstvwxz0123456789"; // 29 chars
 export const BETANUMERIC_CONSONANTS = "bcdfghjkmnpqrstvwxz"; // 19 chars
 
-const ARK_ID_LENGTH = 8;
+const ARK_ID_LENGTH = 10;
 
-// Converts a collection UUID to an 8-char betanumeric string.
+// NCDA (Noid Check Digit Algorithm): computed over betanumeric characters only.
+// Multiply each character's alphabet index by its 1-based position, sum, mod 29.
+export function computeNcdaCheckChar(name: string): string {
+  let total = 0;
+  for (let i = 0; i < name.length; i++) {
+    total += BETANUMERIC.indexOf(name[i]) * (i + 1);
+  }
+  return BETANUMERIC[total % BETANUMERIC.length];
+}
+
+// Converts a collection UUID to a 10-char betanumeric string.
 // Uses SHA-256 of the UUID encoded in base-29; guarantees first char is a consonant
 // so the primordinal shoulder parsing is always unambiguous.
 export function collectionToArkId(collectionId: string): string {
@@ -93,21 +103,24 @@ export function parseArkPath(pathAfterNaan: string): ArkComponents | null {
   const shoulder = firstSeg.slice(0, i + 1);
   const remainder = firstSeg.slice(i + 1);
 
-  // remainder = arkId (with optional .vN suffix)
+  // remainder = arkId + check char (with optional .vN suffix)
   const dotVIdx = remainder.lastIndexOf(".v");
-  let collectionArkId: string;
+  let arkIdWithCheck: string;
   let version: number | undefined;
   if (dotVIdx !== -1) {
-    collectionArkId = remainder.slice(0, dotVIdx);
+    arkIdWithCheck = remainder.slice(0, dotVIdx);
     const vStr = remainder.slice(dotVIdx + 2);
     const vNum = parseInt(vStr, 10);
     if (isNaN(vNum) || vNum < 1) return null;
     version = vNum;
   } else {
-    collectionArkId = remainder;
+    arkIdWithCheck = remainder;
   }
 
-  if (!collectionArkId) return null;
+  if (arkIdWithCheck.length < 2) return null;
+  const collectionArkId = arkIdWithCheck.slice(0, -1);
+  const checkChar = arkIdWithCheck.slice(-1);
+  if (computeNcdaCheckChar(collectionArkId) !== checkChar) return null;
 
   const result: ArkComponents = { shoulder, collectionArkId, version };
   if (parts.length >= 3) {
@@ -125,7 +138,8 @@ export function buildArkUrl(
   recordType?: string,
   recordId?: string,
 ): string {
-  let name = shoulder + collectionArkId;
+  const check = computeNcdaCheckChar(collectionArkId);
+  let name = shoulder + collectionArkId + check;
   if (version !== undefined) name += `.v${version}`;
   if (recordType && recordId) name += `/${encodeURIComponent(recordType)}/${encodeURIComponent(recordId)}`;
   return `${SITE_URL}/ark:${naan}/${name}`;
