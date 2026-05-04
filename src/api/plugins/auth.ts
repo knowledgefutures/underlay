@@ -26,6 +26,7 @@ async function authPlugin(app: FastifyInstance) {
     "/api/accounts/login",
     "/api/accounts/forgot-password",
     "/api/accounts/reset-password",
+    "/api/query/generate-sql",
   ]);
 
   const internalToken = process.env.INTERNAL_API_TOKEN ?? "internal-dev-token";

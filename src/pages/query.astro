@@ -1,0 +1,75 @@
+---
+import UserMenu from "@/components/UserMenu";
+import QueryExplorer from "@/components/QueryExplorer";
+import { apiBase } from "@/lib/page-utils";
+
+let currentUser: { slug: string; displayName: string; orgs?: { slug: string; displayName: string }[] } | null = null;
+const sessionCookie = Astro.cookies.get("session")?.value;
+if (sessionCookie) {
+  try {
+    const res = await fetch(`${apiBase}/api/accounts/me`, {
+      headers: { Cookie: `session=${sessionCookie}` },
+    });
+    if (res.ok) {
+      currentUser = await res.json();
+    }
+  } catch {}
+}
+---
+
+<!doctype html>
+<html lang="en" class="bg-parchment text-ink">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Query collections with SQL or natural language" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Query — Underlay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style is:global>@import "../styles/global.css";</style>
+  </head>
+  <body class="h-screen flex flex-col overflow-hidden font-sans text-[15px] leading-relaxed">
+    <header class="border-b border-rule shrink-0">
+      <nav class="max-w-none px-4 py-3 flex items-center justify-between">
+        <a href="/" class="flex items-center gap-2.5 no-underline">
+          <img src="https://docs.underlay.org/logoLight.svg" alt="Underlay" class="h-6" />
+          <span class="font-semibold text-ink tracking-tight text-base">Underlay</span>
+        </a>
+        <div class="flex items-center gap-5 text-sm text-ink-muted">
+          <a href="/explore" class="hover:text-ink transition-colors">Explore</a>
+          <a href="/schemas" class="hover:text-ink transition-colors">Schemas</a>
+          <a href="/docs" class="hover:text-ink transition-colors">Docs</a>
+          <a href="/blog" class="hover:text-ink transition-colors">Blog</a>
+          {currentUser ? (
+            <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} client:load />
+          ) : (
+            <a href="/login" class="hover:text-ink transition-colors">Log in</a>
+          )}
+        </div>
+      </nav>
+    </header>
+
+    <main class="flex-1 min-h-0">
+      <QueryExplorer client:load />
+    </main>
+
+    <footer class="border-t border-rule shrink-0">
+      <div class="px-4 py-2 flex items-center justify-between text-xs text-ink-muted">
+        <div class="flex items-center gap-1.5">
+          <span>&copy; {new Date().getFullYear()}</span>
+          <a href="https://www.knowledgefutures.org" class="underline hover:text-ink">Knowledge Futures</a>
+        </div>
+        <div class="flex items-center gap-4">
+          <a href="https://github.com/knowledgefutures/underlay" class="hover:text-ink">GitHub</a>
+          <span class="text-rule">·</span>
+          <span class="font-mono">v0.1.0</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -3,6 +3,7 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import { requireAuth } from "../plugins/auth.js";
 import { createHash } from "node:crypto";
+import { getS3ObjectMeta } from "../../lib/s3.js";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 
@@ -718,7 +719,28 @@ export async function uploadRoutes(app: FastifyInstance) {
             .from(schema.files)
             .where(inArray(schema.files.hash, allFileHashes));
           const existingSet = new Set(existingFiles.map((f) => f.hash));
-          const filesNeeded = allFileHashes.filter((h) => !existingSet.has(h));
+          let filesNeeded = allFileHashes.filter((h) => !existingSet.has(h));
+
+          // For files not in local DB, check if they exist in S3 (shared bucket)
+          if (filesNeeded.length > 0) {
+            const stillNeeded: string[] = [];
+            for (const h of filesNeeded) {
+              const key = `files/${h.slice(0, 2)}/${h.slice(2, 4)}/${h}`;
+              const meta = await getS3ObjectMeta(key);
+              if (meta !== null) {
+                await db.insert(schema.files).values({
+                  hash: h,
+                  size: meta.size,
+                  mimeType: meta.contentType,
+                  storageKey: key,
+                }).onConflictDoNothing();
+              } else {
+                stillNeeded.push(h);
+              }
+            }
+            filesNeeded = stillNeeded;
+          }
+
           if (filesNeeded.length > 0) {
             await db.update(schema.uploadSessions).set({ status: "failed" }).where(eq(schema.uploadSessions.id, sessionId));
             await db.execute(sql`DROP TABLE IF EXISTS _finalize_records`);

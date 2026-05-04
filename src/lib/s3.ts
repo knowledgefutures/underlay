@@ -59,6 +59,16 @@ export async function headS3Object(key: string): Promise<boolean> {
   }
 }
 
+export async function getS3ObjectMeta(key: string): Promise<{ size: number; contentType: string } | null> {
+  try {
+    const res = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    if (res.ContentLength == null) return null;
+    return { size: res.ContentLength, contentType: res.ContentType ?? "application/octet-stream" };
+  } catch {
+    return null;
+  }
+}
+
 export async function listS3Objects(prefix: string): Promise<string[]> {
   const keys: string[] = [];
   let continuationToken: string | undefined;
