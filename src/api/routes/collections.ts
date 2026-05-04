@@ -7,6 +7,7 @@ import { pack as tarPack } from "tar-stream";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { downloadFromS3 } from "../../lib/s3.js";
+import { DEFAULT_NAAN, collectionToArkId, getOrMintShoulder, buildArkUrl } from "../../lib/ark.js";
 
 export async function collectionsRoutes(app: FastifyInstance) {
   // Browse public collections
@@ -120,7 +121,18 @@ export async function collectionsRoutes(app: FastifyInstance) {
         public: isPublic ?? false,
       });
 
-      return reply.status(201).send({ id, owner, slug, name });
+      // Auto-mint ARK for the new collection
+      try {
+        const shoulder = await getOrMintShoulder(account.id);
+        const arkId = collectionToArkId(id);
+        await db.insert(schema.arkCollections).values({ collectionId: id, arkId, enabled: true });
+        const naan = account.arkNaan ?? DEFAULT_NAAN;
+        const arkUrl = buildArkUrl(naan, shoulder, arkId);
+        return reply.status(201).send({ id, owner, slug, name, ark: arkUrl });
+      } catch {
+        // ARK minting failure is non-fatal
+        return reply.status(201).send({ id, owner, slug, name });
+      }
     },
   );
 
@@ -214,8 +226,31 @@ export async function collectionsRoutes(app: FastifyInstance) {
       typeCounts = rows.map((r) => ({ type: r.type, count: r.count }));
     }
 
+    // Fetch ARK URL if enabled
+    let ark: string | null = null;
+    try {
+      const [arkRow] = await db
+        .select({
+          arkId: schema.arkCollections.arkId,
+          enabled: schema.arkCollections.enabled,
+          shoulder: schema.arkShoulders.shoulder,
+          ownerNaan: schema.accounts.arkNaan,
+        })
+        .from(schema.arkCollections)
+        .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
+        .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+        .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.accountId, schema.accounts.id))
+        .where(eq(schema.arkCollections.collectionId, result.id))
+        .limit(1);
+      if (arkRow?.enabled) {
+        ark = buildArkUrl(arkRow.ownerNaan ?? DEFAULT_NAAN, arkRow.shoulder, arkRow.arkId);
+      }
+    } catch {
+      // Non-fatal
+    }
+
     const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined };
-    return { ...result, latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null };
+    return { ...result, ark, latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null };
   });
 
   // Update collection

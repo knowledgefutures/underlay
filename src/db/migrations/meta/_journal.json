@@ -43,6 +43,13 @@
       "when": 1777695250467,
       "tag": "0005_smiling_baron_zemo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1746388800000,
+      "tag": "0006_ark_identifiers",
+      "breakpoints": true
     }
   ]
 }

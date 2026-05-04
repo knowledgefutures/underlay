@@ -5,6 +5,7 @@ import { requireAuth } from "../plugins/auth.js";
 import { createHash } from "node:crypto";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
+import { DEFAULT_NAAN, buildArkUrl } from "../../lib/ark.js";
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
@@ -213,6 +214,7 @@ export async function versionRoutes(app: FastifyInstance) {
     if (!collection) return reply.status(404).send({ error: "Collection not found", statusCode: 404 });
 
     const ownerAccess = isOwner(request, collection.accountId);
+    const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null);
 
     const rows = await db
       .select({
@@ -245,6 +247,7 @@ export async function versionRoutes(app: FastifyInstance) {
       fileCount: row.fileCount,
       totalBytes: row.totalBytes,
       createdAt: row.createdAt,
+      ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, row.number) : null,
     }));
   });
 
@@ -266,6 +269,7 @@ export async function versionRoutes(app: FastifyInstance) {
 
     const schemaEntries = await loadVersionSchemas(version.id);
     const ownerAccess = isOwner(request, collection.accountId);
+    const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null);
 
     const schemasMap = ownerAccess
       ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
@@ -275,6 +279,7 @@ export async function versionRoutes(app: FastifyInstance) {
       ...version,
       hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
       schemas: schemasMap,
+      ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number) : null,
     };
   });
 
@@ -297,6 +302,7 @@ export async function versionRoutes(app: FastifyInstance) {
 
     const schemaEntries = await loadVersionSchemas(version.id);
     const ownerAccess = isOwner(request, collection.accountId);
+    const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null);
 
     const schemasMap = ownerAccess
       ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
@@ -306,6 +312,7 @@ export async function versionRoutes(app: FastifyInstance) {
       ...version,
       hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
       schemas: schemasMap,
+      ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number) : null,
     };
   });
 
@@ -396,8 +403,26 @@ export async function versionRoutes(app: FastifyInstance) {
       });
     }
 
+    // Add ARK URLs for record types that have ARKs enabled
+    const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null);
+    let arkEnabledTypes = new Map<string, string>(); // recordType → redirectUrlField
+    if (arkInfo) {
+      const artRows = await db
+        .select({ recordType: schema.arkRecordTypes.recordType, redirectUrlField: schema.arkRecordTypes.redirectUrlField })
+        .from(schema.arkRecordTypes)
+        .where(eq(schema.arkRecordTypes.collectionId, collection.id));
+      for (const r of artRows) arkEnabledTypes.set(r.recordType, r.redirectUrlField);
+    }
+
+    const recordsWithArk = resultRecords.map((rec) => {
+      const ark = arkInfo && arkEnabledTypes.has(rec.type)
+        ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number, rec.type, rec.id)
+        : null;
+      return ark ? { ...rec, ark } : rec;
+    });
+
     return {
-      records: resultRecords,
+      records: recordsWithArk,
       pagination: {
         limit: pageLimit,
         hasMore,
@@ -968,4 +993,23 @@ async function resolveCollection(owner: string, slug: string) {
     .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1);
   return result ?? null;
+}
+
+async function getCollectionArkInfo(
+  collectionId: string,
+): Promise<{ shoulder: string; arkId: string; naan: string } | null> {
+  const [row] = await db
+    .select({
+      shoulder: schema.arkShoulders.shoulder,
+      arkId: schema.arkCollections.arkId,
+      naan: schema.accounts.arkNaan,
+    })
+    .from(schema.arkCollections)
+    .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
+    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.accountId, schema.accounts.id))
+    .where(and(eq(schema.arkCollections.collectionId, collectionId), eq(schema.arkCollections.enabled, true)))
+    .limit(1);
+  if (!row) return null;
+  return { shoulder: row.shoulder, arkId: row.arkId, naan: row.naan ?? DEFAULT_NAAN };
 }
