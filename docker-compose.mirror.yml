@@ -11,7 +11,7 @@ services:
       # Mirror-specific
       UNDERLAY_MODE: mirror
       UNDERLAY_UPSTREAM: https://www.underlay.org
-      UNDERLAY_NODE_NAME: Trinity Mirror
+      UNDERLAY_NODE_NAME: IUA Mirror
       UNDERLAY_SYNC_SCHEDULE: "0 0 * * 0"
       # Database (internal to this stack)
       DATABASE_URL: postgresql://mirror:mirror@postgres:5432/mirror
