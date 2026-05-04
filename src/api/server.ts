@@ -12,12 +12,9 @@ import { versionRoutes } from "./routes/versions.js";
 import { uploadRoutes } from "./routes/uploads.js";
 import { fileRoutes } from "./routes/files.js";
 import { schemaRoutes } from "./routes/schemas.js";
-<<<<<<< HEAD
 import { adminRoutes } from "./routes/admin.js";
 import { queryRoutes } from "./routes/query.js";
-=======
 import { arkRoutes } from "./routes/ark.js";
->>>>>>> c2b47f5 (first version at ARK)
 
 export async function buildApp() {
   const app = Fastify({
@@ -80,13 +77,9 @@ export async function buildApp() {
   await app.register(uploadRoutes, { prefix: "/api" });
   await app.register(fileRoutes, { prefix: "/api" });
   await app.register(schemaRoutes, { prefix: "/api" });
-<<<<<<< HEAD
   await app.register(adminRoutes, { prefix: "/api" });
   await app.register(queryRoutes, { prefix: "/api" });
-=======
   await app.register(arkRoutes, { prefix: "/api" });
->>>>>>> c2b47f5 (first version at ARK)
-
   return app;
 }
 
