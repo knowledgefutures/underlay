@@ -28,6 +28,7 @@ export const accounts = pgTable("accounts", {
   avatarUrl: text("avatar_url"),
   emailVerified: boolean("email_verified").default(false).notNull(),
   notificationPrefs: jsonb("notification_prefs"),
+  arkNaan: text("ark_naan"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -283,3 +284,38 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   usedAt: timestamp("used_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// --- ARK Identifiers ---
+
+export const arkShoulders = pgTable("ark_shoulders", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id")
+    .notNull()
+    .unique()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  shoulder: text("shoulder").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const arkCollections = pgTable("ark_collections", {
+  collectionId: uuid("collection_id")
+    .notNull()
+    .primaryKey()
+    .references(() => collections.id, { onDelete: "cascade" }),
+  arkId: text("ark_id").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(true),
+  customUrl: text("custom_url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const arkRecordTypes = pgTable(
+  "ark_record_types",
+  {
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    recordType: text("record_type").notNull(),
+    redirectUrlField: text("redirect_url_field").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.collectionId, t.recordType] })],
+);

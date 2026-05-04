@@ -29,6 +29,8 @@ const readmeHtml = readmeSource ? marked.parse(readmeSource) : null;
 // Parse type counts for TOC
 const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? [];
 const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type));
+
+const collectionArkPath: string | null = data.ark ? new URL(data.ark).pathname : null;
 ---
 
 <Base title={`${data.name} — Underlay`} description={data.description}>
@@ -155,6 +157,16 @@ const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type
             )}
           </div>
         </div>
+
+        <!-- ARK -->
+        {collectionArkPath && (
+          <div class="mb-6">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">ARK Identifier</h3>
+            <a href={collectionArkPath} class="block text-[11px] font-mono text-link hover:underline break-all bg-parchment-dark px-2 py-1 rounded">
+              {collectionArkPath.slice(1)}
+            </a>
+          </div>
+        )}
       </aside>
     </div>
   </div>

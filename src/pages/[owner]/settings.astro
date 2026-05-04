@@ -211,6 +211,22 @@ if (Astro.request.method === "POST") {
     success = "Key revoked.";
   }
 
+  if (action === "update-ark" && isAdmin) {
+    const naan = (form.get("naan") as string).trim() || null;
+    const res = await fetch(`${apiBase}/api/accounts/${owner}/ark`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ naan }),
+    });
+    if (res.ok) {
+      success = "ARK settings updated.";
+      orgData.arkNaan = naan;
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to update ARK settings.";
+    }
+  }
+
   if (action === "delete-org" && isOwner) {
     const confirmSlug = form.get("confirmSlug") as string;
     if (confirmSlug !== owner) {
@@ -520,6 +536,42 @@ if (deleted) {
         </div>
       )}
     </div>
+
+    <!-- ARK Identifiers -->
+    {isAdmin && (
+      <div class="border-t border-rule pt-6 mb-10">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4">ARK Identifiers</h2>
+
+        {orgData.arkShoulder && (
+          <div class="mb-4">
+            <p class="text-xs text-ink-muted mb-1">Assigned shoulder</p>
+            <code class="text-xs font-mono bg-parchment-dark border border-rule px-2 py-1">{orgData.arkShoulder}</code>
+          </div>
+        )}
+
+        <form method="POST" class="space-y-3">
+          <input type="hidden" name="action" value="update-ark" />
+          <div>
+            <label for="arkNaan" class="block text-xs font-medium mb-1">
+              Name Assigning Authority Number (NAAN)
+            </label>
+            <input
+              type="text"
+              id="arkNaan"
+              name="naan"
+              value={orgData.arkNaan ?? ""}
+              placeholder="Leave blank to use default (12345)"
+              pattern="[0-9]{1,16}"
+              class="w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink"
+            />
+            <p class="text-xs text-ink-muted mt-1">If set, overrides the default NAAN for all ARKs created by this organization.</p>
+          </div>
+          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+            Save
+          </button>
+        </form>
+      </div>
+    )}
 
     <!-- Danger zone -->
     {isOwner && (

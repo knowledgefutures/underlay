@@ -75,6 +75,17 @@ if (tab === "records" && currentType) {
   }
 }
 
+// Compute record fields once — used in the template without needing an IIFE
+const currentTypeFields: string[] = currentType
+  ? (schemasMap[currentType]?.properties
+    ? Object.keys(schemasMap[currentType].properties)
+    : records.length > 0
+      ? Object.keys(records[0].data ?? {})
+      : [])
+  : [];
+
+const versionArkPath: string | null = version.ark ? new URL(version.ark).pathname : null;
+
 // Fetch files only on files tab
 let files: any[] = [];
 if (tab === "files") {
@@ -114,6 +125,11 @@ function tabUrl(t: string, extra?: Record<string, string>) {
         {version.appId && <span>via <strong class="text-ink">{version.appId}</strong></span>}
         <span>{new Date(version.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
         <code class="font-mono text-[11px] text-ink-muted" title={version.hash}>sha256:{version.hash.slice(0, 12)}…</code>
+        {versionArkPath && (
+          <a href={versionArkPath} class="font-mono text-[11px] text-link hover:underline">
+            {versionArkPath.slice(1)}
+          </a>
+        )}
       </div>
     </div>
 
@@ -163,90 +179,88 @@ function tabUrl(t: string, extra?: Record<string, string>) {
 
         <!-- Table area -->
         <div class="min-w-0">
-          {currentType && records.length > 0 && (() => {
-            const fields = schemasMap[currentType]?.properties
-              ? Object.keys(schemasMap[currentType].properties)
-              : records.length > 0
-                ? Object.keys(records[0].data ?? {})
-                : [];
-
-            return (
-              <div>
-                <div class="overflow-x-auto border border-rule rounded">
-                  <table class="w-full text-xs">
-                    <thead>
-                      <tr class="bg-parchment-dark">
-                        <th class="text-left p-2 font-medium border-b border-rule">id</th>
-                        {fields.map((f: string) => (
-                          <th class="text-left p-2 font-medium border-b border-rule">{f}</th>
-                        ))}
+          {currentType && records.length > 0 && (
+            <div>
+              <div class="overflow-x-auto border border-rule rounded">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="bg-parchment-dark">
+                      <th class="text-left p-2 font-medium border-b border-rule">id</th>
+                      {currentTypeFields.map((f: string) => (
+                        <th class="text-left p-2 font-medium border-b border-rule">{f}</th>
+                      ))}
+                      {records[0]?.ark && <th class="text-left p-2 font-medium border-b border-rule">ARK</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records.map((r: any) => (
+                      <tr class="border-t border-rule hover:bg-parchment-dark/50">
+                        <td class="p-2 font-mono text-ink-muted">{r.id}</td>
+                        {currentTypeFields.map((f: string) => {
+                          const val = r.data?.[f];
+                          if (val && typeof val === "object" && "$file" in val) {
+                            const hash = ((val as any).$file as string).replace("sha256:", "");
+                            const fileUrl = `https://assets.underlay.org/files/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash}`;
+                            const label = f === "pdf" ? "PDF" : "File";
+                            return (
+                              <td class="p-2">
+                                <a href={fileUrl} target="_blank" class="inline-flex items-center gap-1 text-link hover:underline">
+                                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                                  {label}
+                                </a>
+                              </td>
+                            );
+                          }
+                          if (typeof val === "string" && val.match(/^https?:\/\//)) {
+                            return (
+                              <td class="p-2 max-w-56 truncate">
+                                <a href={val} target="_blank" rel="noopener noreferrer" class="text-link hover:underline">{val}</a>
+                              </td>
+                            );
+                          }
+                          const display = val === null || val === undefined
+                            ? ""
+                            : typeof val === "object"
+                              ? JSON.stringify(val)
+                              : String(val);
+                          return <td class="p-2 max-w-56 truncate">{display}</td>;
+                        })}
+                        {r.ark && (
+                          <td class="p-2">
+                            <a href={new URL(r.ark).pathname} class="font-mono text-[11px] text-link hover:underline">ark</a>
+                          </td>
+                        )}
                       </tr>
-                    </thead>
-                    <tbody>
-                      {records.map((r: any) => (
-                        <tr class="border-t border-rule hover:bg-parchment-dark/50">
-                          <td class="p-2 font-mono text-ink-muted">{r.id}</td>
-                          {fields.map((f: string) => {
-                            const val = r.data?.[f];
-                            if (val && typeof val === "object" && "$file" in val) {
-                              const hash = ((val as any).$file as string).replace("sha256:", "");
-                              const fileUrl = `https://assets.underlay.org/files/${hash.slice(0, 2)}/${hash.slice(2, 4)}/${hash}`;
-                              const label = f === "pdf" ? "PDF" : "File";
-                              return (
-                                <td class="p-2">
-                                  <a href={fileUrl} target="_blank" class="inline-flex items-center gap-1 text-link hover:underline">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                                    {label}
-                                  </a>
-                                </td>
-                              );
-                            }
-                            if (typeof val === "string" && val.match(/^https?:\/\//)) {
-                              return (
-                                <td class="p-2 max-w-56 truncate">
-                                  <a href={val} target="_blank" rel="noopener noreferrer" class="text-link hover:underline">{val}</a>
-                                </td>
-                              );
-                            }
-                            const display = val === null || val === undefined
-                              ? ""
-                              : typeof val === "object"
-                                ? JSON.stringify(val)
-                                : String(val);
-                            return <td class="p-2 max-w-56 truncate">{display}</td>;
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {totalPages > 1 && (
-                  <nav class="flex items-center justify-between py-3 text-xs">
-                    <span class="text-ink-muted">
-                      Showing {offset + 1}–{Math.min(offset + pageSize, totalRecords)} of {totalRecords.toLocaleString()}
-                    </span>
-                    <div class="flex items-center gap-1">
-                      {page > 1 && (
-                        <a href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page - 1}`} class="border border-rule px-2 py-1 rounded hover:bg-parchment-dark">← Prev</a>
-                      )}
-                      {pageNumbers.map((p) => (
-                        <a
-                          href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${p}`}
-                          class={p === page ? "border border-ink bg-ink text-parchment font-medium px-2 py-1 rounded" : "border border-rule px-2 py-1 rounded hover:bg-parchment-dark"}
-                        >
-                          {p}
-                        </a>
-                      ))}
-                      {page < totalPages && (
-                        <a href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page + 1}`} class="border border-rule px-2 py-1 rounded hover:bg-parchment-dark">Next →</a>
-                      )}
-                    </div>
-                  </nav>
-                )}
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            );
-          })()}
+
+              {totalPages > 1 && (
+                <nav class="flex items-center justify-between py-3 text-xs">
+                  <span class="text-ink-muted">
+                    Showing {offset + 1}–{Math.min(offset + pageSize, totalRecords)} of {totalRecords.toLocaleString()}
+                  </span>
+                  <div class="flex items-center gap-1">
+                    {page > 1 && (
+                      <a href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page - 1}`} class="border border-rule px-2 py-1 rounded hover:bg-parchment-dark">← Prev</a>
+                    )}
+                    {pageNumbers.map((p) => (
+                      <a
+                        href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${p}`}
+                        class={p === page ? "border border-ink bg-ink text-parchment font-medium px-2 py-1 rounded" : "border border-rule px-2 py-1 rounded hover:bg-parchment-dark"}
+                      >
+                        {p}
+                      </a>
+                    ))}
+                    {page < totalPages && (
+                      <a href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page + 1}`} class="border border-rule px-2 py-1 rounded hover:bg-parchment-dark">Next →</a>
+                    )}
+                  </div>
+                </nav>
+              )}
+            </div>
+          )}
           {(!currentType || records.length === 0) && (
             <p class="text-sm text-ink-muted py-8 text-center">Select a type to view records.</p>
           )}
