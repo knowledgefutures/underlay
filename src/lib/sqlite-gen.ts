@@ -18,7 +18,7 @@ interface TypeSchema {
   properties?: Record<string, SchemaProperty>;
 }
 
-interface Record {
+interface DataRecord {
   recordId: string;
   type: string;
   data: unknown;
@@ -79,7 +79,7 @@ export function generateAllDDL(schemas: Record<string, TypeSchema>): string {
  */
 export function buildSqliteBuffer(
   schemas: Record<string, TypeSchema>,
-  records: Record[],
+  records: DataRecord[],
 ): Buffer {
   const db = new Database(":memory:");
 
@@ -90,7 +90,7 @@ export function buildSqliteBuffer(
   }
 
   // Insert records grouped by type
-  const byType = new Map<string, Record[]>();
+  const byType = new Map<string, DataRecord[]>();
   for (const rec of records) {
     const arr = byType.get(rec.type) ?? [];
     arr.push(rec);
@@ -108,7 +108,7 @@ export function buildSqliteBuffer(
       `INSERT OR IGNORE INTO ${ident(typeName)} (${colNames}) VALUES (${placeholders})`,
     );
 
-    const insertMany = db.transaction((recs: Record[]) => {
+    const insertMany = db.transaction((recs: DataRecord[]) => {
       for (const rec of recs) {
         const data = rec.data as any;
         const values = [
