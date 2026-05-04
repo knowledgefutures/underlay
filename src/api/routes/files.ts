@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import { requireAuth } from "../plugins/auth.js";
-import { uploadToS3 } from "../../lib/s3.js";
+import { uploadToS3, headS3Object, getS3ObjectMeta } from "../../lib/s3.js";
 import { createHash } from "node:crypto";
 
 /**
@@ -183,7 +183,7 @@ export async function fileRoutes(app: FastifyInstance) {
       };
       const cleanHash = hash.replace("sha256:", "");
 
-      // Check if file already exists
+      // Check if file already exists in DB
       const [existing] = await db
         .select()
         .from(schema.files)
@@ -191,6 +191,19 @@ export async function fileRoutes(app: FastifyInstance) {
         .limit(1);
 
       if (existing) {
+        return reply.status(200).send({ hash: cleanHash, status: "exists" });
+      }
+
+      // Check if file exists in S3 but not in local DB (shared bucket scenario)
+      const s3Key = `files/${cleanHash.slice(0, 2)}/${cleanHash.slice(2, 4)}/${cleanHash}`;
+      const s3Meta = await getS3ObjectMeta(s3Key);
+      if (s3Meta !== null) {
+        await db.insert(schema.files).values({
+          hash: cleanHash,
+          size: s3Meta.size,
+          mimeType: s3Meta.contentType,
+          storageKey: s3Key,
+        }).onConflictDoNothing();
         return reply.status(200).send({ hash: cleanHash, status: "exists" });
       }
 

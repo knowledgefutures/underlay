@@ -13,6 +13,7 @@ import { uploadRoutes } from "./routes/uploads.js";
 import { fileRoutes } from "./routes/files.js";
 import { schemaRoutes } from "./routes/schemas.js";
 import { adminRoutes } from "./routes/admin.js";
+import { queryRoutes } from "./routes/query.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -76,6 +77,7 @@ export async function buildApp() {
   await app.register(fileRoutes, { prefix: "/api" });
   await app.register(schemaRoutes, { prefix: "/api" });
   await app.register(adminRoutes, { prefix: "/api" });
+  await app.register(queryRoutes, { prefix: "/api" });
 
   return app;
 }
