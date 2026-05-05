@@ -47,6 +47,14 @@ const isOwner = await checkOwnership(sessionCookie, owner!);
               <span>{formatBytes(v.totalBytes)}</span>
               <span class="w-20 text-right">{new Date(v.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
               <code class="font-mono text-[11px] text-ink-muted w-24 text-right" title={`sha256:${v.hash}`}>{v.hash.slice(0, 10)}…</code>
+              {v.ark && (
+                <a
+                  href={new URL(v.ark).pathname}
+                  class="font-mono text-[11px] text-link hover:underline"
+                >
+                  ark
+                </a>
+              )}
               {v.number > 1 ? (
                 <a
                   href={`/${owner}/${collection}/diff?from=${v.number - 1}&to=${v.number}`}

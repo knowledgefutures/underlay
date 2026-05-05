@@ -180,6 +180,7 @@ export async function accountRoutes(app: FastifyInstance) {
         website: schema.accounts.website,
         location: schema.accounts.location,
         avatarUrl: schema.accounts.avatarUrl,
+        arkNaan: schema.accounts.arkNaan,
         createdAt: schema.accounts.createdAt,
       })
       .from(schema.accounts)
@@ -189,7 +190,15 @@ export async function accountRoutes(app: FastifyInstance) {
     if (!account) {
       return reply.status(404).send({ error: "Account not found", statusCode: 404 });
     }
-    return account;
+
+    // Include ARK shoulder if minted
+    const [shoulderRow] = await db
+      .select({ shoulder: schema.arkShoulders.shoulder })
+      .from(schema.arkShoulders)
+      .where(eq(schema.arkShoulders.accountId, account.id))
+      .limit(1);
+
+    return { ...account, arkShoulder: shoulderRow?.shoulder ?? null };
   });
 
   // Update own profile

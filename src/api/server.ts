@@ -14,6 +14,7 @@ import { fileRoutes } from "./routes/files.js";
 import { schemaRoutes } from "./routes/schemas.js";
 import { adminRoutes } from "./routes/admin.js";
 import { queryRoutes } from "./routes/query.js";
+import { arkRoutes } from "./routes/ark.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -78,7 +79,7 @@ export async function buildApp() {
   await app.register(schemaRoutes, { prefix: "/api" });
   await app.register(adminRoutes, { prefix: "/api" });
   await app.register(queryRoutes, { prefix: "/api" });
-
+  await app.register(arkRoutes, { prefix: "/api" });
   return app;
 }
 

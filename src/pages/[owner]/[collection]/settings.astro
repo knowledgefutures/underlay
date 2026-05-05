@@ -34,6 +34,12 @@ if (me.slug !== owner && !isOrgMember) {
   return Astro.redirect(`/${owner}/${collection}`);
 }
 
+// Fetch ARK settings for this collection
+const arkRes = await fetch(`${apiBase}/api/collections/${owner}/${collection}/ark`, {
+  headers: { Cookie: `session=${sessionCookie}` },
+});
+let arkSettings = arkRes.ok ? await arkRes.json() : { enabled: false, customUrl: null, arkUrl: null };
+
 let success = "";
 let error = "";
 let deleted = false;
@@ -41,6 +47,26 @@ let deleted = false;
 if (Astro.request.method === "POST") {
   const form = await Astro.request.formData();
   const action = form.get("action") as string;
+
+  if (action === "update-ark") {
+    const enabled = form.get("arkEnabled") === "on";
+    const customUrl = (form.get("arkCustomUrl") as string).trim() || null;
+    const res = await fetch(`${apiBase}/api/collections/${owner}/${collection}/ark`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: `session=${sessionCookie}` },
+      body: JSON.stringify({ enabled, customUrl }),
+    });
+    if (res.ok) {
+      success = "ARK settings updated.";
+      const refreshed = await fetch(`${apiBase}/api/collections/${owner}/${collection}/ark`, {
+        headers: { Cookie: `session=${sessionCookie}` },
+      });
+      if (refreshed.ok) arkSettings = await refreshed.json();
+    } else {
+      const body = await res.json().catch(() => ({}));
+      error = body.error ?? "Failed to update ARK settings.";
+    }
+  }
 
   if (action === "update") {
     const name = form.get("name") as string;
@@ -96,6 +122,8 @@ if (Astro.request.method === "POST") {
 if (deleted) {
   return Astro.redirect("/dashboard");
 }
+
+const arkPath: string | null = arkSettings.arkUrl ? new URL(arkSettings.arkUrl).pathname : null;
 ---
 
 <Base title={`Settings — ${data.name} — Underlay`}>
@@ -162,6 +190,47 @@ if (deleted) {
       >
         Download archive
       </a>
+    </div>
+
+    <!-- ARK Identifiers -->
+    <div class="border-t border-rule pt-6 mb-10">
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">ARK Identifiers</h2>
+      {arkPath && arkSettings.enabled && (
+        <p class="text-sm text-ink-muted mb-3">
+          Current ARK: <a href={arkPath} class="font-mono text-sm text-link hover:underline">{arkPath.slice(1)}</a>
+        </p>
+      )}
+      <form method="POST" class="space-y-4">
+        <input type="hidden" name="action" value="update-ark" />
+        <div class="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="arkEnabled"
+            name="arkEnabled"
+            checked={arkSettings.enabled}
+            class="accent-ink"
+          />
+          <label for="arkEnabled" class="text-sm">Enable ARK identifier</label>
+        </div>
+        <div>
+          <label for="arkCustomUrl" class="block text-sm font-medium mb-1">
+            Custom redirect URL <span class="text-ink-muted font-normal">(optional — leave blank to redirect to collection page)</span>
+          </label>
+          <input
+            type="url"
+            id="arkCustomUrl"
+            name="arkCustomUrl"
+            value={arkSettings.customUrl ?? ""}
+            placeholder="https://example.org/my-collection"
+            class="w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink"
+          />
+        </div>
+        <div class="pt-2">
+          <button type="submit" class="bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
+            Save ARK settings
+          </button>
+        </div>
+      </form>
     </div>
 
     <!-- Danger zone -->
