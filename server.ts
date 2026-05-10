@@ -7,18 +7,19 @@ import { resolve } from 'node:path'
 import { marked } from 'marked'
 
 import type { AuthEnv } from '~/api/auth.server'
-import { authMiddleware } from '~/api/auth.server'
-import { healthRoutes } from '~/api/health'
-import { accountRoutes } from '~/api/accounts'
-import { collectionsRoutes } from '~/api/collections'
-import { versionRoutes } from '~/api/versions'
-import { uploadRoutes } from '~/api/uploads'
-import { fileRoutes } from '~/api/files'
-import { schemaRoutes } from '~/api/schemas'
-import { adminRoutes } from '~/api/admin'
-import { queryRoutes } from '~/api/query'
-import { arkRoutes } from '~/api/ark'
+import { authMiddleware, requireAuth } from '~/api/auth.server'
 import { arkMiddleware } from '~/api/ark-middleware.server'
+import { getMirrorConfig } from '~/lib/mirror-config'
+import * as health from '~/api/health'
+import * as admin from '~/api/admin'
+import * as query from '~/api/query'
+import * as files from '~/api/files'
+import * as schemas from '~/api/schemas'
+import * as ark from '~/api/ark'
+import * as collections from '~/api/collections'
+import * as uploads from '~/api/uploads'
+import * as versions from '~/api/versions'
+import * as accounts from '~/api/accounts'
 
 const isProd = process.env.NODE_ENV === 'production'
 const app = new Hono<AuthEnv>()
@@ -29,20 +30,116 @@ app.use('/api/*', cors({ origin: '*', credentials: true }))
 // --- Auth middleware for API routes ---
 app.use('/api/*', authMiddleware)
 
+// --- Mirror mode guard for admin routes ---
+app.use('/api/admin/*', async (c, next) => {
+  const config = getMirrorConfig()
+  if (!config.enabled) {
+    return c.json({ error: 'Not found', statusCode: 404 }, 404)
+  }
+  await next()
+})
+
 // --- ARK resolution middleware ---
 app.use('/ark\\:*', arkMiddleware)
 
 // --- API routes ---
-app.route('/api', healthRoutes)
-app.route('/api', accountRoutes)
-app.route('/api', collectionsRoutes)
-app.route('/api', versionRoutes)
-app.route('/api', uploadRoutes)
-app.route('/api', fileRoutes)
-app.route('/api', schemaRoutes)
-app.route('/api', adminRoutes)
-app.route('/api', queryRoutes)
-app.route('/api', arkRoutes)
+app.get('/api/health', health.check)
+
+// Admin (mirror)
+app.get('/api/admin/mirror/status', admin.mirrorStatus)
+app.post('/api/admin/mirror/test', admin.mirrorTest)
+app.post('/api/admin/mirror/sync', admin.mirrorSync)
+app.post('/api/admin/mirror/sync/stop', admin.mirrorSyncStop)
+app.get('/api/admin/mirror/sync/progress', admin.mirrorSyncProgress)
+app.get('/api/admin/mirror/sync/active', admin.mirrorSyncActive)
+app.get('/api/admin/mirror/history', admin.mirrorHistory)
+
+// Query
+app.get('/api/query/sqlite/:owner/:slug/:version', query.sqlite)
+app.get('/api/query/ddl/:owner/:slug/:version', query.ddl)
+app.post('/api/query/generate-sql', query.generateSql)
+app.get('/api/query/collections/search', query.searchCollections)
+app.get('/api/query/collections/:owner/:slug/versions', query.collectionVersions)
+
+// Schemas
+app.get('/api/schemas', schemas.listSchemas)
+app.get('/api/schemas/:id', schemas.getSchema)
+app.get('/api/collections/:owner/:slug/schemas', schemas.collectionSchemas)
+app.post('/api/schemas/:id/labels', requireAuth('write'), schemas.addLabel)
+app.delete('/api/schemas/:id/labels/:label', requireAuth('admin'), schemas.removeLabel)
+
+// ARK
+app.get('/api/ark/resolve', ark.resolve)
+app.get('/api/collections/:owner/:slug/ark', requireAuth('read'), ark.getArk)
+app.patch('/api/collections/:owner/:slug/ark', requireAuth('write'), ark.updateArk)
+app.get('/api/collections/:owner/:slug/ark/record-types', requireAuth('read'), ark.getArkRecordTypes)
+app.patch('/api/collections/:owner/:slug/ark/record-types', requireAuth('write'), ark.updateArkRecordTypes)
+app.patch('/api/accounts/:slug/ark', requireAuth('admin'), ark.updateAccountArk)
+
+// Collections
+app.get('/api/collections', collections.list)
+app.post('/api/accounts/:owner/collections', requireAuth('write'), collections.create)
+app.get('/api/collections/:owner/:slug', collections.get)
+app.patch('/api/collections/:owner/:slug', requireAuth('write'), collections.update)
+app.delete('/api/collections/:owner/:slug', requireAuth('admin'), collections.remove)
+app.get('/api/accounts/:owner/collections', collections.listByOwner)
+app.get('/api/collections/:owner/:slug/export', collections.exportArchive)
+
+// Files
+app.on('HEAD', '/api/collections/:owner/:slug/files/:hash', files.headFile)
+app.get('/api/collections/:owner/:slug/files/:hash', files.getFile)
+app.put('/api/collections/:owner/:slug/files/:hash', requireAuth('write'), files.putFile)
+
+// Uploads
+app.post('/api/collections/:owner/:slug/versions/upload', requireAuth('write'), uploads.startSession)
+app.put('/api/collections/:owner/:slug/versions/upload/:sessionId', requireAuth('write'), uploads.appendBatch)
+app.get('/api/collections/:owner/:slug/versions/upload/:sessionId', requireAuth('read'), uploads.getSession)
+app.post('/api/collections/:owner/:slug/versions/upload/:sessionId/finalize', requireAuth('write'), uploads.finalize)
+app.delete('/api/collections/:owner/:slug/versions/upload/:sessionId', requireAuth('write'), uploads.cancelSession)
+
+// Versions
+app.get('/api/collections/:owner/:slug/versions', versions.list)
+app.get('/api/collections/:owner/:slug/versions/latest', versions.latest)
+app.get('/api/collections/:owner/:slug/versions/:n', versions.getByNumber)
+app.get('/api/collections/:owner/:slug/versions/:n/records', versions.records)
+app.get('/api/collections/:owner/:slug/versions/:n/files', versions.files)
+app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
+app.post('/api/collections/:owner/:slug/versions', requireAuth('write'), versions.push)
+app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
+
+// Accounts
+app.post('/api/accounts/signup', accounts.signup)
+app.post('/api/accounts/login', accounts.login)
+app.post('/api/accounts/logout', accounts.logout)
+app.get('/api/accounts/me', requireAuth(), accounts.getMe)
+app.get('/api/accounts/:slug', accounts.getBySlug)
+app.patch('/api/accounts/me', requireAuth(), accounts.updateMe)
+app.post('/api/accounts/me/email', requireAuth(), accounts.updateEmail)
+app.post('/api/accounts/me/password', requireAuth(), accounts.updatePassword)
+app.post('/api/accounts/me/avatar', requireAuth(), accounts.uploadAvatar)
+app.get('/api/accounts/me/sessions', requireAuth(), accounts.listSessions)
+app.delete('/api/accounts/me/sessions/:sessionId', requireAuth(), accounts.deleteSession)
+app.delete('/api/accounts/me', requireAuth(), accounts.deleteMe)
+app.post('/api/accounts/forgot-password', accounts.forgotPassword)
+app.post('/api/accounts/reset-password', accounts.resetPassword)
+app.post('/api/accounts/keys', requireAuth(), accounts.createKey)
+app.get('/api/accounts/keys', requireAuth(), accounts.listKeys)
+app.delete('/api/accounts/keys/:id', requireAuth(), accounts.deleteKey)
+app.post('/api/accounts/:slug/keys', requireAuth(), accounts.createOrgKey)
+app.get('/api/accounts/:slug/keys', requireAuth(), accounts.listOrgKeys)
+app.delete('/api/accounts/:slug/keys/:id', requireAuth(), accounts.deleteOrgKey)
+app.post('/api/accounts/orgs', requireAuth(), accounts.createOrg)
+app.get('/api/accounts/:slug/members', requireAuth(), accounts.listMembers)
+app.post('/api/accounts/:slug/members', requireAuth(), accounts.addMember)
+app.patch('/api/accounts/:slug/members/:userId', requireAuth(), accounts.updateMember)
+app.delete('/api/accounts/:slug/members/:userId', requireAuth(), accounts.removeMember)
+app.patch('/api/accounts/:slug', requireAuth(), accounts.updateOrg)
+app.post('/api/accounts/:slug/avatar', requireAuth(), accounts.uploadOrgAvatar)
+app.post('/api/accounts/:slug/invitations', requireAuth(), accounts.createInvitation)
+app.get('/api/accounts/:slug/invitations', requireAuth(), accounts.listInvitations)
+app.delete('/api/accounts/:slug/invitations/:id', requireAuth(), accounts.deleteInvitation)
+app.post('/api/accounts/invitations/accept', requireAuth(), accounts.acceptInvitation)
+app.delete('/api/accounts/:slug', requireAuth(), accounts.deleteOrg)
 
 // --- Blog content API (serves rendered markdown) ---
 app.get('/api/blog/:slug', (c) => {

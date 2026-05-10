@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Routes, Route } from 'react-router'
 import { buildRoutes } from '~/route-gen'
 
-const modules = import.meta.glob<{ default: React.ComponentType }>('./routes/**/*.tsx')
+const modules = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
 const routes = buildRoutes(modules)
 
 const componentMap = new Map(

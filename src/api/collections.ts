@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { Context } from 'hono'
 import { stream } from "hono/streaming";
 import { eq, and, ilike, or, sql } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
@@ -9,10 +9,8 @@ import { createGzip } from "node:zlib";
 import { downloadFromS3 } from "../lib/s3.js";
 import { DEFAULT_NAAN, collectionToArkId, getOrMintShoulder, buildArkUrl } from "../lib/ark.js";
 
-const app = new Hono<AuthEnv>();
-
 // Browse public collections
-app.get("/collections", async (c) => {
+export async function list(c: Context<AuthEnv>) {
   const q = c.req.query("q");
   const limit = c.req.query("limit");
   const offset = c.req.query("offset");
@@ -48,11 +46,11 @@ app.get("/collections", async (c) => {
     .orderBy(schema.collections.updatedAt);
 
   return c.json(results);
-});
+}
 
 // Create collection
-app.post("/accounts/:owner/collections", requireAuth("write"), async (c) => {
-  const owner = c.req.param("owner");
+export async function create(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
   const { slug, name, description, public: isPublic } = await c.req.json<{
     slug: string;
     name: string;
@@ -129,12 +127,12 @@ app.post("/accounts/:owner/collections", requireAuth("write"), async (c) => {
     // ARK minting failure is non-fatal
     return c.json({ id, owner, slug, name }, 201);
   }
-});
+}
 
 // Get collection
-app.get("/collections/:owner/:slug", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function get(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
 
   const [result] = await db
     .select({
@@ -247,12 +245,12 @@ app.get("/collections/:owner/:slug", async (c) => {
 
   const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined };
   return c.json({ ...result, ark, latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null });
-});
+}
 
 // Update collection
-app.patch("/collections/:owner/:slug", requireAuth("write"), async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function update(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
   const updates = await c.req.json<{
     name?: string;
     description?: string;
@@ -285,12 +283,12 @@ app.patch("/collections/:owner/:slug", requireAuth("write"), async (c) => {
     .where(eq(schema.collections.id, collection.id));
 
   return c.json({ ok: true });
-});
+}
 
 // Delete collection
-app.delete("/collections/:owner/:slug", requireAuth("admin"), async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function remove(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
 
   const [account] = await db
     .select()
@@ -314,11 +312,11 @@ app.delete("/collections/:owner/:slug", requireAuth("admin"), async (c) => {
 
   await db.delete(schema.collections).where(eq(schema.collections.id, collection.id));
   return c.json({ ok: true });
-});
+}
 
 // List collections for an account
-app.get("/accounts/:owner/collections", async (c) => {
-  const owner = c.req.param("owner");
+export async function listByOwner(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
 
   const [account] = await db
     .select()
@@ -364,12 +362,12 @@ app.get("/accounts/:owner/collections", async (c) => {
     .orderBy(schema.collections.updatedAt);
 
   return c.json(results);
-});
+}
 
 // Export collection as .tar.gz archive
-app.get("/collections/:owner/:slug/export", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function exportArchive(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
   const versionParam = c.req.query("version");
 
   // Resolve collection
@@ -521,6 +519,5 @@ app.get("/collections/:owner/:slug/export", async (c) => {
     "Content-Type": "application/gzip",
     "Content-Disposition": `attachment; filename="${filename}"`,
   });
-});
+}
 
-export { app as collectionsRoutes };

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { Context } from 'hono'
 import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
 import { requireAuth, type AuthEnv } from "./auth.server.js";
@@ -118,13 +118,11 @@ async function isFilePubliclyAccessible(
   return false;
 }
 
-const app = new Hono<AuthEnv>();
-
 // Check if file exists
-app.on("HEAD", "/collections/:owner/:slug/files/:hash", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const hash = c.req.param("hash");
+export async function headFile(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const hash = c.req.param("hash")!;
   const cleanHash = hash.replace("sha256:", "");
 
   const [file] = await db
@@ -146,13 +144,13 @@ app.on("HEAD", "/collections/:owner/:slug/files/:hash", async (c) => {
   c.header("Content-Length", String(file.size));
   c.header("Content-Type", file.mimeType);
   return c.body(null, 200);
-});
+}
 
 // Download file
-app.get("/collections/:owner/:slug/files/:hash", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const hash = c.req.param("hash");
+export async function getFile(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const hash = c.req.param("hash")!;
   const cleanHash = hash.replace("sha256:", "");
 
   const [file] = await db
@@ -174,16 +172,13 @@ app.get("/collections/:owner/:slug/files/:hash", async (c) => {
   // Redirect to CDN
   const cdnUrl = `https://assets.underlay.org/files/${cleanHash.slice(0, 2)}/${cleanHash.slice(2, 4)}/${cleanHash}`;
   return c.redirect(cdnUrl);
-});
+}
 
 // Upload file
-app.put(
-  "/collections/:owner/:slug/files/:hash",
-  requireAuth("write"),
-  async (c) => {
-    const owner = c.req.param("owner");
-    const slug = c.req.param("slug");
-    const hash = c.req.param("hash");
+export async function putFile(c: Context<AuthEnv>) {
+    const owner = c.req.param("owner")!;
+    const slug = c.req.param("slug")!;
+    const hash = c.req.param("hash")!;
     const cleanHash = hash.replace("sha256:", "");
 
     // Check if file already exists in DB
@@ -256,7 +251,4 @@ app.put(
     });
 
     return c.json({ hash: cleanHash, size: buffer.length }, 201);
-  },
-);
-
-export const fileRoutes = app;
+}

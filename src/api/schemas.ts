@@ -1,13 +1,11 @@
-import { Hono } from 'hono';
+import type { Context } from 'hono'
 import { eq, and, sql, inArray, ilike } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
 import { requireAuth, type AuthEnv } from './auth.server.js';
 
-const app = new Hono<AuthEnv>();
-
 // --- Global schema search ---
 // GET /schemas?q=...&slug=...&label=...&schema_hash=...&limit=...&offset=...
-app.get('/schemas', async (c) => {
+export async function listSchemas(c: Context<AuthEnv>) {
   const q = c.req.query('q');
   const slugFilter = c.req.query('slug');
   const label = c.req.query('label');
@@ -170,12 +168,12 @@ app.get('/schemas', async (c) => {
     ...s,
     labels: labelsMap.get(s.id) ?? [],
   })));
-});
+}
 
 // --- Single schema by ID ---
 // GET /schemas/:id
-app.get('/schemas/:id', async (c) => {
-  const id = c.req.param('id');
+export async function getSchema(c: Context<AuthEnv>) {
+  const id = c.req.param('id')!;
 
   const [row] = await db
     .select()
@@ -218,13 +216,13 @@ app.get('/schemas/:id', async (c) => {
       collection: `${u.owner}/${u.collectionSlug}`,
     })),
   });
-});
+}
 
 // --- Collection schemas (for a specific version or latest) ---
 // GET /collections/:owner/:slug/schemas?version=N
-app.get('/collections/:owner/:slug/schemas', async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function collectionSchemas(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
   const versionParam = c.req.query('version');
   const raw = c.req.query('raw');
 
@@ -308,14 +306,14 @@ app.get('/collections/:owner/:slug/schemas', async (c) => {
       };
     }),
   });
-});
+}
 
 // --- Label management ---
 
 // Add a label to a schema
 // POST /schemas/:id/labels { label: "schema.org/Person" }
-app.post('/schemas/:id/labels', requireAuth('write'), async (c) => {
-  const id = c.req.param('id');
+export async function addLabel(c: Context<AuthEnv>) {
+  const id = c.req.param('id')!;
   const { label } = await c.req.json();
 
   if (!label || typeof label !== 'string' || label.trim().length === 0) {
@@ -349,13 +347,13 @@ app.post('/schemas/:id/labels', requireAuth('write'), async (c) => {
   } catch (err: any) {
     return c.json({ error: 'Failed to add label', statusCode: 500 }, 500);
   }
-});
+}
 
 // Remove a label from a schema
 // DELETE /schemas/:id/labels/:label
-app.delete('/schemas/:id/labels/:label', requireAuth('admin'), async (c) => {
-  const id = c.req.param('id');
-  const label = c.req.param('label');
+export async function removeLabel(c: Context<AuthEnv>) {
+  const id = c.req.param('id')!;
+  const label = c.req.param('label')!;
 
   const result = await db
     .delete(schema.schemaLabels)
@@ -367,7 +365,7 @@ app.delete('/schemas/:id/labels/:label', requireAuth('admin'), async (c) => {
   }
 
   return c.json({ status: 'deleted', schemaId: id, label });
-});
+}
 
 // --- Helpers ---
 
@@ -379,4 +377,3 @@ async function getUsageCount(schemaId: string): Promise<number> {
   return result?.count ?? 0;
 }
 
-export const schemaRoutes = app;

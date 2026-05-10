@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { Context } from 'hono'
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
 import { requireAuth, type AuthEnv } from "./auth.server.js";
@@ -175,8 +175,6 @@ function deriveSemver(
   return `v${major}.${minor}.${patch + 1}`;
 }
 
-const app = new Hono<AuthEnv>();
-
 // Lazily backfill totalBytes for versions that were created before we tracked it
 // or where the value was corrupted by a string concatenation bug
 async function backfillTotalBytes(version: { id: number; totalBytes: number; recordCount: number }) {
@@ -210,9 +208,9 @@ async function backfillTotalBytes(version: { id: number; totalBytes: number; rec
 }
 
 // List versions
-app.get("/collections/:owner/:slug/versions", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function list(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
   const limit = c.req.query("limit");
   const offset = c.req.query("offset");
 
@@ -256,12 +254,12 @@ app.get("/collections/:owner/:slug/versions", async (c) => {
     createdAt: row.createdAt,
     ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, row.number) : null,
   })));
-});
+}
 
 // Latest version
-app.get("/collections/:owner/:slug/versions/latest", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
+export async function latest(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
   const collection = await resolveCollection(owner, slug);
   if (!collection) return c.json({ error: "Collection not found", statusCode: 404 }, 404);
 
@@ -290,13 +288,13 @@ app.get("/collections/:owner/:slug/versions/latest", async (c) => {
     schemas: schemasMap,
     ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number) : null,
   });
-});
+}
 
 // Get version by number
-app.get("/collections/:owner/:slug/versions/:n", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const n = c.req.param("n");
+export async function getByNumber(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const n = c.req.param("n")!;
   const collection = await resolveCollection(owner, slug);
   if (!collection) return c.json({ error: "Collection not found", statusCode: 404 }, 404);
 
@@ -326,13 +324,13 @@ app.get("/collections/:owner/:slug/versions/:n", async (c) => {
     schemas: schemasMap,
     ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number) : null,
   });
-});
+}
 
 // Get records for a version
-app.get("/collections/:owner/:slug/versions/:n/records", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const n = c.req.param("n");
+export async function records(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const n = c.req.param("n")!;
   const type = c.req.query("type");
   const limit = c.req.query("limit");
   const offset = c.req.query("offset");
@@ -443,13 +441,13 @@ app.get("/collections/:owner/:slug/versions/:n/records", async (c) => {
       total: version.recordCount,
     },
   });
-});
+}
 
 // List files for a version
-app.get("/collections/:owner/:slug/versions/:n/files", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const n = c.req.param("n");
+export async function files(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const n = c.req.param("n")!;
   const collection = await resolveCollection(owner, slug);
   if (!collection) return c.json({ error: "Collection not found", statusCode: 404 }, 404);
 
@@ -496,13 +494,13 @@ app.get("/collections/:owner/:slug/versions/:n/files", async (c) => {
     ...f,
     references: fileRefs.get(f.hash) ?? [],
   })));
-});
+}
 
 // Get manifest for a version
-app.get("/collections/:owner/:slug/versions/:n/manifest", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const n = c.req.param("n");
+export async function manifest(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const n = c.req.param("n")!;
   const collection = await resolveCollection(owner, slug);
   if (!collection) return c.json({ error: "Collection not found", statusCode: 404 }, 404);
 
@@ -536,15 +534,12 @@ app.get("/collections/:owner/:slug/versions/:n/manifest", async (c) => {
     records: recordIds,
     files: fileHashes.map((f) => f.hash),
   });
-});
+}
 
 // Push a new version
-app.post(
-  "/collections/:owner/:slug/versions",
-  requireAuth("write"),
-  async (c) => {
-    const owner = c.req.param("owner");
-    const slug = c.req.param("slug");
+export async function push(c: Context<AuthEnv>) {
+    const owner = c.req.param("owner")!;
+    const slug = c.req.param("slug")!;
     const body = await c.req.json() as {
       base_version: number | null;
       name?: string;
@@ -893,14 +888,13 @@ app.post(
       recordCount: newRecords.length,
       fileCount: allFileHashes.length,
     }, 201);
-  },
-);
+}
 
 // Diff between versions
-app.get("/collections/:owner/:slug/versions/:n/diff", async (c) => {
-  const owner = c.req.param("owner");
-  const slug = c.req.param("slug");
-  const n = c.req.param("n");
+export async function diff(c: Context<AuthEnv>) {
+  const owner = c.req.param("owner")!;
+  const slug = c.req.param("slug")!;
+  const n = c.req.param("n")!;
   const from = c.req.query("from");
 
   const collection = await resolveCollection(owner, slug);
@@ -998,7 +992,7 @@ app.get("/collections/:owner/:slug/versions/:n/diff", async (c) => {
       filesRemoved: filesRemoved.length,
     },
   });
-});
+}
 
 async function resolveCollection(owner: string, slug: string) {
   const [result] = await db
@@ -1033,4 +1027,3 @@ async function getCollectionArkInfo(
   return { shoulder: row.shoulder, arkId: row.arkId, naan: row.naan ?? DEFAULT_NAAN };
 }
 
-export { app as versionRoutes };

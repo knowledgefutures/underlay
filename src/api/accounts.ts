@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import type { Context } from 'hono'
 import { getCookie } from 'hono/cookie';
 import { eq, and, count } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
@@ -17,10 +17,8 @@ const RESERVED_SLUGS = new Set([
   "search", "new", "create", "edit", "delete", "404", "500",
 ]);
 
-const app = new Hono<AuthEnv>();
-
 // Signup
-app.post('/accounts/signup', async (c) => {
+export async function signup(c: Context<AuthEnv>) {
   const { email, password, username, displayName } = await c.req.json();
 
   if (RESERVED_SLUGS.has(username.toLowerCase())) {
@@ -62,10 +60,10 @@ app.post('/accounts/signup', async (c) => {
   setSessionCookie(c, sessionId);
 
   return c.json({ id, slug: username, displayName }, 201);
-});
+}
 
 // Login
-app.post('/accounts/login', async (c) => {
+export async function login(c: Context<AuthEnv>) {
   const { email, password } = await c.req.json();
 
   const [account] = await db
@@ -96,20 +94,20 @@ app.post('/accounts/login', async (c) => {
   setSessionCookie(c, sessionId);
 
   return c.json({ id: account.id, slug: account.slug, displayName: account.displayName });
-});
+}
 
 // Logout
-app.post('/accounts/logout', async (c) => {
+export async function logout(c: Context<AuthEnv>) {
   const sessionId = getCookie(c, 'session');
   if (sessionId) {
     await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
   }
   clearSessionCookie(c);
   return c.json({ ok: true });
-});
+}
 
 // Get current user
-app.get('/accounts/me', requireAuth(), async (c) => {
+export async function getMe(c: Context<AuthEnv>) {
   const [account] = await db
     .select({
       id: schema.accounts.id,
@@ -146,11 +144,11 @@ app.get('/accounts/me', requireAuth(), async (c) => {
     .where(eq(schema.orgMemberships.userId, account.id));
 
   return c.json({ ...account, orgs: memberships });
-});
+}
 
 // Get account by slug (public)
-app.get('/accounts/:slug', async (c) => {
-  const slug = c.req.param('slug');
+export async function getBySlug(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const [account] = await db
     .select({
       id: schema.accounts.id,
@@ -180,10 +178,10 @@ app.get('/accounts/:slug', async (c) => {
     .limit(1);
 
   return c.json({ ...account, arkShoulder: shoulderRow?.shoulder ?? null });
-});
+}
 
 // Update own profile
-app.patch('/accounts/me', requireAuth(), async (c) => {
+export async function updateMe(c: Context<AuthEnv>) {
   const { displayName, bio, website, location, notificationPrefs } = await c.req.json();
 
   const updates: Record<string, any> = {};
@@ -198,10 +196,10 @@ app.patch('/accounts/me', requireAuth(), async (c) => {
   }
 
   return c.json({ ok: true });
-});
+}
 
 // Change email (requires current password)
-app.post('/accounts/me/email', requireAuth(), async (c) => {
+export async function updateEmail(c: Context<AuthEnv>) {
   const { newEmail, password } = await c.req.json();
 
   const [account] = await db
@@ -236,10 +234,10 @@ app.post('/accounts/me/email', requireAuth(), async (c) => {
     .where(eq(schema.accounts.id, c.get('accountId')!));
 
   return c.json({ ok: true });
-});
+}
 
 // Change password
-app.post('/accounts/me/password', requireAuth(), async (c) => {
+export async function updatePassword(c: Context<AuthEnv>) {
   const { currentPassword, newPassword } = await c.req.json();
 
   if (newPassword.length < 8) {
@@ -268,10 +266,10 @@ app.post('/accounts/me/password', requireAuth(), async (c) => {
     .where(eq(schema.accounts.id, c.get('accountId')!));
 
   return c.json({ ok: true });
-});
+}
 
 // Upload avatar
-app.post('/accounts/me/avatar', requireAuth(), async (c) => {
+export async function uploadAvatar(c: Context<AuthEnv>) {
   const body = await c.req.parseBody();
   const file = Object.values(body).find((v): v is File => v instanceof File);
   if (!file) {
@@ -300,10 +298,10 @@ app.post('/accounts/me/avatar', requireAuth(), async (c) => {
     .where(eq(schema.accounts.id, accountId));
 
   return c.json({ ok: true, avatarUrl: `${ASSETS_BASE_URL}/${key}` });
-});
+}
 
 // List sessions
-app.get('/accounts/me/sessions', requireAuth(), async (c) => {
+export async function listSessions(c: Context<AuthEnv>) {
   const sessions = await db
     .select({
       id: schema.sessions.id,
@@ -321,11 +319,11 @@ app.get('/accounts/me/sessions', requireAuth(), async (c) => {
     ...s,
     current: s.id === currentSessionId,
   })));
-});
+}
 
 // Revoke a session
-app.delete('/accounts/me/sessions/:sessionId', requireAuth(), async (c) => {
-  const sessionId = c.req.param('sessionId');
+export async function deleteSession(c: Context<AuthEnv>) {
+  const sessionId = c.req.param('sessionId')!;
 
   const [session] = await db
     .select()
@@ -339,10 +337,10 @@ app.delete('/accounts/me/sessions/:sessionId', requireAuth(), async (c) => {
 
   await db.delete(schema.sessions).where(eq(schema.sessions.id, sessionId));
   return c.json({ ok: true });
-});
+}
 
 // Delete own account
-app.delete('/accounts/me', requireAuth(), async (c) => {
+export async function deleteMe(c: Context<AuthEnv>) {
   const { password, confirmSlug } = await c.req.json();
 
   const [account] = await db
@@ -391,10 +389,10 @@ app.delete('/accounts/me', requireAuth(), async (c) => {
   await db.delete(schema.accounts).where(eq(schema.accounts.id, account.id));
   clearSessionCookie(c);
   return c.json({ ok: true });
-});
+}
 
 // --- Forgot Password ---
-app.post('/accounts/forgot-password', async (c) => {
+export async function forgotPassword(c: Context<AuthEnv>) {
   const { email } = await c.req.json();
 
   const [account] = await db
@@ -429,10 +427,10 @@ app.post('/accounts/forgot-password', async (c) => {
   });
 
   return c.json({ ok: true });
-});
+}
 
 // --- Reset Password ---
-app.post('/accounts/reset-password', async (c) => {
+export async function resetPassword(c: Context<AuthEnv>) {
   const { email, token, newPassword } = await c.req.json();
 
   if (newPassword.length < 8) {
@@ -480,10 +478,10 @@ app.post('/accounts/reset-password', async (c) => {
     .where(eq(schema.passwordResetTokens.id, validToken.id));
 
   return c.json({ ok: true });
-});
+}
 
 // Create API key
-app.post('/accounts/keys', requireAuth(), async (c) => {
+export async function createKey(c: Context<AuthEnv>) {
   const { label, scope, collectionId, expiresIn } = await c.req.json();
 
   const rawKey = `ul_${uuidv4().replace(/-/g, "")}`;
@@ -516,10 +514,10 @@ app.post('/accounts/keys', requireAuth(), async (c) => {
     collectionId: collectionId ?? null,
     expiresAt,
   }, 201);
-});
+}
 
 // List API keys
-app.get('/accounts/keys', requireAuth(), async (c) => {
+export async function listKeys(c: Context<AuthEnv>) {
   const keys = await db
     .select({
       id: schema.apiKeys.id,
@@ -534,11 +532,11 @@ app.get('/accounts/keys', requireAuth(), async (c) => {
     .from(schema.apiKeys)
     .where(eq(schema.apiKeys.accountId, c.get('accountId')!));
   return c.json(keys);
-});
+}
 
 // Delete API key
-app.delete('/accounts/keys/:id', requireAuth(), async (c) => {
-  const id = c.req.param('id');
+export async function deleteKey(c: Context<AuthEnv>) {
+  const id = c.req.param('id')!;
   const [key] = await db
     .select()
     .from(schema.apiKeys)
@@ -551,13 +549,13 @@ app.delete('/accounts/keys/:id', requireAuth(), async (c) => {
 
   await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
   return c.json({ ok: true });
-});
+}
 
 // --- Org-scoped API Keys ---
 
 // Create API key for an org
-app.post('/accounts/:slug/keys', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function createOrgKey(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const { label, scope, collectionId, expiresIn } = await c.req.json();
 
   const [org] = await db
@@ -609,11 +607,11 @@ app.post('/accounts/:slug/keys', requireAuth(), async (c) => {
     collectionId: collectionId ?? null,
     expiresAt,
   }, 201);
-});
+}
 
 // List org API keys
-app.get('/accounts/:slug/keys', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function listOrgKeys(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
 
   const [org] = await db
     .select()
@@ -647,12 +645,12 @@ app.get('/accounts/:slug/keys', requireAuth(), async (c) => {
     .where(eq(schema.apiKeys.accountId, org.id));
 
   return c.json(keys);
-});
+}
 
 // Delete org API key
-app.delete('/accounts/:slug/keys/:id', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
-  const id = c.req.param('id');
+export async function deleteOrgKey(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
+  const id = c.req.param('id')!;
 
   const [org] = await db
     .select()
@@ -682,12 +680,12 @@ app.delete('/accounts/:slug/keys/:id', requireAuth(), async (c) => {
 
   await db.delete(schema.apiKeys).where(eq(schema.apiKeys.id, id));
   return c.json({ ok: true });
-});
+}
 
 // --- Org Management ---
 
 // Create organization
-app.post('/accounts/orgs', requireAuth(), async (c) => {
+export async function createOrg(c: Context<AuthEnv>) {
   const { slug, displayName } = await c.req.json();
 
   if (RESERVED_SLUGS.has(slug.toLowerCase())) {
@@ -724,11 +722,11 @@ app.post('/accounts/orgs', requireAuth(), async (c) => {
   });
 
   return c.json({ id, slug, displayName, type: "org" }, 201);
-});
+}
 
 // List org members
-app.get('/accounts/:slug/members', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function listMembers(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
 
   const [org] = await db
     .select()
@@ -759,11 +757,11 @@ app.get('/accounts/:slug/members', requireAuth(), async (c) => {
     .where(eq(schema.orgMemberships.orgId, org.id));
 
   return c.json(members);
-});
+}
 
 // Add org member
-app.post('/accounts/:slug/members', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function addMember(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const { username, role } = await c.req.json();
 
   const [org] = await db
@@ -810,12 +808,12 @@ app.post('/accounts/:slug/members', requireAuth(), async (c) => {
   });
 
   return c.json({ ok: true, username, role }, 201);
-});
+}
 
 // Update member role
-app.patch('/accounts/:slug/members/:userId', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
-  const userId = c.req.param('userId');
+export async function updateMember(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
+  const userId = c.req.param('userId')!;
   const { role } = await c.req.json();
 
   const [org] = await db
@@ -843,12 +841,12 @@ app.patch('/accounts/:slug/members/:userId', requireAuth(), async (c) => {
     .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, userId)));
 
   return c.json({ ok: true });
-});
+}
 
 // Remove member
-app.delete('/accounts/:slug/members/:userId', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
-  const userId = c.req.param('userId');
+export async function removeMember(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
+  const userId = c.req.param('userId')!;
 
   const [org] = await db
     .select()
@@ -875,11 +873,11 @@ app.delete('/accounts/:slug/members/:userId', requireAuth(), async (c) => {
     .where(and(eq(schema.orgMemberships.orgId, org.id), eq(schema.orgMemberships.userId, userId)));
 
   return c.json({ ok: true });
-});
+}
 
 // Update org profile
-app.patch('/accounts/:slug', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function updateOrg(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const { displayName, bio, website, location } = await c.req.json();
 
   const [org] = await db
@@ -912,11 +910,11 @@ app.patch('/accounts/:slug', requireAuth(), async (c) => {
   }
 
   return c.json({ ok: true });
-});
+}
 
 // Upload org avatar
-app.post('/accounts/:slug/avatar', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function uploadOrgAvatar(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
 
   const [org] = await db
     .select()
@@ -960,13 +958,13 @@ app.post('/accounts/:slug/avatar', requireAuth(), async (c) => {
   await db.update(schema.accounts).set({ avatarUrl: `${ASSETS_BASE_URL}/${key}` }).where(eq(schema.accounts.id, org.id));
 
   return c.json({ ok: true, avatarUrl: `${ASSETS_BASE_URL}/${key}` });
-});
+}
 
 // --- Org Invitations ---
 
 // Invite user to org
-app.post('/accounts/:slug/invitations', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function createInvitation(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const { email, role } = await c.req.json();
 
   const [org] = await db
@@ -1029,11 +1027,11 @@ app.post('/accounts/:slug/invitations', requireAuth(), async (c) => {
   });
 
   return c.json({ ok: true }, 201);
-});
+}
 
 // List pending invitations for an org
-app.get('/accounts/:slug/invitations', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function listInvitations(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
 
   const [org] = await db
     .select()
@@ -1064,12 +1062,12 @@ app.get('/accounts/:slug/invitations', requireAuth(), async (c) => {
     .where(eq(schema.orgInvitations.orgId, org.id));
 
   return c.json(invitations);
-});
+}
 
 // Cancel an invitation
-app.delete('/accounts/:slug/invitations/:id', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
-  const id = c.req.param('id');
+export async function deleteInvitation(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
+  const id = c.req.param('id')!;
 
   const [org] = await db
     .select()
@@ -1091,10 +1089,10 @@ app.delete('/accounts/:slug/invitations/:id', requireAuth(), async (c) => {
 
   await db.delete(schema.orgInvitations).where(eq(schema.orgInvitations.id, id));
   return c.json({ ok: true });
-});
+}
 
 // Accept an invitation (public, token-based)
-app.post('/accounts/invitations/accept', requireAuth(), async (c) => {
+export async function acceptInvitation(c: Context<AuthEnv>) {
   const { token } = await c.req.json();
 
   const [invitation] = await db
@@ -1147,11 +1145,11 @@ app.post('/accounts/invitations/accept', requireAuth(), async (c) => {
     .limit(1);
 
   return c.json({ ok: true, orgSlug: org?.slug ?? "" });
-});
+}
 
 // Delete org
-app.delete('/accounts/:slug', requireAuth(), async (c) => {
-  const slug = c.req.param('slug');
+export async function deleteOrg(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
 
   const [org] = await db
     .select()
@@ -1175,6 +1173,5 @@ app.delete('/accounts/:slug', requireAuth(), async (c) => {
   // Cascade will handle memberships, collections, etc.
   await db.delete(schema.accounts).where(eq(schema.accounts.id, org.id));
   return c.json({ ok: true });
-});
+}
 
-export { app as accountRoutes };

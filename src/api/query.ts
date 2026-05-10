@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import type { Context } from 'hono'
 import { eq, and, desc, ilike, or, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
 import { requireAuth, type AuthEnv } from './auth.server.js';
@@ -108,13 +108,11 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
   return entry;
 }
 
-const app = new Hono<AuthEnv>();
-
 // GET /query/sqlite/:owner/:slug/:version — Download SQLite file for a version
-app.get('/query/sqlite/:owner/:slug/:version', async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
-  const version = c.req.param('version');
+export async function sqlite(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
+  const version = c.req.param('version')!;
   const versionNum = parseInt(version, 10);
   if (isNaN(versionNum)) return c.json({ error: 'Invalid version number' }, 400);
 
@@ -129,13 +127,13 @@ app.get('/query/sqlite/:owner/:slug/:version', async (c) => {
       'Cache-Control': 'public, max-age=86400',
     },
   });
-});
+}
 
 // GET /query/ddl/:owner/:slug/:version — Get DDL (schema only) for a version
-app.get('/query/ddl/:owner/:slug/:version', async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
-  const version = c.req.param('version');
+export async function ddl(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
+  const version = c.req.param('version')!;
   const versionNum = parseInt(version, 10);
   if (isNaN(versionNum)) return c.json({ error: 'Invalid version number' }, 400);
 
@@ -143,10 +141,10 @@ app.get('/query/ddl/:owner/:slug/:version', async (c) => {
   if (!result) return c.json({ error: 'Collection or version not found' }, 404);
 
   return c.json({ ddl: result.ddl });
-});
+}
 
 // POST /query/generate-sql — LLM-powered SQL generation from natural language
-app.post('/query/generate-sql', async (c) => {
+export async function generateSql(c: Context<AuthEnv>) {
   const { collections: collectionRefs, question } = await c.req.json();
 
   if (!collectionRefs?.length || !question) {
@@ -279,10 +277,10 @@ Important rules:
     console.error(`LLM generation error: ${err.message}`);
     return c.json({ error: 'Failed to generate SQL' }, 500);
   }
-});
+}
 
 // GET /query/collections/search?q=term — Search collections (public + user's private)
-app.get('/query/collections/search', async (c) => {
+export async function searchCollections(c: Context<AuthEnv>) {
   const q = c.req.query('q');
   if (!q || q.trim().length < 2) return c.json([]);
 
@@ -357,12 +355,12 @@ app.get('/query/collections/search', async (c) => {
   }
 
   return c.json(result);
-});
+}
 
 // GET /query/collections/:owner/:slug/versions — List versions for a collection
-app.get('/query/collections/:owner/:slug/versions', async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function collectionVersions(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
 
   const versions = await db
     .select({
@@ -389,6 +387,5 @@ app.get('/query/collections/:owner/:slug/versions', async (c) => {
   }
 
   return c.json(versions);
-});
+}
 
-export const queryRoutes = app;

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { Context } from 'hono'
 import { streamSSE } from "hono/streaming";
 import { type AuthEnv } from "./auth.server.js";
 import { getMirrorConfig } from "../lib/mirror-config.js";
@@ -16,32 +16,21 @@ import {
   type SyncProgressEvent,
 } from "../lib/mirror-sync.js";
 
-const app = new Hono<AuthEnv>();
-
-// All admin routes require mirror mode to be enabled
-app.use("/admin/*", async (c, next) => {
-  const config = getMirrorConfig();
-  if (!config.enabled) {
-    return c.json({ error: "Not found", statusCode: 404 }, 404);
-  }
-  await next();
-});
-
 // Get mirror status
-app.get("/admin/mirror/status", async (c) => {
+export async function mirrorStatus(c: Context<AuthEnv>) {
   const status = await getMirrorStatus();
   return c.json(status);
-});
+}
 
 // Test upstream connection
-app.post("/admin/mirror/test", async (c) => {
+export async function mirrorTest(c: Context<AuthEnv>) {
   const config = getMirrorConfig();
   const result = await testUpstreamConnection(config.upstream);
   return c.json(result);
-});
+}
 
 // Trigger a sync manually (fire-and-forget, client uses SSE for progress)
-app.post("/admin/mirror/sync", async (c) => {
+export async function mirrorSync(c: Context<AuthEnv>) {
   if (isSyncRunning()) {
     return c.json({ started: false, error: "A sync is already running" });
   }
@@ -50,10 +39,10 @@ app.post("/admin/mirror/sync", async (c) => {
     console.error("[mirror-sync] Unhandled sync error:", err);
   });
   return c.json({ started: true });
-});
+}
 
 // Stop a running sync (also cleans up stale DB rows from crashed processes)
-app.post("/admin/mirror/sync/stop", async (c) => {
+export async function mirrorSyncStop(c: Context<AuthEnv>) {
   const stopped = stopSync();
   if (!stopped) {
     // No active sync in this process — clean up stale DB rows
@@ -61,10 +50,10 @@ app.post("/admin/mirror/sync/stop", async (c) => {
     return c.json({ stopped: false, cleaned });
   }
   return c.json({ stopped: true });
-});
+}
 
 // SSE endpoint for live sync progress (replays buffered logs on connect)
-app.get("/admin/mirror/sync/progress", (c) => {
+export async function mirrorSyncProgress(c: Context<AuthEnv>) {
   return streamSSE(c, async (stream) => {
     // Replay buffered logs so reconnects/refreshes don't lose history
     const buffered = getActiveRunLogs();
@@ -109,24 +98,23 @@ app.get("/admin/mirror/sync/progress", (c) => {
       stream.onAbort(() => resolve());
     });
   });
-});
+}
 
 // Get current sync running state (for page refresh reconnection)
-app.get("/admin/mirror/sync/active", async (c) => {
+export async function mirrorSyncActive(c: Context<AuthEnv>) {
   return c.json({
     running: isSyncRunning(),
     runId: getActiveRunId(),
     logs: getActiveRunLogs(),
   });
-});
+}
 
 // Sync history
-app.get("/admin/mirror/history", async (c) => {
+export async function mirrorHistory(c: Context<AuthEnv>) {
   const limit = Math.min(
     Number(c.req.query("limit")) || 20,
     100,
   );
   return c.json(await getSyncHistory(limit));
-});
+}
 
-export { app as adminRoutes };

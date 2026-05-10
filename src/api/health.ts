@@ -1,9 +1,5 @@
-import { Hono } from 'hono'
+import type { Context } from 'hono'
 
-const app = new Hono()
-
-app.get('/health', (c) => {
+export async function check(c: Context) {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
-
-export { app as healthRoutes }
+}

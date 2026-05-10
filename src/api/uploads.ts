@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import type { Context } from 'hono'
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
 import { requireAuth, type AuthEnv } from "./auth.server.js";
@@ -106,15 +106,10 @@ async function resolveCollection(owner: string, slug: string) {
   return result ?? null;
 }
 
-const app = new Hono<AuthEnv>();
-
 // --- Start a chunked upload session ---
-app.post(
-  "/collections/:owner/:slug/versions/upload",
-  requireAuth("write"),
-  async (c) => {
-    const owner = c.req.param("owner");
-    const slug = c.req.param("slug");
+export async function startSession(c: Context<AuthEnv>) {
+    const owner = c.req.param("owner")!;
+    const slug = c.req.param("slug")!;
     const body = await c.req.json<{
       base_version: number | null;
       message?: string;
@@ -172,17 +167,13 @@ app.post(
       sessionId: session!.id,
       expiresAt: expiresAt.toISOString(),
     }, 201);
-  },
-);
+}
 
 // --- Append a batch of changes to a session ---
-app.put(
-  "/collections/:owner/:slug/versions/upload/:sessionId",
-  requireAuth("write"),
-  async (c) => {
-    const owner = c.req.param("owner");
-    const slug = c.req.param("slug");
-    const sessionId = c.req.param("sessionId");
+export async function appendBatch(c: Context<AuthEnv>) {
+    const owner = c.req.param("owner")!;
+    const slug = c.req.param("slug")!;
+    const sessionId = c.req.param("sessionId")!;
     const body = await c.req.json<{
       changes: {
         added?: { id: string; type: string; data: unknown; private?: boolean }[];
@@ -315,15 +306,11 @@ app.put(
       received: { added: addedCount, updated: updatedCount, removed: removedCount },
       totalStaged: countResult?.count ?? 0,
     });
-  },
-);
+}
 
 // --- Get session status ---
-app.get(
-  "/collections/:owner/:slug/versions/upload/:sessionId",
-  requireAuth("read"),
-  async (c) => {
-    const sessionId = c.req.param("sessionId");
+export async function getSession(c: Context<AuthEnv>) {
+    const sessionId = c.req.param("sessionId")!;
 
     const [session] = await db
       .select()
@@ -346,17 +333,13 @@ app.get(
       expiresAt: session.expiresAt,
       createdAt: session.createdAt,
     });
-  },
-);
+}
 
 // --- Finalize: build the version from staged records ---
-app.post(
-  "/collections/:owner/:slug/versions/upload/:sessionId/finalize",
-  requireAuth("write"),
-  async (c) => {
-    const owner = c.req.param("owner");
-    const slug = c.req.param("slug");
-    const sessionId = c.req.param("sessionId");
+export async function finalize(c: Context<AuthEnv>) {
+    const owner = c.req.param("owner")!;
+    const slug = c.req.param("slug")!;
+    const sessionId = c.req.param("sessionId")!;
 
     // Load and validate session
     const [session] = await db
@@ -872,15 +855,11 @@ app.post(
         .where(eq(schema.uploadSessions.id, sessionId));
       throw err;
     }
-  },
-);
+}
 
 // --- Abort/cancel a session ---
-app.delete(
-  "/collections/:owner/:slug/versions/upload/:sessionId",
-  requireAuth("write"),
-  async (c) => {
-    const sessionId = c.req.param("sessionId");
+export async function cancelSession(c: Context<AuthEnv>) {
+    const sessionId = c.req.param("sessionId")!;
 
     const [session] = await db
       .select()
@@ -904,7 +883,5 @@ app.delete(
       .where(eq(schema.uploadSessions.id, sessionId));
 
     return c.body(null, 204);
-  },
-);
+}
 
-export const uploadRoutes = app;

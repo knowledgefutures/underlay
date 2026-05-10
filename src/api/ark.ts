@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import type { Context } from 'hono'
 import { eq, and, desc } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
 import { requireAuth, type AuthEnv } from './auth.server.js';
@@ -12,11 +12,9 @@ import {
   getOrMintShoulder,
 } from '../lib/ark.js';
 
-const app = new Hono<AuthEnv>();
-
 // --- Resolution ---
 
-app.get('/ark/resolve', async (c) => {
+export async function resolve(c: Context<AuthEnv>) {
   const path = c.req.query('path');
   if (!path) return c.json({ error: 'Missing path' }, 400);
 
@@ -281,13 +279,13 @@ app.get('/ark/resolve', async (c) => {
       arkUrl,
     },
   });
-});
+}
 
 // --- Collection ARK settings ---
 
-app.get('/collections/:owner/:slug/ark', requireAuth('read'), async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function getArk(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
 
   const [coll] = await db
     .select({
@@ -328,11 +326,11 @@ app.get('/collections/:owner/:slug/ark', requireAuth('read'), async (c) => {
 
   const arkUrl = buildArkUrl(naan, arkRow.shoulder, arkRow.arkId);
   return c.json({ enabled: arkRow.enabled, customUrl: arkRow.customUrl, arkUrl, shoulder: arkRow.shoulder, arkId: arkRow.arkId });
-});
+}
 
-app.patch('/collections/:owner/:slug/ark', requireAuth('write'), async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function updateArk(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
   const { enabled, customUrl } = await c.req.json();
 
   const [coll] = await db
@@ -375,13 +373,13 @@ app.patch('/collections/:owner/:slug/ark', requireAuth('write'), async (c) => {
   }
 
   return c.json({ ok: true });
-});
+}
 
 // --- Record type ARK settings ---
 
-app.get('/collections/:owner/:slug/ark/record-types', requireAuth('read'), async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function getArkRecordTypes(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
 
   const [coll] = await db
     .select({ id: schema.collections.id, accountId: schema.collections.accountId })
@@ -403,11 +401,11 @@ app.get('/collections/:owner/:slug/ark/record-types', requireAuth('read'), async
     .where(eq(schema.arkRecordTypes.collectionId, coll.id));
 
   return c.json(rows);
-});
+}
 
-app.patch('/collections/:owner/:slug/ark/record-types', requireAuth('write'), async (c) => {
-  const owner = c.req.param('owner');
-  const slug = c.req.param('slug');
+export async function updateArkRecordTypes(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!;
+  const slug = c.req.param('slug')!;
   const { recordType, redirectUrlField } = await c.req.json();
 
   if (!recordType) return c.json({ error: 'recordType required' }, 400);
@@ -443,12 +441,12 @@ app.patch('/collections/:owner/:slug/ark/record-types', requireAuth('write'), as
   }
 
   return c.json({ ok: true });
-});
+}
 
 // --- Org ARK NAAN ---
 
-app.patch('/accounts/:slug/ark', requireAuth('admin'), async (c) => {
-  const slug = c.req.param('slug');
+export async function updateAccountArk(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!;
   const { naan } = await c.req.json();
 
   if (naan !== null && !/^\d{1,16}$/.test(naan)) {
@@ -483,7 +481,7 @@ app.patch('/accounts/:slug/ark', requireAuth('admin'), async (c) => {
 
   await db.update(schema.accounts).set({ arkNaan: naan }).where(eq(schema.accounts.id, account.id));
   return c.json({ ok: true });
-});
+}
 
 // --- Helpers ---
 
@@ -511,4 +509,3 @@ async function checkCollectionAccess(ownerAccountId: string, requestAccountId: s
   return false;
 }
 
-export const arkRoutes = app;
