@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import DocsLayout from '~/components/DocsLayout'
 
 const signupCode = `curl -X POST https://underlay.org/api/accounts/signup \\
@@ -138,9 +139,9 @@ export default function DocsQuickstart() {
 
       <h2>Next steps</h2>
       <ul>
-        <li><a href="/docs/concepts">Core concepts</a> — understand the data model</li>
-        <li><a href="/docs/api/versions">Versions API</a> — full reference for push/pull</li>
-        <li><a href="/docs/api/files">Files API</a> — content-addressed file storage</li>
+        <li><Link to="/docs/concepts">Core concepts</Link> — understand the data model</li>
+        <li><Link to="/docs/api/versions">Versions API</Link> — full reference for push/pull</li>
+        <li><Link to="/docs/api/files">Files API</Link> — content-addressed file storage</li>
       </ul>
     </DocsLayout>
   )

@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import DocsLayout from '~/components/DocsLayout'
 
 const pushExample = `{
@@ -73,7 +74,7 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
 export default function DocsIntegration() {
   return (
     <DocsLayout title="Integration Guide">
-      <p>Everything a developer or LLM needs to push data to the registry. No SDK required. HTTPS and JSON. For a machine-readable version, see <a href="/.well-known/ai.txt">ai.txt</a>.</p>
+      <p>Everything a developer or LLM needs to push data to the registry. No SDK required. HTTPS and JSON. For a machine-readable version, see <Link to="/.well-known/ai.txt">ai.txt</Link>.</p>
 
       <h2>What is Underlay?</h2>
       <p>Underlay is a versioned registry for structured knowledge. Apps push snapshots of their data; Underlay preserves them, deduplicates files, and serves them via a stable API. Think npm for data, or Docker Hub for structured content.</p>
@@ -87,7 +88,7 @@ export default function DocsIntegration() {
       </ul>
 
       <h2>Authentication</h2>
-      <p>Create an API key at <a href="/settings/keys">/settings/keys</a> or via the API. Pass it as:</p>
+      <p>Create an API key at <Link to="/settings/keys">/settings/keys</Link> or via the API. Pass it as:</p>
       <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{'Authorization: Bearer ul_your_key_here'}</code></pre>
       <p>Keys are scoped: <code>read</code>, <code>write</code>, or <code>admin</code>. Use <code>write</code> for pushing data.</p>
 
@@ -143,7 +144,7 @@ export default function DocsIntegration() {
       <p>Private content is stored in the same version — the owner always sees everything. Public readers see only the filtered view. The public content hash excludes private data, so verifiers can confirm integrity of the public subset.</p>
 
       <h2>API Reference</h2>
-      <p>Full API docs are at <a href="/docs">/docs</a>. The key endpoints:</p>
+      <p>Full API docs are at <Link to="/docs">/docs</Link>. The key endpoints:</p>
       <table>
         <tbody>
           <tr><td><code>POST .../versions</code></td><td>Push a new version (up to 100MB)</td></tr>
@@ -162,7 +163,7 @@ export default function DocsIntegration() {
         <li><strong>Append batches:</strong> <code>PUT .../versions/upload/:sessionId</code> with up to 10,000 records per batch. Repeat as needed.</li>
         <li><strong>Finalize:</strong> <code>POST .../versions/upload/:sessionId/finalize</code> to validate and create the version.</li>
       </ol>
-      <p>Sessions expire after 1 hour. If the same record ID appears in multiple batches, last write wins. See the <a href="/docs/api/versions">Versions API docs</a> for full details.</p>
+      <p>Sessions expire after 1 hour. If the same record ID appears in multiple batches, last write wins. See the <Link to="/docs/api/versions">Versions API docs</Link> for full details.</p>
 
       <h2>Error Handling</h2>
       <ul>

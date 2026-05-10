@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 
@@ -99,7 +100,7 @@ export default function SignupPage() {
         </form>
 
         <p className="text-sm text-ink-muted mt-4">
-          Already have an account? <a href="/login" className="text-link underline">Log in</a>
+          Already have an account? <Link to="/login" className="text-link underline">Log in</Link>
         </p>
       </div>
     </BaseLayout>

@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, type FormEvent } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
@@ -172,9 +173,9 @@ export default function Settings() {
         <h1 className="text-xl font-semibold tracking-tight mb-6">Settings</h1>
 
         <nav className="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-          <a href="/settings" className="text-ink font-medium">Account</a>
-          <a href="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</a>
-          <a href="/settings/sessions" className="text-ink-muted hover:text-ink">Sessions</a>
+          <Link to="/settings" className="text-ink font-medium">Account</Link>
+          <Link to="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</Link>
+          <Link to="/settings/sessions" className="text-ink-muted hover:text-ink">Sessions</Link>
         </nav>
 
         {success && <p className="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}
@@ -195,7 +196,7 @@ export default function Settings() {
             <div>
               <p className="text-sm font-medium">{me.displayName}</p>
               <p className="text-xs text-ink-muted font-mono">@{me.slug}</p>
-              <a href="/settings/avatar" className="text-xs text-link hover:underline mt-1 inline-block">Change avatar</a>
+              <Link to="/settings/avatar" className="text-xs text-link hover:underline mt-1 inline-block">Change avatar</Link>
             </div>
           </div>
 

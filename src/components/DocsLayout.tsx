@@ -1,4 +1,4 @@
-import { useLocation } from 'react-router'
+import { Link, useLocation } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import DocsSearch from '~/components/DocsSearch'
 
@@ -47,12 +47,12 @@ export default function DocsLayout({ children, title }: { children: React.ReactN
                   <ul>
                     {group.items.map((item) => (
                       <li key={item.href}>
-                        <a
-                          href={item.href}
+                        <Link
+                          to={item.href}
                           className={`docs-nav-link${currentPath === item.href ? ' active' : ''}`}
                         >
                           {item.label}
-                        </a>
+                        </Link>
                       </li>
                     ))}
                   </ul>

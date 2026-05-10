@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 
 const posts: { title: string; subtitle: string; date: string; url: string }[] = [
@@ -49,7 +50,7 @@ export default function Blog() {
                 {fmtDate(post.date)}
               </time>
               <div>
-                <a href={post.url} className="text-sm font-semibold text-link underline">{post.title}</a>
+                <Link to={post.url} className="text-sm font-semibold text-link underline">{post.title}</Link>
                 <p className="text-xs text-ink-muted mt-0.5">{post.subtitle}</p>
               </div>
             </li>

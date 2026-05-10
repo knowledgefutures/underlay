@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 
@@ -21,7 +22,7 @@ export default function Home() {
                 {mirrorConfig.nodeName}
               </h1>
               <p className="text-ink-muted text-sm leading-relaxed mb-2">
-                This is a mirror of <a href={mirrorConfig.upstream} className="underline hover:text-ink">{mirrorConfig.upstream.replace(/^https?:\/\//, '')}</a>.
+                This is a mirror of <Link to={mirrorConfig.upstream} className="underline hover:text-ink">{mirrorConfig.upstream.replace(/^https?:\/\//, '')}</Link>.
                 It maintains a verified copy of all public collections for long-term preservation and local access.
               </p>
               <p className="text-ink-muted text-sm leading-relaxed mb-6">
@@ -29,18 +30,16 @@ export default function Home() {
                 If the primary server becomes unavailable, this mirror serves as an independent, complete archive.
               </p>
               <div className="flex gap-3">
-                <a
-                  href="/explore"
+                <Link to="/explore"
                   className="inline-block bg-ink text-parchment visited:text-parchment px-4 py-2 text-sm font-medium hover:bg-ink-light transition-colors"
                 >
                   Explore collections
-                </a>
-                <a
-                  href="/schemas"
+                </Link>
+                <Link to="/schemas"
                   className="inline-block border border-ink px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors visited:text-ink"
                 >
                   Browse schemas
-                </a>
+                </Link>
               </div>
             </div>
           </section>
@@ -109,18 +108,16 @@ export default function Home() {
               The structure is the infrastructure.
             </p>
             <div className="flex gap-3">
-              <a
-                href="/docs"
+              <Link to="/docs"
                 className="inline-block bg-ink text-parchment visited:text-parchment px-4 py-2 text-sm font-medium hover:bg-ink-light transition-colors"
               >
                 Read the docs
-              </a>
-              <a
-                href="/explore"
+              </Link>
+              <Link to="/explore"
                 className="inline-block border border-ink px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors visited:text-ink"
               >
                 Explore collections
-              </a>
+              </Link>
             </div>
           </div>
         </section>

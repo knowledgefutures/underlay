@@ -1,4 +1,3 @@
-import type { RouteConfig } from '~/routes'
 import { getSessionUser } from '~/lib/auth.server'
 import { getMirrorConfig } from '~/lib/mirror-config'
 
@@ -30,7 +29,7 @@ async function requireUser(request: Request): Promise<{ user: any; redirect?: st
 
 const loaders: Record<string, LoaderFn> = {
   // --- Public pages ---
-  'home': async ({ request }) => {
+  '/': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -40,7 +39,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'explore': async ({ request }) => {
+  '/explore': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -48,7 +47,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'query': async ({ request }) => {
+  '/query': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -56,7 +55,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'schemas': async ({ request }) => {
+  '/schemas': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -64,7 +63,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'schema-detail': async ({ params, request }) => {
+  '/schemas/:id': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig, schemaId: params['id'] },
@@ -73,7 +72,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   // --- Auth pages ---
-  'login': async ({ request }) => {
+  '/login': async ({ request }) => {
     const user = await getSessionUser(request)
     if (user) return { data: {}, redirect: '/dashboard' }
     return {
@@ -82,7 +81,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'signup': async ({ request }) => {
+  '/signup': async ({ request }) => {
     const user = await getSessionUser(request)
     if (user) return { data: {}, redirect: '/dashboard' }
     return {
@@ -91,18 +90,18 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'logout': async () => {
+  '/logout': async () => {
     return { data: {}, redirect: '/login' }
   },
 
-  'forgot-password': async () => {
+  '/forgot-password': async () => {
     return {
       data: { currentUser: null, mirrorConfig },
       title: 'Forgot password — Underlay',
     }
   },
 
-  'reset-password': async () => {
+  '/reset-password': async () => {
     return {
       data: { currentUser: null, mirrorConfig },
       title: 'Reset password — Underlay',
@@ -110,7 +109,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   // --- Dashboard/Settings ---
-  'dashboard': async ({ request }) => {
+  '/dashboard': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -119,7 +118,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'settings': async ({ request }) => {
+  '/settings': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -128,7 +127,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'settings-keys': async ({ request }) => {
+  '/settings/keys': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -137,7 +136,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'settings-sessions': async ({ request }) => {
+  '/settings/sessions': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -146,7 +145,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'settings-avatar': async ({ request }) => {
+  '/settings/avatar': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -155,7 +154,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'invitations-accept': async ({ request }) => {
+  '/invitations/accept': async ({ request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -164,7 +163,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'admin-mirror': async ({ request }) => {
+  '/admin/mirror': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -173,7 +172,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   // --- Blog ---
-  'blog': async ({ request }) => {
+  '/blog': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -181,7 +180,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'blog-post': async ({ params, request }) => {
+  '/blog/:slug': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig, slug: params['slug'] },
@@ -190,7 +189,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   // --- Docs ---
-  'docs': async ({ request }) => {
+  '/docs': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -198,7 +197,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-concepts': async ({ request }) => {
+  '/docs/concepts': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -206,7 +205,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-quickstart': async ({ request }) => {
+  '/docs/quickstart': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -214,7 +213,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-integration': async ({ request }) => {
+  '/docs/integration': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -222,7 +221,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-self-host': async ({ request }) => {
+  '/docs/self-host': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -230,7 +229,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-api': async ({ request }) => {
+  '/docs/api': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -238,7 +237,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-api-accounts': async ({ request }) => {
+  '/docs/api/accounts': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -246,7 +245,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-api-collections': async ({ request }) => {
+  '/docs/api/collections': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -254,7 +253,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-api-versions': async ({ request }) => {
+  '/docs/api/versions': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -262,7 +261,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'docs-api-files': async ({ request }) => {
+  '/docs/api/files': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig },
@@ -271,7 +270,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   // --- Dynamic owner/collection ---
-  'owner': async ({ params, request }) => {
+  '/:owner': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: { currentUser: user, mirrorConfig, owner: params['owner'] },
@@ -279,7 +278,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'owner-settings': async ({ params, request }) => {
+  '/:owner/settings': async ({ params, request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -288,7 +287,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'owner-settings-keys': async ({ params, request }) => {
+  '/:owner/settings/keys': async ({ params, request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -297,7 +296,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'owner-settings-members': async ({ params, request }) => {
+  '/:owner/settings/members': async ({ params, request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -306,7 +305,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection': async ({ params, request }) => {
+  '/:owner/:collection': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: {
@@ -319,7 +318,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection-versions': async ({ params, request }) => {
+  '/:owner/:collection/versions': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: {
@@ -332,7 +331,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection-version': async ({ params, request }) => {
+  '/:owner/:collection/v/:n': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: {
@@ -346,7 +345,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection-schemas': async ({ params, request }) => {
+  '/:owner/:collection/schemas': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: {
@@ -359,7 +358,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection-diff': async ({ params, request }) => {
+  '/:owner/:collection/diff': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
       data: {
@@ -372,7 +371,7 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  'collection-settings': async ({ params, request }) => {
+  '/:owner/:collection/settings': async ({ params, request }) => {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
@@ -388,12 +387,11 @@ const loaders: Record<string, LoaderFn> = {
 }
 
 export async function runLoaders(
-  matchedRoutes: { route: RouteConfig; params: Record<string, string> }[],
+  matchedRoutes: { path: string; params: Record<string, string> }[],
   request: Request,
 ): Promise<LoaderResult> {
-  // Run the first matched route's loader
-  for (const { route, params } of matchedRoutes) {
-    const loader = loaders[route.id]
+  for (const { path, params } of matchedRoutes) {
+    const loader = loaders[path]
     if (loader) {
       return loader({ params, request })
     }

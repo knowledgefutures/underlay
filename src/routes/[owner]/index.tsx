@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 
@@ -80,12 +80,12 @@ export default function OwnerPage() {
             <div className="flex items-center justify-between">
               <h1 className="text-xl font-semibold tracking-tight">{account.displayName}</h1>
               {isMember && (
-                <a
-                  href={`/${owner}/settings`}
+                <Link
+                  to={`/${owner}/settings`}
                   className="text-sm text-ink-muted hover:text-ink transition-colors"
                 >
                   Settings
-                </a>
+                </Link>
               )}
             </div>
             <div className="flex items-center gap-3 mt-1">
@@ -100,14 +100,14 @@ export default function OwnerPage() {
             <div className="flex items-center gap-4 mt-2 text-xs text-ink-muted flex-wrap">
               {account.location && <span>{account.location}</span>}
               {account.website && (
-                <a
-                  href={account.website}
+                <Link
+                  to={account.website}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-link hover:underline"
                 >
                   {account.website.replace(/^https?:\/\//, '')}
-                </a>
+                </Link>
               )}
               <span>
                 Joined{' '}
@@ -176,9 +176,9 @@ export default function OwnerPage() {
               ) : (
                 <div className="space-y-2">
                   {collections.map((c: any) => (
-                    <a
+                    <Link
                       key={c.id}
-                      href={`/${owner}/${c.slug}`}
+                      to={`/${owner}/${c.slug}`}
                       className="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors"
                     >
                       <div className="flex items-center gap-2 mb-1">
@@ -192,7 +192,7 @@ export default function OwnerPage() {
                           {c.description}
                         </p>
                       )}
-                    </a>
+                    </Link>
                   ))}
                 </div>
               )}
@@ -205,9 +205,9 @@ export default function OwnerPage() {
               </h2>
               <div className="space-y-1.5">
                 {members.map((m: any) => (
-                  <a
+                  <Link
                     key={m.slug}
-                    href={`/${m.slug}`}
+                    to={`/${m.slug}`}
                     className="flex items-center gap-2 px-2 py-1.5 hover:bg-parchment-dark transition-colors rounded"
                     title={m.displayName}
                   >
@@ -215,7 +215,7 @@ export default function OwnerPage() {
                     <span className="text-[10px] text-ink-muted border border-rule px-1 py-0.5">
                       {m.role}
                     </span>
-                  </a>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -231,9 +231,9 @@ export default function OwnerPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {collections.map((c: any) => (
-                  <a
+                  <Link
                     key={c.id}
-                    href={`/${owner}/${c.slug}`}
+                    to={`/${owner}/${c.slug}`}
                     className="block border border-rule p-4 rounded hover:bg-parchment-dark transition-colors"
                   >
                     <div className="flex items-center gap-2 mb-1">
@@ -245,7 +245,7 @@ export default function OwnerPage() {
                     {c.description && (
                       <p className="text-xs text-ink-muted mt-1 line-clamp-2">{c.description}</p>
                     )}
-                  </a>
+                  </Link>
                 ))}
               </div>
             )}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 
@@ -26,13 +26,13 @@ function CollectionNav({
     <>
       <div className="flex items-center justify-between mb-2">
         <nav className="flex items-center gap-1.5 text-lg">
-          <a href={`/${owner}`} className="text-link hover:underline">
+          <Link to={`/${owner}`} className="text-link hover:underline">
             {owner}
-          </a>
+          </Link>
           <span className="text-ink-muted">/</span>
-          <a href={`/${owner}/${collection}`} className="font-semibold hover:underline">
+          <Link to={`/${owner}/${collection}`} className="font-semibold hover:underline">
             {collection}
-          </a>
+          </Link>
           {isPublic !== undefined && (
             <span className="border border-rule text-xs text-ink-muted px-1.5 py-0.5 ml-2">
               {isPublic ? 'public' : 'private'}
@@ -41,32 +41,32 @@ function CollectionNav({
         </nav>
       </div>
       <div className="flex items-center gap-0 border-b border-rule mb-6">
-        <a
-          href={`/${owner}/${collection}`}
+        <Link
+          to={`/${owner}/${collection}`}
           className={active === 'overview' ? activeClass : inactiveClass}
         >
           Overview
-        </a>
-        <a
-          href={`/${owner}/${collection}/versions`}
+        </Link>
+        <Link
+          to={`/${owner}/${collection}/versions`}
           className={active === 'versions' && !versionLabel ? activeClass : inactiveClass}
         >
           Versions
-        </a>
+        </Link>
         {versionLabel && <span className={activeClass}>{versionLabel}</span>}
-        <a
-          href={`/${owner}/${collection}/schemas`}
+        <Link
+          to={`/${owner}/${collection}/schemas`}
           className={active === 'schemas' ? activeClass : inactiveClass}
         >
           Schemas
-        </a>
+        </Link>
         {isOwner && (
-          <a
-            href={`/${owner}/${collection}/settings`}
+          <Link
+            to={`/${owner}/${collection}/settings`}
             className={`${active === 'settings' ? activeClass : inactiveClass} ml-auto`}
           >
             Settings
-          </a>
+          </Link>
         )}
       </div>
     </>
@@ -160,12 +160,12 @@ export default function CollectionPage() {
             </svg>
             <span>
               Mirrored from{' '}
-              <a
-                href={`${mirrorConfig.upstream}/${owner}/${collection}`}
+              <Link
+                to={`${mirrorConfig.upstream}/${owner}/${collection}`}
                 className="underline hover:text-ink"
               >
                 {mirrorConfig.upstream.replace(/^https?:\/\//, '')}
-              </a>
+              </Link>
             </span>
           </div>
         )}
@@ -178,12 +178,12 @@ export default function CollectionPage() {
             {data.latestVersion && (
               <div className="flex items-center justify-between border border-rule rounded px-4 py-2.5 bg-parchment-dark mb-6">
                 <div className="flex items-center gap-3 text-sm">
-                  <a
-                    href={`/${owner}/${collection}/v/${data.latestVersion.number}`}
+                  <Link
+                    to={`/${owner}/${collection}/v/${data.latestVersion.number}`}
                     className="font-medium text-link hover:underline"
                   >
                     {data.latestVersion.semver}
-                  </a>
+                  </Link>
                   <span className="text-ink-muted">·</span>
                   <span className="text-ink-muted">
                     {data.latestVersion.recordCount.toLocaleString()} records
@@ -205,8 +205,8 @@ export default function CollectionPage() {
                       year: 'numeric',
                     })}
                   </span>
-                  <a
-                    href={`/${owner}/${collection}/versions`}
+                  <Link
+                    to={`/${owner}/${collection}/versions`}
                     className="flex items-center gap-1 text-xs text-ink-muted hover:text-ink transition-colors"
                     title="Version history"
                   >
@@ -224,7 +224,7 @@ export default function CollectionPage() {
                       />
                     </svg>
                     <span>{totalVersions}</span>
-                  </a>
+                  </Link>
                 </div>
               </div>
             )}
@@ -233,9 +233,9 @@ export default function CollectionPage() {
             {allTypes.length > 0 && (
               <div className="border border-rule rounded overflow-hidden mb-6">
                 {allTypes.map((t: any, i: number) => (
-                  <a
+                  <Link
                     key={t.type}
-                    href={`/${owner}/${collection}/v/${data.latestVersion.number}?type=${t.type}`}
+                    to={`/${owner}/${collection}/v/${data.latestVersion.number}?type=${t.type}`}
                     className={`flex items-center justify-between px-4 py-2.5 text-sm hover:bg-parchment-dark/50 transition-colors ${i < allTypes.length - 1 ? 'border-b border-rule' : ''}`}
                   >
                     <div className="flex items-center gap-2.5">
@@ -257,7 +257,7 @@ export default function CollectionPage() {
                     <span className="text-xs text-ink-muted">
                       {t.count.toLocaleString()} records
                     </span>
-                  </a>
+                  </Link>
                 ))}
               </div>
             )}
@@ -292,9 +292,9 @@ export default function CollectionPage() {
               </p>
               <div className="mt-2 text-xs text-ink-muted">
                 by{' '}
-                <a href={`/${data.ownerSlug}`} className="text-link hover:underline">
+                <Link to={`/${data.ownerSlug}`} className="text-link hover:underline">
                   {data.ownerName}
-                </a>
+                </Link>
               </div>
             </div>
 
@@ -405,12 +405,12 @@ export default function CollectionPage() {
                   <code className="block text-[11px] text-ink-muted break-all bg-parchment-dark px-2 py-1 rounded">{`GET /api/collections/${owner}/${collection}/versions`}</code>
                 </div>
                 {data.latestVersion && (
-                  <a
-                    href={`/api/collections/${owner}/${collection}/export`}
+                  <Link
+                    to={`/api/collections/${owner}/${collection}/export`}
                     className="inline-block text-link hover:underline"
                   >
                     Download .tar.gz
-                  </a>
+                  </Link>
                 )}
               </div>
             </div>
@@ -421,12 +421,12 @@ export default function CollectionPage() {
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-2">
                   ARK Identifier
                 </h3>
-                <a
-                  href={collectionArkPath}
+                <Link
+                  to={collectionArkPath}
                   className="block text-[11px] font-mono text-link hover:underline break-all bg-parchment-dark px-2 py-1 rounded"
                 >
                   {collectionArkPath.slice(1)}
-                </a>
+                </Link>
               </div>
             )}
           </aside>

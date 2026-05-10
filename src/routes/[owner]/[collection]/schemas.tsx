@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 import { CollectionNav } from '.'
@@ -186,13 +186,13 @@ export default function CollectionSchemasPage() {
                           ))}
                         </div>
                       )}
-                      <a
-                        href={`/schemas/${s.schemaId}`}
+                      <Link
+                        to={`/schemas/${s.schemaId}`}
                         className="text-[11px] text-link hover:underline"
                         title="View global schema detail"
                       >
                         {s.schemaHash.slice(0, 10)}…
-                      </a>
+                      </Link>
                     </div>
                   </div>
 

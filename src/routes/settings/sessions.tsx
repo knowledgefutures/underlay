@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
@@ -58,9 +59,9 @@ export default function SettingsSessions() {
         <h1 className="text-xl font-semibold tracking-tight mb-6">Settings</h1>
 
         <nav className="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-          <a href="/settings" className="text-ink-muted hover:text-ink">Account</a>
-          <a href="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</a>
-          <a href="/settings/sessions" className="text-ink font-medium">Sessions</a>
+          <Link to="/settings" className="text-ink-muted hover:text-ink">Account</Link>
+          <Link to="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</Link>
+          <Link to="/settings/sessions" className="text-ink font-medium">Sessions</Link>
         </nav>
 
         {success && <p className="text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 mb-4">{success}</p>}

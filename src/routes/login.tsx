@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 
@@ -79,9 +80,9 @@ export default function LoginPage() {
 
         <div className="flex items-center justify-between mt-4">
           <p className="text-sm text-ink-muted">
-            Don't have an account? <a href="/signup" className="text-link underline">Sign up</a>
+            Don't have an account? <Link to="/signup" className="text-link underline">Sign up</Link>
           </p>
-          <a href="/forgot-password" className="text-sm text-link hover:underline">Forgot password?</a>
+          <Link to="/forgot-password" className="text-sm text-link hover:underline">Forgot password?</Link>
         </div>
       </div>
     </BaseLayout>

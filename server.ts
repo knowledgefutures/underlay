@@ -44,11 +44,6 @@ app.route('/api', adminRoutes)
 app.route('/api', queryRoutes)
 app.route('/api', arkRoutes)
 
-// API 404 catch-all
-app.all('/api/*', (c) => {
-  return c.json({ error: 'API route not found', statusCode: 404 }, 404)
-})
-
 // --- Blog content API (serves rendered markdown) ---
 app.get('/api/blog/:slug', (c) => {
   const slug = c.req.param('slug')
@@ -62,6 +57,11 @@ app.get('/api/blog/:slug', (c) => {
   const body = fmEnd > 0 ? raw.slice(fmEnd + 3).trim() : raw
   const html = marked(body)
   return c.html(typeof html === 'string' ? html : '')
+})
+
+// API 404 catch-all
+app.all('/api/*', (c) => {
+  return c.json({ error: 'API route not found', statusCode: 404 }, 404)
 })
 
 // --- SSR ---

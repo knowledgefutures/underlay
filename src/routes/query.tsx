@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useSSRData } from '~/lib/ssr-data'
 import UserMenu from '~/components/UserMenu'
 import QueryExplorer from '~/components/QueryExplorer'
@@ -9,19 +10,19 @@ export default function QueryPage() {
     <div className="h-screen flex flex-col overflow-hidden font-sans text-[15px] leading-relaxed">
       <header className="border-b border-rule shrink-0">
         <nav className="max-w-none px-4 py-3 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 no-underline">
+          <Link to="/" className="flex items-center gap-2.5 no-underline">
             <img src="https://docs.underlay.org/logoLight.svg" alt="Underlay" className="h-6" />
             <span className="font-semibold text-ink tracking-tight text-base">Underlay</span>
-          </a>
+          </Link>
           <div className="flex items-center gap-5 text-sm text-ink-muted">
-            <a href="/explore" className="hover:text-ink transition-colors">Explore</a>
-            <a href="/schemas" className="hover:text-ink transition-colors">Schemas</a>
-            <a href="/docs" className="hover:text-ink transition-colors">Docs</a>
-            <a href="/blog" className="hover:text-ink transition-colors">Blog</a>
+            <Link to="/explore" className="hover:text-ink transition-colors">Explore</Link>
+            <Link to="/schemas" className="hover:text-ink transition-colors">Schemas</Link>
+            <Link to="/docs" className="hover:text-ink transition-colors">Docs</Link>
+            <Link to="/blog" className="hover:text-ink transition-colors">Blog</Link>
             {currentUser ? (
               <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} />
             ) : (
-              <a href="/login" className="hover:text-ink transition-colors">Log in</a>
+              <Link to="/login" className="hover:text-ink transition-colors">Log in</Link>
             )}
           </div>
         </nav>

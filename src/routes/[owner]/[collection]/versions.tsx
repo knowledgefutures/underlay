@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 import { CollectionNav, formatBytes } from '.'
@@ -74,8 +74,8 @@ export default function CollectionVersionsPage() {
                 key={v.number}
                 className={`flex items-center justify-between px-4 py-3 hover:bg-parchment-dark/50 transition-colors ${i < versions.length - 1 ? 'border-b border-rule' : ''}`}
               >
-                <a
-                  href={`/${owner}/${collection}/v/${v.number}`}
+                <Link
+                  to={`/${owner}/${collection}/v/${v.number}`}
                   className="flex items-center gap-4 min-w-0"
                 >
                   <div className="flex items-center gap-2">
@@ -87,7 +87,7 @@ export default function CollectionVersionsPage() {
                   {v.message && (
                     <span className="text-xs text-ink-muted truncate">{v.message}</span>
                   )}
-                </a>
+                </Link>
                 <div className="flex items-center gap-5 text-xs text-ink-muted shrink-0 ml-4">
                   <span>{v.recordCount.toLocaleString()} records</span>
                   <span>{v.fileCount.toLocaleString()} files</span>
@@ -106,21 +106,21 @@ export default function CollectionVersionsPage() {
                     {v.hash.slice(0, 10)}…
                   </code>
                   {v.ark && (
-                    <a
-                      href={new URL(v.ark).pathname}
+                    <Link
+                      to={new URL(v.ark).pathname}
                       className="font-mono text-[11px] text-link hover:underline"
                     >
                       ark
-                    </a>
+                    </Link>
                   )}
                   {v.number > 1 ? (
-                    <a
-                      href={`/${owner}/${collection}/diff?from=${v.number - 1}&to=${v.number}`}
+                    <Link
+                      to={`/${owner}/${collection}/diff?from=${v.number - 1}&to=${v.number}`}
                       className="text-link hover:underline w-8 text-right"
                       title={`Diff v${v.number - 1} → v${v.number}`}
                     >
                       diff
-                    </a>
+                    </Link>
                   ) : (
                     <span className="w-8"></span>
                   )}

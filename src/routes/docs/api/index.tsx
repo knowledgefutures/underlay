@@ -1,9 +1,10 @@
+import { Link } from 'react-router'
 import DocsLayout from '~/components/DocsLayout'
 
 export default function DocsApi() {
   return (
     <DocsLayout title="API Overview">
-      <p>The Underlay API is a JSON REST API served at <code>/api</code>. All request and response bodies are JSON (except file uploads/downloads). A machine-readable reference is available at <a href="/.well-known/ai.txt" className="text-link underline">/.well-known/ai.txt</a>.</p>
+      <p>The Underlay API is a JSON REST API served at <code>/api</code>. All request and response bodies are JSON (except file uploads/downloads). A machine-readable reference is available at <Link to="/.well-known/ai.txt" className="text-link underline">/.well-known/ai.txt</Link>.</p>
 
       <h2>Base URL</h2>
       <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{'https://underlay.org/api'}</code></pre>
@@ -24,7 +25,7 @@ export default function DocsApi() {
         <li><code>write</code> — push versions, upload files</li>
         <li><code>admin</code> — delete collections, manage keys</li>
       </ul>
-      <p>Keys can optionally be scoped to a single collection. Create keys in your <a href="/settings" className="text-link underline">organization settings</a> or via <code>POST /api/accounts/keys</code>.</p>
+      <p>Keys can optionally be scoped to a single collection. Create keys in your <Link to="/settings" className="text-link underline">organization settings</Link> or via <code>POST /api/accounts/keys</code>.</p>
 
       <h3>Session Cookies (browser)</h3>
       <p>The web UI authenticates via signed session cookies set by <code>POST /api/accounts/login</code>. Sessions expire after 30 days.</p>
@@ -89,10 +90,10 @@ export default function DocsApi() {
 
       <h2>Endpoints</h2>
       <nav className="space-y-2 text-sm">
-        <div><a href="/docs/api/accounts" className="text-link underline">Accounts</a> — signup, login, API keys, profiles</div>
-        <div><a href="/docs/api/collections" className="text-link underline">Collections</a> — create, list, update, delete</div>
-        <div><a href="/docs/api/versions" className="text-link underline">Versions</a> — push snapshots, browse history, diff</div>
-        <div><a href="/docs/api/files" className="text-link underline">Files</a> — upload and download content-addressed files</div>
+        <div><Link to="/docs/api/accounts" className="text-link underline">Accounts</Link> — signup, login, API keys, profiles</div>
+        <div><Link to="/docs/api/collections" className="text-link underline">Collections</Link> — create, list, update, delete</div>
+        <div><Link to="/docs/api/versions" className="text-link underline">Versions</Link> — push snapshots, browse history, diff</div>
+        <div><Link to="/docs/api/files" className="text-link underline">Files</Link> — upload and download content-addressed files</div>
       </nav>
     </DocsLayout>
   )

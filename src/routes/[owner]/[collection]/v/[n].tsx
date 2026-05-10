@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams, useSearchParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
-import { CollectionNav, formatBytes } from '.'
+import { CollectionNav, formatBytes } from '..'
 
 export default function CollectionVersionPage() {
   const { owner, collection, n } = useParams()
@@ -200,12 +200,12 @@ export default function CollectionVersionPage() {
               sha256:{version.hash.slice(0, 12)}…
             </code>
             {versionArkPath && (
-              <a
-                href={versionArkPath}
+              <Link
+                to={versionArkPath}
                 className="font-mono text-[11px] text-link hover:underline"
               >
                 {versionArkPath.slice(1)}
-              </a>
+              </Link>
             )}
           </div>
         </div>
@@ -253,13 +253,13 @@ export default function CollectionVersionPage() {
                 Types
               </h3>
               {allTypes.map((t) => (
-                <a
+                <Link
                   key={t}
-                  href={`/${owner}/${collection}/v/${n}?type=${t}`}
+                  to={`/${owner}/${collection}/v/${n}?type=${t}`}
                   className={`block px-3 py-1.5 text-sm rounded transition-colors ${t === currentType ? 'bg-ink text-parchment font-medium' : 'text-ink-muted hover:bg-parchment-dark hover:text-ink'}`}
                 >
                   {t}
-                </a>
+                </Link>
               ))}
             </nav>
 
@@ -306,8 +306,8 @@ export default function CollectionVersionPage() {
                                 const label = f === 'pdf' ? 'PDF' : 'File'
                                 return (
                                   <td key={f} className="p-2">
-                                    <a
-                                      href={fileUrl}
+                                    <Link
+                                      to={fileUrl}
                                       target="_blank"
                                       className="inline-flex items-center gap-1 text-link hover:underline"
                                     >
@@ -325,7 +325,7 @@ export default function CollectionVersionPage() {
                                         />
                                       </svg>
                                       {label}
-                                    </a>
+                                    </Link>
                                   </td>
                                 )
                               }
@@ -335,14 +335,14 @@ export default function CollectionVersionPage() {
                               ) {
                                 return (
                                   <td key={f} className="p-2 max-w-56 truncate">
-                                    <a
-                                      href={val}
+                                    <Link
+                                      to={val}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-link hover:underline"
                                     >
                                       {val}
-                                    </a>
+                                    </Link>
                                   </td>
                                 )
                               }
@@ -360,12 +360,12 @@ export default function CollectionVersionPage() {
                             })}
                             {r.ark && (
                               <td className="p-2">
-                                <a
-                                  href={new URL(r.ark).pathname}
+                                <Link
+                                  to={new URL(r.ark).pathname}
                                   className="font-mono text-[11px] text-link hover:underline"
                                 >
                                   ark
-                                </a>
+                                </Link>
                               </td>
                             )}
                           </tr>
@@ -382,17 +382,17 @@ export default function CollectionVersionPage() {
                       </span>
                       <div className="flex items-center gap-1">
                         {page > 1 && (
-                          <a
-                            href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page - 1}`}
+                          <Link
+                            to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page - 1}`}
                             className="border border-rule px-2 py-1 rounded hover:bg-parchment-dark"
                           >
                             ← Prev
-                          </a>
+                          </Link>
                         )}
                         {pageNumbers.map((p) => (
-                          <a
+                          <Link
                             key={p}
-                            href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${p}`}
+                            to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${p}`}
                             className={
                               p === page
                                 ? 'border border-ink bg-ink text-parchment font-medium px-2 py-1 rounded'
@@ -400,15 +400,15 @@ export default function CollectionVersionPage() {
                             }
                           >
                             {p}
-                          </a>
+                          </Link>
                         ))}
                         {page < totalPages && (
-                          <a
-                            href={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page + 1}`}
+                          <Link
+                            to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page + 1}`}
                             className="border border-rule px-2 py-1 rounded hover:bg-parchment-dark"
                           >
                             Next →
-                          </a>
+                          </Link>
                         )}
                       </div>
                     </nav>
@@ -525,9 +525,9 @@ export default function CollectionVersionPage() {
                               {refs.length > 0 ? (
                                 <div className="flex flex-wrap gap-1">
                                   {refs.slice(0, 3).map((ref: any, idx: number) => (
-                                    <a
+                                    <Link
                                       key={idx}
-                                      href={`/${owner}/${collection}/v/${n}?type=${ref.type}`}
+                                      to={`/${owner}/${collection}/v/${n}?type=${ref.type}`}
                                       className="inline-flex items-center gap-1 text-[11px] bg-parchment-dark border border-rule px-1.5 py-0.5 rounded hover:border-ink-muted transition-colors"
                                     >
                                       <span className="text-ink-muted">{ref.type}</span>
@@ -536,7 +536,7 @@ export default function CollectionVersionPage() {
                                           ? ref.recordId.slice(0, 20) + '…'
                                           : ref.recordId}
                                       </span>
-                                    </a>
+                                    </Link>
                                   ))}
                                   {refs.length > 3 && (
                                     <span className="text-[11px] text-ink-muted px-1.5 py-0.5">
@@ -607,9 +607,9 @@ export default function CollectionVersionPage() {
                 <tr className="border-b border-rule">
                   <td className="py-3 pr-6 text-ink-muted font-medium">Owner</td>
                   <td className="py-3">
-                    <a href={`/${owner}`} className="text-link hover:underline">
+                    <Link to={`/${owner}`} className="text-link hover:underline">
                       {collectionData?.ownerName ?? owner}
-                    </a>{' '}
+                    </Link>{' '}
                     <span className="text-ink-muted text-xs">({owner})</span>
                   </td>
                 </tr>
@@ -652,12 +652,12 @@ export default function CollectionVersionPage() {
                   <tr className="border-b border-rule">
                     <td className="py-3 pr-6 text-ink-muted font-medium">Base version</td>
                     <td className="py-3">
-                      <a
-                        href={`/${owner}/${collection}/v/${version.baseNumber}`}
+                      <Link
+                        to={`/${owner}/${collection}/v/${version.baseNumber}`}
                         className="text-link hover:underline"
                       >
                         v{version.baseNumber}
-                      </a>
+                      </Link>
                     </td>
                   </tr>
                 )}

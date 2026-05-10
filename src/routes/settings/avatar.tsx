@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, type FormEvent } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
@@ -56,13 +57,13 @@ export default function SettingsAvatar() {
         <h1 className="text-xl font-semibold tracking-tight mb-6">Settings</h1>
 
         <nav className="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-          <a href="/settings" className="text-ink-muted hover:text-ink">Account</a>
-          <a href="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</a>
-          <a href="/settings/sessions" className="text-ink-muted hover:text-ink">Sessions</a>
+          <Link to="/settings" className="text-ink-muted hover:text-ink">Account</Link>
+          <Link to="/settings/keys" className="text-ink-muted hover:text-ink">API Keys</Link>
+          <Link to="/settings/sessions" className="text-ink-muted hover:text-ink">Sessions</Link>
         </nav>
 
         <nav className="text-xs text-ink-muted mb-6">
-          <a href="/settings" className="hover:text-ink">Account</a>
+          <Link to="/settings" className="hover:text-ink">Account</Link>
           <span className="mx-1">/</span>
           <span className="text-ink font-medium">Avatar</span>
         </nav>

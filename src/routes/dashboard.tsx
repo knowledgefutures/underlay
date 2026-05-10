@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef, type FormEvent } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
@@ -82,7 +83,7 @@ export default function Dashboard() {
       <div className="max-w-5xl mx-auto px-4 py-10">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-          <a href="/settings" className="text-sm text-ink-muted hover:text-ink transition-colors">Settings</a>
+          <Link to="/settings" className="text-sm text-ink-muted hover:text-ink transition-colors">Settings</Link>
         </div>
 
         <div className="flex flex-col lg:flex-row gap-8">
@@ -115,9 +116,9 @@ export default function Dashboard() {
                   {collections
                     .filter((c) => matchesFilter(`${me.slug}/${c.slug} ${c.name} ${c.description ?? ''}`))
                     .map((c) => (
-                      <a
+                      <Link
                         key={c.slug}
-                        href={`/${me.slug}/${c.slug}`}
+                        to={`/${me.slug}/${c.slug}`}
                         className="flex items-center justify-between border border-rule px-3 py-2 hover:bg-parchment-dark transition-colors"
                       >
                         <div className="min-w-0">
@@ -127,7 +128,7 @@ export default function Dashboard() {
                         <span className="text-[10px] text-ink-muted border border-rule px-1.5 py-0.5 ml-2 flex-shrink-0">
                           {c.public ? 'public' : 'private'}
                         </span>
-                      </a>
+                      </Link>
                     ))}
                 </div>
               )}
@@ -138,10 +139,10 @@ export default function Dashboard() {
               <div key={org.slug} className="mb-6">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                    <a href={`/${org.slug}`} className="hover:text-ink transition-colors">{org.displayName}</a>
+                    <Link to={`/${org.slug}`} className="hover:text-ink transition-colors">{org.displayName}</Link>
                     <span className="ml-1.5 text-[10px] font-normal border border-rule px-1 py-0.5 normal-case">{org.role}</span>
                   </h2>
-                  <a href={`/${org.slug}/settings`} className="text-[10px] text-ink-muted hover:text-ink">settings</a>
+                  <Link to={`/${org.slug}/settings`} className="text-[10px] text-ink-muted hover:text-ink">settings</Link>
                 </div>
 
                 {org.collections.length === 0 ? (
@@ -151,9 +152,9 @@ export default function Dashboard() {
                     {org.collections
                       .filter((c) => matchesFilter(`${org.slug}/${c.slug} ${c.name} ${c.description ?? ''}`))
                       .map((c) => (
-                        <a
+                        <Link
                           key={c.slug}
-                          href={`/${org.slug}/${c.slug}`}
+                          to={`/${org.slug}/${c.slug}`}
                           className="flex items-center justify-between border border-rule px-3 py-2 hover:bg-parchment-dark transition-colors"
                         >
                           <div className="min-w-0">
@@ -163,7 +164,7 @@ export default function Dashboard() {
                           <span className="text-[10px] text-ink-muted border border-rule px-1.5 py-0.5 ml-2 flex-shrink-0">
                             {c.public ? 'public' : 'private'}
                           </span>
-                        </a>
+                        </Link>
                       ))}
                   </div>
                 )}
@@ -185,7 +186,7 @@ export default function Dashboard() {
                   <p className="font-medium text-ink text-[11px] mb-0.5">Push version</p>
                   <code className="block bg-parchment-dark px-1.5 py-1 text-[10px] break-all">POST /api/collections/{me.slug}/&lt;slug&gt;/versions</code>
                 </div>
-                <a href="/docs/quickstart" className="block text-link text-[11px] hover:underline mt-2">Quickstart guide →</a>
+                <Link to="/docs/quickstart" className="block text-link text-[11px] hover:underline mt-2">Quickstart guide →</Link>
               </div>
             </div>
 
@@ -230,9 +231,9 @@ export default function Dashboard() {
 
             {/* Links */}
             <div className="text-xs space-y-1.5">
-              <a href={`/${me.slug}`} className="block text-ink-muted hover:text-ink transition-colors">Your profile →</a>
-              <a href="/settings/keys" className="block text-ink-muted hover:text-ink transition-colors">API keys →</a>
-              <a href="/explore" className="block text-ink-muted hover:text-ink transition-colors">Explore collections →</a>
+              <Link to={`/${me.slug}`} className="block text-ink-muted hover:text-ink transition-colors">Your profile →</Link>
+              <Link to="/settings/keys" className="block text-ink-muted hover:text-ink transition-colors">API keys →</Link>
+              <Link to="/explore" className="block text-ink-muted hover:text-ink transition-colors">Explore collections →</Link>
             </div>
           </div>
         </div>

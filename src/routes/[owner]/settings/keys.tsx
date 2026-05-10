@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 import { ApiPlayground } from '~/components/ApiPlayground'
@@ -132,9 +132,9 @@ export default function OwnerSettingsKeys() {
     <BaseLayout>
       <div className="max-w-4xl mx-auto px-4 py-10">
         <nav className="text-xs text-ink-muted mb-6">
-          <a href={`/${owner}`} className="hover:text-ink">
+          <Link to={`/${owner}`} className="hover:text-ink">
             {owner}
-          </a>
+          </Link>
           <span className="mx-1">/</span>
           <span className="text-ink font-medium">settings</span>
         </nav>
@@ -142,15 +142,15 @@ export default function OwnerSettingsKeys() {
         <h1 className="text-xl font-semibold tracking-tight mb-6">Organization Settings</h1>
 
         <nav className="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-          <a href={`/${owner}/settings`} className="text-ink-muted hover:text-ink">
+          <Link to={`/${owner}/settings`} className="text-ink-muted hover:text-ink">
             Profile
-          </a>
-          <a href={`/${owner}/settings/members`} className="text-ink-muted hover:text-ink">
+          </Link>
+          <Link to={`/${owner}/settings/members`} className="text-ink-muted hover:text-ink">
             Members
-          </a>
-          <a href={`/${owner}/settings/keys`} className="text-ink font-medium">
+          </Link>
+          <Link to={`/${owner}/settings/keys`} className="text-ink font-medium">
             API Keys
-          </a>
+          </Link>
         </nav>
 
         {success && (
@@ -261,9 +261,9 @@ export default function OwnerSettingsKeys() {
         <div className="text-xs text-ink-muted bg-parchment border border-rule px-3 py-2 mb-4">
           <strong className="text-ink">Rate limits:</strong> Authenticated requests get 5,000
           req/min. Without a key, the API allows 60 req/min per IP.
-          <a href="/docs/api" className="text-link underline ml-1">
+          <Link to="/docs/api" className="text-link underline ml-1">
             Learn more →
-          </a>
+          </Link>
         </div>
 
         {keys.length === 0 ? (

@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 import { CollectionNav } from '.'
@@ -251,12 +251,12 @@ export default function CollectionSettingsPage() {
               Download a <code className="bg-parchment-dark px-1">.tar.gz</code> archive
               containing the manifest, schema, records, and files for the latest version.
             </p>
-            <a
-              href={`/api/collections/${owner}/${collection}/export`}
+            <Link
+              to={`/api/collections/${owner}/${collection}/export`}
               className="inline-block bg-parchment border border-rule px-4 py-2 text-sm font-medium hover:bg-parchment-dark transition-colors"
             >
               Download archive
-            </a>
+            </Link>
           </div>
 
           {/* ARK Identifiers */}
@@ -267,12 +267,12 @@ export default function CollectionSettingsPage() {
             {arkPath && arkSettings.enabled && (
               <p className="text-sm text-ink-muted mb-3">
                 Current ARK:{' '}
-                <a
-                  href={arkPath}
+                <Link
+                  to={arkPath}
                   className="font-mono text-sm text-link hover:underline"
                 >
                   {arkPath.slice(1)}
-                </a>
+                </Link>
               </p>
             )}
             <form onSubmit={handleUpdateArk} className="space-y-4">

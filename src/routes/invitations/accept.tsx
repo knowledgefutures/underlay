@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, type FormEvent } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
@@ -47,9 +48,9 @@ export default function InvitationsAccept() {
             <p className="font-medium mb-1">You've joined the organization!</p>
             <p className="text-ink-muted text-xs mb-3">You now have access to the organization's collections.</p>
             {orgSlug ? (
-              <a href={`/${orgSlug}`} className="text-sm text-link hover:underline">Go to organization →</a>
+              <Link to={`/${orgSlug}`} className="text-sm text-link hover:underline">Go to organization →</Link>
             ) : (
-              <a href="/dashboard" className="text-sm text-link hover:underline">Go to dashboard →</a>
+              <Link to="/dashboard" className="text-sm text-link hover:underline">Go to dashboard →</Link>
             )}
           </div>
         ) : error ? (
@@ -57,8 +58,8 @@ export default function InvitationsAccept() {
             <p>{error}</p>
             {!me && token && (
               <p className="mt-2 text-xs">
-                You may need to <a href={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} className="underline">log in</a> or
-                <a href={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} className="underline ml-1">sign up</a> first.
+                You may need to <Link to={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} className="underline">log in</Link> or
+                <Link to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`} className="underline ml-1">sign up</Link> first.
               </p>
             )}
           </div>
@@ -68,18 +69,18 @@ export default function InvitationsAccept() {
               <div className="space-y-3">
                 <p className="text-sm text-ink-muted">You've been invited to join an organization. Please log in or sign up to accept.</p>
                 <div className="flex gap-3">
-                  <a
-                    href={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
+                  <Link
+                    to={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
                     className="flex-1 text-center bg-ink text-parchment py-2 text-sm font-medium hover:bg-ink-light transition-colors"
                   >
                     Log in
-                  </a>
-                  <a
-                    href={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
+                  </Link>
+                  <Link
+                    to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
                     className="flex-1 text-center border border-ink py-2 text-sm font-medium hover:bg-parchment-dark transition-colors"
                   >
                     Sign up
-                  </a>
+                  </Link>
                 </div>
               </div>
             ) : (

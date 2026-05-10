@@ -19,7 +19,7 @@ import {
 const app = new Hono<AuthEnv>();
 
 // All admin routes require mirror mode to be enabled
-app.use("*", async (c, next) => {
+app.use("/admin/*", async (c, next) => {
   const config = getMirrorConfig();
   if (!config.enabled) {
     return c.json({ error: "Not found", statusCode: 404 }, 404);

@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 
@@ -68,7 +69,7 @@ export default function ForgotPasswordPage() {
         )}
 
         <p className="text-sm text-ink-muted mt-4">
-          <a href="/login" className="text-link hover:underline">← Back to login</a>
+          <Link to="/login" className="text-link hover:underline">← Back to login</Link>
         </p>
       </div>
     </BaseLayout>

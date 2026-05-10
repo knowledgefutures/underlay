@@ -1,9 +1,8 @@
 import { renderToPipeableStream } from 'react-dom/server'
 import { StaticRouter } from 'react-router'
 import { PassThrough } from 'node:stream'
-import App from '~/App'
+import App, { routes } from '~/App'
 import { SSRDataProvider } from '~/lib/ssr-data'
-import { routes } from '~/routes'
 import { runLoaders } from '~/loaders.server'
 
 function matchPath(pattern: string, pathname: string): Record<string, string> | null {
@@ -27,12 +26,12 @@ function matchPath(pattern: string, pathname: string): Record<string, string> | 
 
 function matchRoutes(url: string) {
   const pathname = new URL(url, 'http://localhost').pathname
-  const matched: { route: (typeof routes)[number]; params: Record<string, string> }[] = []
+  const matched: { path: string; params: Record<string, string> }[] = []
 
   for (const route of routes) {
     const params = matchPath(route.path, pathname)
     if (params !== null) {
-      matched.push({ route, params })
+      matched.push({ path: route.path, params })
       break // first match wins
     }
   }

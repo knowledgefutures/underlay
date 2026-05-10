@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useSSRData } from '~/lib/ssr-data'
 import UserMenu from '~/components/UserMenu'
 
@@ -15,7 +16,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
     <>
       <header className="border-b border-rule">
         <nav className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5 no-underline">
+          <Link to="/" className="flex items-center gap-2.5 no-underline">
             <img
               src="https://docs.underlay.org/logoLight.svg"
               alt="Underlay"
@@ -25,24 +26,24 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
             {mirrorConfig?.enabled && (
               <span className="text-sm font-medium text-ink-muted self-center ml-1">&middot; {mirrorConfig.nodeName}</span>
             )}
-          </a>
+          </Link>
           <div className="flex items-center gap-5 text-sm text-ink-muted">
-            <a href="/explore" className="hover:text-ink transition-colors">Explore</a>
-            <a href="/schemas" className="hover:text-ink transition-colors">Schemas</a>
-            <a href="/docs" className="hover:text-ink transition-colors">Docs</a>
+            <Link to="/explore" className="hover:text-ink transition-colors">Explore</Link>
+            <Link to="/schemas" className="hover:text-ink transition-colors">Schemas</Link>
+            <Link to="/docs" className="hover:text-ink transition-colors">Docs</Link>
             {!mirrorConfig?.enabled && (
-              <a href="/blog" className="hover:text-ink transition-colors">Blog</a>
+              <Link to="/blog" className="hover:text-ink transition-colors">Blog</Link>
             )}
             {mirrorConfig?.enabled ? (
               currentUser ? (
-                <a href="/admin/mirror" className="hover:text-ink transition-colors">Admin</a>
+                <Link to="/admin/mirror" className="hover:text-ink transition-colors">Admin</Link>
               ) : (
-                <a href="/login" className="hover:text-ink transition-colors">Log in</a>
+                <Link to="/login" className="hover:text-ink transition-colors">Log in</Link>
               )
             ) : currentUser ? (
               <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} />
             ) : (
-              <a href="/login" className="hover:text-ink transition-colors">Log in</a>
+              <Link to="/login" className="hover:text-ink transition-colors">Log in</Link>
             )}
           </div>
         </nav>

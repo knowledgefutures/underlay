@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 
@@ -60,7 +61,7 @@ export default function ResetPasswordPage() {
           <div className="border border-rule bg-parchment-dark px-4 py-3 text-sm">
             <p className="font-medium mb-1">Password updated</p>
             <p className="text-ink-muted text-xs">Your password has been reset. You can now log in.</p>
-            <a href="/login" className="inline-block mt-3 text-sm text-link hover:underline">Go to login →</a>
+            <Link to="/login" className="inline-block mt-3 text-sm text-link hover:underline">Go to login →</Link>
           </div>
         ) : (
           <>
@@ -104,7 +105,7 @@ export default function ResetPasswordPage() {
               </form>
             ) : (
               <p className="text-sm text-ink-muted">
-                <a href="/forgot-password" className="text-link hover:underline">Request a new reset link →</a>
+                <Link to="/forgot-password" className="text-link hover:underline">Request a new reset link →</Link>
               </p>
             )}
           </>

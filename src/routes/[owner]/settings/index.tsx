@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useParams } from 'react-router'
+import { useParams, Link } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 
@@ -148,9 +148,9 @@ export default function OwnerSettings() {
     <BaseLayout>
       <div className="max-w-4xl mx-auto px-4 py-10">
         <nav className="text-xs text-ink-muted mb-6">
-          <a href={`/${owner}`} className="hover:text-ink">
+          <Link to={`/${owner}`} className="hover:text-ink">
             {owner}
-          </a>
+          </Link>
           <span className="mx-1">/</span>
           <span className="text-ink font-medium">settings</span>
         </nav>
@@ -158,18 +158,18 @@ export default function OwnerSettings() {
         <h1 className="text-xl font-semibold tracking-tight mb-6">Organization Settings</h1>
 
         <nav className="flex gap-4 text-sm border-b border-rule mb-6 pb-2">
-          <a href={`/${owner}/settings`} className="text-ink font-medium">
+          <Link to={`/${owner}/settings`} className="text-ink font-medium">
             Profile
-          </a>
-          <a href={`/${owner}/settings/members`} className="text-ink-muted hover:text-ink">
+          </Link>
+          <Link to={`/${owner}/settings/members`} className="text-ink-muted hover:text-ink">
             Members
-          </a>
-          <a href={`/${owner}/settings/keys`} className="text-ink-muted hover:text-ink">
+          </Link>
+          <Link to={`/${owner}/settings/keys`} className="text-ink-muted hover:text-ink">
             API Keys
-          </a>
-          <a href={`/${owner}/settings#ark`} className="text-ink-muted hover:text-ink">
+          </Link>
+          <Link to={`/${owner}/settings#ark`} className="text-ink-muted hover:text-ink">
             ARK
-          </a>
+          </Link>
         </nav>
 
         {success && (

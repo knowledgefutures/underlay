@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
@@ -141,9 +142,9 @@ export default function SchemaDetailPage() {
           ) : (
             <div className="border border-rule rounded overflow-hidden">
               {usage.map((u, i) => (
-                <a
+                <Link
                   key={`${u.collection}-${u.slug}`}
-                  href={`/${u.collection}/v/${u.versionNumber}?type=${u.slug}`}
+                  to={`/${u.collection}/v/${u.versionNumber}?type=${u.slug}`}
                   className={`flex items-center justify-between px-4 py-2.5 text-sm hover:bg-parchment-dark/50 transition-colors ${i < usage.length - 1 ? 'border-b border-rule' : ''}`}
                 >
                   <div className="flex items-center gap-3">
@@ -151,7 +152,7 @@ export default function SchemaDetailPage() {
                     <span className="text-ink-muted text-xs">as <code className="font-mono">{u.slug}</code></span>
                   </div>
                   <span className="text-xs text-ink-muted">{u.semver}</span>
-                </a>
+                </Link>
               ))}
             </div>
           )}
