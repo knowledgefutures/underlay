@@ -177,8 +177,10 @@ function deriveSemver(
 
 export async function versionRoutes(app: FastifyInstance) {
   // Lazily backfill totalBytes for versions that were created before we tracked it
+  // or where the value was corrupted by a string concatenation bug
   async function backfillTotalBytes(version: { id: number; totalBytes: number; recordCount: number }) {
-    if (version.totalBytes > 0 || version.recordCount === 0) return version.totalBytes;
+    // Skip recomputation if totalBytes looks reasonable (> 0 and < 1TB)
+    if (version.totalBytes > 0 && version.totalBytes < 1_099_511_627_776 || version.recordCount === 0) return version.totalBytes;
 
     const records = await db
       .select({ data: schema.records.data })
@@ -195,7 +197,7 @@ export async function versionRoutes(app: FastifyInstance) {
       .from(schema.versionFiles)
       .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
       .where(eq(schema.versionFiles.versionId, version.id));
-    totalBytes += fileSizeResult?.total ?? 0;
+    totalBytes += Number(fileSizeResult?.total ?? 0);
 
     // Persist so we don't recompute next time
     await db
@@ -799,7 +801,7 @@ export async function versionRoutes(app: FastifyInstance) {
           .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
           .from(schema.files)
           .where(inArray(schema.files.hash, allFileHashes));
-        totalBytes += fileSizeSum?.total ?? 0;
+        totalBytes += Number(fileSizeSum?.total ?? 0);
       }
 
       // Insert version

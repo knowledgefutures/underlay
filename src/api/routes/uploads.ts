@@ -791,7 +791,7 @@ export async function uploadRoutes(app: FastifyInstance) {
             .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
             .from(schema.files)
             .where(inArray(schema.files.hash, allFileHashes));
-          totalBytes += fileSizeSum?.total ?? 0;
+          totalBytes += Number(fileSizeSum?.total ?? 0);
         }
 
         // Insert version
