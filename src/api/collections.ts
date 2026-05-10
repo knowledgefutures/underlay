@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { stream } from "hono/streaming";
 import { eq, and, ilike, or, sql } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
-import { requireAuth, type AuthEnv } from "./auth.server.js";
+import { type AuthEnv } from "./auth.server.js";
 import { v4 as uuidv4 } from "uuid";
 import { pack as tarPack } from "tar-stream";
 import { createGzip } from "node:zlib";

@@ -4,7 +4,7 @@ import { eq, and, count } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
-import { requireAuth, setSessionCookie, clearSessionCookie, type AuthEnv } from './auth.server.js';
+import { setSessionCookie, clearSessionCookie, type AuthEnv } from './auth.server.js';
 import { uploadToS3, deleteS3Objects, listS3Objects } from '../lib/s3.js';
 import { sendEmail } from '../lib/email.js';
 

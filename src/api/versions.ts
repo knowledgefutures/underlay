@@ -1,86 +1,20 @@
 import type { Context } from 'hono'
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
-import { requireAuth, type AuthEnv } from "./auth.server.js";
+import { type AuthEnv } from "./auth.server.js";
 import { createHash } from "node:crypto";
-import Ajv from "ajv";
-import addFormats from "ajv-formats";
 import { DEFAULT_NAAN, buildArkUrl } from "../lib/ark.js";
-
-const ajv = new Ajv({ allErrors: true, strict: false });
-addFormats(ajv);
-
-// --- Schema helpers ---
-
-type SchemaEntry = { slug: string; schemaId: string; schema: Record<string, unknown>; schemaHash: string };
-
-/** Load the full schema set for a version (slug → schema body + metadata) */
-async function loadVersionSchemas(versionId: number): Promise<SchemaEntry[]> {
-  const rows = await db
-    .select({
-      slug: schema.versionSchemas.slug,
-      schemaId: schema.versionSchemas.schemaId,
-      schema: schema.schemas.schema,
-      schemaHash: schema.schemas.schemaHash,
-    })
-    .from(schema.versionSchemas)
-    .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
-    .where(eq(schema.versionSchemas.versionId, versionId));
-
-  return rows as SchemaEntry[];
-}
-
-// --- Visibility helpers ---
-
-/** Get the set of private type slugs from a version's schemas */
-function getPrivateTypes(schemaEntries: SchemaEntry[]): Set<string> {
-  const types = new Set<string>();
-  for (const entry of schemaEntries) {
-    if ((entry.schema as any)?.private === true) {
-      types.add(entry.slug);
-    }
-  }
-  return types;
-}
-
-/** Get the set of private field names for a given type schema */
-function getPrivateFields(typeSchema: Record<string, unknown>): Set<string> {
-  const fields = new Set<string>();
-  const props = typeSchema?.properties as Record<string, any> | undefined;
-  if (!props) return fields;
-  for (const [fieldName, fieldDef] of Object.entries(props)) {
-    if (fieldDef?.private === true) fields.add(fieldName);
-  }
-  return fields;
-}
-
-/** Strip private fields from a record's data */
-function filterRecordData(data: unknown, privateFields: Set<string>): unknown {
-  if (privateFields.size === 0 || typeof data !== "object" || data === null) return data;
-  const filtered: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    if (!privateFields.has(key)) filtered[key] = value;
-  }
-  return filtered;
-}
-
-/** Filter a type schema for public view: strip private fields from properties */
-function filterTypeSchema(typeSchema: Record<string, unknown>): Record<string, unknown> {
-  const props = typeSchema?.properties as Record<string, any> | undefined;
-  if (!props) return typeSchema;
-
-  const publicProps: Record<string, unknown> = {};
-  for (const [fieldName, fieldDef] of Object.entries(props)) {
-    if ((fieldDef as any)?.private === true) continue;
-    publicProps[fieldName] = fieldDef;
-  }
-
-  const required = (typeSchema.required as string[] | undefined)?.filter(
-    (f: string) => !((props[f] as any)?.private === true),
-  );
-
-  return { ...typeSchema, properties: publicProps, required };
-}
+import {
+  ajv,
+  type SchemaEntry,
+  loadVersionSchemas,
+  getPrivateTypes,
+  getPrivateFields,
+  filterRecordData,
+  filterTypeSchema,
+  hashSchema,
+  deriveSemver,
+} from '../lib/version-helpers.server.js'
 
 /** Build a public-facing schemas map (excluding private types, stripping private fields) */
 function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, unknown> {
@@ -95,11 +29,6 @@ function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, un
 /** Check if requester is the owner of a collection */
 function isOwner(accountId: string | undefined, collectionAccountId: string): boolean {
   return accountId != null && accountId === collectionAccountId;
-}
-
-/** Compute SHA-256 hash of a schema JSON body (canonical stringified) */
-function hashSchema(schemaBody: unknown): string {
-  return createHash("sha256").update(JSON.stringify(schemaBody)).digest("hex");
 }
 
 function computeVersionHash(
@@ -158,21 +87,6 @@ function computePublicHash(
     readme: readme ?? null,
   });
   return "public:" + createHash("sha256").update(canonical).digest("hex");
-}
-
-function deriveSemver(
-  prevSemver: string | null,
-  schemaChanged: boolean,
-  recordsChanged: boolean,
-): string {
-  if (!prevSemver) return "v1.0.0";
-
-  const parts = prevSemver.replace(/^v/, "").split(".").map(Number);
-  const [major, minor, patch] = [parts[0] ?? 1, parts[1] ?? 0, parts[2] ?? 0];
-
-  if (schemaChanged) return `v${major + 1}.0.0`;
-  if (recordsChanged) return `v${major}.${minor + 1}.0`;
-  return `v${major}.${minor}.${patch + 1}`;
 }
 
 // Lazily backfill totalBytes for versions that were created before we tracked it

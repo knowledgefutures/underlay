@@ -1,5 +1,5 @@
 import { Link } from 'react-router'
-import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import BaseLayout from '~/components/BaseLayout'
 import { useSSRData } from '~/lib/ssr-data'
 

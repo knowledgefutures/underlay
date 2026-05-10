@@ -1,8 +1,8 @@
 import type { Context } from 'hono'
 import { eq, and, sql } from "drizzle-orm";
 import { db, schema } from "../db/client.server.js";
-import { requireAuth, type AuthEnv } from "./auth.server.js";
-import { uploadToS3, headS3Object, getS3ObjectMeta } from "../lib/s3.js";
+import { type AuthEnv } from "./auth.server.js";
+import { uploadToS3, getS3ObjectMeta } from "../lib/s3.js";
 import { createHash } from "node:crypto";
 
 /**

@@ -1,7 +1,7 @@
 import type { Context } from 'hono'
 import { eq, and, desc, ilike, or, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
-import { requireAuth, type AuthEnv } from './auth.server.js';
+import { type AuthEnv } from './auth.server.js';
 import { buildSqliteBuffer, generateAllDDL, generateDDL } from '../lib/sqlite-gen.js';
 
 // In-memory LRU cache: key = `${collectionId}:${versionNumber}`, value = { buffer, expiresAt }

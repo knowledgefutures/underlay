@@ -1,7 +1,7 @@
 import type { Context } from 'hono'
 import { eq, and, sql, inArray, ilike } from 'drizzle-orm';
 import { db, schema } from '../db/client.server.js';
-import { requireAuth, type AuthEnv } from './auth.server.js';
+import { type AuthEnv } from './auth.server.js';
 
 // --- Global schema search ---
 // GET /schemas?q=...&slug=...&label=...&schema_hash=...&limit=...&offset=...
