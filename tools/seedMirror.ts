@@ -5,7 +5,7 @@
  * Usage: npm run tool:seed-mirror
  */
 
-import { db, schema } from "../src/db/index.js";
+import { db, schema } from "../src/db/client.server.js";
 import bcrypt from "bcrypt";
 import { v4 as uuidv4 } from "uuid";
 

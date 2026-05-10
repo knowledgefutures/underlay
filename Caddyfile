@@ -3,36 +3,14 @@
 # Reload with: systemctl reload caddy
 # NOTE: Use 127.0.0.1 (not localhost) — Docker Swarm publishes on IPv4 only.
 
+# Single Hono server handles both SSR and API on one port.
+
 www.underlay.org {
     tls internal
-
-    # API routes → Fastify (prod)
-    handle /api/* {
-        reverse_proxy 127.0.0.1:3001
-    }
-    handle /uploads/* {
-        reverse_proxy 127.0.0.1:3001
-    }
-
-    # Everything else → Astro SSR (prod)
-    handle {
-        reverse_proxy 127.0.0.1:4322
-    }
+    reverse_proxy 127.0.0.1:3001
 }
 
 dev.underlay.org {
     tls internal
-
-    # API routes → Fastify (dev)
-    handle /api/* {
-        reverse_proxy 127.0.0.1:3000
-    }
-    handle /uploads/* {
-        reverse_proxy 127.0.0.1:3000
-    }
-
-    # Everything else → Astro SSR (dev)
-    handle {
-        reverse_proxy 127.0.0.1:4321
-    }
+    reverse_proxy 127.0.0.1:3000
 }

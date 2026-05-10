@@ -75,16 +75,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      - name: Set up Node.js
+      - name: Set up Node.js and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install and typecheck
         run: |
-          npm ci
-          npx astro sync
-          npm run typecheck
+          pnpm install --frozen-lockfile
+          pnpm typecheck
 
       - name: Build and push
         uses: docker/build-push-action@v6

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "../db/index.js";
+import { db, schema } from "../db/client.server.js";
 
 export const DEFAULT_NAAN = process.env.ARK_DEFAULT_NAAN ?? "12345";
 const SITE_URL = "https://underlay.org";

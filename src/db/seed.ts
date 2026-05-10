@@ -1,4 +1,4 @@
-import { db, schema } from "./index.js";
+import { db, schema } from "./client.server.js";
 import { eq } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import bcrypt from "bcrypt";

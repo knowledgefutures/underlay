@@ -45,13 +45,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install and typecheck
         run: |
-          npm ci
-          npx astro sync
-          npm run typecheck
+          pnpm install --frozen-lockfile
+          pnpm typecheck
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -134,7 +136,7 @@ jobs:
 
           sudo docker pull "ghcr.io/${REPO}:${IMAGE_TAG}"
 
-          # Deploy using docker-compose.mirror.yml — Postgres is self-contained.
+          # Deploy using docker-compose.yml with mirror config.
           # S3 creds and API key are sourced from prod .env above.
           sudo env \
             IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
@@ -143,7 +145,7 @@ jobs:
             S3_BUCKET="${S3_BUCKET:-underlay}" \
             UNDERLAY_UPSTREAM_API_KEY="${UNDERLAY_UPSTREAM_API_KEY:-}" \
             SESSION_SECRET="$(openssl rand -hex 32)" \
-            docker stack deploy -c docker-compose.mirror.yml \
+            docker stack deploy -c docker-compose.yml \
             --with-registry-auth --resolve-image always --prune "${STACK_NAME}"
 
           sudo docker stack services "${STACK_NAME}"
