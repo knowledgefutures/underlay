@@ -1,4 +1,4 @@
-import { Link } from 'react-router'
+import { Link, } from 'react-router'
 import DocsLayout from '~/components/DocsLayout'
 
 const signupCode = `curl -X POST https://underlay.org/api/accounts/signup \\
@@ -107,41 +107,51 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 
 export default function DocsQuickstart() {
   return (
-    <DocsLayout title="Quickstart">
-      <p>Push your first version in 5 minutes. All you need is <code>curl</code> and a running Underlay instance.</p>
+    <DocsLayout title='Quickstart'>
+      <p>
+        Push your first version in 5 minutes. All you need is <code>curl</code> and a running Underlay instance.
+      </p>
 
       <h2>1. Create an account</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{signupCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{signupCode}</code></pre>
 
       <h2>2. Create an API key</h2>
       <p>Log in and create a write-scoped key:</p>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{loginCode}</code></pre>
-      <p>Save the <code>key</code> value — it's shown only once.</p>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{loginCode}</code></pre>
+      <p>
+        Save the <code>key</code> value — it's shown only once.
+      </p>
 
       <h2>3. Create a collection</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{createCollectionCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{createCollectionCode}</code></pre>
 
       <h2>4. Push a version</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{pushCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{pushCode}</code></pre>
 
       <h2>5. Read it back</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{readCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{readCode}</code></pre>
 
       <h2>6. Push an update</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{updateCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{updateCode}</code></pre>
 
       <h2>7. Diff versions</h2>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{diffCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{diffCode}</code></pre>
 
       <h2>Working with files</h2>
       <p>To attach files (PDFs, images, etc.) to records, upload them first by hash:</p>
-      <pre className="bg-ink text-parchment p-3 text-xs overflow-x-auto"><code>{filesCode}</code></pre>
+      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{filesCode}</code></pre>
 
       <h2>Next steps</h2>
       <ul>
-        <li><Link to="/docs/concepts">Core concepts</Link> — understand the data model</li>
-        <li><Link to="/docs/api/versions">Versions API</Link> — full reference for push/pull</li>
-        <li><Link to="/docs/api/files">Files API</Link> — content-addressed file storage</li>
+        <li>
+          <Link to='/docs/concepts'>Core concepts</Link> — understand the data model
+        </li>
+        <li>
+          <Link to='/docs/api/versions'>Versions API</Link> — full reference for push/pull
+        </li>
+        <li>
+          <Link to='/docs/api/files'>Files API</Link> — content-addressed file storage
+        </li>
       </ul>
     </DocsLayout>
   )

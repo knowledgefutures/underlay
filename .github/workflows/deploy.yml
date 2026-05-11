@@ -2,20 +2,24 @@ name: Deploy
 
 run-name: >-
   ${{
+    github.event_name == 'workflow_run' && format('Deploy dev: {0}', github.event.workflow_run.head_commit.message) ||
     github.event_name == 'release' && format('Deploy prod: {0}', github.event.release.tag_name) ||
-    format('Deploy dev: {0}', github.sha)
+    format('Deploy: {0}', github.sha)
   }}
 
 concurrency:
   group: >-
     deploy-${{
       github.event_name == 'release' && format('prod-{0}', github.event.release.tag_name) ||
-      format('dev-{0}', github.ref)
+      github.event_name == 'workflow_run' && format('ci-{0}', github.event.workflow_run.head_branch) ||
+      github.ref
     }}
   cancel-in-progress: true
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   release:
     types: [published]
@@ -39,10 +43,16 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set deployment vars
         id: vars
@@ -72,19 +82,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-
-      - name: Set up Node.js and pnpm
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install pnpm
-        run: corepack enable && corepack prepare pnpm@latest --activate
-
-      - name: Install and typecheck
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm typecheck
 
       - name: Build and push
         uses: docker/build-push-action@v6

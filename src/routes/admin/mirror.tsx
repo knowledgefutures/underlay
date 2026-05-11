@@ -1,6 +1,6 @@
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
 import MirrorAdmin from '~/components/MirrorAdmin'
+import { useSSRData, } from '~/lib/ssr-data'
 
 interface MirrorConfig {
   enabled: boolean
@@ -10,8 +10,8 @@ interface MirrorConfig {
 }
 
 export default function AdminMirror() {
-  const me = useSSRData<any>('currentUser')
-  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig')
+  const me = useSSRData<any>('currentUser',)
+  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig',)
 
   if (!mirrorConfig?.enabled) {
     if (typeof window !== 'undefined') {
@@ -24,9 +24,9 @@ export default function AdminMirror() {
 
   return (
     <BaseLayout>
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-semibold mb-2">Mirror Administration</h1>
-        <p className="text-ink-muted text-sm mb-8">
+      <div className='max-w-4xl mx-auto px-4 py-8'>
+        <h1 className='text-2xl font-semibold mb-2'>Mirror Administration</h1>
+        <p className='text-ink-muted text-sm mb-8'>
           Configure and monitor this node's sync with the upstream Underlay server.
         </p>
         <MirrorAdmin
