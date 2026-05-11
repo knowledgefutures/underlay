@@ -172,7 +172,7 @@ if (isProd) {
   await runMigrations()
 
   app.get('*', async (c) => {
-    const { render } = await import('./dist/server/entry-server.js' as string)
+    const { render } = await import('./dist/entry-server.js' as string)
     const template = readFileSync(resolve('dist/client/index.html'), 'utf-8')
     const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
 
