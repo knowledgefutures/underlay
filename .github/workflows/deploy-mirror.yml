@@ -75,8 +75,16 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Install sops
+        run: |
+          curl -LO https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
+          sudo mv sops-v3.9.4.linux.amd64 /usr/local/bin/sops
+          sudo chmod +x /usr/local/bin/sops
+
       - name: Extract DEPLOY_HOST from env file
         id: host
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_SECRET_KEY }}
         run: |
           DEPLOY_HOST=$(sops -d --input-type dotenv --output-type dotenv .env.dev.enc | grep '^DEPLOY_HOST=' | cut -d= -f2)
           echo "deploy_host=${DEPLOY_HOST}" >> $GITHUB_OUTPUT
