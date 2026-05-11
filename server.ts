@@ -163,6 +163,12 @@ app.all('/api/*', (c) => {
 
 // --- SSR ---
 if (isProd) {
+  // Verify SSR build artifacts exist at startup (fail fast, don't wait for first request)
+  const clientHtml = resolve('dist/client/index.html')
+  const ssrBundle = resolve('dist/server/entry-server.js')
+  if (!existsSync(clientHtml)) throw new Error(`Missing ${clientHtml} — did 'pnpm build' run?`)
+  if (!existsSync(ssrBundle)) throw new Error(`Missing ${ssrBundle} — did 'pnpm build' run?`)
+
   // Serve static assets from Vite build output
   app.use('/assets/*', serveStatic({ root: './dist/client' }))
   app.use('/favicon.svg', serveStatic({ root: './dist/client' }))
@@ -171,9 +177,10 @@ if (isProd) {
   const { runMigrations } = await import('~/db/migrate')
   await runMigrations()
 
+  const template = readFileSync(clientHtml, 'utf-8')
+  const { render } = await import(ssrBundle as string)
+
   app.get('*', async (c) => {
-    const { render } = await import('./dist/entry-server.js' as string)
-    const template = readFileSync(resolve('dist/client/index.html'), 'utf-8')
     const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
 
     if (redirect) {
