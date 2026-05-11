@@ -6,20 +6,20 @@
  */
 
 export interface MirrorConfig {
-  enabled: boolean;
-  upstream: string;
-  nodeName: string;
-  syncSchedule: string;
-  apiKey: string;
+  enabled: boolean
+  upstream: string
+  nodeName: string
+  syncSchedule: string
+  apiKey: string
 }
 
 export function getMirrorConfig(): MirrorConfig {
-  const mode = process.env.UNDERLAY_MODE ?? "origin";
+  const mode = process.env.UNDERLAY_MODE ?? 'origin'
   return {
-    enabled: mode === "mirror",
-    upstream: process.env.UNDERLAY_UPSTREAM ?? "",
-    nodeName: process.env.UNDERLAY_NODE_NAME || "IUA Mirror",
-    syncSchedule: process.env.UNDERLAY_SYNC_SCHEDULE ?? "0 0 * * 0",
-    apiKey: process.env.UNDERLAY_UPSTREAM_API_KEY ?? "",
-  };
+    enabled: mode === 'mirror',
+    upstream: process.env.UNDERLAY_UPSTREAM ?? '',
+    nodeName: process.env.UNDERLAY_NODE_NAME || 'IUA Mirror',
+    syncSchedule: process.env.UNDERLAY_SYNC_SCHEDULE ?? '0 0 * * 0',
+    apiKey: process.env.UNDERLAY_UPSTREAM_API_KEY ?? '',
+  }
 }

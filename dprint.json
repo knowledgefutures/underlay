@@ -8,6 +8,10 @@
   "json": {
     "indentWidth": 2
   },
-  "includes": ["src/**/*.{ts,tsx}", "server.ts", "vite.config.ts", "drizzle.config.ts"],
+  "plugins": [
+    "https://plugins.dprint.dev/typescript-0.93.3.wasm",
+    "https://plugins.dprint.dev/json-0.19.4.wasm"
+  ],
+  "includes": ["src/**/*.{ts,tsx}", "server.ts", "vite.config.ts", "vitest.config.ts", "drizzle.config.ts"],
   "excludes": ["node_modules", "dist"]
 }

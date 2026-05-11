@@ -17,17 +17,17 @@ export interface RouteEntry {
  * Convert a glob key like "./routes/docs/api/[id].tsx"
  * into a route path like "/docs/api/:id".
  */
-function fileToRoutePath(file: string): string {
+function fileToRoutePath(file: string,): string {
   // Strip prefix and extension: "./routes/foo/bar.tsx" → "foo/bar"
   let route = file
-    .replace(/^\.\/routes\//, '')
-    .replace(/\.tsx$/, '')
+    .replace(/^\.\/routes\//, '',)
+    .replace(/\.tsx$/, '',)
 
   // index files map to parent: "docs/index" → "docs", "index" → ""
-  route = route.replace(/(^|\/)+index$/, '')
+  route = route.replace(/(^|\/)+index$/, '',)
 
   // Convert [param] segments to :param
-  route = route.replace(/\[([^\]]+)\]/g, ':$1')
+  route = route.replace(/\[([^\]]+)\]/g, ':$1',)
 
   return '/' + route
 }
@@ -36,13 +36,13 @@ function fileToRoutePath(file: string): string {
  * Sort routes so static segments come before dynamic ones (Next.js/Astro convention).
  * More specific routes first, catch-all dynamic routes last.
  */
-function sortRoutes(routes: RouteEntry[]): RouteEntry[] {
-  return routes.sort((a, b) => {
-    const aParts = a.path.split('/').filter(Boolean)
-    const bParts = b.path.split('/').filter(Boolean)
+function sortRoutes(routes: RouteEntry[],): RouteEntry[] {
+  return routes.sort((a, b,) => {
+    const aParts = a.path.split('/',).filter(Boolean,)
+    const bParts = b.path.split('/',).filter(Boolean,)
 
     // Compare segment by segment
-    const len = Math.max(aParts.length, bParts.length)
+    const len = Math.max(aParts.length, bParts.length,)
     for (let i = 0; i < len; i++) {
       const aP = aParts[i]
       const bP = bParts[i]
@@ -51,10 +51,10 @@ function sortRoutes(routes: RouteEntry[]): RouteEntry[] {
       // But "/" (root) should come first
       if (!aP && !bP) continue
       if (!aP) return -1 // a is shorter → a first
-      if (!bP) return 1  // b is shorter → b first
+      if (!bP) return 1 // b is shorter → b first
 
-      const aDynamic = aP.startsWith(':')
-      const bDynamic = bP.startsWith(':')
+      const aDynamic = aP.startsWith(':',)
+      const bDynamic = bP.startsWith(':',)
 
       // Static before dynamic at the same level
       if (!aDynamic && bDynamic) return -1
@@ -66,7 +66,7 @@ function sortRoutes(routes: RouteEntry[]): RouteEntry[] {
     }
 
     return 0
-  })
+  },)
 }
 
 /**
@@ -76,10 +76,10 @@ function sortRoutes(routes: RouteEntry[]): RouteEntry[] {
 export function buildRoutes(
   globResult: Record<string, () => Promise<unknown>>,
 ): RouteEntry[] {
-  const entries: RouteEntry[] = Object.keys(globResult).map((filePath) => ({
-    path: fileToRoutePath(filePath),
+  const entries: RouteEntry[] = Object.keys(globResult,).map((filePath,) => ({
+    path: fileToRoutePath(filePath,),
     filePath,
   }))
 
-  return sortRoutes(entries)
+  return sortRoutes(entries,)
 }
