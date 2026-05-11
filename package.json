@@ -83,7 +83,6 @@
     "pre-commit": "pnpm lint-staged"
   },
   "lint-staged": {
-    "*.{ts,tsx,css}": "dprint fmt",
-    "*.json": "dprint fmt"
+    "*.{ts,tsx,css,json}": "dprint fmt --"
   }
 }
