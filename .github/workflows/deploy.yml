@@ -118,7 +118,12 @@ jobs:
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_SECRET_KEY }}
         run: |
+          set -euo pipefail
           DEPLOY_HOST=$(sops -d --input-type dotenv --output-type dotenv "${{ steps.vars.outputs.env_file }}" | grep '^DEPLOY_HOST=' | cut -d= -f2)
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::DEPLOY_HOST not found in ${{ steps.vars.outputs.env_file }}"
+            exit 1
+          fi
           echo "deploy_host=${DEPLOY_HOST}" >> $GITHUB_OUTPUT
 
       - name: Add known hosts
