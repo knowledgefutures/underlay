@@ -148,9 +148,9 @@ Container-internal port is always 3000. Host port is configured via `PORT` in .e
 2. Create a release/tag → deploys to `www.underlay.org`
 3. Manual dispatch → choose environment
 
-The workflow: build Docker image → push to GHCR → SSH to server → decrypt secrets → `docker stack deploy` → wait for healthy rollout.
+The workflow: build Docker image → push to GHCR → decrypt env file for `DEPLOY_HOST` → SSH to server → `docker stack deploy` → wait for healthy rollout.
 
-Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST_DEV`, `SSH_HOST_PROD`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
+Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
 
 ### Docker Compose Files
 
