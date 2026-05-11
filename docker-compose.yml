@@ -10,6 +10,10 @@ services:
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=448'
       PORT: ${PORT:-3000}
+      UNDERLAY_MODE: ${UNDERLAY_MODE:-origin}
+      UNDERLAY_UPSTREAM: ${UNDERLAY_UPSTREAM:-}
+      UNDERLAY_NODE_NAME: ${UNDERLAY_NODE_NAME:-}
+      UNDERLAY_SYNC_SCHEDULE: ${UNDERLAY_SYNC_SCHEDULE:-0 0 * * 0}
     ports:
       - '${PORT:-3000}:${PORT:-3000}'
     deploy:
@@ -54,6 +58,10 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=128'
+      UNDERLAY_MODE: ${UNDERLAY_MODE:-origin}
+      UNDERLAY_UPSTREAM: ${UNDERLAY_UPSTREAM:-}
+      UNDERLAY_NODE_NAME: ${UNDERLAY_NODE_NAME:-}
+      UNDERLAY_SYNC_SCHEDULE: ${UNDERLAY_SYNC_SCHEDULE:-0 0 * * 0}
     command: ['node', '--import', 'tsx/esm', 'tools/cron.ts']
     deploy:
       replicas: 1
