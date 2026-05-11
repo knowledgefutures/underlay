@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef } from "react";
 
 interface Org {
@@ -51,24 +52,22 @@ export default function UserMenu({ slug, orgs = [] }: UserMenuProps) {
       {open && (
         <div className="absolute right-0 top-full pt-1 z-50">
           <div className="bg-parchment border border-rule shadow-sm min-w-48">
-            <a
-              href={`/${slug}`}
+            <Link
+              to={`/${slug}`}
               className="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
             >
               Your Profile
-            </a>
-            <a
-              href="/dashboard"
+            </Link>
+            <Link to="/dashboard"
               className="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
             >
               Dashboard
-            </a>
-            <a
-              href="/settings"
+            </Link>
+            <Link to="/settings"
               className="block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
             >
               Settings
-            </a>
+            </Link>
             {orgs.length > 0 && (
               <>
                 <hr className="border-rule" />
@@ -76,23 +75,22 @@ export default function UserMenu({ slug, orgs = [] }: UserMenuProps) {
                   Your organizations
                 </p>
                 {orgs.map((org) => (
-                  <a
+                  <Link
                     key={org.slug}
-                    href={`/${org.slug}`}
+                    to={`/${org.slug}`}
                     className="block px-3 py-1.5 text-sm text-ink-light hover:bg-parchment-dark transition-colors"
                   >
                     {org.displayName}
-                  </a>
+                  </Link>
                 ))}
               </>
             )}
             <hr className="border-rule" />
-            <a
-              href="/logout"
+            <Link to="/logout"
               className="block px-3 py-2 text-sm text-ink-muted hover:bg-parchment-dark transition-colors"
             >
               Sign out
-            </a>
+            </Link>
           </div>
         </div>
       )}

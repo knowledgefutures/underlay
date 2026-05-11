@@ -1,0 +1,13 @@
+{
+  "typescript": {
+    "indentWidth": 2,
+    "semiColons": "asi",
+    "quoteStyle": "preferSingle",
+    "trailingCommas": "always"
+  },
+  "json": {
+    "indentWidth": 2
+  },
+  "includes": ["src/**/*.{ts,tsx}", "server.ts", "vite.config.ts", "drizzle.config.ts"],
+  "excludes": ["node_modules", "dist"]
+}

@@ -1,43 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 cd "$(dirname "$0")"
 
-MODE="${1:-dev}"
+# Load env vars (prefer .env.local for local dev)
+set -a
+[[ -f .env.local ]] && source .env.local || [[ -f .env ]] && source .env
+set +a
 
-case "$MODE" in
-    dev)
-        COMPOSE_FILE=docker-compose.local.yml
+# Find an available port, incrementing from PORT (default 3000)
+BASE_PORT="${PORT:-3000}"
+PORT="$BASE_PORT"
+while lsof -iTCP:"$PORT" -sTCP:LISTEN -t &>/dev/null; do
+  ((PORT++))
+done
+if [[ "$PORT" -ne "$BASE_PORT" ]]; then
+  echo "Port $BASE_PORT in use, using $PORT"
+fi
+export PORT
 
-        # Only create .env.local if it doesn't exist yet
-        if [[ ! -f .env.local ]]; then
-            if [[ -f .env.test ]]; then
-                echo "Creating .env.local from .env.test defaults (with Docker hostnames)"
-                sed -e 's|@localhost:5432|@postgres:5432|' \
-                    -e 's|http://localhost:9000|http://minio:9000|' \
-                    .env.test > .env.local
-            else
-                echo "No .env.test found — create .env.local manually"
-                exit 1
-            fi
-            echo "Edit .env.local to customize."
-        fi
+trap "docker compose -f docker-compose.local.yml down" EXIT
 
-        echo "Starting local development environment (source mounted, fast reload)..."
-        ;;
-    prod|build)
-        COMPOSE_FILE=docker-compose.yml
-        echo "Starting production-like environment (built image)..."
-        echo "Make sure you've built the image first: docker build -t underlay ."
-        ;;
-    *)
-        echo "Usage: $0 [dev|prod]"
-        echo "  dev   - Fast development with source mounting (default)"
-        echo "  prod  - Production-like testing with built image"
-        exit 1
-        ;;
-esac
-
-trap "docker compose -f $COMPOSE_FILE down --remove-orphans" EXIT
-
-docker compose -f "$COMPOSE_FILE" up --build --attach app
+docker compose -f docker-compose.local.yml up --build --attach app

@@ -5,7 +5,7 @@ import postgres from "postgres";
 const connectionString =
   process.env.DATABASE_URL ?? "postgresql://underlay:underlay@localhost:5432/underlay";
 
-async function runMigrations(retries = 5, delay = 3000) {
+export async function runMigrations(retries = 5, delay = 3000) {
   const client = postgres(connectionString, { max: 1 });
   const db = drizzle(client);
 
@@ -33,9 +33,15 @@ async function runMigrations(retries = 5, delay = 3000) {
   }
 }
 
-runMigrations()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error("[migrate] Failed:", err);
-    process.exit(1);
-  });
+// Run directly if invoked as a script
+const isMain =
+  process.argv[1]?.endsWith("migrate.ts") || process.argv[1]?.endsWith("migrate.js");
+
+if (isMain) {
+  runMigrations()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error("[migrate] Failed:", err);
+      process.exit(1);
+    });
+}

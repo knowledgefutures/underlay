@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef } from "react";
 
 interface Collection {
@@ -55,9 +56,9 @@ export default function CollectionExplorer() {
           <p className="text-sm text-ink-muted">No collections found.</p>
         ) : (
           collections.map((c) => (
-            <a
+            <Link
               key={`${c.ownerSlug}/${c.slug}`}
-              href={`/${c.ownerSlug}/${c.slug}`}
+              to={`/${c.ownerSlug}/${c.slug}`}
               className="block border border-rule p-3 hover:bg-parchment-dark transition-colors"
             >
               <div className="flex items-center gap-2 mb-1">
@@ -66,7 +67,7 @@ export default function CollectionExplorer() {
                 </span>
               </div>
               <p className="text-xs text-ink-muted">{c.description ?? c.name}</p>
-            </a>
+            </Link>
           ))
         )}
       </div>

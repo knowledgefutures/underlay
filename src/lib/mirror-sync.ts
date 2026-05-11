@@ -5,7 +5,7 @@
  * Underlay server. Designed to be called by cron or triggered manually.
  */
 
-import { db, schema } from "../db/index.js";
+import { db, schema } from "../db/client.server.js";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { uploadToS3, headS3Object } from "./s3.js";
 import { createHash } from "node:crypto";

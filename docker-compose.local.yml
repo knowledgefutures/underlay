@@ -1,81 +1,50 @@
 # Local development compose — source-mounted for fast reload.
 # Start with: ./dev.sh
-# Access directly at localhost:4321 (Astro) and localhost:3000 (API).
+# Access at localhost:${PORT:-3000}
 
 name: underlay-local
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  db:
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: underlay
       POSTGRES_PASSWORD: underlay
       POSTGRES_DB: underlay
     command: >
+      postgres
       -c shared_buffers=256MB
       -c effective_cache_size=512MB
       -c work_mem=8MB
       -c maintenance_work_mem=64MB
       -c max_connections=50
     ports:
-      - "5433:5432"
+      - '5433:5432'
     volumes:
       - pgdata-dev:/var/lib/postgresql/data
-    networks:
-      - dev
-      - dbaccess-dev
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U underlay"]
+      test: ['CMD-SHELL', 'pg_isready -U underlay']
       interval: 5s
       timeout: 3s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-          cpus: "1.0"
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
       target: dev
-    env_file:
-      - .env.local
-    environment:
-      NODE_ENV: development
     ports:
-      - "4321:4321"
-      - "3000:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - '${PORT:-3000}:${PORT:-3000}'
     volumes:
-      - ./src:/app/src
-      - ./public:/app/public
-      - ./astro.config.mjs:/app/astro.config.mjs
-      - ./tsconfig.json:/app/tsconfig.json
-      - ./drizzle.config.ts:/app/drizzle.config.ts
-      - ./tools:/app/tools
-      - ./docker-entrypoint.dev.sh:/app/docker-entrypoint.dev.sh
-      - app_node_modules:/app/node_modules
-    networks:
-      - dev
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-          cpus: "1.0"
-    command: ["sh", "-c", "npm run db:migrate && npm run db:seed && npm run dev:server"]
-    entrypoint: ["sh", "/app/docker-entrypoint.dev.sh"]
-    restart: unless-stopped
-
-networks:
-  dev:
-    driver: bridge
-  dbaccess-dev:
-    driver: bridge
+      - .:/app
+      - /app/node_modules
+    environment:
+      PORT: ${PORT:-3000}
+      DATABASE_URL: postgresql://underlay:underlay@db:5432/underlay
+    command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm dev:app"
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   pgdata-dev:
-  app_node_modules:

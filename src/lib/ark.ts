@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { db, schema } from "../db/index.js";
+import { db, schema } from "../db/client.server.js";
 
 export const DEFAULT_NAAN = process.env.ARK_DEFAULT_NAAN ?? "12345";
 const SITE_URL = "https://underlay.org";
@@ -144,34 +144,6 @@ export function buildArkUrl(
   if (version !== undefined) name += `.v${version}`;
   if (recordType && recordId) name += `/${encodeURIComponent(recordType)}/${encodeURIComponent(recordId)}`;
   return `${SITE_URL}/ark:${naan}/${name}`;
-}
-
-// Returns the full ARK URL for a collection if it exists and is enabled.
-export async function getCollectionArkUrl(
-  collectionId: string,
-  naan: string,
-  version?: number,
-): Promise<string | null> {
-  const [row] = await db
-    .select({
-      arkId: schema.arkCollections.arkId,
-      enabled: schema.arkCollections.enabled,
-      shoulder: schema.arkShoulders.shoulder,
-    })
-    .from(schema.arkCollections)
-    .innerJoin(
-      schema.collections,
-      eq(schema.arkCollections.collectionId, schema.collections.id),
-    )
-    .innerJoin(
-      schema.arkShoulders,
-      eq(schema.collections.accountId, schema.arkShoulders.accountId),
-    )
-    .where(eq(schema.arkCollections.collectionId, collectionId))
-    .limit(1);
-
-  if (!row || !row.enabled) return null;
-  return buildArkUrl(naan, row.shoulder, row.arkId, version);
 }
 
 // Formats a date as YYYYMMDD for ERC responses.

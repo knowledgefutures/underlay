@@ -45,13 +45,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install and typecheck
         run: |
-          npm ci
-          npx astro sync
-          npm run typecheck
+          pnpm install --frozen-lockfile
+          pnpm typecheck
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -73,22 +75,41 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Install sops
+        run: |
+          curl -LO https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
+          sudo mv sops-v3.9.4.linux.amd64 /usr/local/bin/sops
+          sudo chmod +x /usr/local/bin/sops
+
+      - name: Extract DEPLOY_HOST from env file
+        id: host
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST=$(sops -d --input-type dotenv --output-type dotenv .env.dev.enc | grep '^DEPLOY_HOST=' | cut -d= -f2)
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::DEPLOY_HOST not found in .env.dev.enc"
+            exit 1
+          fi
+          echo "deploy_host=${DEPLOY_HOST}" >> $GITHUB_OUTPUT
+
       - name: Add known hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.SSH_HOST_DEV }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ steps.host.outputs.deploy_host }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy over SSH
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST_DEV }}
+          DEPLOY_HOST: ${{ steps.host.outputs.deploy_host }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           GHCR_USER: ${{ secrets.GHCR_USER }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           IMAGE_TAG: mirror-${{ github.sha }}
         run: |
-          ssh "${SSH_USER}@${SSH_HOST}" \
+          ssh "${SSH_USER}@${DEPLOY_HOST}" \
             "env GHCR_USER='${GHCR_USER}' GHCR_TOKEN='${GHCR_TOKEN}' IMAGE_TAG='${IMAGE_TAG}' bash -s -- '${REPO}' '${BRANCH}'" <<'EOS'
           set -euo pipefail
 
@@ -134,16 +155,17 @@ jobs:
 
           sudo docker pull "ghcr.io/${REPO}:${IMAGE_TAG}"
 
-          # Deploy using docker-compose.mirror.yml — Postgres is self-contained.
+          # Deploy using docker-compose.yml with mirror config.
           # S3 creds and API key are sourced from prod .env above.
           sudo env \
             IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
+            PORT=3002 APP_REPLICAS=1 \
             S3_ENDPOINT="${S3_ENDPOINT:-}" S3_REGION="${S3_REGION:-auto}" \
             S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
             S3_BUCKET="${S3_BUCKET:-underlay}" \
             UNDERLAY_UPSTREAM_API_KEY="${UNDERLAY_UPSTREAM_API_KEY:-}" \
             SESSION_SECRET="$(openssl rand -hex 32)" \
-            docker stack deploy -c docker-compose.mirror.yml \
+            docker stack deploy -c docker-compose.yml \
             --with-registry-auth --resolve-image always --prune "${STACK_NAME}"
 
           sudo docker stack services "${STACK_NAME}"

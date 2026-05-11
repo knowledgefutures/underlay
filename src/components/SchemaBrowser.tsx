@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef } from "react";
 
 interface SchemaResult {
@@ -98,9 +99,9 @@ export default function SchemaBrowser() {
             const isPrivate = (s.schema as any)?.private === true;
 
             return (
-              <a
+              <Link
                 key={s.id}
-                href={`/schemas/${s.id}`}
+                to={`/schemas/${s.id}`}
                 className="block border border-rule p-4 hover:bg-parchment-dark/50 transition-colors"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -153,7 +154,7 @@ export default function SchemaBrowser() {
                     ))}
                   </div>
                 )}
-              </a>
+              </Link>
             );
           })
         )}

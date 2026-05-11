@@ -1,20 +1,19 @@
-node_modules/
-dist/
+node_modules
+dist
+.astro
 .env
-.env.dev
-.env.local
+.env.*
+!.env.enc
+!.env.*.enc
+.DS_Store
+coverage
 data/
-planning/
-.astro/
 *.db
 *.db-journal
 *.db-wal
-_scriptsRepo/
-pubstarExample/
-pubstarExample2/
+planning/
 
 # OS files
-.DS_Store
 Thumbs.db
 
 # Editor files
@@ -26,6 +25,4 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
-
-# Coverage
 coverage/

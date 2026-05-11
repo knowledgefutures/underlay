@@ -49,12 +49,10 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             echo "image_tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-            echo "host=${{ secrets.SSH_HOST_PROD }}" >> $GITHUB_OUTPUT
             echo "env_file=.env.enc" >> $GITHUB_OUTPUT
             echo "stack_name=underlay-prod" >> $GITHUB_OUTPUT
           else
             echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
-            echo "host=${{ secrets.SSH_HOST_DEV }}" >> $GITHUB_OUTPUT
             echo "env_file=.env.dev.enc" >> $GITHUB_OUTPUT
             echo "stack_name=underlay-dev" >> $GITHUB_OUTPUT
           fi
@@ -75,16 +73,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      - name: Set up Node.js
+      - name: Set up Node.js and pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install and typecheck
         run: |
-          npm ci
-          npx astro sync
-          npm run typecheck
+          pnpm install --frozen-lockfile
+          pnpm typecheck
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -107,15 +107,34 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      - name: Install sops
+        run: |
+          curl -LO https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
+          sudo mv sops-v3.9.4.linux.amd64 /usr/local/bin/sops
+          sudo chmod +x /usr/local/bin/sops
+
+      - name: Extract DEPLOY_HOST from env file
+        id: host
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST=$(sops -d --input-type dotenv --output-type dotenv "${{ steps.vars.outputs.env_file }}" | grep '^DEPLOY_HOST=' | cut -d= -f2)
+          if [[ -z "$DEPLOY_HOST" ]]; then
+            echo "::error::DEPLOY_HOST not found in ${{ steps.vars.outputs.env_file }}"
+            exit 1
+          fi
+          echo "deploy_host=${DEPLOY_HOST}" >> $GITHUB_OUTPUT
+
       - name: Add known hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ steps.vars.outputs.host }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ steps.host.outputs.deploy_host }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Deploy over SSH
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ steps.vars.outputs.host }}
+          DEPLOY_HOST: ${{ steps.host.outputs.deploy_host }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           GHCR_USER: ${{ secrets.GHCR_USER }}
@@ -124,7 +143,7 @@ jobs:
           ENV_FILE: ${{ steps.vars.outputs.env_file }}
           STACK_NAME: ${{ steps.vars.outputs.stack_name }}
         run: |
-          ssh "${SSH_USER}@${SSH_HOST}" \
+          ssh "${SSH_USER}@${DEPLOY_HOST}" \
             "env GHCR_USER='${GHCR_USER}' GHCR_TOKEN='${GHCR_TOKEN}' IMAGE_TAG='${IMAGE_TAG}' ENV_FILE='${ENV_FILE}' STACK_NAME='${STACK_NAME}' bash -s -- '${REPO}' '${BRANCH}'" <<'EOS'
           set -euo pipefail
 
@@ -168,10 +187,19 @@ jobs:
 
           # Deploy/update stack — export .env vars for compose interpolation
           # (docker stack deploy does NOT read .env files automatically)
-          sudo env $(grep -v '^#' .env | grep -v '^$' | xargs) \
-            IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
+          # IMAGE and IMAGE_TAG are set last to prevent .env from overriding them
+          sudo env \
+            $(grep -v '^#' .env | grep -v '^$' | xargs) \
+            IMAGE="ghcr.io/${REPO}" IMAGE_TAG="${IMAGE_TAG}" \
             docker stack deploy -c docker-compose.yml \
             --with-registry-auth --resolve-image always --prune "${STACK_NAME}"
+
+          # Verify the deployed image matches what was built
+          DEPLOYED_IMAGE=$(sudo docker service inspect "${STACK_NAME}_app" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')
+          echo "Deployed image: ${DEPLOYED_IMAGE}"
+          if [[ "$DEPLOYED_IMAGE" != *"${IMAGE_TAG}"* ]]; then
+            echo "::warning::Deployed image tag doesn't match expected ${IMAGE_TAG}"
+          fi
 
           sudo docker stack services "${STACK_NAME}"
 

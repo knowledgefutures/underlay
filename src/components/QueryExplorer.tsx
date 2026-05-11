@@ -675,7 +675,7 @@ export default function QueryExplorer() {
       // Clear the hash so it doesn't reload on refresh
       window.history.replaceState(null, "", window.location.pathname);
     } catch { /* invalid hash, ignore */ }
-  }, [sqlJs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sqlJs]);
 
   return (
     <div className="flex h-full overflow-hidden">

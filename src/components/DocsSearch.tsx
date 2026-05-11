@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef } from "react";
 
 interface DocEntry {
@@ -79,10 +80,10 @@ export default function DocsSearch() {
             <div className="docs-search-empty">No results</div>
           ) : (
             matches.slice(0, 12).map((m, i) => (
-              <a key={i} href={m.href} className="docs-search-result">
+              <Link key={i} to={m.href} className="docs-search-result">
                 <span className="docs-search-result-title">{m.title}</span>
                 {m.context && <span className="docs-search-result-context">{m.context}</span>}
-              </a>
+              </Link>
             ))
           )}
         </div>

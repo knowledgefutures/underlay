@@ -1,3 +1,4 @@
+import { Link } from 'react-router'
 import { useState, useEffect, useRef } from "react";
 
 interface Props {
@@ -78,9 +79,9 @@ function PaginatedCollections({ collections }: { collections: MirrorStatus["coll
           {visible.map((c) => (
             <tr key={`${c.ownerSlug}/${c.slug}`} className="border-b border-rule/50">
               <td className="py-2">
-                <a href={`/${c.ownerSlug}/${c.slug}`} className="text-ink hover:underline">
+                <Link to={`/${c.ownerSlug}/${c.slug}`} className="text-ink hover:underline">
                   {c.ownerSlug}/{c.slug}
-                </a>
+                </Link>
                 <span className="text-ink-muted ml-2">— {c.name}</span>
               </td>
               <td className="py-2 font-mono">{c.localVersion}</td>

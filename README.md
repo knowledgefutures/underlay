@@ -22,19 +22,19 @@ cd underlay
 This starts:
 - **PostgreSQL 16** on port 5433 (host) → 5432 (container)
 - **MinIO** (S3-compatible storage) on ports 9000/9001
-- **Underlay** on port 4321 (Astro SSR) and port 3000 (Fastify API)
+- **Underlay** on port 3000
 
 The dev script auto-creates `.env.local` from `.env.test` defaults if one doesn't exist.
 
 ### Without Docker
 
 ```bash
-npm install
+pnpm install
 cp .env.test .env.local
 # Edit .env.local with your Postgres and S3 connection strings
-npm run db:migrate
-npm run db:seed
-npm run dev:server
+pnpm db:migrate
+pnpm db:seed
+pnpm dev:app
 ```
 
 ### Default Seed User
@@ -48,8 +48,10 @@ Also creates a "Knowledge Futures" org with sample collections.
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Astro 6 SSR + React 19 islands + Tailwind CSS 4 |
-| API | Fastify 5 (TypeScript), always binds to port 3000 |
+| Server | Hono 4 + @hono/node-server |
+| Frontend | React 19 + React Router v7 (SSR + client hydration) |
+| Styling | Tailwind CSS 4 (@tailwindcss/vite) |
+| Build | Vite 6 (client + SSR bundles) |
 | Database | PostgreSQL 16 + Drizzle ORM |
 | File Storage | Cloudflare R2 (prod) / MinIO (dev) — S3-compatible |
 | Auth | Session cookies (web) + API keys (programmatic) |
@@ -57,54 +59,65 @@ Also creates a "Knowledge Futures" org with sample collections.
 | CI/CD | GitHub Actions → GHCR → SSH → `docker stack deploy` |
 | Secrets | SOPS + age encryption |
 
+The app runs as a single Hono server on one port (default 3000). In dev, Vite runs in middleware mode for HMR. In production, Vite builds client and SSR bundles that Hono serves directly.
+
 ## Project Structure
 
 ```
+server.ts                 # Hono entry point (API routes + SSR)
+vite.config.ts            # Vite config (React, Tailwind, SSR)
 src/
-├── api/                  # Fastify API server (port 3000)
-│   ├── plugins/auth.ts   # Auth (API keys + session cookies)
-│   ├── routes/
-│   │   ├── accounts.ts   # Signup, login, API key CRUD, orgs
-│   │   ├── collections.ts    # Collection CRUD
-│   │   ├── versions.ts   # Version push/pull/diff + privacy filtering
-│   │   ├── files.ts      # Content-addressed file storage
-│   │   ├── schemas.ts    # Schema discovery, search, labeling
-│   │   └── health.ts     # Health check
-│   └── server.ts         # Fastify entry point
+├── entry-client.tsx      # Client hydration entry
+├── entry-server.tsx      # SSR rendering (renderToPipeableStream)
+├── App.tsx               # React Router routes (filesystem-based)
+├── route-gen.ts          # Filesystem → route pattern conversion
+├── loaders.server.ts     # Server-side data loaders per route
+├── api/                  # API route handlers (named exports)
+│   ├── auth.server.ts    # Auth middleware + session helpers
+│   ├── accounts.ts       # Signup, login, API key CRUD, orgs
+│   ├── collections.ts    # Collection CRUD
+│   ├── versions.ts       # Version push/pull/diff + privacy filtering
+│   ├── uploads.ts        # Batch upload sessions
+│   ├── files.ts          # Content-addressed file storage
+│   ├── schemas.ts        # Schema discovery, search, labeling
+│   ├── ark.ts            # ARK identifier management
+│   ├── admin.ts          # Admin endpoints (mirror mode)
+│   ├── query.ts          # SQL query tool
+│   └── health.ts         # Health check
 ├── db/
 │   ├── schema.ts         # Drizzle table definitions
-│   ├── index.ts          # Database client
-│   ├── migrate.ts        # Migration runner (retries on DNS failures)
+│   ├── client.server.ts  # Database client
+│   ├── migrate.ts        # Migration runner
 │   ├── seed.ts           # Seed data
 │   └── migrations/       # Generated SQL migrations
-├── layouts/              # Astro layouts (Base, Docs, BlogPost)
-├── components/           # React islands + Astro components
+├── routes/               # React pages (filesystem routing)
+│   ├── index.tsx         # Landing page
+│   ├── explore.tsx       # Browse public collections
+│   ├── dashboard.tsx     # User's collections
+│   ├── settings/         # Account settings + API keys
+│   ├── schemas/          # Schema browser
+│   ├── blog/             # Blog
+│   ├── docs/             # Documentation
+│   └── [owner]/          # Dynamic owner routes
+│       ├── index.tsx
+│       ├── [collection]/
+│       │   ├── index.tsx
+│       │   ├── versions.tsx
+│       │   ├── v/[n].tsx
+│       │   ├── diff.tsx
+│       │   └── settings.tsx
+├── components/           # Shared React components
 ├── lib/
-│   ├── s3.ts             # S3 client (upload, download, head, list, delete)
+│   ├── s3.ts             # S3 client
+│   ├── ark.ts            # ARK identifier utilities
+│   ├── version-helpers.server.ts  # Shared schema/version helpers
 │   └── page-utils.ts     # SSR utilities
-├── pages/
-│   ├── index.astro       # Landing page
-│   ├── explore.astro     # Browse public collections
-│   ├── login/signup.astro
-│   ├── dashboard.astro   # User's collections
-│   ├── settings/         # Account settings + API key management
-│   ├── blog/             # Markdown blog posts
-│   ├── docs/             # Documentation (concepts, quickstart, API ref, self-hosting)
-│   └── [owner]/          # Dynamic routes
-│       ├── index.astro           # Profile page
-│       ├── settings.astro        # Account/org settings
-│       └── [collection]/
-│           ├── index.astro       # Collection overview
-│           ├── versions.astro    # Version history
-│           ├── diff.astro        # Version diff viewer
-│           ├── settings.astro    # Collection settings
-│           └── v/[n].astro       # Version detail
-├── styles/global.css     # Tailwind theme (parchment/ink palette)
+├── styles/global.css     # Tailwind theme
 public/
-├── .well-known/ai.txt   # Machine-readable API docs (for LLMs/bots)
+├── .well-known/ai.txt    # Machine-readable API docs
 tools/
-├── backupDb.ts           # Postgres backup → S3 (_backups/ prefix)
-└── cron.ts               # Scheduled task runner (daily backups)
+├── backupDb.ts           # Postgres backup → S3
+└── cron.ts               # Scheduled task runner
 ```
 
 ## Deployment
@@ -122,13 +135,12 @@ tools/
 
 Two Docker Swarm stacks run on the same box:
 
-| Stack | Domain | Host Ports | Purpose |
+| Stack | Domain | Host Port | Purpose |
 |-------|--------|-----------|---------|
-| `underlay-prod` | www.underlay.org | 4322 (SSR), 3001 (API) | Production |
-| `underlay-dev` | dev.underlay.org | 4321 (SSR), 3000 (API) | Staging |
+| `underlay-prod` | www.underlay.org | 3001 | Production |
+| `underlay-dev` | dev.underlay.org | 3000 | Staging |
 
-Container-internal ports are always fixed: 4321 (Astro) and 3000 (Fastify).
-Host ports are configured via `APP_PORT` and `API_PORT` in .env files (compose-only variables).
+Container-internal port is always 3000. Host port is configured via `PORT` in .env files.
 
 ### CI/CD Flow
 
@@ -136,9 +148,9 @@ Host ports are configured via `APP_PORT` and `API_PORT` in .env files (compose-o
 2. Create a release/tag → deploys to `www.underlay.org`
 3. Manual dispatch → choose environment
 
-The workflow: build Docker image → push to GHCR → SSH to server → decrypt secrets → `docker stack deploy` → wait for healthy rollout.
+The workflow: build Docker image → push to GHCR → decrypt env file for `DEPLOY_HOST` → SSH to server → `docker stack deploy` → wait for healthy rollout.
 
-Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST_DEV`, `SSH_HOST_PROD`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
+Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN`.
 
 ### Docker Compose Files
 
@@ -153,8 +165,7 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST_DEV`, `SSH_HOST_PROD`, `SS
 |----------|-------------|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `SESSION_SECRET` | Secret for signing session cookies |
-| `APP_PORT` | Host-published port for Astro SSR (compose only, default: 4322) |
-| `API_PORT` | Host-published port for Fastify API (compose only, default: 3001) |
+| `PORT` | Server port (default: 3000) |
 | `S3_BUCKET` | S3 bucket name |
 | `S3_REGION` | S3 region (`auto` for R2) |
 | `S3_ENDPOINT` | S3 endpoint URL |
@@ -167,23 +178,32 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_HOST_DEV`, `SSH_HOST_PROD`, `SS
 
 ```bash
 # Development
-npm run dev              # Start full local stack (Docker)
-npm run dev:server       # Start Astro + API without Docker
-npm run build            # Build for production
+pnpm dev              # Start full local stack (Docker)
+pnpm dev:app          # Start server without Docker
+pnpm build            # Build for production (client + SSR)
+pnpm start            # Start production server
+
+# Code quality
+pnpm typecheck        # TypeScript type checking
+pnpm lint             # Lint with oxlint
+pnpm fmt              # Format with dprint
+pnpm fmt:check        # Check formatting
 
 # Database
-npm run db:generate      # Generate Drizzle migrations from schema changes
-npm run db:migrate       # Run pending migrations
-npm run db:seed          # Seed database
+pnpm db:generate      # Generate Drizzle migrations from schema changes
+pnpm db:migrate       # Run pending migrations
+pnpm db:seed          # Seed database
 
 # Tools
-npm run tool:backup      # Manual database backup to S3
+pnpm tool:backup      # Manual database backup to S3
+pnpm tool:restore     # Restore database from backup
+pnpm tool:pruneBackups # Prune old backups
 
 # Secrets (SOPS + age)
-npm run secrets:encrypt      # Encrypt .env → .env.enc
-npm run secrets:encrypt:dev  # Encrypt .env.dev → .env.dev.enc
-npm run secrets:decrypt      # Decrypt .env.enc → .env
-npm run secrets:decrypt:dev  # Decrypt .env.dev.enc → .env.dev
+pnpm secrets:encrypt      # Encrypt .env → .env.enc
+pnpm secrets:encrypt:dev  # Encrypt .env.dev → .env.dev.enc
+pnpm secrets:decrypt      # Decrypt .env.enc → .env
+pnpm secrets:decrypt:dev  # Decrypt .env.dev.enc → .env.dev
 ```
 
 ## Schema System
@@ -243,24 +263,24 @@ When adding or changing features, update these locations:
 | What | Where | Purpose |
 |------|-------|---------|
 | API documentation | `public/.well-known/ai.txt` | Machine-readable docs for LLMs and bots |
-| Concepts | `src/pages/docs/concepts.astro` | Core concepts explanation |
-| API reference | `src/pages/docs/api/*.astro` | Endpoint-level docs with examples |
-| Integration guide | `src/pages/docs/integration.astro` | Developer onboarding guide |
-| Quick start | `src/pages/docs/quickstart.astro` | Getting started tutorial |
-| Self-hosting | `src/pages/docs/self-host.astro` | Deployment instructions |
-| DB schema | `src/db/schema.ts` → `npm run db:generate` | Schema changes need a migration |
-| Schema discovery | `src/api/routes/schemas.ts` | Schema search, labeling, cross-referencing |
+| Concepts | `src/routes/docs/concepts.tsx` | Core concepts explanation |
+| API reference | `src/routes/docs/api/*.tsx` | Endpoint-level docs with examples |
+| Integration guide | `src/routes/docs/integration.tsx` | Developer onboarding guide |
+| Quick start | `src/routes/docs/quickstart.tsx` | Getting started tutorial |
+| Self-hosting | `src/routes/docs/self-host.tsx` | Deployment instructions |
+| DB schema | `src/db/schema.ts` → `pnpm db:generate` | Schema changes need a migration |
+| Schema discovery | `src/api/schemas.ts` | Schema search, labeling, cross-referencing |
 | Encrypted secrets | `.env.enc` / `.env.dev.enc` | Re-encrypt after changing .env files |
 
 ### Privacy features
 
 The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations in per-type schemas. When changing how privacy works, update:
-- `src/api/routes/versions.ts` — filtering logic (reads from `version_schemas` JOIN `schemas`)
-- `src/api/routes/files.ts` — file access checks
-- `src/api/routes/schemas.ts` — public schema filtering
+- `src/api/versions.ts` — filtering logic (reads from `version_schemas` JOIN `schemas`)
+- `src/api/files.ts` — file access checks
+- `src/api/schemas.ts` — public schema filtering
 - `public/.well-known/ai.txt` — Privacy section
-- `src/pages/docs/concepts.astro` — Privacy section
-- `src/pages/docs/api/versions.astro` — Push endpoint docs
+- `src/routes/docs/concepts.tsx` — Privacy section
+- `src/routes/docs/api/versions.tsx` — Push endpoint docs
 
 ## License
 
