@@ -9,6 +9,7 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: '--max-old-space-size=448'
+      PORT: ${PORT:-3000}
     ports:
       - '${PORT:-3000}:${PORT:-3000}'
     deploy:
