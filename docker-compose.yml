@@ -72,7 +72,7 @@ services:
         max-file: '3'
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     env_file:
       - .env
     environment:
