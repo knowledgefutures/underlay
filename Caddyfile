@@ -5,12 +5,17 @@
 
 # Single Hono server handles both SSR and API on one port.
 
+dev.underlay.org {
+    tls internal
+    reverse_proxy 127.0.0.1:3000
+}
+
 www.underlay.org {
     tls internal
     reverse_proxy 127.0.0.1:3001
 }
 
-dev.underlay.org {
+mirror.underlay.org {
     tls internal
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy 127.0.0.1:3002
 }
