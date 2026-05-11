@@ -7,7 +7,7 @@
     "dev": "./dev.sh",
     "dev:app": "tsx --env-file=.env.local server.ts",
     "build": "vite build && vite build --ssr src/entry-server.tsx",
-    "start": "NODE_ENV=production node dist/entry-server.js",
+    "start": "NODE_ENV=production node --import tsx/esm server.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "fmt": "dprint fmt",

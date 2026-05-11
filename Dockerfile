@@ -38,4 +38,4 @@ COPY --from=build /app/public ./public
 
 ENV NODE_ENV=production
 EXPOSE ${PORT:-3000}
-CMD ["node", "dist/entry-server.js"]
+CMD ["node", "--import", "tsx/esm", "server.ts"]
