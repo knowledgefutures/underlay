@@ -3,7 +3,7 @@ FROM node:24-slim AS dev
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install
 COPY . .
 CMD ["pnpm", "dev:app"]
@@ -13,7 +13,7 @@ FROM node:24-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
