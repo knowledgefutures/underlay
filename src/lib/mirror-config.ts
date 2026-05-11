@@ -18,7 +18,7 @@ export function getMirrorConfig(): MirrorConfig {
   return {
     enabled: mode === "mirror",
     upstream: process.env.UNDERLAY_UPSTREAM ?? "",
-    nodeName: process.env.UNDERLAY_NODE_NAME ?? "IUA Mirror",
+    nodeName: process.env.UNDERLAY_NODE_NAME || "IUA Mirror",
     syncSchedule: process.env.UNDERLAY_SYNC_SCHEDULE ?? "0 0 * * 0",
     apiKey: process.env.UNDERLAY_UPSTREAM_API_KEY ?? "",
   };
