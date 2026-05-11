@@ -187,10 +187,19 @@ jobs:
 
           # Deploy/update stack — export .env vars for compose interpolation
           # (docker stack deploy does NOT read .env files automatically)
-          sudo env $(grep -v '^#' .env | grep -v '^$' | xargs) \
-            IMAGE="ghcr.io/${REPO}" IMAGE_TAG="$IMAGE_TAG" \
+          # IMAGE and IMAGE_TAG are set last to prevent .env from overriding them
+          sudo env \
+            $(grep -v '^#' .env | grep -v '^$' | xargs) \
+            IMAGE="ghcr.io/${REPO}" IMAGE_TAG="${IMAGE_TAG}" \
             docker stack deploy -c docker-compose.yml \
             --with-registry-auth --resolve-image always --prune "${STACK_NAME}"
+
+          # Verify the deployed image matches what was built
+          DEPLOYED_IMAGE=$(sudo docker service inspect "${STACK_NAME}_app" --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}')
+          echo "Deployed image: ${DEPLOYED_IMAGE}"
+          if [[ "$DEPLOYED_IMAGE" != *"${IMAGE_TAG}"* ]]; then
+            echo "::warning::Deployed image tag doesn't match expected ${IMAGE_TAG}"
+          fi
 
           sudo docker stack services "${STACK_NAME}"
 
