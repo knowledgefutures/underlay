@@ -71,8 +71,5 @@
     "tsx": "^4.19.0",
     "typescript": "^6.0.0",
     "vite": "^6"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["bcrypt", "better-sqlite3", "dprint", "esbuild"]
   }
 }

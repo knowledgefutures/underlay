@@ -3,7 +3,7 @@ FROM node:24-slim AS dev
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 RUN pnpm install
 COPY . .
 CMD ["pnpm", "dev:app"]
@@ -13,7 +13,7 @@ FROM node:24-slim AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
@@ -23,7 +23,7 @@ FROM node:24-slim AS production
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN apt-get update && apt-get install -y python3 make g++ curl && rm -rf /var/lib/apt/lists/*
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod && apt-get purge -y python3 make g++ && apt-get autoremove -y
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server.ts ./server.ts
