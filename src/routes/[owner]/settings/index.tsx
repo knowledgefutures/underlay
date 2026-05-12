@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 
 export default function OwnerSettings() {
@@ -45,7 +46,7 @@ export default function OwnerSettings() {
       .then((r,) => (r.ok ? r.json() : null))
       .then((data,) => {
         if (!data) {
-          window.location.href = '/404'
+          setLoading(false,)
           return
         }
         setOrgData(data,)
@@ -136,13 +137,14 @@ export default function OwnerSettings() {
     }
   }
 
-  if (loading || !orgData) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-4xl mx-auto px-4 py-10 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!orgData) throw new NotFoundError()
 
   return (
     <BaseLayout>

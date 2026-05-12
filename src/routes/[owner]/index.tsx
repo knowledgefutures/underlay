@@ -1,6 +1,7 @@
 import { useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 
 export default function OwnerPage() {
@@ -22,7 +23,7 @@ export default function OwnerPage() {
       fetch(`/api/accounts/${owner}/collections`, { credentials: 'include', },).then((r,) => r.ok ? r.json() : []),
     ],).then(([acct, cols,],) => {
       if (!acct) {
-        window.location.href = '/404'
+        setLoading(false,)
         return
       }
       setAccount(acct,)
@@ -42,13 +43,14 @@ export default function OwnerPage() {
     },)
   }, [owner, currentUser,],)
 
-  if (loading || !account) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-5xl mx-auto px-4 py-8 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!account) throw new NotFoundError()
 
   const totalVersions = collections.reduce(
     (sum: number, c: any,) => sum + (c.versionCount ?? 0),

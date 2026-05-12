@@ -1,6 +1,7 @@
 import { useEffect, useState, } from 'react'
 import { Link, useParams, useSearchParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 import { CollectionNav, formatBytes, } from '..'
 
@@ -38,7 +39,7 @@ export default function CollectionVersionPage() {
       ),
     ],).then(([ver, col,],) => {
       if (!ver) {
-        window.location.href = '/404'
+        setLoading(false,)
         return
       }
       setVersion(ver,)
@@ -97,13 +98,14 @@ export default function CollectionVersionPage() {
       .then(setFiles,)
   }, [version, tab, owner, collection, n,],)
 
-  if (loading || !version) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-5xl mx-auto px-4 py-8 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!version) throw new NotFoundError()
 
   const schemasMap = (version.schemas ?? {}) as Record<string, any>
   const allTypes = Object.keys(schemasMap,).sort()

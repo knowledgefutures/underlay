@@ -1,6 +1,7 @@
 import { useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 
 function CollectionNav({
@@ -99,7 +100,7 @@ export default function CollectionPage() {
       .then((r,) => (r.ok ? r.json() : null))
       .then((col,) => {
         if (!col) {
-          window.location.href = '/404'
+          setLoading(false,)
           return
         }
         setData(col,)
@@ -125,13 +126,14 @@ export default function CollectionPage() {
       },)
   }, [owner, collection, currentUser,],)
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-5xl mx-auto px-4 py-8 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!data) throw new NotFoundError()
 
   const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
   const allTypes = typeCounts.sort((a: any, b: any,) => a.type.localeCompare(b.type,))

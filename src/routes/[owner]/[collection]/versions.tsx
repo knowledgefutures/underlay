@@ -1,6 +1,7 @@
 import { useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 import { CollectionNav, formatBytes, } from '.'
 
@@ -25,7 +26,7 @@ export default function CollectionVersionsPage() {
       },).then((r,) => (r.ok ? r.json() : [])),
     ],).then(([col, vers,],) => {
       if (!col) {
-        window.location.href = '/404'
+        setLoading(false,)
         return
       }
       setData(col,)
@@ -42,13 +43,14 @@ export default function CollectionVersionsPage() {
     },)
   }, [owner, collection, currentUser,],)
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-5xl mx-auto px-4 py-8 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!data) throw new NotFoundError()
 
   return (
     <BaseLayout>

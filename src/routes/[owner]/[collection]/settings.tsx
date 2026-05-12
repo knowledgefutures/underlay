@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 import { CollectionNav, } from '.'
 
@@ -49,7 +50,7 @@ export default function CollectionSettingsPage() {
       ),
     ],).then(([col, ark,],) => {
       if (!col) {
-        window.location.href = '/404'
+        setLoading(false,)
         return
       }
       setData(col,)
@@ -154,13 +155,14 @@ export default function CollectionSettingsPage() {
     }
   }
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-5xl mx-auto px-4 py-8 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!data) throw new NotFoundError()
 
   const arkPath: string | null = arkSettings.arkUrl
     ? new URL(arkSettings.arkUrl,).pathname

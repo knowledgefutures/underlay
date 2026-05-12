@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState, } from 'react'
 import { Link, useParams, } from 'react-router'
 import { ApiPlayground, } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
+import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
 
 function isExpiringSoon(expiresAt: string | null,): boolean {
@@ -53,7 +54,7 @@ export default function OwnerSettingsKeys() {
       fetch(`/api/accounts/${owner}/collections`, { credentials: 'include', },).then((r,) => r.ok ? r.json() : []),
     ],).then(([org, k, cols,],) => {
       if (!org) {
-        window.location.href = '/404'
+        setLoading(false,)
         return
       }
       setOrgData(org,)
@@ -114,13 +115,14 @@ export default function OwnerSettingsKeys() {
     if (refreshRes.ok) setKeys(await refreshRes.json(),)
   }
 
-  if (loading || !orgData) {
+  if (loading) {
     return (
       <BaseLayout>
         <div className='max-w-4xl mx-auto px-4 py-10 text-sm text-ink-muted'>Loading…</div>
       </BaseLayout>
     )
   }
+  if (!orgData) throw new NotFoundError()
 
   return (
     <BaseLayout>
