@@ -169,9 +169,10 @@ if (isProd) {
   if (!existsSync(clientHtml,)) throw new Error(`Missing ${clientHtml} — did 'pnpm build' run?`,)
   if (!existsSync(ssrBundle,)) throw new Error(`Missing ${ssrBundle} — did 'pnpm build' run?`,)
 
-  // Serve static assets from Vite build output
+  // Serve Vite build assets (hashed JS/CSS bundles)
   app.use('/assets/*', serveStatic({ root: './dist/client', },),)
-  app.use('/favicon.svg', serveStatic({ root: './dist/client', },),)
+  // Serve public/ folder files (favicon, wasm, .well-known, etc.)
+  app.use('/*', serveStatic({ root: './public', },),)
 
   // Run migrations on startup
   const { runMigrations, } = await import('~/db/migrate')
