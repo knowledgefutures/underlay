@@ -1,11 +1,11 @@
 import { eq, } from 'drizzle-orm'
 import { db, schema, } from '../db/client.server.js'
+import { getKfProfile, } from './kf-profile-cache.server.js'
 
 export interface SessionUser {
   id: string
   slug: string
   displayName: string | null
-  email: string | null
   type: string
   bio: string | null
   avatarUrl: string | null
@@ -15,6 +15,10 @@ export interface SessionUser {
 /**
  * Extract the session cookie from a Request object and look up the user.
  * Returns the user data or null if not authenticated.
+ *
+ * For user accounts, displayName and avatarUrl are fetched from KF Auth
+ * (via in-memory cache with 5-min TTL). For org accounts, they come from
+ * the local DB.
  */
 export async function getSessionUser(request: Request,): Promise<SessionUser | null> {
   const cookieHeader = request.headers.get('cookie',)
@@ -57,6 +61,19 @@ export async function getSessionUser(request: Request,): Promise<SessionUser | n
 
   if (!user) return null
 
+  // For user accounts, fetch profile from KF Auth (name + image).
+  // For org accounts, use locally stored displayName + avatarUrl.
+  let displayName = user.displayName
+  let avatarUrl = user.avatarUrl
+
+  if (user.type === 'user') {
+    const profile = await getKfProfile(user.id,)
+    if (profile) {
+      displayName = profile.name
+      avatarUrl = profile.image
+    }
+  }
+
   // Look up org memberships
   const memberships = await db
     .select({
@@ -71,11 +88,10 @@ export async function getSessionUser(request: Request,): Promise<SessionUser | n
   return {
     id: user.id,
     slug: user.slug,
-    displayName: user.displayName,
-    email: user.email,
+    displayName,
     type: user.type,
     bio: user.bio,
-    avatarUrl: user.avatarUrl,
+    avatarUrl,
     orgs: memberships.map((m,) => ({
       slug: m.orgSlug,
       displayName: m.orgDisplayName,

@@ -1,0 +1,1 @@
+ALTER TABLE "accounts" ADD COLUMN "kf_orgs" jsonb;

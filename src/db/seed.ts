@@ -1,4 +1,3 @@
-import bcrypt from 'bcrypt'
 import { eq, } from 'drizzle-orm'
 import { createHash, } from 'node:crypto'
 import { v4 as uuidv4, } from 'uuid'
@@ -82,16 +81,12 @@ async function seed() {
     await db.delete(schema.accounts,)
   }
 
-  const passwordHash = await bcrypt.hash('admin', 10,)
   const adminId = uuidv4()
 
   await db.insert(schema.accounts,).values({
     id: adminId,
     slug: 'admin',
     type: 'user',
-    displayName: 'Admin',
-    email: 'admin@underlay.org',
-    passwordHash,
   },)
 
   const kfId = uuidv4()

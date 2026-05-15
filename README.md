@@ -39,10 +39,8 @@ pnpm dev:app
 
 ### Default Seed User
 
-- **Email:** admin@underlay.org
-- **Password:** admin
-
-Also creates a "Knowledge Futures" org with sample collections.
+The seed script creates a "Knowledge Futures" org with sample collections.
+In production, user accounts are created automatically on first sign-in via [KF Auth](https://auth.knowledgefutures.org) (OIDC SSO).
 
 ## Architecture
 
@@ -54,7 +52,7 @@ Also creates a "Knowledge Futures" org with sample collections.
 | Build | Vite 6 (client + SSR bundles) |
 | Database | PostgreSQL 16 + Drizzle ORM |
 | File Storage | Cloudflare R2 (prod) / MinIO (dev) — S3-compatible |
-| Auth | Session cookies (web) + API keys (programmatic) |
+| Auth | KF Auth SSO (OIDC) for web sessions + API keys (programmatic) |
 | Deployment | Docker Swarm on Hetzner, Caddy reverse proxy, Cloudflare DNS |
 | CI/CD | GitHub Actions → GHCR → SSH → `docker stack deploy` |
 | Secrets | SOPS + age encryption |

@@ -16,19 +16,22 @@ import {
 // --- Accounts ---
 
 export const accounts = pgTable('accounts', {
+  // For user accounts: id = KF Auth user.id (set on OIDC callback).
+  // For org accounts: id = auto-generated UUID.
   id: uuid('id',).defaultRandom().primaryKey(),
   slug: text('slug',).unique().notNull(),
   type: text('type', { enum: ['user', 'org',], },).notNull(),
-  displayName: text('display_name',).notNull(),
-  email: text('email',),
-  passwordHash: text('password_hash',),
+  // displayName/avatarUrl: stored for org accounts only.
+  // For user accounts, name + avatar are fetched from KF Auth on demand.
+  displayName: text('display_name',),
   bio: text('bio',),
   website: text('website',),
   location: text('location',),
   avatarUrl: text('avatar_url',),
-  emailVerified: boolean('email_verified',).default(false,).notNull(),
   notificationPrefs: jsonb('notification_prefs',),
   arkNaan: text('ark_naan',),
+  // Links this account to a KF Organization. NOT unique — multiple UL orgs can belong to the same KF org.
+  kfOrgId: text('kf_org_id',),
   createdAt: timestamp('created_at', { withTimezone: true, },).defaultNow().notNull(),
 },)
 
@@ -288,19 +291,6 @@ export const syncRuns = pgTable('sync_runs', {
   filesSkipped: integer('files_skipped',).default(0,).notNull(),
   errors: jsonb('errors',).$type<string[]>().default([],).notNull(),
   logs: jsonb('logs',).$type<string[]>().default([],).notNull(),
-},)
-
-// --- Password Reset Tokens ---
-
-export const passwordResetTokens = pgTable('password_reset_tokens', {
-  id: uuid('id',).defaultRandom().primaryKey(),
-  userId: uuid('user_id',)
-    .notNull()
-    .references(() => accounts.id, { onDelete: 'cascade', },),
-  tokenHash: text('token_hash',).notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true, },).notNull(),
-  usedAt: timestamp('used_at', { withTimezone: true, },),
-  createdAt: timestamp('created_at', { withTimezone: true, },).defaultNow().notNull(),
 },)
 
 // --- ARK Identifiers ---

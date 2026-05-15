@@ -60,12 +60,12 @@ export default function InvitationsAccept() {
               {!me && token && (
                 <p className='mt-2 text-xs'>
                   You may need to{' '}
-                  <Link
-                    to={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
+                  <a
+                    href={`/auth/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
                     className='underline'
                   >
                     log in
-                  </Link>{' '}
+                  </a>{' '}
                   or
                   <Link
                     to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
@@ -87,12 +87,12 @@ export default function InvitationsAccept() {
                       You've been invited to join an organization. Please log in or sign up to accept.
                     </p>
                     <div className='flex gap-3'>
-                      <Link
-                        to={`/login?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
+                      <a
+                        href={`/auth/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
                         className='flex-1 text-center bg-ink text-parchment py-2 text-sm font-medium hover:bg-ink-light transition-colors'
                       >
                         Log in
-                      </Link>
+                      </a>
                       <Link
                         to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`,)}`}
                         className='flex-1 text-center border border-ink py-2 text-sm font-medium hover:bg-parchment-dark transition-colors'

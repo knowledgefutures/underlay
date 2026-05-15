@@ -15,6 +15,8 @@ import { authMiddleware, requireAuth, } from '~/api/auth.server'
 import * as collections from '~/api/collections'
 import * as files from '~/api/files'
 import * as health from '~/api/health'
+import * as kfAuth from '~/api/kf-auth'
+import * as kfSummary from '~/api/kf-summary'
 import * as query from '~/api/query'
 import * as schemas from '~/api/schemas'
 import * as uploads from '~/api/uploads'
@@ -42,8 +44,27 @@ app.use('/api/admin/*', async (c, next,) => {
 // --- ARK resolution middleware ---
 app.use('/ark\\:*', arkMiddleware,)
 
+// --- KF Auth (OIDC login) ---
+app.get('/login', async (c, next,) => {
+  // Server-side redirect to avoid client-side "Redirecting..." flash.
+  // Fall through to the React route only when there's an error to display.
+  const url = new URL(c.req.url,)
+  if (!url.searchParams.has('error',)) {
+    const returnTo = url.searchParams.get('return_to',) ?? ''
+    const target = returnTo ? `/auth/login?return_to=${encodeURIComponent(returnTo,)}` : '/auth/login'
+    return c.redirect(target,)
+  }
+  await next()
+},)
+app.get('/auth/login', kfAuth.login,)
+app.get('/auth/callback', kfAuth.callback,)
+app.post('/auth/logout', kfAuth.logout,)
+
 // --- API routes ---
 app.get('/api/health', health.check,)
+
+// KF internal (service-to-service)
+app.get('/api/kf/summary', kfSummary.summary,)
 
 // Admin (mirror)
 app.get('/api/admin/mirror/status', admin.mirrorStatus,)
@@ -82,6 +103,7 @@ app.post('/api/accounts/:owner/collections', requireAuth('write',), collections.
 app.get('/api/collections/:owner/:slug', collections.get,)
 app.patch('/api/collections/:owner/:slug', requireAuth('write',), collections.update,)
 app.delete('/api/collections/:owner/:slug', requireAuth('admin',), collections.remove,)
+app.post('/api/collections/:owner/:slug/transfer', requireAuth(), collections.transfer,)
 app.get('/api/accounts/:owner/collections', collections.listByOwner,)
 app.get('/api/collections/:owner/:slug/export', collections.exportArchive,)
 
@@ -108,20 +130,13 @@ app.post('/api/collections/:owner/:slug/versions', requireAuth('write',), versio
 app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff,)
 
 // Accounts
-app.post('/api/accounts/signup', accounts.signup,)
-app.post('/api/accounts/login', accounts.login,)
-app.post('/api/accounts/logout', accounts.logout,)
 app.get('/api/accounts/me', requireAuth(), accounts.getMe,)
+app.get('/api/accounts/available-kf-orgs', requireAuth(), accounts.availableKfOrgs,)
 app.get('/api/accounts/:slug', accounts.getBySlug,)
 app.patch('/api/accounts/me', requireAuth(), accounts.updateMe,)
-app.post('/api/accounts/me/email', requireAuth(), accounts.updateEmail,)
-app.post('/api/accounts/me/password', requireAuth(), accounts.updatePassword,)
-app.post('/api/accounts/me/avatar', requireAuth(), accounts.uploadAvatar,)
 app.get('/api/accounts/me/sessions', requireAuth(), accounts.listSessions,)
 app.delete('/api/accounts/me/sessions/:sessionId', requireAuth(), accounts.deleteSession,)
 app.delete('/api/accounts/me', requireAuth(), accounts.deleteMe,)
-app.post('/api/accounts/forgot-password', accounts.forgotPassword,)
-app.post('/api/accounts/reset-password', accounts.resetPassword,)
 app.post('/api/accounts/keys', requireAuth(), accounts.createKey,)
 app.get('/api/accounts/keys', requireAuth(), accounts.listKeys,)
 app.delete('/api/accounts/keys/:id', requireAuth(), accounts.deleteKey,)

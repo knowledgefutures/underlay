@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState, } from 'react'
-import { Link, useParams, } from 'react-router'
+import { Link, useNavigate, useParams, } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError, } from '~/components/NotFound'
 import { useSSRData, } from '~/lib/ssr-data'
@@ -18,9 +18,15 @@ export default function OwnerSettings() {
 
   // Profile form
   const [displayName, setDisplayName,] = useState('',)
+  const [slugValue, setSlugValue,] = useState('',)
   const [bio, setBio,] = useState('',)
   const [website, setWebsite,] = useState('',)
   const [location, setLocation,] = useState('',)
+
+  // KF org link
+  const [kfOrgId, setKfOrgId,] = useState('',)
+  const [kfOrgs, setKfOrgs,] = useState<{ id: string; name: string }[]>([],)
+  const [kfOrgsLoading, setKfOrgsLoading,] = useState(false,)
 
   // ARK form
   const [arkNaan, setArkNaan,] = useState('',)
@@ -51,12 +57,24 @@ export default function OwnerSettings() {
         }
         setOrgData(data,)
         setDisplayName(data.displayName ?? '',)
+        setSlugValue(data.slug ?? owner,)
         setBio(data.bio ?? '',)
         setWebsite(data.website ?? '',)
         setLocation(data.location ?? '',)
+        setKfOrgId(data.kfOrgId ?? '',)
         setArkNaan(data.arkNaan ?? '',)
         setLoading(false,)
       },)
+
+    // Fetch available KF orgs for the transfer UI
+    setKfOrgsLoading(true,)
+    fetch('/api/accounts/available-kf-orgs', { credentials: 'include', },)
+      .then((r,) => (r.ok ? r.json() : []))
+      .then((orgs,) => {
+        setKfOrgs(Array.isArray(orgs) ? orgs : [],)
+        setKfOrgsLoading(false,)
+      },)
+      .catch(() => setKfOrgsLoading(false,))
   }, [owner, currentUser,],)
 
   if (!currentUser) {
@@ -73,14 +91,23 @@ export default function OwnerSettings() {
     e.preventDefault()
     clearMessages()
     setSubmitting('profile',)
+    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== owner
     try {
+      const payload: Record<string, any> = { displayName, bio, website, location, }
+      if (slugChanged) payload.slug = slugValue.trim()
+
       const res = await fetch(`/api/accounts/${owner}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', },
         credentials: 'include',
-        body: JSON.stringify({ displayName, bio, website, location, },),
+        body: JSON.stringify(payload,),
       },)
       if (res.ok) {
+        if (slugChanged) {
+          const body = await res.json().catch(() => ({}))
+          window.location.href = `/${body.slug ?? slugValue.trim()}/settings`
+          return
+        }
         setSuccess('Organization updated.',)
       } else {
         const body = await res.json().catch(() => ({}))
@@ -263,9 +290,18 @@ export default function OwnerSettings() {
                 </div>
               </div>
               <div>
-                <label className='block text-sm font-medium mb-1'>Slug</label>
-                <p className='text-sm text-ink-muted font-mono'>{owner}</p>
-                <p className='text-xs text-ink-muted mt-1'>Slugs cannot be changed.</p>
+                <label htmlFor='slug' className='block text-sm font-medium mb-1'>Slug</label>
+                <input
+                  type='text'
+                  id='slug'
+                  value={slugValue}
+                  onChange={(e,) => setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '',),)}
+                  pattern='[a-z0-9][a-z0-9-]*[a-z0-9]'
+                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink'
+                />
+                {slugValue !== owner && (
+                  <p className='text-xs text-amber-700 mt-1'>Changing the slug will update all URLs for this account.</p>
+                )}
               </div>
               <button
                 type='submit'
@@ -324,6 +360,70 @@ export default function OwnerSettings() {
                 Save
               </button>
             </form>
+          </div>
+        )}
+
+        {/* KF Organization Link */}
+        {isOwner && (
+          <div className='border-t border-rule pt-6 mb-10'>
+            <h2 className='text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4'>
+              KF Organization
+            </h2>
+            <p className='text-sm text-ink-muted mb-3'>
+              Link this Underlay organization to a Knowledge Futures organization. This determines which KF org manages this account.
+            </p>
+            {kfOrgsLoading
+              ? <p className='text-sm text-ink-muted'>Loading KF organizations…</p>
+              : (
+                <form
+                  onSubmit={async (e: FormEvent,) => {
+                    e.preventDefault()
+                    clearMessages()
+                    setSubmitting('kforg',)
+                    try {
+                      const res = await fetch(`/api/accounts/${owner}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', },
+                        credentials: 'include',
+                        body: JSON.stringify({ kfOrgId, },),
+                      },)
+                      if (res.ok) {
+                        setSuccess('KF organization updated.',)
+                      } else {
+                        const body = await res.json().catch(() => ({}))
+                        setError(body.error ?? 'Failed to update KF organization.',)
+                      }
+                    } finally {
+                      setSubmitting('',)
+                    }
+                  }}
+                  className='space-y-3'
+                >
+                  <div>
+                    <label htmlFor='kfOrgId' className='block text-xs font-medium mb-1'>
+                      Linked KF Organization
+                    </label>
+                    <select
+                      id='kfOrgId'
+                      value={kfOrgId}
+                      onChange={(e,) => setKfOrgId(e.target.value,)}
+                      className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
+                    >
+                      <option value=''>— None —</option>
+                      {kfOrgs.map((org,) => (
+                        <option key={org.id} value={org.id}>{org.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type='submit'
+                    disabled={submitting === 'kforg'}
+                    className='bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity'
+                  >
+                    Save
+                  </button>
+                </form>
+              )}
           </div>
         )}
 

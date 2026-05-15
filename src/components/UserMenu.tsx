@@ -8,10 +8,11 @@ interface Org {
 
 interface UserMenuProps {
   slug: string
+  displayName?: string | null
   orgs?: Org[]
 }
 
-export default function UserMenu({ slug, orgs = [], }: UserMenuProps,) {
+export default function UserMenu({ slug, displayName, orgs = [], }: UserMenuProps,) {
   const [open, setOpen,] = useState(false,)
   const rootRef = useRef<HTMLDivElement>(null,)
   const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined,)
@@ -47,7 +48,7 @@ export default function UserMenu({ slug, orgs = [], }: UserMenuProps,) {
         type='button'
         onClick={() => setOpen((v,) => !v)}
       >
-        {slug} ▾
+        {displayName || slug} ▾
       </button>
       {open && (
         <div className='absolute right-0 top-full pt-1 z-50'>

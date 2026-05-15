@@ -38,11 +38,11 @@ export default function BaseLayout({ children, }: { children: React.ReactNode },
               ? (
                 currentUser
                   ? <Link to='/admin/mirror' className='hover:text-ink transition-colors'>Admin</Link>
-                  : <Link to='/login' className='hover:text-ink transition-colors'>Log in</Link>
+                  : <a href='/auth/login' className='hover:text-ink transition-colors'>Log in</a>
               )
               : currentUser
-              ? <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} />
-              : <Link to='/login' className='hover:text-ink transition-colors'>Log in</Link>}
+              ? <UserMenu slug={currentUser.slug} displayName={currentUser.displayName} orgs={currentUser.orgs ?? []} />
+              : <a href='/auth/login' className='hover:text-ink transition-colors'>Log in</a>}
           </div>
         </nav>
       </header>

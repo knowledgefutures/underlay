@@ -5,7 +5,6 @@
  * Usage: npm run tool:seed-mirror
  */
 
-import bcrypt from 'bcrypt'
 import { v4 as uuidv4, } from 'uuid'
 import { db, schema, } from '../src/db/client.server.js'
 
@@ -18,23 +17,16 @@ async function seedMirror() {
     process.exit(0,)
   }
 
-  const password = process.env.MIRROR_ADMIN_PASSWORD ?? 'admin'
-  const email = process.env.MIRROR_ADMIN_EMAIL ?? 'admin@mirror.underlay.org'
-
-  const passwordHash = await bcrypt.hash(password, 10,)
   const adminId = uuidv4()
 
   await db.insert(schema.accounts,).values({
     id: adminId,
     slug: 'admin',
     type: 'user',
-    displayName: 'Mirror Admin',
-    email,
-    passwordHash,
   },)
 
-  console.log(`[seed-mirror] Created admin user (${email} / ${password})`,)
-  console.log('[seed-mirror] Done. You can now log in to /admin/mirror.',)
+  console.log('[seed-mirror] Created admin user',)
+  console.log('[seed-mirror] Done. Log in via KF Auth.',)
   process.exit(0,)
 }
 

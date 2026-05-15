@@ -91,7 +91,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 
   '/logout': async () => {
-    return { data: {}, redirect: '/login', }
+    return { data: { kfAuthUrl: process.env.KF_AUTH_URL ?? 'http://localhost:3000', }, }
   },
 
   '/forgot-password': async () => {
@@ -386,6 +386,8 @@ const loaders: Record<string, LoaderFn> = {
   },
 }
 
+const kfAccountUrl = process.env.KF_ACCOUNT_URL ?? 'http://localhost:3001'
+
 export async function runLoaders(
   matchedRoutes: { path: string; params: Record<string, string> }[],
   request: Request,
@@ -393,10 +395,12 @@ export async function runLoaders(
   for (const { path, params, } of matchedRoutes) {
     const loader = loaders[path]
     if (loader) {
-      return loader({ params, request, },)
+      const result = await loader({ params, request, },)
+      result.data.kfAccountUrl = kfAccountUrl
+      return result
     }
   }
 
   // No loader found — return empty data
-  return { data: {}, }
+  return { data: { kfAccountUrl, }, }
 }

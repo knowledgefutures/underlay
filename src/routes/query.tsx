@@ -22,8 +22,8 @@ export default function QueryPage() {
             <Link to='/docs' className='hover:text-ink transition-colors'>Docs</Link>
             <Link to='/blog' className='hover:text-ink transition-colors'>Blog</Link>
             {currentUser
-              ? <UserMenu slug={currentUser.slug} orgs={currentUser.orgs ?? []} />
-              : <Link to='/login' className='hover:text-ink transition-colors'>Log in</Link>}
+              ? <UserMenu slug={currentUser.slug} displayName={currentUser.displayName} orgs={currentUser.orgs ?? []} />
+              : <a href='/auth/login' className='hover:text-ink transition-colors'>Log in</a>}
           </div>
         </nav>
       </header>

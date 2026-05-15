@@ -22,6 +22,7 @@ export default function CollectionSettingsPage() {
 
   // Form state
   const [name, setName,] = useState('',)
+  const [slugValue, setSlugValue,] = useState('',)
   const [description, setDescription,] = useState('',)
   const [isPublic, setIsPublic,] = useState(false,)
 
@@ -31,6 +32,9 @@ export default function CollectionSettingsPage() {
 
   // Delete form
   const [confirmSlug, setConfirmSlug,] = useState('',)
+
+  // Transfer form
+  const [transferTarget, setTransferTarget,] = useState('',)
 
   useEffect(() => {
     if (!owner || !collection || !currentUser) return
@@ -55,6 +59,7 @@ export default function CollectionSettingsPage() {
       }
       setData(col,)
       setName(col.name,)
+      setSlugValue(col.slug,)
       setDescription(col.description ?? '',)
       setIsPublic(col.public,)
 
@@ -80,14 +85,23 @@ export default function CollectionSettingsPage() {
     e.preventDefault()
     clearMessages()
     setSubmitting('update',)
+    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== collection
     try {
+      const payload: Record<string, any> = { name, description, public: isPublic, }
+      if (slugChanged) payload.slug = slugValue.trim()
+
       const res = await fetch(`/api/collections/${owner}/${collection}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', },
         credentials: 'include',
-        body: JSON.stringify({ name, description, public: isPublic, },),
+        body: JSON.stringify(payload,),
       },)
       if (res.ok) {
+        if (slugChanged) {
+          const body = await res.json().catch(() => ({}))
+          window.location.href = `/${owner}/${body.slug ?? slugValue.trim()}/settings`
+          return
+        }
         setSuccess('Collection updated.',)
         const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
           credentials: 'include',
@@ -208,6 +222,23 @@ export default function CollectionSettingsPage() {
             </div>
 
             <div>
+              <label htmlFor='collSlug' className='block text-sm font-medium mb-1'>
+                Slug
+              </label>
+              <input
+                type='text'
+                id='collSlug'
+                value={slugValue}
+                onChange={(e,) => setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '',),)}
+                pattern='[a-z0-9][a-z0-9-]*[a-z0-9]'
+                className='w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink'
+              />
+              {slugValue !== collection && (
+                <p className='text-xs text-amber-700 mt-1'>Changing the slug will update this collection's URL.</p>
+              )}
+            </div>
+
+            <div>
               <label htmlFor='description' className='block text-sm font-medium mb-1'>
                 Description
               </label>
@@ -315,6 +346,70 @@ export default function CollectionSettingsPage() {
                   Save ARK settings
                 </button>
               </div>
+            </form>
+          </div>
+
+          {/* Transfer */}
+          <div className='border-t border-rule pt-6 mb-10'>
+            <h2 className='text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3'>
+              Transfer Collection
+            </h2>
+            <p className='text-sm text-ink-muted mb-3'>
+              Move this collection to another account you have access to.
+            </p>
+            <form
+              onSubmit={async (e: FormEvent,) => {
+                e.preventDefault()
+                clearMessages()
+                if (!transferTarget) return
+                setSubmitting('transfer',)
+                try {
+                  const res = await fetch(`/api/collections/${owner}/${collection}/transfer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', },
+                    credentials: 'include',
+                    body: JSON.stringify({ targetAccountSlug: transferTarget, },),
+                  },)
+                  if (res.ok) {
+                    window.location.href = `/${transferTarget}/${data?.slug ?? collection}/settings`
+                  } else {
+                    const body = await res.json().catch(() => ({}))
+                    setError(body.error ?? 'Transfer failed.',)
+                  }
+                } finally {
+                  setSubmitting('',)
+                }
+              }}
+              className='space-y-3'
+            >
+              <div>
+                <label htmlFor='transferTarget' className='block text-xs font-medium mb-1'>
+                  Target account
+                </label>
+                <select
+                  id='transferTarget'
+                  value={transferTarget}
+                  onChange={(e,) => setTransferTarget(e.target.value,)}
+                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
+                >
+                  <option value=''>— Select —</option>
+                  {currentUser?.slug && currentUser.slug !== owner && (
+                    <option value={currentUser.slug}>{currentUser.displayName ?? currentUser.slug} (personal)</option>
+                  )}
+                  {currentUser?.orgs
+                    ?.filter((o: any,) => o.slug !== owner && (o.role === 'owner' || o.role === 'admin'))
+                    .map((o: any,) => (
+                      <option key={o.slug} value={o.slug}>{o.displayName ?? o.slug}</option>
+                    ))}
+                </select>
+              </div>
+              <button
+                type='submit'
+                disabled={!transferTarget || submitting === 'transfer'}
+                className='bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50'
+              >
+                Transfer
+              </button>
             </form>
           </div>
 

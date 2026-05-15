@@ -16,26 +16,29 @@ export type AuthEnv = {
 
 const publicPaths = new Set([
   '/api/health',
-  '/api/accounts/signup',
-  '/api/accounts/login',
-  '/api/accounts/forgot-password',
-  '/api/accounts/reset-password',
   '/api/query/generate-sql',
 ],)
 
 const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
+const kfInternalApiKey = process.env.KF_INTERNAL_API_KEY ?? ''
 const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next,) => {
-  // Internal service calls
+  // Internal service calls (legacy header)
   const internalHeader = c.req.header('x-internal-token',)
   if (internalHeader === internalToken) {
     c.set('apiKeyScope', 'read',)
     return next()
   }
 
-  // API key auth via Bearer token
+  // KF Auth internal API key (used by /api/kf/* endpoints)
   const auth = c.req.header('authorization',)
+  if (kfInternalApiKey && auth === `Bearer ${kfInternalApiKey}`) {
+    c.set('apiKeyScope', 'admin',)
+    return next()
+  }
+
+  // API key auth via Bearer token
   if (auth?.startsWith('Bearer ',)) {
     const token = auth.slice(7,)
     const keys = await db.select().from(schema.apiKeys,)

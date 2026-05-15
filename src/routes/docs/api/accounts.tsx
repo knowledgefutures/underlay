@@ -1,27 +1,5 @@
 import DocsLayout from '~/components/DocsLayout'
 
-const signupReq = `{
-  "email": "user@example.com",
-  "password": "securepassword",
-  "username": "jdoe",
-  "displayName": "Jane Doe"
-}`
-
-const signupRes = `{
-  "id": "uuid",
-  "slug": "jdoe",
-  "displayName": "Jane Doe"
-}`
-
-const loginReq = `{
-  "email": "user@example.com",
-  "password": "securepassword"
-}`
-
-const loginRes = signupRes
-
-const logoutRes = `{"ok": true}`
-
 const meRes = `{
   "id": "uuid",
   "slug": "jdoe",
@@ -53,72 +31,33 @@ const createKeyRes = `{
   "collectionId": null
 }`
 
-const deleteKeyRes = logoutRes
+const deleteKeyRes = `{"ok": true}`
 
 export default function DocsApiAccounts() {
   return (
     <DocsLayout title='Accounts API'>
-      <p>Create accounts, authenticate, and manage API keys.</p>
+      <p>Manage accounts and API keys.</p>
 
       <h2>Authentication</h2>
       <p>There are two authentication methods:</p>
       <ul>
         <li>
-          <strong>Session cookies</strong> — set by login, used by the web UI
+          <strong>Session cookies</strong> — set via SSO login through{' '}
+          <a href='https://auth.knowledgefutures.org' className='text-link hover:underline'>KF Auth</a>, used by the web
+          UI
         </li>
         <li>
           <strong>API keys</strong> — <code>Authorization: Bearer ul_...</code>, used by apps and scripts
         </li>
       </ul>
       <p>
+        User accounts are created automatically on first sign-in via KF Auth (OIDC SSO). There are no local signup or
+        login endpoints.
+      </p>
+      <p>
         API keys have three scopes: <code>read</code>, <code>write</code>,{' '}
         <code>admin</code>. A key can optionally be scoped to a single collection.
       </p>
-
-      <hr className='border-rule my-6' />
-
-      <div className='endpoint'>
-        <h2>POST /api/accounts/signup</h2>
-        <p className='scope'>No auth required</p>
-        <p>Create a new user account.</p>
-        <h3>Request</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{signupReq}</code></pre>
-        <h3>
-          Response <span className='text-ink-muted font-normal'>201</span>
-        </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{signupRes}</code></pre>
-        <p>
-          Also sets a <code>session</code> cookie (30-day expiry).
-        </p>
-      </div>
-
-      <hr className='border-rule my-6' />
-
-      <div className='endpoint'>
-        <h2>POST /api/accounts/login</h2>
-        <p className='scope'>No auth required</p>
-        <h3>Request</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{loginReq}</code></pre>
-        <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
-        </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{loginRes}</code></pre>
-        <p>
-          Sets a <code>session</code> cookie.
-        </p>
-      </div>
-
-      <hr className='border-rule my-6' />
-
-      <div className='endpoint'>
-        <h2>POST /api/accounts/logout</h2>
-        <p className='scope'>No auth required</p>
-        <p>Clears the session cookie and deletes the session from the database.</p>
-        <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
-        </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{logoutRes}</code></pre>
-      </div>
 
       <hr className='border-rule my-6' />
 

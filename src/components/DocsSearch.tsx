@@ -14,8 +14,7 @@ const docs: DocEntry[] = [
     title: 'Quickstart',
     href: '/docs/quickstart',
     headings: [
-      'Create an account',
-      'Create an API key',
+      'Sign in and create an API key',
       'Create a collection',
       'Push a version',
       'Read it back',
@@ -61,9 +60,6 @@ const docs: DocEntry[] = [
     href: '/docs/api/accounts',
     headings: [
       'Authentication',
-      'POST /api/accounts/signup',
-      'POST /api/accounts/login',
-      'POST /api/accounts/logout',
       'GET /api/accounts/me',
       'GET /api/accounts/:slug',
       'POST /api/accounts/keys',

@@ -5,24 +5,16 @@ import { useSSRData, } from '~/lib/ssr-data'
 
 export default function Settings() {
   const me = useSSRData<any>('currentUser',)
+  const kfAccountUrl = useSSRData<string>('kfAccountUrl',)
 
   const [success, setSuccess,] = useState('',)
   const [error, setError,] = useState('',)
 
-  // Profile form
-  const [displayName, setDisplayName,] = useState(me?.displayName ?? '',)
+  // Profile form (Underlay-specific fields only — name/email/avatar managed by KF Auth)
+  const [slugValue, setSlugValue,] = useState(me?.slug ?? '',)
   const [bio, setBio,] = useState(me?.bio ?? '',)
   const [website, setWebsite,] = useState(me?.website ?? '',)
   const [location, setLocation,] = useState(me?.location ?? '',)
-
-  // Email form
-  const [newEmail, setNewEmail,] = useState('',)
-  const [emailPassword, setEmailPassword,] = useState('',)
-
-  // Password form
-  const [currentPassword, setCurrentPassword,] = useState('',)
-  const [newPassword, setNewPassword,] = useState('',)
-  const [confirmPassword, setConfirmPassword,] = useState('',)
 
   // Notifications
   const notifPrefs = (me?.notificationPrefs as Record<string, boolean>) ?? {}
@@ -32,7 +24,6 @@ export default function Settings() {
 
   // Delete account
   const [confirmSlug, setConfirmSlug,] = useState('',)
-  const [deletePassword, setDeletePassword,] = useState('',)
 
   const [submitting, setSubmitting,] = useState('',)
 
@@ -45,69 +36,26 @@ export default function Settings() {
     e.preventDefault()
     clearMessages()
     setSubmitting('profile',)
+    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== me?.slug
     try {
+      const payload: Record<string, any> = { bio, website, location, }
+      if (slugChanged) payload.slug = slugValue.trim()
+
       const res = await fetch('/api/accounts/me', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', },
         credentials: 'include',
-        body: JSON.stringify({ displayName, bio, website, location, },),
+        body: JSON.stringify(payload,),
       },)
       if (res.ok) {
+        if (slugChanged) {
+          window.location.href = '/settings'
+          return
+        }
         setSuccess('Profile updated.',)
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Update failed.',)
-      }
-    } finally {
-      setSubmitting('',)
-    }
-  }
-
-  async function handleChangeEmail(e: FormEvent,) {
-    e.preventDefault()
-    clearMessages()
-    setSubmitting('email',)
-    try {
-      const res = await fetch('/api/accounts/me/email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', },
-        credentials: 'include',
-        body: JSON.stringify({ newEmail, password: emailPassword, },),
-      },)
-      if (res.ok) {
-        setSuccess('Email updated.',)
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Failed to update email.',)
-      }
-    } finally {
-      setSubmitting('',)
-    }
-  }
-
-  async function handleChangePassword(e: FormEvent,) {
-    e.preventDefault()
-    clearMessages()
-    if (newPassword !== confirmPassword) {
-      setError('New passwords do not match.',)
-      return
-    }
-    setSubmitting('password',)
-    try {
-      const res = await fetch('/api/accounts/me/password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', },
-        credentials: 'include',
-        body: JSON.stringify({ currentPassword, newPassword, },),
-      },)
-      if (res.ok) {
-        setSuccess('Password changed.',)
-        setCurrentPassword('',)
-        setNewPassword('',)
-        setConfirmPassword('',)
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Failed to change password.',)
       }
     } finally {
       setSubmitting('',)
@@ -144,7 +92,7 @@ export default function Settings() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', },
         credentials: 'include',
-        body: JSON.stringify({ confirmSlug, password: deletePassword, },),
+        body: JSON.stringify({ confirmSlug, },),
       },)
       if (res.ok) {
         window.location.href = '/'
@@ -155,14 +103,6 @@ export default function Settings() {
     } finally {
       setSubmitting('',)
     }
-  }
-
-  async function handleLogout() {
-    await fetch('/api/accounts/logout', {
-      method: 'POST',
-      credentials: 'include',
-    },)
-    window.location.href = '/'
   }
 
   if (!me) return null
@@ -204,22 +144,26 @@ export default function Settings() {
             <div>
               <p className='text-sm font-medium'>{me.displayName}</p>
               <p className='text-xs text-ink-muted font-mono'>@{me.slug}</p>
-              <Link to='/settings/avatar' className='text-xs text-link hover:underline mt-1 inline-block'>
-                Change avatar
-              </Link>
+              <a
+                href={kfAccountUrl}
+                target='_blank'
+                rel='noopener noreferrer'
+                className='text-xs text-link hover:underline mt-1 inline-block'
+              >
+                Edit name or avatar at KF Account →
+              </a>
             </div>
           </div>
 
           <div>
-            <label htmlFor='displayName' className='block text-sm font-medium mb-1'>Display Name</label>
-            <input
-              type='text'
-              id='displayName'
-              value={displayName}
-              onChange={(e,) => setDisplayName(e.target.value,)}
-              required
-              className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
-            />
+            <label className='block text-sm font-medium mb-1'>Display Name</label>
+            <p className='text-sm text-ink-muted'>{me.displayName}</p>
+            <p className='text-xs text-ink-muted mt-1'>
+              Managed by your{' '}
+              <a href={kfAccountUrl} target='_blank' rel='noopener noreferrer' className='text-link hover:underline'>
+                KF Account
+              </a>.
+            </p>
           </div>
           <div>
             <label htmlFor='bio' className='block text-sm font-medium mb-1'>Bio</label>
@@ -257,9 +201,18 @@ export default function Settings() {
             </div>
           </div>
           <div>
-            <label className='block text-sm font-medium mb-1'>Username</label>
-            <p className='text-sm text-ink-muted font-mono'>{me.slug}</p>
-            <p className='text-xs text-ink-muted mt-1'>Usernames cannot be changed.</p>
+            <label htmlFor='slug' className='block text-sm font-medium mb-1'>Username</label>
+            <input
+              type='text'
+              id='slug'
+              value={slugValue}
+              onChange={(e,) => setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '',),)}
+              pattern='[a-z0-9][a-z0-9-]*[a-z0-9]'
+              className='w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink'
+            />
+            {slugValue !== me?.slug && (
+              <p className='text-xs text-amber-700 mt-1'>Changing your username will update all your URLs.</p>
+            )}
           </div>
           <button
             type='submit'
@@ -270,98 +223,20 @@ export default function Settings() {
           </button>
         </form>
 
-        {/* Change Email */}
+        {/* KF Auth Account — name, email, avatar, password, security */}
         <div className='border-t border-rule pt-6 mb-10'>
-          <h2 className='text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4'>Email</h2>
+          <h2 className='text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4'>Account &amp; Security</h2>
           <p className='text-sm text-ink-muted mb-3'>
-            Current: <span className='font-mono'>{me.email}</span>
+            Your name, email, avatar, password, and security settings are managed through your KF Account.
           </p>
-          <details className='group'>
-            <summary className='text-sm text-link cursor-pointer hover:underline'>Change email address</summary>
-            <form onSubmit={handleChangeEmail} className='mt-3 space-y-3'>
-              <div>
-                <label htmlFor='newEmail' className='block text-xs font-medium mb-1'>New email</label>
-                <input
-                  type='email'
-                  id='newEmail'
-                  value={newEmail}
-                  onChange={(e,) => setNewEmail(e.target.value,)}
-                  required
-                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm font-mono focus:outline-none focus:border-ink'
-                />
-              </div>
-              <div>
-                <label htmlFor='emailPassword' className='block text-xs font-medium mb-1'>Current password</label>
-                <input
-                  type='password'
-                  id='emailPassword'
-                  value={emailPassword}
-                  onChange={(e,) => setEmailPassword(e.target.value,)}
-                  required
-                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
-                />
-              </div>
-              <button
-                type='submit'
-                disabled={submitting === 'email'}
-                className='bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity'
-              >
-                Update email
-              </button>
-            </form>
-          </details>
-        </div>
-
-        {/* Change Password */}
-        <div className='border-t border-rule pt-6 mb-10'>
-          <h2 className='text-sm font-semibold uppercase tracking-wide text-ink-muted mb-4'>Password</h2>
-          <details className='group'>
-            <summary className='text-sm text-link cursor-pointer hover:underline'>Change password</summary>
-            <form onSubmit={handleChangePassword} className='mt-3 space-y-3'>
-              <div>
-                <label htmlFor='currentPassword' className='block text-xs font-medium mb-1'>Current password</label>
-                <input
-                  type='password'
-                  id='currentPassword'
-                  value={currentPassword}
-                  onChange={(e,) => setCurrentPassword(e.target.value,)}
-                  required
-                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
-                />
-              </div>
-              <div>
-                <label htmlFor='newPassword' className='block text-xs font-medium mb-1'>New password</label>
-                <input
-                  type='password'
-                  id='newPassword'
-                  value={newPassword}
-                  onChange={(e,) => setNewPassword(e.target.value,)}
-                  required
-                  minLength={8}
-                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
-                />
-              </div>
-              <div>
-                <label htmlFor='confirmPassword' className='block text-xs font-medium mb-1'>Confirm new password</label>
-                <input
-                  type='password'
-                  id='confirmPassword'
-                  value={confirmPassword}
-                  onChange={(e,) => setConfirmPassword(e.target.value,)}
-                  required
-                  minLength={8}
-                  className='w-full bg-parchment border border-rule px-3 py-2 text-sm focus:outline-none focus:border-ink'
-                />
-              </div>
-              <button
-                type='submit'
-                disabled={submitting === 'password'}
-                className='bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity'
-              >
-                Change password
-              </button>
-            </form>
-          </details>
+          <a
+            href={kfAccountUrl}
+            target='_blank'
+            rel='noopener noreferrer'
+            className='inline-block bg-ink text-parchment px-4 py-2 text-sm font-medium hover:opacity-90 transition-opacity'
+          >
+            Manage account →
+          </a>
         </div>
 
         {/* Notifications */}
@@ -426,17 +301,6 @@ export default function Settings() {
                   onChange={(e,) => setConfirmSlug(e.target.value,)}
                   required
                   autoComplete='off'
-                  className='w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400'
-                />
-              </div>
-              <div>
-                <label htmlFor='deletePassword' className='block text-sm text-ink-muted mb-1'>Password:</label>
-                <input
-                  type='password'
-                  id='deletePassword'
-                  value={deletePassword}
-                  onChange={(e,) => setDeletePassword(e.target.value,)}
-                  required
                   className='w-full bg-parchment border border-red-200 px-3 py-2 text-sm focus:outline-none focus:border-red-400'
                 />
               </div>

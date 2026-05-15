@@ -253,6 +253,7 @@ export async function update(c: Context<AuthEnv>,) {
   const slug = c.req.param('slug',)!
   const updates = await c.req.json<{
     name?: string
+    slug?: string
     description?: string
     public?: boolean
   }>()
@@ -277,12 +278,33 @@ export async function update(c: Context<AuthEnv>,) {
     return c.json({ error: 'Not found', statusCode: 404, }, 404,)
   }
 
+  // Validate new slug if provided
+  if (updates.slug !== undefined) {
+    const newSlug = updates.slug
+    if (!newSlug || typeof newSlug !== 'string') {
+      return c.json({ error: 'Slug is required', statusCode: 422, }, 422,)
+    }
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(newSlug,)) {
+      return c.json({ error: 'Slug must be lowercase alphanumeric with hyphens', statusCode: 422, }, 422,)
+    }
+    // Check uniqueness within same account
+    const [existing,] = await db
+      .select({ id: schema.collections.id, },)
+      .from(schema.collections,)
+      .where(and(eq(schema.collections.accountId, account.id,), eq(schema.collections.slug, newSlug,),),)
+      .limit(1,)
+
+    if (existing && existing.id !== collection.id) {
+      return c.json({ error: 'A collection with that slug already exists', statusCode: 409, }, 409,)
+    }
+  }
+
   await db
     .update(schema.collections,)
     .set({ ...updates, updatedAt: new Date(), },)
     .where(eq(schema.collections.id, collection.id,),)
 
-  return c.json({ ok: true, },)
+  return c.json({ ok: true, slug: updates.slug ?? slug, },)
 }
 
 // Delete collection
@@ -312,6 +334,95 @@ export async function remove(c: Context<AuthEnv>,) {
 
   await db.delete(schema.collections,).where(eq(schema.collections.id, collection.id,),)
   return c.json({ ok: true, },)
+}
+
+// Transfer collection to another account
+export async function transfer(c: Context<AuthEnv>,) {
+  const owner = c.req.param('owner',)!
+  const slug = c.req.param('slug',)!
+  const { targetAccountSlug, } = await c.req.json()
+
+  if (!targetAccountSlug || typeof targetAccountSlug !== 'string') {
+    return c.json({ error: 'targetAccountSlug is required', statusCode: 422, }, 422,)
+  }
+
+  const callerId = c.get('accountId',)!
+
+  // Find source account
+  const [sourceAccount,] = await db
+    .select()
+    .from(schema.accounts,)
+    .where(eq(schema.accounts.slug, owner,),)
+    .limit(1,)
+
+  if (!sourceAccount) return c.json({ error: 'Source account not found', statusCode: 404, }, 404,)
+
+  // Verify caller has access to source account
+  const callerIsSource = sourceAccount.id === callerId
+  let callerHasSourceAccess = callerIsSource
+  if (!callerIsSource && sourceAccount.type === 'org') {
+    const [membership,] = await db
+      .select()
+      .from(schema.orgMemberships,)
+      .where(and(eq(schema.orgMemberships.orgId, sourceAccount.id,), eq(schema.orgMemberships.userId, callerId,),),)
+      .limit(1,)
+    callerHasSourceAccess = !!membership && (membership.role === 'owner' || membership.role === 'admin')
+  }
+  if (!callerHasSourceAccess) {
+    return c.json({ error: 'You must be an owner or admin of the source account', statusCode: 403, }, 403,)
+  }
+
+  // Find target account
+  const [targetAccount,] = await db
+    .select()
+    .from(schema.accounts,)
+    .where(eq(schema.accounts.slug, targetAccountSlug,),)
+    .limit(1,)
+
+  if (!targetAccount) return c.json({ error: 'Target account not found', statusCode: 404, }, 404,)
+
+  // Verify caller has access to target account
+  const callerIsTarget = targetAccount.id === callerId
+  let callerHasTargetAccess = callerIsTarget
+  if (!callerIsTarget && targetAccount.type === 'org') {
+    const [membership,] = await db
+      .select()
+      .from(schema.orgMemberships,)
+      .where(and(eq(schema.orgMemberships.orgId, targetAccount.id,), eq(schema.orgMemberships.userId, callerId,),),)
+      .limit(1,)
+    callerHasTargetAccess = !!membership && (membership.role === 'owner' || membership.role === 'admin')
+  }
+  if (!callerHasTargetAccess) {
+    return c.json({ error: 'You must be an owner or admin of the target account', statusCode: 403, }, 403,)
+  }
+
+  // Find collection
+  const [collection,] = await db
+    .select()
+    .from(schema.collections,)
+    .where(and(eq(schema.collections.accountId, sourceAccount.id,), eq(schema.collections.slug, slug,),),)
+    .limit(1,)
+
+  if (!collection) return c.json({ error: 'Collection not found', statusCode: 404, }, 404,)
+
+  // Check slug uniqueness in target account
+  const [existing,] = await db
+    .select({ id: schema.collections.id, },)
+    .from(schema.collections,)
+    .where(and(eq(schema.collections.accountId, targetAccount.id,), eq(schema.collections.slug, slug,),),)
+    .limit(1,)
+
+  if (existing) {
+    return c.json({ error: `Target account already has a collection with slug "${slug}"`, statusCode: 409, }, 409,)
+  }
+
+  // Transfer
+  await db
+    .update(schema.collections,)
+    .set({ accountId: targetAccount.id, updatedAt: new Date(), },)
+    .where(eq(schema.collections.id, collection.id,),)
+
+  return c.json({ ok: true, newOwner: targetAccountSlug, },)
 }
 
 // List collections for an account

@@ -15,12 +15,11 @@ There are two auth methods:
 1. API Key (for programmatic access):
    Header: Authorization: Bearer ul_<key>
    Keys have scopes: read, write, admin.
-   Create keys at https://underlay.org/settings/keys or via POST /api/accounts/keys.
+   Create keys at https://underlay.org/settings/keys.
 
 2. Session cookie (for browser use):
-   POST /api/accounts/login with {"email": "...", "password": "..."} sets a session cookie.
-   POST /api/accounts/signup with {"email", "password", "username", "displayName"} creates an account.
-   POST /api/accounts/logout clears the session.
+   Users sign in via KF Auth SSO (OIDC) at https://underlay.org/login.
+   Accounts are created automatically on first sign-in.
    GET /api/accounts/me returns the current user (works with either auth method).
 
 All GET requests are public — no auth required to read public data.

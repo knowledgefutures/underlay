@@ -109,8 +109,6 @@ async function ensureMirrorAccount(ownerSlug: string,): Promise<string> {
       slug: ownerSlug,
       type: 'org',
       displayName: ownerSlug,
-      email: null,
-      passwordHash: null,
     },)
     .returning({ id: schema.accounts.id, },)
 

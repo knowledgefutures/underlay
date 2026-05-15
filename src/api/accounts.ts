@@ -6,7 +6,7 @@ import { v4 as uuidv4, } from 'uuid'
 import { db, schema, } from '../db/client.server.js'
 import { sendEmail, } from '../lib/email.js'
 import { deleteS3Objects, listS3Objects, uploadToS3, } from '../lib/s3.js'
-import { type AuthEnv, clearSessionCookie, setSessionCookie, } from './auth.server.js'
+import { type AuthEnv, clearSessionCookie, } from './auth.server.js'
 
 /** Base URL for public assets (avatars, etc.) */
 const ASSETS_BASE_URL = process.env.ASSETS_BASE_URL ?? 'https://assets.underlay.org'
@@ -34,93 +34,18 @@ const RESERVED_SLUGS = new Set([
   '500',
 ],)
 
-// Signup
-export async function signup(c: Context<AuthEnv>,) {
-  const { email, password, username, displayName, } = await c.req.json()
+const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
-  if (RESERVED_SLUGS.has(username.toLowerCase(),)) {
-    return c.json({ error: 'That username is reserved', statusCode: 422, }, 422,)
+/** Validate a slug and return an error message or null if valid. */
+function validateSlug(slug: string,): string | null {
+  if (!slug || typeof slug !== 'string') return 'Slug is required'
+  if (slug.length < 2) return 'Slug must be at least 2 characters'
+  if (slug.length > 64) return 'Slug must be at most 64 characters'
+  if (!SLUG_RE.test(slug,)) {
+    return 'Slug must be lowercase alphanumeric with hyphens, and cannot start or end with a hyphen'
   }
-
-  const existing = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.slug, username,),)
-    .limit(1,)
-
-  if (existing.length > 0) {
-    return c.json({ error: 'Username already taken', statusCode: 409, }, 409,)
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10,)
-  const id = uuidv4()
-
-  await db.insert(schema.accounts,).values({
-    id,
-    slug: username,
-    type: 'user',
-    displayName,
-    email,
-    passwordHash,
-  },)
-
-  const sessionId = uuidv4()
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000,) // 30 days
-  await db.insert(schema.sessions,).values({
-    id: sessionId,
-    userId: id,
-    expiresAt,
-    userAgent: c.req.header('user-agent',) ?? null,
-    ipAddress: c.req.header('x-forwarded-for',) || 'unknown',
-  },)
-
-  setSessionCookie(c, sessionId,)
-
-  return c.json({ id, slug: username, displayName, }, 201,)
-}
-
-// Login
-export async function login(c: Context<AuthEnv>,) {
-  const { email, password, } = await c.req.json()
-
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.email, email,),)
-    .limit(1,)
-
-  if (!account?.passwordHash) {
-    return c.json({ error: 'Invalid credentials', statusCode: 401, }, 401,)
-  }
-
-  const valid = await bcrypt.compare(password, account.passwordHash,)
-  if (!valid) {
-    return c.json({ error: 'Invalid credentials', statusCode: 401, }, 401,)
-  }
-
-  const sessionId = uuidv4()
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000,)
-  await db.insert(schema.sessions,).values({
-    id: sessionId,
-    userId: account.id,
-    expiresAt,
-    userAgent: c.req.header('user-agent',) ?? null,
-    ipAddress: c.req.header('x-forwarded-for',) || 'unknown',
-  },)
-
-  setSessionCookie(c, sessionId,)
-
-  return c.json({ id: account.id, slug: account.slug, displayName: account.displayName, },)
-}
-
-// Logout
-export async function logout(c: Context<AuthEnv>,) {
-  const sessionId = getCookie(c, 'session',)
-  if (sessionId) {
-    await db.delete(schema.sessions,).where(eq(schema.sessions.id, sessionId,),)
-  }
-  clearSessionCookie(c,)
-  return c.json({ ok: true, },)
+  if (RESERVED_SLUGS.has(slug,)) return 'That slug is reserved'
+  return null
 }
 
 // Get current user
@@ -131,12 +56,10 @@ export async function getMe(c: Context<AuthEnv>,) {
       slug: schema.accounts.slug,
       type: schema.accounts.type,
       displayName: schema.accounts.displayName,
-      email: schema.accounts.email,
       bio: schema.accounts.bio,
       website: schema.accounts.website,
       location: schema.accounts.location,
       avatarUrl: schema.accounts.avatarUrl,
-      emailVerified: schema.accounts.emailVerified,
       notificationPrefs: schema.accounts.notificationPrefs,
       createdAt: schema.accounts.createdAt,
     },)
@@ -177,6 +100,7 @@ export async function getBySlug(c: Context<AuthEnv>,) {
       location: schema.accounts.location,
       avatarUrl: schema.accounts.avatarUrl,
       arkNaan: schema.accounts.arkNaan,
+      kfOrgId: schema.accounts.kfOrgId,
       createdAt: schema.accounts.createdAt,
     },)
     .from(schema.accounts,)
@@ -199,90 +123,38 @@ export async function getBySlug(c: Context<AuthEnv>,) {
 
 // Update own profile
 export async function updateMe(c: Context<AuthEnv>,) {
-  const { displayName, bio, website, location, notificationPrefs, } = await c.req.json()
+  // Name, email, and avatar are managed by KF Auth — only Underlay-specific fields are writable here.
+  const { slug, bio, website, location, notificationPrefs, } = await c.req.json()
+
+  const accountId = c.get('accountId',)!
+
+  if (slug !== undefined) {
+    const slugErr = validateSlug(slug,)
+    if (slugErr) return c.json({ error: slugErr, statusCode: 422, }, 422,)
+
+    const [existing,] = await db
+      .select({ id: schema.accounts.id, },)
+      .from(schema.accounts,)
+      .where(eq(schema.accounts.slug, slug,),)
+      .limit(1,)
+
+    if (existing && existing.id !== accountId) {
+      return c.json({ error: 'That slug is already taken', statusCode: 409, }, 409,)
+    }
+  }
 
   const updates: Record<string, any> = {}
-  if (displayName !== undefined) updates.displayName = displayName
+  if (slug !== undefined) updates.slug = slug
   if (bio !== undefined) updates.bio = bio
   if (website !== undefined) updates.website = website
   if (location !== undefined) updates.location = location
   if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs
 
   if (Object.keys(updates,).length > 0) {
-    await db.update(schema.accounts,).set(updates,).where(eq(schema.accounts.id, c.get('accountId',)!,),)
+    await db.update(schema.accounts,).set(updates,).where(eq(schema.accounts.id, accountId,),)
   }
 
-  return c.json({ ok: true, },)
-}
-
-// Change email (requires current password)
-export async function updateEmail(c: Context<AuthEnv>,) {
-  const { newEmail, password, } = await c.req.json()
-
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.id, c.get('accountId',)!,),)
-    .limit(1,)
-
-  if (!account?.passwordHash) {
-    return c.json({ error: 'Cannot change email for this account type', statusCode: 400, }, 400,)
-  }
-
-  const valid = await bcrypt.compare(password, account.passwordHash,)
-  if (!valid) {
-    return c.json({ error: 'Invalid password', statusCode: 401, }, 401,)
-  }
-
-  // Check email not taken
-  const [existing,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.email, newEmail,),)
-    .limit(1,)
-
-  if (existing && existing.id !== account.id) {
-    return c.json({ error: 'Email already in use', statusCode: 409, }, 409,)
-  }
-
-  await db
-    .update(schema.accounts,)
-    .set({ email: newEmail, emailVerified: false, },)
-    .where(eq(schema.accounts.id, c.get('accountId',)!,),)
-
-  return c.json({ ok: true, },)
-}
-
-// Change password
-export async function updatePassword(c: Context<AuthEnv>,) {
-  const { currentPassword, newPassword, } = await c.req.json()
-
-  if (newPassword.length < 8) {
-    return c.json({ error: 'Password must be at least 8 characters', statusCode: 422, }, 422,)
-  }
-
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.id, c.get('accountId',)!,),)
-    .limit(1,)
-
-  if (!account?.passwordHash) {
-    return c.json({ error: 'Cannot change password for this account type', statusCode: 400, }, 400,)
-  }
-
-  const valid = await bcrypt.compare(currentPassword, account.passwordHash,)
-  if (!valid) {
-    return c.json({ error: 'Current password is incorrect', statusCode: 401, }, 401,)
-  }
-
-  const newHash = await bcrypt.hash(newPassword, 10,)
-  await db
-    .update(schema.accounts,)
-    .set({ passwordHash: newHash, },)
-    .where(eq(schema.accounts.id, c.get('accountId',)!,),)
-
-  return c.json({ ok: true, },)
+  return c.json({ ok: true, slug: slug ?? undefined, },)
 }
 
 // Upload avatar
@@ -358,7 +230,7 @@ export async function deleteSession(c: Context<AuthEnv>,) {
 
 // Delete own account
 export async function deleteMe(c: Context<AuthEnv>,) {
-  const { password, confirmSlug, } = await c.req.json()
+  const { confirmSlug, } = await c.req.json()
 
   const [account,] = await db
     .select()
@@ -366,17 +238,12 @@ export async function deleteMe(c: Context<AuthEnv>,) {
     .where(eq(schema.accounts.id, c.get('accountId',)!,),)
     .limit(1,)
 
-  if (!account?.passwordHash) {
-    return c.json({ error: 'Cannot delete this account type', statusCode: 400, }, 400,)
+  if (!account) {
+    return c.json({ error: 'Account not found', statusCode: 404, }, 404,)
   }
 
   if (confirmSlug !== account.slug) {
     return c.json({ error: 'Username confirmation does not match', statusCode: 422, }, 422,)
-  }
-
-  const valid = await bcrypt.compare(password, account.passwordHash,)
-  if (!valid) {
-    return c.json({ error: 'Invalid password', statusCode: 401, }, 401,)
   }
 
   // Check for owned collections
@@ -405,97 +272,6 @@ export async function deleteMe(c: Context<AuthEnv>,) {
   // Cascade will handle sessions, memberships, api keys
   await db.delete(schema.accounts,).where(eq(schema.accounts.id, account.id,),)
   clearSessionCookie(c,)
-  return c.json({ ok: true, },)
-}
-
-// --- Forgot Password ---
-export async function forgotPassword(c: Context<AuthEnv>,) {
-  const { email, } = await c.req.json()
-
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.email, email,),)
-    .limit(1,)
-
-  // Always return success to prevent email enumeration
-  if (!account) {
-    return c.json({ ok: true, },)
-  }
-
-  const rawToken = uuidv4()
-  const tokenHash = await bcrypt.hash(rawToken, 10,)
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000,) // 1 hour
-
-  await db.insert(schema.passwordResetTokens,).values({
-    userId: account.id,
-    tokenHash,
-    expiresAt,
-  },)
-
-  // Send email (no-op if SMTP not configured)
-  const origin = new URL(c.req.url,).origin
-  const resetUrl = `${origin}/reset-password?token=${rawToken}&email=${encodeURIComponent(email,)}`
-  await sendEmail({
-    to: email,
-    subject: 'Reset your Underlay password',
-    text:
-      `Click here to reset your password: ${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
-    html:
-      `<p>Click <a href="${resetUrl}">here</a> to reset your password.</p><p>This link expires in 1 hour. If you didn't request this, ignore this email.</p>`,
-  },)
-
-  return c.json({ ok: true, },)
-}
-
-// --- Reset Password ---
-export async function resetPassword(c: Context<AuthEnv>,) {
-  const { email, token, newPassword, } = await c.req.json()
-
-  if (newPassword.length < 8) {
-    return c.json({ error: 'Password must be at least 8 characters', statusCode: 422, }, 422,)
-  }
-
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.email, email,),)
-    .limit(1,)
-
-  if (!account) {
-    return c.json({ error: 'Invalid or expired reset link', statusCode: 400, }, 400,)
-  }
-
-  // Find valid unused tokens for this user
-  const tokens = await db
-    .select()
-    .from(schema.passwordResetTokens,)
-    .where(and(
-      eq(schema.passwordResetTokens.userId, account.id,),
-    ),)
-
-  let validToken = null
-  for (const t of tokens) {
-    if (t.usedAt) continue
-    if (new Date(t.expiresAt,) < new Date()) continue
-    const match = await bcrypt.compare(token, t.tokenHash,)
-    if (match) {
-      validToken = t
-      break
-    }
-  }
-
-  if (!validToken) {
-    return c.json({ error: 'Invalid or expired reset link', statusCode: 400, }, 400,)
-  }
-
-  const newHash = await bcrypt.hash(newPassword, 10,)
-  await db.update(schema.accounts,).set({ passwordHash: newHash, },).where(eq(schema.accounts.id, account.id,),)
-  await db
-    .update(schema.passwordResetTokens,)
-    .set({ usedAt: new Date(), },)
-    .where(eq(schema.passwordResetTokens.id, validToken.id,),)
-
   return c.json({ ok: true, },)
 }
 
@@ -705,7 +481,14 @@ export async function deleteOrgKey(c: Context<AuthEnv>,) {
 
 // Create organization
 export async function createOrg(c: Context<AuthEnv>,) {
-  const { slug, displayName, } = await c.req.json()
+  const { slug, displayName, kfOrgId, } = await c.req.json()
+
+  if (!kfOrgId || typeof kfOrgId !== 'string') {
+    return c.json(
+      { error: 'kfOrgId is required — every Underlay org must be linked to a KF org', statusCode: 422, },
+      422,
+    )
+  }
 
   if (RESERVED_SLUGS.has(slug.toLowerCase(),)) {
     return c.json({ error: 'That name is reserved', statusCode: 422, }, 422,)
@@ -734,6 +517,7 @@ export async function createOrg(c: Context<AuthEnv>,) {
     slug,
     type: 'org',
     displayName,
+    kfOrgId,
   },)
 
   // Add the creating user as owner
@@ -743,7 +527,19 @@ export async function createOrg(c: Context<AuthEnv>,) {
     role: 'owner',
   },)
 
-  return c.json({ id, slug, displayName, type: 'org', }, 201,)
+  return c.json({ id, slug, displayName, type: 'org', kfOrgId, }, 201,)
+}
+
+/**
+ * GET /api/accounts/available-kf-orgs
+ * Returns all KF orgs the current user belongs to.
+ */
+export async function availableKfOrgs(c: Context<AuthEnv>,) {
+  const accountId = c.get('accountId',)!
+
+  // Fetch user's KF orgs on demand from KF Auth internal API
+  const { fetchKfOrgs, } = await import('../lib/kf-orgs.server.js')
+  return c.json(await fetchKfOrgs(accountId,),)
 }
 
 // List org members
@@ -900,7 +696,7 @@ export async function removeMember(c: Context<AuthEnv>,) {
 // Update org profile
 export async function updateOrg(c: Context<AuthEnv>,) {
   const slug = c.req.param('slug',)!
-  const { displayName, bio, website, location, } = await c.req.json()
+  const { slug: newSlug, displayName, bio, website, location, kfOrgId, } = await c.req.json()
 
   const [org,] = await db
     .select()
@@ -921,17 +717,52 @@ export async function updateOrg(c: Context<AuthEnv>,) {
     return c.json({ error: 'Must be an owner to update the organization', statusCode: 403, }, 403,)
   }
 
+  // Validate slug change if provided
+  if (newSlug !== undefined) {
+    const slugErr = validateSlug(newSlug,)
+    if (slugErr) return c.json({ error: slugErr, statusCode: 422, }, 422,)
+
+    const [existing,] = await db
+      .select({ id: schema.accounts.id, },)
+      .from(schema.accounts,)
+      .where(eq(schema.accounts.slug, newSlug,),)
+      .limit(1,)
+
+    if (existing && existing.id !== org.id) {
+      return c.json({ error: 'That slug is already taken', statusCode: 409, }, 409,)
+    }
+  }
+
+  // Validate kfOrgId change if provided
+  if (kfOrgId !== undefined) {
+    if (!kfOrgId || typeof kfOrgId !== 'string') {
+      return c.json({ error: 'kfOrgId must be a non-empty string', statusCode: 422, }, 422,)
+    }
+    // Check it's not already linked to another UL org
+    const [alreadyLinked,] = await db
+      .select({ id: schema.accounts.id, },)
+      .from(schema.accounts,)
+      .where(and(eq(schema.accounts.kfOrgId, kfOrgId,), eq(schema.accounts.type, 'org',),),)
+      .limit(1,)
+
+    if (alreadyLinked && alreadyLinked.id !== org.id) {
+      return c.json({ error: 'This KF organization is already linked to another Underlay org', statusCode: 409, }, 409,)
+    }
+  }
+
   const updates: Record<string, any> = {}
+  if (newSlug !== undefined) updates.slug = newSlug
   if (displayName !== undefined) updates.displayName = displayName
   if (bio !== undefined) updates.bio = bio
   if (website !== undefined) updates.website = website
   if (location !== undefined) updates.location = location
+  if (kfOrgId !== undefined) updates.kfOrgId = kfOrgId
 
   if (Object.keys(updates,).length > 0) {
     await db.update(schema.accounts,).set(updates,).where(eq(schema.accounts.id, org.id,),)
   }
 
-  return c.json({ ok: true, },)
+  return c.json({ ok: true, slug: newSlug ?? slug, },)
 }
 
 // Upload org avatar
@@ -1009,23 +840,18 @@ export async function createInvitation(c: Context<AuthEnv>,) {
     return c.json({ error: 'Must be an owner or admin to invite members', statusCode: 403, }, 403,)
   }
 
-  // Check if already a member (by email)
-  const [existingUser,] = await db
+  // Check if there's already a pending invitation for this email
+  const [existingInvite,] = await db
     .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.email, email,),)
+    .from(schema.orgInvitations,)
+    .where(and(
+      eq(schema.orgInvitations.orgId, org.id,),
+      eq(schema.orgInvitations.email, email,),
+    ),)
     .limit(1,)
 
-  if (existingUser) {
-    const [existingMembership,] = await db
-      .select()
-      .from(schema.orgMemberships,)
-      .where(and(eq(schema.orgMemberships.orgId, org.id,), eq(schema.orgMemberships.userId, existingUser.id,),),)
-      .limit(1,)
-
-    if (existingMembership) {
-      return c.json({ error: 'User is already a member', statusCode: 409, }, 409,)
-    }
+  if (existingInvite && !existingInvite.acceptedAt) {
+    return c.json({ error: 'An invitation is already pending for this email', statusCode: 409, }, 409,)
   }
 
   const token = uuidv4()
@@ -1139,14 +965,26 @@ export async function acceptInvitation(c: Context<AuthEnv>,) {
     return c.json({ error: 'Invitation has expired', statusCode: 410, }, 410,)
   }
 
-  // Verify the logged-in user's email matches the invitation
-  const [account,] = await db
-    .select()
-    .from(schema.accounts,)
-    .where(eq(schema.accounts.id, c.get('accountId',)!,),)
-    .limit(1,)
+  // Verify the logged-in user's email matches the invitation.
+  // Email is fetched from KF Auth since we don't store it locally.
+  const { getKfProfile, } = await import('../lib/kf-profile-cache.server.js')
+  const accountId = c.get('accountId',)!
 
-  if (!account || account.email !== invitation.email) {
+  // Fetch email from KF Auth internal API directly (profile cache doesn't include email)
+  const KF_AUTH_INTERNAL_URL = process.env.KF_AUTH_INTERNAL_URL ?? process.env.KF_AUTH_URL ?? 'http://localhost:3000'
+  const KF_INTERNAL_API_KEY = process.env.KF_INTERNAL_API_KEY ?? ''
+  let userEmail: string | null = null
+  try {
+    const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/internal/users/${accountId}`, {
+      headers: { Authorization: `Bearer ${KF_INTERNAL_API_KEY}`, },
+    },)
+    if (res.ok) {
+      const data = (await res.json()) as { email: string }
+      userEmail = data.email
+    }
+  } catch {}
+
+  if (!userEmail || userEmail !== invitation.email) {
     return c.json({ error: 'This invitation was sent to a different email address', statusCode: 403, }, 403,)
   }
 

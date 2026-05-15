@@ -1,6 +1,6 @@
 # Local development compose — source-mounted for fast reload.
 # Start with: ./dev.sh
-# Access at localhost:${PORT:-3000}
+# Access at localhost:${PORT:-4100}
 
 name: underlay-local
 
@@ -34,13 +34,17 @@ services:
       dockerfile: Dockerfile
       target: dev
     ports:
-      - '${PORT:-3000}:${PORT:-3000}'
+      - '${PORT:-4100}:${PORT:-4100}'
     volumes:
       - .:/app
-      - /app/node_modules
+      - app_node_modules:/app/node_modules
+    env_file:
+      - .env.local
     environment:
-      PORT: ${PORT:-3000}
+      PORT: ${PORT:-4100}
       DATABASE_URL: postgresql://underlay:underlay@db:5432/underlay
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm dev:app"
     depends_on:
       db:
@@ -48,3 +52,4 @@ services:
 
 volumes:
   pgdata-dev:
+  app_node_modules:
