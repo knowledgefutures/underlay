@@ -1,6 +1,5 @@
 allowBuilds:
   bcrypt: true
   better-sqlite3: true
-  dprint: true
   esbuild: true
   simple-git-hooks: false

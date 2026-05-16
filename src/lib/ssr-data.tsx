@@ -1,21 +1,15 @@
-import { createContext, useContext, } from 'react'
+import { createContext, useContext } from 'react'
 
 type SSRData = Record<string, unknown>
 
-const SSRDataContext = createContext<SSRData>({},)
+const SSRDataContext = createContext<SSRData>({})
 
-export function SSRDataProvider({
-  data,
-  children,
-}: {
-  data: SSRData
-  children: React.ReactNode
-},) {
+export function SSRDataProvider({ data, children }: { data: SSRData; children: React.ReactNode }) {
   return <SSRDataContext.Provider value={data}>{children}</SSRDataContext.Provider>
 }
 
-export function useSSRData<T,>(key: string,): T {
-  const data = useContext(SSRDataContext,)
+export function useSSRData<T>(key: string): T {
+  const data = useContext(SSRDataContext)
   return data[key] as T
 }
 

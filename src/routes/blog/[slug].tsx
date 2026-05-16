@@ -1,7 +1,8 @@
-import { useEffect, useState, } from 'react'
-import { useParams, } from 'react-router'
+import { useEffect, useState } from 'react'
+import { useParams } from 'react-router'
+
 import BlogLayout from '~/components/BlogLayout'
-import { useSSRData, } from '~/lib/ssr-data'
+import { useSSRData } from '~/lib/ssr-data'
 
 // Blog post metadata
 const posts: Record<string, { title: string; subtitle: string; date: string }> = {
@@ -28,23 +29,23 @@ const posts: Record<string, { title: string; subtitle: string; date: string }> =
 }
 
 export default function BlogPost() {
-  const { slug, } = useParams()
-  const [content, setContent,] = useState<string | null>(null,)
+  const { slug } = useParams()
+  const [content, setContent] = useState<string | null>(null)
 
   const meta = slug ? posts[slug] : undefined
 
   useEffect(() => {
     if (!slug) return
     // Fetch the rendered markdown from an API endpoint or static file
-    fetch(`/api/blog/${slug}`,)
-      .then((res,) => (res.ok ? res.text() : ''))
-      .then(setContent,)
-      .catch(() => setContent('',))
-  }, [slug,],)
+    fetch(`/api/blog/${slug}`)
+      .then((res) => (res.ok ? res.text() : ''))
+      .then(setContent)
+      .catch(() => setContent(''))
+  }, [slug])
 
   if (!meta) {
     return (
-      <BlogLayout title='Post Not Found'>
+      <BlogLayout title="Post Not Found">
         <p>The requested blog post could not be found.</p>
       </BlogLayout>
     )
@@ -52,9 +53,11 @@ export default function BlogPost() {
 
   return (
     <BlogLayout title={meta.title} subtitle={meta.subtitle} date={meta.date}>
-      {content === null
-        ? <p className='text-ink-muted'>Loading...</p>
-        : <div dangerouslySetInnerHTML={{ __html: content, }} />}
+      {content === null ? (
+        <p className="text-ink-muted">Loading...</p>
+      ) : (
+        <div dangerouslySetInnerHTML={{ __html: content }} />
+      )}
     </BlogLayout>
   )
 }

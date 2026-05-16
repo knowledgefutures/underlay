@@ -71,16 +71,17 @@ const listRes = `[
 
 export default function DocsApiCollections() {
   return (
-    <DocsLayout title='Collections API'>
+    <DocsLayout title="Collections API">
       <p>
-        Create, browse, update, and delete collections. A collection is identified by <code>:owner/:slug</code>.
+        Create, browse, update, and delete collections. A collection is identified by{' '}
+        <code>:owner/:slug</code>.
       </p>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>GET /api/collections</h2>
-        <p className='scope'>No auth required</p>
+        <p className="scope">No auth required</p>
         <p>Browse public collections with optional search.</p>
         <h3>Query parameters</h3>
         <table>
@@ -106,76 +107,95 @@ export default function DocsApiCollections() {
           </tbody>
         </table>
         <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{browseRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{browseRes}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>POST /api/accounts/:owner/collections</h2>
-        <p className='scope'>Auth: write scope</p>
-        <p>Create a new collection under an account. You must own the account or be a member of the org.</p>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Create a new collection under an account. You must own the account or be a member of the
+          org.
+        </p>
         <h3>Request</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{createReq}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{createReq}</code>
+        </pre>
         <h3>
-          Response <span className='text-ink-muted font-normal'>201</span>
+          Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{createRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{createRes}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>GET /api/collections/:owner/:slug</h2>
-        <p className='scope'>No auth for public collections</p>
+        <p className="scope">No auth for public collections</p>
         <p>Get collection metadata and latest version summary.</p>
         <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{getRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{getRes}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>PATCH /api/collections/:owner/:slug</h2>
-        <p className='scope'>Auth: write scope</p>
+        <p className="scope">Auth: write scope</p>
         <p>Update collection metadata. Pass only the fields to change.</p>
         <h3>Request</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{updateReq}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{updateReq}</code>
+        </pre>
         <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{okRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{okRes}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>DELETE /api/collections/:owner/:slug</h2>
-        <p className='scope'>Auth: admin scope</p>
+        <p className="scope">Auth: admin scope</p>
         <p>
-          Delete a collection and all its versions, records, and file references. Files themselves are not deleted (they
-          may be referenced by other collections).
+          Delete a collection and all its versions, records, and file references. Files themselves
+          are not deleted (they may be referenced by other collections).
         </p>
         <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{okRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{okRes}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>GET /api/accounts/:owner/collections</h2>
-        <p className='scope'>No auth required</p>
+        <p className="scope">No auth required</p>
         <p>List all collections belonging to an account. Non-owners see only public collections.</p>
         <h3>
-          Response <span className='text-ink-muted font-normal'>200</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{listRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{listRes}</code>
+        </pre>
       </div>
     </DocsLayout>
   )

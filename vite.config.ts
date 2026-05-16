@@ -1,20 +1,19 @@
+import { resolve } from 'node:path'
+
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { resolve, } from 'node:path'
-import { defineConfig, } from 'vite'
+import { defineConfig } from 'vite'
 
 function serverOnly(): import('vite').Plugin {
   return {
     name: 'server-only',
-    resolveId(source, importer,) {
-      if (source.endsWith('.server',) || source.includes('.server.',)) {
-        if (importer && !importer.includes('.server.',) && !importer.includes('entry-server',)) {
-          if (importer.endsWith('server.ts',) || importer.includes('loaders.server',)) {
+    resolveId(source, importer) {
+      if (source.endsWith('.server') || source.includes('.server.')) {
+        if (importer && !importer.includes('.server.') && !importer.includes('entry-server')) {
+          if (importer.endsWith('server.ts') || importer.includes('loaders.server')) {
             return null
           }
-          this.error(
-            `Cannot import server-only module "${source}" from client code "${importer}"`,
-          )
+          this.error(`Cannot import server-only module "${source}" from client code "${importer}"`)
         }
       }
       return null
@@ -23,18 +22,18 @@ function serverOnly(): import('vite').Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), serverOnly(),],
+  plugins: [react(), tailwindcss(), serverOnly()],
   resolve: {
-    alias: { '~': resolve(__dirname, 'src',), },
+    alias: { '~': resolve(__dirname, 'src') },
   },
   build: {
     rollupOptions: {
       input: {
-        client: resolve(__dirname, 'index.html',),
+        client: resolve(__dirname, 'index.html'),
       },
     },
   },
   ssr: {
-    external: ['react', 'react-dom', 'react-router', 'postgres', 'better-sqlite3', 'bcrypt',],
+    external: ['react', 'react-dom', 'react-router', 'postgres', 'better-sqlite3', 'bcrypt'],
   },
-},)
+})

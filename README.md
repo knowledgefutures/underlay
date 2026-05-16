@@ -20,6 +20,7 @@ cd underlay
 ```
 
 This starts:
+
 - **PostgreSQL 16** on port 5433 (host) → 5432 (container)
 - **MinIO** (S3-compatible storage) on ports 9000/9001
 - **Underlay** on port 3000
@@ -44,18 +45,18 @@ In production, user accounts are created automatically on first sign-in via [KF 
 
 ## Architecture
 
-| Layer | Technology |
-|-------|-----------|
-| Server | Hono 4 + @hono/node-server |
-| Frontend | React 19 + React Router v7 (SSR + client hydration) |
-| Styling | Tailwind CSS 4 (@tailwindcss/vite) |
-| Build | Vite 6 (client + SSR bundles) |
-| Database | PostgreSQL 16 + Drizzle ORM |
-| File Storage | Cloudflare R2 (prod) / MinIO (dev) — S3-compatible |
-| Auth | KF Auth SSO (OIDC) for web sessions + API keys (programmatic) |
-| Deployment | Docker Swarm on Hetzner, Caddy reverse proxy, Cloudflare DNS |
-| CI/CD | GitHub Actions → GHCR → SSH → `docker stack deploy` |
-| Secrets | SOPS + age encryption |
+| Layer        | Technology                                                    |
+| ------------ | ------------------------------------------------------------- |
+| Server       | Hono 4 + @hono/node-server                                    |
+| Frontend     | React 19 + React Router v7 (SSR + client hydration)           |
+| Styling      | Tailwind CSS 4 (@tailwindcss/vite)                            |
+| Build        | Vite 6 (client + SSR bundles)                                 |
+| Database     | PostgreSQL 16 + Drizzle ORM                                   |
+| File Storage | Cloudflare R2 (prod) / MinIO (dev) — S3-compatible            |
+| Auth         | KF Auth SSO (OIDC) for web sessions + API keys (programmatic) |
+| Deployment   | Docker Swarm on Hetzner, Caddy reverse proxy, Cloudflare DNS  |
+| CI/CD        | GitHub Actions → GHCR → SSH → `docker stack deploy`           |
+| Secrets      | SOPS + age encryption                                         |
 
 The app runs as a single Hono server on one port (default 3000). In dev, Vite runs in middleware mode for HMR. In production, Vite builds client and SSR bundles that Hono serves directly.
 
@@ -133,10 +134,10 @@ tools/
 
 Two Docker Swarm stacks run on the same box:
 
-| Stack | Domain | Host Port | Purpose |
-|-------|--------|-----------|---------|
-| `underlay-prod` | www.underlay.org | 3001 | Production |
-| `underlay-dev` | dev.underlay.org | 3000 | Staging |
+| Stack           | Domain           | Host Port | Purpose    |
+| --------------- | ---------------- | --------- | ---------- |
+| `underlay-prod` | www.underlay.org | 3001      | Production |
+| `underlay-dev`  | dev.underlay.org | 3000      | Staging    |
 
 Container-internal port is always 3000. Host port is configured via `PORT` in .env files.
 
@@ -152,23 +153,23 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN
 
 ### Docker Compose Files
 
-| File | Purpose |
-|------|---------|
-| `docker-compose.yml` | Deployed stacks (prod & dev via Swarm) |
+| File                       | Purpose                                               |
+| -------------------------- | ----------------------------------------------------- |
+| `docker-compose.yml`       | Deployed stacks (prod & dev via Swarm)                |
 | `docker-compose.local.yml` | Local development (source-mounted, MinIO, hot reload) |
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
+| Variable         | Description                        |
+| ---------------- | ---------------------------------- |
+| `DATABASE_URL`   | PostgreSQL connection string       |
 | `SESSION_SECRET` | Secret for signing session cookies |
-| `PORT` | Server port (default: 3000) |
-| `S3_BUCKET` | S3 bucket name |
-| `S3_REGION` | S3 region (`auto` for R2) |
-| `S3_ENDPOINT` | S3 endpoint URL |
-| `S3_ACCESS_KEY` | S3 access key |
-| `S3_SECRET_KEY` | S3 secret key |
+| `PORT`           | Server port (default: 3000)        |
+| `S3_BUCKET`      | S3 bucket name                     |
+| `S3_REGION`      | S3 region (`auto` for R2)          |
+| `S3_ENDPOINT`    | S3 endpoint URL                    |
+| `S3_ACCESS_KEY`  | S3 access key                      |
+| `S3_SECRET_KEY`  | S3 secret key                      |
 
 `NODE_ENV` is set in `docker-compose.yml` `environment:` block (not in .env files).
 
@@ -184,7 +185,7 @@ pnpm start            # Start production server
 # Code quality
 pnpm typecheck        # TypeScript type checking
 pnpm lint             # Lint with oxlint
-pnpm fmt              # Format with dprint
+pnpm fmt              # Format with oxfmt
 pnpm fmt:check        # Check formatting
 
 # Database
@@ -242,11 +243,11 @@ Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.
 
 ### Schema discovery API
 
-| Endpoint | Purpose |
-|----------|--------|
-| `GET /api/schemas` | Global search (filter by `q`, `slug`, `label`, `schema_hash`) |
-| `GET /api/schemas/:id` | Single schema with labels + usage info |
-| `GET /api/collections/:owner/:slug/schemas` | Collection's schemas (with label enrichment) |
+| Endpoint                                    | Purpose                                                       |
+| ------------------------------------------- | ------------------------------------------------------------- |
+| `GET /api/schemas`                          | Global search (filter by `q`, `slug`, `label`, `schema_hash`) |
+| `GET /api/schemas/:id`                      | Single schema with labels + usage info                        |
+| `GET /api/collections/:owner/:slug/schemas` | Collection's schemas (with label enrichment)                  |
 
 ### Versioning semantics
 
@@ -258,21 +259,22 @@ Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.
 
 When adding or changing features, update these locations:
 
-| What | Where | Purpose |
-|------|-------|---------|
-| API documentation | `public/.well-known/ai.txt` | Machine-readable docs for LLMs and bots |
-| Concepts | `src/routes/docs/concepts.tsx` | Core concepts explanation |
-| API reference | `src/routes/docs/api/*.tsx` | Endpoint-level docs with examples |
-| Integration guide | `src/routes/docs/integration.tsx` | Developer onboarding guide |
-| Quick start | `src/routes/docs/quickstart.tsx` | Getting started tutorial |
-| Self-hosting | `src/routes/docs/self-host.tsx` | Deployment instructions |
-| DB schema | `src/db/schema.ts` → `pnpm db:generate` | Schema changes need a migration |
-| Schema discovery | `src/api/schemas.ts` | Schema search, labeling, cross-referencing |
-| Encrypted secrets | `.env.enc` / `.env.dev.enc` | Re-encrypt after changing .env files |
+| What              | Where                                   | Purpose                                    |
+| ----------------- | --------------------------------------- | ------------------------------------------ |
+| API documentation | `public/.well-known/ai.txt`             | Machine-readable docs for LLMs and bots    |
+| Concepts          | `src/routes/docs/concepts.tsx`          | Core concepts explanation                  |
+| API reference     | `src/routes/docs/api/*.tsx`             | Endpoint-level docs with examples          |
+| Integration guide | `src/routes/docs/integration.tsx`       | Developer onboarding guide                 |
+| Quick start       | `src/routes/docs/quickstart.tsx`        | Getting started tutorial                   |
+| Self-hosting      | `src/routes/docs/self-host.tsx`         | Deployment instructions                    |
+| DB schema         | `src/db/schema.ts` → `pnpm db:generate` | Schema changes need a migration            |
+| Schema discovery  | `src/api/schemas.ts`                    | Schema search, labeling, cross-referencing |
+| Encrypted secrets | `.env.enc` / `.env.dev.enc`             | Re-encrypt after changing .env files       |
 
 ### Privacy features
 
 The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations in per-type schemas. When changing how privacy works, update:
+
 - `src/api/versions.ts` — filtering logic (reads from `version_schemas` JOIN `schemas`)
 - `src/api/files.ts` — file access checks
 - `src/api/schemas.ts` — public schema filtering

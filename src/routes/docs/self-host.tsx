@@ -21,10 +21,10 @@ npm run tool:backup
 
 export default function DocsSelfHost() {
   return (
-    <DocsLayout title='Self-Hosting'>
+    <DocsLayout title="Self-Hosting">
       <p>
-        Underlay is designed to be self-hosted. You need three things: a Node.js runtime, a PostgreSQL database, and
-        S3-compatible object storage.
+        Underlay is designed to be self-hosted. You need three things: a Node.js runtime, a
+        PostgreSQL database, and S3-compatible object storage.
       </p>
 
       <h2>Requirements</h2>
@@ -45,10 +45,12 @@ export default function DocsSelfHost() {
 
       <h2>Quick start with Docker</h2>
       <p>Clone the repo and run:</p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{devShCode}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{devShCode}</code>
+      </pre>
       <p>
-        This starts Postgres, MinIO (S3), and the Underlay app in development mode. The dev script auto-creates a{' '}
-        <code>.env.dev</code> from defaults if one doesn't exist.
+        This starts Postgres, MinIO (S3), and the Underlay app in development mode. The dev script
+        auto-creates a <code>.env.dev</code> from defaults if one doesn't exist.
       </p>
 
       <h2>Environment variables</h2>
@@ -141,15 +143,19 @@ export default function DocsSelfHost() {
 
       <h2>Secrets management</h2>
       <p>
-        We use <a href='https://github.com/getsops/sops'>SOPS</a> with{' '}
-        <a href='https://github.com/FiloSottile/age'>age</a> encryption. Encrypted <code>.env.enc</code>{' '}
-        files are committed to the repo; plaintext <code>.env</code> files are gitignored.
+        We use <a href="https://github.com/getsops/sops">SOPS</a> with{' '}
+        <a href="https://github.com/FiloSottile/age">age</a> encryption. Encrypted{' '}
+        <code>.env.enc</code> files are committed to the repo; plaintext <code>.env</code> files are
+        gitignored.
       </p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{secretsCode}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{secretsCode}</code>
+      </pre>
 
       <h2>CI/CD</h2>
       <p>
-        The included GitHub Actions workflow (<code>.github/workflows/deploy.yml</code>) handles the full pipeline:
+        The included GitHub Actions workflow (<code>.github/workflows/deploy.yml</code>) handles the
+        full pipeline:
       </p>
       <ol>
         <li>
@@ -161,18 +167,20 @@ export default function DocsSelfHost() {
         </li>
       </ol>
       <p>
-        Required GitHub secrets: <code>SSH_PRIVATE_KEY</code>, <code>SSH_HOST</code>, <code>SSH_USER</code>,{' '}
-        <code>GHCR_USER</code>, <code>GHCR_TOKEN</code>.
+        Required GitHub secrets: <code>SSH_PRIVATE_KEY</code>, <code>SSH_HOST</code>,{' '}
+        <code>SSH_USER</code>, <code>GHCR_USER</code>, <code>GHCR_TOKEN</code>.
       </p>
 
       <h2>Backups</h2>
       <p>The cron container runs daily Postgres backups to S3:</p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{backupCode}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{backupCode}</code>
+      </pre>
 
       <h2>Reverse proxy</h2>
       <p>
-        Put Caddy, nginx, or Cloudflare in front. The app exposes a single port (default 3000) serving both the API and
-        SSR.
+        Put Caddy, nginx, or Cloudflare in front. The app exposes a single port (default 3000)
+        serving both the API and SSR.
       </p>
     </DocsLayout>
   )

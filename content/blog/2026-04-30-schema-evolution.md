@@ -1,6 +1,6 @@
 ---
-title: "From Monolithic Schemas to Content-Addressed Types"
-subtitle: "How we made interoperability automatic by treating schemas like files."
+title: 'From Monolithic Schemas to Content-Addressed Types'
+subtitle: 'How we made interoperability automatic by treating schemas like files.'
 date: 2026-04-30
 ---
 

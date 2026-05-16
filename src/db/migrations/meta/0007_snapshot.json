@@ -109,16 +109,12 @@
         "accounts_slug_unique": {
           "name": "accounts_slug_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         },
         "accounts_kf_user_id_unique": {
           "name": "accounts_kf_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "kf_user_id"
-          ]
+          "columns": ["kf_user_id"]
         }
       },
       "policies": {},
@@ -198,12 +194,8 @@
           "name": "api_keys_account_id_accounts_id_fk",
           "tableFrom": "api_keys",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -211,12 +203,8 @@
           "name": "api_keys_collection_id_collections_id_fk",
           "tableFrom": "api_keys",
           "tableTo": "collections",
-          "columnsFrom": [
-            "collection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -270,12 +258,8 @@
           "name": "ark_collections_collection_id_collections_id_fk",
           "tableFrom": "ark_collections",
           "tableTo": "collections",
-          "columnsFrom": [
-            "collection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -285,9 +269,7 @@
         "ark_collections_ark_id_unique": {
           "name": "ark_collections_ark_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "ark_id"
-          ]
+          "columns": ["ark_id"]
         }
       },
       "policies": {},
@@ -323,12 +305,8 @@
           "name": "ark_record_types_collection_id_collections_id_fk",
           "tableFrom": "ark_record_types",
           "tableTo": "collections",
-          "columnsFrom": [
-            "collection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -336,10 +314,7 @@
       "compositePrimaryKeys": {
         "ark_record_types_collection_id_record_type_pk": {
           "name": "ark_record_types_collection_id_record_type_pk",
-          "columns": [
-            "collection_id",
-            "record_type"
-          ]
+          "columns": ["collection_id", "record_type"]
         }
       },
       "uniqueConstraints": {},
@@ -384,12 +359,8 @@
           "name": "ark_shoulders_account_id_accounts_id_fk",
           "tableFrom": "ark_shoulders",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -399,16 +370,12 @@
         "ark_shoulders_account_id_unique": {
           "name": "ark_shoulders_account_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "account_id"
-          ]
+          "columns": ["account_id"]
         },
         "ark_shoulders_shoulder_unique": {
           "name": "ark_shoulders_shoulder_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "shoulder"
-          ]
+          "columns": ["shoulder"]
         }
       },
       "policies": {},
@@ -500,12 +467,8 @@
           "name": "collections_account_id_accounts_id_fk",
           "tableFrom": "collections",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -513,12 +476,8 @@
           "name": "collections_forked_from_collections_id_fk",
           "tableFrom": "collections",
           "tableTo": "collections",
-          "columnsFrom": [
-            "forked_from"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["forked_from"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -528,10 +487,7 @@
         "collections_account_id_slug_unique": {
           "name": "collections_account_id_slug_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "account_id",
-            "slug"
-          ]
+          "columns": ["account_id", "slug"]
         }
       },
       "policies": {},
@@ -649,12 +605,8 @@
           "name": "org_invitations_org_id_accounts_id_fk",
           "tableFrom": "org_invitations",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "org_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["org_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -662,12 +614,8 @@
           "name": "org_invitations_invited_by_accounts_id_fk",
           "tableFrom": "org_invitations",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "invited_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["invited_by"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -677,9 +625,7 @@
         "org_invitations_token_unique": {
           "name": "org_invitations_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -715,12 +661,8 @@
           "name": "org_memberships_org_id_accounts_id_fk",
           "tableFrom": "org_memberships",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "org_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["org_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -728,12 +670,8 @@
           "name": "org_memberships_user_id_accounts_id_fk",
           "tableFrom": "org_memberships",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -741,10 +679,7 @@
       "compositePrimaryKeys": {
         "org_memberships_org_id_user_id_pk": {
           "name": "org_memberships_org_id_user_id_pk",
-          "columns": [
-            "org_id",
-            "user_id"
-          ]
+          "columns": ["org_id", "user_id"]
         }
       },
       "uniqueConstraints": {},
@@ -801,12 +736,8 @@
           "name": "password_reset_tokens_user_id_accounts_id_fk",
           "tableFrom": "password_reset_tokens",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -881,12 +812,8 @@
           "name": "records_version_id_versions_id_fk",
           "tableFrom": "records",
           "tableTo": "versions",
-          "columnsFrom": [
-            "version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["version_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -894,10 +821,7 @@
       "compositePrimaryKeys": {
         "records_version_id_record_id_pk": {
           "name": "records_version_id_record_id_pk",
-          "columns": [
-            "version_id",
-            "record_id"
-          ]
+          "columns": ["version_id", "record_id"]
         }
       },
       "uniqueConstraints": {},
@@ -958,12 +882,8 @@
           "name": "schema_labels_schema_id_schemas_id_fk",
           "tableFrom": "schema_labels",
           "tableTo": "schemas",
-          "columnsFrom": [
-            "schema_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["schema_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -973,10 +893,7 @@
         "schema_labels_schema_id_label_unique": {
           "name": "schema_labels_schema_id_label_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "schema_id",
-            "label"
-          ]
+          "columns": ["schema_id", "label"]
         }
       },
       "policies": {},
@@ -1021,9 +938,7 @@
         "schemas_schema_hash_unique": {
           "name": "schemas_schema_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "schema_hash"
-          ]
+          "columns": ["schema_hash"]
         }
       },
       "policies": {},
@@ -1079,12 +994,8 @@
           "name": "sessions_user_id_accounts_id_fk",
           "tableFrom": "sessions",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1243,12 +1154,8 @@
           "name": "upload_records_session_id_upload_sessions_id_fk",
           "tableFrom": "upload_records",
           "tableTo": "upload_sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1256,10 +1163,7 @@
       "compositePrimaryKeys": {
         "upload_records_session_id_record_id_pk": {
           "name": "upload_records_session_id_record_id_pk",
-          "columns": [
-            "session_id",
-            "record_id"
-          ]
+          "columns": ["session_id", "record_id"]
         }
       },
       "uniqueConstraints": {},
@@ -1360,12 +1264,8 @@
           "name": "upload_sessions_collection_id_collections_id_fk",
           "tableFrom": "upload_sessions",
           "tableTo": "collections",
-          "columnsFrom": [
-            "collection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1373,12 +1273,8 @@
           "name": "upload_sessions_account_id_accounts_id_fk",
           "tableFrom": "upload_sessions",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["account_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1428,12 +1324,8 @@
           "name": "version_files_version_id_versions_id_fk",
           "tableFrom": "version_files",
           "tableTo": "versions",
-          "columnsFrom": [
-            "version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["version_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1441,12 +1333,8 @@
           "name": "version_files_file_hash_files_hash_fk",
           "tableFrom": "version_files",
           "tableTo": "files",
-          "columnsFrom": [
-            "file_hash"
-          ],
-          "columnsTo": [
-            "hash"
-          ],
+          "columnsFrom": ["file_hash"],
+          "columnsTo": ["hash"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1454,10 +1342,7 @@
       "compositePrimaryKeys": {
         "version_files_version_id_file_hash_pk": {
           "name": "version_files_version_id_file_hash_pk",
-          "columns": [
-            "version_id",
-            "file_hash"
-          ]
+          "columns": ["version_id", "file_hash"]
         }
       },
       "uniqueConstraints": {},
@@ -1510,12 +1395,8 @@
           "name": "version_schemas_version_id_versions_id_fk",
           "tableFrom": "version_schemas",
           "tableTo": "versions",
-          "columnsFrom": [
-            "version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["version_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1523,12 +1404,8 @@
           "name": "version_schemas_schema_id_schemas_id_fk",
           "tableFrom": "version_schemas",
           "tableTo": "schemas",
-          "columnsFrom": [
-            "schema_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["schema_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1536,10 +1413,7 @@
       "compositePrimaryKeys": {
         "version_schemas_version_id_slug_pk": {
           "name": "version_schemas_version_id_slug_pk",
-          "columns": [
-            "version_id",
-            "slug"
-          ]
+          "columns": ["version_id", "slug"]
         }
       },
       "uniqueConstraints": {},
@@ -1661,12 +1535,8 @@
           "name": "versions_collection_id_collections_id_fk",
           "tableFrom": "versions",
           "tableTo": "collections",
-          "columnsFrom": [
-            "collection_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1674,12 +1544,8 @@
           "name": "versions_pushed_by_accounts_id_fk",
           "tableFrom": "versions",
           "tableTo": "accounts",
-          "columnsFrom": [
-            "pushed_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["pushed_by"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1689,18 +1555,12 @@
         "versions_collection_id_number_unique": {
           "name": "versions_collection_id_number_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "collection_id",
-            "number"
-          ]
+          "columns": ["collection_id", "number"]
         },
         "versions_collection_id_hash_unique": {
           "name": "versions_collection_id_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "collection_id",
-            "hash"
-          ]
+          "columns": ["collection_id", "hash"]
         }
       },
       "policies": {},

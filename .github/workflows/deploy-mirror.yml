@@ -1,6 +1,6 @@
 name: Deploy Mirror
 
-run-name: "Deploy mirror: ${{ github.sha }}"
+run-name: 'Deploy mirror: ${{ github.sha }}'
 
 concurrency:
   group: deploy-mirror

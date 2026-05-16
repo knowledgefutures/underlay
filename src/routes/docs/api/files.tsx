@@ -37,10 +37,11 @@ const fileRefExample = `{
 
 export default function DocsApiFiles() {
   return (
-    <DocsLayout title='Files API'>
+    <DocsLayout title="Files API">
       <p>
-        Files are content-addressed by SHA-256 hash. The same bytes always produce the same hash, so identical files are
-        stored only once. Upload files before pushing a version that references them.
+        Files are content-addressed by SHA-256 hash. The same bytes always produce the same hash, so
+        identical files are stored only once. Upload files before pushing a version that references
+        them.
       </p>
 
       <h3>Workflow</h3>
@@ -58,11 +59,11 @@ export default function DocsApiFiles() {
         <li>Push your version — the server verifies all referenced files exist</li>
       </ol>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>HEAD /api/collections/:owner/:slug/files/:hash</h2>
-        <p className='scope'>No auth required</p>
+        <p className="scope">No auth required</p>
         <p>Check if a file exists. Returns headers only, no body.</p>
         <h3>Parameters</h3>
         <table>
@@ -97,17 +98,19 @@ export default function DocsApiFiles() {
           </tbody>
         </table>
         <h3>Example</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{headExample}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{headExample}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>GET /api/collections/:owner/:slug/files/:hash</h2>
-        <p className='scope'>No auth required</p>
+        <p className="scope">No auth required</p>
         <p>
-          Download a file. Returns the raw binary data with appropriate content type. Response is cacheable (immutable
-          content).
+          Download a file. Returns the raw binary data with appropriate content type. Response is
+          cacheable (immutable content).
         </p>
         <h3>Headers</h3>
         <table>
@@ -135,27 +138,34 @@ export default function DocsApiFiles() {
           </tbody>
         </table>
         <h3>Example</h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{getExample}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{getExample}</code>
+        </pre>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <div className='endpoint'>
+      <div className="endpoint">
         <h2>PUT /api/collections/:owner/:slug/files/:hash</h2>
-        <p className='scope'>Auth: write scope</p>
+        <p className="scope">Auth: write scope</p>
         <p>
-          Upload a file. The server verifies the SHA-256 hash of the uploaded bytes matches the hash in the URL. If the
-          file already exists, returns <code>200</code> without re-uploading.
+          Upload a file. The server verifies the SHA-256 hash of the uploaded bytes matches the hash
+          in the URL. If the file already exists, returns <code>200</code> without re-uploading.
         </p>
         <h3>Request</h3>
         <p>
-          Send the file as the raw request body with the appropriate <code>Content-Type</code> header.
+          Send the file as the raw request body with the appropriate <code>Content-Type</code>{' '}
+          header.
         </p>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{putExample}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{putExample}</code>
+        </pre>
         <h3>
-          Response <span className='text-ink-muted font-normal'>201</span>
+          Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{putRes}</code></pre>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{putRes}</code>
+        </pre>
         <h3>Errors</h3>
         <table>
           <tbody>
@@ -177,17 +187,19 @@ export default function DocsApiFiles() {
         </table>
       </div>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
-      <h2 className='font-sans !text-base'>File references in records</h2>
+      <h2 className="font-sans !text-base">File references in records</h2>
       <p>
         To link a file to a record, use the <code>$file</code> convention:
       </p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{fileRefExample}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{fileRefExample}</code>
+      </pre>
       <p>
-        When pushing a version, the server scans all record data for <code>$file</code>{' '}
-        references and verifies each referenced file exists. If any are missing, the push returns <code>422</code>{' '}
-        with a list of needed hashes.
+        When pushing a version, the server scans all record data for <code>$file</code> references
+        and verifies each referenced file exists. If any are missing, the push returns{' '}
+        <code>422</code> with a list of needed hashes.
       </p>
     </DocsLayout>
   )

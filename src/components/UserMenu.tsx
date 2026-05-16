@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, } from 'react'
-import { Link, } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 
 interface Org {
   slug: string
@@ -12,86 +12,81 @@ interface UserMenuProps {
   orgs?: Org[]
 }
 
-export default function UserMenu({ slug, displayName, orgs = [], }: UserMenuProps,) {
-  const [open, setOpen,] = useState(false,)
-  const rootRef = useRef<HTMLDivElement>(null,)
-  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined,)
+export default function UserMenu({ slug, displayName, orgs = [] }: UserMenuProps) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   function show() {
-    clearTimeout(hideTimeout.current,)
-    setOpen(true,)
+    clearTimeout(hideTimeout.current)
+    setOpen(true)
   }
 
   function scheduleHide() {
-    hideTimeout.current = setTimeout(() => setOpen(false,), 150,)
+    hideTimeout.current = setTimeout(() => setOpen(false), 150)
   }
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent,) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node,)) {
-        setOpen(false,)
+    function handleClickOutside(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
       }
     }
-    document.addEventListener('click', handleClickOutside,)
-    return () => document.removeEventListener('click', handleClickOutside,)
-  }, [],)
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [])
 
   return (
-    <div
-      ref={rootRef}
-      className='relative'
-      onMouseEnter={show}
-      onMouseLeave={scheduleHide}
-    >
+    <div ref={rootRef} className="relative" onMouseEnter={show} onMouseLeave={scheduleHide}>
       <button
-        className='hover:text-ink transition-colors font-medium text-ink cursor-pointer'
-        type='button'
-        onClick={() => setOpen((v,) => !v)}
+        className="hover:text-ink text-ink cursor-pointer font-medium transition-colors"
+        type="button"
+        onClick={() => setOpen((v) => !v)}
       >
         {displayName || slug} ▾
       </button>
       {open && (
-        <div className='absolute right-0 top-full pt-1 z-50'>
-          <div className='bg-parchment border border-rule shadow-sm min-w-48'>
+        <div className="absolute top-full right-0 z-50 pt-1">
+          <div className="bg-parchment border-rule min-w-48 border shadow-sm">
             <Link
               to={`/${slug}`}
-              className='block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors'
+              className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
             >
               Your Profile
             </Link>
             <Link
-              to='/dashboard'
-              className='block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors'
+              to="/dashboard"
+              className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
             >
               Dashboard
             </Link>
             <Link
-              to='/settings'
-              className='block px-3 py-2 text-sm text-ink-light hover:bg-parchment-dark transition-colors'
+              to="/settings"
+              className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
             >
               Settings
             </Link>
             {orgs.length > 0 && (
               <>
-                <hr className='border-rule' />
-                <p className='px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-ink-muted font-semibold'>
+                <hr className="border-rule" />
+                <p className="text-ink-muted px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wide uppercase">
                   Your organizations
                 </p>
-                {orgs.map((org,) => (
+                {orgs.map((org) => (
                   <Link
                     key={org.slug}
                     to={`/${org.slug}`}
-                    className='block px-3 py-1.5 text-sm text-ink-light hover:bg-parchment-dark transition-colors'
+                    className="text-ink-light hover:bg-parchment-dark block px-3 py-1.5 text-sm transition-colors"
                   >
                     {org.displayName}
                   </Link>
                 ))}
               </>
             )}
-            <hr className='border-rule' />
+            <hr className="border-rule" />
             <Link
-              to='/logout'
-              className='block px-3 py-2 text-sm text-ink-muted hover:bg-parchment-dark transition-colors'
+              to="/logout"
+              className="text-ink-muted hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
             >
               Sign out
             </Link>
