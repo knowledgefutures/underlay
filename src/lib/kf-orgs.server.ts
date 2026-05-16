@@ -20,5 +20,8 @@ export async function fetchKfOrgs(kfUserId: string,): Promise<KFOrg[]> {
     console.error(`Failed to fetch KF orgs for ${kfUserId}: ${res.status}`,)
     return []
   }
-  return res.json() as Promise<KFOrg[]>
+  const data = await res.json() as { orgs?: KFOrg[] } | KFOrg[]
+  // Handle both { orgs: [...] } and bare array shapes
+  if (Array.isArray(data,)) return data
+  return data.orgs ?? []
 }
