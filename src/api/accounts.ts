@@ -1064,12 +1064,11 @@ export async function acceptInvitation(c: Context<AuthEnv>) {
   const accountId = c.get('accountId')!
 
   // Fetch email from KF Auth internal API directly (profile cache doesn't include email)
-  const KF_AUTH_INTERNAL_URL =
-    process.env.KF_AUTH_INTERNAL_URL ?? process.env.KF_AUTH_URL ?? 'http://localhost:3000'
+  const KF_AUTH_URL = process.env.KF_AUTH_URL ?? 'http://localhost:3000'
   const KF_INTERNAL_API_KEY = process.env.KF_INTERNAL_API_KEY ?? ''
   let userEmail: string | null = null
   try {
-    const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/internal/users/${accountId}`, {
+    const res = await fetch(`${KF_AUTH_URL}/api/internal/users/${accountId}`, {
       headers: { Authorization: `Bearer ${KF_INTERNAL_API_KEY}` },
     })
     if (res.ok) {

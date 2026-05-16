@@ -43,8 +43,6 @@ services:
     environment:
       PORT: ${PORT:-4100}
       DATABASE_URL: postgresql://underlay:underlay@db:5432/underlay
-    extra_hosts:
-      - 'host.docker.internal:host-gateway'
     command: sh -c "pnpm db:migrate && pnpm db:seed && pnpm dev:app"
     depends_on:
       db:

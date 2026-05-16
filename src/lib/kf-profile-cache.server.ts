@@ -3,8 +3,7 @@
  * Fetches name + image from KF Auth's internal API with a 5-minute TTL.
  */
 
-const KF_AUTH_INTERNAL_URL =
-  process.env.KF_AUTH_INTERNAL_URL ?? process.env.KF_AUTH_URL ?? 'http://localhost:3000'
+const KF_AUTH_URL = process.env.KF_AUTH_URL ?? 'http://localhost:3000'
 const KF_INTERNAL_API_KEY = process.env.KF_INTERNAL_API_KEY ?? ''
 
 const TTL_MS = 5 * 60 * 1000 // 5 minutes
@@ -34,7 +33,7 @@ export async function getKfProfile(userId: string): Promise<KFProfile | null> {
   }
 
   try {
-    const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/internal/users/${userId}`, {
+    const res = await fetch(`${KF_AUTH_URL}/api/internal/users/${userId}`, {
       headers: { Authorization: `Bearer ${KF_INTERNAL_API_KEY}` },
     })
     if (!res.ok) return null

@@ -2,13 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Load env vars (prefer .env.local for local dev)
-set -a
-if [[ -f .env.local ]]; then
-  source .env.local
-elif [[ -f .env ]]; then
-  source .env
+# Decrypt local env if needed
+if [[ -f .env.local.enc ]] && [[ ! -f .env.local ]]; then
+  sops -d --input-type dotenv --output-type dotenv --output .env.local .env.local.enc
 fi
+
+# Load env vars
+set -a
+[[ -f .env.local ]] && source .env.local
 set +a
 
 # Find an available port, incrementing from PORT (default 4100)

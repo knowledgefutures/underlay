@@ -59,7 +59,7 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "release" ]]; then
             echo "image_tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-            echo "env_file=.env.enc" >> $GITHUB_OUTPUT
+            echo "env_file=.env.prod.enc" >> $GITHUB_OUTPUT
             echo "stack_name=underlay-prod" >> $GITHUB_OUTPUT
           else
             echo "image_tag=${{ github.sha }}" >> $GITHUB_OUTPUT
