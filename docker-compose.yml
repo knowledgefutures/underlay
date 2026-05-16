@@ -1,5 +1,5 @@
 # Stack file — deploy with: docker stack deploy -c docker-compose.yml <stack-name>
-# SOPS decrypts .env.enc → .env before this runs (see deploy workflow).
+# SOPS decrypts .env.{prod,dev}.enc → .env before this runs (see deploy workflow).
 
 services:
   app:
