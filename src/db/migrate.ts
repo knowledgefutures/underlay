@@ -5,30 +5,26 @@ import postgres from 'postgres'
 const connectionString =
   process.env.DATABASE_URL ?? 'postgresql://underlay:underlay@localhost:5432/underlay'
 
-export async function runMigrations(retries = 5, delay = 3000) {
-  const client = postgres(connectionString, { max: 1 })
-  const db = drizzle(client)
-
-  try {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        console.log(`[migrate] Running migrations (attempt ${attempt})...`)
-        await migrate(db, { migrationsFolder: './src/db/migrations' })
-        console.log('[migrate] Done.')
-        return
-      } catch (err: any) {
-        const code = err?.cause?.code ?? err?.code
-        const isTransient = code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT'
-        if (isTransient && attempt < retries) {
-          console.log(`[migrate] DB not ready (${code}), retrying in ${delay}ms...`)
-          await new Promise((r) => setTimeout(r, delay))
-        } else {
-          throw err
-        }
+export async function runMigrations(retries = 10, delay = 3000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const client = postgres(connectionString, { max: 1 })
+    try {
+      console.log(`[migrate] Running migrations (attempt ${attempt})...`)
+      await migrate(drizzle(client), { migrationsFolder: './src/db/migrations' })
+      console.log('[migrate] Done.')
+      return
+    } catch (err: any) {
+      const code = err?.cause?.code ?? err?.code
+      const isTransient = code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT'
+      if (isTransient && attempt < retries) {
+        console.log(`[migrate] DB not ready (${code}), retrying in ${delay}ms...`)
+        await new Promise((r) => setTimeout(r, delay))
+      } else {
+        throw err
       }
+    } finally {
+      await client.end()
     }
-  } finally {
-    await client.end()
   }
 }
 
