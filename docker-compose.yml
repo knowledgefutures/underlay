@@ -109,6 +109,8 @@ services:
       -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - '${DB_PORT:-5432}:5432'
     networks:
       - appnet
       - dbaccess
