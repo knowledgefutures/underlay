@@ -1,13 +1,16 @@
 /**
  * Lightweight OIDC client for KF Auth.
  *
- * KF_AUTH_URL is used for both browser redirects and server-side calls
- * (token exchange, userinfo).
+ * Two base URLs:
+ *   KF_AUTH_URL          — browser-facing (e.g. localhost:3000)
+ *   KF_AUTH_INTERNAL_URL — server-to-server (e.g. host.docker.internal:3000 in Docker)
+ *                          Falls back to KF_AUTH_URL when not set (production).
  */
 
 import crypto from 'node:crypto'
 
 const KF_AUTH_URL = process.env.KF_AUTH_URL ?? 'http://localhost:3000'
+const KF_AUTH_INTERNAL_URL = process.env.KF_AUTH_INTERNAL_URL ?? KF_AUTH_URL
 const KF_AUTH_CLIENT_ID = process.env.KF_AUTH_CLIENT_ID ?? 'kf_underlay'
 const KF_AUTH_CLIENT_SECRET = process.env.KF_AUTH_CLIENT_SECRET ?? ''
 const APP_URL = process.env.APP_URL ?? 'http://localhost:4100'
@@ -60,7 +63,7 @@ interface TokenResponse {
 
 /**
  * Exchange an authorization code for tokens.
- * Uses KF_AUTH_URL (server-to-server).
+ * Uses KF_AUTH_INTERNAL_URL (server-to-server).
  */
 export async function exchangeCode(code: string, codeVerifier: string): Promise<TokenResponse> {
   const body = new URLSearchParams({
@@ -72,7 +75,7 @@ export async function exchangeCode(code: string, codeVerifier: string): Promise<
     code_verifier: codeVerifier,
   })
 
-  const res = await fetch(`${KF_AUTH_URL}${TOKEN_PATH}`, {
+  const res = await fetch(`${KF_AUTH_INTERNAL_URL}${TOKEN_PATH}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
@@ -104,10 +107,10 @@ export interface KFUserInfo {
 
 /**
  * Fetch user info from KF Auth using an access token.
- * Uses KF_AUTH_URL (server-to-server).
+ * Uses KF_AUTH_INTERNAL_URL (server-to-server).
  */
 export async function fetchUserInfo(accessToken: string): Promise<KFUserInfo> {
-  const res = await fetch(`${KF_AUTH_URL}${USERINFO_PATH}`, {
+  const res = await fetch(`${KF_AUTH_INTERNAL_URL}${USERINFO_PATH}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
 
