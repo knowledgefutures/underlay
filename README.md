@@ -53,7 +53,7 @@ In production, user accounts are created automatically on first sign-in via [KF 
 | Styling      | Tailwind CSS 4 (@tailwindcss/vite)                            |
 | Build        | Vite 6 (client + SSR bundles)                                 |
 | Database     | PostgreSQL 17 + Drizzle ORM                                   |
-| File Storage | S3-compatible (Cloudflare R2 in production)                    |
+| File Storage | S3-compatible (Cloudflare R2 in production)                   |
 | Auth         | KF Auth SSO (OIDC) for web sessions + API keys (programmatic) |
 | Deployment   | Docker Swarm on Hetzner, Caddy reverse proxy, Cloudflare DNS  |
 | CI/CD        | GitHub Actions → GHCR → SSH → `docker stack deploy`           |
@@ -154,10 +154,10 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN
 
 ### Docker Compose Files
 
-| File                       | Purpose                                               |
-| -------------------------- | ----------------------------------------------------- |
-| `docker-compose.yml`       | Deployed stacks (prod & dev via Swarm)                |
-| `docker-compose.local.yml` | Local development (source-mounted, hot reload)        |
+| File                       | Purpose                                        |
+| -------------------------- | ---------------------------------------------- |
+| `docker-compose.yml`       | Deployed stacks (prod & dev via Swarm)         |
+| `docker-compose.local.yml` | Local development (source-mounted, hot reload) |
 
 ## Environment Variables
 
