@@ -1,26 +1,31 @@
-import { Link, } from 'react-router'
+import { Link } from 'react-router'
+
 import DocsLayout from '~/components/DocsLayout'
 
 export default function DocsApi() {
   return (
-    <DocsLayout title='API Overview'>
+    <DocsLayout title="API Overview">
       <p>
-        The Underlay API is a JSON REST API served at{' '}
-        <code>/api</code>. All request and response bodies are JSON (except file uploads/downloads). A machine-readable
-        reference is available at{' '}
-        <Link to='/.well-known/ai.txt' className='text-link underline'>/.well-known/ai.txt</Link>.
+        The Underlay API is a JSON REST API served at <code>/api</code>. All request and response
+        bodies are JSON (except file uploads/downloads). A machine-readable reference is available
+        at{' '}
+        <Link to="/.well-known/ai.txt" className="text-link underline">
+          /.well-known/ai.txt
+        </Link>
+        .
       </p>
 
       <h2>Base URL</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{'https://underlay.org/api'}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{'https://underlay.org/api'}</code>
+      </pre>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
       <h2>Authentication</h2>
       <p>
-        All <code>GET</code> requests are <strong>public</strong>{' '}
-        — no authentication required to read public data. All write requests (<code>POST</code>, <code>PATCH</code>,
-        {' '}
+        All <code>GET</code> requests are <strong>public</strong> — no authentication required to
+        read public data. All write requests (<code>POST</code>, <code>PATCH</code>,{' '}
         <code>PUT</code>, <code>DELETE</code>) require authentication.
       </p>
 
@@ -28,7 +33,9 @@ export default function DocsApi() {
 
       <h3>API Keys (recommended for scripts &amp; apps)</h3>
       <p>Pass your key as a Bearer token:</p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{'Authorization: Bearer ul_a1b2c3d4e5...'}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{'Authorization: Bearer ul_a1b2c3d4e5...'}</code>
+      </pre>
       <p>Keys have three scopes:</p>
       <ul>
         <li>
@@ -43,8 +50,10 @@ export default function DocsApi() {
       </ul>
       <p>
         Keys can optionally be scoped to a single collection. Create keys in your{' '}
-        <Link to='/settings' className='text-link underline'>organization settings</Link> or via{' '}
-        <code>POST /api/accounts/keys</code>.
+        <Link to="/settings" className="text-link underline">
+          organization settings
+        </Link>{' '}
+        or via <code>POST /api/accounts/keys</code>.
       </p>
 
       <h3>Session Cookies (browser)</h3>
@@ -56,34 +65,37 @@ export default function DocsApi() {
       <h3>Invalid Credentials</h3>
       <p>
         If a <code>Bearer</code> token is provided but does not match any key, the request is{' '}
-        <strong>immediately rejected</strong> with <code>401</code> — it will not fall through to anonymous access.
+        <strong>immediately rejected</strong> with <code>401</code> — it will not fall through to
+        anonymous access.
       </p>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
       <h2>Rate Limits</h2>
-      <p>All requests are rate-limited. Authenticated requests get a significantly higher allowance:</p>
+      <p>
+        All requests are rate-limited. Authenticated requests get a significantly higher allowance:
+      </p>
 
-      <table className='text-sm w-full border-collapse'>
+      <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className='border-b border-rule text-left'>
-            <th className='py-2 pr-4'>Auth status</th>
-            <th className='py-2'>Limit</th>
+          <tr className="border-rule border-b text-left">
+            <th className="py-2 pr-4">Auth status</th>
+            <th className="py-2">Limit</th>
           </tr>
         </thead>
         <tbody>
-          <tr className='border-b border-rule'>
-            <td className='py-2 pr-4'>Unauthenticated (by IP)</td>
-            <td className='py-2 font-mono'>60 requests / minute</td>
+          <tr className="border-rule border-b">
+            <td className="py-2 pr-4">Unauthenticated (by IP)</td>
+            <td className="py-2 font-mono">60 requests / minute</td>
           </tr>
-          <tr className='border-b border-rule'>
-            <td className='py-2 pr-4'>Authenticated (by account)</td>
-            <td className='py-2 font-mono'>5,000 requests / minute</td>
+          <tr className="border-rule border-b">
+            <td className="py-2 pr-4">Authenticated (by account)</td>
+            <td className="py-2 font-mono">5,000 requests / minute</td>
           </tr>
         </tbody>
       </table>
 
-      <p className='mt-3'>Every response includes rate limit headers:</p>
+      <p className="mt-3">Every response includes rate limit headers:</p>
       <ul>
         <li>
           <code>X-RateLimit-Limit</code> — max requests in the current window
@@ -96,23 +108,26 @@ export default function DocsApi() {
         </li>
       </ul>
       <p>
-        When you exceed the limit, you'll receive a <code>429 Too Many Requests</code> response with a{' '}
-        <code>Retry-After</code> header indicating how long to wait.
+        When you exceed the limit, you'll receive a <code>429 Too Many Requests</code> response with
+        a <code>Retry-After</code> header indicating how long to wait.
       </p>
       <p>
-        For any automated or scripted access, <strong>always use an API key</strong> to get the higher rate limit.
+        For any automated or scripted access, <strong>always use an API key</strong> to get the
+        higher rate limit.
       </p>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
       <h2>Error Responses</h2>
       <p>
         Errors return a JSON body with <code>error</code> and <code>statusCode</code>:
       </p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{`{
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{`{
   "error": "Authentication required",
   "statusCode": 401
-}`}</code></pre>
+}`}</code>
+      </pre>
 
       <p>Common status codes:</p>
       <ul>
@@ -139,24 +154,32 @@ export default function DocsApi() {
         </li>
       </ul>
 
-      <hr className='border-rule my-6' />
+      <hr className="border-rule my-6" />
 
       <h2>Endpoints</h2>
-      <nav className='space-y-2 text-sm'>
+      <nav className="space-y-2 text-sm">
         <div>
-          <Link to='/docs/api/accounts' className='text-link underline'>Accounts</Link>{' '}
+          <Link to="/docs/api/accounts" className="text-link underline">
+            Accounts
+          </Link>{' '}
           — signup, login, API keys, profiles
         </div>
         <div>
-          <Link to='/docs/api/collections' className='text-link underline'>Collections</Link>{' '}
+          <Link to="/docs/api/collections" className="text-link underline">
+            Collections
+          </Link>{' '}
           — create, list, update, delete
         </div>
         <div>
-          <Link to='/docs/api/versions' className='text-link underline'>Versions</Link>{' '}
+          <Link to="/docs/api/versions" className="text-link underline">
+            Versions
+          </Link>{' '}
           — push snapshots, browse history, diff
         </div>
         <div>
-          <Link to='/docs/api/files' className='text-link underline'>Files</Link>{' '}
+          <Link to="/docs/api/files" className="text-link underline">
+            Files
+          </Link>{' '}
           — upload and download content-addressed files
         </div>
       </nav>

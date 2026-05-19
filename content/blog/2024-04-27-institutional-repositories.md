@@ -1,5 +1,5 @@
 ---
-title: "The IR of the Future Is a Reading List"
+title: 'The IR of the Future Is a Reading List'
 subtitle: "Institutional repositories don't need to be monoliths. They need to be views."
 date: 2024-04-27
 ---
@@ -62,4 +62,4 @@ The institutional repository we are describing is a curated reading list backed 
 
 Institutional repositories were always meant to make a university's knowledge accessible. They ended up becoming another silo that knowledge had to be manually deposited into. The better path is to make the knowledge accessible first, structured and versioned and public, and let the institution put its frame around it.
 
-*Underlay is a public registry for structured knowledge. An institutional repository is one way to read it.*
+_Underlay is a public registry for structured knowledge. An institutional repository is one way to read it._

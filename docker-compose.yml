@@ -1,5 +1,5 @@
 # Stack file — deploy with: docker stack deploy -c docker-compose.yml <stack-name>
-# SOPS decrypts .env.enc → .env before this runs (see deploy workflow).
+# SOPS decrypts .env.{prod,dev}.enc → .env before this runs (see deploy workflow).
 
 services:
   app:
@@ -38,7 +38,11 @@ services:
     tmpfs:
       - /tmp:size=64m
     healthcheck:
-      test: ['CMD-SHELL', 'node -e "Promise.all([fetch(\"http://127.0.0.1:${PORT:-3000}/api/health\"),fetch(\"http://127.0.0.1:${PORT:-3000}/\")]).then(rs=>{for(const r of rs)if(!r.ok)throw r.status}).catch(()=>process.exit(1))"']
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "Promise.all([fetch(\"http://127.0.0.1:${PORT:-3000}/api/health\"),fetch(\"http://127.0.0.1:${PORT:-3000}/\")]).then(rs=>{for(const r of rs)if(!r.ok)throw r.status}).catch(()=>process.exit(1))"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -105,6 +109,8 @@ services:
       -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - '${DB_PORT:-5432}:5432'
     networks:
       - appnet
       - dbaccess
@@ -114,24 +120,24 @@ services:
       resources:
         limits:
           memory: 4g
-          cpus: "2.0"
+          cpus: '2.0'
         reservations:
           memory: 1g
-          cpus: "0.5"
+          cpus: '0.5'
       placement:
         constraints: [node.role == manager]
       restart_policy:
         condition: any
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-underlay}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-underlay}']
       interval: 10s
       timeout: 5s
       retries: 5
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
 
 networks:
   appnet:

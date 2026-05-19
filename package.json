@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.33.3",
   "scripts": {
     "dev": "./dev.sh",
     "dev:app": "tsx --env-file=.env.local server.ts",
@@ -11,8 +10,8 @@
     "start": "NODE_ENV=production node --import tsx/esm server.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
-    "fmt": "dprint fmt",
-    "fmt:check": "dprint check",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
@@ -22,9 +21,11 @@
     "tool:seed-mirror": "tsx tools/seedMirror.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "secrets:encrypt": "sops -e --input-type dotenv --output-type dotenv --output .env.enc .env",
+    "secrets:encrypt:local": "sops -e --input-type dotenv --output-type dotenv --output .env.local.enc .env.local",
+    "secrets:encrypt:prod": "sops -e --input-type dotenv --output-type dotenv --output .env.prod.enc .env.prod",
     "secrets:encrypt:dev": "sops -e --input-type dotenv --output-type dotenv --output .env.dev.enc .env.dev",
-    "secrets:decrypt": "sops -d --input-type dotenv --output-type dotenv --output .env .env.enc",
+    "secrets:decrypt:local": "sops -d --input-type dotenv --output-type dotenv --output .env.local .env.local.enc",
+    "secrets:decrypt:prod": "sops -d --input-type dotenv --output-type dotenv --output .env.prod .env.prod.enc",
     "secrets:decrypt:dev": "sops -d --input-type dotenv --output-type dotenv --output .env.dev .env.dev.enc"
   },
   "dependencies": {
@@ -69,10 +70,10 @@
     "@types/react-dom": "^19.1.0",
     "@types/tar-stream": "^3.1.4",
     "@vitejs/plugin-react": "^4",
-    "dprint": "latest",
     "drizzle-kit": "^0.31.0",
     "happy-dom": "^20.9.0",
     "lint-staged": "^17.0.4",
+    "oxfmt": "latest",
     "oxlint": "latest",
     "simple-git-hooks": "^2.13.1",
     "tailwindcss": "^4.1.0",
@@ -84,6 +85,7 @@
     "pre-commit": "pnpm lint-staged"
   },
   "lint-staged": {
-    "*.{ts,tsx,css,json}": "dprint fmt --"
-  }
+    "*.{ts,tsx,css,json}": "oxfmt --"
+  },
+  "packageManager": "pnpm@10.33.3"
 }

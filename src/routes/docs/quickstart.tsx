@@ -1,27 +1,10 @@
-import { Link, } from 'react-router'
+import { Link } from 'react-router'
+
 import DocsLayout from '~/components/DocsLayout'
 
-const signupCode = `curl -X POST https://underlay.org/api/accounts/signup \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "email": "you@example.com",
-    "password": "your-password",
-    "username": "yourname",
-    "displayName": "Your Name"
-  }'`
-
-const loginCode = `# Login (saves session cookie)
-curl -X POST https://underlay.org/api/accounts/login \\
-  -H "Content-Type: application/json" \\
-  -c cookies.txt \\
-  -d '{"email": "you@example.com", "password": "your-password"}'
-
-# Create API key
-curl -X POST https://underlay.org/api/accounts/keys \\
-  -H "Content-Type: application/json" \\
-  -b cookies.txt \\
-  -d '{"label": "my-app", "scope": "write"}'
-# → {"id":"...","key":"ul_abc123...","label":"my-app","scope":"write"}`
+const loginNote = `# Sign in via KF Auth SSO at https://underlay.org/login
+# Your account is created automatically on first sign-in.
+# Then create an API key at https://underlay.org/settings/keys`
 
 const createCollectionCode = `export KEY="ul_abc123..."
 
@@ -107,50 +90,72 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 
 export default function DocsQuickstart() {
   return (
-    <DocsLayout title='Quickstart'>
+    <DocsLayout title="Quickstart">
       <p>
-        Push your first version in 5 minutes. All you need is <code>curl</code> and a running Underlay instance.
+        Push your first version in 5 minutes. All you need is <code>curl</code> and a running
+        Underlay instance.
       </p>
 
-      <h2>1. Create an account</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{signupCode}</code></pre>
-
-      <h2>2. Create an API key</h2>
-      <p>Log in and create a write-scoped key:</p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{loginCode}</code></pre>
+      <h2>1. Sign in and create an API key</h2>
+      <p>
+        Sign in at{' '}
+        <a href="https://underlay.org/login" className="text-link hover:underline">
+          underlay.org/login
+        </a>{' '}
+        via KF Auth SSO. Your account is created automatically on first sign-in. Then go to{' '}
+        <Link to="/settings/keys" className="text-link hover:underline">
+          Settings → API Keys
+        </Link>{' '}
+        and create a write-scoped key.
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{loginNote}</code>
+      </pre>
       <p>
         Save the <code>key</code> value — it's shown only once.
       </p>
 
-      <h2>3. Create a collection</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{createCollectionCode}</code></pre>
+      <h2>2. Create a collection</h2>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{createCollectionCode}</code>
+      </pre>
 
-      <h2>4. Push a version</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{pushCode}</code></pre>
+      <h2>3. Push a version</h2>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{pushCode}</code>
+      </pre>
 
-      <h2>5. Read it back</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{readCode}</code></pre>
+      <h2>4. Read it back</h2>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{readCode}</code>
+      </pre>
 
-      <h2>6. Push an update</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{updateCode}</code></pre>
+      <h2>5. Push an update</h2>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{updateCode}</code>
+      </pre>
 
-      <h2>7. Diff versions</h2>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{diffCode}</code></pre>
+      <h2>6. Diff versions</h2>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{diffCode}</code>
+      </pre>
 
       <h2>Working with files</h2>
       <p>To attach files (PDFs, images, etc.) to records, upload them first by hash:</p>
-      <pre className='bg-ink text-parchment p-3 text-xs overflow-x-auto'><code>{filesCode}</code></pre>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{filesCode}</code>
+      </pre>
 
       <h2>Next steps</h2>
       <ul>
         <li>
-          <Link to='/docs/concepts'>Core concepts</Link> — understand the data model
+          <Link to="/docs/concepts">Core concepts</Link> — understand the data model
         </li>
         <li>
-          <Link to='/docs/api/versions'>Versions API</Link> — full reference for push/pull
+          <Link to="/docs/api/versions">Versions API</Link> — full reference for push/pull
         </li>
         <li>
-          <Link to='/docs/api/files'>Files API</Link> — content-addressed file storage
+          <Link to="/docs/api/files">Files API</Link> — content-addressed file storage
         </li>
       </ul>
     </DocsLayout>

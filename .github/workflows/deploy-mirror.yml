@@ -1,6 +1,6 @@
 name: Deploy Mirror
 
-run-name: "Deploy mirror: ${{ github.sha }}"
+run-name: 'Deploy mirror: ${{ github.sha }}'
 
 concurrency:
   group: deploy-mirror
@@ -139,9 +139,9 @@ jobs:
           git checkout "${BRANCH}"
           git pull origin "${BRANCH}"
 
-          # Decrypt .env.enc into this directory (self-contained, no dependency on prod)
+          # Decrypt prod env to source S3 creds and API keys
           umask 077
-          sops -d --input-type dotenv --output-type dotenv .env.enc > .env
+          sops -d --input-type dotenv --output-type dotenv .env.prod.enc > .env
           set -a
           source <(grep -v '^#' .env | grep -v '^$')
           set +a

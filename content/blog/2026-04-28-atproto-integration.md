@@ -1,6 +1,6 @@
 ---
-title: "Underlay Meets AT Protocol"
-subtitle: "Every collection is a feed. Every push is an event."
+title: 'Underlay Meets AT Protocol'
+subtitle: 'Every collection is a feed. Every push is an event.'
 date: 2026-04-28
 ---
 

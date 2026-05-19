@@ -27,7 +27,7 @@ interface DataRecord {
 /**
  * Map a JSON Schema property type to a SQLite column type.
  */
-function sqliteType(prop: SchemaProperty,): string {
+function sqliteType(prop: SchemaProperty): string {
   switch (prop.type) {
     case 'integer':
       return 'INTEGER'
@@ -46,32 +46,32 @@ function sqliteType(prop: SchemaProperty,): string {
 /**
  * Sanitize a name for use as a SQL identifier.
  */
-function ident(name: string,): string {
-  return `"${name.replace(/"/g, '""',)}"`
+function ident(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`
 }
 
 /**
  * Generate CREATE TABLE DDL for a type schema.
  */
-export function generateDDL(typeName: string, typeSchema: TypeSchema,): string {
-  const cols: string[] = [`"_record_id" TEXT PRIMARY KEY`,]
+export function generateDDL(typeName: string, typeSchema: TypeSchema): string {
+  const cols: string[] = [`"_record_id" TEXT PRIMARY KEY`]
 
   if (typeSchema.properties) {
-    for (const [fieldName, fieldDef,] of Object.entries(typeSchema.properties,)) {
-      cols.push(`${ident(fieldName,)} ${sqliteType(fieldDef,)}`,)
+    for (const [fieldName, fieldDef] of Object.entries(typeSchema.properties)) {
+      cols.push(`${ident(fieldName)} ${sqliteType(fieldDef)}`)
     }
   }
 
-  return `CREATE TABLE ${ident(typeName,)} (\n  ${cols.join(',\n  ',)}\n);`
+  return `CREATE TABLE ${ident(typeName)} (\n  ${cols.join(',\n  ')}\n);`
 }
 
 /**
  * Generate DDL for all types in a schema set.
  */
-export function generateAllDDL(schemas: Record<string, TypeSchema>,): string {
-  return Object.entries(schemas,)
-    .map(([name, schema,],) => generateDDL(name, schema,))
-    .join('\n\n',)
+export function generateAllDDL(schemas: Record<string, TypeSchema>): string {
+  return Object.entries(schemas)
+    .map(([name, schema]) => generateDDL(name, schema))
+    .join('\n\n')
 }
 
 /**
@@ -81,55 +81,55 @@ export function buildSqliteBuffer(
   schemas: Record<string, TypeSchema>,
   records: DataRecord[],
 ): Buffer {
-  const db = new Database(':memory:',)
+  const db = new Database(':memory:')
 
   // Create tables
-  for (const [typeName, typeSchema,] of Object.entries(schemas,)) {
-    const ddl = generateDDL(typeName, typeSchema,)
-    db.exec(ddl,)
+  for (const [typeName, typeSchema] of Object.entries(schemas)) {
+    const ddl = generateDDL(typeName, typeSchema)
+    db.exec(ddl)
   }
 
   // Insert records grouped by type
   const byType = new Map<string, DataRecord[]>()
   for (const rec of records) {
-    const arr = byType.get(rec.type,) ?? []
-    arr.push(rec,)
-    byType.set(rec.type, arr,)
+    const arr = byType.get(rec.type) ?? []
+    arr.push(rec)
+    byType.set(rec.type, arr)
   }
 
-  for (const [typeName, typeRecords,] of byType) {
+  for (const [typeName, typeRecords] of byType) {
     const typeSchema = schemas[typeName]
     if (!typeSchema?.properties) continue
 
-    const fields = Object.keys(typeSchema.properties,)
-    const colNames = ['_record_id', ...fields,].map(ident,).join(', ',)
-    const placeholders = ['?', ...fields.map(() => '?'),].join(', ',)
+    const fields = Object.keys(typeSchema.properties)
+    const colNames = ['_record_id', ...fields].map(ident).join(', ')
+    const placeholders = ['?', ...fields.map(() => '?')].join(', ')
     const insertStmt = db.prepare(
-      `INSERT OR IGNORE INTO ${ident(typeName,)} (${colNames}) VALUES (${placeholders})`,
+      `INSERT OR IGNORE INTO ${ident(typeName)} (${colNames}) VALUES (${placeholders})`,
     )
 
-    const insertMany = db.transaction((recs: DataRecord[],) => {
+    const insertMany = db.transaction((recs: DataRecord[]) => {
       for (const rec of recs) {
         const data = rec.data as any
         const values = [
           rec.recordId,
-          ...fields.map((f,) => {
+          ...fields.map((f) => {
             const val = data?.[f]
             if (val === undefined || val === null) return null
-            if (typeof val === 'object') return JSON.stringify(val,)
+            if (typeof val === 'object') return JSON.stringify(val)
             if (typeof val === 'boolean') return val ? 1 : 0
             return val
-          },),
+          }),
         ]
-        insertStmt.run(...values,)
+        insertStmt.run(...values)
       }
-    },)
+    })
 
-    insertMany(typeRecords,)
+    insertMany(typeRecords)
   }
 
   // Export as buffer
   const buffer = db.serialize()
   db.close()
-  return Buffer.from(buffer,)
+  return Buffer.from(buffer)
 }

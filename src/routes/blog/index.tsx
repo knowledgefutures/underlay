@@ -1,4 +1,5 @@
-import { Link, } from 'react-router'
+import { Link } from 'react-router'
+
 import BaseLayout from '~/components/BaseLayout'
 
 const posts: { title: string; subtitle: string; date: string; url: string }[] = [
@@ -28,30 +29,35 @@ const posts: { title: string; subtitle: string; date: string; url: string }[] = 
   },
 ]
 
-function fmtDate(d: string,) {
-  const date = new Date(d,)
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', },)
+function fmtDate(d: string) {
+  const date = new Date(d)
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function isoDate(d: string,) {
-  return new Date(d,).toISOString().slice(0, 10,)
+function isoDate(d: string) {
+  return new Date(d).toISOString().slice(0, 10)
 }
 
 export default function Blog() {
   return (
     <BaseLayout>
-      <div className='max-w-2xl mx-auto px-4 py-10'>
-        <h1 className='text-xl font-semibold tracking-tight font-sans mb-6'>Blog</h1>
+      <div className="mx-auto max-w-2xl px-4 py-10">
+        <h1 className="mb-6 font-sans text-xl font-semibold tracking-tight">Blog</h1>
 
-        <ul className='space-y-3'>
-          {posts.map((post,) => (
-            <li key={post.url} className='flex items-baseline gap-3'>
-              <time className='text-xs text-ink-muted tabular-nums shrink-0 w-24' dateTime={isoDate(post.date,)}>
-                {fmtDate(post.date,)}
+        <ul className="space-y-3">
+          {posts.map((post) => (
+            <li key={post.url} className="flex items-baseline gap-3">
+              <time
+                className="text-ink-muted w-24 shrink-0 text-xs tabular-nums"
+                dateTime={isoDate(post.date)}
+              >
+                {fmtDate(post.date)}
               </time>
               <div>
-                <Link to={post.url} className='text-sm font-semibold text-link underline'>{post.title}</Link>
-                <p className='text-xs text-ink-muted mt-0.5'>{post.subtitle}</p>
+                <Link to={post.url} className="text-link text-sm font-semibold underline">
+                  {post.title}
+                </Link>
+                <p className="text-ink-muted mt-0.5 text-xs">{post.subtitle}</p>
               </div>
             </li>
           ))}

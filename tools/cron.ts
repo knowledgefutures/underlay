@@ -5,29 +5,31 @@
  * In dev, no jobs are registered — run tools manually with `npm run tool:<name>`.
  */
 
+import { execSync } from 'node:child_process'
+
 import cron from 'node-cron'
-import { execSync, } from 'node:child_process'
-import { getMirrorConfig, } from '../src/lib/mirror-config.js'
-import { runMirrorSync, } from '../src/lib/mirror-sync.js'
 
-const log = (msg: string,) => console.log(`[cron] ${new Date().toISOString()} ${msg}`,)
+import { getMirrorConfig } from '../src/lib/mirror-config.js'
+import { runMirrorSync } from '../src/lib/mirror-sync.js'
 
-function run(name: string, script: string,): void {
-  log(`Starting: ${name}`,)
+const log = (msg: string) => console.log(`[cron] ${new Date().toISOString()} ${msg}`)
+
+function run(name: string, script: string): void {
+  log(`Starting: ${name}`)
   try {
-    execSync(`npm run ${script}`, { stdio: 'inherit', },)
-    log(`Completed: ${name}`,)
+    execSync(`npm run ${script}`, { stdio: 'inherit' })
+    log(`Completed: ${name}`)
   } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err,),)
-    log(`Failed: ${name} — ${error.message}`,)
+    const error = err instanceof Error ? err : new Error(String(err))
+    log(`Failed: ${name} — ${error.message}`)
   }
 }
 
 if (process.env.NODE_ENV === 'production') {
   // Daily at 3 AM UTC — backup Postgres database to S3
-  cron.schedule('0 3 * * *', () => run('Backup DB', 'tool:backup',), {
+  cron.schedule('0 3 * * *', () => run('Backup DB', 'tool:backup'), {
     timezone: 'UTC',
-  },)
+  })
 
   // Mirror sync — only if mirror mode is enabled
   const mirrorConfig = getMirrorConfig()
@@ -35,26 +37,26 @@ if (process.env.NODE_ENV === 'production') {
     cron.schedule(
       mirrorConfig.syncSchedule,
       async () => {
-        log('Starting: Mirror sync',)
+        log('Starting: Mirror sync')
         try {
-          const result = await runMirrorSync('cron',)
+          const result = await runMirrorSync('cron')
           log(
             `Completed: Mirror sync — ${result.collections.synced} collections, ${result.versions.pulled} versions pulled`,
           )
           if (result.errors.length > 0) {
-            log(`  Errors: ${result.errors.slice(0, 3,).join('; ',)}`,)
+            log(`  Errors: ${result.errors.slice(0, 3).join('; ')}`)
           }
         } catch (err) {
-          const error = err instanceof Error ? err : new Error(String(err,),)
-          log(`Failed: Mirror sync — ${error.message}`,)
+          const error = err instanceof Error ? err : new Error(String(err))
+          log(`Failed: Mirror sync — ${error.message}`)
         }
       },
-      { timezone: 'UTC', },
+      { timezone: 'UTC' },
     )
-    log(`Mirror sync scheduled: ${mirrorConfig.syncSchedule} (upstream: ${mirrorConfig.upstream})`,)
+    log(`Mirror sync scheduled: ${mirrorConfig.syncSchedule} (upstream: ${mirrorConfig.upstream})`)
   }
 
-  log('Scheduler started — production mode',)
+  log('Scheduler started — production mode')
 } else {
   const logNotSet = () => {
     log(
@@ -62,5 +64,5 @@ if (process.env.NODE_ENV === 'production') {
     )
   }
   logNotSet()
-  cron.schedule('0 0 * * *', logNotSet, { timezone: 'UTC', },)
+  cron.schedule('0 0 * * *', logNotSet, { timezone: 'UTC' })
 }

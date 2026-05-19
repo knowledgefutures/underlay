@@ -1,6 +1,6 @@
 ---
-title: "Underlay, Revived"
-subtitle: "The landscape changed. The project can finally be simple."
+title: 'Underlay, Revived'
+subtitle: 'The landscape changed. The project can finally be simple.'
 date: 2024-04-27
 ---
 
@@ -20,7 +20,7 @@ Three things, each removing a class of complexity the original design had to abs
 
 That is no longer true. With modern tooling and AI-assisted development, a bespoke publishing application with custom workflows and a tailored editorial process can be built in a fraction of the time and cost. Better for the user: they get exactly the tool they need.
 
-But if the application is bespoke, and perhaps even disposable, the *data* needs to live somewhere durable. The application is the interface; the archive is the thing that lasts.
+But if the application is bespoke, and perhaps even disposable, the _data_ needs to live somewhere durable. The application is the interface; the archive is the thing that lasts.
 
 **LLMs changed what "interoperability" requires.** The original Underlay spent enormous effort on alignment: reconciling schemas, mapping ontologies, resolving entity references across datasets. This was genuinely hard when the consumer was a rigid program that needed exact field names and precise types.
 
@@ -69,4 +69,4 @@ The Underlay was always about one thing: public knowledge should be a public res
 
 The hard problems we originally tried to solve in the protocol (alignment, mapping, transformation, discovery) are now better solved by tools and models that sit on top of structured data. The Underlay does not need to be smart. It needs to be reliable, durable, and clear. Get the structure right, make it public, and the rest follows.
 
-*Underlay is a public registry for structured knowledge. The structure is the infrastructure.*
+_Underlay is a public registry for structured knowledge. The structure is the infrastructure._
