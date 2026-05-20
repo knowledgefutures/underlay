@@ -9,7 +9,8 @@
  *   AUTH_INTERNAL_API_KEY — shared secret for service-to-service calls (fallback: KF_INTERNAL_API_KEY)
  */
 
-import { OIDC_ISSUER_INTERNAL_URL } from './oidc.server.js'
+const OIDC_ISSUER_INTERNAL_URL =
+  process.env.OIDC_ISSUER_INTERNAL_URL ?? process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
 
 const AUTH_INTERNAL_API_URL =
   process.env.AUTH_INTERNAL_API_URL ??

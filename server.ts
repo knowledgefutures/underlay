@@ -16,14 +16,13 @@ import { authMiddleware, requireAuth } from '~/api/auth.server'
 import * as collections from '~/api/collections'
 import * as files from '~/api/files'
 import * as health from '~/api/health'
-import * as kfAuth from '~/api/kf-auth'
 import * as kfSummary from '~/api/kf-summary'
 import * as query from '~/api/query'
 import * as schemas from '~/api/schemas'
 import * as uploads from '~/api/uploads'
 import * as versions from '~/api/versions'
+import { auth } from '~/lib/better-auth'
 import { getMirrorConfig } from '~/lib/mirror-config'
-import { initOidc } from '~/lib/oidc.server'
 
 const isProd = process.env.NODE_ENV === 'production'
 const app = new Hono<AuthEnv>()
@@ -46,7 +45,7 @@ app.use('/api/admin/*', async (c, next) => {
 // --- ARK resolution middleware ---
 app.use('/ark\\:*', arkMiddleware)
 
-// --- KF Auth (OIDC login) ---
+// --- KF Auth (OIDC login via better-auth) ---
 app.get('/login', async (c, next) => {
   // Server-side redirect to avoid client-side "Redirecting..." flash.
   // Fall through to the React route only when there's an error to display.
@@ -60,9 +59,55 @@ app.get('/login', async (c, next) => {
   }
   await next()
 })
-app.get('/auth/login', kfAuth.login)
-app.get('/auth/callback', kfAuth.callback)
-app.post('/auth/logout', kfAuth.logout)
+
+// /auth/login — triggers better-auth's social sign-in with kf-auth provider
+app.get('/auth/login', async (c) => {
+  const url = new URL(c.req.url)
+  const returnTo = url.searchParams.get('return_to') ?? '/'
+  // POST to better-auth's sign-in/social internally
+  const signInUrl = new URL('/api/auth/sign-in/social', url.origin)
+  const req = new Request(signInUrl, {
+    method: 'POST',
+    headers: new Headers({
+      'Content-Type': 'application/json',
+      Origin: url.origin,
+      cookie: c.req.header('cookie') ?? '',
+    }),
+    body: JSON.stringify({ provider: 'kf-auth', callbackURL: returnTo }),
+  })
+  const res = await auth.handler(req)
+
+  // better-auth returns JSON { url, redirect } — extract and do a real redirect
+  // Also forward any Set-Cookie headers (state/PKCE cookies)
+  const body = (await res.json()) as { url?: string; redirect?: boolean }
+  if (body?.url) {
+    const response = c.redirect(body.url)
+    // Forward cookies set by better-auth (OAuth state, code verifier)
+    res.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'set-cookie') {
+        response.headers.append('set-cookie', value)
+      }
+    })
+    return response
+  }
+  return res
+})
+
+// /auth/logout — proxy to better-auth sign-out
+app.post('/auth/logout', async (c) => {
+  // Forward the request to better-auth's sign-out handler
+  const signOutUrl = new URL('/api/auth/sign-out', c.req.url)
+  const req = new Request(signOutUrl, {
+    method: 'POST',
+    headers: c.req.raw.headers,
+  })
+  return auth.handler(req)
+})
+
+// better-auth handles: /api/auth/sign-in/social, /api/auth/callback/kf-auth, sessions, etc.
+app.on(['GET', 'POST'], '/api/auth/*', (c) => {
+  return auth.handler(c.req.raw)
+})
 
 // --- API routes ---
 app.get('/api/health', health.check)
@@ -305,13 +350,6 @@ if (isProd) {
 }
 
 const port = Number(process.env.PORT) || 3000
-
-// Validate OIDC provider is reachable before accepting requests
-await initOidc().catch((err) => {
-  console.error('FATAL: OIDC discovery failed — cannot start without a valid OIDC provider.')
-  console.error(err.message)
-  process.exit(1)
-})
 
 console.log(`Server running at http://localhost:${port}`)
 serve({ fetch: app.fetch, port })

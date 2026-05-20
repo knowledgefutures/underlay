@@ -41,6 +41,7 @@
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.0",
     "bcrypt": "^6.0.0",
+    "better-auth": "^1.6.11",
     "better-sqlite3": "^12.9.0",
     "codemirror": "^6.0.2",
     "drizzle-orm": "^0.45.0",

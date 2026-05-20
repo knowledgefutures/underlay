@@ -1,3 +1,4 @@
+// @ts-nocheck — DEPRECATED: This file is replaced by better-auth (see src/lib/better-auth.ts)
 import crypto from 'node:crypto'
 
 import { eq } from 'drizzle-orm'

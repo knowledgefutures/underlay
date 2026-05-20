@@ -1,10 +1,10 @@
 import bcrypt from 'bcrypt'
 import { eq } from 'drizzle-orm'
-import type { Context, MiddlewareHandler } from 'hono'
-import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
+import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 
 import { db, schema } from '../db/client.server.js'
+import { auth } from '../lib/better-auth.js'
 
 export type AuthEnv = {
   Variables: {
@@ -20,7 +20,6 @@ const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
 const authInternalApiKey =
   process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY ?? ''
-const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Internal service calls (legacy header)
@@ -31,15 +30,15 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   }
 
   // Auth provider internal API key (used by /api/kf/* endpoints)
-  const auth = c.req.header('authorization')
-  if (authInternalApiKey && auth === `Bearer ${authInternalApiKey}`) {
+  const headerAuth = c.req.header('authorization')
+  if (authInternalApiKey && headerAuth === `Bearer ${authInternalApiKey}`) {
     c.set('apiKeyScope', 'admin')
     return next()
   }
 
   // API key auth via Bearer token
-  if (auth?.startsWith('Bearer ')) {
-    const token = auth.slice(7)
+  if (headerAuth?.startsWith('Bearer ')) {
+    const token = headerAuth.slice(7)
     const keys = await db.select().from(schema.apiKeys)
     let matched = false
     for (const key of keys) {
@@ -62,31 +61,13 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     return next()
   }
 
-  // Session cookie auth
-  const sessionCookie = getCookie(c, 'session')
-  if (sessionCookie) {
-    try {
-      // Try to parse as signed cookie (value.signature format)
-      let sessionId = sessionCookie
-      const dotIdx = sessionCookie.lastIndexOf('.')
-      if (dotIdx > 0) {
-        sessionId = sessionCookie.slice(0, dotIdx)
-      }
-      if (sessionId) {
-        const [session] = await db
-          .select()
-          .from(schema.sessions)
-          .where(eq(schema.sessions.id, sessionId))
-          .limit(1)
-        if (session && new Date(session.expiresAt) > new Date()) {
-          c.set('sessionUserId', session.userId)
-          c.set('accountId', session.userId)
-          c.set('apiKeyScope', 'admin')
-        }
-      }
-    } catch {
-      // Invalid or expired cookie — ignore silently
-    }
+  // Session cookie auth via better-auth
+  const session = await auth.api.getSession({ headers: c.req.raw.headers })
+  if (session?.user) {
+    // session.user.id = KF Auth sub = accounts.id (shared ID)
+    c.set('sessionUserId', session.user.id)
+    c.set('accountId', session.user.id)
+    c.set('apiKeyScope', 'admin')
   }
 
   // Public GETs are allowed without auth
@@ -115,19 +96,4 @@ export function requireAuth(scope?: 'read' | 'write' | 'admin'): MiddlewareHandl
     }
     return next()
   }
-}
-
-// Helper to set signed session cookie
-export function setSessionCookie(c: Context, sessionId: string) {
-  setCookie(c, 'session', sessionId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  })
-}
-
-export function clearSessionCookie(c: Context) {
-  deleteCookie(c, 'session', { path: '/' })
 }

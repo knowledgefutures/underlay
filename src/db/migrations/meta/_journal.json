@@ -85,6 +85,20 @@
       "when": 1778812081690,
       "tag": "0011_messy_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779303678092,
+      "tag": "0012_better-auth-tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779310000000,
+      "tag": "0013_rename-account-to-oauth-account",
+      "breakpoints": true
     }
   ]
 }

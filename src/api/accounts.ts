@@ -1,13 +1,13 @@
 import bcrypt from 'bcrypt'
 import { and, count, eq } from 'drizzle-orm'
 import type { Context } from 'hono'
-import { getCookie } from 'hono/cookie'
+import { deleteCookie, getCookie } from 'hono/cookie'
 import { v4 as uuidv4 } from 'uuid'
 
 import { db, schema } from '../db/client.server.js'
 import { sendEmail } from '../lib/email.js'
 import { deleteS3Objects, listS3Objects, uploadToS3 } from '../lib/s3.js'
-import { type AuthEnv, clearSessionCookie } from './auth.server.js'
+import type { AuthEnv } from './auth.server.js'
 
 /** Base URL for public assets (avatars, etc.) */
 const ASSETS_BASE_URL = process.env.ASSETS_BASE_URL ?? 'https://assets.underlay.org'
@@ -280,7 +280,7 @@ export async function deleteMe(c: Context<AuthEnv>) {
 
   // Cascade will handle sessions, memberships, api keys
   await db.delete(schema.accounts).where(eq(schema.accounts.id, account.id))
-  clearSessionCookie(c)
+  deleteCookie(c, 'ul.session_token', { path: '/' })
   return c.json({ ok: true })
 }
 
