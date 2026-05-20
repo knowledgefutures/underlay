@@ -23,6 +23,7 @@ import * as schemas from '~/api/schemas'
 import * as uploads from '~/api/uploads'
 import * as versions from '~/api/versions'
 import { getMirrorConfig } from '~/lib/mirror-config'
+import { initOidc } from '~/lib/oidc.server'
 
 const isProd = process.env.NODE_ENV === 'production'
 const app = new Hono<AuthEnv>()
@@ -304,5 +305,13 @@ if (isProd) {
 }
 
 const port = Number(process.env.PORT) || 3000
+
+// Validate OIDC provider is reachable before accepting requests
+await initOidc().catch((err) => {
+  console.error('FATAL: OIDC discovery failed — cannot start without a valid OIDC provider.')
+  console.error(err.message)
+  process.exit(1)
+})
+
 console.log(`Server running at http://localhost:${port}`)
 serve({ fetch: app.fetch, port })

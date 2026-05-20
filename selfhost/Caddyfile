@@ -1,0 +1,17 @@
+{
+	admin off
+}
+
+{$DOMAIN:localhost} {
+	handle_path /auth/* {
+		reverse_proxy auth:3000
+	}
+
+	handle_path /account/* {
+		reverse_proxy account:3001
+	}
+
+	handle {
+		reverse_proxy app:{$APP_PORT:4100}
+	}
+}

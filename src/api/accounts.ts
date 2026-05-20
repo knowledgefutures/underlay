@@ -1059,23 +1059,16 @@ export async function acceptInvitation(c: Context<AuthEnv>) {
   }
 
   // Verify the logged-in user's email matches the invitation.
-  // Email is fetched from KF Auth since we don't store it locally.
-  const { getKfProfile } = await import('../lib/kf-profile-cache.server.js')
+  // Email is fetched from auth internal API since we don't store it locally.
+  const { getAuthUserWithEmail } = await import('../lib/auth-internal.server.js')
   const accountId = c.get('accountId')!
 
-  // Fetch email from KF Auth internal API directly (profile cache doesn't include email)
-  const KF_AUTH_URL = process.env.KF_AUTH_URL ?? 'http://localhost:3000'
-  const KF_INTERNAL_API_KEY = process.env.KF_INTERNAL_API_KEY ?? ''
+  // Fetch email from auth internal API
   let userEmail: string | null = null
-  try {
-    const res = await fetch(`${KF_AUTH_URL}/api/internal/users/${accountId}`, {
-      headers: { Authorization: `Bearer ${KF_INTERNAL_API_KEY}` },
-    })
-    if (res.ok) {
-      const data = (await res.json()) as { email: string }
-      userEmail = data.email
-    }
-  } catch {}
+  const authUser = await getAuthUserWithEmail(accountId)
+  if (authUser) {
+    userEmail = authUser.email
+  }
 
   if (!userEmail || userEmail !== invitation.email) {
     return c.json(

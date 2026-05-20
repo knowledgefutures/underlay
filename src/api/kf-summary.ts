@@ -19,7 +19,7 @@ export async function summary(c: Context) {
 
   // Verify internal API key
   const authHeader = c.req.header('Authorization')
-  const expectedKey = process.env.KF_INTERNAL_API_KEY
+  const expectedKey = process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY
   if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
     return c.json({ error: 'Unauthorized' }, 401)
   }
