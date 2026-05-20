@@ -1,0 +1,169 @@
+# docker-compose.withauth.yml — Self-hosted Underlay with bundled auth.
+#
+# Runs: Underlay app + KF Auth (auth + account) + Postgres + Caddy
+# One command: docker compose -f docker-compose.withauth.yml up
+#
+# First run generates secrets automatically via the init container.
+# Set DOMAIN=https://your-domain.com in your shell or .env file.
+
+name: underlay-withauth
+
+services:
+  # --- Init container: generates secrets + config ---
+  withauth-init:
+    image: alpine:3.20
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ -f /config/.env.withauth ]; then
+          echo "Config already exists, skipping init."
+          exit 0
+        fi
+        apk add --no-cache openssl
+        AUTH_SECRET=$$(openssl rand -hex 32)
+        CLIENT_SECRET=$$(openssl rand -hex 32)
+        INTERNAL_KEY=$$(openssl rand -hex 32)
+        printf '%s\n' \
+          "BETTER_AUTH_SECRET=$$AUTH_SECRET" \
+          "BETTER_AUTH_URL=$${DOMAIN:-http://localhost}/auth" \
+          "ACCOUNT_URL=$${DOMAIN:-http://localhost}/account" \
+          "DATABASE_URL=postgres://kfauth:kfauth@postgres:5432/kfauth" \
+          "SMTP_HOST=$${SMTP_HOST:-localhost}" \
+          "SMTP_PORT=$${SMTP_PORT:-25}" \
+          "SMTP_FROM=$${SMTP_FROM:-noreply@localhost}" \
+          "SMTP_USER=$${SMTP_USER:-}" \
+          "SMTP_PASS=$${SMTP_PASS:-}" \
+          "KF_INTERNAL_API_KEY=$$INTERNAL_KEY" \
+          "BASE_PATH=/auth" \
+          "APPS_REGISTRY_FILE=/config/apps.withauth.yaml" \
+          "GITHUB_CLIENT_ID=$${GITHUB_CLIENT_ID:-}" \
+          "GITHUB_CLIENT_SECRET=$${GITHUB_CLIENT_SECRET:-}" \
+          "GOOGLE_CLIENT_ID=$${GOOGLE_CLIENT_ID:-}" \
+          "GOOGLE_CLIENT_SECRET=$${GOOGLE_CLIENT_SECRET:-}" \
+          "ORCID_CLIENT_ID=$${ORCID_CLIENT_ID:-}" \
+          "ORCID_CLIENT_SECRET=$${ORCID_CLIENT_SECRET:-}" \
+          "AUTH_SERVICE_NAME=$${AUTH_SERVICE_NAME:-Underlay Auth}" \
+          > /config/.env.withauth
+        printf '%s\n' \
+          "- client_id: underlay" \
+          "  client_secret: $$CLIENT_SECRET" \
+          "  redirect_uris:" \
+          "    - $${DOMAIN:-http://localhost}/auth/callback" \
+          "  skip_consent: true" \
+          "  display_name: \"Underlay\"" \
+          "  allow_sign_up: true" \
+          > /config/apps.withauth.yaml
+        printf '%s\n' \
+          "OIDC_ISSUER_URL=$${DOMAIN:-http://localhost}/auth" \
+          "OIDC_ISSUER_INTERNAL_URL=http://auth:3000" \
+          "OIDC_CLIENT_ID=underlay" \
+          "OIDC_CLIENT_SECRET=$$CLIENT_SECRET" \
+          "AUTH_INTERNAL_API_KEY=$$INTERNAL_KEY" \
+          "DATABASE_URL=postgres://kfauth:kfauth@postgres:5432/app" \
+          > /config/.env.app
+        echo "Init complete."
+    volumes:
+      - withauth-config:/config
+    environment:
+      - DOMAIN
+      - SMTP_HOST
+      - SMTP_PORT
+      - SMTP_FROM
+      - SMTP_USER
+      - SMTP_PASS
+      - GITHUB_CLIENT_ID
+      - GITHUB_CLIENT_SECRET
+      - GOOGLE_CLIENT_ID
+      - GOOGLE_CLIENT_SECRET
+      - ORCID_CLIENT_ID
+      - ORCID_CLIENT_SECRET
+      - AUTH_SERVICE_NAME
+
+  # --- Shared Postgres (two databases: kfauth + app) ---
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kfauth
+      POSTGRES_PASSWORD: kfauth
+      POSTGRES_DB: kfauth
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./selfhost/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kfauth']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Auth server (kf-auth) ---
+  auth:
+    image: ghcr.io/knowledgefutures/kf-auth:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      withauth-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      - withauth-config:/config:ro
+    command: sh -c "set -a && . /config/.env.withauth && set +a && node dist/server.js"
+
+  # --- Account server (kf-auth account UI) ---
+  account:
+    image: ghcr.io/knowledgefutures/kf-auth:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      withauth-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+    volumes:
+      - withauth-config:/config:ro
+    command: sh -c "set -a && . /config/.env.withauth && set +a && node dist/server-account.js"
+
+  # --- Underlay app ---
+  app:
+    image: ghcr.io/knowledgefutures/underlay:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      withauth-init:
+        condition: service_completed_successfully
+      auth:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: 4100
+      APP_URL: ${DOMAIN:-http://localhost}
+    volumes:
+      - withauth-config:/config:ro
+    command: sh -c "set -a && . /config/.env.app && set +a && node dist/server.js"
+
+  # --- Caddy reverse proxy ---
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      APP_PORT: '4100'
+    depends_on:
+      - auth
+      - account
+      - app
+
+volumes:
+  pgdata:
+  withauth-config:
+  caddy-data:
+  caddy-config:

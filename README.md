@@ -154,10 +154,23 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN
 
 ### Docker Compose Files
 
-| File                       | Purpose                                        |
-| -------------------------- | ---------------------------------------------- |
-| `docker-compose.yml`       | Deployed stacks (prod & dev via Swarm)         |
-| `docker-compose.local.yml` | Local development (source-mounted, hot reload) |
+| File                          | Purpose                                        |
+| ----------------------------- | ---------------------------------------------- |
+| `docker-compose.yml`          | Deployed stacks (prod & dev via Swarm)         |
+| `docker-compose.local.yml`    | Local development (source-mounted, hot reload) |
+| `docker-compose.withauth.yml` | Self-hosted: app + bundled KF Auth stack       |
+
+### Self-Hosting
+
+Run the Underlay with a bundled auth server (no external auth provider needed):
+
+```bash
+DOMAIN=https://my-instance.com docker compose -f docker-compose.withauth.yml up
+```
+
+This starts Postgres, KF Auth (auth + account), the Underlay app, and Caddy with TLS. On first boot, secrets are auto-generated. Set `SMTP_*` vars for email delivery.
+
+Supporting files live in `selfhost/` (Caddyfile, Postgres init script).
 
 ## Environment Variables
 

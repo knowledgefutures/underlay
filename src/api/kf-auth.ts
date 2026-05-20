@@ -9,9 +9,10 @@ import { db, schema } from '../db/client.server.js'
 import {
   buildAuthorizeUrl,
   exchangeCode,
+  extractOrgs,
   fetchUserInfo,
-  type KFOrg,
-} from '../lib/kf-auth.server.js'
+  type OIDCOrg,
+} from '../lib/oidc.server.js'
 import { type AuthEnv, setSessionCookie } from './auth.server.js'
 
 const STATE_COOKIE = 'kf_oauth_state'
@@ -37,7 +38,7 @@ export async function login(c: Context<AuthEnv>) {
   setCookie(c, STATE_COOKIE, state, cookieOpts)
   setCookie(c, RETURN_COOKIE, returnTo, cookieOpts)
 
-  const { url, codeVerifier } = buildAuthorizeUrl(state)
+  const { url, codeVerifier } = await buildAuthorizeUrl(state)
   setCookie(c, VERIFIER_COOKIE, codeVerifier, cookieOpts)
 
   return c.redirect(url)
@@ -99,7 +100,7 @@ export async function callback(c: Context<AuthEnv>) {
   // User account id IS the KF Auth user id (userInfo.sub).
   // No profile data stored locally — fetched from KF Auth on demand.
   const kfUserId = userInfo.sub
-  const kfOrgs: KFOrg[] = userInfo['https://knowledgefutures.org/orgs'] ?? []
+  const kfOrgs: OIDCOrg[] = extractOrgs(userInfo)
   const kfPersonalOrg = kfOrgs.find((o) => o.type === 'personal')
   const accountId = kfUserId
 

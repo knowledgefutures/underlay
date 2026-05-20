@@ -18,7 +18,8 @@ export type AuthEnv = {
 const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 
 const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
-const kfInternalApiKey = process.env.KF_INTERNAL_API_KEY ?? ''
+const authInternalApiKey =
+  process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY ?? ''
 const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
@@ -29,9 +30,9 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     return next()
   }
 
-  // KF Auth internal API key (used by /api/kf/* endpoints)
+  // Auth provider internal API key (used by /api/kf/* endpoints)
   const auth = c.req.header('authorization')
-  if (kfInternalApiKey && auth === `Bearer ${kfInternalApiKey}`) {
+  if (authInternalApiKey && auth === `Bearer ${authInternalApiKey}`) {
     c.set('apiKeyScope', 'admin')
     return next()
   }
