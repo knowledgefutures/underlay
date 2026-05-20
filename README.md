@@ -154,11 +154,11 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN
 
 ### Docker Compose Files
 
-| File                           | Purpose                                        |
-| ------------------------------ | ---------------------------------------------- |
-| `docker-compose.yml`           | Deployed stacks (prod & dev via Swarm)         |
-| `docker-compose.local.yml`     | Local development (source-mounted, hot reload) |
-| `docker-compose.withauth.yml`  | Self-hosted: app + bundled KF Auth stack       |
+| File                          | Purpose                                        |
+| ----------------------------- | ---------------------------------------------- |
+| `docker-compose.yml`          | Deployed stacks (prod & dev via Swarm)         |
+| `docker-compose.local.yml`    | Local development (source-mounted, hot reload) |
+| `docker-compose.withauth.yml` | Self-hosted: app + bundled KF Auth stack       |
 
 ### Self-Hosting
 
