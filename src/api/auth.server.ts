@@ -18,8 +18,7 @@ export type AuthEnv = {
 const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 
 const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
-const authInternalApiKey =
-  process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY ?? ''
+const authInternalApiKey = process.env.AUTH_INTERNAL_API_KEY ?? ''
 const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {

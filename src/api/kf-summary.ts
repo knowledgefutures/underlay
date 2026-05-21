@@ -9,7 +9,7 @@ import { db, schema } from '../db/client.server.js'
  * Returns Underlay accounts and their collections linked to a KF org.
  * For user-type accounts it also includes UL orgs the user belongs to.
  *
- * Auth: requires KF_INTERNAL_API_KEY (service-to-service).
+ * Auth: requires AUTH_INTERNAL_API_KEY (service-to-service).
  */
 export async function summary(c: Context) {
   const kfOrgId = c.req.query('kf_org_id')
@@ -19,7 +19,7 @@ export async function summary(c: Context) {
 
   // Verify internal API key
   const authHeader = c.req.header('Authorization')
-  const expectedKey = process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY
+  const expectedKey = process.env.AUTH_INTERNAL_API_KEY
   if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
     return c.json({ error: 'Unauthorized' }, 401)
   }

@@ -93,8 +93,7 @@ const loaders: Record<string, LoaderFn> = {
   '/logout': async () => {
     return {
       data: {
-        kfAuthUrl:
-          process.env.OIDC_ISSUER_URL ?? process.env.KF_AUTH_URL ?? 'http://localhost:3000',
+        kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
       },
     }
   },
@@ -391,8 +390,7 @@ const loaders: Record<string, LoaderFn> = {
   },
 }
 
-const kfAccountUrl =
-  process.env.OIDC_ACCOUNT_URL ?? process.env.KF_ACCOUNT_URL ?? 'http://localhost:3001'
+const kfAccountUrl = process.env.OIDC_ACCOUNT_URL ?? 'http://localhost:3001'
 
 export async function runLoaders(
   matchedRoutes: { path: string; params: Record<string, string> }[],

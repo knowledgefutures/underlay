@@ -4,21 +4,16 @@
  * Optional — only active when AUTH_INTERNAL_API_URL + AUTH_INTERNAL_API_KEY are set.
  * When the internal API is unavailable, apps fall back to OIDC userinfo data only.
  *
- * Env vars (with backward-compat fallbacks):
- *   AUTH_INTERNAL_API_URL — base URL for internal API (fallback: KF_AUTH_INTERNAL_URL, then OIDC_ISSUER_INTERNAL_URL)
- *   AUTH_INTERNAL_API_KEY — shared secret for service-to-service calls (fallback: KF_INTERNAL_API_KEY)
+ * Env vars:
+ *   AUTH_INTERNAL_API_URL — base URL for internal API (falls back to OIDC_ISSUER_INTERNAL_URL)
+ *   AUTH_INTERNAL_API_KEY — shared secret for service-to-service calls
  */
 
 import { OIDC_ISSUER_INTERNAL_URL } from './oidc.server.js'
 
-const AUTH_INTERNAL_API_URL =
-  process.env.AUTH_INTERNAL_API_URL ??
-  process.env.KF_AUTH_INTERNAL_URL ??
-  process.env.KF_AUTH_URL ??
-  OIDC_ISSUER_INTERNAL_URL
+const AUTH_INTERNAL_API_URL = process.env.AUTH_INTERNAL_API_URL ?? OIDC_ISSUER_INTERNAL_URL
 
-const AUTH_INTERNAL_API_KEY =
-  process.env.AUTH_INTERNAL_API_KEY ?? process.env.KF_INTERNAL_API_KEY ?? ''
+const AUTH_INTERNAL_API_KEY = process.env.AUTH_INTERNAL_API_KEY ?? ''
 
 /** Whether the internal API is configured and available. */
 export const hasInternalApi = Boolean(AUTH_INTERNAL_API_KEY)
