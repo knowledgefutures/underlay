@@ -6,26 +6,56 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { marked } from 'marked'
+import type { ViteDevServer } from 'vite'
 
-import * as accounts from '~/api/accounts'
-import * as admin from '~/api/admin'
-import * as ark from '~/api/ark'
+import * as _accounts from '~/api/accounts'
+import * as _admin from '~/api/admin'
+import * as _ark from '~/api/ark'
 import { arkMiddleware } from '~/api/ark-middleware.server'
 import type { AuthEnv } from '~/api/auth.server'
 import { authMiddleware, requireAuth } from '~/api/auth.server'
-import * as collections from '~/api/collections'
-import * as files from '~/api/files'
-import * as health from '~/api/health'
-import * as kfAuth from '~/api/kf-auth'
-import * as kfSummary from '~/api/kf-summary'
-import * as query from '~/api/query'
-import * as schemas from '~/api/schemas'
-import * as uploads from '~/api/uploads'
-import * as versions from '~/api/versions'
+import * as _collections from '~/api/collections'
+import * as _files from '~/api/files'
+import * as _health from '~/api/health'
+import * as _kfAuth from '~/api/kf-auth'
+import * as _kfSummary from '~/api/kf-summary'
+import * as _query from '~/api/query'
+import * as _schemas from '~/api/schemas'
+import * as _uploads from '~/api/uploads'
+import * as _versions from '~/api/versions'
 import { getMirrorConfig } from '~/lib/mirror-config'
 import { initOidc } from '~/lib/oidc.server'
 
 const isProd = process.env.NODE_ENV === 'production'
+let vite: ViteDevServer | undefined
+
+// In dev, proxy API modules through Vite's SSR loader for hot reload
+function hot<T extends Record<string, any>>(staticMod: T, modulePath: string): T {
+  if (isProd) return staticMod
+  return new Proxy(staticMod as object, {
+    get(_, prop) {
+      if (typeof prop === 'symbol') return undefined
+      return async (...args: unknown[]) => {
+        const mod = await vite!.ssrLoadModule(modulePath)
+        return (mod[prop as string] as Function)(...args)
+      }
+    },
+  }) as T
+}
+
+const accounts = hot(_accounts, '/src/api/accounts.ts')
+const admin = hot(_admin, '/src/api/admin.ts')
+const ark = hot(_ark, '/src/api/ark.ts')
+const collections = hot(_collections, '/src/api/collections.ts')
+const files = hot(_files, '/src/api/files.ts')
+const health = hot(_health, '/src/api/health.ts')
+const kfAuth = hot(_kfAuth, '/src/api/kf-auth.ts')
+const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
+const query = hot(_query, '/src/api/query.ts')
+const schemas = hot(_schemas, '/src/api/schemas.ts')
+const uploads = hot(_uploads, '/src/api/uploads.ts')
+const versions = hot(_versions, '/src/api/versions.ts')
+
 const app = new Hono<AuthEnv>()
 
 // --- CORS ---
@@ -256,7 +286,7 @@ if (isProd) {
   })
 } else {
   const { createServer: createViteServer } = await import('vite')
-  const vite = await createViteServer({
+  vite = await createViteServer({
     server: { middlewareMode: true },
     appType: 'custom',
   })
@@ -267,16 +297,16 @@ if (isProd) {
     const nodeRes = (c.env as any).outgoing
     if (!nodeReq || !nodeRes) return next()
     return new Promise<Response | void>((resolve) => {
-      vite.middlewares(nodeReq, nodeRes, () => resolve(next()))
+      vite!.middlewares(nodeReq, nodeRes, () => resolve(next()))
     })
   })
 
   app.get('*', async (c) => {
     const url = c.req.url
     let template = readFileSync(resolve('index.html'), 'utf-8')
-    template = await vite.transformIndexHtml(url, template)
+    template = await vite!.transformIndexHtml(url, template)
 
-    const { render } = await vite.ssrLoadModule('/src/entry-server.tsx')
+    const { render } = await vite!.ssrLoadModule('/src/entry-server.tsx')
     const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
 
     if (redirect) {
