@@ -162,9 +162,11 @@ export async function callback(c: Context<AuthEnv>) {
 
   setSessionCookie(c, sessionId)
 
-  // Redirect to saved return URL
-  const returnTo = getCookie(c, RETURN_COOKIE) ?? '/dashboard'
+  // Redirect to saved return URL (validate it's a safe relative path)
+  const rawReturn = getCookie(c, RETURN_COOKIE) ?? '/dashboard'
   deleteCookie(c, RETURN_COOKIE, { path: '/' })
+  const returnTo =
+    rawReturn.startsWith('/') && !rawReturn.startsWith('//') ? rawReturn : '/dashboard'
 
   return c.redirect(returnTo)
 }

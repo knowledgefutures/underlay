@@ -1,3 +1,5 @@
+import crypto from 'node:crypto'
+
 import bcrypt from 'bcrypt'
 import { eq } from 'drizzle-orm'
 import type { Context, MiddlewareHandler } from 'hono'
@@ -21,17 +23,22 @@ const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
 const authInternalApiKey = process.env.AUTH_INTERNAL_API_KEY ?? ''
 const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
 
+function timingSafeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
+}
+
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Internal service calls (legacy header)
   const internalHeader = c.req.header('x-internal-token')
-  if (internalHeader === internalToken) {
+  if (internalHeader && timingSafeEquals(internalHeader, internalToken)) {
     c.set('apiKeyScope', 'read')
     return next()
   }
 
   // Auth provider internal API key (used by /api/kf/* endpoints)
   const auth = c.req.header('authorization')
-  if (authInternalApiKey && auth === `Bearer ${authInternalApiKey}`) {
+  if (authInternalApiKey && auth && timingSafeEquals(auth, `Bearer ${authInternalApiKey}`)) {
     c.set('apiKeyScope', 'admin')
     return next()
   }
