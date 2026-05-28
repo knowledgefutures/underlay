@@ -7,7 +7,7 @@ export type AuthEnv = {
   Variables: {
     userId?: string
     apiKeyScope?: 'read' | 'write' | 'admin'
-    apiKeyCollectionId?: string | null
+    apiKeyCollectionIds?: string[]
     sessionUserId?: string
   }
 }
@@ -46,6 +46,10 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
           c.set('apiKeyScope', 'write')
         } else {
           c.set('apiKeyScope', 'read')
+        }
+        const meta = (result.key as any).metadata as Record<string, any> | null
+        if (meta?.collectionIds?.length) {
+          c.set('apiKeyCollectionIds', meta.collectionIds)
         }
         return next()
       }

@@ -3,15 +3,16 @@ import { Link } from 'react-router'
 
 import { ApiPlayground } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
+import { authClient } from '~/lib/auth-client'
 import { useSSRData } from '~/lib/ssr-data'
 
 interface Key {
   id: string
-  label: string
-  keyPrefix?: string
-  scope: string
+  name: string
+  start?: string
+  permissions?: Record<string, string[]>
+  metadata?: { scope?: string; collectionIds?: string[] }
   createdAt: string
-  lastUsedAt?: string
   expiresAt?: string
 }
 
@@ -31,28 +32,34 @@ function isExpired(expiresAt: string | null): boolean {
   return new Date(expiresAt) < new Date()
 }
 
+function getScope(permissions?: Record<string, string[]>): string {
+  const perms = permissions?.['collections'] ?? []
+  if (perms.includes('admin')) return 'admin'
+  if (perms.includes('write')) return 'write'
+  return 'read'
+}
+
 export default function SettingsKeys() {
   const me = useSSRData<any>('currentUser')
 
   const [keys, setKeys] = useState<Key[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
-  const [newKeyResult, setNewKeyResult] = useState<{ key: string; label: string } | null>(null)
+  const [newKeyResult, setNewKeyResult] = useState<{ key: string; name: string } | null>(null)
   const [error, setError] = useState('')
 
-  // Create key form
   const [label, setLabel] = useState('')
   const [scope, setScope] = useState('write')
-  const [collectionId, setCollectionId] = useState('')
   const [expiresIn, setExpiresIn] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  async function loadKeys() {
+    const { data } = await authClient.apiKey.list()
+    if (data) setKeys((data as any).apiKeys ?? [])
+  }
+
   useEffect(() => {
     if (!me) return
-
-    fetch('/api/accounts/keys', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setKeys)
-
+    loadKeys()
     fetch(`/api/accounts/${me.slug}/collections`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : []))
       .then(setCollections)
@@ -64,27 +71,18 @@ export default function SettingsKeys() {
     setNewKeyResult(null)
     setSubmitting(true)
     try {
-      const res = await fetch('/api/accounts/keys', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          label,
-          scope,
-          collectionId: collectionId || undefined,
-          expiresIn: expiresIn ? parseInt(expiresIn) : undefined,
-        }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setNewKeyResult({ key: data.key, label: data.label })
+      const { data, error: err } = await authClient.apiKey.create({
+        name: label,
+        metadata: { scope },
+        expiresIn: expiresIn ? parseInt(expiresIn) * 24 * 60 * 60 : undefined,
+        prefix: 'ul',
+      } as any)
+      if (err) {
+        setError(err.message ?? 'Failed to create key.')
+      } else if (data) {
+        setNewKeyResult({ key: (data as any).key, name: label })
         setLabel('')
-        // Refresh keys list
-        const keysRes = await fetch('/api/accounts/keys', { credentials: 'include' })
-        if (keysRes.ok) setKeys(await keysRes.json())
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Failed to create key.')
+        await loadKeys()
       }
     } finally {
       setSubmitting(false)
@@ -92,10 +90,7 @@ export default function SettingsKeys() {
   }
 
   async function handleRevokeKey(keyId: string) {
-    await fetch(`/api/accounts/keys/${keyId}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
+    await authClient.apiKey.delete({ keyId } as any)
     setKeys((prev) => prev.filter((k) => k.id !== keyId))
   }
 
@@ -120,7 +115,7 @@ export default function SettingsKeys() {
 
         {newKeyResult && (
           <div className="mb-4 border border-green-300 bg-green-50 p-4">
-            <p className="mb-1 text-sm font-semibold">Key created: {newKeyResult.label}</p>
+            <p className="mb-1 text-sm font-semibold">Key created: {newKeyResult.name}</p>
             <p className="text-ink-muted mb-2 text-xs">
               Copy this key now — it won't be shown again.
             </p>
@@ -167,24 +162,6 @@ export default function SettingsKeys() {
                   <option value="read">read — list and download</option>
                   <option value="write">write — push versions</option>
                   <option value="admin">admin — full access</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="collectionId" className="text-ink-muted mb-1 block text-xs">
-                  Scope to collection (optional)
-                </label>
-                <select
-                  id="collectionId"
-                  value={collectionId}
-                  onChange={(e) => setCollectionId(e.target.value)}
-                  className="bg-parchment border-rule focus:border-ink w-full border px-2 py-1.5 text-sm focus:outline-none"
-                >
-                  <option value="">All collections</option>
-                  {collections.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.slug}
-                    </option>
-                  ))}
                 </select>
               </div>
               <div>
@@ -236,17 +213,16 @@ export default function SettingsKeys() {
               >
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{k.label}</span>
-                    {k.keyPrefix && (
-                      <span className="text-ink-muted font-mono text-xs">{k.keyPrefix}…</span>
+                    <span className="text-sm font-medium">{k.name}</span>
+                    {k.start && (
+                      <span className="text-ink-muted font-mono text-xs">{k.start}…</span>
                     )}
                   </div>
                   <div className="text-ink-muted mt-0.5 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="border-rule border px-1 py-0.5">{k.scope}</span>
+                    <span className="border-rule border px-1 py-0.5">
+                      {getScope(k.permissions)}
+                    </span>
                     <span>Created {new Date(k.createdAt).toLocaleDateString()}</span>
-                    {k.lastUsedAt && (
-                      <span>· Last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
-                    )}
                     {k.expiresAt && !isExpired(k.expiresAt) && (
                       <span
                         className={isExpiringSoon(k.expiresAt) ? 'font-medium text-yellow-700' : ''}

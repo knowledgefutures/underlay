@@ -238,7 +238,7 @@ export default function Settings() {
               onChange={(e) =>
                 setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
               }
-              pattern="[a-z0-9][a-z0-9-]*[a-z0-9]"
+              pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
               className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 font-mono text-sm focus:outline-none"
             />
             {slugValue !== me?.slug && (

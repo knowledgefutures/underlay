@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { createServer as createHttpServer } from 'node:http'
 import { resolve } from 'node:path'
 
-import { serve } from '@hono/node-server'
+import { getRequestListener, serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -27,6 +28,7 @@ import { getMirrorConfig } from '~/lib/mirror-config'
 
 const isProd = process.env.NODE_ENV === 'production'
 let vite: ViteDevServer | undefined
+let devHttpServer: import('node:http').Server | undefined
 
 // In dev, proxy API modules through Vite's SSR loader for hot reload
 function hot<T extends Record<string, any>>(staticMod: T, modulePath: string): T {
@@ -279,9 +281,10 @@ if (isProd) {
     return c.html(page, statusCode ?? 200)
   })
 } else {
+  devHttpServer = createHttpServer()
   const { createServer: createViteServer } = await import('vite')
   vite = await createViteServer({
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, hmr: { server: devHttpServer } },
     appType: 'custom',
   })
 
@@ -330,5 +333,23 @@ if (isProd) {
 
 const port = Number(process.env.PORT) || 3000
 
+const KF_AUTH_INTERNAL_URL =
+  process.env.OIDC_ISSUER_INTERNAL_URL ?? process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
+try {
+  const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/health`, {
+    signal: AbortSignal.timeout(5000),
+  })
+  if (!res.ok) throw new Error(`status ${res.status}`)
+} catch (err: any) {
+  console.error(`FATAL: KF Auth not reachable at ${KF_AUTH_INTERNAL_URL}/api/health`)
+  console.error(err.message)
+  process.exit(1)
+}
+
 console.log(`Server running at http://localhost:${port}`)
-serve({ fetch: app.fetch, port })
+if (devHttpServer) {
+  devHttpServer.on('request', getRequestListener(app.fetch))
+  devHttpServer.listen(port)
+} else {
+  serve({ fetch: app.fetch, port })
+}

@@ -56,7 +56,17 @@ export const auth = betterAuth({
         },
       },
     }),
-    apiKey(),
+    apiKey({
+      enableMetadata: true,
+      permissions: {
+        defaultPermissions: async (_referenceId, ctx) => {
+          const scope = ctx.body?.metadata?.scope ?? 'read'
+          if (scope === 'admin') return { collections: ['admin', 'write', 'read'] }
+          if (scope === 'write') return { collections: ['write', 'read'] }
+          return { collections: ['read'] }
+        },
+      },
+    }),
   ],
 
   databaseHooks: {

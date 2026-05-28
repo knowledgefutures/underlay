@@ -330,7 +330,7 @@ export default function Dashboard() {
                     <input
                       type="text"
                       required
-                      pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
+                      pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                       minLength={2}
                       placeholder="my-dataset"
                       value={colSlug}
@@ -434,7 +434,7 @@ export default function Dashboard() {
                     <input
                       type="text"
                       required
-                      pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
+                      pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                       minLength={2}
                       placeholder="my-org"
                       value={orgSlug}
