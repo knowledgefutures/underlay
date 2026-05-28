@@ -1,6 +1,6 @@
 import { createGzip } from 'node:zlib'
 
-import { and, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { stream } from 'hono/streaming'
 import { pack as tarPack } from 'tar-stream'
@@ -14,10 +14,10 @@ import { type AuthEnv } from './auth.server.js'
 // Browse public collections
 export async function list(c: Context<AuthEnv>) {
   const q = c.req.query('q')
-  const limit = c.req.query('limit')
-  const offset = c.req.query('offset')
-  const take = Math.min(parseInt(limit ?? '50', 10), 100)
-  const skip = parseInt(offset ?? '0', 10)
+  const owner = c.req.query('owner')
+  const sort = c.req.query('sort')
+  const take = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100)
+  const skip = parseInt(c.req.query('offset') ?? '0', 10)
 
   const conditions = [eq(schema.collections.public, true)]
   if (q) {
@@ -27,6 +27,9 @@ export async function list(c: Context<AuthEnv>) {
         ilike(schema.collections.description, `%${q}%`),
       )!,
     )
+  }
+  if (owner) {
+    conditions.push(eq(schema.organization.slug, owner))
   }
 
   const results = await db
@@ -45,9 +48,81 @@ export async function list(c: Context<AuthEnv>) {
     .where(and(...conditions))
     .limit(take)
     .offset(skip)
-    .orderBy(schema.collections.updatedAt)
+    .orderBy(sort === 'name' ? schema.collections.name : desc(schema.collections.updatedAt))
 
-  return c.json(results)
+  const ids = results.map((r) => r.id)
+  const statsMap = new Map<
+    string,
+    {
+      collectionId: string
+      number: number
+      semver: string
+      recordCount: number
+      fileCount: number
+      totalBytes: number
+      lastPushAt: Date
+    }
+  >()
+
+  if (ids.length > 0) {
+    const allVersions = await db
+      .select({
+        collectionId: schema.versions.collectionId,
+        number: schema.versions.number,
+        semver: schema.versions.semver,
+        recordCount: schema.versions.recordCount,
+        fileCount: schema.versions.fileCount,
+        totalBytes: schema.versions.totalBytes,
+        lastPushAt: schema.versions.createdAt,
+      })
+      .from(schema.versions)
+      .where(inArray(schema.versions.collectionId, ids))
+      .orderBy(desc(schema.versions.number))
+
+    for (const v of allVersions) {
+      if (!statsMap.has(v.collectionId)) {
+        statsMap.set(v.collectionId, v)
+      }
+    }
+  }
+
+  const facetConditions = [eq(schema.collections.public, true)]
+  if (q) {
+    facetConditions.push(
+      or(
+        ilike(schema.collections.name, `%${q}%`),
+        ilike(schema.collections.description, `%${q}%`),
+      )!,
+    )
+  }
+
+  const ownerFacets = await db
+    .select({
+      slug: schema.organization.slug,
+      name: schema.organization.name,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.collections)
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(...facetConditions))
+    .groupBy(schema.organization.slug, schema.organization.name)
+    .orderBy(sql`count(*) DESC`)
+
+  return c.json({
+    collections: results.map((r) => {
+      const stats = statsMap.get(r.id)
+      return {
+        ...r,
+        latestVersion: stats?.number ?? null,
+        semver: stats?.semver ?? null,
+        recordCount: stats?.recordCount ?? null,
+        fileCount: stats?.fileCount ?? null,
+        totalBytes: stats?.totalBytes ?? null,
+        lastPushAt: stats?.lastPushAt ?? null,
+      }
+    }),
+    facets: { owners: ownerFacets },
+  })
 }
 
 // Create collection

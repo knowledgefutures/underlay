@@ -1,7 +1,14 @@
+import crypto from 'node:crypto'
+
 import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 
 import { auth } from '../lib/auth.js'
+
+function timingSafeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
+}
 
 export type AuthEnv = {
   Variables: {
@@ -20,14 +27,18 @@ const authInternalApiKey = process.env.AUTH_INTERNAL_API_KEY ?? ''
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Internal service calls (legacy header)
   const internalHeader = c.req.header('x-internal-token')
-  if (internalHeader === internalToken) {
+  if (internalHeader && timingSafeEquals(internalHeader, internalToken)) {
     c.set('apiKeyScope', 'read')
     return next()
   }
 
   // Auth provider internal API key (used by /api/kf/* endpoints)
   const authorization = c.req.header('authorization')
-  if (authInternalApiKey && authorization === `Bearer ${authInternalApiKey}`) {
+  if (
+    authInternalApiKey &&
+    authorization &&
+    timingSafeEquals(authorization, `Bearer ${authInternalApiKey}`)
+  ) {
     c.set('apiKeyScope', 'admin')
     return next()
   }

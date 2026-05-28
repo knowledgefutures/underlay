@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
@@ -15,7 +15,8 @@ interface SchemaData {
 }
 
 export default function SchemaDetailPage() {
-  const schemaId = useSSRData<string>('schemaId')
+  const params = useParams()
+  const schemaId = useSSRData<string>('schemaId') ?? params.id
   const [schema, setSchema] = useState<SchemaData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
