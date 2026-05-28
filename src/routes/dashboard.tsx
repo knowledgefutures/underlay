@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { authClient } from '~/lib/auth-client'
 import { useSSRData } from '~/lib/ssr-data'
 
 interface Collection {
@@ -94,17 +95,15 @@ export default function Dashboard() {
     setOrgError('')
     setSubmitting(true)
     try {
-      const res = await fetch('/api/accounts/orgs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ slug: orgSlug, displayName: orgDisplayName, kfOrgId: orgKfOrgId }),
-      })
-      if (res.ok) {
+      const { data, error } = await authClient.organization.create({
+        name: orgDisplayName,
+        slug: orgSlug,
+        kfOrgId: orgKfOrgId || undefined,
+      } as any)
+      if (error) {
+        setOrgError(error.message ?? 'Failed to create organization')
+      } else if (data) {
         window.location.reload()
-      } else {
-        const err = await res.json()
-        setOrgError(err.error ?? 'Failed to create organization')
       }
     } finally {
       setSubmitting(false)

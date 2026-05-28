@@ -172,8 +172,18 @@ export async function updateMe(c: Context<AuthEnv>) {
 
 export async function availableKfOrgs(c: Context<AuthEnv>) {
   const userId = c.get('userId')!
+
+  // Look up the KF Auth user ID from the OAuth account link
+  const [acct] = await db
+    .select({ accountId: schema.account.accountId })
+    .from(schema.account)
+    .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
+    .limit(1)
+
+  if (!acct) return c.json([])
+
   const { fetchAuthOrgs } = await import('../lib/auth-internal.server.js')
-  return c.json(await fetchAuthOrgs(userId))
+  return c.json(await fetchAuthOrgs(acct.accountId))
 }
 
 // Upload org avatar
