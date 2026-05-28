@@ -38,13 +38,13 @@ export default function Home() {
               <div className="flex gap-3">
                 <Link
                   to="/explore"
-                  className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block px-4 py-2 text-sm font-medium transition-colors"
+                  className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block rounded px-4 py-2 text-sm font-medium transition-colors"
                 >
                   Explore collections
                 </Link>
                 <Link
                   to="/schemas"
-                  className="border-ink hover:bg-parchment-dark visited:text-ink inline-block border px-4 py-2 text-sm font-medium transition-colors"
+                  className="border-ink hover:bg-parchment-dark visited:text-ink inline-block rounded border px-4 py-2 text-sm font-medium transition-colors"
                 >
                   Browse schemas
                 </Link>
@@ -109,124 +109,146 @@ export default function Home() {
     <BaseLayout>
       <div className="mx-auto max-w-5xl px-4">
         {/* Hero */}
-        <section className="border-rule border-b py-12">
+        <section className="py-16">
           <div className="max-w-2xl">
-            <h1 className="mb-3 font-sans text-2xl font-semibold tracking-tight">
-              A public registry for structured knowledge.
+            <h1 className="mb-4 font-sans text-3xl font-semibold tracking-tight">
+              Knowledge that lasts.
             </h1>
-            <p className="text-ink-muted mb-6 text-sm leading-relaxed">
-              Apps publish versioned snapshots of their data to Underlay. Each version is
-              self-describing: a JSON Schema, flat records, content-addressed files. The structure
-              is the infrastructure.
+            <p className="text-ink-light mb-8 text-base leading-relaxed">
+              Underlay is a public registry where organizations publish versioned snapshots of their
+              structured data — making it permanently discoverable, verifiable, and citable.
+              Research datasets, publication archives, open knowledge: published once, preserved
+              indefinitely.
             </p>
             <div className="flex gap-3">
               <Link
-                to="/docs"
-                className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block px-4 py-2 text-sm font-medium transition-colors"
-              >
-                Read the docs
-              </Link>
-              <Link
                 to="/explore"
-                className="border-ink hover:bg-parchment-dark visited:text-ink inline-block border px-4 py-2 text-sm font-medium transition-colors"
+                className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block rounded px-5 py-2.5 text-sm font-medium transition-colors"
               >
                 Explore collections
               </Link>
+              <Link
+                to="/docs/quickstart"
+                className="border-ink hover:bg-parchment-dark visited:text-ink inline-block rounded border px-5 py-2.5 text-sm font-medium transition-colors"
+              >
+                Start publishing
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* Value propositions */}
+        <section className="border-rule border-t py-12">
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
+            <div>
+              <h3 className="mb-2 font-sans text-base font-semibold">Permanent</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Every version of your data is stored immutably. Research doesn't disappear when a
+                project ends or a server goes down. Once published, it's preserved.
+              </p>
+            </div>
+            <div>
+              <h3 className="mb-2 font-sans text-base font-semibold">Verifiable</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Content-addressed storage means anyone can confirm that data hasn't been altered.
+                Cryptographic hashes at every level make tampering evident and trust auditable.
+              </p>
+            </div>
+            <div>
+              <h3 className="mb-2 font-sans text-base font-semibold">Discoverable</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Structured data with shared schemas across collections. Browse, search, and export —
+                every dataset is openly accessible through both the web and a REST API.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Who it's for */}
+        <section className="border-rule border-t py-12">
+          <h2 className="text-ink-muted mb-6 text-xs font-semibold tracking-widest uppercase">
+            Built for
+          </h2>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="border-rule rounded border p-5">
+              <h3 className="mb-1 font-sans font-semibold">Research institutions</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Preserve datasets beyond the life of a grant. Publish versioned snapshots that are
+                citable and independently verifiable.
+              </p>
+            </div>
+            <div className="border-rule rounded border p-5">
+              <h3 className="mb-1 font-sans font-semibold">Academic publishers</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Archive publication metadata, review data, and supplementary materials in a format
+                that's structured, searchable, and open.
+              </p>
+            </div>
+            <div className="border-rule rounded border p-5">
+              <h3 className="mb-1 font-sans font-semibold">Open data organizations</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Share curated datasets with the public. Underlay handles versioning, integrity, and
+                access — so you can focus on the data itself.
+              </p>
+            </div>
+            <div className="border-rule rounded border p-5">
+              <h3 className="mb-1 font-sans font-semibold">Developers</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Build on open knowledge. Pull snapshots via API, integrate with existing workflows,
+                or run your own Underlay instance.
+              </p>
             </div>
           </div>
         </section>
 
         {/* How it works */}
-        <section className="border-rule border-b py-8">
-          <h2 className="text-ink-muted mb-5 text-xs font-semibold tracking-widest uppercase">
+        <section className="border-rule border-t py-12">
+          <h2 className="text-ink-muted mb-6 text-xs font-semibold tracking-widest uppercase">
             How it works
           </h2>
-          <div className="grid grid-cols-1 gap-6 text-sm md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
             <div>
-              <h3 className="mb-1 font-sans font-semibold">1. Push</h3>
-              <p className="text-ink-muted">
-                Your app serializes its current state and pushes a versioned snapshot to Underlay
-                over HTTPS. A cron job, a webhook, or a button.
+              <div className="text-ink-muted mb-2 font-mono text-xs">01</div>
+              <h3 className="mb-1 font-sans font-semibold">Publish</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Push structured data via a simple REST API. Define your schema, add records and
+                files, and create a versioned snapshot.
               </p>
             </div>
             <div>
-              <h3 className="mb-1 font-sans font-semibold">2. Store</h3>
-              <p className="text-ink-muted">
-                Underlay validates records against the JSON Schema, deduplicates files by hash, and
-                stores the version immutably.
+              <div className="text-ink-muted mb-2 font-mono text-xs">02</div>
+              <h3 className="mb-1 font-sans font-semibold">Preserve</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Each version is validated, deduplicated, and stored immutably. Files are
+                content-addressed. Every byte is accounted for.
               </p>
             </div>
             <div>
-              <h3 className="mb-1 font-sans font-semibold">3. Browse</h3>
-              <p className="text-ink-muted">
-                Anyone can browse public collections, view any version, diff between versions, and
-                export full archives.
+              <div className="text-ink-muted mb-2 font-mono text-xs">03</div>
+              <h3 className="mb-1 font-sans font-semibold">Discover</h3>
+              <p className="text-ink-muted text-sm leading-relaxed">
+                Anyone can browse collections, inspect schemas, view diffs between versions, and
+                export full archives. The data is the interface.
               </p>
             </div>
           </div>
-        </section>
-
-        {/* Concepts */}
-        <section className="border-rule border-b py-8">
-          <h2 className="text-ink-muted mb-5 text-xs font-semibold tracking-widest uppercase">
-            Core concepts
-          </h2>
-          <div className="space-y-3 text-sm">
-            <div className="flex gap-3">
-              <span className="text-ink-muted w-24 shrink-0 text-right">collection</span>
-              <span>
-                A named, versioned body of structured data plus its files. The unit of preservation.
-              </span>
-            </div>
-            <div className="flex gap-3">
-              <span className="text-ink-muted w-24 shrink-0 text-right">version</span>
-              <span>An immutable snapshot: JSON Schema + records + files + metadata.</span>
-            </div>
-            <div className="flex gap-3">
-              <span className="text-ink-muted w-24 shrink-0 text-right">record</span>
-              <span>A flat JSON object. One entity, one row. Relationships via ID references.</span>
-            </div>
-            <div className="flex gap-3">
-              <span className="text-ink-muted w-24 shrink-0 text-right">file</span>
-              <span>
-                A binary blob, content-addressed by SHA-256. Stored once, referenced everywhere.
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {/* API preview */}
-        <section className="border-rule border-b py-8">
-          <h2 className="text-ink-muted mb-5 text-xs font-semibold tracking-widest uppercase">
-            The API
-          </h2>
-          <p className="text-ink-muted mb-4 text-sm">~13 endpoints. Each one does one thing.</p>
-          <pre className="bg-ink text-parchment overflow-x-auto p-4 text-xs leading-relaxed">
-            <code>{`POST   /accounts/:owner/collections            # create a collection
-GET    /collections/:owner/:slug               # collection metadata
-POST   /collections/:owner/:slug/versions      # push a version
-GET    /collections/:owner/:slug/versions/:n   # read a version
-GET    .../versions/:n/records                 # browse records
-GET    .../versions/:n/diff?from=:m            # diff versions
-PUT    /collections/:owner/:slug/files/:hash   # upload a file
-GET    /collections/:owner/:slug/files/:hash   # download a file
-GET    /collections/:owner/:slug/export        # full archive`}</code>
-          </pre>
         </section>
 
         {/* Bottom */}
-        <section className="py-8">
-          <div className="flex gap-8 text-sm">
+        <section className="border-rule border-t py-10">
+          <div className="flex flex-col gap-8 text-sm md:flex-row md:gap-16">
             <div>
               <h3 className="mb-1 font-sans font-semibold">Open source</h3>
-              <p className="text-ink-muted">
-                MIT licensed. Run your own instance or push to the canonical host at underlay.org.
+              <p className="text-ink-muted leading-relaxed">
+                MIT licensed. Run your own instance, contribute, or push data to the canonical host
+                at underlay.org.
               </p>
             </div>
             <div>
               <h3 className="mb-1 font-sans font-semibold">Built by Knowledge Futures</h3>
-              <p className="text-ink-muted">
-                A 501(c)(3) nonprofit building open infrastructure for knowledge sharing.
+              <p className="text-ink-muted leading-relaxed">
+                A 501(c)(3) nonprofit building open infrastructure for the production, curation, and
+                preservation of knowledge.
               </p>
             </div>
           </div>
