@@ -28,9 +28,15 @@ function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, un
   return result
 }
 
-/** Check if requester is the owner of a collection */
-function isOwner(accountId: string | undefined, collectionAccountId: string): boolean {
-  return accountId != null && accountId === collectionAccountId
+/** Check if user has access to the org that owns a collection */
+async function hasOrgAccess(userId: string | undefined, orgId: string): Promise<boolean> {
+  if (!userId) return false
+  const [membership] = await db
+    .select()
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
+    .limit(1)
+  return !!membership
 }
 
 function computeVersionHash(
@@ -141,8 +147,7 @@ export async function list(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-  const accountId = c.get('accountId')
-  const ownerAccess = isOwner(accountId, collection.accountId)
+  const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
   const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
   const rows = await db
@@ -200,8 +205,7 @@ export async function latest(c: Context<AuthEnv>) {
   version.totalBytes = await backfillTotalBytes(version)
 
   const schemaEntries = await loadVersionSchemas(version.id)
-  const accountId = c.get('accountId')
-  const ownerAccess = isOwner(accountId, collection.accountId)
+  const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
   const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
   const schemasMap = ownerAccess
@@ -241,8 +245,7 @@ export async function getByNumber(c: Context<AuthEnv>) {
   version.totalBytes = await backfillTotalBytes(version)
 
   const schemaEntries = await loadVersionSchemas(version.id)
-  const accountId = c.get('accountId')
-  const ownerAccess = isOwner(accountId, collection.accountId)
+  const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
   const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
   const schemasMap = ownerAccess
@@ -294,8 +297,7 @@ export async function records(c: Context<AuthEnv>) {
   }
 
   // Determine visibility
-  const accountId = c.get('accountId')
-  const ownerAccess = isOwner(accountId, collection.accountId)
+  const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
 
   let privateTypes = new Set<string>()
   let schemaEntries: SchemaEntry[] = []
@@ -826,7 +828,7 @@ export async function push(c: Context<AuthEnv>) {
       baseNumber: body.base_version,
       message: body.message ?? null,
       readme: readmeValue,
-      pushedBy: c.get('accountId') ?? null,
+      pushedBy: c.get('userId') ?? null,
       appId: body.app_id ?? null,
       actorId: body.actor_id ?? null,
       recordCount: newRecords.length,
@@ -1006,12 +1008,12 @@ async function resolveCollection(owner: string, slug: string) {
   const [result] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
       slug: schema.collections.slug,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   return result ?? null
 }
@@ -1023,12 +1025,12 @@ async function getCollectionArkInfo(
     .select({
       shoulder: schema.arkShoulders.shoulder,
       arkId: schema.arkCollections.arkId,
-      naan: schema.accounts.arkNaan,
+      naan: schema.organization.arkNaan,
     })
     .from(schema.arkCollections)
     .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.organizationId, schema.organization.id))
     .where(
       and(
         eq(schema.arkCollections.collectionId, collectionId),

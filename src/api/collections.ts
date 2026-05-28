@@ -35,13 +35,13 @@ export async function list(c: Context<AuthEnv>) {
       slug: schema.collections.slug,
       name: schema.collections.name,
       description: schema.collections.description,
-      ownerSlug: schema.accounts.slug,
-      ownerName: schema.accounts.displayName,
+      ownerSlug: schema.organization.slug,
+      ownerName: schema.organization.name,
       createdAt: schema.collections.createdAt,
       updatedAt: schema.collections.updatedAt,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(...conditions))
     .limit(take)
     .offset(skip)
@@ -65,42 +65,34 @@ export async function create(c: Context<AuthEnv>) {
     public?: boolean
   }>()
 
-  // Resolve owner account
-  const [account] = await db
+  // Resolve owner org
+  const [org] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, owner))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, owner))
     .limit(1)
 
-  if (!account) {
-    return c.json({ error: 'Account not found', statusCode: 404 }, 404)
+  if (!org) {
+    return c.json({ error: 'Org not found', statusCode: 404 }, 404)
   }
 
-  // Check permission: user must own the account or be a member of the org
-  if (account.type === 'user' && account.id !== c.get('accountId')) {
+  // Check permission: user must be a member of the org
+  const [membership] = await db
+    .select()
+    .from(schema.member)
+    .where(
+      and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, c.get('userId')!)),
+    )
+    .limit(1)
+  if (!membership) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-  }
-  if (account.type === 'org') {
-    const [membership] = await db
-      .select()
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, account.id),
-          eq(schema.orgMemberships.userId, c.get('accountId')!),
-        ),
-      )
-      .limit(1)
-    if (!membership) {
-      return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-    }
   }
 
   // Check for existing collection with same slug under this owner
   const [existing] = await db
     .select({ id: schema.collections.id })
     .from(schema.collections)
-    .where(and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, slug)))
+    .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (existing) {
@@ -110,7 +102,7 @@ export async function create(c: Context<AuthEnv>) {
   const id = uuidv4()
   await db.insert(schema.collections).values({
     id,
-    accountId: account.id,
+    organizationId: org.id,
     slug,
     name,
     description: description ?? null,
@@ -119,10 +111,10 @@ export async function create(c: Context<AuthEnv>) {
 
   // Auto-mint ARK for the new collection
   try {
-    const shoulder = await getOrMintShoulder(account.id)
+    const shoulder = await getOrMintShoulder(org.id)
     const arkId = collectionToArkId(id)
     await db.insert(schema.arkCollections).values({ collectionId: id, arkId, enabled: true })
-    const naan = account.arkNaan ?? DEFAULT_NAAN
+    const naan = org.arkNaan ?? DEFAULT_NAAN
     const arkUrl = buildArkUrl(naan, shoulder, arkId)
     return c.json({ id, owner, slug, name, ark: arkUrl }, 201)
   } catch {
@@ -143,44 +135,39 @@ export async function get(c: Context<AuthEnv>) {
       name: schema.collections.name,
       description: schema.collections.description,
       public: schema.collections.public,
-      ownerSlug: schema.accounts.slug,
-      ownerName: schema.accounts.displayName,
-      ownerType: schema.accounts.type,
+      ownerSlug: schema.organization.slug,
+      ownerName: schema.organization.name,
       createdAt: schema.collections.createdAt,
       updatedAt: schema.collections.updatedAt,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!result) {
     return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
   }
 
-  if (!result.public && c.get('accountId') !== result.id) {
-    // Check if user owns or is member of the owning account
-    const [account] = await db
-      .select()
-      .from(schema.accounts)
-      .where(eq(schema.accounts.slug, owner))
+  if (!result.public) {
+    // Check if user is a member of the owning org
+    const [org] = await db
+      .select({ id: schema.organization.id })
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, owner))
       .limit(1)
 
-    if (!account) {
+    if (!org) {
       return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
     }
 
-    let hasAccess = account.id === c.get('accountId')
-    if (!hasAccess && account.type === 'org') {
+    const userId = c.get('userId')
+    let hasAccess = false
+    if (userId) {
       const [membership] = await db
         .select()
-        .from(schema.orgMemberships)
-        .where(
-          and(
-            eq(schema.orgMemberships.orgId, account.id),
-            eq(schema.orgMemberships.userId, c.get('accountId')!),
-          ),
-        )
+        .from(schema.member)
+        .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, userId)))
         .limit(1)
       hasAccess = !!membership
     }
@@ -230,12 +217,15 @@ export async function get(c: Context<AuthEnv>) {
         arkId: schema.arkCollections.arkId,
         enabled: schema.arkCollections.enabled,
         shoulder: schema.arkShoulders.shoulder,
-        ownerNaan: schema.accounts.arkNaan,
+        ownerNaan: schema.organization.arkNaan,
       })
       .from(schema.arkCollections)
       .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
-      .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-      .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.accountId, schema.accounts.id))
+      .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+      .innerJoin(
+        schema.arkShoulders,
+        eq(schema.arkShoulders.organizationId, schema.organization.id),
+      )
       .where(eq(schema.arkCollections.collectionId, result.id))
       .limit(1)
     if (arkRow?.enabled) {
@@ -264,20 +254,20 @@ export async function update(c: Context<AuthEnv>) {
     public?: boolean
   }>()
 
-  const [account] = await db
+  const [org] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, owner))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, owner))
     .limit(1)
 
-  if (!account) {
+  if (!org) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
   }
 
   const [collection] = await db
     .select()
     .from(schema.collections)
-    .where(and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, slug)))
+    .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) {
@@ -296,12 +286,12 @@ export async function update(c: Context<AuthEnv>) {
         422,
       )
     }
-    // Check uniqueness within same account
+    // Check uniqueness within same org
     const [existing] = await db
       .select({ id: schema.collections.id })
       .from(schema.collections)
       .where(
-        and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, newSlug)),
+        and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, newSlug)),
       )
       .limit(1)
 
@@ -323,20 +313,20 @@ export async function remove(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
 
-  const [account] = await db
+  const [org] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, owner))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, owner))
     .limit(1)
 
-  if (!account) {
+  if (!org) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
   }
 
   const [collection] = await db
     .select()
     .from(schema.collections)
-    .where(and(eq(schema.collections.accountId, account.id), eq(schema.collections.slug, slug)))
+    .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) {
@@ -347,80 +337,64 @@ export async function remove(c: Context<AuthEnv>) {
   return c.json({ ok: true })
 }
 
-// Transfer collection to another account
+// Transfer collection to another org
 export async function transfer(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
-  const { targetAccountSlug } = await c.req.json()
+  const { targetOrgSlug } = await c.req.json()
 
-  if (!targetAccountSlug || typeof targetAccountSlug !== 'string') {
-    return c.json({ error: 'targetAccountSlug is required', statusCode: 422 }, 422)
+  if (!targetOrgSlug || typeof targetOrgSlug !== 'string') {
+    return c.json({ error: 'targetOrgSlug is required', statusCode: 422 }, 422)
   }
 
-  const callerId = c.get('accountId')!
+  const callerId = c.get('userId')!
 
-  // Find source account
-  const [sourceAccount] = await db
+  // Find source org
+  const [sourceOrg] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, owner))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, owner))
     .limit(1)
 
-  if (!sourceAccount) return c.json({ error: 'Source account not found', statusCode: 404 }, 404)
+  if (!sourceOrg) return c.json({ error: 'Source org not found', statusCode: 404 }, 404)
 
-  // Verify caller has access to source account
-  const callerIsSource = sourceAccount.id === callerId
-  let callerHasSourceAccess = callerIsSource
-  if (!callerIsSource && sourceAccount.type === 'org') {
-    const [membership] = await db
-      .select()
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, sourceAccount.id),
-          eq(schema.orgMemberships.userId, callerId),
-        ),
-      )
-      .limit(1)
-    callerHasSourceAccess =
-      !!membership && (membership.role === 'owner' || membership.role === 'admin')
-  }
-  if (!callerHasSourceAccess) {
+  // Verify caller has admin/owner access to source org
+  const [sourceMembership] = await db
+    .select()
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, sourceOrg.id), eq(schema.member.userId, callerId)))
+    .limit(1)
+  if (
+    !sourceMembership ||
+    (sourceMembership.role !== 'owner' && sourceMembership.role !== 'admin')
+  ) {
     return c.json(
-      { error: 'You must be an owner or admin of the source account', statusCode: 403 },
+      { error: 'You must be an owner or admin of the source org', statusCode: 403 },
       403,
     )
   }
 
-  // Find target account
-  const [targetAccount] = await db
+  // Find target org
+  const [targetOrg] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, targetAccountSlug))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, targetOrgSlug))
     .limit(1)
 
-  if (!targetAccount) return c.json({ error: 'Target account not found', statusCode: 404 }, 404)
+  if (!targetOrg) return c.json({ error: 'Target org not found', statusCode: 404 }, 404)
 
-  // Verify caller has access to target account
-  const callerIsTarget = targetAccount.id === callerId
-  let callerHasTargetAccess = callerIsTarget
-  if (!callerIsTarget && targetAccount.type === 'org') {
-    const [membership] = await db
-      .select()
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, targetAccount.id),
-          eq(schema.orgMemberships.userId, callerId),
-        ),
-      )
-      .limit(1)
-    callerHasTargetAccess =
-      !!membership && (membership.role === 'owner' || membership.role === 'admin')
-  }
-  if (!callerHasTargetAccess) {
+  // Verify caller has admin/owner access to target org
+  const [targetMembership] = await db
+    .select()
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, targetOrg.id), eq(schema.member.userId, callerId)))
+    .limit(1)
+  if (
+    !targetMembership ||
+    (targetMembership.role !== 'owner' && targetMembership.role !== 'admin')
+  ) {
     return c.json(
-      { error: 'You must be an owner or admin of the target account', statusCode: 403 },
+      { error: 'You must be an owner or admin of the target org', statusCode: 403 },
       403,
     )
   }
@@ -430,24 +404,24 @@ export async function transfer(c: Context<AuthEnv>) {
     .select()
     .from(schema.collections)
     .where(
-      and(eq(schema.collections.accountId, sourceAccount.id), eq(schema.collections.slug, slug)),
+      and(eq(schema.collections.organizationId, sourceOrg.id), eq(schema.collections.slug, slug)),
     )
     .limit(1)
 
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-  // Check slug uniqueness in target account
+  // Check slug uniqueness in target org
   const [existing] = await db
     .select({ id: schema.collections.id })
     .from(schema.collections)
     .where(
-      and(eq(schema.collections.accountId, targetAccount.id), eq(schema.collections.slug, slug)),
+      and(eq(schema.collections.organizationId, targetOrg.id), eq(schema.collections.slug, slug)),
     )
     .limit(1)
 
   if (existing) {
     return c.json(
-      { error: `Target account already has a collection with slug "${slug}"`, statusCode: 409 },
+      { error: `Target org already has a collection with slug "${slug}"`, statusCode: 409 },
       409,
     )
   }
@@ -455,41 +429,37 @@ export async function transfer(c: Context<AuthEnv>) {
   // Transfer
   await db
     .update(schema.collections)
-    .set({ accountId: targetAccount.id, updatedAt: new Date() })
+    .set({ organizationId: targetOrg.id, updatedAt: new Date() })
     .where(eq(schema.collections.id, collection.id))
 
-  return c.json({ ok: true, newOwner: targetAccountSlug })
+  return c.json({ ok: true, newOwner: targetOrgSlug })
 }
 
-// List collections for an account
+// List collections for an org
 export async function listByOwner(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
 
-  const [account] = await db
+  const [org] = await db
     .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, owner))
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, owner))
     .limit(1)
 
-  if (!account) return c.json([])
+  if (!org) return c.json([])
 
-  // Check if the requester owns this account or is an org member
-  let hasFullAccess = c.get('accountId') === account.id
-  if (!hasFullAccess && account.type === 'org' && c.get('accountId')) {
+  // Check if the requester is an org member
+  let hasFullAccess = false
+  const userId = c.get('userId')
+  if (userId) {
     const [membership] = await db
       .select()
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, account.id),
-          eq(schema.orgMemberships.userId, c.get('accountId')!),
-        ),
-      )
+      .from(schema.member)
+      .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, userId)))
       .limit(1)
     hasFullAccess = !!membership
   }
 
-  const conditions = [eq(schema.collections.accountId, account.id)]
+  const conditions = [eq(schema.collections.organizationId, org.id)]
   if (!hasFullAccess) {
     conditions.push(eq(schema.collections.public, true))
   }
@@ -525,18 +495,18 @@ export async function exportArchive(c: Context<AuthEnv>) {
       name: schema.collections.name,
       description: schema.collections.description,
       public: schema.collections.public,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) {
     return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
   }
 
-  if (!collection.public && c.get('accountId') !== collection.accountId) {
+  if (!collection.public) {
     return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
   }
 

@@ -1,101 +1,49 @@
 import { eq } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
-import { getKfProfile } from './kf-profile-cache.server.js'
+import { auth } from './auth.js'
 
 export interface SessionUser {
   id: string
-  slug: string
   displayName: string | null
-  type: string
-  bio: string | null
   avatarUrl: string | null
+  defaultOrg: { slug: string; displayName: string | null } | null
   orgs: Array<{ slug: string; displayName: string | null; role: string }>
 }
 
-/**
- * Extract the session cookie from a Request object and look up the user.
- * Returns the user data or null if not authenticated.
- *
- * For user accounts, displayName and avatarUrl are fetched from KF Auth
- * (via in-memory cache with 5-min TTL). For org accounts, they come from
- * the local DB.
- */
 export async function getSessionUser(request: Request): Promise<SessionUser | null> {
-  const cookieHeader = request.headers.get('cookie')
-  if (!cookieHeader) return null
-
-  // Parse session cookie
-  const cookies = Object.fromEntries(
-    cookieHeader.split(';').map((c) => {
-      const [key, ...rest] = c.trim().split('=')
-      return [key, rest.join('=')] as [string, string]
-    }),
-  )
-
-  let sessionId = cookies['session']
-  if (!sessionId) return null
-
-  // Strip signature if present (legacy signed cookies)
-  const dotIdx = sessionId.lastIndexOf('.')
-  if (dotIdx > 0) {
-    sessionId = sessionId.slice(0, dotIdx)
-  }
-
-  // Look up session
-  const [session] = await db
-    .select()
-    .from(schema.sessions)
-    .where(eq(schema.sessions.id, sessionId))
-    .limit(1)
-
-  if (!session || new Date(session.expiresAt) <= new Date()) {
+  let session: Awaited<ReturnType<typeof auth.api.getSession>>
+  try {
+    session = await auth.api.getSession({ headers: request.headers })
+  } catch {
     return null
   }
+  if (!session) return null
 
-  // Look up user
-  const [user] = await db
-    .select()
-    .from(schema.accounts)
-    .where(eq(schema.accounts.id, session.userId))
-    .limit(1)
+  const u = session.user
 
-  if (!user) return null
-
-  // For user accounts, fetch profile from KF Auth (name + image).
-  // For org accounts, use locally stored displayName + avatarUrl.
-  let displayName = user.displayName
-  let avatarUrl = user.avatarUrl
-
-  if (user.type === 'user') {
-    const profile = await getKfProfile(user.id)
-    if (profile) {
-      displayName = profile.name
-      avatarUrl = profile.image
-    }
-  }
-
-  // Look up org memberships
   const memberships = await db
     .select({
-      orgSlug: schema.accounts.slug,
-      orgDisplayName: schema.accounts.displayName,
-      role: schema.orgMemberships.role,
+      orgId: schema.organization.id,
+      orgSlug: schema.organization.slug,
+      orgName: schema.organization.name,
+      isDefault: schema.organization.isDefault,
+      role: schema.member.role,
     })
-    .from(schema.orgMemberships)
-    .innerJoin(schema.accounts, eq(schema.orgMemberships.orgId, schema.accounts.id))
-    .where(eq(schema.orgMemberships.userId, user.id))
+    .from(schema.member)
+    .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+    .where(eq(schema.member.userId, u.id))
+
+  const defaultOrg = memberships.find((m) => m.isDefault) ?? null
 
   return {
-    id: user.id,
-    slug: user.slug,
-    displayName,
-    type: user.type,
-    bio: user.bio,
-    avatarUrl,
+    id: u.id,
+    displayName: defaultOrg?.orgName ?? u.name,
+    avatarUrl: u.image ?? null,
+    defaultOrg: defaultOrg ? { slug: defaultOrg.orgSlug, displayName: defaultOrg.orgName } : null,
     orgs: memberships.map((m) => ({
       slug: m.orgSlug,
-      displayName: m.orgDisplayName,
+      displayName: m.orgName,
       role: m.role,
     })),
   }

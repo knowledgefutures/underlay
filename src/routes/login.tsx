@@ -10,7 +10,7 @@ export default function LoginPage() {
   useEffect(() => {
     // If no error, redirect to KF Auth immediately
     if (!error) {
-      window.location.href = '/auth/login'
+      window.location.href = '/login'
     }
   }, [error])
 
@@ -42,7 +42,7 @@ export default function LoginPage() {
         </div>
 
         <a
-          href="/auth/login"
+          href="/login"
           className="bg-ink text-parchment hover:bg-ink-light block w-full py-2 text-center text-sm font-medium transition-colors"
         >
           Try again

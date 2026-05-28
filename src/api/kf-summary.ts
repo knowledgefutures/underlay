@@ -6,8 +6,7 @@ import { db, schema } from '../db/client.server.js'
 /**
  * GET /api/kf/summary?kf_org_id=xxx
  *
- * Returns Underlay accounts and their collections linked to a KF org.
- * For user-type accounts it also includes UL orgs the user belongs to.
+ * Returns Underlay orgs and their collections linked to a KF org.
  *
  * Auth: requires AUTH_INTERNAL_API_KEY (service-to-service).
  */
@@ -26,37 +25,36 @@ export async function summary(c: Context) {
 
   const APP_URL = process.env.APP_URL ?? 'http://localhost:4100'
 
-  // Find local accounts linked to this KF org via kf_org_id.
-  const directAccounts = await db
+  // Find local orgs linked to this KF org via kf_org_id.
+  const directOrgs = await db
     .select({
-      id: schema.accounts.id,
-      slug: schema.accounts.slug,
-      type: schema.accounts.type,
-      displayName: schema.accounts.displayName,
+      id: schema.organization.id,
+      slug: schema.organization.slug,
+      displayName: schema.organization.name,
     })
-    .from(schema.accounts)
-    .where(eq(schema.accounts.kfOrgId, kfOrgId))
+    .from(schema.organization)
+    .where(eq(schema.organization.kfOrgId, kfOrgId))
 
-  if (directAccounts.length === 0) {
-    return c.json({ accounts: [] })
+  if (directOrgs.length === 0) {
+    return c.json({ orgs: [] })
   }
 
-  const allAccountIds = directAccounts.map((a) => a.id)
+  const allOrgIds = directOrgs.map((a) => a.id)
 
-  // Get collections for all accounts
+  // Get collections for all orgs
   const collections = await db
     .select({
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      accountId: schema.collections.accountId,
-      ownerSlug: schema.accounts.slug,
+      organizationId: schema.collections.organizationId,
+      ownerSlug: schema.organization.slug,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(
-      sql`${schema.collections.accountId} IN (${sql.join(
-        allAccountIds.map((id) => sql`${id}`),
+      sql`${schema.collections.organizationId} IN (${sql.join(
+        allOrgIds.map((id) => sql`${id}`),
         sql`, `,
       )})`,
     )
@@ -95,22 +93,21 @@ export async function summary(c: Context) {
     }
   }
 
-  // Group collections by account
-  const collectionsByAccount = new Map<string, typeof collections>()
+  // Group collections by org
+  const collectionsByOrg = new Map<string, typeof collections>()
   for (const col of collections) {
-    const list = collectionsByAccount.get(col.accountId) ?? []
+    const list = collectionsByOrg.get(col.organizationId) ?? []
     list.push(col)
-    collectionsByAccount.set(col.accountId, list)
+    collectionsByOrg.set(col.organizationId, list)
   }
 
   return c.json({
-    accounts: directAccounts.map((acct) => ({
-      id: acct.id,
-      slug: acct.slug,
-      type: acct.type,
-      name: acct.displayName ?? acct.slug,
-      url: `${APP_URL}/${acct.slug}`,
-      collections: (collectionsByAccount.get(acct.id) ?? []).map((col) => {
+    orgs: directOrgs.map((org) => ({
+      id: org.id,
+      slug: org.slug,
+      name: org.displayName ?? org.slug,
+      url: `${APP_URL}/${org.slug}`,
+      collections: (collectionsByOrg.get(org.id) ?? []).map((col) => {
         const stats = statsMap.get(col.id)
         return {
           id: col.id,

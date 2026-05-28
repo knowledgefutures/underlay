@@ -17,14 +17,13 @@ import { authMiddleware, requireAuth } from '~/api/auth.server'
 import * as _collections from '~/api/collections'
 import * as _files from '~/api/files'
 import * as _health from '~/api/health'
-import * as _kfAuth from '~/api/kf-auth'
 import * as _kfSummary from '~/api/kf-summary'
 import * as _query from '~/api/query'
 import * as _schemas from '~/api/schemas'
 import * as _uploads from '~/api/uploads'
 import * as _versions from '~/api/versions'
+import { auth } from '~/lib/auth'
 import { getMirrorConfig } from '~/lib/mirror-config'
-import { initOidc } from '~/lib/oidc.server'
 
 const isProd = process.env.NODE_ENV === 'production'
 let vite: ViteDevServer | undefined
@@ -49,7 +48,6 @@ const ark = hot(_ark, '/src/api/ark.ts')
 const collections = hot(_collections, '/src/api/collections.ts')
 const files = hot(_files, '/src/api/files.ts')
 const health = hot(_health, '/src/api/health.ts')
-const kfAuth = hot(_kfAuth, '/src/api/kf-auth.ts')
 const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
 const query = hot(_query, '/src/api/query.ts')
 const schemas = hot(_schemas, '/src/api/schemas.ts')
@@ -76,23 +74,38 @@ app.use('/api/admin/*', async (c, next) => {
 // --- ARK resolution middleware ---
 app.use('/ark\\:*', arkMiddleware)
 
-// --- KF Auth (OIDC login) ---
+// --- Better-auth handler (OIDC login, sessions, API keys) ---
+app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
+  return auth.handler(c.req.raw)
+})
+
+// /login redirect — fall through to React route only when there's an error to display
 app.get('/login', async (c, next) => {
-  // Server-side redirect to avoid client-side "Redirecting..." flash.
-  // Fall through to the React route only when there's an error to display.
   const url = new URL(c.req.url)
   if (!url.searchParams.has('error')) {
-    const returnTo = url.searchParams.get('return_to') ?? ''
-    const target = returnTo
-      ? `/auth/login?return_to=${encodeURIComponent(returnTo)}`
-      : '/auth/login'
-    return c.redirect(target)
+    const signInUrl = new URL('/api/auth/sign-in/oauth2', url.origin)
+    const authRes = await auth.handler(
+      new Request(signInUrl, {
+        method: 'POST',
+        headers: new Headers({
+          'Content-Type': 'application/json',
+          Cookie: c.req.header('cookie') ?? '',
+          Origin: url.origin,
+        }),
+        body: JSON.stringify({ providerId: 'kf-auth', callbackURL: '/dashboard' }),
+      }),
+    )
+    const body = await authRes.json()
+    if (body.url) {
+      const redirect = new Response(null, { status: 302, headers: { Location: body.url } })
+      for (const [key, value] of authRes.headers.entries()) {
+        if (key.toLowerCase() === 'set-cookie') redirect.headers.append(key, value)
+      }
+      return redirect
+    }
   }
   await next()
 })
-app.get('/auth/login', kfAuth.login)
-app.get('/auth/callback', kfAuth.callback)
-app.post('/auth/logout', kfAuth.logout)
 
 // --- API routes ---
 app.get('/api/health', health.check)
@@ -191,32 +204,13 @@ app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
 app.post('/api/collections/:owner/:slug/versions', requireAuth('write'), versions.push)
 app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
 
-// Accounts
+// Accounts (custom routes — org CRUD, members, invitations, API keys handled by /api/auth/*)
 app.get('/api/accounts/me', requireAuth(), accounts.getMe)
 app.get('/api/accounts/available-kf-orgs', requireAuth(), accounts.availableKfOrgs)
 app.get('/api/accounts/:slug', accounts.getBySlug)
 app.patch('/api/accounts/me', requireAuth(), accounts.updateMe)
-app.get('/api/accounts/me/sessions', requireAuth(), accounts.listSessions)
-app.delete('/api/accounts/me/sessions/:sessionId', requireAuth(), accounts.deleteSession)
-app.delete('/api/accounts/me', requireAuth(), accounts.deleteMe)
-app.post('/api/accounts/keys', requireAuth(), accounts.createKey)
-app.get('/api/accounts/keys', requireAuth(), accounts.listKeys)
-app.delete('/api/accounts/keys/:id', requireAuth(), accounts.deleteKey)
-app.post('/api/accounts/:slug/keys', requireAuth(), accounts.createOrgKey)
-app.get('/api/accounts/:slug/keys', requireAuth(), accounts.listOrgKeys)
-app.delete('/api/accounts/:slug/keys/:id', requireAuth(), accounts.deleteOrgKey)
-app.post('/api/accounts/orgs', requireAuth(), accounts.createOrg)
-app.get('/api/accounts/:slug/members', requireAuth(), accounts.listMembers)
-app.post('/api/accounts/:slug/members', requireAuth(), accounts.addMember)
-app.patch('/api/accounts/:slug/members/:userId', requireAuth(), accounts.updateMember)
-app.delete('/api/accounts/:slug/members/:userId', requireAuth(), accounts.removeMember)
-app.patch('/api/accounts/:slug', requireAuth(), accounts.updateOrg)
 app.post('/api/accounts/:slug/avatar', requireAuth(), accounts.uploadOrgAvatar)
-app.post('/api/accounts/:slug/invitations', requireAuth(), accounts.createInvitation)
-app.get('/api/accounts/:slug/invitations', requireAuth(), accounts.listInvitations)
-app.delete('/api/accounts/:slug/invitations/:id', requireAuth(), accounts.deleteInvitation)
-app.post('/api/accounts/invitations/accept', requireAuth(), accounts.acceptInvitation)
-app.delete('/api/accounts/:slug', requireAuth(), accounts.deleteOrg)
+app.delete('/api/accounts/me', requireAuth(), accounts.deleteMe)
 
 // --- Blog content API (serves rendered markdown) ---
 app.get('/api/blog/:slug', (c) => {
@@ -335,13 +329,6 @@ if (isProd) {
 }
 
 const port = Number(process.env.PORT) || 3000
-
-// Validate OIDC provider is reachable before accepting requests
-await initOidc().catch((err) => {
-  console.error('FATAL: OIDC discovery failed — cannot start without a valid OIDC provider.')
-  console.error(err.message)
-  process.exit(1)
-})
 
 console.log(`Server running at http://localhost:${port}`)
 serve({ fetch: app.fetch, port })

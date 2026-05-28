@@ -95,24 +95,24 @@ export async function cleanupStaleRuns(): Promise<number> {
   return rows.length
 }
 
-/** Ensure a system account exists for mirrored content */
-async function ensureMirrorAccount(ownerSlug: string): Promise<string> {
+/** Ensure a system org exists for mirrored content */
+async function ensureMirrorOrg(ownerSlug: string): Promise<string> {
   const [existing] = await db
-    .select({ id: schema.accounts.id })
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, ownerSlug))
+    .select({ id: schema.organization.id })
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, ownerSlug))
     .limit(1)
 
   if (existing) return existing.id
 
   const [created] = await db
-    .insert(schema.accounts)
+    .insert(schema.organization)
     .values({
+      id: crypto.randomUUID(),
       slug: ownerSlug,
-      type: 'org',
-      displayName: ownerSlug,
+      name: ownerSlug,
     })
-    .returning({ id: schema.accounts.id })
+    .returning({ id: schema.organization.id })
 
   return created!.id
 }
@@ -417,15 +417,15 @@ async function syncCollection(
   emit: (type: SyncProgressEvent['type'], message: string) => void,
   signal: AbortSignal,
 ): Promise<void> {
-  // Ensure the owner account exists locally
-  const accountId = await ensureMirrorAccount(uc.ownerSlug)
+  // Ensure the owner org exists locally
+  const organizationId = await ensureMirrorOrg(uc.ownerSlug)
 
   // Check if collection exists locally
   const [localColl] = await db
     .select({ id: schema.collections.id })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, uc.ownerSlug), eq(schema.collections.slug, uc.slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, uc.ownerSlug), eq(schema.collections.slug, uc.slug)))
     .limit(1)
 
   let collectionId: string
@@ -435,7 +435,7 @@ async function syncCollection(
     const [created] = await db
       .insert(schema.collections)
       .values({
-        accountId,
+        organizationId,
         slug: uc.slug,
         name: uc.name,
         description: uc.description,
@@ -701,13 +701,13 @@ export async function getMirrorStatus(): Promise<{
 
   const collections = await db
     .select({
-      ownerSlug: schema.accounts.slug,
+      ownerSlug: schema.organization.slug,
       slug: schema.collections.slug,
       name: schema.collections.name,
       updatedAt: schema.collections.updatedAt,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(eq(schema.collections.public, true))
 
   // Get latest version for each collection
@@ -717,8 +717,11 @@ export async function getMirrorStatus(): Promise<{
         .select({ semver: schema.versions.semver })
         .from(schema.versions)
         .innerJoin(schema.collections, eq(schema.versions.collectionId, schema.collections.id))
-        .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-        .where(and(eq(schema.accounts.slug, c.ownerSlug), eq(schema.collections.slug, c.slug)))
+        .innerJoin(
+          schema.organization,
+          eq(schema.collections.organizationId, schema.organization.id),
+        )
+        .where(and(eq(schema.organization.slug, c.ownerSlug), eq(schema.collections.slug, c.slug)))
         .orderBy(sql`${schema.versions.number} desc`)
         .limit(1)
 

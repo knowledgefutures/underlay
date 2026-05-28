@@ -1,15 +1,14 @@
 import { useEffect } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
+import { authClient } from '~/lib/auth-client'
 import { useSSRData } from '~/lib/ssr-data'
 
 export default function LogoutPage() {
   const kfAuthUrl = useSSRData<string>('kfAuthUrl')
 
   useEffect(() => {
-    // Clear the local Underlay session, then redirect to KF Auth signout
-    // so the IdP session is also cleared (prevents auto-re-login)
-    fetch('/auth/logout', { method: 'POST', credentials: 'include' }).finally(() => {
+    authClient.signOut().then(() => {
       const appHomeUrl = window.location.origin
       const signoutUrl = kfAuthUrl
         ? `${kfAuthUrl}/auth/signout?redirect_uri=${encodeURIComponent(appHomeUrl)}`

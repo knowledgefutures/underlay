@@ -1,1 +1,0 @@
-ALTER TABLE "accounts" ALTER COLUMN "display_name" DROP NOT NULL;

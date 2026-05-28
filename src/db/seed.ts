@@ -61,7 +61,7 @@ async function seed() {
   const force = process.argv.includes('--force')
   console.log('[seed] Seeding database...')
 
-  const existing = await db.select().from(schema.accounts).limit(1)
+  const existing = await db.select().from(schema.organization).limit(1)
   if (existing.length > 0 && !force) {
     console.log('[seed] Database already seeded, skipping. Use --force to re-seed.')
     process.exit(0)
@@ -77,42 +77,60 @@ async function seed() {
     await db.delete(schema.schemas)
     await db.delete(schema.versions)
     await db.delete(schema.collections)
-    await db.delete(schema.apiKeys)
-    await db.delete(schema.sessions)
-    await db.delete(schema.orgMemberships)
-    await db.delete(schema.accounts)
+    await db.delete(schema.member)
+    await db.delete(schema.organization)
+    await db.delete(schema.session)
+    await db.delete(schema.account)
+    await db.delete(schema.user)
   }
 
-  const adminId = uuidv4()
+  const adminId = 'seed-admin-user'
 
-  await db.insert(schema.accounts).values({
+  await db.insert(schema.user).values({
     id: adminId,
+    name: 'Admin',
+    email: 'admin@underlay.org',
+    emailVerified: true,
+  })
+
+  const adminOrgId = uuidv4()
+  await db.insert(schema.organization).values({
+    id: adminOrgId,
     slug: 'admin',
-    type: 'user',
+    name: 'Admin',
+    isDefault: true,
   })
 
-  const kfId = uuidv4()
-  await db.insert(schema.accounts).values({
-    id: kfId,
-    slug: 'knowledge-futures',
-    type: 'org',
-    displayName: 'Knowledge Futures',
-  })
-
-  await db.insert(schema.orgMemberships).values({
-    orgId: kfId,
+  await db.insert(schema.member).values({
+    id: crypto.randomUUID(),
+    organizationId: adminOrgId,
     userId: adminId,
     role: 'owner',
   })
 
-  console.log('[seed] Created admin user (admin@underlay.org / admin)')
+  const kfId = uuidv4()
+  await db.insert(schema.organization).values({
+    id: kfId,
+    slug: 'knowledge-futures',
+    name: 'Knowledge Futures',
+    isDefault: false,
+  })
+
+  await db.insert(schema.member).values({
+    id: crypto.randomUUID(),
+    organizationId: kfId,
+    userId: adminId,
+    role: 'owner',
+  })
+
+  console.log('[seed] Created admin user + default org')
   console.log('[seed] Created Knowledge Futures org')
 
   // --- Collection 1: PubPub Archive ---
   const pubpubId = uuidv4()
   await db.insert(schema.collections).values({
     id: pubpubId,
-    accountId: kfId,
+    organizationId: kfId,
     slug: 'pubpub-archive',
     name: 'PubPub Archive',
     description:
@@ -358,7 +376,7 @@ async function seed() {
   const grantsId = uuidv4()
   await db.insert(schema.collections).values({
     id: grantsId,
-    accountId: kfId,
+    organizationId: kfId,
     slug: 'open-grants',
     name: 'Open Grants Dataset',
     description:
@@ -547,7 +565,7 @@ async function seed() {
   const climateId = uuidv4()
   await db.insert(schema.collections).values({
     id: climateId,
-    accountId: kfId,
+    organizationId: kfId,
     slug: 'climate-observations',
     name: 'Global Climate Observations',
     description:
@@ -775,7 +793,7 @@ async function seed() {
   const pubnotesId = uuidv4()
   await db.insert(schema.collections).values({
     id: pubnotesId,
-    accountId: kfId,
+    organizationId: kfId,
     slug: 'pub-notes',
     name: 'Pub Notes',
     description:

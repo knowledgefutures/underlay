@@ -5,85 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1777578810241,
-      "tag": "0000_military_machine_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1777584805442,
-      "tag": "0001_daffy_agent_zero",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1777605287163,
-      "tag": "0002_harsh_madrox",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1777606816957,
-      "tag": "0003_cool_leper_queen",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1777691764763,
-      "tag": "0004_powerful_marvex",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1777695250467,
-      "tag": "0005_smiling_baron_zemo",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1746388800000,
-      "tag": "0006_ark_identifiers",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1778791722837,
-      "tag": "0007_kf-auth-integration",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1778806667338,
-      "tag": "0008_sudden_cyclops",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1778809182465,
-      "tag": "0009_salty_colossus",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1778810604741,
-      "tag": "0010_keen_meltdown",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1778812081690,
-      "tag": "0011_messy_molten_man",
+      "when": 1779936029364,
+      "tag": "0000_harsh_white_tiger",
       "breakpoints": true
     }
   ]

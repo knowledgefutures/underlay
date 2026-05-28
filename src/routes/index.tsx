@@ -95,7 +95,7 @@ export default function Home() {
               <div>
                 <h3 className="mb-1 font-sans font-semibold">Built by Knowledge Futures</h3>
                 <p className="text-ink-muted">
-                  A 501(c)(3) nonprofit building open infrastructure for knowledge sharing.
+                  A 501(c)(3) public charity building open infrastructure for knowledge sharing.
                 </p>
               </div>
             </div>
@@ -226,7 +226,7 @@ GET    /collections/:owner/:slug/export        # full archive`}</code>
             <div>
               <h3 className="mb-1 font-sans font-semibold">Built by Knowledge Futures</h3>
               <p className="text-ink-muted">
-                A 501(c)(3) nonprofit building open infrastructure for knowledge sharing.
+                A 501(c)(3) public charity building open infrastructure for knowledge sharing.
               </p>
             </div>
           </div>

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "./dev.sh",
-    "dev:app": "tsx --env-file=.env.local server.ts",
+    "dev:app": "tsx watch --clear-screen=false --env-file=.env.local server.ts",
     "build": "vite build --outDir dist/client && vite build --ssr src/entry-server.tsx --outDir dist/server",
     "start": "NODE_ENV=production node --import tsx/esm server.ts",
     "typecheck": "tsc --noEmit",
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.750.0",
+    "@better-auth/api-key": "^1.6.11",
     "@codemirror/autocomplete": "^6.20.1",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-sql": "^6.10.0",
@@ -41,6 +42,7 @@
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.0",
     "bcrypt": "^6.0.0",
+    "better-auth": "^1.6.11",
     "better-sqlite3": "^12.9.0",
     "codemirror": "^6.0.2",
     "drizzle-orm": "^0.45.0",

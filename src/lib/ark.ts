@@ -56,11 +56,11 @@ export function nextShoulderCounter(count: number): string {
   return result
 }
 
-export async function getOrMintShoulder(accountId: string): Promise<string> {
+export async function getOrMintShoulder(organizationId: string): Promise<string> {
   const [existing] = await db
     .select({ shoulder: schema.arkShoulders.shoulder })
     .from(schema.arkShoulders)
-    .where(eq(schema.arkShoulders.accountId, accountId))
+    .where(eq(schema.arkShoulders.organizationId, organizationId))
     .limit(1)
   if (existing) return existing.shoulder
 
@@ -72,7 +72,7 @@ export async function getOrMintShoulder(accountId: string): Promise<string> {
     const digit = Math.floor(Math.random() * 10).toString()
     const shoulder = `ul${counter}${digit}`
     try {
-      await db.insert(schema.arkShoulders).values({ accountId, shoulder })
+      await db.insert(schema.arkShoulders).values({ organizationId, shoulder })
       return shoulder
     } catch (e: any) {
       // Retry on unique constraint violation (concurrent insert)
