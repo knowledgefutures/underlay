@@ -246,6 +246,13 @@ export async function deleteMe(c: Context<AuthEnv>) {
     // Non-fatal
   }
 
+  // Clean up better-auth managed rows + domain data
+  await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId))
+  await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, defaultOrg.id))
+  await db.delete(schema.invitation).where(eq(schema.invitation.organizationId, defaultOrg.id))
+  await db.delete(schema.member).where(eq(schema.member.userId, userId))
+  await db.delete(schema.session).where(eq(schema.session.userId, userId))
+  await db.delete(schema.account).where(eq(schema.account.userId, userId))
   await db.delete(schema.organization).where(eq(schema.organization.id, defaultOrg.id))
   await db.delete(schema.user).where(eq(schema.user.id, userId))
   return c.json({ ok: true })
