@@ -15,12 +15,14 @@ There are two auth methods:
 1. API Key (for programmatic access):
    Header: Authorization: Bearer ul_<key>
    Keys have scopes: read, write, admin.
-   Create keys at https://underlay.org/settings/keys.
+   Keys can optionally be scoped to specific collections via metadata.
+   Create keys at https://underlay.org/settings/keys (personal) or /:owner/settings/keys (organization).
+   Keys are managed via better-auth's apiKey plugin at /api/auth/api-key/*.
 
 2. Session cookie (for browser use):
-   Users sign in via KF Auth SSO (OIDC) at https://underlay.org/login.
-   Accounts are created automatically on first sign-in.
-   GET /api/accounts/me returns the current user (works with either auth method).
+   Users sign in via KF Auth SSO (OAuth2/PKCE) at https://underlay.org/login.
+   Accounts are created automatically on first sign-in, along with a default organization.
+   GET /api/accounts/me returns the current user and their organization memberships.
 
 All GET requests are public — no auth required to read public data.
 All write requests (POST, PATCH, PUT, DELETE) require authentication.
@@ -47,7 +49,8 @@ To get the higher limit, authenticate with an API key (recommended for any autom
 
 ## Core Concepts
 
-- Collection: a named, versioned body of data owned by an account. Identified by :owner/:slug.
+- Organization: an entity that owns collections. Every user gets a default organization on signup. Identified by :slug. Managed via better-auth's organization plugin at /api/auth/organization/*.
+- Collection: a named, versioned body of data owned by an organization. Identified by :owner/:slug.
 - Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
 - Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
 - File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
@@ -342,12 +345,24 @@ When schemas are returned via the collection schemas endpoint, known labels are 
 
 ---
 
+## Organization Management
+
+Organizations are managed via better-auth's organization plugin at /api/auth/organization/*.
+Every user gets a default organization on signup. Users can create additional organizations.
+
+POST /api/auth/organization/create     → create org {"name", "slug"}
+GET /api/auth/organization/list        → list user's organizations
+PATCH /api/auth/organization/update    → update org
+DELETE /api/auth/organization/delete   → delete org
+
+Member management (invite, remove, update roles) is also under /api/auth/organization/*.
+
 ## Collection Management
 
 POST /api/accounts/:owner/collections              → create collection {"slug", "name", "description", "public"}
 PATCH /api/collections/:owner/:slug                → update {"name", "description", "public"}
 DELETE /api/collections/:owner/:slug               → delete collection (requires admin scope)
-GET /api/accounts/:owner/collections               → list collections for an account
+GET /api/accounts/:owner/collections               → list collections for an organization
 
 ---
 
@@ -409,10 +424,13 @@ article-2 is only visible to the collection owner. Public readers see article-1 
 
 ## API Key Management
 
-POST /api/accounts/keys    → create key {"label": "my-app", "scope": "write"}
-                              Response includes the key once: {"key": "ul_abc123...", "id": "..."}
-GET /api/accounts/keys     → list keys (id, label, scope, createdAt, lastUsedAt — not the key itself)
-DELETE /api/accounts/keys/:id → revoke a key
+API keys are managed via better-auth's apiKey plugin. All endpoints are under /api/auth/api-key/*.
+
+POST /api/auth/api-key/create  → create key {"name": "my-app", "metadata": {"scope": "write"}, "prefix": "ul"}
+                                  The scope in metadata is translated to permissions server-side.
+                                  Response includes the key once: {"key": "ul_abc123...", "id": "..."}
+GET /api/auth/api-key/list     → list keys (id, name, start, permissions, metadata, createdAt, expiresAt)
+POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 
 ---
 
