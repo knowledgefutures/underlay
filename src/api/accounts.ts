@@ -121,6 +121,41 @@ export async function getBySlug(c: Context<AuthEnv>) {
   return c.json({ ...org, arkShoulder: shoulderRow?.shoulder ?? null })
 }
 
+// List public members for an org
+export async function listMembers(c: Context<AuthEnv>) {
+  const slug = c.req.param('slug')!
+  const org = await findOrgBySlug(slug)
+  if (!org) return c.json({ error: 'Not found', statusCode: 404 }, 404)
+
+  const defaultOrgSub = db
+    .select({
+      userId: schema.member.userId,
+      slug: schema.organization.slug,
+      name: schema.organization.name,
+    })
+    .from(schema.member)
+    .innerJoin(
+      schema.organization,
+      and(
+        eq(schema.member.organizationId, schema.organization.id),
+        eq(schema.organization.isDefault, true),
+      ),
+    )
+    .as('default_org')
+
+  const rows = await db
+    .select({
+      role: schema.member.role,
+      slug: defaultOrgSub.slug,
+      displayName: defaultOrgSub.name,
+    })
+    .from(schema.member)
+    .leftJoin(defaultOrgSub, eq(schema.member.userId, defaultOrgSub.userId))
+    .where(eq(schema.member.organizationId, org.id))
+
+  return c.json(rows)
+}
+
 // Update own profile (updates the user's default org)
 export async function updateMe(c: Context<AuthEnv>) {
   const { slug, displayName, bio, website } = await c.req.json()

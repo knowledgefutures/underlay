@@ -5,10 +5,17 @@ import { auth } from './auth.js'
 
 export interface SessionUser {
   id: string
+  slug: string | null
   displayName: string | null
   avatarUrl: string | null
   defaultOrg: { slug: string; displayName: string | null } | null
-  orgs: Array<{ slug: string; displayName: string | null; role: string }>
+  orgs: Array<{
+    organizationId: string
+    slug: string
+    displayName: string | null
+    role: string
+    isDefault: boolean | null
+  }>
 }
 
 export async function getSessionUser(request: Request): Promise<SessionUser | null> {
@@ -38,13 +45,16 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
 
   return {
     id: u.id,
+    slug: defaultOrg?.orgSlug ?? null,
     displayName: defaultOrg?.orgName ?? u.name,
     avatarUrl: u.image ?? null,
     defaultOrg: defaultOrg ? { slug: defaultOrg.orgSlug, displayName: defaultOrg.orgName } : null,
     orgs: memberships.map((m) => ({
+      organizationId: m.orgId,
       slug: m.orgSlug,
       displayName: m.orgName,
       role: m.role,
+      isDefault: m.isDefault,
     })),
   }
 }

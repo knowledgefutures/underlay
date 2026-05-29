@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
+import { authClient } from '~/lib/auth-client'
 import { useSSRData } from '~/lib/ssr-data'
 
 export default function OwnerSettingsMembers() {
@@ -10,6 +11,7 @@ export default function OwnerSettingsMembers() {
   const currentUser = useSSRData<any>('currentUser')
 
   const [orgData, setOrgData] = useState<any>(null)
+  const [orgId, setOrgId] = useState<string | null>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [members, setMembers] = useState<any[]>([])
@@ -19,13 +21,22 @@ export default function OwnerSettingsMembers() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  // Add member form
-  const [addUsername, setAddUsername] = useState('')
-  const [addRole, setAddRole] = useState('member')
-
-  // Invite form
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
+
+  async function loadMembers(organizationId: string) {
+    const { data } = await authClient.organization.listMembers({
+      query: { organizationId },
+    } as any)
+    if (data) setMembers((data as any).members ?? [])
+  }
+
+  async function loadInvitations(organizationId: string) {
+    const { data } = await authClient.organization.listInvitations({
+      query: { organizationId },
+    } as any)
+    if (data) setInvitations(Array.isArray(data) ? data : [])
+  }
 
   useEffect(() => {
     if (!owner || !currentUser) return
@@ -36,29 +47,19 @@ export default function OwnerSettingsMembers() {
       return
     }
 
-    const ownerRole = org.role === 'owner'
-    const adminRole = org.role === 'admin' || ownerRole
-    setIsOwner(ownerRole)
-    setIsAdmin(adminRole)
+    const id = org.organizationId
+    setOrgId(id)
+    setIsOwner(org.role === 'owner')
+    setIsAdmin(org.role === 'admin' || org.role === 'owner')
 
     Promise.all([
       fetch(`/api/accounts/${owner}`, { credentials: 'include' }).then((r) =>
         r.ok ? r.json() : null,
       ),
-      fetch(`/api/accounts/${owner}/members`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-      fetch(`/api/accounts/${owner}/invitations`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-    ]).then(([org, m, inv]) => {
-      if (!org) {
-        setLoading(false)
-        return
-      }
-      setOrgData(org)
-      setMembers(m)
-      setInvitations(inv)
+      loadMembers(id),
+      loadInvitations(id),
+    ]).then(([orgResult]) => {
+      if (orgResult) setOrgData(orgResult)
       setLoading(false)
     })
   }, [owner, currentUser])
@@ -73,104 +74,67 @@ export default function OwnerSettingsMembers() {
     setError('')
   }
 
-  async function refreshMembers() {
-    const res = await fetch(`/api/accounts/${owner}/members`, { credentials: 'include' })
-    if (res.ok) setMembers(await res.json())
-  }
-
-  async function refreshInvitations() {
-    const res = await fetch(`/api/accounts/${owner}/invitations`, { credentials: 'include' })
-    if (res.ok) setInvitations(await res.json())
-  }
-
-  async function handleAddMember(e: FormEvent) {
-    e.preventDefault()
+  async function handleChangeRole(memberId: string, role: string) {
+    if (!orgId) return
     clearMessages()
-    setSubmitting(true)
-    try {
-      const res = await fetch(`/api/accounts/${owner}/members`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ username: addUsername, role: addRole }),
-      })
-      if (res.ok) {
-        setSuccess(`Added ${addUsername} as ${addRole}.`)
-        setAddUsername('')
-        await refreshMembers()
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Failed to add member.')
-      }
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  async function handleChangeRole(userId: string, role: string) {
-    clearMessages()
-    const res = await fetch(`/api/accounts/${owner}/members/${userId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ role }),
-    })
-    if (res.ok) {
+    const { error: err } = await authClient.organization.updateMemberRole({
+      memberId,
+      role,
+      organizationId: orgId,
+    } as any)
+    if (err) {
+      setError(err.message ?? 'Failed to update role.')
+    } else {
       setSuccess('Role updated.')
-      await refreshMembers()
-    } else {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'Failed to update role.')
+      await loadMembers(orgId)
     }
   }
 
-  async function handleRemoveMember(userId: string) {
+  async function handleRemoveMember(memberIdOrEmail: string) {
+    if (!orgId) return
     clearMessages()
-    const res = await fetch(`/api/accounts/${owner}/members/${userId}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
-    if (res.ok) {
-      setSuccess('Member removed.')
-      await refreshMembers()
+    const { error: err } = await authClient.organization.removeMember({
+      memberIdOrEmail,
+      organizationId: orgId,
+    } as any)
+    if (err) {
+      setError(err.message ?? 'Failed to remove member.')
     } else {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'Failed to remove member.')
+      setSuccess('Member removed.')
+      await loadMembers(orgId)
     }
   }
 
   async function handleLeaveOrg() {
+    if (!orgId) return
     clearMessages()
-    const res = await fetch(`/api/accounts/${owner}/members/${currentUser.id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
-    if (res.ok) {
-      window.location.href = '/dashboard'
+    const { error: err } = await authClient.organization.leave({
+      organizationId: orgId,
+    } as any)
+    if (err) {
+      setError(err.message ?? 'Failed to leave organization.')
     } else {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'Failed to leave organization.')
+      window.location.href = '/dashboard'
     }
   }
 
   async function handleInviteMember(e: FormEvent) {
     e.preventDefault()
+    if (!orgId) return
     clearMessages()
     setSubmitting(true)
     try {
-      const res = await fetch(`/api/accounts/${owner}/invitations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-      })
-      if (res.ok) {
+      const { error: err } = await authClient.organization.inviteMember({
+        email: inviteEmail,
+        role: inviteRole,
+        organizationId: orgId,
+      } as any)
+      if (err) {
+        setError(err.message ?? 'Failed to send invitation.')
+      } else {
         setSuccess(`Invitation sent to ${inviteEmail}.`)
         setInviteEmail('')
-        await refreshInvitations()
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Failed to send invitation.')
+        await loadInvitations(orgId)
       }
     } finally {
       setSubmitting(false)
@@ -179,15 +143,14 @@ export default function OwnerSettingsMembers() {
 
   async function handleCancelInvitation(invitationId: string) {
     clearMessages()
-    const res = await fetch(`/api/accounts/${owner}/invitations/${invitationId}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
-    if (res.ok) {
-      setSuccess('Invitation cancelled.')
-      await refreshInvitations()
+    const { error: err } = await authClient.organization.cancelInvitation({
+      invitationId,
+    } as any)
+    if (err) {
+      setError(err.message ?? 'Failed to cancel invitation.')
     } else {
-      setError('Failed to cancel invitation.')
+      setSuccess('Invitation cancelled.')
+      if (orgId) await loadInvitations(orgId)
     }
   }
 
@@ -200,7 +163,7 @@ export default function OwnerSettingsMembers() {
   }
   if (!orgData) throw new NotFoundError()
 
-  const pendingInvitations = invitations.filter((i: any) => !i.acceptedAt)
+  const pendingInvitations = invitations.filter((i: any) => i.status === 'pending')
 
   return (
     <BaseLayout>
@@ -244,19 +207,14 @@ export default function OwnerSettingsMembers() {
 
         <div className="mb-6 space-y-2">
           {members.map((m: any) => (
-            <div
-              key={m.userId}
-              className="border-rule flex items-center justify-between border p-3"
-            >
+            <div key={m.id} className="border-rule flex items-center justify-between border p-3">
               <div className="flex items-center gap-3">
-                <Link to={`/${m.slug}`} className="text-link text-sm font-semibold underline">
-                  {m.slug}
-                </Link>
-                <span className="text-ink-muted text-xs">{m.displayName}</span>
+                <span className="text-sm font-medium">{m.user?.name ?? m.userId}</span>
+                <span className="text-ink-muted text-xs">{m.user?.email}</span>
                 {isOwner && m.userId !== currentUser.id ? (
                   <select
                     value={m.role}
-                    onChange={(e) => handleChangeRole(m.userId, e.target.value)}
+                    onChange={(e) => handleChangeRole(m.id, e.target.value)}
                     className="bg-parchment border-rule cursor-pointer border px-1.5 py-0.5 text-xs"
                   >
                     <option value="member">Member</option>
@@ -270,7 +228,7 @@ export default function OwnerSettingsMembers() {
               <div className="flex items-center gap-2">
                 {isAdmin && m.userId !== currentUser.id && (
                   <button
-                    onClick={() => handleRemoveMember(m.userId)}
+                    onClick={() => handleRemoveMember(m.id)}
                     className="text-xs text-red-700 hover:underline"
                   >
                     Remove
@@ -283,47 +241,7 @@ export default function OwnerSettingsMembers() {
 
         {isAdmin && (
           <div className="border-rule space-y-4 border-t pt-6">
-            <h3 className="text-ink-muted text-xs font-semibold">Add by username</h3>
-            <form onSubmit={handleAddMember} className="flex items-end gap-3">
-              <div className="flex-1">
-                <label htmlFor="username" className="mb-1 block text-xs font-medium">
-                  Username
-                </label>
-                <input
-                  type="text"
-                  id="username"
-                  value={addUsername}
-                  onChange={(e) => setAddUsername(e.target.value)}
-                  required
-                  placeholder="e.g. jsmith"
-                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
-                />
-              </div>
-              <div>
-                <label htmlFor="addRole" className="mb-1 block text-xs font-medium">
-                  Role
-                </label>
-                <select
-                  id="addRole"
-                  value={addRole}
-                  onChange={(e) => setAddRole(e.target.value)}
-                  className="bg-parchment border-rule focus:border-ink border px-3 py-2 text-sm focus:outline-none"
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                  {isOwner && <option value="owner">Owner</option>}
-                </select>
-              </div>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="bg-ink text-parchment px-4 py-2 text-sm font-medium whitespace-nowrap transition-opacity hover:opacity-90"
-              >
-                Add
-              </button>
-            </form>
-
-            <h3 className="text-ink-muted mt-4 text-xs font-semibold">Invite by email</h3>
+            <h3 className="text-ink-muted text-xs font-semibold">Invite by email</h3>
             <form onSubmit={handleInviteMember} className="flex items-end gap-3">
               <div className="flex-1">
                 <label htmlFor="inviteEmail" className="mb-1 block text-xs font-medium">
@@ -365,7 +283,6 @@ export default function OwnerSettingsMembers() {
           </div>
         )}
 
-        {/* Pending invitations */}
         {pendingInvitations.length > 0 && (
           <div className="border-rule mt-6 border-t pt-6">
             <h3 className="text-ink-muted mb-2 text-xs font-semibold">Pending Invitations</h3>
@@ -378,9 +295,11 @@ export default function OwnerSettingsMembers() {
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{inv.email}</span>
                     <span className="border-rule border px-1.5 py-0.5 text-xs">{inv.role}</span>
-                    <span className="text-ink-muted text-xs">
-                      Expires {new Date(inv.expiresAt).toLocaleDateString()}
-                    </span>
+                    {inv.expiresAt && (
+                      <span className="text-ink-muted text-xs">
+                        Expires {new Date(inv.expiresAt).toLocaleDateString()}
+                      </span>
+                    )}
                   </div>
                   {isAdmin && (
                     <button
@@ -396,7 +315,6 @@ export default function OwnerSettingsMembers() {
           </div>
         )}
 
-        {/* Leave org */}
         {!isOwner && (
           <div className="border-rule mt-6 border-t pt-4">
             <button onClick={handleLeaveOrg} className="text-sm text-red-700 hover:underline">

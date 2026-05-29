@@ -26,21 +26,19 @@ export default function OwnerPage() {
       fetch(`/api/accounts/${owner}/collections`, { credentials: 'include' }).then((r) =>
         r.ok ? r.json() : [],
       ),
-    ]).then(([acct, cols]) => {
+      fetch(`/api/accounts/${owner}/members`, { credentials: 'include' }).then((r) =>
+        r.ok ? r.json() : [],
+      ),
+    ]).then(([acct, cols, mems]) => {
       if (!acct) {
         setLoading(false)
         return
       }
       setAccount(acct)
       setCollections(cols)
+      setMembers(mems)
 
-      if (acct.type === 'org') {
-        fetch(`/api/accounts/${owner}/members`, { credentials: 'include' })
-          .then((r) => (r.ok ? r.json() : []))
-          .then(setMembers)
-      }
-
-      if (currentUser && acct.type === 'org') {
+      if (currentUser) {
         setIsMember(currentUser.orgs?.some((o: any) => o.slug === owner) ?? false)
       }
 
@@ -88,12 +86,7 @@ export default function OwnerPage() {
                 </Link>
               )}
             </div>
-            <div className="mt-1 flex items-center gap-3">
-              <p className="text-ink-muted font-mono text-sm">@{account.slug}</p>
-              <span className="text-ink-muted border-rule border px-1.5 py-0.5 text-xs">
-                {account.type === 'org' ? 'Organization' : 'User'}
-              </span>
-            </div>
+            <p className="text-ink-muted mt-1 font-mono text-sm">@{account.slug}</p>
 
             {account.bio && <p className="text-ink mt-2 text-sm">{account.bio}</p>}
 
@@ -166,41 +159,38 @@ export default function OwnerPage() {
           </div>
         </div>
 
-        {/* Public member list for orgs */}
-        {account.type === 'org' && members.length > 0 ? (
-          <div className="flex flex-col gap-8 md:flex-row">
-            {/* Collections - main column */}
-            <div className="min-w-0 flex-1">
-              <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
-                Collections ({collections.length})
-              </h2>
+        <div className="flex flex-col gap-8 md:flex-row">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
+              Collections ({collections.length})
+            </h2>
 
-              {collections.length === 0 ? (
-                <p className="text-ink-muted text-sm">No public collections yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {collections.map((c: any) => (
-                    <Link
-                      key={c.id}
-                      to={`/${owner}/${c.slug}`}
-                      className="border-rule hover:bg-parchment-dark block rounded border p-4 transition-colors"
-                    >
-                      <div className="mb-1 flex items-center gap-2">
-                        <span className="text-link text-sm font-semibold">{c.name}</span>
-                        <span className="text-ink-muted border-rule border px-1.5 py-0.5 text-xs">
-                          {c.public ? 'public' : 'private'}
-                        </span>
-                      </div>
-                      {c.description && (
-                        <p className="text-ink-muted mt-1 line-clamp-2 text-xs">{c.description}</p>
-                      )}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
+            {collections.length === 0 ? (
+              <p className="text-ink-muted text-sm">No public collections yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {collections.map((c: any) => (
+                  <Link
+                    key={c.id}
+                    to={`/${owner}/${c.slug}`}
+                    className="border-rule hover:bg-parchment-dark block rounded border p-4 transition-colors"
+                  >
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="text-link text-sm font-semibold">{c.name}</span>
+                      <span className="text-ink-muted border-rule border px-1.5 py-0.5 text-xs">
+                        {c.public ? 'public' : 'private'}
+                      </span>
+                    </div>
+                    {c.description && (
+                      <p className="text-ink-muted mt-1 line-clamp-2 text-xs">{c.description}</p>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
 
-            {/* Members - right sidebar */}
+          {members.length > 0 && (
             <div className="flex-shrink-0 md:w-56">
               <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
                 Members
@@ -221,38 +211,8 @@ export default function OwnerPage() {
                 ))}
               </div>
             </div>
-          </div>
-        ) : (
-          <>
-            <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
-              Collections ({collections.length})
-            </h2>
-
-            {collections.length === 0 ? (
-              <p className="text-ink-muted text-sm">No public collections yet.</p>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {collections.map((c: any) => (
-                  <Link
-                    key={c.id}
-                    to={`/${owner}/${c.slug}`}
-                    className="border-rule hover:bg-parchment-dark block rounded border p-4 transition-colors"
-                  >
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="text-link text-sm font-semibold">{c.name}</span>
-                      <span className="text-ink-muted border-rule border px-1.5 py-0.5 text-xs">
-                        {c.public ? 'public' : 'private'}
-                      </span>
-                    </div>
-                    {c.description && (
-                      <p className="text-ink-muted mt-1 line-clamp-2 text-xs">{c.description}</p>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+          )}
+        </div>
       </div>
     </BaseLayout>
   )
