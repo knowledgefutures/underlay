@@ -8,18 +8,29 @@ const modules = import.meta.glob<{ default: React.ComponentType; handle?: unknow
   './routes/**/[!_]*.tsx',
 )
 
-async function rootLoader({ request }: { request: Request }): Promise<AppContext> {
+const EMPTY_CONTEXT: AppContext = {
+  currentUser: null,
+  mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '', apiKey: '' },
+  kfAccountUrl: '',
+  kfAuthUrl: '',
+}
+
+async function rootLoader({
+  request,
+  context,
+}: {
+  request: Request
+  context?: { loadAppContext: (req: Request) => Promise<AppContext> }
+}): Promise<AppContext> {
+  // SSR: server passes loadAppContext via requestContext — direct DB access, no HTTP
+  if (context?.loadAppContext) {
+    return context.loadAppContext(request)
+  }
+  // Client navigation: fetch from server
   const res = await fetch(new URL('/api/context', request.url), {
     headers: { Cookie: request.headers.get('Cookie') ?? '' },
   })
-  if (!res.ok) {
-    return {
-      currentUser: null,
-      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '', apiKey: '' },
-      kfAccountUrl: '',
-      kfAuthUrl: '',
-    }
-  }
+  if (!res.ok) return EMPTY_CONTEXT
   return res.json()
 }
 

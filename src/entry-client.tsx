@@ -2,6 +2,7 @@ import { hydrateRoot } from 'react-dom/client'
 import { createBrowserRouter, matchRoutes, RouterProvider } from 'react-router'
 
 import { routes } from '~/App'
+import { extractRouteMeta } from '~/lib/route-meta'
 
 import '~/global.css'
 
@@ -27,22 +28,11 @@ const hydrationData = (window as any).__staticRouterHydrationData
 const router = createBrowserRouter(routes, { hydrationData })
 
 router.subscribe((state) => {
-  const matches = state.matches
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const handle = matches[i]?.route?.handle as {
-      title?: string | ((params: Record<string, string>, loaderData: unknown) => string)
-    } | null
-    if (handle?.title) {
-      const title =
-        typeof handle.title === 'function'
-          ? handle.title(matches[i]!.params as Record<string, string>, (state as any).loaderData)
-          : handle.title
-      if (title) {
-        document.title = title
-        break
-      }
-    }
-  }
+  const { title } = extractRouteMeta(
+    state.matches as Array<{ params: Record<string, string>; route: { handle?: unknown } }>,
+    (state as any).loaderData,
+  )
+  if (title) document.title = title
 })
 
 hydrateRoot(document.getElementById('root')!, <RouterProvider router={router} />)

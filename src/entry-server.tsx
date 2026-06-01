@@ -4,8 +4,23 @@ import { renderToPipeableStream } from 'react-dom/server'
 import { createStaticHandler, createStaticRouter, StaticRouterProvider } from 'react-router'
 
 import { routes } from '~/App'
+import type { AppContext } from '~/lib/app-context'
+import { getSessionUser } from '~/lib/auth.server'
+import { getMirrorConfig } from '~/lib/mirror-config'
+import { extractRouteMeta } from '~/lib/route-meta'
 
 const handler = createStaticHandler(routes)
+
+async function loadAppContext(request: Request): Promise<AppContext> {
+  const user = await getSessionUser(request)
+  const config = getMirrorConfig()
+  return {
+    currentUser: user,
+    mirrorConfig: config,
+    kfAccountUrl: process.env.OIDC_ACCOUNT_URL ?? 'http://localhost:3001',
+    kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+  }
+}
 
 export async function render(request: Request): Promise<{
   html: string
@@ -15,7 +30,9 @@ export async function render(request: Request): Promise<{
   title?: string
   description?: string
 }> {
-  const context = await handler.query(request)
+  const context = await handler.query(request, {
+    requestContext: { loadAppContext },
+  })
 
   if (context instanceof Response) {
     const location = context.headers.get('Location')
@@ -43,32 +60,10 @@ export async function render(request: Request): Promise<{
     }
   }
 
-  // Extract title and description from the deepest matched route's handle
-  let title: string | undefined
-  let description: string | undefined
-  for (let i = context.matches.length - 1; i >= 0; i--) {
-    const match = context.matches[i]!
-    const handle = match.route.handle as
-      | {
-          title?: string | ((params: Record<string, string>, loaderData: unknown) => string)
-          description?: string | ((params: Record<string, string>, loaderData: unknown) => string)
-        }
-      | undefined
-
-    if (handle?.title && !title) {
-      title =
-        typeof handle.title === 'function'
-          ? handle.title(match.params as Record<string, string>, context.loaderData)
-          : handle.title
-    }
-    if (handle?.description && !description) {
-      description =
-        typeof handle.description === 'function'
-          ? handle.description(match.params as Record<string, string>, context.loaderData)
-          : handle.description
-    }
-    if (title && description) break
-  }
+  const { title, description } = extractRouteMeta(
+    context.matches as Array<{ params: Record<string, string>; route: { handle?: unknown } }>,
+    context.loaderData,
+  )
 
   const router = createStaticRouter(handler.dataRoutes, context)
 
