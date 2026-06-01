@@ -306,7 +306,8 @@ export default function DocsIntegration() {
       </p>
       <p>
         Built by <a href="https://www.knowledgefutures.org">Knowledge Futures</a>, a 501(c)(3)
-        nonprofit. Contact: <a href="mailto:team@knowledgefutures.org">team@knowledgefutures.org</a>
+        public charity. Contact:{' '}
+        <a href="mailto:team@knowledgefutures.org">team@knowledgefutures.org</a>
       </p>
     </DocsLayout>
   )

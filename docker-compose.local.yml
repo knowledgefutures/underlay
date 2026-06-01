@@ -21,7 +21,7 @@ services:
     ports:
       - '5433:5432'
     volumes:
-      - pgdata-dev:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U underlay']
       interval: 5s
@@ -49,5 +49,5 @@ services:
         condition: service_healthy
 
 volumes:
-  pgdata-dev:
+  pgdata:
   app_node_modules:

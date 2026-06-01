@@ -39,7 +39,7 @@ export default function QueryPage() {
                 orgs={currentUser.orgs ?? []}
               />
             ) : (
-              <a href="/auth/login" className="hover:text-ink transition-colors">
+              <a href="/login" className="hover:text-ink transition-colors">
                 Log in
               </a>
             )}

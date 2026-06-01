@@ -1,18 +1,20 @@
 import crypto from 'node:crypto'
 
-import bcrypt from 'bcrypt'
-import { eq } from 'drizzle-orm'
-import type { Context, MiddlewareHandler } from 'hono'
-import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
+import type { MiddlewareHandler } from 'hono'
 import { createMiddleware } from 'hono/factory'
 
-import { db, schema } from '../db/client.server.js'
+import { auth } from '../lib/auth.js'
+
+function timingSafeEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
+}
 
 export type AuthEnv = {
   Variables: {
-    accountId?: string
+    userId?: string
     apiKeyScope?: 'read' | 'write' | 'admin'
-    apiKeyCollectionId?: string | null
+    apiKeyCollectionIds?: string[]
     sessionUserId?: string
   }
 }
@@ -21,12 +23,6 @@ const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 
 const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
 const authInternalApiKey = process.env.AUTH_INTERNAL_API_KEY ?? ''
-const sessionSecret = process.env.SESSION_SECRET ?? 'dev-secret-change-me'
-
-function timingSafeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
-}
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Internal service calls (legacy header)
@@ -37,69 +33,60 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   }
 
   // Auth provider internal API key (used by /api/kf/* endpoints)
-  const auth = c.req.header('authorization')
-  if (authInternalApiKey && auth && timingSafeEquals(auth, `Bearer ${authInternalApiKey}`)) {
+  const authorization = c.req.header('authorization')
+  if (
+    authInternalApiKey &&
+    authorization &&
+    timingSafeEquals(authorization, `Bearer ${authInternalApiKey}`)
+  ) {
     c.set('apiKeyScope', 'admin')
     return next()
   }
 
-  // API key auth via Bearer token
-  if (auth?.startsWith('Bearer ')) {
-    const token = auth.slice(7)
-    const keys = await db.select().from(schema.apiKeys)
-    let matched = false
-    for (const key of keys) {
-      const match = await bcrypt.compare(token, key.keyHash)
-      if (match) {
-        c.set('accountId', key.accountId)
-        c.set('apiKeyScope', key.scope as 'read' | 'write' | 'admin')
-        c.set('apiKeyCollectionId', key.collectionId)
-        await db
-          .update(schema.apiKeys)
-          .set({ lastUsedAt: new Date() })
-          .where(eq(schema.apiKeys.id, key.id))
-        matched = true
-        break
-      }
-    }
-    if (!matched) {
-      return c.json({ error: 'Invalid API key', statusCode: 401 }, 401)
-    }
-    return next()
-  }
-
-  // Session cookie auth
-  const sessionCookie = getCookie(c, 'session')
-  if (sessionCookie) {
+  // API key auth via Bearer token (better-auth apiKey plugin)
+  if (authorization?.startsWith('Bearer ')) {
+    const key = authorization.slice(7)
     try {
-      // Try to parse as signed cookie (value.signature format)
-      let sessionId = sessionCookie
-      const dotIdx = sessionCookie.lastIndexOf('.')
-      if (dotIdx > 0) {
-        sessionId = sessionCookie.slice(0, dotIdx)
-      }
-      if (sessionId) {
-        const [session] = await db
-          .select()
-          .from(schema.sessions)
-          .where(eq(schema.sessions.id, sessionId))
-          .limit(1)
-        if (session && new Date(session.expiresAt) > new Date()) {
-          c.set('sessionUserId', session.userId)
-          c.set('accountId', session.userId)
+      const result = await auth.api.verifyApiKey({ body: { key } })
+      if (result?.valid && result.key) {
+        c.set('userId', (result.key as any).userId ?? (result.key as any).referenceId)
+        const perms = (result.key.permissions as Record<string, string[]>) ?? {}
+        if (perms['collections']?.includes('admin')) {
           c.set('apiKeyScope', 'admin')
+        } else if (perms['collections']?.includes('write')) {
+          c.set('apiKeyScope', 'write')
+        } else {
+          c.set('apiKeyScope', 'read')
         }
+        const meta = (result.key as any).metadata as Record<string, any> | null
+        if (meta?.collectionIds?.length) {
+          c.set('apiKeyCollectionIds', meta.collectionIds)
+        }
+        return next()
       }
     } catch {
-      // Invalid or expired cookie — ignore silently
+      // Invalid key — fall through
     }
+    return c.json({ error: 'Invalid API key', statusCode: 401 }, 401)
+  }
+
+  // Session cookie auth (better-auth managed)
+  try {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers })
+    if (session) {
+      c.set('sessionUserId', session.user.id)
+      c.set('userId', session.user.id)
+      c.set('apiKeyScope', 'admin')
+    }
+  } catch {
+    // Invalid or expired session — ignore
   }
 
   // Public GETs are allowed without auth
   if (c.req.method === 'GET') return next()
 
   // All writes require auth, except public paths
-  if (!c.get('accountId')) {
+  if (!c.get('userId')) {
     const path = new URL(c.req.url).pathname
     if (publicPaths.has(path)) return next()
     return c.json({ error: 'Authentication required', statusCode: 401 }, 401)
@@ -110,7 +97,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 
 export function requireAuth(scope?: 'read' | 'write' | 'admin'): MiddlewareHandler<AuthEnv> {
   return async (c, next) => {
-    if (!c.get('accountId')) {
+    if (!c.get('userId')) {
       return c.json({ error: 'Authentication required', statusCode: 401 }, 401)
     }
     if (scope === 'admin' && c.get('apiKeyScope') !== 'admin') {
@@ -121,19 +108,4 @@ export function requireAuth(scope?: 'read' | 'write' | 'admin'): MiddlewareHandl
     }
     return next()
   }
-}
-
-// Helper to set signed session cookie
-export function setSessionCookie(c: Context, sessionId: string) {
-  setCookie(c, 'session', sessionId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  })
-}
-
-export function clearSessionCookie(c: Context) {
-  deleteCookie(c, 'session', { path: '/' })
 }

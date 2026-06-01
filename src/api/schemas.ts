@@ -202,13 +202,13 @@ export async function getSchema(c: Context<AuthEnv>) {
       semver: schema.versions.semver,
       versionNumber: schema.versions.number,
       collectionSlug: schema.collections.slug,
-      owner: schema.accounts.slug,
+      owner: schema.organization.slug,
       isPublic: schema.collections.public,
     })
     .from(schema.versionSchemas)
     .innerJoin(schema.versions, eq(schema.versionSchemas.versionId, schema.versions.id))
     .innerJoin(schema.collections, eq(schema.versions.collectionId, schema.collections.id))
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.versionSchemas.schemaId, id), eq(schema.collections.public, true)))
     .orderBy(sql`${schema.versions.createdAt} desc`)
     .limit(50)
@@ -237,18 +237,18 @@ export async function collectionSchemas(c: Context<AuthEnv>) {
   const [collection] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
       public: schema.collections.public,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   // Visibility check
-  if (!collection.public && c.get('accountId') !== collection.accountId) {
+  if (!collection.public && c.get('userId') !== collection.organizationId) {
     return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
   }
 

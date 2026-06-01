@@ -38,9 +38,9 @@ export async function resolve(c: Context<AuthEnv>) {
 
   const { shoulder, collectionArkId, version, recordType, recordId } = components
 
-  // Lookup shoulder → account
+  // Lookup shoulder → org
   const [shoulderRow] = await db
-    .select({ accountId: schema.arkShoulders.accountId })
+    .select({ organizationId: schema.arkShoulders.organizationId })
     .from(schema.arkShoulders)
     .where(eq(schema.arkShoulders.shoulder, shoulder))
     .limit(1)
@@ -54,21 +54,21 @@ export async function resolve(c: Context<AuthEnv>) {
       customUrl: schema.arkCollections.customUrl,
       collectionSlug: schema.collections.slug,
       collectionName: schema.collections.name,
-      ownerSlug: schema.accounts.slug,
-      ownerName: schema.accounts.displayName,
-      ownerNaan: schema.accounts.arkNaan,
-      collectionAccountId: schema.collections.accountId,
+      ownerSlug: schema.organization.slug,
+      ownerName: schema.organization.name,
+      ownerNaan: schema.organization.arkNaan,
+      collectionOrgId: schema.collections.organizationId,
     })
     .from(schema.arkCollections)
     .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(eq(schema.arkCollections.arkId, collectionArkId))
     .limit(1)
 
   if (!collRow || !collRow.enabled) return c.json({ type: 'not_found' }, 404)
 
   // Verify the shoulder belongs to the collection's owner
-  if (shoulderRow.accountId !== collRow.collectionAccountId) {
+  if (shoulderRow.organizationId !== collRow.collectionOrgId) {
     return c.json({ type: 'not_found' }, 404)
   }
 
@@ -289,17 +289,17 @@ export async function getArk(c: Context<AuthEnv>) {
   const [coll] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
-      ownerNaan: schema.accounts.arkNaan,
+      organizationId: schema.collections.organizationId,
+      ownerNaan: schema.organization.arkNaan,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found' }, 404)
 
   // Must be owner/member
-  const hasAccess = await checkCollectionAccess(coll.accountId, c.get('accountId')!)
+  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
 
   const naan = coll.ownerNaan ?? DEFAULT_NAAN
@@ -312,7 +312,7 @@ export async function getArk(c: Context<AuthEnv>) {
       shoulder: schema.arkShoulders.shoulder,
     })
     .from(schema.arkCollections)
-    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.accountId, coll.accountId))
+    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.organizationId, coll.organizationId))
     .where(eq(schema.arkCollections.collectionId, coll.id))
     .limit(1)
 
@@ -336,14 +336,14 @@ export async function updateArk(c: Context<AuthEnv>) {
   const { enabled, customUrl } = await c.req.json()
 
   const [coll] = await db
-    .select({ id: schema.collections.id, accountId: schema.collections.accountId })
+    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found' }, 404)
 
-  const hasAccess = await checkCollectionAccess(coll.accountId, c.get('accountId')!)
+  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
 
   const [existing] = await db
@@ -354,7 +354,7 @@ export async function updateArk(c: Context<AuthEnv>) {
 
   if (!existing) {
     // Collection predates ARK tables — mint now
-    await getOrMintShoulder(coll.accountId)
+    await getOrMintShoulder(coll.organizationId)
     const arkId = collectionToArkId(coll.id)
     await db.insert(schema.arkCollections).values({
       collectionId: coll.id,
@@ -384,14 +384,14 @@ export async function getArkRecordTypes(c: Context<AuthEnv>) {
   const slug = c.req.param('slug')!
 
   const [coll] = await db
-    .select({ id: schema.collections.id, accountId: schema.collections.accountId })
+    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found' }, 404)
 
-  const hasAccess = await checkCollectionAccess(coll.accountId, c.get('accountId')!)
+  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
 
   const rows = await db
@@ -413,14 +413,14 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
   if (!recordType) return c.json({ error: 'recordType required' }, 400)
 
   const [coll] = await db
-    .select({ id: schema.collections.id, accountId: schema.collections.accountId })
+    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found' }, 404)
 
-  const hasAccess = await checkCollectionAccess(coll.accountId, c.get('accountId')!)
+  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
 
   if (redirectUrlField === null) {
@@ -455,61 +455,39 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
     return c.json({ error: 'NAAN must be numeric (up to 16 digits)' }, 400)
   }
 
-  const [account] = await db
-    .select({ id: schema.accounts.id, type: schema.accounts.type })
-    .from(schema.accounts)
-    .where(eq(schema.accounts.slug, slug))
+  const [org] = await db
+    .select({ id: schema.organization.id })
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, slug))
     .limit(1)
-  if (!account) return c.json({ error: 'Account not found' }, 404)
+  if (!org) return c.json({ error: 'Org not found' }, 404)
 
-  // Must be owner/admin of the org (or the user themselves)
-  if (account.type === 'org') {
-    const [membership] = await db
-      .select({ role: schema.orgMemberships.role })
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, account.id),
-          eq(schema.orgMemberships.userId, c.get('accountId')!),
-        ),
-      )
-      .limit(1)
-    if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
-      return c.json({ error: 'Forbidden' }, 403)
-    }
-  } else if (account.id !== c.get('accountId')) {
+  // Must be owner/admin of the org
+  const [membership] = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(
+      and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, c.get('userId')!)),
+    )
+    .limit(1)
+  if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
     return c.json({ error: 'Forbidden' }, 403)
   }
 
-  await db.update(schema.accounts).set({ arkNaan: naan }).where(eq(schema.accounts.id, account.id))
+  await db
+    .update(schema.organization)
+    .set({ arkNaan: naan })
+    .where(eq(schema.organization.id, org.id))
   return c.json({ ok: true })
 }
 
 // --- Helpers ---
 
-async function checkCollectionAccess(
-  ownerAccountId: string,
-  requestAccountId: string,
-): Promise<boolean> {
-  const [account] = await db
-    .select({ id: schema.accounts.id, type: schema.accounts.type })
-    .from(schema.accounts)
-    .where(eq(schema.accounts.id, ownerAccountId))
+async function checkCollectionAccess(orgId: string, userId: string): Promise<boolean> {
+  const [membership] = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
     .limit(1)
-  if (!account) return false
-  if (account.id === requestAccountId) return true
-  if (account.type === 'org') {
-    const [membership] = await db
-      .select({ role: schema.orgMemberships.role })
-      .from(schema.orgMemberships)
-      .where(
-        and(
-          eq(schema.orgMemberships.orgId, account.id),
-          eq(schema.orgMemberships.userId, requestAccountId),
-        ),
-      )
-      .limit(1)
-    return !!membership
-  }
-  return false
+  return !!membership
 }

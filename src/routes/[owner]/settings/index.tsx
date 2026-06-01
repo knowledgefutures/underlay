@@ -298,7 +298,7 @@ export default function OwnerSettings() {
                 onChange={(e) =>
                   setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
                 }
-                pattern="[a-z0-9][a-z0-9-]*[a-z0-9]"
+                pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                 className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 font-mono text-sm focus:outline-none"
               />
               {slugValue !== owner && (
@@ -366,18 +366,19 @@ export default function OwnerSettings() {
           </div>
         )}
 
-        {/* KF Organization Link */}
+        {/* Transfer Organization */}
         {isOwner && (
           <div className="border-rule mb-10 border-t pt-6">
             <h2 className="text-ink-muted mb-4 text-sm font-semibold tracking-wide uppercase">
-              KF Organization
+              Transfer Organization
             </h2>
             <p className="text-ink-muted mb-3 text-sm">
-              Link this Underlay organization to a Knowledge Futures organization. This determines
-              which KF org manages this account.
+              Transfer this Underlay organization to a different KF Account you belong to. This
+              changes which KF Account is responsible for billing and ownership, but does not affect
+              permissions or membership on the Underlay side.
             </p>
             {kfOrgsLoading ? (
-              <p className="text-ink-muted text-sm">Loading KF organizations…</p>
+              <p className="text-ink-muted text-sm">Loading KF Accounts…</p>
             ) : (
               <form
                 onSubmit={async (e: FormEvent) => {
@@ -392,10 +393,10 @@ export default function OwnerSettings() {
                       body: JSON.stringify({ kfOrgId }),
                     })
                     if (res.ok) {
-                      setSuccess('KF organization updated.')
+                      setSuccess('Ownership transferred.')
                     } else {
                       const body = await res.json().catch(() => ({}))
-                      setError(body.error ?? 'Failed to update KF organization.')
+                      setError(body.error ?? 'Failed to transfer ownership.')
                     }
                   } finally {
                     setSubmitting('')
@@ -405,7 +406,7 @@ export default function OwnerSettings() {
               >
                 <div>
                   <label htmlFor="kfOrgId" className="mb-1 block text-xs font-medium">
-                    Linked KF Organization
+                    KF Account
                   </label>
                   <select
                     id="kfOrgId"

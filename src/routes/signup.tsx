@@ -5,7 +5,7 @@ import BaseLayout from '~/components/BaseLayout'
 export default function SignupPage() {
   useEffect(() => {
     // Account creation now happens via KF Auth
-    window.location.href = '/auth/login'
+    window.location.href = '/login'
   }, [])
 
   return (

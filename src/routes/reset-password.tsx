@@ -4,7 +4,7 @@ import BaseLayout from '~/components/BaseLayout'
 
 export default function ResetPasswordPage() {
   useEffect(() => {
-    window.location.href = '/auth/login'
+    window.location.href = '/login'
   }, [])
 
   return (

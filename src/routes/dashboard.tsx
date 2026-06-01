@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { authClient } from '~/lib/auth-client'
 import { useSSRData } from '~/lib/ssr-data'
 
 interface Collection {
@@ -29,7 +30,6 @@ interface KfOrg {
 
 export default function Dashboard() {
   const me = useSSRData<any>('currentUser')
-  const [collections, setCollections] = useState<Collection[]>([])
   const [orgs, setOrgs] = useState<Org[]>([])
   const [filter, setFilter] = useState('')
 
@@ -54,12 +54,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!me) return
 
-    // Set default collection owner
-    setColOwner(me.slug)
-
-    fetch(`/api/accounts/${me.slug}/collections`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setCollections)
+    const defaultOrg = me.orgs?.find((o: any) => o.isDefault) ?? me.orgs?.[0]
+    setColOwner(defaultOrg?.slug ?? me.slug)
 
     if (me.orgs?.length) {
       Promise.all(
@@ -69,7 +65,7 @@ export default function Dashboard() {
           })
           return {
             slug: org.slug,
-            displayName: org.displayName,
+            displayName: org.name ?? org.displayName,
             role: org.role,
             collections: res.ok ? await res.json() : [],
           }
@@ -94,17 +90,15 @@ export default function Dashboard() {
     setOrgError('')
     setSubmitting(true)
     try {
-      const res = await fetch('/api/accounts/orgs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ slug: orgSlug, displayName: orgDisplayName, kfOrgId: orgKfOrgId }),
-      })
-      if (res.ok) {
+      const { data, error } = await authClient.organization.create({
+        name: orgDisplayName,
+        slug: orgSlug,
+        kfOrgId: orgKfOrgId || undefined,
+      } as any)
+      if (error) {
+        setOrgError(error.message ?? 'Failed to create organization')
+      } else if (data) {
         window.location.reload()
-      } else {
-        const err = await res.json()
-        setOrgError(err.error ?? 'Failed to create organization')
       }
     } finally {
       setSubmitting(false)
@@ -138,11 +132,7 @@ export default function Dashboard() {
     }
   }
 
-  // All accounts the user can create collections under
-  const ownerOptions = [
-    { slug: me?.slug, label: me?.displayName ?? me?.slug },
-    ...(orgs ?? []).map((o) => ({ slug: o.slug, label: o.displayName })),
-  ]
+  const ownerOptions = orgs.map((o) => ({ slug: o.slug, label: o.displayName }))
 
   function matchesFilter(text: string) {
     return text.toLowerCase().includes(filter.toLowerCase())
@@ -174,51 +164,7 @@ export default function Dashboard() {
               />
             </div>
 
-            {/* Personal collections */}
-            <div className="mb-6">
-              <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                Your Collections ({collections.length})
-              </h2>
-
-              {collections.length === 0 ? (
-                <div className="border-rule border border-dashed p-4 text-center">
-                  <p className="text-ink-muted mb-1 text-sm">No collections yet.</p>
-                  <p className="text-ink-muted text-xs">
-                    Use the API to create your first collection.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {collections
-                    .filter((c) =>
-                      matchesFilter(`${me.slug}/${c.slug} ${c.name} ${c.description ?? ''}`),
-                    )
-                    .map((c) => (
-                      <Link
-                        key={c.slug}
-                        to={`/${me.slug}/${c.slug}`}
-                        className="border-rule hover:bg-parchment-dark flex items-center justify-between border px-3 py-2 transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <span className="text-sm font-medium">
-                            {me.slug}/{c.slug}
-                          </span>
-                          {c.description && (
-                            <p className="text-ink-muted mt-0.5 truncate text-xs">
-                              {c.description}
-                            </p>
-                          )}
-                        </div>
-                        <span className="text-ink-muted border-rule ml-2 flex-shrink-0 border px-1.5 py-0.5 text-[10px]">
-                          {c.public ? 'public' : 'private'}
-                        </span>
-                      </Link>
-                    ))}
-                </div>
-              )}
-            </div>
-
-            {/* Org collections */}
+            {/* Collections by org */}
             {orgs.map((org) => (
               <div key={org.slug} className="mb-6">
                 <div className="mb-2 flex items-center justify-between">
@@ -330,7 +276,7 @@ export default function Dashboard() {
                     <input
                       type="text"
                       required
-                      pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
+                      pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                       minLength={2}
                       placeholder="my-dataset"
                       value={colSlug}
@@ -434,7 +380,7 @@ export default function Dashboard() {
                     <input
                       type="text"
                       required
-                      pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
+                      pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                       minLength={2}
                       placeholder="my-org"
                       value={orgSlug}

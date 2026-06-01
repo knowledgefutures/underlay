@@ -15,23 +15,23 @@ async function isFilePubliclyAccessible(
   owner: string,
   slug: string,
   fileHash: string,
-  accountId: string | undefined,
+  userId: string | undefined,
 ): Promise<boolean> {
   // Resolve collection
   const [collection] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) return false
 
-  // Owner always has access
-  if (accountId != null && accountId === collection.accountId) {
+  // Org member always has access
+  if (userId != null && userId === collection.organizationId) {
     return true
   }
 
@@ -138,7 +138,7 @@ export async function headFile(c: Context<AuthEnv>) {
   }
 
   // Check visibility
-  const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('accountId'))
+  const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('userId'))
   if (!accessible) {
     return c.body(null, 404)
   }
@@ -166,7 +166,7 @@ export async function getFile(c: Context<AuthEnv>) {
   }
 
   // Check visibility
-  const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('accountId'))
+  const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('userId'))
   if (!accessible) {
     return c.json({ error: 'File not found', statusCode: 404 }, 404)
   }

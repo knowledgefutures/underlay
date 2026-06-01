@@ -43,12 +43,12 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
   const [collection] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
       public: schema.collections.public,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.collections.accountId))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
 
   if (!collection) return null
@@ -336,21 +336,21 @@ export async function searchCollections(c: Context<AuthEnv>) {
   if (!q || q.trim().length < 2) return c.json([])
 
   const term = `%${q.trim()}%`
-  const userId = c.get('accountId')
+  const userId = c.get('userId')
 
-  // Build accessible account IDs (user's own + orgs they belong to)
+  // Build accessible org IDs (user's own + orgs they belong to)
   let accessibleAccountIds: string[] = []
   if (userId) {
     const memberships = await db
-      .select({ orgId: schema.orgMemberships.orgId })
-      .from(schema.orgMemberships)
-      .where(eq(schema.orgMemberships.userId, userId))
-    accessibleAccountIds = [userId, ...memberships.map((m) => m.orgId)]
+      .select({ organizationId: schema.member.organizationId })
+      .from(schema.member)
+      .where(eq(schema.member.userId, userId))
+    accessibleAccountIds = [userId, ...memberships.map((m) => m.organizationId)]
   }
 
-  // Query: public collections OR private collections owned by accessible accounts
+  // Query: public collections OR private collections owned by accessible orgs
   const searchCondition = or(
-    ilike(schema.accounts.slug, term),
+    ilike(schema.organization.slug, term),
     ilike(schema.collections.slug, term),
     ilike(schema.collections.name, term),
   )
@@ -361,7 +361,7 @@ export async function searchCollections(c: Context<AuthEnv>) {
       searchCondition,
       or(
         eq(schema.collections.public, true),
-        inArray(schema.collections.accountId, accessibleAccountIds),
+        inArray(schema.collections.organizationId, accessibleAccountIds),
       ),
     )
   } else {
@@ -370,14 +370,14 @@ export async function searchCollections(c: Context<AuthEnv>) {
 
   const collections = await db
     .select({
-      ownerSlug: schema.accounts.slug,
+      ownerSlug: schema.organization.slug,
       slug: schema.collections.slug,
       name: schema.collections.name,
       description: schema.collections.description,
       public: schema.collections.public,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.collections.accountId))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
     .where(whereCondition)
     .limit(20)
 
@@ -392,8 +392,8 @@ export async function searchCollections(c: Context<AuthEnv>) {
       })
       .from(schema.versions)
       .innerJoin(schema.collections, eq(schema.collections.id, schema.versions.collectionId))
-      .innerJoin(schema.accounts, eq(schema.accounts.id, schema.collections.accountId))
-      .where(and(eq(schema.accounts.slug, c2.ownerSlug), eq(schema.collections.slug, c2.slug)))
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
+      .where(and(eq(schema.organization.slug, c2.ownerSlug), eq(schema.collections.slug, c2.slug)))
       .orderBy(desc(schema.versions.number))
       .limit(1)
 
@@ -427,10 +427,10 @@ export async function collectionVersions(c: Context<AuthEnv>) {
     })
     .from(schema.versions)
     .innerJoin(schema.collections, eq(schema.collections.id, schema.versions.collectionId))
-    .innerJoin(schema.accounts, eq(schema.accounts.id, schema.collections.accountId))
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
     .where(
       and(
-        eq(schema.accounts.slug, owner),
+        eq(schema.organization.slug, owner),
         eq(schema.collections.slug, slug),
         eq(schema.collections.public, true),
       ),

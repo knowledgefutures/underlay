@@ -28,12 +28,12 @@ async function resolveCollection(owner: string, slug: string) {
   const [result] = await db
     .select({
       id: schema.collections.id,
-      accountId: schema.collections.accountId,
+      organizationId: schema.collections.organizationId,
       slug: schema.collections.slug,
     })
     .from(schema.collections)
-    .innerJoin(schema.accounts, eq(schema.collections.accountId, schema.accounts.id))
-    .where(and(eq(schema.accounts.slug, owner), eq(schema.collections.slug, slug)))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   return result ?? null
 }
@@ -54,8 +54,18 @@ export async function startSession(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-  // Verify the caller owns this collection
-  if (c.get('accountId') !== collection.accountId) {
+  // Verify the caller is a member of this collection's org
+  const [membership] = await db
+    .select({ organizationId: schema.member.organizationId })
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, collection.organizationId),
+        eq(schema.member.userId, c.get('userId')!),
+      ),
+    )
+    .limit(1)
+  if (!membership) {
     return c.json({ error: 'Not authorized for this collection', statusCode: 403 }, 403)
   }
 
@@ -85,7 +95,7 @@ export async function startSession(c: Context<AuthEnv>) {
     .insert(schema.uploadSessions)
     .values({
       collectionId: collection.id,
-      accountId: c.get('accountId')!,
+      userId: c.get('userId')!,
       baseVersion: body.base_version ?? null,
       message: body.message ?? null,
       readme: body.readme ?? null,
@@ -130,7 +140,7 @@ export async function appendBatch(c: Context<AuthEnv>) {
   if (!session) {
     return c.json({ error: 'Upload session not found', statusCode: 404 }, 404)
   }
-  if (session.accountId !== c.get('accountId')) {
+  if (session.userId !== c.get('userId')) {
     return c.json({ error: 'Not authorized for this session', statusCode: 403 }, 403)
   }
   if (session.status !== 'open') {
@@ -265,7 +275,7 @@ export async function getSession(c: Context<AuthEnv>) {
   if (!session) {
     return c.json({ error: 'Upload session not found', statusCode: 404 }, 404)
   }
-  if (session.accountId !== c.get('accountId')) {
+  if (session.userId !== c.get('userId')) {
     return c.json({ error: 'Not authorized for this session', statusCode: 403 }, 403)
   }
 
@@ -295,7 +305,7 @@ export async function finalize(c: Context<AuthEnv>) {
   if (!session) {
     return c.json({ error: 'Upload session not found', statusCode: 404 }, 404)
   }
-  if (session.accountId !== c.get('accountId')) {
+  if (session.userId !== c.get('userId')) {
     return c.json({ error: 'Not authorized for this session', statusCode: 403 }, 403)
   }
   if (session.status !== 'open') {
@@ -774,7 +784,7 @@ export async function finalize(c: Context<AuthEnv>) {
         baseNumber: session.baseVersion,
         message: session.message ?? null,
         readme: readmeValue,
-        pushedBy: c.get('accountId') ?? null,
+        pushedBy: c.get('userId') ?? null,
         appId: session.appId ?? null,
         actorId: session.actorId ?? null,
         recordCount,
@@ -856,7 +866,7 @@ export async function cancelSession(c: Context<AuthEnv>) {
   if (!session) {
     return c.json({ error: 'Upload session not found', statusCode: 404 }, 404)
   }
-  if (session.accountId !== c.get('accountId')) {
+  if (session.userId !== c.get('userId')) {
     return c.json({ error: 'Not authorized for this session', statusCode: 403 }, 403)
   }
 

@@ -67,7 +67,7 @@ export default function InvitationsAccept() {
               <p className="mt-2 text-xs">
                 You may need to{' '}
                 <a
-                  href={`/auth/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
+                  href={`/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
                   className="underline"
                 >
                   log in
@@ -92,7 +92,7 @@ export default function InvitationsAccept() {
                 </p>
                 <div className="flex gap-3">
                   <a
-                    href={`/auth/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
+                    href={`/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
                     className="bg-ink text-parchment hover:bg-ink-light flex-1 py-2 text-center text-sm font-medium transition-colors"
                   >
                     Log in

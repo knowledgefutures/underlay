@@ -232,7 +232,7 @@ export default function CollectionSettingsPage() {
                 onChange={(e) =>
                   setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
                 }
-                pattern="[a-z0-9][a-z0-9-]*[a-z0-9]"
+                pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
                 className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 font-mono text-sm focus:outline-none"
               />
               {slugValue !== collection && (
@@ -369,7 +369,7 @@ export default function CollectionSettingsPage() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ targetAccountSlug: transferTarget }),
+                    body: JSON.stringify({ targetOrgSlug: transferTarget }),
                   })
                   if (res.ok) {
                     window.location.href = `/${transferTarget}/${data?.slug ?? collection}/settings`
@@ -385,7 +385,7 @@ export default function CollectionSettingsPage() {
             >
               <div>
                 <label htmlFor="transferTarget" className="mb-1 block text-xs font-medium">
-                  Target account
+                  Target organization
                 </label>
                 <select
                   id="transferTarget"
@@ -394,11 +394,6 @@ export default function CollectionSettingsPage() {
                   className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
                 >
                   <option value="">— Select —</option>
-                  {currentUser?.slug && currentUser.slug !== owner && (
-                    <option value={currentUser.slug}>
-                      {currentUser.displayName ?? currentUser.slug} (personal)
-                    </option>
-                  )}
                   {currentUser?.orgs
                     ?.filter(
                       (o: any) => o.slug !== owner && (o.role === 'owner' || o.role === 'admin'),

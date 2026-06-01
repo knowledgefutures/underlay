@@ -47,7 +47,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
                   Admin
                 </Link>
               ) : (
-                <a href="/auth/login" className="hover:text-ink transition-colors">
+                <a href="/login" className="hover:text-ink transition-colors">
                   Log in
                 </a>
               )
@@ -58,7 +58,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
                 orgs={currentUser.orgs ?? []}
               />
             ) : (
-              <a href="/auth/login" className="hover:text-ink transition-colors">
+              <a href="/login" className="hover:text-ink transition-colors">
                 Log in
               </a>
             )}
