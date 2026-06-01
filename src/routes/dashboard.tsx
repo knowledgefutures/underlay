@@ -1,9 +1,9 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { useSSRData } from '~/lib/ssr-data'
 
 interface Collection {
   id: string
@@ -28,8 +28,10 @@ interface KfOrg {
   role: string
 }
 
+export const handle = { title: 'Dashboard — Underlay', requireAuth: true }
+
 export default function Dashboard() {
-  const me = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
   const [orgs, setOrgs] = useState<Org[]>([])
   const [filter, setFilter] = useState('')
 
@@ -52,14 +54,14 @@ export default function Dashboard() {
   const [colSubmitting, setColSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!me) return
+    if (!currentUser) return
 
-    const defaultOrg = me.orgs?.find((o: any) => o.isDefault) ?? me.orgs?.[0]
-    setColOwner(defaultOrg?.slug ?? me.slug)
+    const defaultOrg = currentUser.orgs?.find((o: any) => o.isDefault) ?? currentUser.orgs?.[0]
+    setColOwner(defaultOrg?.slug ?? currentUser.slug)
 
-    if (me.orgs?.length) {
+    if (currentUser.orgs?.length) {
       Promise.all(
-        me.orgs.map(async (org: any) => {
+        currentUser.orgs.map(async (org: any) => {
           const res = await fetch(`/api/accounts/${org.slug}/collections`, {
             credentials: 'include',
           })
@@ -83,7 +85,7 @@ export default function Dashboard() {
           setOrgKfOrgId(orgs[0]!.id)
         }
       })
-  }, [me])
+  }, [currentUser])
 
   async function handleCreateOrg(e: FormEvent) {
     e.preventDefault()
@@ -138,7 +140,7 @@ export default function Dashboard() {
     return text.toLowerCase().includes(filter.toLowerCase())
   }
 
-  if (!me) return null
+  if (!currentUser) return <Navigate to="/login" replace />
 
   return (
     <BaseLayout>
@@ -324,7 +326,7 @@ export default function Dashboard() {
                   <div>
                     <p className="text-ink mb-0.5 text-[11px] font-medium">Via API</p>
                     <code className="bg-parchment-dark block px-1.5 py-1 text-[10px] break-all">
-                      POST /api/accounts/{me.slug}/collections
+                      POST /api/accounts/{currentUser.slug}/collections
                     </code>
                   </div>
                   <Link
@@ -413,7 +415,7 @@ export default function Dashboard() {
             {/* Links */}
             <div className="space-y-1.5 text-xs">
               <Link
-                to={`/${me.slug}`}
+                to={`/${currentUser.slug}`}
                 className="text-ink-muted hover:text-ink block transition-colors"
               >
                 Your profile →

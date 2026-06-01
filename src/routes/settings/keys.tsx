@@ -1,10 +1,10 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
 
 import { ApiPlayground } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { useSSRData } from '~/lib/ssr-data'
 
 interface Key {
   id: string
@@ -39,8 +39,10 @@ function getScope(permissions?: Record<string, string[]>): string {
   return 'read'
 }
 
+export const handle = { title: 'API Keys — Underlay', requireAuth: true }
+
 export default function SettingsKeys() {
-  const me = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [keys, setKeys] = useState<Key[]>([])
   const [collections, setCollections] = useState<Collection[]>([])
@@ -58,12 +60,12 @@ export default function SettingsKeys() {
   }
 
   useEffect(() => {
-    if (!me) return
+    if (!currentUser) return
     loadKeys()
-    fetch(`/api/accounts/${me.slug}/collections`, { credentials: 'include' })
+    fetch(`/api/accounts/${currentUser.slug}/collections`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : []))
       .then(setCollections)
-  }, [me])
+  }, [currentUser])
 
   async function handleCreateKey(e: FormEvent) {
     e.preventDefault()
@@ -94,7 +96,7 @@ export default function SettingsKeys() {
     setKeys((prev) => prev.filter((k) => k.id !== keyId))
   }
 
-  if (!me) return null
+  if (!currentUser) return <Navigate to="/login" replace />
 
   return (
     <BaseLayout>
@@ -255,7 +257,7 @@ export default function SettingsKeys() {
             Test API calls using your session. Select an endpoint to get started.
           </p>
           <ApiPlayground
-            slug={me.slug}
+            slug={currentUser.slug}
             collections={collections.map((c) => ({ id: c.id, slug: c.slug }))}
           />
         </div>

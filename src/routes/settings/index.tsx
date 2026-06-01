@@ -1,24 +1,25 @@
 import { type FormEvent, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
+
+export const handle = { title: 'Settings — Underlay', requireAuth: true }
 
 export default function Settings() {
-  const me = useSSRData<any>('currentUser')
-  const kfAccountUrl = useSSRData<string>('kfAccountUrl')
+  const { currentUser, kfAccountUrl } = useAppContext()
 
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
 
   // Profile form (Underlay-specific fields only — name/email/avatar managed by KF Auth)
-  const [slugValue, setSlugValue] = useState(me?.slug ?? '')
-  const [bio, setBio] = useState(me?.bio ?? '')
-  const [website, setWebsite] = useState(me?.website ?? '')
-  const [location, setLocation] = useState(me?.location ?? '')
+  const [slugValue, setSlugValue] = useState(currentUser?.slug ?? '')
+  const [bio, setBio] = useState(currentUser?.bio ?? '')
+  const [website, setWebsite] = useState(currentUser?.website ?? '')
+  const [location, setLocation] = useState(currentUser?.location ?? '')
 
   // Notifications
-  const notifPrefs = (me?.notificationPrefs as Record<string, boolean>) ?? {}
+  const notifPrefs = (currentUser?.notificationPrefs as Record<string, boolean>) ?? {}
   const [collectionActivity, setCollectionActivity] = useState(
     notifPrefs.collectionActivity ?? true,
   )
@@ -39,7 +40,7 @@ export default function Settings() {
     e.preventDefault()
     clearMessages()
     setSubmitting('profile')
-    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== me?.slug
+    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== currentUser?.slug
     try {
       const payload: Record<string, any> = { bio, website, location }
       if (slugChanged) payload.slug = slugValue.trim()
@@ -110,7 +111,7 @@ export default function Settings() {
     }
   }
 
-  if (!me) return null
+  if (!currentUser) return <Navigate to="/login" replace />
 
   return (
     <BaseLayout>
@@ -145,20 +146,20 @@ export default function Settings() {
           <h2 className="text-ink-muted text-sm font-semibold tracking-wide uppercase">Profile</h2>
 
           <div className="mb-4 flex items-center gap-4">
-            {me.avatarUrl ? (
+            {currentUser.avatarUrl ? (
               <img
-                src={me.avatarUrl}
+                src={currentUser.avatarUrl}
                 alt="Avatar"
                 className="border-rule h-16 w-16 rounded-full border object-cover"
               />
             ) : (
               <div className="bg-parchment-dark border-rule text-ink-muted flex h-16 w-16 items-center justify-center rounded-full border text-lg font-semibold">
-                {me.displayName?.charAt(0)?.toUpperCase() ?? '?'}
+                {currentUser.displayName?.charAt(0)?.toUpperCase() ?? '?'}
               </div>
             )}
             <div>
-              <p className="text-sm font-medium">{me.displayName}</p>
-              <p className="text-ink-muted font-mono text-xs">@{me.slug}</p>
+              <p className="text-sm font-medium">{currentUser.displayName}</p>
+              <p className="text-ink-muted font-mono text-xs">@{currentUser.slug}</p>
               <a
                 href={kfAccountUrl}
                 target="_blank"
@@ -172,7 +173,7 @@ export default function Settings() {
 
           <div>
             <label className="mb-1 block text-sm font-medium">Display Name</label>
-            <p className="text-ink-muted text-sm">{me.displayName}</p>
+            <p className="text-ink-muted text-sm">{currentUser.displayName}</p>
             <p className="text-ink-muted mt-1 text-xs">
               Managed by your{' '}
               <a
@@ -241,7 +242,7 @@ export default function Settings() {
               pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
               className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 font-mono text-sm focus:outline-none"
             />
-            {slugValue !== me?.slug && (
+            {slugValue !== currentUser?.slug && (
               <p className="mt-1 text-xs text-amber-700">
                 Changing your username will update all your URLs.
               </p>
@@ -334,7 +335,7 @@ export default function Settings() {
             <form onSubmit={handleDeleteAccount} className="mt-3 space-y-3">
               <div>
                 <label htmlFor="confirmSlug" className="text-ink-muted mb-1 block text-sm">
-                  Type <strong>{me.slug}</strong> to confirm:
+                  Type <strong>{currentUser.slug}</strong> to confirm:
                 </label>
                 <input
                   type="text"

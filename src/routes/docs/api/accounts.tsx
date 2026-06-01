@@ -33,6 +33,8 @@ const createKeyRes = `{
 
 const deleteKeyRes = `{"ok": true}`
 
+export const handle = { title: 'Accounts API — Underlay Docs' }
+
 export default function DocsApiAccounts() {
   return (
     <DocsLayout title="Accounts API">

@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
 
+export const handle = { title: 'Sign up — Underlay' }
+
 export default function SignupPage() {
   useEffect(() => {
     // Account creation now happens via KF Auth

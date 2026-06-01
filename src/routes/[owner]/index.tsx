@@ -3,11 +3,13 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
+
+export const handle = { title: (params: Record<string, string>) => params.owner + ' — Underlay' }
 
 export default function OwnerPage() {
   const { owner } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [account, setAccount] = useState<any>(null)
   const [collections, setCollections] = useState<any[]>([])

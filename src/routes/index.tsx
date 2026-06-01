@@ -1,16 +1,17 @@
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
-interface MirrorConfig {
-  enabled: boolean
-  nodeName: string
-  upstream: string
+export const handle = {
+  title: (_p: any, loaderData: any) =>
+    loaderData?.root?.mirrorConfig?.enabled
+      ? 'Underlay · ' + loaderData.root.mirrorConfig.nodeName
+      : 'Underlay — A public registry for structured knowledge',
 }
 
 export default function Home() {
-  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig')
+  const { mirrorConfig } = useAppContext()
 
   if (mirrorConfig?.enabled) {
     return (

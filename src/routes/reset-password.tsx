@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
 
+export const handle = { title: 'Reset password — Underlay' }
+
 export default function ResetPasswordPage() {
   useEffect(() => {
     window.location.href = '/login'

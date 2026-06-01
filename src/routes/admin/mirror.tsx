@@ -1,17 +1,11 @@
 import BaseLayout from '~/components/BaseLayout'
 import MirrorAdmin from '~/components/MirrorAdmin'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
-interface MirrorConfig {
-  enabled: boolean
-  nodeName: string
-  upstream: string
-  syncSchedule: string
-}
+export const handle = { title: 'Mirror Admin — Underlay' }
 
 export default function AdminMirror() {
-  const me = useSSRData<any>('currentUser')
-  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig')
+  const { currentUser, mirrorConfig } = useAppContext()
 
   if (!mirrorConfig?.enabled) {
     if (typeof window !== 'undefined') {
@@ -20,7 +14,7 @@ export default function AdminMirror() {
     return null
   }
 
-  if (!me) return null
+  if (!currentUser) return null
 
   return (
     <BaseLayout>

@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
-import { useSSRData } from '~/lib/ssr-data'
 
 interface SchemaData {
   id: number
@@ -14,9 +13,11 @@ interface SchemaData {
   usage?: { slug: string; semver: string; versionNumber: number; collection: string }[]
 }
 
+export const handle = { title: 'Schema — Underlay' }
+
 export default function SchemaDetailPage() {
   const params = useParams()
-  const schemaId = useSSRData<string>('schemaId') ?? params.id
+  const schemaId = params.id
   const [schema, setSchema] = useState<SchemaData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

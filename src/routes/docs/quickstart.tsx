@@ -88,6 +88,8 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 # Reference in a record
 # {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}`
 
+export const handle = { title: 'Quickstart — Underlay Docs' }
+
 export default function DocsQuickstart() {
   return (
     <DocsLayout title="Quickstart">

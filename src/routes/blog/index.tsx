@@ -38,6 +38,8 @@ function isoDate(d: string) {
   return new Date(d).toISOString().slice(0, 10)
 }
 
+export const handle = { title: 'Blog — Underlay' }
+
 export default function Blog() {
   return (
     <BaseLayout>

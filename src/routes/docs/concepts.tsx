@@ -13,6 +13,8 @@ const recordExample = `{
 
 const fileRef = '{"$file": "sha256:..."}'
 
+export const handle = { title: 'Core Concepts — Underlay Docs' }
+
 export default function DocsConcepts() {
   return (
     <DocsLayout title="Concepts">

@@ -24,6 +24,7 @@ import * as _schemas from '~/api/schemas'
 import * as _uploads from '~/api/uploads'
 import * as _versions from '~/api/versions'
 import { auth } from '~/lib/auth'
+import { getSessionUser } from '~/lib/auth.server'
 import { getMirrorConfig } from '~/lib/mirror-config'
 
 const isProd = process.env.NODE_ENV === 'production'
@@ -230,6 +231,18 @@ app.get('/api/blog/:slug', (c) => {
   return c.html(typeof html === 'string' ? html : '')
 })
 
+// --- App context (consumed by root route loader) ---
+app.get('/api/context', async (c) => {
+  const user = await getSessionUser(c.req.raw)
+  const config = getMirrorConfig()
+  return c.json({
+    currentUser: user,
+    mirrorConfig: config,
+    kfAccountUrl: process.env.OIDC_ACCOUNT_URL ?? 'http://localhost:3001',
+    kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+  })
+})
+
 // API 404 catch-all
 app.all('/api/*', (c) => {
   return c.json({ error: 'API route not found', statusCode: 404 }, 404)
@@ -256,17 +269,19 @@ if (isProd) {
   const { render } = await import(ssrBundle as string)
 
   app.get('*', async (c) => {
-    const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
+    const { html, hydrationData, redirect, statusCode, title, description } = await render(
+      c.req.raw,
+    )
 
     if (redirect) {
-      return c.redirect(redirect, 302)
+      return c.redirect(redirect, statusCode ?? 302)
     }
 
     let page = template
       .replace('<!--ssr-outlet-->', html)
       .replace(
         '<!--ssr-data-->',
-        `<script>window.__SSR_DATA__=${JSON.stringify(ssrData).replace(/</g, '\\u003c')}</script>`,
+        `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
       )
 
     if (title) {
@@ -305,17 +320,19 @@ if (isProd) {
     template = await vite!.transformIndexHtml(url, template)
 
     const { render } = await vite!.ssrLoadModule('/src/entry-server.tsx')
-    const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
+    const { html, hydrationData, redirect, statusCode, title, description } = await render(
+      c.req.raw,
+    )
 
     if (redirect) {
-      return c.redirect(redirect, 302)
+      return c.redirect(redirect, statusCode ?? 302)
     }
 
     let page = template
       .replace('<!--ssr-outlet-->', html)
       .replace(
         '<!--ssr-data-->',
-        `<script>window.__SSR_DATA__=${JSON.stringify(ssrData).replace(/</g, '\\u003c')}</script>`,
+        `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
       )
 
     if (title) {

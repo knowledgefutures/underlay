@@ -1,105 +1,104 @@
 import { PassThrough } from 'node:stream'
 
 import { renderToPipeableStream } from 'react-dom/server'
-import { StaticRouter } from 'react-router'
+import { createStaticHandler, createStaticRouter, StaticRouterProvider } from 'react-router'
 
-import App, { routes } from '~/App'
-import { SSRDataProvider } from '~/lib/ssr-data'
-import { runLoaders } from '~/loaders.server'
+import { routes } from '~/App'
 
-function matchPath(pattern: string, pathname: string): Record<string, string> | null {
-  const patternParts = pattern.split('/').filter(Boolean)
-  const pathParts = pathname.split('/').filter(Boolean)
-
-  if (patternParts.length !== pathParts.length) return null
-
-  const params: Record<string, string> = {}
-  for (let i = 0; i < patternParts.length; i++) {
-    const pat = patternParts[i]!
-    const val = pathParts[i]!
-    if (pat.startsWith(':')) {
-      params[pat.slice(1)] = val
-    } else if (pat !== val) {
-      return null
-    }
-  }
-  return params
-}
-
-function matchRoutes(url: string) {
-  const pathname = new URL(url, 'http://localhost').pathname
-  const matched: { path: string; params: Record<string, string> }[] = []
-
-  for (const route of routes) {
-    const params = matchPath(route.path, pathname)
-    if (params !== null) {
-      matched.push({ path: route.path, params })
-      break // first match wins
-    }
-  }
-  return matched
-}
+const handler = createStaticHandler(routes)
 
 export async function render(request: Request): Promise<{
   html: string
-  ssrData: Record<string, unknown>
+  hydrationData: string
   redirect?: string
   statusCode?: number
   title?: string
   description?: string
 }> {
-  const url = request.url
-  const pathname = new URL(url, 'http://localhost').pathname
-  const matchedRoutes = matchRoutes(url)
+  const context = await handler.query(request)
 
-  let ssrData: Record<string, unknown>
-  let redirect: string | undefined
-  let statusCode: number | undefined
+  if (context instanceof Response) {
+    const location = context.headers.get('Location')
+    return {
+      html: '',
+      hydrationData: '{}',
+      redirect: location ?? '/',
+      statusCode: context.status,
+    }
+  }
+
+  // Check for auth redirects via route handle metadata
+  for (const match of context.matches) {
+    const handle = match.route.handle as { requireAuth?: boolean } | undefined
+    if (handle?.requireAuth) {
+      const rootData = context.loaderData?.root as { currentUser: unknown } | undefined
+      if (!rootData?.currentUser) {
+        return {
+          html: '',
+          hydrationData: '{}',
+          redirect: '/login',
+          statusCode: 302,
+        }
+      }
+    }
+  }
+
+  // Extract title and description from the deepest matched route's handle
   let title: string | undefined
   let description: string | undefined
+  for (let i = context.matches.length - 1; i >= 0; i--) {
+    const match = context.matches[i]!
+    const handle = match.route.handle as
+      | {
+          title?: string | ((params: Record<string, string>, loaderData: unknown) => string)
+          description?: string | ((params: Record<string, string>, loaderData: unknown) => string)
+        }
+      | undefined
 
-  try {
-    const result = await runLoaders(matchedRoutes, request)
-    ssrData = result.data
-    redirect = result.redirect
-    statusCode = result.statusCode
-    title = result.title
-    description = result.description
-  } catch (err) {
-    console.error('Loader error:', err)
-    ssrData = {}
-    statusCode = 500
+    if (handle?.title && !title) {
+      title =
+        typeof handle.title === 'function'
+          ? handle.title(match.params as Record<string, string>, context.loaderData)
+          : handle.title
+    }
+    if (handle?.description && !description) {
+      description =
+        typeof handle.description === 'function'
+          ? handle.description(match.params as Record<string, string>, context.loaderData)
+          : handle.description
+    }
+    if (title && description) break
   }
 
-  if (redirect) {
-    return { html: '', ssrData: {}, redirect, statusCode: statusCode ?? 302 }
-  }
+  const router = createStaticRouter(handler.dataRoutes, context)
 
   return new Promise((resolve, reject) => {
     let html = ''
     const passthrough = new PassThrough()
-    passthrough.on('data', (chunk) => {
+    passthrough.on('data', (chunk: Buffer) => {
       html += chunk.toString()
     })
 
     const { pipe } = renderToPipeableStream(
-      <StaticRouter location={pathname}>
-        <SSRDataProvider data={ssrData}>
-          <App />
-        </SSRDataProvider>
-      </StaticRouter>,
+      <StaticRouterProvider router={router} context={context} />,
       {
         onAllReady() {
           pipe(passthrough)
-          passthrough.on('end', () =>
+          passthrough.on('end', () => {
+            const hydrationData = JSON.stringify({
+              loaderData: context.loaderData,
+              actionData: context.actionData ?? null,
+              errors: context.errors ?? null,
+            }).replace(/</g, '\\u003c')
+
             resolve({
               html,
-              ssrData,
-              ...(statusCode !== undefined && { statusCode }),
+              hydrationData,
+              statusCode: context.statusCode,
               ...(title !== undefined && { title }),
               ...(description !== undefined && { description }),
-            }),
-          )
+            })
+          })
         },
         onError: reject,
       },

@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 function CollectionNav({
   owner,
@@ -83,10 +83,13 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+export const handle = {
+  title: (params: Record<string, string>) => params.owner + '/' + params.collection + ' — Underlay',
+}
+
 export default function CollectionPage() {
   const { owner, collection } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
-  const mirrorConfig = useSSRData<any>('mirrorConfig')
+  const { currentUser, mirrorConfig } = useAppContext()
 
   const [data, setData] = useState<any>(null)
   const [totalVersions, setTotalVersions] = useState(0)

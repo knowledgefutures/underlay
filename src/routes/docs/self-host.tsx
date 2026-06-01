@@ -19,6 +19,8 @@ npm run tool:backup
 # Backups are stored at:
 # s3://{bucket}/{BACKUP_S3_PREFIX}{timestamp}/underlay.sql.gz`
 
+export const handle = { title: 'Self-hosting — Underlay Docs' }
+
 export default function DocsSelfHost() {
   return (
     <DocsLayout title="Self-Hosting">

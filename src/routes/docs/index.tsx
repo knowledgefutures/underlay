@@ -2,6 +2,8 @@ import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
 
+export const handle = { title: 'Documentation — Underlay' }
+
 export default function Docs() {
   return (
     <DocsLayout title="Documentation">

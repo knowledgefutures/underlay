@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 interface Session {
   id: string
@@ -23,19 +23,21 @@ function parseUserAgent(ua: string | null): string {
   return 'Unknown browser'
 }
 
+export const handle = { title: 'Sessions — Underlay', requireAuth: true }
+
 export default function SettingsSessions() {
-  const me = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [sessions, setSessions] = useState<Session[]>([])
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!me) return
+    if (!currentUser) return
     fetch('/api/accounts/me/sessions', { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : []))
       .then(setSessions)
-  }, [me])
+  }, [currentUser])
 
   async function handleRevoke(sessionId: string) {
     setSuccess('')
@@ -52,7 +54,7 @@ export default function SettingsSessions() {
     }
   }
 
-  if (!me) return null
+  if (!currentUser) return <Navigate to="/login" replace />
 
   return (
     <BaseLayout>

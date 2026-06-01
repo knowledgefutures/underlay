@@ -69,6 +69,8 @@ const listRes = `[
   }
 ]`
 
+export const handle = { title: 'Collections API — Underlay Docs' }
+
 export default function DocsApiCollections() {
   return (
     <DocsLayout title="Collections API">

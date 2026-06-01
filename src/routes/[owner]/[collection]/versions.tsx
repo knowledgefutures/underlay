@@ -3,13 +3,18 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav, formatBytes } from '.'
 
+export const handle = {
+  title: (params: Record<string, string>) =>
+    'Versions — ' + params.owner + '/' + params.collection + ' — Underlay',
+}
+
 export default function CollectionVersionsPage() {
   const { owner, collection } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [data, setData] = useState<any>(null)
   const [versions, setVersions] = useState<any[]>([])

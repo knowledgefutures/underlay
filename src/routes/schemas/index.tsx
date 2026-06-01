@@ -1,6 +1,8 @@
 import BaseLayout from '~/components/BaseLayout'
 import SchemaBrowser from '~/components/SchemaBrowser'
 
+export const handle = { title: 'Schemas — Underlay' }
+
 export default function SchemasPage() {
   return (
     <BaseLayout>

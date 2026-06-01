@@ -35,6 +35,8 @@ const fileRefExample = `{
   }
 }`
 
+export const handle = { title: 'Files API — Underlay Docs' }
+
 export default function DocsApiFiles() {
   return (
     <DocsLayout title="Files API">

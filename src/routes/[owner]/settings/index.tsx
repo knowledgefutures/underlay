@@ -1,13 +1,18 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
+
+export const handle = {
+  title: (params: Record<string, string>) => 'Settings — ' + params.owner + ' — Underlay',
+  requireAuth: true,
+}
 
 export default function OwnerSettings() {
   const { owner } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [orgData, setOrgData] = useState<any>(null)
   const [isOwner, setIsOwner] = useState(false)
@@ -78,10 +83,7 @@ export default function OwnerSettings() {
       .catch(() => setKfOrgsLoading(false))
   }, [owner, currentUser])
 
-  if (!currentUser) {
-    window.location.href = '/login'
-    return null
-  }
+  if (!currentUser) return <Navigate to="/login" replace />
 
   function clearMessages() {
     setSuccess('')

@@ -2,6 +2,8 @@ import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
 
+export const handle = { title: 'API Reference — Underlay Docs' }
+
 export default function DocsApi() {
   return (
     <DocsLayout title="API Overview">

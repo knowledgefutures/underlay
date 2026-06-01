@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router'
 
 import BlogLayout from '~/components/BlogLayout'
-import { useSSRData } from '~/lib/ssr-data'
 
 // Blog post metadata
 const posts: Record<string, { title: string; subtitle: string; date: string }> = {
@@ -27,6 +26,8 @@ const posts: Record<string, { title: string; subtitle: string; date: string }> =
     date: '2026-04-30',
   },
 }
+
+export const handle = { title: 'Blog — Underlay' }
 
 export default function BlogPost() {
   const { slug } = useParams()

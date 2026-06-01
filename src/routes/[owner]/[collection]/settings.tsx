@@ -1,15 +1,21 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, Navigate, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
 
+export const handle = {
+  title: (params: Record<string, string>) =>
+    'Settings — ' + params.owner + '/' + params.collection + ' — Underlay',
+  requireAuth: true,
+}
+
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [data, setData] = useState<any>(null)
   const [arkSettings, setArkSettings] = useState<any>({
@@ -73,10 +79,7 @@ export default function CollectionSettingsPage() {
     })
   }, [owner, collection, currentUser])
 
-  if (!currentUser) {
-    window.location.href = '/login'
-    return null
-  }
+  if (!currentUser) return <Navigate to="/login" replace />
 
   function clearMessages() {
     setSuccess('')

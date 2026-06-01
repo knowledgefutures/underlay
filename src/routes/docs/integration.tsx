@@ -72,6 +72,8 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
     }
   }'`
 
+export const handle = { title: 'Integration — Underlay Docs' }
+
 export default function DocsIntegration() {
   return (
     <DocsLayout title="Integration Guide">

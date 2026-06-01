@@ -1,17 +1,10 @@
 import { Link } from 'react-router'
 
 import UserMenu from '~/components/UserMenu'
-import { useSSRData } from '~/lib/ssr-data'
-
-interface MirrorConfig {
-  enabled: boolean
-  nodeName: string
-  upstream: string
-}
+import { useAppContext } from '~/lib/app-context'
 
 export default function BaseLayout({ children }: { children: React.ReactNode }) {
-  const currentUser = useSSRData<any>('currentUser')
-  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig')
+  const { currentUser, mirrorConfig } = useAppContext()
 
   return (
     <>

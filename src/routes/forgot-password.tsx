@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
 
+export const handle = { title: 'Forgot password — Underlay' }
+
 export default function ForgotPasswordPage() {
   useEffect(() => {
     // Password management now happens via KF Auth

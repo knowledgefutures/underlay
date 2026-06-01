@@ -1,6 +1,8 @@
 import BaseLayout from '~/components/BaseLayout'
 import CollectionExplorer from '~/components/CollectionExplorer'
 
+export const handle = { title: 'Explore — Underlay' }
+
 export default function ExplorePage() {
   return (
     <BaseLayout>

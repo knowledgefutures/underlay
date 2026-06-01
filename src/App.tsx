@@ -1,27 +1,35 @@
-import { lazy, Suspense } from 'react'
-import { Route, Routes } from 'react-router'
+import type { RouteObject } from 'react-router'
 
-import { AppErrorBoundary } from '~/components/NotFound'
-import { buildRoutes } from '~/route-gen'
+import Root from '~/components/Root'
+import type { AppContext } from '~/lib/app-context'
+import { buildDataRoutes } from '~/route-gen'
 
-const modules = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
-const routes = buildRoutes(modules)
+const modules = import.meta.glob<{ default: React.ComponentType; handle?: unknown }>(
+  './routes/**/[!_]*.tsx',
+)
 
-const componentMap = new Map(routes.map((r) => [r.path, lazy(modules[r.filePath]!)]))
-
-export { routes }
-
-export default function App() {
-  return (
-    <AppErrorBoundary>
-      <Suspense>
-        <Routes>
-          {routes.map((r) => {
-            const Page = componentMap.get(r.path)
-            return Page ? <Route key={r.path} path={r.path} element={<Page />} /> : null
-          })}
-        </Routes>
-      </Suspense>
-    </AppErrorBoundary>
-  )
+async function rootLoader({ request }: { request: Request }): Promise<AppContext> {
+  const res = await fetch(new URL('/api/context', request.url), {
+    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+  })
+  if (!res.ok) {
+    return {
+      currentUser: null,
+      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '', apiKey: '' },
+      kfAccountUrl: '',
+      kfAuthUrl: '',
+    }
+  }
+  return res.json()
 }
+
+const NotFound = () => import('~/routes/404').then((m) => ({ Component: m.default }))
+
+export const routes: RouteObject[] = [
+  {
+    id: 'root',
+    Component: Root,
+    loader: rootLoader,
+    children: [...buildDataRoutes(modules), { path: '*', lazy: NotFound }],
+  },
+]

@@ -82,6 +82,8 @@ const diffRes = `{
   "removed": ["pub-old"]
 }`
 
+export const handle = { title: 'Versions API — Underlay Docs' }
+
 export default function DocsApiVersions() {
   return (
     <DocsLayout title="Versions API">

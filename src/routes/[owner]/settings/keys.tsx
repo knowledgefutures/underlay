@@ -1,11 +1,11 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, Navigate, useParams } from 'react-router'
 
 import { ApiPlayground } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { useSSRData } from '~/lib/ssr-data'
 
 interface Key {
   id: string
@@ -35,9 +35,14 @@ function getScope(permissions?: Record<string, string[]>): string {
   return 'read'
 }
 
+export const handle = {
+  title: (params: Record<string, string>) => 'API Keys — ' + params.owner + ' — Underlay',
+  requireAuth: true,
+}
+
 export default function OwnerSettingsKeys() {
   const { owner } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [orgData, setOrgData] = useState<any>(null)
   const [isAdmin, setIsAdmin] = useState(false)
@@ -89,10 +94,7 @@ export default function OwnerSettingsKeys() {
     })
   }, [owner, currentUser])
 
-  if (!currentUser) {
-    window.location.href = '/login'
-    return null
-  }
+  if (!currentUser) return <Navigate to="/login" replace />
 
   async function handleCreateKey(e: FormEvent) {
     e.preventDefault()

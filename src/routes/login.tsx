@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 
+export const handle = { title: 'Log in — Underlay' }
+
 export default function LoginPage() {
   const [params] = useSearchParams()
   const error = params.get('error')
