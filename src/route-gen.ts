@@ -79,3 +79,32 @@ export function buildRoutes(globResult: Record<string, () => Promise<unknown>>):
 
   return sortRoutes(entries)
 }
+
+export function matchRoutes(
+  routes: RouteEntry[],
+  url: string,
+): { path: string; params: Record<string, string> }[] {
+  const pathname = new URL(url, 'http://localhost').pathname
+
+  for (const route of routes) {
+    const patternParts = route.path.split('/').filter(Boolean)
+    const pathParts = pathname.split('/').filter(Boolean)
+
+    if (patternParts.length !== pathParts.length) continue
+
+    const params: Record<string, string> = {}
+    let matched = true
+    for (let i = 0; i < patternParts.length; i++) {
+      const pat = patternParts[i]!
+      const val = pathParts[i]!
+      if (pat.startsWith(':')) {
+        params[pat.slice(1)] = val
+      } else if (pat !== val) {
+        matched = false
+        break
+      }
+    }
+    if (matched) return [{ path: route.path, params }]
+  }
+  return []
+}

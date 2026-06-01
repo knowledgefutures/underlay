@@ -253,7 +253,17 @@ if (isProd) {
   await runMigrations()
 
   const template = readFileSync(clientHtml, 'utf-8')
-  const { render } = await import(ssrBundle as string)
+  const { render, loadData } = await import(ssrBundle as string)
+
+  app.get('/__data', async (c) => {
+    const path = new URL(c.req.url).searchParams.get('path')
+    if (!path) return c.json({ error: 'Missing path param' }, 400)
+    const fakeUrl = new URL(path, c.req.url)
+    const req = new Request(fakeUrl, { headers: c.req.raw.headers })
+    const result = await loadData(req)
+    if (result.redirect) return c.json({ redirect: result.redirect }, 200)
+    return c.json(result)
+  })
 
   app.get('*', async (c) => {
     const { html, ssrData, redirect, statusCode, title, description } = await render(c.req.raw)
@@ -297,6 +307,17 @@ if (isProd) {
     return new Promise<Response | void>((resolve) => {
       vite!.middlewares(nodeReq, nodeRes, () => resolve(next()))
     })
+  })
+
+  app.get('/__data', async (c) => {
+    const path = new URL(c.req.url).searchParams.get('path')
+    if (!path) return c.json({ error: 'Missing path param' }, 400)
+    const { loadData } = await vite!.ssrLoadModule('/src/entry-server.tsx')
+    const fakeUrl = new URL(path, c.req.url)
+    const req = new Request(fakeUrl, { headers: c.req.raw.headers })
+    const result = await loadData(req)
+    if (result.redirect) return c.json({ redirect: result.redirect }, 200)
+    return c.json(result)
   })
 
   app.get('*', async (c) => {
