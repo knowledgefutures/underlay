@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useSSRData, useSSRNavigating } from '~/lib/ssr-data'
 
 function CollectionNav({
   owner,
@@ -87,54 +87,59 @@ export default function CollectionPage() {
   const { owner, collection } = useParams()
   const currentUser = useSSRData<any>('currentUser')
   const mirrorConfig = useSSRData<any>('mirrorConfig')
-
-  const [data, setData] = useState<any>(null)
-  const [totalVersions, setTotalVersions] = useState(0)
-  const [isOwner, setIsOwner] = useState(false)
+  const data = useSSRData<any>('collection')
+  const navigating = useSSRNavigating()
   const [readmeHtml, setReadmeHtml] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+
+  const isOwner = useMemo(
+    () =>
+      !!currentUser &&
+      (currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner)),
+    [currentUser, owner],
+  )
 
   useEffect(() => {
-    if (!owner || !collection) return
-
-    fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((col) => {
-        if (!col) {
-          setLoading(false)
-          return
-        }
-        setData(col)
-        setTotalVersions(col.latestVersion?.number ?? 0)
-
-        // Render readme
-        const readmeSource = col.latestVersion?.readme || col.latestVersion?.message || null
-        if (readmeSource) {
-          import('marked').then(({ marked }) => {
-            setReadmeHtml(marked.parse(readmeSource) as string)
-          })
-        }
-
-        // Check ownership
-        if (currentUser) {
-          setIsOwner(
-            currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner),
-          )
-        }
-
-        setLoading(false)
+    const readmeSource = data?.latestVersion?.readme || data?.latestVersion?.message || null
+    if (readmeSource) {
+      import('marked').then(({ marked }) => {
+        setReadmeHtml(marked.parse(readmeSource) as string)
       })
-  }, [owner, collection, currentUser])
+    } else {
+      setReadmeHtml(null)
+    }
+  }, [data])
 
-  if (loading) {
+  // Client navigation: data hasn't arrived yet — show skeleton
+  if (navigating && !data) {
     return (
       <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
+        <div className="mx-auto max-w-5xl px-4 py-8">
+          <div className="mb-2 flex items-center gap-1.5 text-lg">
+            <span className="text-link">{owner}</span>
+            <span className="text-ink-muted">/</span>
+            <span className="font-semibold">{collection}</span>
+          </div>
+          <div className="border-rule mb-6 border-b pb-2" />
+          <div className="grid grid-cols-[1fr_260px] gap-8">
+            <div className="space-y-4">
+              <div className="border-rule bg-parchment-dark h-14 animate-pulse rounded border" />
+              <div className="border-rule bg-parchment-dark h-48 animate-pulse rounded border" />
+              <div className="border-rule bg-parchment-dark h-32 animate-pulse rounded border" />
+            </div>
+            <div className="space-y-4">
+              <div className="border-rule bg-parchment-dark h-24 animate-pulse rounded border" />
+              <div className="border-rule bg-parchment-dark h-32 animate-pulse rounded border" />
+            </div>
+          </div>
+        </div>
       </BaseLayout>
     )
   }
+
+  // SSR or data arrived: no collection found
   if (!data) throw new NotFoundError()
 
+  const totalVersions = data.latestVersion?.number ?? 0
   const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
   const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type))
   const collectionArkPath: string | null = data.ark ? new URL(data.ark).pathname : null

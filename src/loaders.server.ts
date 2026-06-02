@@ -1,4 +1,5 @@
 import { getSessionUser } from '~/lib/auth.server'
+import { getCollectionPageData } from '~/lib/collections.server'
 import { getMirrorConfig } from '~/lib/mirror-config'
 
 type LoaderContext = {
@@ -18,17 +19,28 @@ type LoaderFn = (ctx: LoaderContext) => LoaderResult | Promise<LoaderResult>
 
 const mirrorConfig = getMirrorConfig()
 
-// Shared helper: require auth or redirect to login
 async function requireUser(request: Request): Promise<{ user: any; redirect?: string }> {
   const user = await getSessionUser(request)
-  if (!user) {
-    return { user: null, redirect: '/login' }
-  }
+  if (!user) return { user: null, redirect: '/login' }
   return { user }
 }
 
+function page(title: string, extra?: Record<string, unknown>): LoaderFn {
+  return async ({ request }) => {
+    const user = await getSessionUser(request)
+    return { data: { currentUser: user, mirrorConfig, ...extra }, title }
+  }
+}
+
+function authPage(title: string, extra?: Record<string, unknown>): LoaderFn {
+  return async ({ request }) => {
+    const { user, redirect } = await requireUser(request)
+    if (redirect) return { data: {}, redirect }
+    return { data: { currentUser: user, mirrorConfig, ...extra }, title }
+  }
+}
+
 const loaders: Record<string, LoaderFn> = {
-  // --- Public pages ---
   '/': async ({ request }) => {
     const user = await getSessionUser(request)
     return {
@@ -39,245 +51,61 @@ const loaders: Record<string, LoaderFn> = {
     }
   },
 
-  '/explore': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Explore — Underlay',
-    }
-  },
+  '/explore': page('Explore — Underlay'),
+  '/query': page('Query Explorer — Underlay'),
+  '/schemas': page('Schemas — Underlay'),
+  '/schemas/:id': page('Schema — Underlay'),
+  '/blog': page('Blog — Underlay'),
+  '/blog/:slug': page('Blog — Underlay'),
+  '/docs': page('Documentation — Underlay'),
+  '/docs/concepts': page('Core Concepts — Underlay Docs'),
+  '/docs/quickstart': page('Quickstart — Underlay Docs'),
+  '/docs/integration': page('Integration — Underlay Docs'),
+  '/docs/self-host': page('Self-hosting — Underlay Docs'),
+  '/docs/api': page('API Reference — Underlay Docs'),
+  '/docs/api/accounts': page('Accounts API — Underlay Docs'),
+  '/docs/api/collections': page('Collections API — Underlay Docs'),
+  '/docs/api/versions': page('Versions API — Underlay Docs'),
+  '/docs/api/files': page('Files API — Underlay Docs'),
+  '/admin/mirror': page('Mirror Admin — Underlay'),
 
-  '/query': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Query Explorer — Underlay',
-    }
-  },
-
-  '/schemas': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Schemas — Underlay',
-    }
-  },
-
-  '/schemas/:id': async ({ params, request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig, schemaId: params['id'] },
-      title: 'Schema — Underlay',
-    }
-  },
-
-  // --- Auth pages ---
   '/login': async ({ request }) => {
     const user = await getSessionUser(request)
     if (user) return { data: {}, redirect: '/dashboard' }
-    return {
-      data: { currentUser: null, mirrorConfig },
-      title: 'Log in — Underlay',
-    }
+    return { data: { currentUser: null, mirrorConfig }, title: 'Log in — Underlay' }
   },
 
   '/signup': async ({ request }) => {
     const user = await getSessionUser(request)
     if (user) return { data: {}, redirect: '/dashboard' }
-    return {
-      data: { currentUser: null, mirrorConfig },
-      title: 'Sign up — Underlay',
-    }
+    return { data: { currentUser: null, mirrorConfig }, title: 'Sign up — Underlay' }
   },
 
-  '/logout': async () => {
-    return {
-      data: {
-        kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
-      },
-    }
-  },
+  '/logout': async () => ({
+    data: { kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000' },
+  }),
 
-  '/forgot-password': async () => {
-    return {
-      data: { currentUser: null, mirrorConfig },
-      title: 'Forgot password — Underlay',
-    }
-  },
+  '/forgot-password': async () => ({
+    data: { currentUser: null, mirrorConfig },
+    title: 'Forgot password — Underlay',
+  }),
 
-  '/reset-password': async () => {
-    return {
-      data: { currentUser: null, mirrorConfig },
-      title: 'Reset password — Underlay',
-    }
-  },
+  '/reset-password': async () => ({
+    data: { currentUser: null, mirrorConfig },
+    title: 'Reset password — Underlay',
+  }),
 
-  // --- Dashboard/Settings ---
-  '/dashboard': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Dashboard — Underlay',
-    }
-  },
+  '/dashboard': authPage('Dashboard — Underlay'),
+  '/settings': authPage('Settings — Underlay'),
+  '/settings/keys': authPage('API Keys — Underlay'),
+  '/settings/sessions': authPage('Sessions — Underlay'),
+  '/settings/avatar': authPage('Avatar — Underlay'),
+  '/invitations/accept': authPage('Accept Invitation — Underlay'),
 
-  '/settings': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Settings — Underlay',
-    }
-  },
-
-  '/settings/keys': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'API Keys — Underlay',
-    }
-  },
-
-  '/settings/sessions': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Sessions — Underlay',
-    }
-  },
-
-  '/settings/avatar': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Avatar — Underlay',
-    }
-  },
-
-  '/invitations/accept': async ({ request }) => {
-    const { user, redirect } = await requireUser(request)
-    if (redirect) return { data: {}, redirect }
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Accept Invitation — Underlay',
-    }
-  },
-
-  '/admin/mirror': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Mirror Admin — Underlay',
-    }
-  },
-
-  // --- Blog ---
-  '/blog': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Blog — Underlay',
-    }
-  },
-
-  '/blog/:slug': async ({ params, request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig, slug: params['slug'] },
-      title: 'Blog — Underlay',
-    }
-  },
-
-  // --- Docs ---
-  '/docs': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Documentation — Underlay',
-    }
-  },
-
-  '/docs/concepts': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Core Concepts — Underlay Docs',
-    }
-  },
-
-  '/docs/quickstart': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Quickstart — Underlay Docs',
-    }
-  },
-
-  '/docs/integration': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Integration — Underlay Docs',
-    }
-  },
-
-  '/docs/self-host': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Self-hosting — Underlay Docs',
-    }
-  },
-
-  '/docs/api': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'API Reference — Underlay Docs',
-    }
-  },
-
-  '/docs/api/accounts': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Accounts API — Underlay Docs',
-    }
-  },
-
-  '/docs/api/collections': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Collections API — Underlay Docs',
-    }
-  },
-
-  '/docs/api/versions': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Versions API — Underlay Docs',
-    }
-  },
-
-  '/docs/api/files': async ({ request }) => {
-    const user = await getSessionUser(request)
-    return {
-      data: { currentUser: user, mirrorConfig },
-      title: 'Files API — Underlay Docs',
-    }
-  },
-
-  // --- Dynamic owner/collection ---
   '/:owner': async ({ params, request }) => {
     const user = await getSessionUser(request)
     return {
-      data: { currentUser: user, mirrorConfig, owner: params['owner'] },
+      data: { currentUser: user, mirrorConfig },
       title: `${params['owner']} — Underlay`,
     }
   },
@@ -286,7 +114,7 @@ const loaders: Record<string, LoaderFn> = {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
-      data: { currentUser: user, mirrorConfig, owner: params['owner'] },
+      data: { currentUser: user, mirrorConfig },
       title: `Settings — ${params['owner']} — Underlay`,
     }
   },
@@ -295,7 +123,7 @@ const loaders: Record<string, LoaderFn> = {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
-      data: { currentUser: user, mirrorConfig, owner: params['owner'] },
+      data: { currentUser: user, mirrorConfig },
       title: `API Keys — ${params['owner']} — Underlay`,
     }
   },
@@ -304,21 +132,26 @@ const loaders: Record<string, LoaderFn> = {
     const { user, redirect } = await requireUser(request)
     if (redirect) return { data: {}, redirect }
     return {
-      data: { currentUser: user, mirrorConfig, owner: params['owner'] },
+      data: { currentUser: user, mirrorConfig },
       title: `Members — ${params['owner']} — Underlay`,
     }
   },
 
   '/:owner/:collection': async ({ params, request }) => {
     const user = await getSessionUser(request)
+    const collection = await getCollectionPageData(
+      params['owner']!,
+      params['collection']!,
+      user?.id,
+    )
     return {
       data: {
         currentUser: user,
         mirrorConfig,
-        owner: params['owner'],
-        collection: params['collection'],
+        collection,
       },
       title: `${params['owner']}/${params['collection']} — Underlay`,
+      ...(collection ? {} : { statusCode: 404 }),
     }
   },
 
