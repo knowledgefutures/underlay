@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { getMirrorConfig } from './mirror-config.js'
@@ -256,7 +256,7 @@ interface UpstreamManifest {
   semver: string
   hash: string
   schemas: Record<string, string>
-  records: { id: string; type: string }[]
+  records: { id: string; type: string; hash: string }[]
   files: string[]
 }
 
@@ -497,23 +497,75 @@ async function pullVersion(
     `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/manifest`,
   )
 
-  // Pull all records (paginated)
-  const allRecords: { id: string; type: string; data: unknown }[] = []
-  let cursor: string | null = null
-  let hasMore = true
+  // Determine which records we already have locally
+  const manifestHashes = manifest.records.map((r) => r.hash)
+  let neededHashes: string[] = manifestHashes
+  if (manifestHashes.length > 0) {
+    const CHUNK = 500
+    const existingSet = new Set<string>()
+    for (let i = 0; i < manifestHashes.length; i += CHUNK) {
+      const chunk = manifestHashes.slice(i, i + CHUNK)
+      const rows = await db
+        .select({ hash: schema.recordObjects.hash })
+        .from(schema.recordObjects)
+        .where(inArray(schema.recordObjects.hash, chunk))
+      for (const r of rows) existingSet.add(r.hash)
+    }
+    neededHashes = manifestHashes.filter((h) => !existingSet.has(h))
+  }
 
-  while (hasMore) {
-    const recordsPath: string = cursor
-      ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
-      : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+  // Fetch only missing records via batch endpoint (or fall back to paginated records API)
+  const fetchedRecords: { id: string; type: string; data: unknown }[] = []
+  if (neededHashes.length > 0) {
+    try {
+      const config = getMirrorConfig()
+      const batchUrl = `${upstream.replace(/\/$/, '')}/api/records/batch`
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`
 
-    const page: UpstreamRecordsResponse = await fetchUpstream<UpstreamRecordsResponse>(
-      upstream,
-      recordsPath,
+      const res = await fetch(batchUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ hashes: neededHashes }),
+      })
+
+      if (res.ok) {
+        const text = await res.text()
+        for (const line of text.split('\n').filter((l) => l.trim())) {
+          fetchedRecords.push(JSON.parse(line))
+        }
+      } else {
+        // Batch endpoint not available — fall back to paginated records API
+        let cursor: string | null = null
+        let hasMore = true
+        while (hasMore) {
+          const recordsPath: string = cursor
+            ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
+            : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+          const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
+          fetchedRecords.push(...page.records)
+          hasMore = page.pagination.hasMore
+          cursor = page.pagination.nextCursor
+        }
+      }
+    } catch {
+      // Fall back to paginated records API
+      let cursor: string | null = null
+      let hasMore = true
+      while (hasMore) {
+        const recordsPath: string = cursor
+          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
+          : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+        const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
+        fetchedRecords.push(...page.records)
+        hasMore = page.pagination.hasMore
+        cursor = page.pagination.nextCursor
+      }
+    }
+    emit(
+      'version',
+      `${uc.ownerSlug}/${uc.slug} v${uv.number}: fetched ${fetchedRecords.length} records (${manifestHashes.length - neededHashes.length} already local)`,
     )
-    allRecords.push(...page.records)
-    hasMore = page.pagination.hasMore
-    cursor = page.pagination.nextCursor
   }
 
   // Pull files
@@ -605,7 +657,7 @@ async function pullVersion(
       message: uv.message,
       appId: uv.appId,
       actorId: uv.actorId,
-      recordCount: allRecords.length,
+      recordCount: manifest.records.length,
       fileCount: manifest.files.length,
       totalBytes: uv.totalBytes,
     })
@@ -621,15 +673,13 @@ async function pullVersion(
     }
   }
 
-  // Hash and upsert record objects, then link to version
-  const recordHashes: { versionId: number; recordHash: string }[] = []
+  // Upsert only the newly-fetched record objects (the rest already exist locally)
   const BATCH_SIZE = 500
-  for (let i = 0; i < allRecords.length; i += BATCH_SIZE) {
-    const batch = allRecords.slice(i, i + BATCH_SIZE)
+  for (let i = 0; i < fetchedRecords.length; i += BATCH_SIZE) {
+    const batch = fetchedRecords.slice(i, i + BATCH_SIZE)
     const objectRows = batch.map((r) => {
       const canonical = JSON.stringify({ id: r.id, type: r.type, data: r.data })
       const hash = createHash('sha256').update(canonical).digest('hex')
-      recordHashes.push({ versionId, recordHash: hash })
       return {
         hash,
         recordId: r.id,
@@ -642,10 +692,12 @@ async function pullVersion(
     await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
   }
 
-  // Insert version_records manifest in batches
-  for (let i = 0; i < recordHashes.length; i += BATCH_SIZE) {
-    const batch = recordHashes.slice(i, i + BATCH_SIZE)
-    await db.insert(schema.versionRecords).values(batch)
+  // Insert version_records manifest using hashes from the manifest (all records, not just fetched)
+  for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
+    const batch = manifestHashes.slice(i, i + BATCH_SIZE)
+    await db
+      .insert(schema.versionRecords)
+      .values(batch.map((hash) => ({ versionId, recordHash: hash })))
   }
 
   // Link files to version

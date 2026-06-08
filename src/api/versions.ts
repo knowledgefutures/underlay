@@ -454,11 +454,12 @@ export async function files(c: Context<AuthEnv>) {
   )
 }
 
-// Get manifest for a version
+// Get manifest for a version (optionally as delta from a previous version via ?since=N)
 export async function manifest(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const n = c.req.param('n')!
+  const sinceParam = c.req.query('since')
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
@@ -494,6 +495,64 @@ export async function manifest(c: Context<AuthEnv>) {
     .where(eq(schema.versionFiles.versionId, version.id))
 
   const schemaEntries = await loadVersionSchemas(version.id)
+
+  // If ?since=N is provided, return a delta instead of the full manifest
+  if (sinceParam) {
+    const sinceNum = parseInt(sinceParam, 10)
+    if (isNaN(sinceNum)) return c.json({ error: 'Invalid since parameter' }, 400)
+
+    const [sinceVersion] = await db
+      .select({ id: schema.versions.id })
+      .from(schema.versions)
+      .where(
+        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, sinceNum)),
+      )
+      .limit(1)
+
+    if (!sinceVersion) return c.json({ error: `Version ${sinceNum} not found` }, 404)
+
+    const sinceRecords = await db
+      .select({
+        id: schema.recordObjects.recordId,
+        type: schema.recordObjects.type,
+        hash: schema.recordObjects.hash,
+      })
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
+      .where(eq(schema.versionRecords.versionId, sinceVersion.id))
+
+    const sinceMap = new Map(sinceRecords.map((r) => [r.id, r]))
+    const targetMap = new Map(recordRows.map((r) => [r.id, r]))
+
+    const added: typeof recordRows = []
+    const updated: { id: string; type: string; hash: string; previousHash: string }[] = []
+    const removed: typeof recordRows = []
+
+    for (const [id, rec] of targetMap) {
+      const prev = sinceMap.get(id)
+      if (!prev) {
+        added.push(rec)
+      } else if (prev.hash !== rec.hash) {
+        updated.push({ ...rec, previousHash: prev.hash })
+      }
+    }
+    for (const [id, rec] of sinceMap) {
+      if (!targetMap.has(id)) removed.push(rec)
+    }
+
+    return c.json({
+      version: version.number,
+      semver: version.semver,
+      hash: version.hash,
+      since: sinceNum,
+      schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
+      delta: { added, updated, removed },
+      files: fileHashes.map((f) => f.hash),
+    })
+  }
 
   return c.json({
     version: version.number,

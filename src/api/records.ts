@@ -1,5 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
+import { streamText } from 'hono/streaming'
 
 import { db, schema } from '../db/client.server.js'
 import { type AuthEnv } from './auth.server.js'
@@ -54,5 +55,48 @@ export async function provenance(c: Context<AuthEnv>) {
       semver: r.versionSemver,
       versionCreatedAt: r.versionCreatedAt,
     })),
+  })
+}
+
+// POST /api/records/batch — Fetch record objects by hash, returns JSONL
+export async function batch(c: Context<AuthEnv>) {
+  const body = (await c.req.json()) as { hashes: string[] }
+
+  if (!body.hashes?.length) {
+    return c.json({ error: 'hashes array is required' }, 400)
+  }
+
+  if (body.hashes.length > 10000) {
+    return c.json({ error: 'Maximum 10,000 hashes per request' }, 400)
+  }
+
+  const CHUNK = 500
+  c.header('Content-Type', 'application/x-ndjson')
+  return streamText(c, async (stream) => {
+    for (let i = 0; i < body.hashes.length; i += CHUNK) {
+      const chunk = body.hashes.slice(i, i + CHUNK)
+      const rows = await db
+        .select({
+          hash: schema.recordObjects.hash,
+          recordId: schema.recordObjects.recordId,
+          type: schema.recordObjects.type,
+          data: schema.recordObjects.data,
+          private: schema.recordObjects.private,
+        })
+        .from(schema.recordObjects)
+        .where(inArray(schema.recordObjects.hash, chunk))
+
+      for (const row of rows) {
+        await stream.write(
+          JSON.stringify({
+            id: row.recordId,
+            type: row.type,
+            data: row.data,
+            private: row.private,
+            hash: row.hash,
+          }) + '\n',
+        )
+      }
+    }
   })
 }

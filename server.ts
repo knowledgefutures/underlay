@@ -19,6 +19,7 @@ import * as _collections from '~/api/collections'
 import * as _files from '~/api/files'
 import * as _health from '~/api/health'
 import * as _kfSummary from '~/api/kf-summary'
+import * as _negotiate from '~/api/negotiate'
 import * as _query from '~/api/query'
 import * as _records from '~/api/records'
 import * as _schemas from '~/api/schemas'
@@ -52,6 +53,7 @@ const ark = hot(_ark, '/src/api/ark.ts')
 const collections = hot(_collections, '/src/api/collections.ts')
 const files = hot(_files, '/src/api/files.ts')
 const health = hot(_health, '/src/api/health.ts')
+const negotiate = hot(_negotiate, '/src/api/negotiate.ts')
 const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
 const query = hot(_query, '/src/api/query.ts')
 const records = hot(_records, '/src/api/records.ts')
@@ -136,6 +138,7 @@ app.get('/api/query/collections/:owner/:slug/versions', query.collectionVersions
 
 // Records
 app.get('/api/records/:hash/provenance', records.provenance)
+app.post('/api/records/batch', records.batch)
 
 // Schemas
 app.get('/api/schemas', schemas.listSchemas)
@@ -210,6 +213,16 @@ app.get('/api/collections/:owner/:slug/versions/:n/records', versions.records)
 app.get('/api/collections/:owner/:slug/versions/:n/files', versions.files)
 app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
 app.post('/api/collections/:owner/:slug/versions', requireAuth('write'), versions.push)
+app.post(
+  '/api/collections/:owner/:slug/versions/negotiate',
+  requireAuth('write'),
+  negotiate.negotiate,
+)
+app.post(
+  '/api/collections/:owner/:slug/versions/negotiate/:sessionId/commit',
+  requireAuth('write'),
+  negotiate.commit,
+)
 app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
 
 // Accounts (custom routes — org CRUD, members, invitations, API keys handled by /api/auth/*)
