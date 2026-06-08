@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { marked } from 'marked'
+import { useMemo } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
@@ -86,7 +87,6 @@ export default function CollectionPage() {
   const { owner, collection } = useParams()
   const { currentUser, mirrorConfig } = useAppContext()
   const data = useLoaderData() as any
-  const [readmeHtml, setReadmeHtml] = useState<string | null>(null)
 
   const isOwner = useMemo(
     () =>
@@ -95,15 +95,9 @@ export default function CollectionPage() {
     [currentUser, owner],
   )
 
-  useEffect(() => {
-    const readmeSource = data?.latestVersion?.readme || data?.latestVersion?.message || null
-    if (readmeSource) {
-      import('marked').then(({ marked }) => {
-        setReadmeHtml(marked.parse(readmeSource) as string)
-      })
-    } else {
-      setReadmeHtml(null)
-    }
+  const readmeHtml = useMemo(() => {
+    const source = data?.latestVersion?.readme || data?.latestVersion?.message || null
+    return source ? (marked.parse(source) as string) : null
   }, [data])
 
   const totalVersions = data.latestVersion?.number ?? 0
