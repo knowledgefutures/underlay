@@ -1,9 +1,8 @@
-import { hashRecord } from '../../lib/core/index.js'
+import { hashRecord, hashSchema } from '../../lib/core/index.js'
 import { readConfig } from '../lib/config.js'
 import {
   requireRoot,
   getHead,
-  readVersion,
   writeVersion,
   writeObject,
   writeSchema,
@@ -27,57 +26,52 @@ export async function pull(remoteName: string = 'origin'): Promise<void> {
   }
 
   const baseUrl = `${remote.url}/api/collections/${remote.collection}`
+  const headers = remote.token ? { Authorization: `Bearer ${remote.token}` } : {}
   const head = getHead(root)
 
-  // 1. Get remote latest
-  const latestRes = await fetch(`${baseUrl}/versions/latest`, {
-    headers: remote.token ? { Authorization: `Bearer ${remote.token}` } : {},
-  })
+  // 1. Get remote latest (includes full schema bodies and metadata)
+  const latestRes = await fetch(`${baseUrl}/versions/latest`, { headers })
   if (!latestRes.ok) {
     console.error(`Failed to fetch latest version (${latestRes.status})`)
     process.exit(1)
   }
 
-  const latest = (await latestRes.json()) as { number: number; semver: string }
-  if (latest.number <= head) {
-    console.log(`Already up to date (local: ${head}, remote: ${latest.number})`)
+  const latest = (await latestRes.json()) as {
+    semver: string
+    hash: string
+    message: string
+    metadata: Record<string, unknown> | null
+    schemas: Record<string, unknown>
+  }
+  if (latest.semver === head) {
+    console.log(`Already up to date (${head})`)
     return
   }
 
-  console.log(`Pulling version ${latest.number} (${latest.semver})...`)
+  console.log(`Pulling ${latest.semver}...`)
 
-  // 2. Get manifest (with delta if we have a previous version)
-  const manifestUrl =
-    head > 0
-      ? `${baseUrl}/versions/${latest.number}/manifest?since=${head}`
-      : `${baseUrl}/versions/${latest.number}/manifest`
+  // 2. Store schemas from the latest response (has full bodies)
+  const schemaMap: Record<string, string> = {}
+  for (const [slug, body] of Object.entries(latest.schemas)) {
+    const hash = hashSchema(body)
+    writeSchema(root, hash, JSON.stringify(body))
+    schemaMap[slug] = hash
+  }
 
-  const manifestRes = await fetch(manifestUrl, {
-    headers: remote.token ? { Authorization: `Bearer ${remote.token}` } : {},
-  })
+  // 3. Get manifest for record hashes
+  const manifestUrl = head
+    ? `${baseUrl}/versions/${latest.semver}/manifest?since=${head}`
+    : `${baseUrl}/versions/${latest.semver}/manifest`
+
+  const manifestRes = await fetch(manifestUrl, { headers })
   if (!manifestRes.ok) {
     console.error(`Failed to fetch manifest (${manifestRes.status})`)
     process.exit(1)
   }
 
   const manifest = (await manifestRes.json()) as {
-    version: number
     records: Array<{ id: string; type: string; hash: string }>
-    schemas: Record<string, { hash: string; schema: unknown }>
-    delta?: {
-      added: Array<{ id: string; type: string; hash: string }>
-      updated: Array<{ id: string; type: string; hash: string }>
-      removed: Array<{ id: string; type: string; hash: string }>
-    }
-  }
-
-  // 3. Store schemas
-  const schemaMap: Record<string, string> = {}
-  if (manifest.schemas) {
-    for (const [slug, entry] of Object.entries(manifest.schemas)) {
-      writeSchema(root, entry.hash, JSON.stringify(entry.schema))
-      schemaMap[slug] = entry.hash
-    }
+    files: string[]
   }
 
   // 4. Figure out which record hashes we need
@@ -87,12 +81,11 @@ export async function pull(remoteName: string = 'origin'): Promise<void> {
   if (needed.length > 0) {
     console.log(`Fetching ${needed.length} of ${allHashes.length} records...`)
 
-    // Batch fetch missing records
     const batchRes = await fetch(`${remote.url}/api/records/batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(remote.token ? { Authorization: `Bearer ${remote.token}` } : {}),
+        ...headers,
       },
       body: JSON.stringify({ hashes: needed }),
     })
@@ -112,19 +105,19 @@ export async function pull(remoteName: string = 'origin'): Promise<void> {
 
   // 5. Create local version
   const versionManifest: VersionManifest = {
-    number: latest.number,
     semver: latest.semver,
-    hash: '',
-    message: `Pulled from ${remoteName}`,
+    hash: latest.hash,
+    message: latest.message ?? `Pulled from ${remoteName}`,
+    metadata: latest.metadata ?? null,
     schemas: schemaMap,
     records: allHashes,
-    files: [],
+    files: manifest.files ?? [],
     createdAt: new Date().toISOString(),
   }
 
   writeVersion(root, versionManifest)
-  setHead(root, latest.number)
+  setHead(root, latest.semver)
   console.log(
-    `Version ${latest.number} (${latest.semver}): ${allHashes.length} records, ${Object.keys(schemaMap).length} types`,
+    `${latest.semver}: ${allHashes.length} records, ${Object.keys(schemaMap).length} types`,
   )
 }

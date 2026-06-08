@@ -31,8 +31,18 @@ async function isFilePubliclyAccessible(
   if (!collection) return false
 
   // Org member always has access
-  if (userId != null && userId === collection.organizationId) {
-    return true
+  if (userId != null) {
+    const [membership] = await db
+      .select()
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, collection.organizationId),
+          eq(schema.member.userId, userId),
+        ),
+      )
+      .limit(1)
+    if (membership) return true
   }
 
   // Get the latest version

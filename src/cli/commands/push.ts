@@ -1,6 +1,8 @@
 import { readConfig } from '../lib/config.js'
 import { requireRoot, getHead, readVersion, readObject, readSchema } from '../lib/store.js'
 
+const RECORDS_BATCH_SIZE = 5000
+
 export async function push(remoteName: string = 'origin'): Promise<void> {
   const root = requireRoot()
   const config = readConfig(root)
@@ -22,7 +24,7 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
   }
 
   const head = getHead(root)
-  if (head === 0) {
+  if (!head) {
     console.error('No versions to push.')
     process.exit(1)
   }
@@ -34,14 +36,17 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
   }
 
   const baseUrl = `${remote.url}/api/collections/${remote.collection}`
+  const headers = {
+    Authorization: `Bearer ${remote.token}`,
+  }
 
   // 1. Get remote latest version
-  let remoteLatest: number | null = null
+  let remoteLatestSemver: string | null = null
   try {
     const res = await fetch(`${baseUrl}/versions/latest`)
     if (res.ok) {
-      const data = (await res.json()) as { number: number }
-      remoteLatest = data.number
+      const data = (await res.json()) as { semver: string }
+      remoteLatestSemver = data.semver
     }
   } catch {
     // no remote versions yet
@@ -69,16 +74,14 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
   // 4. Negotiate
   const negotiateRes = await fetch(`${baseUrl}/versions/negotiate`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${remote.token}`,
-    },
+    headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      base_version: remoteLatest,
+      base_version: remoteLatestSemver,
       schemas,
       manifest,
       files: version.files,
       message: version.message,
+      metadata: version.metadata,
     }),
   })
 
@@ -98,25 +101,56 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
     `Server needs ${negotiateData.needed_records.length} of ${version.records.length} records`,
   )
 
-  // 5. Commit — send needed records as JSONL
-  const neededSet = new Set(negotiateData.needed_records)
-  const lines: string[] = []
-  for (const hash of version.records) {
-    if (neededSet.has(hash)) {
-      const obj = readObject(root, hash)
-      if (obj) lines.push(obj)
+  // 5. Send needed records in batches via /records
+  if (negotiateData.needed_records.length > 0) {
+    const neededSet = new Set(negotiateData.needed_records)
+    const neededHashes = version.records.filter((h) => neededSet.has(h))
+
+    for (let i = 0; i < neededHashes.length; i += RECORDS_BATCH_SIZE) {
+      const batch = neededHashes.slice(i, i + RECORDS_BATCH_SIZE)
+      const lines: string[] = []
+      for (const hash of batch) {
+        const obj = readObject(root, hash)
+        if (obj) lines.push(obj)
+      }
+
+      const batchNum = Math.floor(i / RECORDS_BATCH_SIZE) + 1
+      const totalBatches = Math.ceil(neededHashes.length / RECORDS_BATCH_SIZE)
+
+      const recordsRes = await fetch(
+        `${baseUrl}/versions/negotiate/${negotiateData.session_id}/records`,
+        {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/x-ndjson' },
+          body: lines.join('\n'),
+        },
+      )
+
+      if (!recordsRes.ok) {
+        const err = await recordsRes.text()
+        console.error(`Records batch failed (${recordsRes.status}): ${err}`)
+        process.exit(1)
+      }
+
+      const batchResult = (await recordsRes.json()) as {
+        received: number
+        remaining: number
+      }
+
+      if (totalBatches > 1) {
+        console.log(
+          `Batch ${batchNum}/${totalBatches}: sent ${batchResult.received}, ${batchResult.remaining} remaining`,
+        )
+      }
     }
   }
 
+  // 6. Commit
   const commitRes = await fetch(
     `${baseUrl}/versions/negotiate/${negotiateData.session_id}/commit`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-ndjson',
-        Authorization: `Bearer ${remote.token}`,
-      },
-      body: lines.join('\n'),
+      headers,
     },
   )
 
@@ -126,6 +160,6 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
     process.exit(1)
   }
 
-  const result = (await commitRes.json()) as { version: { number: number; semver: string } }
-  console.log(`Pushed version ${result.version.number} (${result.version.semver}) to ${remoteName}`)
+  const result = (await commitRes.json()) as { semver: string }
+  console.log(`Pushed ${result.semver} to ${remoteName}`)
 }

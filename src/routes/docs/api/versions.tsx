@@ -1,14 +1,7 @@
 import DocsLayout from '~/components/DocsLayout'
 
-const pushReq = `{
+const negotiateReq = `{
   "base_version": "v1.0.0",
-  "message": "Add new publications",
-  "app_id": "pubpub-sync",
-  "actor_id": "user-42",
-  "metadata": {
-    "description": "PubPub archive",
-    "readme": "# Publications\\nArchived from PubPub."
-  },
   "schemas": {
     "Publication": {
       "type": "object",
@@ -17,22 +10,39 @@ const pushReq = `{
       }
     }
   },
-  "changes": {
-    "added": [
-      {"id": "rec-1", "type": "Publication", "data": {"title": "..."}}
-    ],
-    "updated": [
-      {"id": "rec-0", "type": "Publication", "data": {"title": "Updated"}}
-    ],
-    "removed": ["rec-old"]
+  "manifest": [
+    {"id": "pub-001", "type": "Publication", "hash": "abc123..."},
+    {"id": "pub-002", "type": "Publication", "hash": "def456..."},
+    {"id": "pub-003", "type": "Publication", "hash": "789abc..."}
+  ],
+  "files": ["7a8b9c..."],
+  "message": "Add new publications",
+  "metadata": {
+    "description": "PubPub archive"
   }
 }`
 
-const pushRes = `{
+const negotiateRes = `{
+  "session_id": "uuid",
+  "needed_records": ["def456...", "789abc..."],
+  "needed_files": [],
+  "total_records": 3,
+  "total_files": 1,
+  "already_have_records": 1,
+  "already_have_files": 1
+}`
+
+const recordsRes = `{
+  "received": 2,
+  "remaining": 0,
+  "total_needed": 2
+}`
+
+const commitRes = `{
   "semver": "v1.1.0",
   "hash": "a1b2c3d4...",
-  "recordCount": 150,
-  "fileCount": 12
+  "recordCount": 3,
+  "fileCount": 1
 }`
 
 const listRes = `[
@@ -49,7 +59,7 @@ const listRes = `[
   }
 ]`
 
-const recordsRes = `{
+const getRecordsRes = `{
   "records": [
     {
       "id": "pub-001",
@@ -96,25 +106,32 @@ export default function DocsApiVersions() {
     <DocsLayout title="Versions API">
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
-        schema + records + file references.
+        schema + records + file references. Pushing a new version uses the{' '}
+        <strong>negotiate protocol</strong> — a three-step flow similar to git's pack negotiation.
       </p>
 
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>POST /api/collections/:owner/:slug/versions</h2>
+        <h2>Push Protocol (Negotiate → Records → Commit)</h2>
+        <p>
+          All pushes use the negotiate protocol. You send a manifest of record hashes; the server
+          tells you which ones it needs; you send only those records; then you commit. For
+          collections where most records are unchanged between versions, only a few records are
+          transferred.
+        </p>
+
+        <h3>Step 1: POST /api/collections/:owner/:slug/versions/negotiate</h3>
         <p className="scope">Auth: write scope</p>
         <p>
-          Push a new version. This is the primary write operation. You send a{' '}
-          <code>base_version</code> for optimistic locking, an optional schema, and a set of changes
-          (added, updated, removed records). The server computes the full snapshot from the previous
-          version plus your changes.
+          Start a negotiate session. Send your full manifest of record hashes plus schemas. The
+          server checks which record and file hashes it already has and returns what it still needs.
         </p>
-        <h3>Request</h3>
+        <h4>Request</h4>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{pushReq}</code>
+          <code>{negotiateReq}</code>
         </pre>
-        <h3>Fields</h3>
+        <h4>Fields</h4>
         <table>
           <tbody>
             <tr>
@@ -122,28 +139,41 @@ export default function DocsApiVersions() {
                 <code>base_version</code>
               </td>
               <td>
-                <strong>Required.</strong> The semver string this push is based on (e.g.{' '}
+                <strong>Required.</strong> The semver this push is based on (e.g.{' '}
                 <code>"v1.0.0"</code>). Use <code>null</code> for the first version. If the current
                 version doesn't match, returns <code>409 Conflict</code>.
               </td>
             </tr>
             <tr>
               <td>
+                <code>schemas</code>
+              </td>
+              <td>
+                <strong>Required.</strong> Per-type JSON Schema map (e.g.{' '}
+                <code>{'{"TypeName": {schema}}'}</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>manifest</code>
+              </td>
+              <td>
+                <strong>Required.</strong> Array of <code>{'{"id", "type", "hash"}'}</code> objects.
+                Each <code>hash</code> is the SHA-256 of the canonical JSON{' '}
+                <code>{'{"id":...,"type":...,"data":...}'}</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>files</code>
+              </td>
+              <td>Array of file hashes (SHA-256 hex strings) referenced by records.</td>
+            </tr>
+            <tr>
+              <td>
                 <code>message</code>
               </td>
               <td>Human-readable commit message.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>app_id</code>
-              </td>
-              <td>Identifier for the application that pushed this version.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>actor_id</code>
-              </td>
-              <td>Identifier for the user or process that triggered the push.</td>
             </tr>
             <tr>
               <td>
@@ -156,39 +186,62 @@ export default function DocsApiVersions() {
             </tr>
             <tr>
               <td>
-                <code>schemas</code>
+                <code>strip_unknown_fields</code>
               </td>
               <td>
-                Per-type JSON Schema map (e.g. <code>{'{"TypeName": {schema}}'}</code>). Required on
-                first push. If omitted on subsequent pushes, the previous version's schemas are
-                reused.
+                If <code>true</code>, the server strips fields not defined in the schema instead of
+                rejecting the push.
               </td>
-            </tr>
-            <tr>
-              <td>
-                <code>changes.added</code>
-              </td>
-              <td>
-                New records to add. Each record can include <code>"private": true</code> to hide it
-                from public readers.
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>changes.updated</code>
-              </td>
-              <td>
-                Existing records to replace (by id). Can include <code>"private": true</code>.
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>changes.removed</code>
-              </td>
-              <td>Record IDs to remove.</td>
             </tr>
           </tbody>
         </table>
+        <h4>
+          Response <span className="text-ink-muted font-normal">200</span>
+        </h4>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{negotiateRes}</code>
+        </pre>
+
+        <h3>Step 2: POST .../negotiate/:sessionId/records</h3>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Send needed records as a JSONL body (<code>Content-Type: application/x-ndjson</code>).
+          Each line is one JSON record. Only send records whose hashes appear in{' '}
+          <code>needed_records</code> from the negotiate response.
+        </p>
+        <p>
+          <strong>Call this endpoint multiple times</strong> to send records in batches (up to
+          10,000 per request). The server tracks which records have been received. If{' '}
+          <code>needed_records</code> was empty, skip this step and go directly to commit.
+        </p>
+        <h4>Request</h4>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{`{"id":"pub-002","type":"Publication","data":{"title":"New Paper"}}
+{"id":"pub-003","type":"Publication","data":{"title":"Another Paper"}}`}</code>
+        </pre>
+        <h4>
+          Response <span className="text-ink-muted font-normal">200</span>
+        </h4>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{recordsRes}</code>
+        </pre>
+        <p>
+          When <code>remaining</code> reaches 0, all needed records have been received and you can
+          commit.
+        </p>
+
+        <h3>Step 3: POST .../negotiate/:sessionId/commit</h3>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Finalize the push. The server validates all records against schemas, computes version
+          hashes, and creates the new immutable version. No request body is needed.
+        </p>
+        <h4>
+          Response <span className="text-ink-muted font-normal">201</span>
+        </h4>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{commitRes}</code>
+        </pre>
 
         <h3>Schema privacy</h3>
         <p>
@@ -197,16 +250,13 @@ export default function DocsApiVersions() {
         <ul>
           <li>
             <strong>Type-level:</strong> Add <code>"private": true</code> to a type definition to
-            hide all records of that type from public readers. The type is also stripped from the
-            public schema response.
+            hide all records of that type from public readers.
           </li>
           <li>
             <strong>Field-level:</strong> Add <code>"private": true</code> to a field definition to
-            strip that field from records returned to public readers. The field is also removed from
-            the public schema.
+            strip that field from records returned to public readers.
           </li>
         </ul>
-        <p>Example schema with privacy:</p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{`"schemas": {
   "Article": {
@@ -226,22 +276,50 @@ export default function DocsApiVersions() {
   }
 }`}</code>
         </pre>
-        <h3>
-          Response <span className="text-ink-muted font-normal">201</span>
-        </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{pushRes}</code>
-        </pre>
+
+        <h3>Session management</h3>
+        <table>
+          <tbody>
+            <tr>
+              <td>
+                <code>GET .../negotiate/:sessionId</code>
+              </td>
+              <td>Check session status — returns remaining needed records and files.</td>
+            </tr>
+            <tr>
+              <td>
+                <code>DELETE .../negotiate/:sessionId</code>
+              </td>
+              <td>Cancel a session. Returns 204.</td>
+            </tr>
+          </tbody>
+        </table>
+
         <h3>Errors</h3>
         <table>
           <tbody>
             <tr>
               <td>
+                <code>400</code>
+              </td>
+              <td>
+                Unexpected record hash — a submitted record doesn't match any needed hash, or the
+                batch is empty/malformed.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>404</code>
+              </td>
+              <td>Session expired or not found. Sessions expire after 10 minutes.</td>
+            </tr>
+            <tr>
+              <td>
                 <code>409</code>
               </td>
               <td>
-                Version conflict — someone pushed since your <code>base_version</code>. Re-fetch and
-                retry.
+                Version conflict — someone pushed since your <code>base_version</code>.
+                Re-negotiate.
               </td>
             </tr>
             <tr>
@@ -249,8 +327,8 @@ export default function DocsApiVersions() {
                 <code>422</code>
               </td>
               <td>
-                Missing files — records reference files that haven't been uploaded yet. Response
-                includes <code>filesNeeded</code> array.
+                Schema validation failed, missing files, or records contain extra fields not defined
+                in the schema.
               </td>
             </tr>
           </tbody>
@@ -349,7 +427,7 @@ export default function DocsApiVersions() {
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{recordsRes}</code>
+          <code>{getRecordsRes}</code>
         </pre>
         <p>
           Use <code>pagination.nextCursor</code> as the <code>after</code> parameter in the next
@@ -402,131 +480,6 @@ export default function DocsApiVersions() {
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{diffRes}</code>
         </pre>
-      </div>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2>Chunked Upload (Large Pushes)</h2>
-        <p>
-          For pushes exceeding 100MB or containing millions of records, use the chunked upload
-          protocol instead of the single-request push. This streams changes in batches to avoid body
-          size limits and server memory pressure.
-        </p>
-
-        <h3>Flow</h3>
-        <ol>
-          <li>
-            <strong>Start session</strong> — POST metadata (base_version, schemas, message)
-          </li>
-          <li>
-            <strong>Append batches</strong> — PUT changes in chunks of up to 10,000 records each
-          </li>
-          <li>
-            <strong>Finalize</strong> — POST to create the immutable version from all staged records
-          </li>
-        </ol>
-
-        <h3>POST /api/collections/:owner/:slug/versions/upload</h3>
-        <p className="scope">Auth: write scope</p>
-        <p>Start a new upload session. Returns a session ID valid for 1 hour.</p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "base_version": "v3.0.0",
-  "message": "Bulk import",
-  "app_id": "my-app",
-  "schemas": { "Article": { "type": "object", "properties": { ... } } }
-}`}</code>
-        </pre>
-        <h4>
-          Response <span className="text-ink-muted font-normal">201</span>
-        </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "sessionId": "uuid",
-  "expiresAt": "2026-04-30T01:00:00.000Z"
-}`}</code>
-        </pre>
-
-        <h3>PUT /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
-        <p className="scope">Auth: write scope</p>
-        <p>
-          Append a batch of changes to the session. Call as many times as needed. Max 10,000 records
-          per batch. If the same record ID appears in multiple batches, last write wins.
-        </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "changes": {
-    "added": [{"id": "rec-1", "type": "Article", "data": {...}}],
-    "updated": [...],
-    "removed": ["rec-old"]
-  }
-}`}</code>
-        </pre>
-        <h4>
-          Response <span className="text-ink-muted font-normal">200</span>
-        </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "received": { "added": 5000, "updated": 0, "removed": 0 },
-  "totalStaged": 15000
-}`}</code>
-        </pre>
-
-        <h3>POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize</h3>
-        <p className="scope">Auth: write scope</p>
-        <p>
-          Finalize the session: applies all staged changes to the base version, validates records
-          against schemas, computes hashes, and creates the new immutable version.
-        </p>
-        <h4>
-          Response <span className="text-ink-muted font-normal">201</span>
-        </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "semver": "v1.3.0",
-  "hash": "...",
-  "recordCount": 2000000,
-  "fileCount": 5
-}`}</code>
-        </pre>
-        <h4>Errors</h4>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>409</code>
-              </td>
-              <td>
-                Version conflict — someone pushed since your base_version. Start a new session.
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>410</code>
-              </td>
-              <td>Session expired — the 1-hour window elapsed.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>422</code>
-              </td>
-              <td>Schema validation failed or missing files.</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <h3>GET /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
-        <p className="scope">Auth: read scope</p>
-        <p>
-          Check session status. Returns status (<code>open</code>, <code>finalizing</code>,{' '}
-          <code>completed</code>, <code>failed</code>, <code>expired</code>), record count, and
-          expiry.
-        </p>
-
-        <h3>DELETE /api/collections/:owner/:slug/versions/upload/:sessionId</h3>
-        <p className="scope">Auth: write scope</p>
-        <p>Cancel and discard a session. Staged records are deleted. Returns 204.</p>
       </div>
     </DocsLayout>
   )

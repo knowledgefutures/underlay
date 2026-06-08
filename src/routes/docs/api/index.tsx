@@ -53,13 +53,13 @@ export default function DocsApi() {
         <Link to="/settings" className="text-link underline">
           organization settings
         </Link>{' '}
-        or via <code>POST /api/accounts/keys</code>.
+        or via <code>POST /api/auth/api-key/create</code>.
       </p>
 
       <h3>Session Cookies (browser)</h3>
       <p>
-        The web UI authenticates via signed session cookies set by{' '}
-        <code>POST /api/accounts/login</code>. Sessions expire after 30 days.
+        The web UI authenticates via OAuth2/PKCE sign-in through KF Auth, handled by better-auth at{' '}
+        <code>/api/auth/*</code>. Sessions expire after 30 days.
       </p>
 
       <h3>Invalid Credentials</h3>
@@ -162,7 +162,7 @@ export default function DocsApi() {
           <Link to="/docs/api/accounts" className="text-link underline">
             Accounts
           </Link>{' '}
-          — signup, login, API keys, profiles
+          — API keys, profiles
         </div>
         <div>
           <Link to="/docs/api/collections" className="text-link underline">

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-function canonicalize(value: unknown): unknown {
+export function canonicalize(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
   if (Array.isArray(value)) return value.map(canonicalize)
   const sorted: Record<string, unknown> = {}
@@ -20,7 +20,11 @@ export function hashRecord(record: { id: string; type: string; data: unknown }):
   hash: string
   canonical: string
 } {
-  const canonical = JSON.stringify({ id: record.id, type: record.type, data: record.data })
+  const canonical = JSON.stringify({
+    id: record.id,
+    type: record.type,
+    data: canonicalize(record.data),
+  })
   const hash = createHash('sha256').update(canonical).digest('hex')
   return { hash, canonical }
 }

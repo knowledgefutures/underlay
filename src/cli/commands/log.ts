@@ -9,10 +9,10 @@ export function log(): void {
     return
   }
 
-  for (const n of versions.toReversed()) {
-    const v = readVersion(root, n)
+  for (const sv of versions.toReversed()) {
+    const v = readVersion(root, sv)
     if (!v) continue
-    console.log(`v${v.number} (${v.semver})  ${v.hash.slice(0, 16)}...`)
+    console.log(`${v.semver}  ${v.hash.slice(0, 16)}...`)
     console.log(`  ${v.message}`)
     console.log(`  ${Object.keys(v.schemas).length} type(s), ${v.records.length} record(s)`)
     console.log(`  ${v.createdAt}`)

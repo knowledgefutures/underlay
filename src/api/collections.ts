@@ -808,82 +808,76 @@ export async function fork(c: Context<AuthEnv>) {
     return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)
   }
 
-  // Create forked collection
+  // Create forked collection + version in a transaction
   const newCollectionId = uuidv4()
-  await db.insert(schema.collections).values({
-    id: newCollectionId,
-    organizationId: targetOrgRow.id,
-    slug: newSlug,
-    name: source.name,
-    public: false,
-    forkedFrom: source.id,
-  })
-
-  // Create version 1 in the fork referencing the same objects
-  const [newVersion] = await db
-    .insert(schema.versions)
-    .values({
-      collectionId: newCollectionId,
-      semver: 'v1.0.0',
-      major: 1,
-      minor: 0,
-      patch: 0,
-      hash: latestVersion.hash,
-      publicHash: latestVersion.publicHash,
-      baseSemver: null,
-      message: `Forked from ${sourceOwner}/${sourceSlug} ${latestVersion.semver}`,
-      metadata: latestVersion.metadata,
-      pushedBy: c.get('userId') ?? null,
-      appId: 'fork',
-      recordCount: latestVersion.recordCount,
-      fileCount: latestVersion.fileCount,
-      totalBytes: latestVersion.totalBytes,
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.collections).values({
+      id: newCollectionId,
+      organizationId: targetOrgRow.id,
+      slug: newSlug,
+      name: source.name,
+      public: false,
+      forkedFrom: source.id,
     })
-    .returning({ id: schema.versions.id })
 
-  if (!newVersion) {
-    return c.json({ error: 'Failed to create version', statusCode: 500 }, 500)
-  }
+    const [newVersion] = await tx
+      .insert(schema.versions)
+      .values({
+        collectionId: newCollectionId,
+        semver: 'v1.0.0',
+        major: 1,
+        minor: 0,
+        patch: 0,
+        hash: latestVersion.hash,
+        publicHash: latestVersion.publicHash,
+        baseSemver: null,
+        message: `Forked from ${sourceOwner}/${sourceSlug} ${latestVersion.semver}`,
+        metadata: latestVersion.metadata,
+        pushedBy: c.get('userId') ?? null,
+        appId: 'fork',
+        recordCount: latestVersion.recordCount,
+        fileCount: latestVersion.fileCount,
+        totalBytes: latestVersion.totalBytes,
+      })
+      .returning({ id: schema.versions.id })
 
-  // Copy version_records (references same record_objects — zero storage cost)
-  const sourceRecords = await db
-    .select({ recordHash: schema.versionRecords.recordHash })
-    .from(schema.versionRecords)
-    .where(eq(schema.versionRecords.versionId, latestVersion.id))
+    const sourceRecords = await tx
+      .select({ recordHash: schema.versionRecords.recordHash })
+      .from(schema.versionRecords)
+      .where(eq(schema.versionRecords.versionId, latestVersion.id))
 
-  if (sourceRecords.length > 0) {
-    await db
-      .insert(schema.versionRecords)
-      .values(sourceRecords.map((r) => ({ versionId: newVersion.id, recordHash: r.recordHash })))
-  }
+    if (sourceRecords.length > 0) {
+      await tx
+        .insert(schema.versionRecords)
+        .values(sourceRecords.map((r) => ({ versionId: newVersion!.id, recordHash: r.recordHash })))
+    }
 
-  // Copy version_files
-  const sourceFiles = await db
-    .select({ fileHash: schema.versionFiles.fileHash })
-    .from(schema.versionFiles)
-    .where(eq(schema.versionFiles.versionId, latestVersion.id))
+    const sourceFiles = await tx
+      .select({ fileHash: schema.versionFiles.fileHash })
+      .from(schema.versionFiles)
+      .where(eq(schema.versionFiles.versionId, latestVersion.id))
 
-  if (sourceFiles.length > 0) {
-    await db
-      .insert(schema.versionFiles)
-      .values(sourceFiles.map((f) => ({ versionId: newVersion.id, fileHash: f.fileHash })))
-  }
+    if (sourceFiles.length > 0) {
+      await tx
+        .insert(schema.versionFiles)
+        .values(sourceFiles.map((f) => ({ versionId: newVersion!.id, fileHash: f.fileHash })))
+    }
 
-  // Copy version_schemas
-  const sourceSchemas = await db
-    .select({ slug: schema.versionSchemas.slug, schemaId: schema.versionSchemas.schemaId })
-    .from(schema.versionSchemas)
-    .where(eq(schema.versionSchemas.versionId, latestVersion.id))
+    const sourceSchemas = await tx
+      .select({ slug: schema.versionSchemas.slug, schemaId: schema.versionSchemas.schemaId })
+      .from(schema.versionSchemas)
+      .where(eq(schema.versionSchemas.versionId, latestVersion.id))
 
-  if (sourceSchemas.length > 0) {
-    await db.insert(schema.versionSchemas).values(
-      sourceSchemas.map((s) => ({
-        versionId: newVersion.id,
-        slug: s.slug,
-        schemaId: s.schemaId,
-      })),
-    )
-  }
+    if (sourceSchemas.length > 0) {
+      await tx.insert(schema.versionSchemas).values(
+        sourceSchemas.map((s) => ({
+          versionId: newVersion!.id,
+          slug: s.slug,
+          schemaId: s.schemaId,
+        })),
+      )
+    }
+  })
 
   return c.json(
     {

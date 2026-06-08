@@ -216,150 +216,7 @@ export default function DevPage() {
     setRecords((prev) => prev.filter((r) => r.key !== key))
   }
 
-  const buildChanges = () => {
-    const added = records
-      .filter((r) => r.status === 'added')
-      .map((r) => ({ id: r.id, type: r.type, data: tryParse(r.data) }))
-    const updated = records
-      .filter((r) => r.status === 'updated')
-      .map((r) => ({ id: r.id, type: r.type, data: tryParse(r.data) }))
-    const removed = records.filter((r) => r.status === 'removed').map((r) => r.id)
-    return { added, updated, removed }
-  }
-
-  const simplePush = async () => {
-    setWorking(true)
-    try {
-      const changes = buildChanges()
-      const schemas = tryParse(schemaJson)
-      const hasSchemas = schemas && Object.keys(schemas).length > 0
-      const payload: Record<string, unknown> = {
-        base_version: baseVersion,
-        message: message || 'Dev push',
-        app_id: 'underlay-dev-tool',
-        strip_unknown_fields: stripUnknownFields,
-        changes,
-      }
-      if (hasSchemas) {
-        payload.schemas = schemas
-      } else {
-        log({
-          time: new Date().toISOString().slice(11, 23),
-          direction: 'info',
-          body: 'No schemas in payload — server will carry forward from previous version',
-        })
-      }
-      const res = await apiFetch('POST', `${collectionBase}/versions`, payload)
-      if (res.ok) {
-        const data = await res.json()
-        log({
-          time: new Date().toISOString().slice(11, 23),
-          direction: 'info',
-          body: `Version ${data.version} (${data.semver}) created`,
-        })
-        await fetchLatest()
-      }
-    } finally {
-      setWorking(false)
-    }
-  }
-
-  const batchPush = async () => {
-    setWorking(true)
-    try {
-      const schemas = tryParse(schemaJson)
-
-      // Step 1: Start upload session
-      const hasSchemas = schemas && Object.keys(schemas).length > 0
-      const startPayload: Record<string, unknown> = {
-        base_version: baseVersion,
-        message: message || 'Dev batch push',
-        app_id: 'underlay-dev-tool',
-      }
-      if (hasSchemas) {
-        startPayload.schemas = schemas
-      } else {
-        log({
-          time: new Date().toISOString().slice(11, 23),
-          direction: 'info',
-          body: 'No schemas in payload — server will carry forward from previous version',
-        })
-      }
-
-      const startRes = await apiFetch('POST', `${collectionBase}/versions/upload`, startPayload)
-      if (!startRes.ok) return
-      const { sessionId } = await startRes.json()
-
-      log({
-        time: new Date().toISOString().slice(11, 23),
-        direction: 'info',
-        body: `Upload session started: ${sessionId}`,
-      })
-
-      // Step 2: Send batches
-      const changes = buildChanges()
-      const allAdded = changes.added
-      const allUpdated = changes.updated
-      const allRemoved = changes.removed
-
-      // Batch the added records
-      for (let i = 0; i < allAdded.length; i += batchSize) {
-        const batch = allAdded.slice(i, i + batchSize)
-        const batchPayload = {
-          changes: { added: batch, updated: [] as unknown[], removed: [] as string[] },
-        }
-        // Include updated and removed only in the first batch
-        if (i === 0) {
-          batchPayload.changes.updated = allUpdated
-          batchPayload.changes.removed = allRemoved
-        }
-        const batchRes = await apiFetch(
-          'PUT',
-          `${collectionBase}/versions/upload/${sessionId}`,
-          batchPayload,
-        )
-        if (!batchRes.ok) return
-        const batchData = await batchRes.json()
-        log({
-          time: new Date().toISOString().slice(11, 23),
-          direction: 'info',
-          body: `Batch ${Math.floor(i / batchSize) + 1}: ${batchData.totalStaged} total staged`,
-        })
-      }
-
-      // If no added records, still send updated/removed
-      if (allAdded.length === 0 && (allUpdated.length > 0 || allRemoved.length > 0)) {
-        const batchPayload = {
-          changes: { added: [] as unknown[], updated: allUpdated, removed: allRemoved },
-        }
-        const batchRes = await apiFetch(
-          'PUT',
-          `${collectionBase}/versions/upload/${sessionId}`,
-          batchPayload,
-        )
-        if (!batchRes.ok) return
-      }
-
-      // Step 3: Finalize
-      const finalizeUrl = stripUnknownFields
-        ? `${collectionBase}/versions/upload/${sessionId}/finalize?strip_unknown_fields=true`
-        : `${collectionBase}/versions/upload/${sessionId}/finalize`
-      const finalRes = await apiFetch('POST', finalizeUrl)
-      if (finalRes.ok) {
-        const data = await finalRes.json()
-        log({
-          time: new Date().toISOString().slice(11, 23),
-          direction: 'info',
-          body: `Finalized: version ${data.version} (${data.semver}), ${data.recordCount} records`,
-        })
-        await fetchLatest()
-      }
-    } finally {
-      setWorking(false)
-    }
-  }
-
-  const negotiatePush = async () => {
+  const push = async () => {
     setWorking(true)
     try {
       const schemas = tryParse(schemaJson)
@@ -389,7 +246,7 @@ export default function DevPage() {
         schemas,
         manifest,
         files: [],
-        message: message || 'Dev negotiate push',
+        message: message || 'Dev push',
         strip_unknown_fields: stripUnknownFields,
       }
       const negRes = await apiFetch('POST', `${collectionBase}/versions/negotiate`, negPayload)
@@ -402,52 +259,63 @@ export default function DevPage() {
         body: `Negotiate: ${negData.needed_records.length} needed, ${negData.already_have_records} already on server`,
       })
 
-      // Step 2: Send only needed records as JSONL
-      const lines = negData.needed_records
-        .map((hash: string) => {
-          const rec = recordBodies.get(hash)
-          return rec ? JSON.stringify(rec) : null
-        })
-        .filter(Boolean)
-        .join('\n')
+      // Step 2: Send needed records in batches via /records
+      if (negData.needed_records.length > 0) {
+        const neededHashes: string[] = negData.needed_records
+        for (let i = 0; i < neededHashes.length; i += batchSize) {
+          const batch = neededHashes.slice(i, i + batchSize)
+          const lines = batch
+            .map((hash: string) => {
+              const rec = recordBodies.get(hash)
+              return rec ? JSON.stringify(rec) : null
+            })
+            .filter(Boolean)
+            .join('\n')
 
-      const commitUrl = `${collectionBase}/versions/negotiate/${negData.session_id}/commit`
-      const commitHeaders: Record<string, string> = { 'Content-Type': 'application/x-ndjson' }
-      if (apiKey) commitHeaders['Authorization'] = `Bearer ${apiKey}`
+          const recordsUrl = `${collectionBase}/versions/negotiate/${negData.session_id}/records`
+          const recordsHeaders: Record<string, string> = {
+            'Content-Type': 'application/x-ndjson',
+          }
+          if (apiKey) recordsHeaders['Authorization'] = `Bearer ${apiKey}`
 
-      log({
-        time: new Date().toISOString().slice(11, 23),
-        direction: 'req',
-        method: 'POST',
-        url: commitUrl,
-        body: `${lines.split('\n').length} JSONL lines (${lines.length} bytes)`,
-      })
+          const batchRes = await fetch(recordsUrl, {
+            method: 'POST',
+            headers: recordsHeaders,
+            body: lines,
+            credentials: 'same-origin',
+          })
+          if (!batchRes.ok) {
+            const errData = await batchRes.json().catch(() => ({}))
+            log({
+              time: new Date().toISOString().slice(11, 23),
+              direction: 'error',
+              method: 'POST',
+              url: recordsUrl,
+              status: batchRes.status,
+              body: JSON.stringify(errData, null, 2),
+            })
+            return
+          }
+          const batchData = await batchRes.json()
+          log({
+            time: new Date().toISOString().slice(11, 23),
+            direction: 'info',
+            body: `Records batch: ${batchData.received} sent, ${batchData.remaining} remaining`,
+          })
+        }
+      }
 
-      const start = performance.now()
-      const commitRes = await fetch(commitUrl, {
-        method: 'POST',
-        headers: commitHeaders,
-        body: lines,
-        credentials: 'same-origin',
-      })
-      const duration = Math.round(performance.now() - start)
-      const commitData = await commitRes.json()
-
-      log({
-        time: new Date().toISOString().slice(11, 23),
-        direction: commitRes.ok ? 'res' : 'error',
-        method: 'POST',
-        url: commitUrl,
-        status: commitRes.status,
-        body: JSON.stringify(commitData, null, 2),
-        duration,
-      })
-
+      // Step 3: Commit
+      const commitRes = await apiFetch(
+        'POST',
+        `${collectionBase}/versions/negotiate/${negData.session_id}/commit`,
+      )
       if (commitRes.ok) {
+        const commitData = await commitRes.json()
         log({
           time: new Date().toISOString().slice(11, 23),
           direction: 'info',
-          body: `Version ${commitData.version} (${commitData.semver}): ${commitData.records_transferred} transferred, ${commitData.records_deduplicated} deduplicated`,
+          body: `Version ${commitData.semver}: ${commitData.recordCount} records`,
         })
         await fetchLatest()
       }
@@ -694,38 +562,22 @@ export default function DevPage() {
             {/* Actions */}
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
-                onClick={simplePush}
+                onClick={push}
                 disabled={working}
                 className="bg-ink text-parchment rounded px-4 py-2 text-xs font-medium disabled:opacity-50"
               >
-                Simple Push
+                Push
               </button>
-              <button
-                onClick={negotiatePush}
-                disabled={working}
-                className="rounded border border-blue-600 px-4 py-2 text-xs font-medium text-blue-600 disabled:opacity-50"
-              >
-                Negotiate Push
-              </button>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={batchPush}
-                  disabled={working}
-                  className="rounded border border-purple-600 px-4 py-2 text-xs font-medium text-purple-600 disabled:opacity-50"
-                >
-                  Batch Push
-                </button>
-                <label className="text-ink-muted ml-1 text-xs">
-                  batch size:
-                  <input
-                    type="number"
-                    min={1}
-                    className="border-rule ml-1 w-12 rounded border px-1 py-0.5 text-center font-mono text-xs"
-                    value={batchSize}
-                    onChange={(e) => setBatchSize(Number(e.target.value) || 1)}
-                  />
-                </label>
-              </div>
+              <label className="text-ink-muted text-xs">
+                batch size:
+                <input
+                  type="number"
+                  min={1}
+                  className="border-rule ml-1 w-12 rounded border px-1 py-0.5 text-center font-mono text-xs"
+                  value={batchSize}
+                  onChange={(e) => setBatchSize(Number(e.target.value) || 1)}
+                />
+              </label>
               <label className="text-ink-muted flex items-center gap-1 text-xs">
                 <input
                   type="checkbox"

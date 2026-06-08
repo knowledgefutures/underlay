@@ -25,11 +25,13 @@ async function rootLoader({ request }: LoaderFunctionArgs) {
   return res.json()
 }
 
+const NotFound = () => import('~/routes/404').then((m) => ({ Component: m.default }))
+
 export const routes: RouteObject[] = [
   {
     id: 'root',
     Component: Root,
     loader: rootLoader,
-    children: buildDataRoutes(components, dataModules),
+    children: [...buildDataRoutes(components, dataModules), { path: '*', lazy: NotFound }],
   },
 ]

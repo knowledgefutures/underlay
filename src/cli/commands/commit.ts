@@ -6,6 +6,7 @@ import {
   requireRoot,
   getHead,
   readVersion,
+  readSchema,
   writeVersion,
   setHead,
   type VersionManifest,
@@ -23,10 +24,10 @@ export function commit(message: string): void {
     process.exit(1)
   }
 
-  const prev = head > 0 ? readVersion(root, head) : null
+  const prev = head ? readVersion(root, head) : null
 
   const schemas: Record<string, string> = {}
-  const schemaSource = stagedSchema ?? (prev ? rebuildSchemas(prev) : null)
+  const schemaSource = stagedSchema ?? (prev ? rebuildSchemas(root, prev) : null)
   if (!schemaSource) {
     console.error('No schema set. Use `underlay schema-set` first.')
     process.exit(1)
@@ -54,7 +55,7 @@ export function commit(message: string): void {
     schemas: Object.fromEntries(sortedSchemaEntries),
     records: recordHashes,
     files: [],
-    readme: null,
+    metadata: null,
   })
   const hash = 'private:' + createHash('sha256').update(canonical).digest('hex')
 
@@ -65,12 +66,11 @@ export function commit(message: string): void {
     : true
   const sv = deriveSemver(prev?.semver ?? null, schemaChanged, recordsChanged)
 
-  const newNumber = head + 1
   const manifest: VersionManifest = {
-    number: newNumber,
     semver: sv.semver,
     hash,
     message,
+    metadata: null,
     schemas,
     records: recordHashes,
     files: [],
@@ -78,14 +78,20 @@ export function commit(message: string): void {
   }
 
   writeVersion(root, manifest)
-  setHead(root, newNumber)
+  setHead(root, sv.semver)
   clearStaging(root)
 
-  console.log(`Version ${newNumber} (${sv.semver}) committed: ${message}`)
+  console.log(`${sv.semver} committed: ${message}`)
   console.log(`  ${Object.keys(schemas).length} type(s), ${recordHashes.length} record(s)`)
   console.log(`  Hash: ${hash.slice(0, 20)}...`)
 }
 
-function rebuildSchemas(prev: VersionManifest): Record<string, unknown> | null {
-  return null
+function rebuildSchemas(root: string, prev: VersionManifest): Record<string, unknown> | null {
+  const result: Record<string, unknown> = {}
+  for (const [slug, hash] of Object.entries(prev.schemas)) {
+    const body = readSchema(root, hash)
+    if (!body) return null
+    result[slug] = JSON.parse(body)
+  }
+  return Object.keys(result).length > 0 ? result : null
 }

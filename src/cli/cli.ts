@@ -51,8 +51,8 @@ program.command('log').description('Show version history').action(log)
 program
   .command('diff')
   .description('Compare two local versions')
-  .argument('<from>', 'source version number')
-  .argument('<to>', 'target version number')
+  .argument('<from>', 'source version (semver)')
+  .argument('<to>', 'target version (semver)')
   .action(diff)
 
 const remote = program.command('remote').description('Manage remote registries')

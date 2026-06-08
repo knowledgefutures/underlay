@@ -15,7 +15,7 @@ The core contract:
 1. Push JSON records conforming to a JSON Schema.
 2. Underlay stores them as an immutable, content-addressed version.
 3. Each version gets a semver: schema changed (major), records changed (minor), metadata only (patch).
-4. Version 14 of a collection will always return exactly the same records and schema.
+4. Version v2.3.0 of a collection will always return exactly the same records and schema.
 5. You can diff between any two versions to see what changed.
 
 The simplicity is the point. An agent, an application, a scraper, a researcher: they all interact with the same primitive. Push records in, pull records out, trust the versions. The intelligence lives in the actors, not the store.
@@ -36,7 +36,7 @@ GitHub versions code. Hugging Face versions dataset files. Underlay versions str
 
 **GitHub** can store JSON files in a repository, but git diffs are line-oriented. Change one field in one record of a large JSON file and you get a line diff, not a semantic one. Git does not know what a "record" is, what a "schema" is, or how to tell you "47 records were added and the schema gained a field."
 
-**Hugging Face** stores datasets as downloadable artifacts. You version files, you download the whole thing, you process it locally. There is no record-level API, no schema-level diffing, no way to ask "what changed since version 12." It is optimized for the ML pipeline: download and train. Not for incremental access or structured exchange.
+**Hugging Face** stores datasets as downloadable artifacts. You version files, you download the whole thing, you process it locally. There is no record-level API, no schema-level diffing, no way to ask "what changed since v1.2.0." It is optimized for the ML pipeline: download and train. Not for incremental access or structured exchange.
 
 **Dat** (now Hypercore Protocol) got the philosophy right: data should be versionable, verifiable, and shareable without trusting the host. Append-only logs, content addressing, cryptographic integrity. But it versions opaque blobs and files. There is no concept of a record or a schema. It solved the transport and integrity layer. Underlay solves the data model and meaning layer.
 
@@ -46,7 +46,7 @@ Underlay treats the typed record as the primitive. That is the difference that m
 
 Underlay is a simple HTTP protocol. The operations:
 
-- **Push** JSONL records and a JSON Schema to a collection endpoint. Get back a version number, a semver, and a content hash.
+- **Push** JSONL records and a JSON Schema to a collection endpoint. Get back a semver and a content hash.
 - **Pull** a specific version: its records, its schema, its metadata.
 - **Diff** any two versions: which records were added, updated, removed. Which schema fields changed.
 - **Fork** a collection and track lineage. The fork relationship is recorded; diffs work across forks.
@@ -99,7 +99,7 @@ The collaboration model borrows from git but adapts to how data sharing actually
 The protocol provides three primitives:
 
 - **Forks.** Take a collection, push your own versions of it. The fork relationship is tracked.
-- **Diffs.** Compare any two versions, including across forks. "Here is what my fork added relative to your version 47."
+- **Diffs.** Compare any two versions, including across forks. "Here is what my fork added relative to your v3.2.0."
 - **Lineage.** Every version references what it was based on, creating a directed graph of provenance.
 
 The social layer, contribution proposals, review, discussion, discoverability, lives on underlay.org. A contribution is a fork plus a diff plus a message: "I added 500 records to your dataset, here is what changed." The maintainer reviews the data and accepts or rejects it. This is the pull request pattern, adapted for data instead of code.

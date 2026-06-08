@@ -23,7 +23,6 @@ import * as _negotiate from '~/api/negotiate'
 import * as _query from '~/api/query'
 import * as _records from '~/api/records'
 import * as _schemas from '~/api/schemas'
-import * as _uploads from '~/api/uploads'
 import * as _versions from '~/api/versions'
 import { auth } from '~/lib/auth'
 import { getSessionUser } from '~/lib/auth.server'
@@ -58,7 +57,6 @@ const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
 const query = hot(_query, '/src/api/query.ts')
 const records = hot(_records, '/src/api/records.ts')
 const schemas = hot(_schemas, '/src/api/schemas.ts')
-const uploads = hot(_uploads, '/src/api/uploads.ts')
 const versions = hot(_versions, '/src/api/versions.ts')
 
 const app = new Hono<AuthEnv>()
@@ -185,33 +183,6 @@ app.on('HEAD', '/api/collections/:owner/:slug/files/:hash', files.headFile)
 app.get('/api/collections/:owner/:slug/files/:hash', files.getFile)
 app.put('/api/collections/:owner/:slug/files/:hash', requireAuth('write'), files.putFile)
 
-// Uploads
-app.post(
-  '/api/collections/:owner/:slug/versions/upload',
-  requireAuth('write'),
-  uploads.startSession,
-)
-app.put(
-  '/api/collections/:owner/:slug/versions/upload/:sessionId',
-  requireAuth('write'),
-  uploads.appendBatch,
-)
-app.get(
-  '/api/collections/:owner/:slug/versions/upload/:sessionId',
-  requireAuth('read'),
-  uploads.getSession,
-)
-app.post(
-  '/api/collections/:owner/:slug/versions/upload/:sessionId/finalize',
-  requireAuth('write'),
-  uploads.finalize,
-)
-app.delete(
-  '/api/collections/:owner/:slug/versions/upload/:sessionId',
-  requireAuth('write'),
-  uploads.cancelSession,
-)
-
 // Versions
 app.get('/api/collections/:owner/:slug/versions', versions.list)
 app.get('/api/collections/:owner/:slug/versions/latest', versions.latest)
@@ -219,16 +190,30 @@ app.get('/api/collections/:owner/:slug/versions/:n', versions.getBySemver)
 app.get('/api/collections/:owner/:slug/versions/:n/records', versions.records)
 app.get('/api/collections/:owner/:slug/versions/:n/files', versions.files)
 app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
-app.post('/api/collections/:owner/:slug/versions', requireAuth('write'), versions.push)
 app.post(
   '/api/collections/:owner/:slug/versions/negotiate',
   requireAuth('write'),
   negotiate.negotiate,
 )
+app.get(
+  '/api/collections/:owner/:slug/versions/negotiate/:sessionId',
+  requireAuth('read'),
+  negotiate.getSession,
+)
+app.post(
+  '/api/collections/:owner/:slug/versions/negotiate/:sessionId/records',
+  requireAuth('write'),
+  negotiate.submitRecords,
+)
 app.post(
   '/api/collections/:owner/:slug/versions/negotiate/:sessionId/commit',
   requireAuth('write'),
   negotiate.commit,
+)
+app.delete(
+  '/api/collections/:owner/:slug/versions/negotiate/:sessionId',
+  requireAuth('write'),
+  negotiate.cancelSession,
 )
 app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
 app.patch('/api/collections/:owner/:slug/metadata', requireAuth('write'), versions.updateMetadata)

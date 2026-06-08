@@ -134,8 +134,14 @@ Body: raw file bytes
 The server verifies the SHA-256 hash matches the body. Existing hashes are idempotent (200 OK).
 Check existence first with HEAD if you want to skip uploads.
 
-### Step 4: Push the version
-POST /api/collections/:owner/:slug/versions
+### Step 4: Push the version (negotiate protocol)
+
+All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation.
+The client sends a manifest of record hashes; the server says which it needs; the client sends
+only those records; then commits.
+
+#### Step 4a: Negotiate
+POST /api/collections/:owner/:slug/versions/negotiate
 Content-Type: application/json
 Authorization: Bearer ul_<key>
 
@@ -162,74 +168,29 @@ Authorization: Bearer ul_<key>
       }
     }
   },
-  "changes": {
-    "added": [
-      {"id": "article-42", "type": "Article", "data": {"title": "New Paper", "body": "...", "publishedAt": "2026-04-27T00:00:00Z", "authorId": "author-1"}}
-    ],
-    "updated": [
-      {"id": "article-10", "type": "Article", "data": {"title": "Updated Title", "body": "...", "publishedAt": "2025-01-01T00:00:00Z", "authorId": "author-2"}}
-    ],
-    "removed": ["article-5"]
+  "manifest": [
+    {"id": "article-42", "type": "Article", "hash": "abc123..."},
+    {"id": "article-10", "type": "Article", "hash": "def456..."}
+  ],
+  "files": ["7a8b9c..."],
+  "metadata": {
+    "description": "Daily archive of publications"
   }
 }
 
+Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`
+with object keys sorted recursively.
+
 Field reference:
 - base_version: the semver string of the version you diffed against (e.g. "v1.2.0"). null for first push. Used for optimistic locking.
-- schemas: per-type JSON Schema map. Required on first push. If omitted on subsequent pushes and records validate against carried-forward schemas, they are carried forward automatically.
-- schemas[TypeName]: JSON Schema for that record type. Use "x-ref-type" to annotate foreign key fields.
-- metadata: optional JSON object for version metadata. Can include "description", "readme", "license", and any other key-value pairs. Metadata is versioned — it lives on the version, not the collection.
+- schemas: per-type JSON Schema map. Required on every push.
+- manifest: array of {id, type, hash} for every record in the new version.
+- files: array of file hashes (SHA-256 hex strings) referenced by records.
+- metadata: optional JSON object for version metadata (description, readme, license, etc.). Merged with previous version's metadata.
 - message: human-readable commit message (optional).
 - app_id: identifier for the pushing application (optional).
 - actor_id: identifier for the user or process that triggered the push (optional).
-- strip_unknown_fields: if true, records with fields not defined in the schema will have those fields silently stripped before storage. If false (default), the push returns 422 with a list of extra fields.
-- changes.added: new records to insert.
-- changes.updated: existing records to replace (full record, not a patch).
-- changes.removed: record ids to delete.
-
-### Step 5: Handle the response
-
-Success (201):
-{ "semver": "v1.3.0", "hash": "def456...", "recordCount": 100, "fileCount": 5 }
-
-Conflict (409 — someone pushed while you were diffing):
-{ "error": "Version conflict", "currentVersion": "v1.3.0", "statusCode": 409 }
-→ Re-fetch latest, re-diff, re-push with the new base_version.
-
-Missing files (422 — records reference files not yet uploaded):
-{ "error": "Missing files", "filesNeeded": ["sha256:abc...", "sha256:def..."], "statusCode": 422 }
-→ Upload the listed files, then retry the push.
-
-Extra fields (422 — records contain fields not in the schema):
-{ "error": "Records contain fields not defined in schema", "extraFields": [{"recordId":"...", "type":"...", "fields":["unknownField"]}], "hint": "Set strip_unknown_fields: true ...", "statusCode": 422 }
-→ Either remove the extra fields from records, or re-push with "strip_unknown_fields": true to accept stripping.
-
-### First push (no existing versions)
-Set base_version to null. Put all records in changes.added. Include schemas for all types. The first version will be v1.0.0.
-
----
-
-## Negotiate Push: Hash-Efficient Transfers
-
-For large collections where most records are unchanged between versions, the negotiate protocol
-avoids transferring data the server already has — similar to git's pack negotiation.
-
-### Step 1: Send the manifest
-POST /api/collections/:owner/:slug/versions/negotiate
-Authorization: Bearer ul_<key>
-
-{
-  "base_version": "v1.2.0",
-  "schemas": { "Article": { ... } },
-  "manifest": [
-    {"id": "article-1", "type": "Article", "hash": "abc123..."},
-    {"id": "article-2", "type": "Article", "hash": "def456..."}
-  ],
-  "files": ["7a8b9c..."],
-  "message": "Daily update",
-  "strip_unknown_fields": false
-}
-
-Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`.
+- strip_unknown_fields: if true, records with fields not defined in the schema will have those fields silently stripped. Default: false (returns 422 with extra field list).
 
 Response:
 {
@@ -237,118 +198,64 @@ Response:
   "needed_records": ["def456..."],
   "needed_files": [],
   "total_records": 2,
-  "already_have_records": 1
+  "total_files": 1,
+  "already_have_records": 1,
+  "already_have_files": 1
 }
 
-### Step 2: Send only the missing records
-POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+#### Step 4b: Send needed records
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
 Content-Type: application/x-ndjson
 Authorization: Bearer ul_<key>
 
-{"id":"article-2","type":"Article","data":{"title":"New Paper","body":"..."}}
+{"id":"article-10","type":"Article","data":{"title":"Updated Title","body":"..."}}
 
-Each line is one record as JSON. The server verifies each record hashes to an expected hash from step 1.
-If 100,000 records already exist and only 5 are new, only 5 lines are sent.
+Each line is one JSON record. Only send records whose hashes appear in needed_records.
+Call this endpoint multiple times for large datasets (up to 10,000 records per batch).
+If needed_records was empty, skip this step entirely.
+
+Response:
+{ "received": 1, "remaining": 0, "total_needed": 1 }
+
+When remaining reaches 0, all needed records have been received.
+
+#### Step 4c: Commit
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+Authorization: Bearer ul_<key>
+
+No request body needed. The server validates all records against schemas, computes
+version hashes, and creates the new immutable version.
 
 Response (201):
-{
-  "semver": "v1.3.0",
-  "hash": "...",
-  "recordCount": 2,
-  "records_transferred": 1,
-  "records_deduplicated": 1
-}
+{ "semver": "v1.3.0", "hash": "def456...", "recordCount": 2, "fileCount": 1 }
+
+### Step 5: Handle errors
+
+Conflict (409 — someone pushed while you were diffing):
+{ "error": "Version conflict", "currentVersion": "v1.3.0", "statusCode": 409 }
+→ Re-negotiate with the new base_version.
+
+Missing records (400 — commit called before all records submitted):
+{ "error": "Missing records", "missing_hashes": ["def456..."], "statusCode": 400 }
+→ Send the remaining records via the /records endpoint, then retry commit.
+
+Missing files (422 — records reference files not yet uploaded):
+{ "error": "Missing files", "filesNeeded": ["sha256:abc..."], "statusCode": 422 }
+→ Upload the listed files, then retry commit.
+
+Extra fields (422 — records contain fields not in the schema):
+{ "error": "Records contain fields not defined in schema", "extraFields": [...], "statusCode": 422 }
+→ Either fix the records, or re-negotiate with "strip_unknown_fields": true.
 
 Sessions expire after 10 minutes. If the session expires, re-negotiate.
 
-If records contain fields not defined in the schema, the commit returns 422 with a list of extra fields.
-Set "strip_unknown_fields": true in the negotiate request (step 1) to accept stripping. When stripping
-is enabled, the server strips extra fields, recomputes record hashes, and updates the manifest accordingly.
+### Session management
+GET  /api/collections/:owner/:slug/versions/negotiate/:sessionId  → check session status
+DELETE /api/collections/:owner/:slug/versions/negotiate/:sessionId → cancel session (204)
 
----
-
-## Chunked Push: Large Uploads
-
-For pushes exceeding 100MB (or millions of records), use the chunked upload protocol. This avoids
-body size limits and memory pressure by streaming changes in batches.
-
-### Step 1: Start an upload session
-POST /api/collections/:owner/:slug/versions/upload
-Authorization: Bearer ul_<key>
-
-{
-  "base_version": "v1.2.0",
-  "message": "Bulk import 2M records",
-  "app_id": "my-app",
-  "schemas": { ... }
-}
-
-Response (201):
-{
-  "sessionId": "uuid-of-session",
-  "expiresAt": "2026-04-30T01:00:00.000Z"
-}
-
-Sessions expire after 1 hour.
-
-### Step 2: Append batches (repeat as needed)
-PUT /api/collections/:owner/:slug/versions/upload/:sessionId
-Authorization: Bearer ul_<key>
-
-{
-  "changes": {
-    "added": [ ...up to 10,000 records... ],
-    "updated": [ ... ],
-    "removed": ["id-1", "id-2"]
-  }
-}
-
-Response:
-{
-  "received": { "added": 5000, "updated": 0, "removed": 0 },
-  "totalStaged": 15000
-}
-
-Each batch can contain up to 10,000 records. Call this endpoint as many times as needed.
-If a record ID is sent more than once, the last write wins (upsert semantics).
-
-### Step 3: Finalize the version
-POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize
-POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize?strip_unknown_fields=true
-Authorization: Bearer ul_<key>
-
-Add ?strip_unknown_fields=true to accept stripping fields not defined in the schema.
-Without it, finalize returns 422 if any records contain extra fields.
-
-Response (201): same as regular push
-{
-  "semver": "v1.3.0",
-  "hash": "...",
-  "recordCount": 2000000,
-  "fileCount": 5
-}
-
-Finalize applies all staged changes to the base version, validates against schemas,
-computes hashes, and creates the new immutable version.
-
-### Errors during finalize
-- 409 Version conflict: someone pushed since your base_version. Start a new session.
-- 422 Schema validation failed: one or more records don't match. Fix and re-upload.
-- 422 Missing files: records reference files not yet uploaded. Upload them and retry finalize.
-- 410 Session expired: the 1-hour window elapsed. Start a new session.
-
-### Cancel a session
-DELETE /api/collections/:owner/:slug/versions/upload/:sessionId
-Response: 204 (staged records are discarded)
-
-### Check session status
-GET /api/collections/:owner/:slug/versions/upload/:sessionId
-Response: { sessionId, status, recordCount, baseVersion (semver string), expiresAt, createdAt }
-
-Status values: open, finalizing, completed, failed, expired.
-
-Note: On successful finalize, the session and all staged records are deleted from the database.
-There is no need to manually clean up completed sessions.
+### First push (no existing versions)
+Set base_version to null. Include all records in the manifest. Include schemas for all types.
+The first version will be v1.0.0.
 
 ---
 

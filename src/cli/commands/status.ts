@@ -6,7 +6,7 @@ export function status(): void {
   const root = requireRoot()
   const head = getHead(root)
 
-  console.log(`HEAD: version ${head}`)
+  console.log(`HEAD: ${head || '(none)'}`)
 
   const stagedSchema = getStagedSchema(root)
   const stagedRecords = getStagedRecords(root)
@@ -18,7 +18,7 @@ export function status(): void {
 
   if (stagedSchema) {
     const typeSlugs = Object.keys(stagedSchema)
-    if (head === 0) {
+    if (!head) {
       console.log(`\nSchema (new): ${typeSlugs.length} type(s)`)
       for (const slug of typeSlugs) {
         console.log(`  + ${slug}`)
@@ -53,7 +53,7 @@ export function status(): void {
       byType.set(r.type, (byType.get(r.type) ?? 0) + 1)
     }
 
-    if (head === 0) {
+    if (!head) {
       console.log(`\nRecords (new): ${records.length} total`)
       for (const [type, count] of byType) {
         console.log(`  + ${count} ${type}`)

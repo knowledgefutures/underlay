@@ -1,124 +1,26 @@
-import { createHash } from 'node:crypto'
-
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
 import {
   ajv,
+  canonicalize,
+  computePublicHash,
+  computeVersionHash,
   deriveSemver,
-  filterRecordData,
-  filterTypeSchema,
   findExtraFields,
-  getPrivateFields,
-  getPrivateTypes,
   hashRecord,
   hashSchema,
   loadVersionSchemas,
   parseSemver,
+  resolveCollection,
   type SchemaEntry,
   stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
-// In-memory negotiate sessions (short-lived, expires in 10 minutes)
-const sessions = new Map<
-  string,
-  {
-    collectionId: string
-    owner: string
-    slug: string
-    baseSemver: string | null
-    schemas: Record<string, object>
-    manifest: { id: string; type: string; hash: string; private?: boolean }[]
-    fileHashes: string[]
-    neededRecords: string[]
-    neededFiles: string[]
-    message: string | null
-    metadata: Record<string, unknown> | null
-    appId: string | null
-    actorId: string | null
-    stripUnknownFields: boolean
-    expiresAt: number
-  }
->()
-
 const SESSION_TTL_MS = 10 * 60 * 1000
-
-setInterval(() => {
-  const now = Date.now()
-  for (const [key, session] of sessions) {
-    if (session.expiresAt < now) sessions.delete(key)
-  }
-}, 60 * 1000)
-
-async function resolveCollection(owner: string, slug: string) {
-  const [result] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      slug: schema.collections.slug,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  return result ?? null
-}
-
-function canonicalize(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
-  }
-  return sorted
-}
-
-function computeVersionHash(
-  schemaSet: { slug: string; schemaHash: string }[],
-  recordHashes: string[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: [...recordHashes].sort(),
-    files: fileHashes.sort(),
-    metadata: metadata ? canonicalize(metadata) : null,
-  })
-  return 'private:' + createHash('sha256').update(canonical).digest('hex')
-}
-
-function computePublicHash(
-  schemaEntries: SchemaEntry[],
-  recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const privateTypes = getPrivateTypes(schemaEntries)
-  const publicSchemaSet: { slug: string; schemaHash: string }[] = []
-  for (const entry of schemaEntries) {
-    if (privateTypes.has(entry.slug)) continue
-    const filtered = filterTypeSchema(entry.schema)
-    publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
-  }
-  const publicRecordHashes = recordRows
-    .filter((r) => !r.private && !privateTypes.has(r.type))
-    .map((r) => {
-      const entry = schemaEntries.find((e) => e.slug === r.type)
-      const privateFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
-      const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data
-      return hashRecord({ id: r.recordId, type: r.type, data }).hash
-    })
-  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, metadata).replace(
-    'private:',
-    'public:',
-  )
-}
+const MAX_BATCH_RECORDS = 10_000
 
 // POST /api/collections/:owner/:slug/versions/negotiate
 export async function negotiate(c: Context<AuthEnv>) {
@@ -143,7 +45,6 @@ export async function negotiate(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-  // Check latest version for optimistic lock
   const [latest] = await db
     .select({ semver: schema.versions.semver })
     .from(schema.versions)
@@ -155,7 +56,6 @@ export async function negotiate(c: Context<AuthEnv>) {
 
   const currentSemver = latest?.semver ?? null
   if (body.base_version !== null && body.base_version !== currentSemver) {
-    // Normalize and compare
     const normalized = body.base_version ? parseSemver(body.base_version).semver : null
     if (normalized !== currentSemver) {
       return c.json(
@@ -189,27 +89,28 @@ export async function negotiate(c: Context<AuthEnv>) {
     neededFiles = fileHashes.filter((h) => !existingSet.has(h))
   }
 
-  const sessionId = crypto.randomUUID()
-  sessions.set(sessionId, {
-    collectionId: collection.id,
-    owner,
-    slug,
-    baseSemver: body.base_version,
-    schemas: body.schemas,
-    manifest: body.manifest,
-    fileHashes,
-    neededRecords,
-    neededFiles,
-    message: body.message ?? null,
-    metadata: body.metadata ?? null,
-    appId: body.app_id ?? null,
-    actorId: body.actor_id ?? null,
-    stripUnknownFields: body.strip_unknown_fields ?? false,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  })
+  const [session] = await db
+    .insert(schema.negotiateSessions)
+    .values({
+      collectionId: collection.id,
+      userId: c.get('userId')!,
+      baseSemver: body.base_version,
+      schemas: body.schemas as any,
+      manifest: body.manifest as any,
+      fileHashes,
+      neededRecords,
+      neededFiles,
+      message: body.message ?? null,
+      metadata: body.metadata ?? null,
+      appId: body.app_id ?? null,
+      actorId: body.actor_id ?? null,
+      stripUnknownFields: body.strip_unknown_fields ?? false,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    })
+    .returning({ id: schema.negotiateSessions.id })
 
   return c.json({
-    session_id: sessionId,
+    session_id: session!.id,
     needed_records: neededRecords,
     needed_files: neededFiles,
     total_records: manifestHashes.length,
@@ -219,40 +120,87 @@ export async function negotiate(c: Context<AuthEnv>) {
   })
 }
 
-// POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
-export async function commit(c: Context<AuthEnv>) {
+// GET /api/collections/:owner/:slug/versions/negotiate/:sessionId
+export async function getSession(c: Context<AuthEnv>) {
   const sessionId = c.req.param('sessionId')!
-  const session = sessions.get(sessionId)
 
-  if (!session || session.expiresAt < Date.now()) {
-    sessions.delete(sessionId)
+  const [session] = await db
+    .select()
+    .from(schema.negotiateSessions)
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+
+  if (!session) {
+    return c.json({ error: 'Session not found', statusCode: 404 }, 404)
+  }
+  if (session.userId !== c.get('userId')) {
+    return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+  }
+
+  return c.json({
+    session_id: session.id,
+    status: session.status,
+    needed_records: session.neededRecords,
+    needed_files: session.neededFiles,
+    expires_at: session.expiresAt,
+    created_at: session.createdAt,
+  })
+}
+
+// POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
+export async function submitRecords(c: Context<AuthEnv>) {
+  const sessionId = c.req.param('sessionId')!
+
+  const [sessionRow] = await db
+    .select()
+    .from(schema.negotiateSessions)
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+
+  if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
+    if (sessionRow) {
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
+    }
     return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
   }
 
-  // Parse JSONL body
+  if (sessionRow.userId !== c.get('userId')) {
+    return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+  }
+
   const rawBody = await c.req.text()
   const lines = rawBody
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
 
-  const submittedRecords: {
-    id: string
-    type: string
-    data: unknown
-    private?: boolean
-  }[] = []
+  if (lines.length === 0) {
+    return c.json({ error: 'Empty batch', statusCode: 400 }, 400)
+  }
+  if (lines.length > MAX_BATCH_RECORDS) {
+    return c.json(
+      {
+        error: `Batch too large. Maximum ${MAX_BATCH_RECORDS} records per request.`,
+        statusCode: 400,
+      },
+      400,
+    )
+  }
+
+  const submittedRecords: { id: string; type: string; data: unknown; private?: boolean }[] = []
   for (const line of lines) {
     try {
       submittedRecords.push(JSON.parse(line))
     } catch {
-      sessions.delete(sessionId)
       return c.json({ error: `Invalid JSONL line: ${line.slice(0, 100)}`, statusCode: 400 }, 400)
     }
   }
 
-  // Verify submitted records hash to expected values
-  const neededSet = new Set(session.neededRecords)
+  const manifestHashSet = new Set((sessionRow.manifest as { hash: string }[]).map((r) => r.hash))
+  const neededSet = new Set(sessionRow.neededRecords)
   const receivedHashes = new Set<string>()
   const recordObjects: {
     hash: string
@@ -265,46 +213,133 @@ export async function commit(c: Context<AuthEnv>) {
 
   for (const rec of submittedRecords) {
     const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
-    if (!neededSet.has(hash)) {
-      sessions.delete(sessionId)
+    if (!manifestHashSet.has(hash)) {
       return c.json(
         {
           error: 'Unexpected record hash',
           hash,
           recordId: rec.id,
-          message: 'Submitted record does not match any needed hash from the negotiate step.',
+          message: 'Submitted record does not match any hash in the manifest.',
           statusCode: 400,
         },
         400,
       )
     }
-    receivedHashes.add(hash)
-    recordObjects.push({
-      hash,
-      recordId: rec.id,
-      type: rec.type,
-      data: rec.data,
-      private: rec.private ?? false,
-      size: Buffer.byteLength(canonical, 'utf-8'),
-    })
+    if (neededSet.has(hash)) {
+      receivedHashes.add(hash)
+      recordObjects.push({
+        hash,
+        recordId: rec.id,
+        type: rec.type,
+        data: rec.data,
+        private: rec.private ?? false,
+        size: Buffer.byteLength(canonical, 'utf-8'),
+      })
+    }
   }
 
-  // Check all needed records were provided
-  const missing = session.neededRecords.filter((h) => !receivedHashes.has(h))
-  if (missing.length > 0) {
+  if (recordObjects.length > 0) {
+    const BATCH = 1000
+    for (let i = 0; i < recordObjects.length; i += BATCH) {
+      const batch = recordObjects.slice(i, i + BATCH)
+      await db.insert(schema.recordObjects).values(batch).onConflictDoNothing()
+    }
+  }
+
+  const remainingNeeded = sessionRow.neededRecords.filter((h) => !receivedHashes.has(h))
+  await db
+    .update(schema.negotiateSessions)
+    .set({ neededRecords: remainingNeeded })
+    .where(eq(schema.negotiateSessions.id, sessionId))
+
+  return c.json({
+    received: receivedHashes.size,
+    remaining: remainingNeeded.length,
+    total_needed: sessionRow.neededRecords.length,
+  })
+}
+
+// POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+export async function commit(c: Context<AuthEnv>) {
+  const sessionId = c.req.param('sessionId')!
+  const [sessionRow] = await db
+    .select()
+    .from(schema.negotiateSessions)
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+
+  if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
+    if (sessionRow) {
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
+    }
+    return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
+  }
+
+  const session = {
+    collectionId: sessionRow.collectionId,
+    baseSemver: sessionRow.baseSemver,
+    schemas: sessionRow.schemas as Record<string, object>,
+    manifest: sessionRow.manifest as {
+      id: string
+      type: string
+      hash: string
+      private?: boolean
+    }[],
+    fileHashes: sessionRow.fileHashes,
+    neededRecords: sessionRow.neededRecords,
+    neededFiles: sessionRow.neededFiles,
+    message: sessionRow.message,
+    metadata: sessionRow.metadata as Record<string, unknown> | null,
+    appId: sessionRow.appId,
+    actorId: sessionRow.actorId,
+    stripUnknownFields: sessionRow.stripUnknownFields,
+  }
+
+  // All needed records must have been submitted via /records
+  if (session.neededRecords.length > 0) {
     return c.json(
       {
         error: 'Missing records',
-        missing_hashes: missing,
-        message: `${missing.length} needed record(s) were not submitted.`,
+        missing_hashes: session.neededRecords,
+        message: `${session.neededRecords.length} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
         statusCode: 400,
       },
       400,
     )
   }
 
-  // Build manifest lookup for private flags
-  const manifestMap = new Map(session.manifest.map((r) => [r.hash, r]))
+  // Load ALL manifest records from record_objects
+  const manifestHashes = session.manifest.map((r) => r.hash)
+  const allRecords: {
+    hash: string
+    recordId: string
+    type: string
+    data: unknown
+    private: boolean
+    size: number
+  }[] = []
+
+  if (manifestHashes.length > 0) {
+    const LOAD_BATCH = 1000
+    for (let i = 0; i < manifestHashes.length; i += LOAD_BATCH) {
+      const batch = manifestHashes.slice(i, i + LOAD_BATCH)
+      const rows = await db
+        .select({
+          hash: schema.recordObjects.hash,
+          recordId: schema.recordObjects.recordId,
+          type: schema.recordObjects.type,
+          data: schema.recordObjects.data,
+          private: schema.recordObjects.private,
+          size: schema.recordObjects.size,
+        })
+        .from(schema.recordObjects)
+        .where(inArray(schema.recordObjects.hash, batch))
+      allRecords.push(...rows)
+    }
+  }
 
   // --- Schema resolution ---
   const newSchemaSet: {
@@ -339,41 +374,12 @@ export async function commit(c: Context<AuthEnv>) {
     })
   }
 
-  // Validate ALL records against schemas (both new and existing)
+  // Validate ALL records against schemas
   const validators = new Map<string, ReturnType<typeof ajv.compile>>()
   for (const entry of newSchemaSet) {
     validators.set(entry.slug, ajv.compile(entry.schema as object))
   }
 
-  // Build the full record list for validation + version creation
-  // For records we already had, load them from record_objects
-  const existingHashes = session.manifest.map((r) => r.hash).filter((h) => !neededSet.has(h))
-  let existingRecords: {
-    hash: string
-    recordId: string
-    type: string
-    data: unknown
-    private: boolean
-    size: number
-  }[] = []
-  if (existingHashes.length > 0) {
-    const rows = await db
-      .select({
-        hash: schema.recordObjects.hash,
-        recordId: schema.recordObjects.recordId,
-        type: schema.recordObjects.type,
-        data: schema.recordObjects.data,
-        private: schema.recordObjects.private,
-        size: schema.recordObjects.size,
-      })
-      .from(schema.recordObjects)
-      .where(inArray(schema.recordObjects.hash, existingHashes))
-    existingRecords = rows
-  }
-
-  const allRecords = [...existingRecords, ...recordObjects]
-
-  // Validate
   const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
   for (const rec of allRecords) {
     const validate = validators.get(rec.type)
@@ -397,7 +403,10 @@ export async function commit(c: Context<AuthEnv>) {
   }
 
   if (validationErrors.length > 0) {
-    sessions.delete(sessionId)
+    await db
+      .update(schema.negotiateSessions)
+      .set({ status: 'expired' })
+      .where(eq(schema.negotiateSessions.id, sessionId))
     return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
   }
 
@@ -410,40 +419,41 @@ export async function commit(c: Context<AuthEnv>) {
     allRecords.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
     schemasForCheck,
   )
+
+  const strippedRecordObjects: (typeof allRecords)[number][] = []
+
   if (extraFieldWarnings.length > 0) {
     if (!session.stripUnknownFields) {
-      sessions.delete(sessionId)
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
       return c.json(
         {
           error: 'Records contain fields not defined in schema',
           extraFields: extraFieldWarnings,
-          hint: 'Set strip_unknown_fields: true in the negotiate request to accept stripping these fields.',
+          hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
           statusCode: 422,
         },
         422,
       )
     }
     const affectedIds = new Set(extraFieldWarnings.map((w) => w.recordId))
-    const oldToNewHash = new Map<string, string>()
     for (const rec of allRecords) {
       if (!affectedIds.has(rec.recordId)) continue
       const typeSchema = schemasForCheck[rec.type]
       if (!typeSchema?.properties || typeof rec.data !== 'object' || rec.data === null) continue
-      const oldHash = rec.hash
       rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
       const { hash: newHash, canonical } = hashRecord({
         id: rec.recordId,
         type: rec.type,
         data: rec.data,
       })
-      rec.hash = newHash
-      rec.size = Buffer.byteLength(canonical, 'utf-8')
-      if (oldHash !== newHash) oldToNewHash.set(oldHash, newHash)
-    }
-    // Update manifest to reflect new hashes
-    for (const entry of session.manifest) {
-      const newHash = oldToNewHash.get(entry.hash)
-      if (newHash) entry.hash = newHash
+      if (rec.hash !== newHash) {
+        rec.hash = newHash
+        rec.size = Buffer.byteLength(canonical, 'utf-8')
+        strippedRecordObjects.push(rec)
+      }
     }
   }
 
@@ -479,10 +489,12 @@ export async function commit(c: Context<AuthEnv>) {
 
   const currentSemver = latest?.semver ?? null
   if (session.baseSemver !== null && session.baseSemver !== currentSemver) {
-    // Normalize and compare
     const normalized = session.baseSemver ? parseSemver(session.baseSemver).semver : null
     if (normalized !== currentSemver) {
-      sessions.delete(sessionId)
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
       return c.json(
         { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
         409,
@@ -511,16 +523,20 @@ export async function commit(c: Context<AuthEnv>) {
       .from(schema.versionRecords)
       .where(eq(schema.versionRecords.versionId, latest.id))
     const prevSet = new Set(prevHashes.map((r) => r.hash))
-    const newSet = new Set(session.manifest.map((r) => r.hash))
+    const newSet = new Set(allRecords.map((r) => r.hash))
     recordsChanged = prevSet.size !== newSet.size || [...newSet].some((h) => !prevSet.has(h))
   }
 
-  const metadataValue =
-    session.metadata !== undefined
-      ? session.metadata
-      : ((latest?.metadata as Record<string, unknown> | null) ?? null)
+  const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
+  const metadataValue = session.metadata
+    ? { ...(prevMetadata ?? {}), ...(session.metadata as Record<string, unknown>) }
+    : prevMetadata
+  const metadataChanged =
+    JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==
+    JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
+
   const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-  const allRecordHashes = session.manifest.map((r) => r.hash)
+  const allRecordHashes = allRecords.map((r) => r.hash)
   const versionHash = computeVersionHash(
     schemaSetForHash,
     allRecordHashes,
@@ -546,7 +562,7 @@ export async function commit(c: Context<AuthEnv>) {
     metadataValue,
   )
 
-  const sv = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged)
+  const sv = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged || metadataChanged)
 
   // Check for duplicate
   const [existingHash] = await db
@@ -560,7 +576,10 @@ export async function commit(c: Context<AuthEnv>) {
     )
     .limit(1)
   if (existingHash) {
-    sessions.delete(sessionId)
+    await db
+      .update(schema.negotiateSessions)
+      .set({ status: 'expired' })
+      .where(eq(schema.negotiateSessions.id, sessionId))
     return c.json(
       {
         error: 'No changes detected',
@@ -582,71 +601,83 @@ export async function commit(c: Context<AuthEnv>) {
     totalBytes += Number(fileSizeSum?.total ?? 0)
   }
 
-  // Insert version
-  const [version] = await db
-    .insert(schema.versions)
-    .values({
-      collectionId: session.collectionId,
-      semver: sv.semver,
-      major: sv.major,
-      minor: sv.minor,
-      patch: sv.patch,
-      hash: versionHash,
-      publicHash,
-      baseSemver: session.baseSemver,
-      message: session.message,
-      metadata: metadataValue,
-      pushedBy: c.get('userId') ?? null,
-      appId: session.appId,
-      actorId: session.actorId,
-      recordCount: allRecords.length,
-      fileCount: session.fileHashes.length,
-      totalBytes,
-    })
-    .returning()
+  // Insert version + all related rows in a transaction
+  await db.transaction(async (tx) => {
+    const [version] = await tx
+      .insert(schema.versions)
+      .values({
+        collectionId: session.collectionId,
+        semver: sv.semver,
+        major: sv.major,
+        minor: sv.minor,
+        patch: sv.patch,
+        hash: versionHash,
+        publicHash,
+        baseSemver: session.baseSemver,
+        message: session.message,
+        metadata: metadataValue,
+        pushedBy: c.get('userId') ?? null,
+        appId: session.appId,
+        actorId: session.actorId,
+        recordCount: allRecords.length,
+        fileCount: session.fileHashes.length,
+        totalBytes,
+      })
+      .returning()
 
-  // Upsert new record objects
-  if (recordObjects.length > 0) {
-    const BATCH = 1000
-    for (let i = 0; i < recordObjects.length; i += BATCH) {
-      const batch = recordObjects.slice(i, i + BATCH)
-      await db.insert(schema.recordObjects).values(batch).onConflictDoNothing()
+    // Store any record_objects created by field stripping
+    if (strippedRecordObjects.length > 0) {
+      const BATCH = 1000
+      for (let i = 0; i < strippedRecordObjects.length; i += BATCH) {
+        const batch = strippedRecordObjects.slice(i, i + BATCH)
+        await tx
+          .insert(schema.recordObjects)
+          .values(
+            batch.map((r) => ({
+              hash: r.hash,
+              recordId: r.recordId,
+              type: r.type,
+              data: r.data as any,
+              private: r.private,
+              size: r.size,
+            })),
+          )
+          .onConflictDoNothing()
+      }
     }
-  }
 
-  // Insert version_records manifest
-  const BATCH = 1000
-  for (let i = 0; i < session.manifest.length; i += BATCH) {
-    const batch = session.manifest.slice(i, i + BATCH)
-    await db
-      .insert(schema.versionRecords)
-      .values(batch.map((r) => ({ versionId: version!.id, recordHash: r.hash })))
-  }
+    const BATCH = 1000
+    for (let i = 0; i < allRecords.length; i += BATCH) {
+      const batch = allRecords.slice(i, i + BATCH)
+      await tx
+        .insert(schema.versionRecords)
+        .values(batch.map((r) => ({ versionId: version!.id, recordHash: r.hash })))
+    }
 
-  // Insert version_files
-  if (session.fileHashes.length > 0) {
-    await db
-      .insert(schema.versionFiles)
-      .values(session.fileHashes.map((hash) => ({ versionId: version!.id, fileHash: hash })))
-  }
+    if (session.fileHashes.length > 0) {
+      await tx
+        .insert(schema.versionFiles)
+        .values(session.fileHashes.map((hash) => ({ versionId: version!.id, fileHash: hash })))
+    }
 
-  // Insert version_schemas
-  await db.insert(schema.versionSchemas).values(
-    newSchemaSet.map((entry) => ({
-      versionId: version!.id,
-      slug: entry.slug,
-      schemaId: entry.schemaId,
-    })),
-  )
+    await tx.insert(schema.versionSchemas).values(
+      newSchemaSet.map((entry) => ({
+        versionId: version!.id,
+        slug: entry.slug,
+        schemaId: entry.schemaId,
+      })),
+    )
 
-  // Update collection timestamp
+    await tx
+      .update(schema.collections)
+      .set({ updatedAt: new Date() })
+      .where(eq(schema.collections.id, session.collectionId))
+  })
+
   await db
-    .update(schema.collections)
-    .set({ updatedAt: new Date() })
-    .where(eq(schema.collections.id, session.collectionId))
-
-  // Clean up session
-  sessions.delete(sessionId)
+    .update(schema.negotiateSessions)
+    .set({ status: 'committed' })
+    .where(eq(schema.negotiateSessions.id, sessionId))
 
   return c.json(
     {
@@ -654,9 +685,32 @@ export async function commit(c: Context<AuthEnv>) {
       hash: versionHash,
       recordCount: allRecords.length,
       fileCount: session.fileHashes.length,
-      records_transferred: recordObjects.length,
-      records_deduplicated: allRecords.length - recordObjects.length,
     },
     201,
   )
+}
+
+// DELETE /api/collections/:owner/:slug/versions/negotiate/:sessionId
+export async function cancelSession(c: Context<AuthEnv>) {
+  const sessionId = c.req.param('sessionId')!
+
+  const [session] = await db
+    .select()
+    .from(schema.negotiateSessions)
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+
+  if (!session) {
+    return c.json({ error: 'Session not found', statusCode: 404 }, 404)
+  }
+  if (session.userId !== c.get('userId')) {
+    return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+  }
+
+  await db
+    .update(schema.negotiateSessions)
+    .set({ status: 'expired' })
+    .where(eq(schema.negotiateSessions.id, sessionId))
+
+  return c.body(null, 204)
 }

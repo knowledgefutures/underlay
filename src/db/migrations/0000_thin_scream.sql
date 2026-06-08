@@ -69,7 +69,6 @@ CREATE TABLE "collections" (
 	"organization_id" text NOT NULL,
 	"slug" text NOT NULL,
 	"name" text NOT NULL,
-	"description" text,
 	"public" boolean DEFAULT false NOT NULL,
 	"forked_from" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -102,6 +101,26 @@ CREATE TABLE "member" (
 	"user_id" text NOT NULL,
 	"role" text DEFAULT 'member' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "negotiate_sessions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"collection_id" uuid NOT NULL,
+	"user_id" text NOT NULL,
+	"base_semver" text,
+	"schemas" jsonb NOT NULL,
+	"manifest" jsonb NOT NULL,
+	"file_hashes" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"needed_records" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"needed_files" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"message" text,
+	"metadata" jsonb,
+	"app_id" text,
+	"actor_id" text,
+	"strip_unknown_fields" boolean DEFAULT false NOT NULL,
+	"status" text DEFAULT 'open' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "organization" (
@@ -175,32 +194,6 @@ CREATE TABLE "sync_runs" (
 	"logs" jsonb DEFAULT '[]'::jsonb NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "upload_records" (
-	"session_id" uuid NOT NULL,
-	"record_id" text NOT NULL,
-	"type" text,
-	"data" jsonb,
-	"private" boolean DEFAULT false,
-	"operation" text NOT NULL,
-	CONSTRAINT "upload_records_session_id_record_id_pk" PRIMARY KEY("session_id","record_id")
-);
---> statement-breakpoint
-CREATE TABLE "upload_sessions" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"collection_id" uuid NOT NULL,
-	"user_id" text NOT NULL,
-	"base_version" integer,
-	"message" text,
-	"readme" text,
-	"app_id" text,
-	"actor_id" text,
-	"schemas" jsonb,
-	"status" text DEFAULT 'open' NOT NULL,
-	"record_count" integer DEFAULT 0 NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"expires_at" timestamp with time zone NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "user" (
 	"id" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
@@ -243,13 +236,15 @@ CREATE TABLE "version_schemas" (
 CREATE TABLE "versions" (
 	"id" bigserial PRIMARY KEY NOT NULL,
 	"collection_id" uuid NOT NULL,
-	"number" integer NOT NULL,
 	"semver" text NOT NULL,
+	"major" integer NOT NULL,
+	"minor" integer NOT NULL,
+	"patch" integer NOT NULL,
 	"hash" text NOT NULL,
 	"public_hash" text,
-	"base_number" integer,
+	"base_semver" text,
 	"message" text,
-	"readme" text,
+	"metadata" jsonb,
 	"pushed_by" text,
 	"app_id" text,
 	"actor_id" text,
@@ -258,7 +253,7 @@ CREATE TABLE "versions" (
 	"file_count" integer NOT NULL,
 	"total_bytes" bigint NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "versions_collection_id_number_unique" UNIQUE("collection_id","number"),
+	CONSTRAINT "versions_collection_id_semver_unique" UNIQUE("collection_id","semver"),
 	CONSTRAINT "versions_collection_id_hash_unique" UNIQUE("collection_id","hash")
 );
 --> statement-breakpoint
@@ -272,11 +267,10 @@ ALTER TABLE "invitation" ADD CONSTRAINT "invitation_organization_id_organization
 ALTER TABLE "invitation" ADD CONSTRAINT "invitation_inviter_id_user_id_fk" FOREIGN KEY ("inviter_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member" ADD CONSTRAINT "member_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member" ADD CONSTRAINT "member_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "negotiate_sessions" ADD CONSTRAINT "negotiate_sessions_collection_id_collections_id_fk" FOREIGN KEY ("collection_id") REFERENCES "public"."collections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "negotiate_sessions" ADD CONSTRAINT "negotiate_sessions_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "schema_labels" ADD CONSTRAINT "schema_labels_schema_id_schemas_id_fk" FOREIGN KEY ("schema_id") REFERENCES "public"."schemas"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "upload_records" ADD CONSTRAINT "upload_records_session_id_upload_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."upload_sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "upload_sessions" ADD CONSTRAINT "upload_sessions_collection_id_collections_id_fk" FOREIGN KEY ("collection_id") REFERENCES "public"."collections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "upload_sessions" ADD CONSTRAINT "upload_sessions_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_files" ADD CONSTRAINT "version_files_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_files" ADD CONSTRAINT "version_files_file_hash_files_hash_fk" FOREIGN KEY ("file_hash") REFERENCES "public"."files"("hash") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_records" ADD CONSTRAINT "version_records_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -301,4 +295,5 @@ CREATE INDEX "session_user_id_idx" ON "session" USING btree ("user_id");--> stat
 CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");--> statement-breakpoint
 CREATE INDEX "version_files_file_hash_idx" ON "version_files" USING btree ("file_hash");--> statement-breakpoint
 CREATE INDEX "version_records_record_hash_idx" ON "version_records" USING btree ("record_hash");--> statement-breakpoint
-CREATE INDEX "version_schemas_schema_id_idx" ON "version_schemas" USING btree ("schema_id");
+CREATE INDEX "version_schemas_schema_id_idx" ON "version_schemas" USING btree ("schema_id");--> statement-breakpoint
+CREATE INDEX "versions_ordering_idx" ON "versions" USING btree ("collection_id","major","minor","patch");

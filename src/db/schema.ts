@@ -346,9 +346,9 @@ export const schemaLabels = pgTable(
   (t) => [unique().on(t.schemaId, t.label), index('schema_labels_label_idx').on(t.label)],
 )
 
-// --- Upload Sessions (chunked push) ---
+// --- Negotiate Sessions (push protocol) ---
 
-export const uploadSessions = pgTable('upload_sessions', {
+export const negotiateSessions = pgTable('negotiate_sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
   collectionId: uuid('collection_id')
     .notNull()
@@ -357,33 +357,22 @@ export const uploadSessions = pgTable('upload_sessions', {
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
   baseSemver: text('base_semver'),
+  schemas: jsonb('schemas').notNull(),
+  manifest: jsonb('manifest').notNull(),
+  fileHashes: jsonb('file_hashes').$type<string[]>().notNull().default([]),
+  neededRecords: jsonb('needed_records').$type<string[]>().notNull().default([]),
+  neededFiles: jsonb('needed_files').$type<string[]>().notNull().default([]),
   message: text('message'),
   metadata: jsonb('metadata'),
   appId: text('app_id'),
   actorId: text('actor_id'),
-  schemas: jsonb('schemas'),
-  status: text('status', { enum: ['open', 'finalizing', 'completed', 'failed', 'expired'] })
+  stripUnknownFields: boolean('strip_unknown_fields').notNull().default(false),
+  status: text('status', { enum: ['open', 'committed', 'expired'] })
     .notNull()
     .default('open'),
-  recordCount: integer('record_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 })
-
-export const uploadRecords = pgTable(
-  'upload_records',
-  {
-    sessionId: uuid('session_id')
-      .notNull()
-      .references(() => uploadSessions.id, { onDelete: 'cascade' }),
-    recordId: text('record_id').notNull(),
-    type: text('type'),
-    data: jsonb('data'),
-    private: boolean('private').default(false),
-    operation: text('operation', { enum: ['add', 'update', 'remove'] }).notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.sessionId, t.recordId] })],
-)
 
 // --- Sync Runs (mirror mode) ---
 

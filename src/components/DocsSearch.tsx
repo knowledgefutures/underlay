@@ -70,9 +70,9 @@ const docs: DocEntry[] = [
       'Authentication',
       'GET /api/accounts/me',
       'GET /api/accounts/:slug',
-      'POST /api/accounts/keys',
-      'GET /api/accounts/keys',
-      'DELETE /api/accounts/keys/:id',
+      'POST /api/auth/api-key/create',
+      'GET /api/auth/api-key/list',
+      'POST /api/auth/api-key/delete',
     ],
   },
   {
@@ -91,7 +91,9 @@ const docs: DocEntry[] = [
     title: 'Versions API',
     href: '/docs/api/versions',
     headings: [
-      'POST /api/collections/:owner/:slug/versions',
+      'POST /api/collections/:owner/:slug/versions/negotiate',
+      'POST /api/.../negotiate/:sessionId/records',
+      'POST /api/.../negotiate/:sessionId/commit',
       'GET /api/collections/:owner/:slug/versions',
       'GET /api/collections/:owner/:slug/versions/latest',
       'GET /api/collections/:owner/:slug/versions/:n',

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { underlayDir } from './store.js'
@@ -33,6 +33,6 @@ export function appendStagedRecords(root: string, lines: string[]): void {
 export function clearStaging(root: string): void {
   const schemaPath = join(stagingDir(root), 'schema.json')
   const recordsPath = join(stagingDir(root), 'records.jsonl')
-  if (existsSync(schemaPath)) writeFileSync(schemaPath, '', 'utf-8')
-  if (existsSync(recordsPath)) writeFileSync(recordsPath, '', 'utf-8')
+  if (existsSync(schemaPath)) unlinkSync(schemaPath)
+  if (existsSync(recordsPath)) unlinkSync(recordsPath)
 }

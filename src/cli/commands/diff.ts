@@ -2,18 +2,15 @@ import { requireRoot, readVersion, readObject } from '../lib/store.js'
 
 export function diff(from: string, to: string): void {
   const root = requireRoot()
-  const fromNum = parseInt(from, 10)
-  const toNum = parseInt(to, 10)
-
-  const fromVersion = readVersion(root, fromNum)
-  const toVersion = readVersion(root, toNum)
+  const fromVersion = readVersion(root, from)
+  const toVersion = readVersion(root, to)
 
   if (!fromVersion) {
-    console.error(`Version ${fromNum} not found.`)
+    console.error(`Version ${from} not found.`)
     process.exit(1)
   }
   if (!toVersion) {
-    console.error(`Version ${toNum} not found.`)
+    console.error(`Version ${to} not found.`)
     process.exit(1)
   }
 
@@ -54,7 +51,7 @@ export function diff(from: string, to: string): void {
     if (!toRecords.has(id)) removed.push(id)
   }
 
-  console.log(`Diff: v${fromNum} → v${toNum}`)
+  console.log(`Diff: ${from} → ${to}`)
   console.log(
     `  ${added.length} added, ${updated.length} updated, ${removed.length} removed, ${toRecords.size - added.length - updated.length} unchanged`,
   )

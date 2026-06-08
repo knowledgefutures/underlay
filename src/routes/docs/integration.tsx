@@ -244,15 +244,21 @@ export default function DocsIntegration() {
         <tbody>
           <tr>
             <td>
-              <code>POST .../versions</code>
+              <code>POST .../versions/negotiate</code>
             </td>
-            <td>Push a new version (up to 100MB)</td>
+            <td>Start a push (hash negotiation)</td>
           </tr>
           <tr>
             <td>
-              <code>POST .../versions/upload</code>
+              <code>POST .../negotiate/:id/records</code>
             </td>
-            <td>Start chunked upload (for large pushes)</td>
+            <td>Send needed records (JSONL, repeatable)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>POST .../negotiate/:id/commit</code>
+            </td>
+            <td>Finalize and create the version</td>
           </tr>
           <tr>
             <td>
@@ -281,13 +287,13 @@ export default function DocsIntegration() {
         </tbody>
       </table>
 
-      <h2>Efficient Pushes (Hash Negotiation)</h2>
+      <h2>Push Protocol</h2>
       <p>
-        For collections where most records are unchanged between versions, the{' '}
+        All pushes use the{' '}
         <Link to="/protocol#push" className="text-link underline">
           negotiate protocol
-        </Link>{' '}
-        avoids transferring data the server already has:
+        </Link>
+        , a three-step flow similar to git's pack negotiation:
       </p>
       <ol>
         <li>
@@ -295,9 +301,13 @@ export default function DocsIntegration() {
           a manifest of record hashes. The server responds with which hashes it needs.
         </li>
         <li>
-          <strong>Commit:</strong> <code>POST .../versions/negotiate/:sessionId/commit</code> with
-          only the missing records as JSONL. If 100,000 records already exist and 5 are new, only 5
-          lines are sent.
+          <strong>Send records:</strong> <code>POST .../negotiate/:id/records</code> with the needed
+          records as JSONL. Call this endpoint multiple times for large datasets (up to 10,000
+          records per batch). Skip this step if the server already has all records.
+        </li>
+        <li>
+          <strong>Commit:</strong> <code>POST .../negotiate/:id/commit</code> to validate and create
+          the version.
         </li>
       </ol>
       <p>
@@ -308,37 +318,18 @@ export default function DocsIntegration() {
         </Link>{' '}
         for the full hashing specification.
       </p>
-
-      <h2>Large Pushes (Chunked Upload)</h2>
       <p>
-        For pushes exceeding 100MB or containing hundreds of thousands of records, use the chunked
-        upload protocol:
-      </p>
-      <ol>
-        <li>
-          <strong>Start session:</strong> <code>POST .../versions/upload</code> with metadata
-          (base_version, schemas, message). Returns a <code>sessionId</code>.
-        </li>
-        <li>
-          <strong>Append batches:</strong> <code>PUT .../versions/upload/:sessionId</code> with up
-          to 10,000 records per batch. Repeat as needed.
-        </li>
-        <li>
-          <strong>Finalize:</strong> <code>POST .../versions/upload/:sessionId/finalize</code> to
-          validate and create the version.
-        </li>
-      </ol>
-      <p>
-        Sessions expire after 1 hour. If the same record ID appears in multiple batches, last write
-        wins. See the <Link to="/docs/api/versions">Versions API docs</Link> for full details.
+        This protocol is efficient at every scale: for a small push of 5 new records, only those 5
+        are transferred. For a push of 100,000 records where only 5 changed, only 5 are transferred.
+        For large initial imports, records are streamed in batches with per-batch progress and retry
+        granularity.
       </p>
 
       <h2>Unknown Fields</h2>
       <p>
-        If records contain fields not defined in the schema, the push returns <code>422</code> with
-        a list of extra fields per record. To accept stripping those fields before storage, set{' '}
-        <code>"strip_unknown_fields": true</code> in the push body. For chunked uploads, add{' '}
-        <code>?strip_unknown_fields=true</code> to the finalize URL.
+        If records contain fields not defined in the schema, the commit returns <code>422</code>{' '}
+        with a list of extra fields per record. To accept stripping those fields before storage, set{' '}
+        <code>"strip_unknown_fields": true</code> in the negotiate request.
       </p>
       <p>
         When stripping is enabled, the server removes extra fields, recomputes record hashes, and
@@ -349,14 +340,14 @@ export default function DocsIntegration() {
       <ul>
         <li>
           <code>409 Conflict</code> — Another version was pushed since your{' '}
-          <code>base_version</code>. Re-fetch and retry.
+          <code>base_version</code>. Re-negotiate.
         </li>
         <li>
           <code>422 Unprocessable</code> — Records reference files that haven't been uploaded,
           schema validation failed, or records contain fields not in the schema.
         </li>
         <li>
-          <code>400 Bad Request</code> — Malformed request body or hash mismatch on file upload.
+          <code>400 Bad Request</code> — Malformed JSONL, hash mismatch, or missing records.
         </li>
       </ul>
 
@@ -368,27 +359,19 @@ export default function DocsIntegration() {
           records in <code>{'{id, type, data}'}</code> format.
         </li>
         <li>
-          <strong>Choose a push mode</strong> based on size:
-          <ul>
-            <li>
-              Under 100MB / 50k records → <strong>simple push</strong> (
-              <code>POST .../versions</code>). Send everything in one request.
-            </li>
-            <li>
-              Over 100MB or 50k+ records → <strong>chunked upload</strong> (
-              <code>POST .../versions/upload</code>). Stream records in batches of 10,000.
-            </li>
-            <li>
-              Mostly unchanged between pushes → <strong>negotiate</strong> (
-              <code>POST .../versions/negotiate</code>). Hash locally, send only what's new.
-            </li>
-          </ul>
+          <strong>Hash each record:</strong> SHA-256 of{' '}
+          <code>{'JSON.stringify({id, type, data})'}</code> with keys sorted recursively.
         </li>
         <li>
-          <strong>For recurring syncs</strong>, fetch the latest version first (
-          <code>GET .../versions/latest</code>) and use its semver as <code>base_version</code>.
-          Only send <code>changes.added</code>, <code>changes.updated</code>, and{' '}
-          <code>changes.removed</code> — not the full dataset.
+          <strong>Negotiate:</strong> send the manifest of <code>{'{ id, type, hash }'}</code>{' '}
+          entries. The server tells you which records it already has.
+        </li>
+        <li>
+          <strong>Send missing records</strong> as JSONL. For large datasets, batch into groups of
+          5,000–10,000 records per request.
+        </li>
+        <li>
+          <strong>Commit</strong> to create the version.
         </li>
       </ol>
       <p>

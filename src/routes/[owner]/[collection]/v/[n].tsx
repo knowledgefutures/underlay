@@ -47,9 +47,11 @@ export default function CollectionVersionPage() {
       setVersion(ver)
       setCollectionData(col)
 
-      if (ver.readme) {
+      const meta = ver.metadata as Record<string, unknown> | null | undefined
+      const readmeSource = (meta?.readme as string) || null
+      if (readmeSource) {
         import('marked').then(({ marked }) => {
-          setReadmeHtml(marked.parse(ver.readme) as string)
+          setReadmeHtml(marked.parse(readmeSource) as string)
         })
       }
 
@@ -748,7 +750,7 @@ export default function CollectionVersionPage() {
             </table>
 
             {/* README */}
-            {version.readme && readmeHtml && (
+            {readmeHtml && (
               <div>
                 <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
                   README

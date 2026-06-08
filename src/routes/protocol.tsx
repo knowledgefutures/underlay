@@ -15,7 +15,7 @@ const versionHashExample = `canonical = JSON.stringify({
 })
 hash = "private:" + SHA256(canonical)`
 
-const negotiateExample = `# 1. Client sends manifest
+const negotiateExample = `# 1. Client sends manifest of record hashes
 POST /api/collections/:owner/:slug/versions/negotiate
 {
   "base_version": "v1.1.0",
@@ -37,27 +37,16 @@ POST /api/collections/:owner/:slug/versions/negotiate
   "already_have_records": 1
 }
 
-# 3. Client sends only the missing records as JSONL
-POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+# 3. Client sends only the missing records as JSONL (repeatable for large batches)
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
 Content-Type: application/x-ndjson
 
 {"id":"pub-002","type":"Publication","data":{"title":"...","doi":"..."}}
+# -> { "received": 1, "remaining": 0, "total_needed": 1 }
 
-# 4. Server verifies hashes, validates schemas, creates version`
-
-const simplePushExample = `POST /api/collections/:owner/:slug/versions
-{
-  "base_version": "v1.1.0",
-  "schemas": { "Publication": { ... } },
-  "metadata": { "readme": "# Publications\\nA curated dataset." },
-  "strip_unknown_fields": true,
-  "changes": {
-    "added": [{ "id": "pub-002", "type": "Publication", "data": { ... } }],
-    "updated": [{ "id": "pub-001", "type": "Publication", "data": { ... } }],
-    "removed": ["pub-003"]
-  },
-  "message": "Update publications"
-}`
+# 4. Client commits — server validates schemas, creates version
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+# -> { "semver": "v1.2.0", "hash": "...", "recordCount": 2, "fileCount": 1 }`
 
 const pullExample = `# Full manifest
 GET /api/collections/:owner/:slug/versions/v2.0.0/manifest
@@ -222,21 +211,10 @@ export default function Protocol() {
           </ul>
 
           <h2 id="push">Push</h2>
-          <p>There are two push modes, depending on whether the client knows record hashes.</p>
-
-          <h3>Simple push</h3>
           <p>
-            Send the changes (added, updated, removed records) and the server computes hashes
-            server-side. Best for small updates or clients that don't track hashes locally.
-          </p>
-          <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-            <code>{simplePushExample}</code>
-          </pre>
-
-          <h3>Negotiate push</h3>
-          <p>
-            A two-step protocol that avoids transferring records the server already has. Similar to
-            git's pack negotiation. Best for large collections where most records are unchanged.
+            All pushes use the negotiate protocol — a three-step flow similar to git's pack
+            negotiation. The client sends a manifest of record hashes, the server says which it
+            needs, the client sends those records (in one or more batches), then commits.
           </p>
           <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
             <code>{negotiateExample}</code>
@@ -244,6 +222,12 @@ export default function Protocol() {
           <p>
             The negotiate step checks every record and file hash against the server's global store.
             If 100,000 records already exist and only 5 are new, only those 5 are transferred.
+          </p>
+          <p>
+            For large pushes, the <code>/records</code> endpoint can be called multiple times (up to
+            10,000 records per batch). The server tracks which records have been received. Once all
+            needed records are submitted, commit to finalize the version. Sessions expire after 10
+            minutes.
           </p>
 
           <h2 id="pull">Pull</h2>
@@ -298,11 +282,9 @@ export default function Protocol() {
             accidentally storing data outside the schema contract.
           </p>
           <p>
-            To accept stripping, set <code>"strip_unknown_fields": true</code> in the push body
-            (simple push and negotiate) or add <code>?strip_unknown_fields=true</code> to the
-            finalize URL (chunked upload). The server strips the extra fields before hashing and
-            storing, so the stored records match the schema exactly. Hashes are recomputed after
-            stripping.
+            To accept stripping, set <code>"strip_unknown_fields": true</code> in the negotiate
+            request. The server strips the extra fields before hashing and storing, so the stored
+            records match the schema exactly. Hashes are recomputed after stripping.
           </p>
 
           <h2 id="files">Files</h2>

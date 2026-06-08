@@ -1,143 +1,24 @@
-import { createHash } from 'node:crypto'
-
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import {
-  ajv,
+  canonicalize,
+  computePublicHash,
+  computeVersionHash,
   deriveSemver,
   filterRecordData,
-  filterTypeSchema,
-  findExtraFields,
+  filterSchemasForPublic,
   getPrivateFields,
   getPrivateTypes,
-  hashRecord,
-  hashSchema,
+  hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
+  resolveCollection,
   type SchemaEntry,
-  stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
-
-/** Build a public-facing schemas map (excluding private types, stripping private fields) */
-function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const entry of schemaEntries) {
-    if ((entry.schema as any)?.private === true) continue
-    result[entry.slug] = filterTypeSchema(entry.schema)
-  }
-  return result
-}
-
-/** Check if user has access to the org that owns a collection */
-async function hasOrgAccess(userId: string | undefined, orgId: string): Promise<boolean> {
-  if (!userId) return false
-  const [membership] = await db
-    .select()
-    .from(schema.member)
-    .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
-    .limit(1)
-  return !!membership
-}
-
-function canonicalize(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
-  }
-  return sorted
-}
-
-function computeVersionHash(
-  schemaSet: { slug: string; schemaHash: string }[],
-  recordHashes: string[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: [...recordHashes].sort(),
-    files: fileHashes.sort(),
-    metadata: metadata ? canonicalize(metadata) : null,
-  })
-  return 'private:' + createHash('sha256').update(canonical).digest('hex')
-}
-
-function computePublicHash(
-  schemaEntries: SchemaEntry[],
-  recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const privateTypes = getPrivateTypes(schemaEntries)
-
-  const publicSchemaSet: { slug: string; schemaHash: string }[] = []
-  for (const entry of schemaEntries) {
-    if (privateTypes.has(entry.slug)) continue
-    const filtered = filterTypeSchema(entry.schema)
-    publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
-  }
-
-  const publicRecordHashes = recordRows
-    .filter((r) => !r.private && !privateTypes.has(r.type))
-    .map((r) => {
-      const entry = schemaEntries.find((e) => e.slug === r.type)
-      const privateFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
-      const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data
-      return hashRecord({ id: r.recordId, type: r.type, data }).hash
-    })
-
-  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, metadata).replace(
-    'private:',
-    'public:',
-  )
-}
-
-// Lazily backfill totalBytes for versions that were created before we tracked it
-// or where the value was corrupted by a string concatenation bug
-async function backfillTotalBytes(version: {
-  id: number
-  totalBytes: number
-  recordCount: number
-}) {
-  // Skip recomputation if totalBytes looks reasonable (> 0 and < 1TB)
-  if (
-    (version.totalBytes > 0 && version.totalBytes < 1_099_511_627_776) ||
-    version.recordCount === 0
-  ) {
-    return version.totalBytes
-  }
-
-  const recordSizes = await db
-    .select({ total: sql<number>`coalesce(sum(${schema.recordObjects.size}), 0)` })
-    .from(schema.versionRecords)
-    .innerJoin(
-      schema.recordObjects,
-      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-    )
-    .where(eq(schema.versionRecords.versionId, version.id))
-
-  let totalBytes = Number(recordSizes[0]?.total ?? 0)
-
-  const [fileSizeResult] = await db
-    .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
-    .from(schema.versionFiles)
-    .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
-    .where(eq(schema.versionFiles.versionId, version.id))
-  totalBytes += Number(fileSizeResult?.total ?? 0)
-
-  // Persist so we don't recompute next time
-  await db.update(schema.versions).set({ totalBytes }).where(eq(schema.versions.id, version.id))
-
-  return totalBytes
-}
 
 // List versions
 export async function list(c: Context<AuthEnv>) {
@@ -206,7 +87,6 @@ export async function latest(c: Context<AuthEnv>) {
     .limit(1)
 
   if (!version) return c.json({ error: 'No versions', statusCode: 404 }, 404)
-  version.totalBytes = await backfillTotalBytes(version)
 
   const schemaEntries = await loadVersionSchemas(version.id)
   const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
@@ -242,7 +122,6 @@ export async function getBySemver(c: Context<AuthEnv>) {
     .limit(1)
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
-  version.totalBytes = await backfillTotalBytes(version)
 
   const schemaEntries = await loadVersionSchemas(version.id)
   const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
@@ -561,491 +440,6 @@ export async function manifest(c: Context<AuthEnv>) {
   })
 }
 
-// Push a new version
-export async function push(c: Context<AuthEnv>) {
-  const owner = c.req.param('owner')!
-  const slug = c.req.param('slug')!
-  const body = (await c.req.json()) as {
-    base_version: string | null
-    name?: string
-    message?: string
-    metadata?: Record<string, unknown>
-    app_id?: string
-    actor_id?: string
-    schemas?: Record<string, object>
-    strip_unknown_fields?: boolean
-    changes: {
-      added?: { id: string; type: string; data: unknown; private?: boolean }[]
-      updated?: { id: string; type: string; data: unknown; private?: boolean }[]
-      removed?: string[]
-    }
-  }
-
-  const collection = await resolveCollection(owner, slug)
-  if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-  // Get latest version
-  const [latest] = await db
-    .select()
-    .from(schema.versions)
-    .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(
-      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-    )
-    .limit(1)
-
-  // Optimistic lock — compare semver strings
-  if (body.base_version !== null && body.base_version !== (latest?.semver ?? null)) {
-    const normalized = body.base_version ? parseSemver(body.base_version).semver : null
-    if (normalized !== (latest?.semver ?? null)) {
-      return c.json(
-        {
-          error: 'Version conflict',
-          currentVersion: latest?.semver ?? null,
-          statusCode: 409,
-        },
-        409,
-      )
-    }
-  }
-
-  // Build the full record manifest for this version using content-addressed records
-  type RecordEntry = {
-    recordId: string
-    type: string
-    data: unknown
-    private: boolean
-    hash: string
-    size: number
-  }
-
-  // Load previous version's records as a map of recordId -> entry
-  let existingMap = new Map<string, RecordEntry>()
-  if (latest) {
-    const existing = await db
-      .select({
-        recordId: schema.recordObjects.recordId,
-        type: schema.recordObjects.type,
-        data: schema.recordObjects.data,
-        private: schema.recordObjects.private,
-        hash: schema.recordObjects.hash,
-        size: schema.recordObjects.size,
-      })
-      .from(schema.versionRecords)
-      .innerJoin(
-        schema.recordObjects,
-        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-      )
-      .where(eq(schema.versionRecords.versionId, latest.id))
-    existingMap = new Map(existing.map((r) => [r.recordId, r]))
-  }
-
-  // Apply changes — hash new/updated records on the fly
-  const recordMap = new Map(existingMap)
-
-  for (const rec of body.changes.added ?? []) {
-    const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
-    recordMap.set(rec.id, {
-      recordId: rec.id,
-      type: rec.type,
-      data: rec.data,
-      private: rec.private ?? false,
-      hash,
-      size: Buffer.byteLength(canonical, 'utf-8'),
-    })
-  }
-  for (const rec of body.changes.updated ?? []) {
-    const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
-    recordMap.set(rec.id, {
-      recordId: rec.id,
-      type: rec.type,
-      data: rec.data,
-      private: rec.private ?? false,
-      hash,
-      size: Buffer.byteLength(canonical, 'utf-8'),
-    })
-  }
-  for (const id of body.changes.removed ?? []) {
-    recordMap.delete(id)
-  }
-
-  const newRecords = Array.from(recordMap.values())
-
-  // --- Resolve schemas ---
-  let prevSchemaEntries: SchemaEntry[] = []
-  if (latest) {
-    prevSchemaEntries = await loadVersionSchemas(latest.id)
-  }
-
-  // Determine the schema set for this version
-  let schemasInput: Record<string, object>
-  if (body.schemas && Object.keys(body.schemas).length > 0) {
-    schemasInput = body.schemas
-  } else if (prevSchemaEntries.length > 0) {
-    // Carry forward previous schemas
-    schemasInput = Object.fromEntries(prevSchemaEntries.map((e) => [e.slug, e.schema]))
-  } else {
-    return c.json(
-      {
-        error: 'Schemas required',
-        message: 'First version must include a `schemas` map with at least one type definition.',
-        statusCode: 422,
-      },
-      422,
-    )
-  }
-
-  // Ensure every record type has a schema
-  const recordTypes = new Set(newRecords.map((r) => r.type))
-  const missingSchemas = [...recordTypes].filter((t) => !(t in schemasInput))
-  if (missingSchemas.length > 0) {
-    return c.json(
-      {
-        error: 'Missing schemas for record types',
-        types: missingSchemas,
-        message: `Every record type must have a corresponding schema. Missing: ${missingSchemas.join(', ')}`,
-        statusCode: 422,
-      },
-      422,
-    )
-  }
-
-  // Hash and upsert each schema into the global schemas table
-  const newSchemaSet: {
-    slug: string
-    schemaId: string
-    schemaHash: string
-    schema: Record<string, unknown>
-  }[] = []
-  for (const [typeSlug, typeSchema] of Object.entries(schemasInput)) {
-    const hash = hashSchema(typeSchema)
-
-    const [existing] = await db
-      .select({ id: schema.schemas.id })
-      .from(schema.schemas)
-      .where(eq(schema.schemas.schemaHash, hash))
-      .limit(1)
-
-    let schemaId: string
-    if (existing) {
-      schemaId = existing.id
-    } else {
-      const [inserted] = await db
-        .insert(schema.schemas)
-        .values({ schema: typeSchema as any, schemaHash: hash })
-        .returning({ id: schema.schemas.id })
-      schemaId = inserted!.id
-    }
-
-    newSchemaSet.push({
-      slug: typeSlug,
-      schemaId,
-      schemaHash: hash,
-      schema: typeSchema as Record<string, unknown>,
-    })
-  }
-
-  // Validate records against their type's schema
-  const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
-  const validators = new Map<string, ReturnType<typeof ajv.compile>>()
-  for (const entry of newSchemaSet) {
-    validators.set(entry.slug, ajv.compile(entry.schema as object))
-  }
-
-  for (const rec of newRecords) {
-    const validate = validators.get(rec.type)
-    if (!validate) {
-      validationErrors.push({
-        recordId: rec.recordId,
-        type: rec.type,
-        errors: [`No schema defined for record type "${rec.type}"`],
-      })
-      continue
-    }
-    if (!validate(rec.data)) {
-      validationErrors.push({
-        recordId: rec.recordId,
-        type: rec.type,
-        errors: (validate.errors ?? []).map(
-          (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
-        ),
-      })
-    }
-  }
-
-  if (validationErrors.length > 0) {
-    return c.json(
-      {
-        error: 'Schema validation failed',
-        validationErrors,
-        statusCode: 422,
-      },
-      422,
-    )
-  }
-
-  // Check for extra fields not defined in schemas
-  const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
-  for (const entry of newSchemaSet) {
-    schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
-  }
-  const extraFieldWarnings = findExtraFields(
-    newRecords.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
-    schemasForCheck,
-  )
-  if (extraFieldWarnings.length > 0) {
-    if (!body.strip_unknown_fields) {
-      return c.json(
-        {
-          error: 'Records contain fields not defined in schema',
-          extraFields: extraFieldWarnings,
-          hint: 'Set strip_unknown_fields: true to accept stripping these fields before storage.',
-          statusCode: 422,
-        },
-        422,
-      )
-    }
-    for (const rec of newRecords) {
-      const typeSchema = schemasForCheck[rec.type]
-      if (typeSchema?.properties && typeof rec.data === 'object' && rec.data !== null) {
-        rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
-        const { hash, canonical } = hashRecord({ id: rec.recordId, type: rec.type, data: rec.data })
-        rec.hash = hash
-        rec.size = Buffer.byteLength(canonical, 'utf-8')
-      }
-    }
-  }
-
-  // Determine if schema set changed
-  const prevSchemaMap = new Map(prevSchemaEntries.map((e) => [e.slug, e.schemaHash]))
-  const newSchemaMap = new Map(newSchemaSet.map((e) => [e.slug, e.schemaHash]))
-  let schemaChanged = prevSchemaMap.size !== newSchemaMap.size
-  if (!schemaChanged) {
-    for (const [s, hash] of newSchemaMap) {
-      if (prevSchemaMap.get(s) !== hash) {
-        schemaChanged = true
-        break
-      }
-    }
-  }
-
-  const recordsChanged =
-    (body.changes.added?.length ?? 0) > 0 ||
-    (body.changes.updated?.length ?? 0) > 0 ||
-    (body.changes.removed?.length ?? 0) > 0
-
-  // Get file hashes from existing version + any new references
-  let existingFileHashes: string[] = []
-  if (latest) {
-    const vf = await db
-      .select({ hash: schema.versionFiles.fileHash })
-      .from(schema.versionFiles)
-      .where(eq(schema.versionFiles.versionId, latest.id))
-    existingFileHashes = vf.map((f) => f.hash)
-  }
-
-  // Scan new records for $file references
-  const referencedHashes = new Set(existingFileHashes)
-  for (const rec of newRecords) {
-    const data = rec.data as Record<string, unknown>
-    for (const val of Object.values(data)) {
-      if (
-        typeof val === 'object' &&
-        val !== null &&
-        '$file' in val &&
-        typeof (val as { $file: string }).$file === 'string'
-      ) {
-        const hash = (val as { $file: string }).$file.replace('sha256:', '')
-        referencedHashes.add(hash)
-      }
-    }
-  }
-
-  // Check all referenced files exist
-  const allFileHashes = Array.from(referencedHashes)
-  if (allFileHashes.length > 0) {
-    const existingFiles = await db
-      .select({ hash: schema.files.hash })
-      .from(schema.files)
-      .where(inArray(schema.files.hash, allFileHashes))
-    const existingSet = new Set(existingFiles.map((f) => f.hash))
-    const filesNeeded = allFileHashes.filter((h) => !existingSet.has(h))
-
-    if (filesNeeded.length > 0) {
-      return c.json(
-        {
-          error: 'Missing files',
-          filesNeeded: filesNeeded.map((h) => `sha256:${h}`),
-          statusCode: 422,
-        },
-        422,
-      )
-    }
-  }
-
-  // Resolve metadata (merge with previous version's metadata if provided)
-  const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
-  const metadataValue = body.metadata ? { ...(prevMetadata ?? {}), ...body.metadata } : prevMetadata
-
-  // Detect if metadata changed
-  const metadataChanged =
-    JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==
-    JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
-
-  // Compute hashes and semver
-  const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-  const allRecordHashes = newRecords.map((r) => r.hash)
-  const versionHash = computeVersionHash(
-    schemaSetForHash,
-    allRecordHashes,
-    allFileHashes,
-    metadataValue,
-  )
-
-  const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
-    slug: e.slug,
-    schemaId: e.schemaId,
-    schema: e.schema,
-    schemaHash: e.schemaHash,
-  }))
-  const publicHash = computePublicHash(
-    schemaEntriesForPublicHash,
-    newRecords,
-    allFileHashes,
-    metadataValue,
-  )
-
-  const { semver, major, minor, patch } = deriveSemver(
-    latest?.semver ?? null,
-    schemaChanged,
-    recordsChanged || metadataChanged,
-  )
-
-  // Check for duplicate hash
-  const [existingHash] = await db
-    .select({ semver: schema.versions.semver })
-    .from(schema.versions)
-    .where(
-      and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.hash, versionHash)),
-    )
-    .limit(1)
-  if (existingHash) {
-    return c.json(
-      {
-        error: 'No changes detected',
-        message: `Version ${existingHash.semver} already has identical content (hash: ${versionHash.slice(0, 12)}...)`,
-        existingVersion: existingHash.semver,
-      },
-      409,
-    )
-  }
-
-  // Compute total bytes
-  let totalBytes = 0
-  for (const rec of newRecords) {
-    totalBytes += rec.size
-  }
-  if (allFileHashes.length > 0) {
-    const [fileSizeSum] = await db
-      .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
-      .from(schema.files)
-      .where(inArray(schema.files.hash, allFileHashes))
-    totalBytes += Number(fileSizeSum?.total ?? 0)
-  }
-
-  // Insert version
-  const [version] = await db
-    .insert(schema.versions)
-    .values({
-      collectionId: collection.id,
-      semver,
-      major,
-      minor,
-      patch,
-      hash: versionHash,
-      publicHash,
-      baseSemver: body.base_version ?? null,
-      message: body.message ?? null,
-      metadata: metadataValue,
-      pushedBy: c.get('userId') ?? null,
-      appId: body.app_id ?? null,
-      actorId: body.actor_id ?? null,
-      recordCount: newRecords.length,
-      fileCount: allFileHashes.length,
-      totalBytes,
-    })
-    .returning()
-
-  // Upsert record objects (content-addressed, deduplicated)
-  if (newRecords.length > 0) {
-    const RECORD_BATCH = 1000
-    for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
-      const batch = newRecords.slice(i, i + RECORD_BATCH)
-      await db
-        .insert(schema.recordObjects)
-        .values(
-          batch.map((r) => ({
-            hash: r.hash,
-            recordId: r.recordId,
-            type: r.type,
-            data: r.data as any,
-            private: r.private,
-            size: r.size,
-          })),
-        )
-        .onConflictDoNothing()
-    }
-
-    // Insert version_records manifest
-    for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
-      const batch = newRecords.slice(i, i + RECORD_BATCH)
-      await db.insert(schema.versionRecords).values(
-        batch.map((r) => ({
-          versionId: version!.id,
-          recordHash: r.hash,
-        })),
-      )
-    }
-  }
-
-  // Insert version_files
-  if (allFileHashes.length > 0) {
-    await db.insert(schema.versionFiles).values(
-      allFileHashes.map((hash) => ({
-        versionId: version!.id,
-        fileHash: hash,
-      })),
-    )
-  }
-
-  // Insert version_schemas
-  await db.insert(schema.versionSchemas).values(
-    newSchemaSet.map((entry) => ({
-      versionId: version!.id,
-      slug: entry.slug,
-      schemaId: entry.schemaId,
-    })),
-  )
-
-  // Update collection timestamp + optional name
-  const collectionUpdates: Record<string, unknown> = { updatedAt: new Date() }
-  if (body.name) collectionUpdates.name = body.name
-  await db
-    .update(schema.collections)
-    .set(collectionUpdates)
-    .where(eq(schema.collections.id, collection.id))
-
-  return c.json(
-    {
-      semver,
-      hash: versionHash,
-      recordCount: newRecords.length,
-      fileCount: allFileHashes.length,
-    },
-    201,
-  )
-}
-
 // Diff between versions
 export async function diff(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
@@ -1149,7 +543,8 @@ export async function diff(c: Context<AuthEnv>) {
   }
 
   const metadataChanged =
-    JSON.stringify(targetVersion.metadata ?? null) !== JSON.stringify(fromVersion?.metadata ?? null)
+    JSON.stringify(canonicalize(targetVersion.metadata ?? null)) !==
+    JSON.stringify(canonicalize(fromVersion?.metadata ?? null))
 
   // Compare file sets
   const targetFiles = await db
@@ -1209,8 +604,8 @@ export async function updateMetadata(c: Context<AuthEnv>) {
     return c.json({ error: 'No versions exist yet', statusCode: 422 }, 422)
   }
 
-  const prevMetadata = (latest.metadata as Record<string, unknown>) ?? {}
-  const newMetadata = { ...prevMetadata, ...body }
+  const prevMetadata = (latest.metadata as Record<string, unknown>) ?? null
+  const newMetadata = { ...(prevMetadata ?? {}), ...body }
 
   if (JSON.stringify(canonicalize(newMetadata)) === JSON.stringify(canonicalize(prevMetadata))) {
     return c.json({ semver: latest.semver, unchanged: true })
@@ -1218,12 +613,21 @@ export async function updateMetadata(c: Context<AuthEnv>) {
 
   const schemaEntries = await loadVersionSchemas(latest.id)
   const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-  const recordHashes = (
-    await db
-      .select({ hash: schema.versionRecords.recordHash })
-      .from(schema.versionRecords)
-      .where(eq(schema.versionRecords.versionId, latest.id))
-  ).map((r) => r.hash)
+  const recordRows = await db
+    .select({
+      hash: schema.versionRecords.recordHash,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
+      private: schema.recordObjects.private,
+    })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, latest.id))
+  const recordHashes = recordRows.map((r) => r.hash)
   const fileHashes = (
     await db
       .select({ hash: schema.versionFiles.fileHash })
@@ -1232,71 +636,60 @@ export async function updateMetadata(c: Context<AuthEnv>) {
   ).map((f) => f.hash)
 
   const versionHash = computeVersionHash(schemaSet, recordHashes, fileHashes, newMetadata)
+  const publicHash = computePublicHash(schemaEntries, recordRows, fileHashes, newMetadata)
 
-  const sv = deriveSemver(latest.semver, false, false)
+  const sv = deriveSemver(latest.semver, false, true)
 
-  const [version] = await db
-    .insert(schema.versions)
-    .values({
-      collectionId: collection.id,
-      semver: sv.semver,
-      major: sv.major,
-      minor: sv.minor,
-      patch: sv.patch,
-      hash: versionHash,
-      publicHash: latest.publicHash,
-      baseSemver: latest.semver,
-      message: `Update metadata`,
-      metadata: newMetadata,
-      pushedBy: userId ?? null,
-      recordCount: latest.recordCount,
-      fileCount: latest.fileCount,
-      totalBytes: latest.totalBytes,
-    })
-    .returning({ id: schema.versions.id })
+  await db.transaction(async (tx) => {
+    const [version] = await tx
+      .insert(schema.versions)
+      .values({
+        collectionId: collection.id,
+        semver: sv.semver,
+        major: sv.major,
+        minor: sv.minor,
+        patch: sv.patch,
+        hash: versionHash,
+        publicHash,
+        baseSemver: latest.semver,
+        message: `Update metadata`,
+        metadata: newMetadata,
+        pushedBy: userId ?? null,
+        recordCount: latest.recordCount,
+        fileCount: latest.fileCount,
+        totalBytes: latest.totalBytes,
+      })
+      .returning({ id: schema.versions.id })
 
-  if (schemaEntries.length > 0) {
-    await db.insert(schema.versionSchemas).values(
-      schemaEntries.map((e) => ({
-        versionId: version!.id,
-        slug: e.slug,
-        schemaId: e.schemaId,
-      })),
-    )
-  }
+    if (schemaEntries.length > 0) {
+      await tx.insert(schema.versionSchemas).values(
+        schemaEntries.map((e) => ({
+          versionId: version!.id,
+          slug: e.slug,
+          schemaId: e.schemaId,
+        })),
+      )
+    }
 
-  if (recordHashes.length > 0) {
-    await db
-      .insert(schema.versionRecords)
-      .values(recordHashes.map((h) => ({ versionId: version!.id, recordHash: h })))
-  }
+    if (recordHashes.length > 0) {
+      await tx
+        .insert(schema.versionRecords)
+        .values(recordHashes.map((h) => ({ versionId: version!.id, recordHash: h })))
+    }
 
-  if (fileHashes.length > 0) {
-    await db
-      .insert(schema.versionFiles)
-      .values(fileHashes.map((h) => ({ versionId: version!.id, fileHash: h })))
-  }
+    if (fileHashes.length > 0) {
+      await tx
+        .insert(schema.versionFiles)
+        .values(fileHashes.map((h) => ({ versionId: version!.id, fileHash: h })))
+    }
 
-  await db
-    .update(schema.collections)
-    .set({ updatedAt: new Date() })
-    .where(eq(schema.collections.id, collection.id))
+    await tx
+      .update(schema.collections)
+      .set({ updatedAt: new Date() })
+      .where(eq(schema.collections.id, collection.id))
+  })
 
   return c.json({ semver: sv.semver, hash: versionHash, metadata: newMetadata }, 201)
-}
-
-async function resolveCollection(owner: string, slug: string) {
-  const [result] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      slug: schema.collections.slug,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  return result ?? null
 }
 
 async function getCollectionArkInfo(
