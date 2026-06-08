@@ -9,12 +9,14 @@ import {
   deriveSemver,
   filterRecordData,
   filterTypeSchema,
+  findExtraFields,
   getPrivateFields,
   getPrivateTypes,
   hashRecord,
   hashSchema,
   loadVersionSchemas,
   type SchemaEntry,
+  stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
@@ -35,6 +37,7 @@ const sessions = new Map<
     readme: string | null
     appId: string | null
     actorId: string | null
+    stripUnknownFields: boolean
     expiresAt: number
   }
 >()
@@ -119,6 +122,7 @@ export async function negotiate(c: Context<AuthEnv>) {
     readme?: string
     app_id?: string
     actor_id?: string
+    strip_unknown_fields?: boolean
   }
 
   if (!body.schemas || !body.manifest) {
@@ -183,6 +187,7 @@ export async function negotiate(c: Context<AuthEnv>) {
     readme: body.readme ?? null,
     appId: body.app_id ?? null,
     actorId: body.actor_id ?? null,
+    stripUnknownFields: body.strip_unknown_fields ?? false,
     expiresAt: Date.now() + SESSION_TTL_MS,
   })
 
@@ -377,6 +382,52 @@ export async function commit(c: Context<AuthEnv>) {
   if (validationErrors.length > 0) {
     sessions.delete(sessionId)
     return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
+  }
+
+  // Check for extra fields not defined in schemas
+  const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+  for (const entry of newSchemaSet) {
+    schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
+  }
+  const extraFieldWarnings = findExtraFields(
+    allRecords.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
+    schemasForCheck,
+  )
+  if (extraFieldWarnings.length > 0) {
+    if (!session.stripUnknownFields) {
+      sessions.delete(sessionId)
+      return c.json(
+        {
+          error: 'Records contain fields not defined in schema',
+          extraFields: extraFieldWarnings,
+          hint: 'Set strip_unknown_fields: true in the negotiate request to accept stripping these fields.',
+          statusCode: 422,
+        },
+        422,
+      )
+    }
+    const affectedIds = new Set(extraFieldWarnings.map((w) => w.recordId))
+    const oldToNewHash = new Map<string, string>()
+    for (const rec of allRecords) {
+      if (!affectedIds.has(rec.recordId)) continue
+      const typeSchema = schemasForCheck[rec.type]
+      if (!typeSchema?.properties || typeof rec.data !== 'object' || rec.data === null) continue
+      const oldHash = rec.hash
+      rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
+      const { hash: newHash, canonical } = hashRecord({
+        id: rec.recordId,
+        type: rec.type,
+        data: rec.data,
+      })
+      rec.hash = newHash
+      rec.size = Buffer.byteLength(canonical, 'utf-8')
+      if (oldHash !== newHash) oldToNewHash.set(oldHash, newHash)
+    }
+    // Update manifest to reflect new hashes
+    for (const entry of session.manifest) {
+      const newHash = oldToNewHash.get(entry.hash)
+      if (newHash) entry.hash = newHash
+    }
   }
 
   // Check files exist

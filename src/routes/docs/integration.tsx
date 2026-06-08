@@ -310,6 +310,18 @@ export default function DocsIntegration() {
         wins. See the <Link to="/docs/api/versions">Versions API docs</Link> for full details.
       </p>
 
+      <h2>Unknown Fields</h2>
+      <p>
+        If records contain fields not defined in the schema, the push returns <code>422</code> with
+        a list of extra fields per record. To accept stripping those fields before storage, set{' '}
+        <code>"strip_unknown_fields": true</code> in the push body. For chunked uploads, add{' '}
+        <code>?strip_unknown_fields=true</code> to the finalize URL.
+      </p>
+      <p>
+        When stripping is enabled, the server removes extra fields, recomputes record hashes, and
+        stores only the schema-conformant data.
+      </p>
+
       <h2>Error Handling</h2>
       <ul>
         <li>
@@ -317,11 +329,11 @@ export default function DocsIntegration() {
           <code>base_version</code>. Re-fetch and retry.
         </li>
         <li>
-          <code>422 Unprocessable</code> — Records reference files that haven't been uploaded.
-          Upload them first.
+          <code>422 Unprocessable</code> — Records reference files that haven't been uploaded,
+          schema validation failed, or records contain fields not in the schema.
         </li>
         <li>
-          <code>400 Bad Request</code> — Schema validation failed or hash mismatch on file upload.
+          <code>400 Bad Request</code> — Malformed request body or hash mismatch on file upload.
         </li>
       </ul>
 

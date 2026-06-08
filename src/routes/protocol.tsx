@@ -49,6 +49,7 @@ const simplePushExample = `POST /api/collections/:owner/:slug/versions
 {
   "base_version": 3,
   "schemas": { "Publication": { ... } },
+  "strip_unknown_fields": true,
   "changes": {
     "added": [{ "id": "pub-002", "type": "Publication", "data": { ... } }],
     "updated": [{ "id": "pub-001", "type": "Publication", "data": { ... } }],
@@ -269,6 +270,20 @@ export default function Protocol() {
             Schema changes trigger a major semver bump.
           </p>
 
+          <h3>Unknown field handling</h3>
+          <p>
+            When records contain fields not defined in the schema, the server rejects the push with
+            a <code>422</code> response listing the extra fields per record. This protects against
+            accidentally storing data outside the schema contract.
+          </p>
+          <p>
+            To accept stripping, set <code>"strip_unknown_fields": true</code> in the push body
+            (simple push and negotiate) or add <code>?strip_unknown_fields=true</code> to the
+            finalize URL (chunked upload). The server strips the extra fields before hashing and
+            storing, so the stored records match the schema exactly. Hashes are recomputed after
+            stripping.
+          </p>
+
           <h2 id="files">Files</h2>
           <p>
             Files are binary blobs stored by SHA-256 hash. Upload a file, then reference it from a
@@ -344,7 +359,9 @@ export default function Protocol() {
               <code>409</code> — Version conflict (base_version doesn't match) or duplicate content
             </li>
             <li>
-              <code>422</code> — Schema validation failed or missing schemas/files
+              <code>422</code> — Schema validation failed, missing schemas/files, or records contain
+              fields not defined in the schema (set <code>strip_unknown_fields</code> to accept
+              stripping)
             </li>
             <li>
               <code>429</code> — Rate limited (includes <code>Retry-After</code> header)

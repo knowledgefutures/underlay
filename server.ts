@@ -63,6 +63,12 @@ const versions = hot(_versions, '/src/api/versions.ts')
 
 const app = new Hono<AuthEnv>()
 
+// --- ai.txt with explicit charset (browsers default to Latin-1 for text/plain) ---
+app.get('/.well-known/ai.txt', async (c) => {
+  const content = readFileSync(resolve('public/.well-known/ai.txt'), 'utf-8')
+  return c.text(content, 200, { 'Content-Type': 'text/plain; charset=utf-8' })
+})
+
 // --- CORS ---
 app.use('/api/*', cors({ origin: '*', credentials: true }))
 

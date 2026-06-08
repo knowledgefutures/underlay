@@ -181,6 +181,7 @@ Field reference:
 - message: human-readable commit message (optional).
 - app_id: identifier for the pushing application (optional).
 - actor_id: identifier for the user or process that triggered the push (optional).
+- strip_unknown_fields: if true, records with fields not defined in the schema will have those fields silently stripped before storage. If false (default), the push returns 422 with a list of extra fields.
 - changes.added: new records to insert.
 - changes.updated: existing records to replace (full record, not a patch).
 - changes.removed: record ids to delete.
@@ -197,6 +198,10 @@ Conflict (409 — someone pushed while you were diffing):
 Missing files (422 — records reference files not yet uploaded):
 { "error": "Missing files", "filesNeeded": ["sha256:abc...", "sha256:def..."], "statusCode": 422 }
 → Upload the listed files, then retry the push.
+
+Extra fields (422 — records contain fields not in the schema):
+{ "error": "Records contain fields not defined in schema", "extraFields": [{"recordId":"...", "type":"...", "fields":["unknownField"]}], "hint": "Set strip_unknown_fields: true ...", "statusCode": 422 }
+→ Either remove the extra fields from records, or re-push with "strip_unknown_fields": true to accept stripping.
 
 ### First push (no existing versions)
 Set base_version to null. Put all records in changes.added. Include schemas for all types.
@@ -220,7 +225,8 @@ Authorization: Bearer ul_<key>
     {"id": "article-2", "type": "Article", "hash": "def456..."}
   ],
   "files": ["7a8b9c..."],
-  "message": "Daily update"
+  "message": "Daily update",
+  "strip_unknown_fields": false
 }
 
 Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`.
@@ -255,6 +261,10 @@ Response (201):
 }
 
 Sessions expire after 10 minutes. If the session expires, re-negotiate.
+
+If records contain fields not defined in the schema, the commit returns 422 with a list of extra fields.
+Set "strip_unknown_fields": true in the negotiate request (step 1) to accept stripping. When stripping
+is enabled, the server strips extra fields, recomputes record hashes, and updates the manifest accordingly.
 
 ---
 
@@ -305,7 +315,11 @@ If a record ID is sent more than once, the last write wins (upsert semantics).
 
 ### Step 3: Finalize the version
 POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize
+POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize?strip_unknown_fields=true
 Authorization: Bearer ul_<key>
+
+Add ?strip_unknown_fields=true to accept stripping fields not defined in the schema.
+Without it, finalize returns 422 if any records contain extra fields.
 
 Response (201): same as regular push
 {
@@ -514,7 +528,7 @@ POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 403 — Insufficient scope (e.g. read key used for write)
 404 — Not found (or private collection you can't access)
 409 — Version conflict (re-fetch and retry with new base_version)
-422 — Missing files (upload them first, then retry push)
+422 — Missing files, schema validation failed, or records contain extra fields not in the schema
 
 ---
 

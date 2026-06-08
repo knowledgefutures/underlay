@@ -5,13 +5,16 @@ import { db, schema } from '../db/client.server.js'
 export {
   ajv,
   deriveSemver,
+  type ExtraFieldWarning,
   filterRecordData,
   filterTypeSchema,
+  findExtraFields,
   getPrivateFields,
   getPrivateTypes,
   hashRecord,
   hashSchema,
   type SchemaEntry,
+  stripToSchema,
 } from './core/index.js'
 
 import type { SchemaEntry } from './core/index.js'

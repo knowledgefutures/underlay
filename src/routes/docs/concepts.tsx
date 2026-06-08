@@ -101,6 +101,11 @@ export default function DocsConcepts() {
         and records together.
       </p>
       <p>
+        Records are validated against the schema on push. If a record contains fields not defined in
+        the schema, the push is rejected with a 422 listing the extra fields. Set{' '}
+        <code>strip_unknown_fields</code> to accept stripping them automatically.
+      </p>
+      <p>
         Binary data is referenced via <code>{fileRef}</code> — a pointer to a content-addressed file
         in the registry. The wire format for records is JSONL — one record per line, independently
         hashable and streamable.

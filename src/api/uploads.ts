@@ -10,12 +10,14 @@ import {
   deriveSemver,
   filterRecordData,
   filterTypeSchema,
+  findExtraFields,
   getPrivateFields,
   getPrivateTypes,
   hashRecord,
   hashSchema,
   loadVersionSchemas,
   type SchemaEntry,
+  stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
@@ -54,21 +56,6 @@ export async function startSession(c: Context<AuthEnv>) {
 
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-  // Verify the caller is a member of this collection's org
-  const [membership] = await db
-    .select({ organizationId: schema.member.organizationId })
-    .from(schema.member)
-    .where(
-      and(
-        eq(schema.member.organizationId, collection.organizationId),
-        eq(schema.member.userId, c.get('userId')!),
-      ),
-    )
-    .limit(1)
-  if (!membership) {
-    return c.json({ error: 'Not authorized for this collection', statusCode: 403 }, 403)
-  }
 
   // Optimistic lock check at session creation time
   const [latest] = await db
@@ -465,7 +452,7 @@ export async function finalize(c: Context<AuthEnv>) {
           type text NOT NULL,
           data jsonb NOT NULL,
           private boolean NOT NULL DEFAULT false
-        ) ON COMMIT DROP
+        )
       `)
 
     // Insert existing records from base version (if any)
@@ -663,6 +650,67 @@ export async function finalize(c: Context<AuthEnv>) {
         },
         422,
       )
+    }
+
+    // Check for extra fields not defined in schemas
+    const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+    for (const entry of newSchemaSet) {
+      schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
+    }
+    const extraFieldWarnings = findExtraFields(
+      allRecordEntries.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
+      schemasForCheck,
+    )
+    if (extraFieldWarnings.length > 0) {
+      const stripFlag = c.req.query('strip_unknown_fields') === 'true'
+      if (!stripFlag) {
+        await db
+          .update(schema.uploadSessions)
+          .set({ status: 'failed' })
+          .where(eq(schema.uploadSessions.id, sessionId))
+        await db.execute(sql`DROP TABLE IF EXISTS _finalize_records`)
+        return c.json(
+          {
+            error: 'Records contain fields not defined in schema',
+            extraFields: extraFieldWarnings.slice(0, 100),
+            hint: 'Add ?strip_unknown_fields=true to the finalize URL to accept stripping these fields.',
+            statusCode: 422,
+          },
+          422,
+        )
+      }
+      const affectedIds = new Set(extraFieldWarnings.map((w) => w.recordId))
+      for (const rec of allRecordEntries) {
+        if (!affectedIds.has(rec.recordId)) continue
+        const typeSchema = schemasForCheck[rec.type]
+        if (!typeSchema?.properties || typeof rec.data !== 'object' || rec.data === null) continue
+        rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
+        const { hash: newHash, canonical } = hashRecord({
+          id: rec.recordId,
+          type: rec.type,
+          data: rec.data,
+        })
+        rec.hash = newHash
+        rec.size = Buffer.byteLength(canonical, 'utf-8')
+      }
+      // Recompute public record hashes after stripping
+      publicRecordHashes.length = 0
+      for (const rec of allRecordEntries) {
+        const isPrivateRecord = rec.private
+        const isPrivateType = privateTypes.has(rec.type)
+        if (!isPrivateRecord && !isPrivateType) {
+          const entry = newSchemaSet.find((e) => e.slug === rec.type)
+          const privFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
+          if (privFields.size > 0) {
+            const pubData = filterRecordData(rec.data, privFields)
+            publicRecordHashes.push(
+              hashRecord({ id: rec.recordId, type: rec.type, data: pubData }).hash,
+            )
+          } else {
+            publicRecordHashes.push(rec.hash)
+          }
+        }
+      }
     }
 
     // Check all referenced files exist

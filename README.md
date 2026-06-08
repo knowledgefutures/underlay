@@ -1,10 +1,14 @@
 <h1><img src="public/favicon.svg" height="32" alt="" />&nbsp; Underlay</h1>
 
-Underlay is a versioned, content-addressed registry for structured public knowledge. Data published on Underlay is preserved, API accessible, and becomes the basis for any number of applications that can be built on top.
+Underlay is a protocol for giving structured data a permanent address. You push JSON records and a JSON Schema. You get back a versioned, content-addressed snapshot you can point to forever.
 
-Structured knowledge that lives inside institutional repositories and databases can be published as Underlay collections, making it available as the foundation for discovery tools, LLM integrations, custom interfaces, and any other application that needs reliable access to well-described data.
+Every piece of content — records, schemas, and files — is identified by its SHA-256 hash. Versions are manifests that reference these hashes. Storage is deduplicated globally, transfers only move data the other side doesn't have, and provenance is built in: any record can be traced back to every collection and version that includes it.
 
-Underlay is built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) public charity dedicated to building open-source knowledge infrastructure.
+Schemas are first-class objects: inspectable, comparable, and alignable across independently authored datasets. Two collections that independently define the same Author type produce the same schema hash — alignment falls out of the data model automatically. The infrastructure doesn't need to solve interoperability. It provides enough structure that interoperability can be solved dynamically by the tools and models that consume the data.
+
+The protocol is simple: push records in, pull records out, trust the versions. The intelligence lives in the actors, not the store. The reference implementation runs at [underlay.org](https://underlay.org).
+
+Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) public charity.
 
 ## Quick Start
 
@@ -44,6 +48,46 @@ pnpm dev:app
 The seed script creates a "Knowledge Futures" org with sample collections.
 In production, user accounts are created automatically on first sign-in via [KF Auth](https://auth.knowledgefutures.org) (OIDC SSO).
 
+## Content-Addressed Storage
+
+Everything in Underlay is content-addressed by SHA-256:
+
+- **Records** are stored as objects in a global `record_objects` table, keyed by the hash of their canonical JSON (`{"id":...,"type":...,"data":...}`). The same record in ten collections is stored once.
+- **Schemas** are stored in a global `schemas` table, keyed by content hash. Two collections that define the same type share the same schema row.
+- **Files** are stored in S3, keyed by SHA-256 of their bytes.
+- **Versions** are manifests — join tables (`version_records`, `version_schemas`, `version_files`) that reference content by hash. Creating a new version that shares 99% of its records with the previous version adds only the new records to storage.
+
+This architecture enables hash negotiation for push and pull (only transfer what the other side doesn't have), provenance (which collections contain this exact record), and forking (copy the manifest, not the data).
+
+## CLI
+
+The CLI wraps the same versioning logic as the server: hashing, diffing, semver derivation. Versions exist locally in a `.underlay/` directory. You can commit multiple times before pushing, inspect history offline, and push when ready.
+
+```bash
+pnpm cli init my-collection
+pnpm cli schema-set schema.json
+pnpm cli add records.jsonl
+pnpm cli status
+pnpm cli commit -m "initial load"
+pnpm cli remote add origin https://underlay.org my-org/my-collection
+pnpm cli push
+```
+
+The CLI source lives in `src/cli/`. For npm distribution, `packages/cli/` is a thin publish wrapper that uses esbuild to bundle into a standalone `@underlay/cli` package.
+
+### Local store format
+
+```
+.underlay/
+  config.json               # remotes (url, token, collection)
+  HEAD                      # current version number
+  objects/ab/cd/abcd1234... # record content, keyed by hash
+  schemas/ef/01/ef012345... # schema JSON, keyed by hash
+  versions/1.json           # version manifest (schemas, records, files, semver)
+  staging/records.jsonl     # staged records before commit
+  staging/schema.json       # staged schema before commit
+```
+
 ## Architecture
 
 | Layer        | Technology                                                    |
@@ -72,17 +116,19 @@ src/
 ├── App.tsx               # React Router routes (filesystem-based)
 ├── route-gen.ts          # Filesystem → route pattern conversion
 ├── loaders.server.ts     # Server-side data loaders per route
-├── api/                  # API route handlers (named exports)
+├── api/                  # API route handlers
 │   ├── auth.server.ts    # Auth middleware + session helpers
 │   ├── accounts.ts       # Signup, login, API key CRUD, orgs
-│   ├── collections.ts    # Collection CRUD
+│   ├── collections.ts    # Collection CRUD + fork
 │   ├── versions.ts       # Version push/pull/diff + privacy filtering
-│   ├── uploads.ts        # Batch upload sessions
+│   ├── negotiate.ts      # Hash negotiation protocol (negotiate + commit)
+│   ├── records.ts        # Provenance + batch record fetch
+│   ├── uploads.ts        # Chunked upload sessions
 │   ├── files.ts          # Content-addressed file storage
 │   ├── schemas.ts        # Schema discovery, search, labeling
+│   ├── query.ts          # SQL query tool
 │   ├── ark.ts            # ARK identifier management
 │   ├── admin.ts          # Admin endpoints (mirror mode)
-│   ├── query.ts          # SQL query tool
 │   └── health.ts         # Health check
 ├── db/
 │   ├── schema.ts         # Drizzle table definitions
@@ -90,35 +136,129 @@ src/
 │   ├── migrate.ts        # Migration runner
 │   ├── seed.ts           # Seed data
 │   └── migrations/       # Generated SQL migrations
+├── lib/
+│   ├── core/             # Pure functions shared by server and CLI
+│   │   ├── hash.ts       # hashRecord, hashSchema (SHA-256)
+│   │   ├── semver.ts     # deriveSemver
+│   │   ├── privacy.ts    # getPrivateTypes, getPrivateFields, filterRecordData
+│   │   ├── validate.ts   # AJV schema validation
+│   │   ├── types.ts      # Shared type definitions
+│   │   └── index.ts      # Re-exports
+│   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers
+│   ├── mirror-sync.ts    # Server-to-server mirroring
+│   ├── s3.ts             # S3 client
+│   ├── ark.ts            # ARK identifier utilities
+│   └── page-utils.ts     # SSR utilities
+├── cli/                  # CLI source (local versioning + push/pull)
+│   ├── cli.ts            # Commander entry point
+│   ├── commands/         # init, schema-set, add, status, commit, log, diff, remote, push, pull
+│   └── lib/              # Local store, config, staging helpers
 ├── routes/               # React pages (filesystem routing)
 │   ├── index.tsx         # Landing page
 │   ├── explore.tsx       # Browse public collections
 │   ├── dashboard.tsx     # User's collections
-│   ├── settings/         # Account settings + API keys
+│   ├── protocol.tsx      # Protocol specification
+│   ├── records/[hash].tsx # Record detail + provenance
 │   ├── schemas/          # Schema browser
+│   ├── settings/         # Account settings + API keys
 │   ├── blog/             # Blog
 │   ├── docs/             # Documentation
 │   └── [owner]/          # Dynamic owner routes
 │       ├── index.tsx
-│       ├── [collection]/
-│       │   ├── index.tsx
-│       │   ├── versions.tsx
-│       │   ├── v/[n].tsx
-│       │   ├── diff.tsx
-│       │   └── settings.tsx
+│       └── [collection]/
+│           ├── index.tsx
+│           ├── versions.tsx
+│           ├── v/[n].tsx
+│           ├── diff.tsx
+│           └── settings.tsx
 ├── components/           # Shared React components
-├── lib/
-│   ├── s3.ts             # S3 client
-│   ├── ark.ts            # ARK identifier utilities
-│   ├── version-helpers.server.ts  # Shared schema/version helpers
-│   └── page-utils.ts     # SSR utilities
 ├── styles/global.css     # Tailwind theme
+packages/
+└── cli/                  # npm publish wrapper (@underlay/cli)
+    └── package.json      # esbuild bundles src/cli → dist/cli.js
 public/
 ├── .well-known/ai.txt    # Machine-readable API docs
 tools/
 ├── backupDb.ts           # Postgres backup → S3
 └── cron.ts               # Scheduled task runner
 ```
+
+## Protocol and Documentation
+
+The protocol and the platform are documented together:
+
+| Resource | URL | Purpose |
+| -------- | --- | ------- |
+| Protocol spec | [/protocol](https://underlay.org/protocol) | Full protocol: data model, hashing, push, pull, provenance, privacy |
+| User docs | [/docs](https://underlay.org/docs) | Concepts, integration guide, API reference, quickstart |
+| ai.txt | [/.well-known/ai.txt](https://underlay.org/.well-known/ai.txt) | Machine-readable API docs for LLMs and bots |
+
+### Key API endpoints
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `POST .../versions` | Simple push (server computes hashes) |
+| `POST .../versions/negotiate` | Hash negotiation push (only transfer missing records) |
+| `POST .../versions/upload` | Chunked upload for large pushes |
+| `GET .../versions/:n/manifest` | Version manifest (add `?since=M` for delta) |
+| `GET .../versions/:n/records` | Paginated records |
+| `GET .../versions/:n/diff?from=M` | Diff between two versions |
+| `POST /api/records/batch` | Fetch records by hash (JSONL stream) |
+| `GET /api/records/:hash/provenance` | Find all collections containing a record |
+| `POST .../fork` | Fork a collection (copies manifest, not data) |
+| `GET /api/schemas` | Search schemas across all collections |
+
+## Privacy
+
+Privacy is part of the protocol, not just a hosted-instance feature. It operates at three levels:
+
+- **Private types**: `"private": true` on a schema root hides all records of that type from public readers.
+- **Private fields**: `"private": true` on a schema property strips that field from public responses.
+- **Private records**: `"private": true` on a record when pushing hides that specific record.
+
+The `private` flag is not part of the record hash — a record's content identity doesn't change when you change who can see it. Each version has two hashes: a **private hash** (all content, used by owners for integrity) and a **public hash** (excludes private types, fields, and records, verifiable by anyone).
+
+Privacy filtering is implemented in `src/lib/core/privacy.ts` (pure functions) and enforced at the API layer in `src/api/versions.ts`.
+
+## Schema System
+
+Underlay uses **globally deduplicated, content-addressed schemas** for record validation and interoperability.
+
+- Each record type in a collection has its own JSON Schema, stored as an immutable, content-addressed row in the global `schemas` table.
+- A version declares its full set of type-to-schema bindings via the `version_schemas` join table.
+- If two collections define the same fields and types for a record type, they produce the same schema hash. Alignment is automatic.
+- Schemas are never modified. Evolving a type produces a new hash and a new row.
+
+### Push payload
+
+```json
+{
+  "schemas": {
+    "Author": { "type": "object", "properties": { "name": { "type": "string" } } },
+    "Pub": { "type": "object", "properties": { "title": { "type": "string" }, "authorId": { "type": "string", "x-ref-type": "Author" } } }
+  },
+  "changes": { "added": [...] }
+}
+```
+
+### Relationship annotations
+
+Fields that hold record IDs of another type use `"x-ref-type": "TypeName"` to document the relationship. This enables linked-record navigation in the UI and helps LLMs understand the relational graph.
+
+### Schema labeling
+
+Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.org/Person`, `dc.author.v1`). Labels enable discovery across collections without upfront coordination.
+
+- `POST /api/schemas/:id/labels` - Add a label
+- `DELETE /api/schemas/:id/labels/:label` - Remove a label
+- `GET /api/schemas?label=...` - Search by label
+- Labels are injected as `x-underlay-labels` in schema exports (opt-out via `?raw=true`)
+
+### Versioning semantics
+
+- **Major bump**: Schema set changed (type added, removed, or schema modified)
+- **Minor bump**: Records changed, schema set identical
+- **Patch bump**: Only metadata changed (readme, message)
 
 ## Deployment
 
@@ -195,6 +335,7 @@ pnpm dev              # Start full local stack (Docker)
 pnpm dev:app          # Start server without Docker
 pnpm build            # Build for production (client + SSR)
 pnpm start            # Start production server
+pnpm cli <command>    # Run CLI locally (e.g. pnpm cli init, pnpm cli add)
 
 # Code quality
 pnpm typecheck        # TypeScript type checking
@@ -221,62 +362,13 @@ pnpm secrets:decrypt:prod   # Decrypt .env.prod.enc → .env.prod
 pnpm secrets:decrypt:dev    # Decrypt .env.dev.enc → .env.dev
 ```
 
-## Schema System
-
-Underlay uses **globally deduplicated, content-addressed schemas** for record validation and interoperability.
-
-### How it works
-
-- Each record type in a collection has its own JSON Schema, stored as an immutable, content-addressed row in the global `schemas` table.
-- A version declares its full set of type→schema bindings via the `version_schemas` join table.
-- If two collections define the same fields and types for a record type, they produce the same schema hash. Alignment is automatic.
-- Schemas are never modified. Evolving a type produces a new hash and a new row.
-
-### Push payload
-
-```json
-{
-  "schemas": {
-    "Author": { "type": "object", "properties": { "name": { "type": "string" } } },
-    "Pub": { "type": "object", "properties": { "title": { "type": "string" }, "authorId": { "type": "string", "x-ref-type": "Author" } } }
-  },
-  "changes": { "added": [...] }
-}
-```
-
-### Relationship annotations
-
-Fields that hold record IDs of another type use `"x-ref-type": "TypeName"` to document the relationship. This enables linked-record navigation in the UI and helps LLMs understand the relational graph.
-
-### Schema labeling
-
-Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.org/Person`, `dc.author.v1`). Labels enable discovery across collections without upfront coordination.
-
-- `POST /api/schemas/:id/labels` - Add a label
-- `DELETE /api/schemas/:id/labels/:label` - Remove a label
-- `GET /api/schemas?label=...` - Search by label
-- Labels are injected as `x-underlay-labels` in schema exports (opt-out via `?raw=true`)
-
-### Schema discovery API
-
-| Endpoint                                    | Purpose                                                       |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| `GET /api/schemas`                          | Global search (filter by `q`, `slug`, `label`, `schema_hash`) |
-| `GET /api/schemas/:id`                      | Single schema with labels + usage info                        |
-| `GET /api/collections/:owner/:slug/schemas` | Collection's schemas (with label enrichment)                  |
-
-### Versioning semantics
-
-- **Major bump**: Schema set changed (type added, removed, or schema modified)
-- **Minor bump**: Records changed, schema set identical
-- **Patch bump**: Only metadata changed (readme, message)
-
 ## Maintenance Checklist
 
 When adding or changing features, update these locations:
 
 | What              | Where                                   | Purpose                                    |
 | ----------------- | --------------------------------------- | ------------------------------------------ |
+| Protocol spec     | `src/routes/protocol.tsx`               | Protocol documentation page                |
 | API documentation | `public/.well-known/ai.txt`             | Machine-readable docs for LLMs and bots    |
 | Concepts          | `src/routes/docs/concepts.tsx`          | Core concepts explanation                  |
 | API reference     | `src/routes/docs/api/*.tsx`             | Endpoint-level docs with examples          |
@@ -284,19 +376,23 @@ When adding or changing features, update these locations:
 | Quick start       | `src/routes/docs/quickstart.tsx`        | Getting started tutorial                   |
 | Self-hosting      | `src/routes/docs/self-host.tsx`         | Deployment instructions                    |
 | DB schema         | `src/db/schema.ts` → `pnpm db:generate` | Schema changes need a migration            |
+| Core library      | `src/lib/core/`                         | Hashing, semver, privacy, validation       |
+| CLI commands      | `src/cli/commands/`                     | Local versioning and sync                  |
 | Schema discovery  | `src/api/schemas.ts`                    | Schema search, labeling, cross-referencing |
 | Encrypted secrets | `.env.enc` / `.env.dev.enc`             | Re-encrypt after changing .env files       |
 
 ### Privacy features
 
-The system supports three levels of privacy (type-level, field-level, record-level) via `"private": true` annotations in per-type schemas. When changing how privacy works, update:
+Privacy is part of the protocol. The system supports three levels (type-level, field-level, record-level) via `"private": true` annotations. When changing how privacy works, update:
 
-- `src/api/versions.ts` - filtering logic (reads from `version_schemas` JOIN `schemas`)
+- `src/lib/core/privacy.ts` - pure filtering functions (shared by server and CLI)
+- `src/api/versions.ts` - API-level filtering
 - `src/api/files.ts` - file access checks
 - `src/api/schemas.ts` - public schema filtering
+- `src/routes/protocol.tsx` - protocol spec
 - `public/.well-known/ai.txt` - Privacy section
 - `src/routes/docs/concepts.tsx` - Privacy section
-- `src/routes/docs/api/versions.tsx` - Push endpoint docs
+- `src/routes/docs/integration.tsx` - Privacy section
 
 ## License
 

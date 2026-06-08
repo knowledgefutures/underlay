@@ -10,12 +10,14 @@ import {
   deriveSemver,
   filterRecordData,
   filterTypeSchema,
+  findExtraFields,
   getPrivateFields,
   getPrivateTypes,
   hashRecord,
   hashSchema,
   loadVersionSchemas,
   type SchemaEntry,
+  stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
@@ -577,6 +579,7 @@ export async function push(c: Context<AuthEnv>) {
     app_id?: string
     actor_id?: string
     schemas?: Record<string, object>
+    strip_unknown_fields?: boolean
     changes: {
       added?: { id: string; type: string; data: unknown; private?: boolean }[]
       updated?: { id: string; type: string; data: unknown; private?: boolean }[]
@@ -782,6 +785,38 @@ export async function push(c: Context<AuthEnv>) {
       },
       422,
     )
+  }
+
+  // Check for extra fields not defined in schemas
+  const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+  for (const entry of newSchemaSet) {
+    schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
+  }
+  const extraFieldWarnings = findExtraFields(
+    newRecords.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
+    schemasForCheck,
+  )
+  if (extraFieldWarnings.length > 0) {
+    if (!body.strip_unknown_fields) {
+      return c.json(
+        {
+          error: 'Records contain fields not defined in schema',
+          extraFields: extraFieldWarnings,
+          hint: 'Set strip_unknown_fields: true to accept stripping these fields before storage.',
+          statusCode: 422,
+        },
+        422,
+      )
+    }
+    for (const rec of newRecords) {
+      const typeSchema = schemasForCheck[rec.type]
+      if (typeSchema?.properties && typeof rec.data === 'object' && rec.data !== null) {
+        rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
+        const { hash, canonical } = hashRecord({ id: rec.recordId, type: rec.type, data: rec.data })
+        rec.hash = hash
+        rec.size = Buffer.byteLength(canonical, 'utf-8')
+      }
+    }
   }
 
   // Determine if schema set changed

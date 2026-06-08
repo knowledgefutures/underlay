@@ -5,8 +5,20 @@ import { v4 as uuidv4 } from 'uuid'
 
 import { db, schema } from './client.server.js'
 
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
+  }
+  return sorted
+}
+
 function hashSchema(schemaBody: unknown): string {
-  return createHash('sha256').update(JSON.stringify(schemaBody)).digest('hex')
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalize(schemaBody)))
+    .digest('hex')
 }
 
 function hashRecord(record: { recordId: string; type: string; data: unknown }): {
@@ -394,7 +406,277 @@ async function seed() {
 
   await insertRecords(pubpubVersion!.id, pubpubRecords)
 
-  console.log('[seed] Created collection: knowledge-futures/pubpub-archive (17 records)')
+  console.log('[seed] Created collection: knowledge-futures/pubpub-archive v1 (17 records)')
+
+  // --- PubPub Archive v1.1.0 (minor: record changes, same schema) ---
+  const pubpubV2Records = [
+    // Carried forward (unchanged)
+    ...pubpubRecords.filter((r) => r.recordId !== 'pub-001' && r.recordId !== 'pubauthor-002'),
+    // Updated: pub-001 gets a revised description
+    {
+      recordId: 'pub-001',
+      type: 'Pub',
+      data: {
+        title: 'The Role of Failure in Scientific Discovery',
+        slug: 'role-of-failure',
+        communityId: 'community-001',
+        doi: '10.36850/e1',
+        description:
+          'A revised analysis of how systematic failures contribute to and accelerate the scientific process, with new case studies from 2024.',
+        publishedAt: '2021-03-15T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+      },
+    },
+    // Added: new author
+    {
+      recordId: 'author-006',
+      type: 'Author',
+      data: {
+        name: 'Lisa Nakamura',
+        orcid: '0000-0002-3333-6666',
+        affiliation: 'University of Michigan',
+      },
+    },
+    // Added: new pub
+    {
+      recordId: 'pub-005',
+      type: 'Pub',
+      data: {
+        title: 'Digital Race and Platform Epistemology',
+        slug: 'digital-race-platform',
+        communityId: 'community-002',
+        doi: '10.36850/ci-5',
+        description:
+          'How racial categorization is encoded in platform architectures and what that means for collective knowledge production.',
+        publishedAt: '2024-09-01T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+      },
+    },
+    // Added: link new author to new pub
+    {
+      recordId: 'pubauthor-006',
+      type: 'PubAuthor',
+      data: { pubId: 'pub-005', authorId: 'author-006', order: 1 },
+    },
+    // Removed: pubauthor-002 (dropped by filtering above)
+  ]
+
+  const pubpubV2Hash = computeVersionHash(pubpubSchemaEntries, pubpubV2Records, [], null)
+  const pubpubV2TotalBytes = pubpubV2Records.reduce(
+    (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
+    0,
+  )
+  const [pubpubV2] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: pubpubId,
+      number: 2,
+      semver: 'v1.1.0',
+      hash: pubpubV2Hash,
+      baseNumber: 1,
+      message: 'Add Nakamura pub, update failure paper description, remove duplicate author link',
+      readme: null,
+      pushedBy: adminId,
+      appId: 'underlay-seed/1.0',
+      actorId: 'admin',
+      recordCount: pubpubV2Records.length,
+      fileCount: 0,
+      totalBytes: pubpubV2TotalBytes,
+    })
+    .returning()
+
+  await db.insert(schema.versionSchemas).values(
+    pubpubSchemaEntries.map((e) => ({
+      versionId: pubpubV2!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  )
+
+  await insertRecords(pubpubV2!.id, pubpubV2Records)
+
+  console.log('[seed] Created collection: knowledge-futures/pubpub-archive v1.1.0 (minor)')
+
+  // --- PubPub Archive v2.0.0 (major: schema change — add Review type + abstract field) ---
+  const pubpubV3Schema = {
+    Community: pubpubSchema.Community,
+    Pub: {
+      type: 'object',
+      properties: {
+        ...pubpubSchema.Pub.properties,
+        abstract: { type: 'string' },
+      },
+    },
+    Author: pubpubSchema.Author,
+    PubAuthor: pubpubSchema.PubAuthor,
+    Review: {
+      type: 'object',
+      properties: {
+        pubId: { type: 'string', 'x-ref-type': 'Pub' },
+        reviewerId: { type: 'string', 'x-ref-type': 'Author' },
+        recommendation: { type: 'string' },
+        comment: { type: 'string' },
+        submittedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  }
+
+  const pubpubV3Records = [
+    // Carry forward all v2 records, but update pubs to include abstract
+    ...pubpubV2Records.filter((r) => r.type !== 'Pub'),
+    // Pubs with abstracts added
+    {
+      recordId: 'pub-001',
+      type: 'Pub',
+      data: {
+        title: 'The Role of Failure in Scientific Discovery',
+        slug: 'role-of-failure',
+        communityId: 'community-001',
+        doi: '10.36850/e1',
+        description:
+          'A revised analysis of how systematic failures contribute to and accelerate the scientific process, with new case studies from 2024.',
+        publishedAt: '2021-03-15T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+        abstract:
+          'We examine the epistemological role of failure in scientific research through case studies spanning experimental physics, drug discovery, and climate modeling.',
+      },
+    },
+    {
+      recordId: 'pub-002',
+      type: 'Pub',
+      data: {
+        title: 'Collective Memory in Online Communities',
+        slug: 'collective-memory',
+        communityId: 'community-002',
+        doi: '10.36850/ci-2',
+        description: 'How online groups form and retain shared knowledge structures.',
+        publishedAt: '2022-07-20T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+        abstract:
+          'Drawing on Halbwachs and computational methods, we analyze how online communities construct and maintain collective memory through repeated interaction.',
+      },
+    },
+    {
+      recordId: 'pub-003',
+      type: 'Pub',
+      data: {
+        title: 'Annotating Frankenstein: A Digital Experiment',
+        slug: 'annotating-frankenstein',
+        communityId: 'community-003',
+        doi: '10.21428/frank.001',
+        description: "Collaborative annotation of Shelley's Frankenstein using digital tools.",
+        publishedAt: '2018-06-01T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+        abstract:
+          "A collaborative reading experiment inviting scholars and the public to annotate Mary Shelley's Frankenstein using digital annotation tools.",
+      },
+    },
+    {
+      recordId: 'pub-004',
+      type: 'Pub',
+      data: {
+        title: 'Open Infrastructure for Open Science',
+        slug: 'open-infrastructure',
+        communityId: 'community-002',
+        doi: '10.36850/ci-4',
+        description: 'The case for community-owned scholarly infrastructure.',
+        publishedAt: '2023-01-10T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+        abstract:
+          'We argue that scholarly communication infrastructure should be owned and governed by the academic community rather than commercial entities.',
+      },
+    },
+    {
+      recordId: 'pub-005',
+      type: 'Pub',
+      data: {
+        title: 'Digital Race and Platform Epistemology',
+        slug: 'digital-race-platform',
+        communityId: 'community-002',
+        doi: '10.36850/ci-5',
+        description:
+          'How racial categorization is encoded in platform architectures and what that means for collective knowledge production.',
+        publishedAt: '2024-09-01T00:00:00.000Z',
+        license: 'CC-BY-4.0',
+        abstract:
+          'An examination of how race is constructed through platform design choices, taxonomies, and algorithmic systems, and its implications for epistemic justice.',
+      },
+    },
+    // New: reviews
+    {
+      recordId: 'review-001',
+      type: 'Review',
+      data: {
+        pubId: 'pub-001',
+        reviewerId: 'author-002',
+        recommendation: 'accept',
+        comment:
+          'Excellent revision. The new case studies strengthen the argument considerably. Minor copyediting needed in section 3.',
+        submittedAt: '2024-12-01T10:00:00.000Z',
+      },
+    },
+    {
+      recordId: 'review-002',
+      type: 'Review',
+      data: {
+        pubId: 'pub-005',
+        reviewerId: 'author-005',
+        recommendation: 'minor-revisions',
+        comment:
+          'Important contribution. The connection between platform epistemology and knowledge infrastructure deserves more development in the discussion section.',
+        submittedAt: '2024-10-15T14:30:00.000Z',
+      },
+    },
+    {
+      recordId: 'review-003',
+      type: 'Review',
+      data: {
+        pubId: 'pub-002',
+        reviewerId: 'author-003',
+        recommendation: 'accept',
+        comment:
+          'Compelling use of computational methods to study collective memory. The Halbwachs framing is well-integrated.',
+        submittedAt: '2022-05-20T09:00:00.000Z',
+      },
+    },
+  ]
+
+  const pubpubV3SchemaEntries = await upsertSchemas(pubpubV3Schema)
+  const pubpubV3Hash = computeVersionHash(pubpubV3SchemaEntries, pubpubV3Records, [], null)
+  const pubpubV3TotalBytes = pubpubV3Records.reduce(
+    (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
+    0,
+  )
+  const [pubpubV3] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: pubpubId,
+      number: 3,
+      semver: 'v2.0.0',
+      hash: pubpubV3Hash,
+      baseNumber: 2,
+      message: 'Add abstracts to pubs, add Review type with peer review data',
+      readme: null,
+      pushedBy: adminId,
+      appId: 'underlay-seed/1.0',
+      actorId: 'admin',
+      recordCount: pubpubV3Records.length,
+      fileCount: 0,
+      totalBytes: pubpubV3TotalBytes,
+    })
+    .returning()
+
+  await db.insert(schema.versionSchemas).values(
+    pubpubV3SchemaEntries.map((e) => ({
+      versionId: pubpubV3!.id,
+      slug: e.slug,
+      schemaId: e.schemaId,
+    })),
+  )
+
+  await insertRecords(pubpubV3!.id, pubpubV3Records)
+
+  console.log('[seed] Created collection: knowledge-futures/pubpub-archive v2.0.0 (major)')
 
   // --- Collection 2: Open Grants ---
   const grantsId = uuidv4()
