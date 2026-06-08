@@ -29,9 +29,9 @@ export default function CollectionDiffPage() {
   const [loading, setLoading] = useState(true)
   const [diffLoading, setDiffLoading] = useState(false)
 
-  // Version selectors
-  const [fromNum, setFromNum] = useState<number>(0)
-  const [toNum, setToNum] = useState<number>(0)
+  // Version selectors (semver strings, empty string = none/empty)
+  const [fromVer, setFromVer] = useState<string>('')
+  const [toVer, setToVer] = useState<string>('')
 
   useEffect(() => {
     if (!owner || !collection) return
@@ -58,13 +58,13 @@ export default function CollectionDiffPage() {
       }
 
       // Determine from/to from URL
-      const latestNum = vers.length > 0 ? vers[0].number : null
+      const latestSemver = vers.length > 0 ? vers[0].semver : ''
       const urlTo = searchParams.get('to')
       const urlFrom = searchParams.get('from')
-      const target = urlTo ? parseInt(urlTo, 10) : (latestNum ?? 0)
-      const base = urlFrom ? parseInt(urlFrom, 10) : target ? target - 1 : 0
-      setToNum(target)
-      setFromNum(base)
+      const target = urlTo || latestSemver
+      const base = urlFrom ?? ''
+      setToVer(target)
+      setFromVer(base)
 
       setLoading(false)
     })
@@ -72,13 +72,13 @@ export default function CollectionDiffPage() {
 
   // Fetch diff when from/to change
   useEffect(() => {
-    if (!toNum || toNum <= 0 || loading) return
+    if (!toVer || loading) return
     setDiffLoading(true)
     setDiff(null)
     setDiffError(null)
 
-    const fromParam = fromNum >= 0 ? `?from=${fromNum}` : ''
-    fetch(`/api/collections/${owner}/${collection}/versions/${toNum}/diff${fromParam}`, {
+    const fromParam = fromVer ? `?from=${fromVer}` : ''
+    fetch(`/api/collections/${owner}/${collection}/versions/${toVer}/diff${fromParam}`, {
       credentials: 'include',
     })
       .then(async (r) => {
@@ -90,17 +90,19 @@ export default function CollectionDiffPage() {
         }
       })
       .finally(() => setDiffLoading(false))
-  }, [fromNum, toNum, loading, owner, collection])
+  }, [fromVer, toVer, loading, owner, collection])
 
   function handleCompare(e: React.FormEvent) {
     e.preventDefault()
     const form = e.target as HTMLFormElement
     const fd = new FormData(form)
-    const f = parseInt(fd.get('from') as string, 10)
-    const t = parseInt(fd.get('to') as string, 10)
-    setFromNum(f)
-    setToNum(t)
-    setSearchParams({ from: String(f), to: String(t) })
+    const f = fd.get('from') as string
+    const t = fd.get('to') as string
+    setFromVer(f)
+    setToVer(t)
+    const params: Record<string, string> = { to: t }
+    if (f) params.from = f
+    setSearchParams(params)
   }
 
   if (loading) {
@@ -112,8 +114,8 @@ export default function CollectionDiffPage() {
   }
   if (!data) throw new NotFoundError()
 
-  const targetVersion = versions.find((v: any) => v.number === toNum)
-  const baseVersion = versions.find((v: any) => v.number === fromNum)
+  const targetVersion = versions.find((v: any) => v.semver === toVer)
+  const baseVersion = versions.find((v: any) => v.semver === fromVer)
 
   const addedByType = diff ? groupByType(diff.added) : {}
   const updatedByType = diff ? groupByType(diff.updated) : {}
@@ -145,25 +147,25 @@ export default function CollectionDiffPage() {
             <label className="text-ink-muted">Comparing</label>
             <select
               name="from"
-              defaultValue={fromNum}
+              defaultValue={fromVer}
               className="border-rule bg-parchment rounded border px-2 py-1 text-sm"
             >
-              <option value="0">∅ (empty)</option>
+              <option value="">∅ (empty)</option>
               {versions.map((v: any) => (
-                <option key={v.number} value={v.number}>
-                  v{v.number} ({v.semver})
+                <option key={v.semver} value={v.semver}>
+                  {v.semver}
                 </option>
               ))}
             </select>
             <span className="text-ink-muted">→</span>
             <select
               name="to"
-              defaultValue={toNum}
+              defaultValue={toVer}
               className="border-rule bg-parchment rounded border px-2 py-1 text-sm"
             >
               {versions.map((v: any) => (
-                <option key={v.number} value={v.number}>
-                  v{v.number} ({v.semver})
+                <option key={v.semver} value={v.semver}>
+                  {v.semver}
                 </option>
               ))}
             </select>
@@ -189,7 +191,7 @@ export default function CollectionDiffPage() {
             {/* Summary bar */}
             <div className="border-rule bg-parchment-dark mb-6 flex items-center gap-4 rounded border px-4 py-2.5 text-sm">
               <span className="text-ink-muted">
-                {baseVersion ? `v${baseVersion.number}` : '∅'} → v{targetVersion?.number}
+                {baseVersion ? baseVersion.semver : '∅'} → {targetVersion?.semver}
               </span>
               <span className="text-ink-muted">·</span>
               <span>

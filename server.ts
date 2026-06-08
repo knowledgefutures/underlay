@@ -215,7 +215,7 @@ app.delete(
 // Versions
 app.get('/api/collections/:owner/:slug/versions', versions.list)
 app.get('/api/collections/:owner/:slug/versions/latest', versions.latest)
-app.get('/api/collections/:owner/:slug/versions/:n', versions.getByNumber)
+app.get('/api/collections/:owner/:slug/versions/:n', versions.getBySemver)
 app.get('/api/collections/:owner/:slug/versions/:n/records', versions.records)
 app.get('/api/collections/:owner/:slug/versions/:n/files', versions.files)
 app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
@@ -231,6 +231,7 @@ app.post(
   negotiate.commit,
 )
 app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
+app.patch('/api/collections/:owner/:slug/metadata', requireAuth('write'), versions.updateMetadata)
 
 // Accounts (custom routes — org CRUD, members, invitations, API keys handled by /api/auth/*)
 app.get('/api/accounts/me', requireAuth(), accounts.getMe)

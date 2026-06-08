@@ -1,11 +1,22 @@
 import DocsLayout from '~/components/DocsLayout'
 
 const pushReq = `{
-  "base_version": 1,
+  "base_version": "v1.0.0",
   "message": "Add new publications",
   "app_id": "pubpub-sync",
   "actor_id": "user-42",
-  "schema": { ... },
+  "metadata": {
+    "description": "PubPub archive",
+    "readme": "# Publications\\nArchived from PubPub."
+  },
+  "schemas": {
+    "Publication": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"}
+      }
+    }
+  },
   "changes": {
     "added": [
       {"id": "rec-1", "type": "Publication", "data": {"title": "..."}}
@@ -18,7 +29,6 @@ const pushReq = `{
 }`
 
 const pushRes = `{
-  "version": 2,
   "semver": "v1.1.0",
   "hash": "a1b2c3d4...",
   "recordCount": 150,
@@ -27,7 +37,6 @@ const pushRes = `{
 
 const listRes = `[
   {
-    "number": 2,
     "semver": "v1.1.0",
     "hash": "a1b2c3d4...",
     "message": "Add new publications",
@@ -60,19 +69,19 @@ const recordsRes = `{
 }`
 
 const manifestRes = `{
-  "version": 2,
   "semver": "v1.1.0",
   "hash": "a1b2c3d4...",
+  "schemas": {"Publication": "sha256:abc123..."},
   "records": [
-    {"id": "pub-001", "type": "Publication"},
-    {"id": "pub-002", "type": "Publication"}
+    {"id": "pub-001", "type": "Publication", "hash": "sha256:def456..."},
+    {"id": "pub-002", "type": "Publication", "hash": "sha256:789abc..."}
   ],
-  "files": ["a1b2c3...", "d4e5f6..."]
+  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."]
 }`
 
 const diffRes = `{
-  "from": 1,
-  "to": 2,
+  "from": "v1.0.0",
+  "to": "v1.1.0",
   "added": [
     {"id": "pub-003", "type": "Publication", "data": {...}}
   ],
@@ -113,9 +122,9 @@ export default function DocsApiVersions() {
                 <code>base_version</code>
               </td>
               <td>
-                <strong>Required.</strong> The version number this push is based on. Use{' '}
-                <code>null</code> for the first version. If the current version doesn't match,
-                returns <code>409 Conflict</code>.
+                <strong>Required.</strong> The semver string this push is based on (e.g.{' '}
+                <code>"v1.0.0"</code>). Use <code>null</code> for the first version. If the current
+                version doesn't match, returns <code>409 Conflict</code>.
               </td>
             </tr>
             <tr>
@@ -138,10 +147,21 @@ export default function DocsApiVersions() {
             </tr>
             <tr>
               <td>
-                <code>schema</code>
+                <code>metadata</code>
               </td>
               <td>
-                JSON Schema for the records. If omitted, the previous version's schema is reused.
+                Optional object with version metadata (<code>description</code>, <code>readme</code>
+                , <code>license</code>, etc.). Merged with the previous version's metadata.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>schemas</code>
+              </td>
+              <td>
+                Per-type JSON Schema map (e.g. <code>{'{"TypeName": {schema}}'}</code>). Required on
+                first push. If omitted on subsequent pushes, the previous version's schemas are
+                reused.
               </td>
             </tr>
             <tr>
@@ -188,23 +208,20 @@ export default function DocsApiVersions() {
         </ul>
         <p>Example schema with privacy:</p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-          <code>{`{
-  "type": "object",
-  "properties": {
-    "Article": {
-      "type": "object",
-      "properties": {
-        "title": {"type": "string"},
-        "body": {"type": "string"},
-        "internalScore": {"type": "number", "private": true}
-      }
-    },
-    "InternalNote": {
-      "type": "object",
-      "private": true,
-      "properties": {
-        "note": {"type": "string"}
-      }
+          <code>{`"schemas": {
+  "Article": {
+    "type": "object",
+    "properties": {
+      "title": {"type": "string"},
+      "body": {"type": "string"},
+      "internalScore": {"type": "number", "private": true}
+    }
+  },
+  "InternalNote": {
+    "type": "object",
+    "private": true,
+    "properties": {
+      "note": {"type": "string"}
     }
   }
 }`}</code>
@@ -284,7 +301,10 @@ export default function DocsApiVersions() {
       <div className="endpoint">
         <h2>GET /api/collections/:owner/:slug/versions/:n</h2>
         <p className="scope">No auth for public collections</p>
-        <p>Get a specific version by number. Returns the full version object including schema.</p>
+        <p>
+          Get a specific version by semver (e.g. <code>v1.1.0</code>). Returns the full version
+          object including schemas.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -360,7 +380,8 @@ export default function DocsApiVersions() {
         <h2>GET /api/collections/:owner/:slug/versions/:n/diff</h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Diff two versions. By default compares version <code>:n</code> against <code>:n-1</code>.
+          Diff two versions. By default compares version <code>:n</code> against the previous
+          version.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -369,7 +390,9 @@ export default function DocsApiVersions() {
               <td>
                 <code>from</code>
               </td>
-              <td>Version number to diff from (default: n-1)</td>
+              <td>
+                Semver to diff from (e.g. <code>v1.0.0</code>). Default: previous version.
+              </td>
             </tr>
           </tbody>
         </table>
@@ -409,7 +432,7 @@ export default function DocsApiVersions() {
         <p>Start a new upload session. Returns a session ID valid for 1 hour.</p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{`{
-  "base_version": 3,
+  "base_version": "v3.0.0",
   "message": "Bulk import",
   "app_id": "my-app",
   "schemas": { "Article": { "type": "object", "properties": { ... } } }
@@ -461,7 +484,6 @@ export default function DocsApiVersions() {
         </h4>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{`{
-  "version": 4,
   "semver": "v1.3.0",
   "hash": "...",
   "recordCount": 2000000,

@@ -16,6 +16,7 @@ import {
   hashRecord,
   hashSchema,
   loadVersionSchemas,
+  parseSemver,
   type SchemaEntry,
   stripToSchema,
 } from '../lib/version-helpers.server.js'
@@ -42,11 +43,21 @@ async function hasOrgAccess(userId: string | undefined, orgId: string): Promise<
   return !!membership
 }
 
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
+  }
+  return sorted
+}
+
 function computeVersionHash(
   schemaSet: { slug: string; schemaHash: string }[],
   recordHashes: string[],
   fileHashes: string[],
-  readme: string | null,
+  metadata: Record<string, unknown> | null,
 ): string {
   const canonical = JSON.stringify({
     schemas: Object.fromEntries(
@@ -54,18 +65,16 @@ function computeVersionHash(
     ),
     records: [...recordHashes].sort(),
     files: fileHashes.sort(),
-    readme: readme ?? null,
+    metadata: metadata ? canonicalize(metadata) : null,
   })
   return 'private:' + createHash('sha256').update(canonical).digest('hex')
 }
 
-/** Compute a public hash that only covers non-private content.
- *  Re-hashes public records with private fields stripped. */
 function computePublicHash(
   schemaEntries: SchemaEntry[],
   recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
   fileHashes: string[],
-  readme: string | null,
+  metadata: Record<string, unknown> | null,
 ): string {
   const privateTypes = getPrivateTypes(schemaEntries)
 
@@ -85,7 +94,7 @@ function computePublicHash(
       return hashRecord({ id: r.recordId, type: r.type, data }).hash
     })
 
-  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, readme).replace(
+  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, metadata).replace(
     'private:',
     'public:',
   )
@@ -145,7 +154,6 @@ export async function list(c: Context<AuthEnv>) {
 
   const rows = await db
     .select({
-      number: schema.versions.number,
       semver: schema.versions.semver,
       hash: schema.versions.hash,
       publicHash: schema.versions.publicHash,
@@ -159,13 +167,14 @@ export async function list(c: Context<AuthEnv>) {
     })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(Math.min(parseInt(limit ?? '50', 10), 100))
     .offset(parseInt(offset ?? '0', 10))
 
   return c.json(
     rows.map((row) => ({
-      number: row.number,
       semver: row.semver,
       hash: ownerAccess ? row.hash : (row.publicHash ?? row.hash),
       message: row.message,
@@ -175,7 +184,7 @@ export async function list(c: Context<AuthEnv>) {
       fileCount: row.fileCount,
       totalBytes: row.totalBytes,
       createdAt: row.createdAt,
-      ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, row.number) : null,
+      ark: arkInfo ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, row.semver) : null,
     })),
   )
 }
@@ -191,7 +200,9 @@ export async function latest(c: Context<AuthEnv>) {
     .select()
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!version) return c.json({ error: 'No versions', statusCode: 404 }, 404)
@@ -210,28 +221,24 @@ export async function latest(c: Context<AuthEnv>) {
     hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
     schemas: schemasMap,
     ark: arkInfo
-      ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number)
+      ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.semver)
       : null,
   })
 }
 
-// Get version by number
-export async function getByNumber(c: Context<AuthEnv>) {
+// Get version by semver
+export async function getBySemver(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const n = c.req.param('n')!
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const { semver } = parseSemver(n)
   const [version] = await db
     .select()
     .from(schema.versions)
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.number, parseInt(n, 10)),
-      ),
-    )
+    .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)))
     .limit(1)
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
@@ -250,7 +257,7 @@ export async function getByNumber(c: Context<AuthEnv>) {
     hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
     schemas: schemasMap,
     ark: arkInfo
-      ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.number)
+      ? buildArkUrl(arkInfo.naan, arkInfo.shoulder, arkInfo.arkId, version.semver)
       : null,
   })
 }
@@ -268,15 +275,11 @@ export async function records(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const { semver } = parseSemver(n)
   const [version] = await db
     .select()
     .from(schema.versions)
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.number, parseInt(n, 10)),
-      ),
-    )
+    .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)))
     .limit(1)
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
@@ -371,7 +374,7 @@ export async function records(c: Context<AuthEnv>) {
             arkInfo.naan,
             arkInfo.shoulder,
             arkInfo.arkId,
-            version.number,
+            version.semver,
             rec.type,
             rec.id,
           )
@@ -398,15 +401,11 @@ export async function files(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const { semver } = parseSemver(n)
   const [version] = await db
     .select()
     .from(schema.versions)
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.number, parseInt(n, 10)),
-      ),
-    )
+    .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)))
     .limit(1)
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
@@ -465,15 +464,11 @@ export async function manifest(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const { semver } = parseSemver(n)
   const [version] = await db
     .select()
     .from(schema.versions)
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.number, parseInt(n, 10)),
-      ),
-    )
+    .where(and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)))
     .limit(1)
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
@@ -498,20 +493,22 @@ export async function manifest(c: Context<AuthEnv>) {
 
   const schemaEntries = await loadVersionSchemas(version.id)
 
-  // If ?since=N is provided, return a delta instead of the full manifest
+  // If ?since=vX.Y.Z is provided, return a delta instead of the full manifest
   if (sinceParam) {
-    const sinceNum = parseInt(sinceParam, 10)
-    if (isNaN(sinceNum)) return c.json({ error: 'Invalid since parameter' }, 400)
+    const { semver: sinceSemver } = parseSemver(sinceParam)
 
     const [sinceVersion] = await db
       .select({ id: schema.versions.id })
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, sinceNum)),
+        and(
+          eq(schema.versions.collectionId, collection.id),
+          eq(schema.versions.semver, sinceSemver),
+        ),
       )
       .limit(1)
 
-    if (!sinceVersion) return c.json({ error: `Version ${sinceNum} not found` }, 404)
+    if (!sinceVersion) return c.json({ error: `Version ${sinceSemver} not found` }, 404)
 
     const sinceRecords = await db
       .select({
@@ -546,10 +543,9 @@ export async function manifest(c: Context<AuthEnv>) {
     }
 
     return c.json({
-      version: version.number,
       semver: version.semver,
       hash: version.hash,
-      since: sinceNum,
+      since: sinceSemver,
       schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
       delta: { added, updated, removed },
       files: fileHashes.map((f) => f.hash),
@@ -557,7 +553,6 @@ export async function manifest(c: Context<AuthEnv>) {
   }
 
   return c.json({
-    version: version.number,
     semver: version.semver,
     hash: version.hash,
     schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
@@ -571,11 +566,10 @@ export async function push(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const body = (await c.req.json()) as {
-    base_version: number | null
+    base_version: string | null
     name?: string
-    description?: string
     message?: string
-    readme?: string
+    metadata?: Record<string, unknown>
     app_id?: string
     actor_id?: string
     schemas?: Record<string, object>
@@ -595,21 +589,24 @@ export async function push(c: Context<AuthEnv>) {
     .select()
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
-  const currentNumber = latest?.number ?? 0
-
-  // Optimistic lock
-  if (body.base_version !== null && body.base_version !== currentNumber) {
-    return c.json(
-      {
-        error: 'Version conflict',
-        currentVersion: currentNumber,
-        statusCode: 409,
-      },
-      409,
-    )
+  // Optimistic lock — compare semver strings
+  if (body.base_version !== null && body.base_version !== (latest?.semver ?? null)) {
+    const normalized = body.base_version ? parseSemver(body.base_version).semver : null
+    if (normalized !== (latest?.semver ?? null)) {
+      return c.json(
+        {
+          error: 'Version conflict',
+          currentVersion: latest?.semver ?? null,
+          statusCode: 409,
+        },
+        409,
+      )
+    }
   }
 
   // Build the full record manifest for this version using content-addressed records
@@ -886,8 +883,14 @@ export async function push(c: Context<AuthEnv>) {
     }
   }
 
-  // Resolve readme (carry forward from base version if not provided)
-  const readmeValue = body.readme !== undefined ? body.readme : (latest?.readme ?? null)
+  // Resolve metadata (merge with previous version's metadata if provided)
+  const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
+  const metadataValue = body.metadata ? { ...(prevMetadata ?? {}), ...body.metadata } : prevMetadata
+
+  // Detect if metadata changed
+  const metadataChanged =
+    JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==
+    JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
 
   // Compute hashes and semver
   const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
@@ -896,7 +899,7 @@ export async function push(c: Context<AuthEnv>) {
     schemaSetForHash,
     allRecordHashes,
     allFileHashes,
-    readmeValue,
+    metadataValue,
   )
 
   const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
@@ -909,15 +912,18 @@ export async function push(c: Context<AuthEnv>) {
     schemaEntriesForPublicHash,
     newRecords,
     allFileHashes,
-    readmeValue,
+    metadataValue,
   )
 
-  const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged)
-  const newNumber = currentNumber + 1
+  const { semver, major, minor, patch } = deriveSemver(
+    latest?.semver ?? null,
+    schemaChanged,
+    recordsChanged || metadataChanged,
+  )
 
   // Check for duplicate hash
   const [existingHash] = await db
-    .select({ number: schema.versions.number })
+    .select({ semver: schema.versions.semver })
     .from(schema.versions)
     .where(
       and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.hash, versionHash)),
@@ -927,8 +933,8 @@ export async function push(c: Context<AuthEnv>) {
     return c.json(
       {
         error: 'No changes detected',
-        message: `Version ${existingHash.number} already has identical content (hash: ${versionHash.slice(0, 12)}...)`,
-        existingVersion: existingHash.number,
+        message: `Version ${existingHash.semver} already has identical content (hash: ${versionHash.slice(0, 12)}...)`,
+        existingVersion: existingHash.semver,
       },
       409,
     )
@@ -952,13 +958,15 @@ export async function push(c: Context<AuthEnv>) {
     .insert(schema.versions)
     .values({
       collectionId: collection.id,
-      number: newNumber,
       semver,
+      major,
+      minor,
+      patch,
       hash: versionHash,
       publicHash,
-      baseNumber: body.base_version,
+      baseSemver: body.base_version ?? null,
       message: body.message ?? null,
-      readme: readmeValue,
+      metadata: metadataValue,
       pushedBy: c.get('userId') ?? null,
       appId: body.app_id ?? null,
       actorId: body.actor_id ?? null,
@@ -1019,10 +1027,9 @@ export async function push(c: Context<AuthEnv>) {
     })),
   )
 
-  // Update collection timestamp + optional name/description
+  // Update collection timestamp + optional name
   const collectionUpdates: Record<string, unknown> = { updatedAt: new Date() }
   if (body.name) collectionUpdates.name = body.name
-  if (body.description !== undefined) collectionUpdates.description = body.description
   await db
     .update(schema.collections)
     .set(collectionUpdates)
@@ -1030,7 +1037,6 @@ export async function push(c: Context<AuthEnv>) {
 
   return c.json(
     {
-      version: newNumber,
       semver,
       hash: versionHash,
       recordCount: newRecords.length,
@@ -1050,14 +1056,16 @@ export async function diff(c: Context<AuthEnv>) {
   const collection = await resolveCollection(owner, slug)
   if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-  const targetNum = parseInt(n, 10)
-  const fromNum = from ? parseInt(from, 10) : targetNum - 1
+  const { semver: targetSemver } = parseSemver(n)
 
   const [targetVersion] = await db
     .select()
     .from(schema.versions)
     .where(
-      and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, targetNum)),
+      and(
+        eq(schema.versions.collectionId, collection.id),
+        eq(schema.versions.semver, targetSemver),
+      ),
     )
     .limit(1)
 
@@ -1083,12 +1091,16 @@ export async function diff(c: Context<AuthEnv>) {
 
   let fromVersion: typeof targetVersion | null = null
   let fromRecords: DiffRecord[] = []
-  if (fromNum > 0) {
+  if (from) {
+    const { semver: fromSemver } = parseSemver(from)
     const [fv] = await db
       .select()
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.number, fromNum)),
+        and(
+          eq(schema.versions.collectionId, collection.id),
+          eq(schema.versions.semver, fromSemver),
+        ),
       )
       .limit(1)
 
@@ -1136,7 +1148,8 @@ export async function diff(c: Context<AuthEnv>) {
     }
   }
 
-  const readmeChanged = (targetVersion.readme ?? null) !== (fromVersion?.readme ?? null)
+  const metadataChanged =
+    JSON.stringify(targetVersion.metadata ?? null) !== JSON.stringify(fromVersion?.metadata ?? null)
 
   // Compare file sets
   const targetFiles = await db
@@ -1155,20 +1168,121 @@ export async function diff(c: Context<AuthEnv>) {
   const filesRemoved = fromFiles.filter((f) => !targetFileSet.has(f.hash)).map((f) => f.hash)
 
   return c.json({
-    from: fromNum,
-    to: targetNum,
+    from: fromVersion?.semver ?? null,
+    to: targetVersion.semver,
     added: added.map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
     updated: updated.map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
     removed: removed.map((r) => r.recordId),
     meta: {
       schemaChanged,
-      readmeChanged,
-      readmeFrom: readmeChanged ? (fromVersion?.readme?.slice(0, 100) ?? null) : undefined,
-      readmeTo: readmeChanged ? (targetVersion.readme?.slice(0, 100) ?? null) : undefined,
+      metadataChanged,
       filesAdded: filesAdded.length,
       filesRemoved: filesRemoved.length,
     },
   })
+}
+
+// Update version metadata (description, readme, license, etc.) — creates a patch version
+export async function updateMetadata(c: Context<AuthEnv>) {
+  const owner = c.req.param('owner')!
+  const slug = c.req.param('slug')!
+  const body = (await c.req.json()) as Record<string, unknown>
+
+  const collection = await resolveCollection(owner, slug)
+  if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+
+  const userId = c.get('userId')
+  if (!(await hasOrgAccess(userId, collection.organizationId))) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+
+  const [latest] = await db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.collectionId, collection.id))
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
+    .limit(1)
+
+  if (!latest) {
+    return c.json({ error: 'No versions exist yet', statusCode: 422 }, 422)
+  }
+
+  const prevMetadata = (latest.metadata as Record<string, unknown>) ?? {}
+  const newMetadata = { ...prevMetadata, ...body }
+
+  if (JSON.stringify(canonicalize(newMetadata)) === JSON.stringify(canonicalize(prevMetadata))) {
+    return c.json({ semver: latest.semver, unchanged: true })
+  }
+
+  const schemaEntries = await loadVersionSchemas(latest.id)
+  const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
+  const recordHashes = (
+    await db
+      .select({ hash: schema.versionRecords.recordHash })
+      .from(schema.versionRecords)
+      .where(eq(schema.versionRecords.versionId, latest.id))
+  ).map((r) => r.hash)
+  const fileHashes = (
+    await db
+      .select({ hash: schema.versionFiles.fileHash })
+      .from(schema.versionFiles)
+      .where(eq(schema.versionFiles.versionId, latest.id))
+  ).map((f) => f.hash)
+
+  const versionHash = computeVersionHash(schemaSet, recordHashes, fileHashes, newMetadata)
+
+  const sv = deriveSemver(latest.semver, false, false)
+
+  const [version] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: collection.id,
+      semver: sv.semver,
+      major: sv.major,
+      minor: sv.minor,
+      patch: sv.patch,
+      hash: versionHash,
+      publicHash: latest.publicHash,
+      baseSemver: latest.semver,
+      message: `Update metadata`,
+      metadata: newMetadata,
+      pushedBy: userId ?? null,
+      recordCount: latest.recordCount,
+      fileCount: latest.fileCount,
+      totalBytes: latest.totalBytes,
+    })
+    .returning({ id: schema.versions.id })
+
+  if (schemaEntries.length > 0) {
+    await db.insert(schema.versionSchemas).values(
+      schemaEntries.map((e) => ({
+        versionId: version!.id,
+        slug: e.slug,
+        schemaId: e.schemaId,
+      })),
+    )
+  }
+
+  if (recordHashes.length > 0) {
+    await db
+      .insert(schema.versionRecords)
+      .values(recordHashes.map((h) => ({ versionId: version!.id, recordHash: h })))
+  }
+
+  if (fileHashes.length > 0) {
+    await db
+      .insert(schema.versionFiles)
+      .values(fileHashes.map((h) => ({ versionId: version!.id, fileHash: h })))
+  }
+
+  await db
+    .update(schema.collections)
+    .set({ updatedAt: new Date() })
+    .where(eq(schema.collections.id, collection.id))
+
+  return c.json({ semver: sv.semver, hash: versionHash, metadata: newMetadata }, 201)
 }
 
 async function resolveCollection(owner: string, slug: string) {

@@ -11,14 +11,14 @@ const versionHashExample = `canonical = JSON.stringify({
   schemas: { "Publication": "abc123...", "Author": "def456..." },  // sorted by slug
   records: ["0a1b2c...", "3d4e5f...", ...],                        // sorted, hex SHA-256
   files: ["7a8b9c...", ...],                                       // sorted, hex SHA-256
-  readme: "# My Collection\\n..."                                   // or null
+  metadata: { "license": "CC-BY-4.0", "readme": "# My Collection\\n..." }  // canonicalized JSON
 })
 hash = "private:" + SHA256(canonical)`
 
 const negotiateExample = `# 1. Client sends manifest
 POST /api/collections/:owner/:slug/versions/negotiate
 {
-  "base_version": 3,
+  "base_version": "v1.1.0",
   "schemas": { "Publication": { ... } },
   "manifest": [
     { "id": "pub-001", "type": "Publication", "hash": "abc123..." },
@@ -47,8 +47,9 @@ Content-Type: application/x-ndjson
 
 const simplePushExample = `POST /api/collections/:owner/:slug/versions
 {
-  "base_version": 3,
+  "base_version": "v1.1.0",
   "schemas": { "Publication": { ... } },
+  "metadata": { "readme": "# Publications\\nA curated dataset." },
   "strip_unknown_fields": true,
   "changes": {
     "added": [{ "id": "pub-002", "type": "Publication", "data": { ... } }],
@@ -59,13 +60,13 @@ const simplePushExample = `POST /api/collections/:owner/:slug/versions
 }`
 
 const pullExample = `# Full manifest
-GET /api/collections/:owner/:slug/versions/5/manifest
+GET /api/collections/:owner/:slug/versions/v2.0.0/manifest
 
-# Delta since version 3
-GET /api/collections/:owner/:slug/versions/5/manifest?since=3
+# Delta since a previous version
+GET /api/collections/:owner/:slug/versions/v2.0.0/manifest?since=v1.1.0
 {
-  "version": 5,
-  "since": 3,
+  "version": "v2.0.0",
+  "since": "v1.1.0",
   "delta": {
     "added":   [{ "id": "pub-004", "type": "Publication", "hash": "..." }],
     "updated": [{ "id": "pub-001", "type": "Publication", "hash": "...", "previousHash": "..." }],
@@ -107,8 +108,8 @@ const provenanceExample = `GET /api/records/:hash/provenance
   "type": "Publication",
   "firstSeen": "2026-01-15T...",
   "references": [
-    { "owner": "alice", "collection": "papers", "version": 3, "semver": "v1.2.0" },
-    { "owner": "bob", "collection": "reading-list", "version": 1, "semver": "v1.0.0" }
+    { "owner": "alice", "collection": "papers", "version": "v1.2.0" },
+    { "owner": "bob", "collection": "reading-list", "version": "v1.0.0" }
   ]
 }`
 
@@ -156,8 +157,8 @@ export default function Protocol() {
             </li>
             <li>
               <strong>Version</strong> — An immutable snapshot: a manifest of record hashes, schema
-              hashes, file hashes, and a readme. Versions are numbered sequentially and carry an
-              auto-derived semver label.
+              hashes, file hashes, and a metadata bag. Versions are identified by semver (e.g.{' '}
+              <code>v1.2.0</code>).
             </li>
             <li>
               <strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash.
@@ -199,6 +200,26 @@ export default function Protocol() {
             private fields stripped before re-hashing. This lets external verifiers confirm the
             public content without access to private data.
           </p>
+
+          <h3>Semver semantics</h3>
+          <p>
+            Versions are identified by semver strings (e.g. <code>v1.2.0</code>). The server
+            auto-derives the next version based on what changed:
+          </p>
+          <ul>
+            <li>
+              <strong>Major bump</strong> — a schema changed (e.g. <code>v1.2.0</code> {'->'}{' '}
+              <code>v2.0.0</code>)
+            </li>
+            <li>
+              <strong>Minor bump</strong> — records or files changed (e.g. <code>v1.2.0</code>{' '}
+              {'->'} <code>v1.3.0</code>)
+            </li>
+            <li>
+              <strong>Patch bump</strong> — metadata-only change such as readme or license (e.g.{' '}
+              <code>v1.2.0</code> {'->'} <code>v1.2.1</code>)
+            </li>
+          </ul>
 
           <h2 id="push">Push</h2>
           <p>There are two push modes, depending on whether the client knows record hashes.</p>
@@ -309,7 +330,7 @@ export default function Protocol() {
           <p>
             <code>firstSeen</code> is the earliest version creation date across all references — the
             record's birthday on this server. This enables citation-like provenance: "this record
-            first appeared in alice/papers v3 on 2026-01-15."
+            first appeared in alice/papers v1.2.0 on 2026-01-15."
           </p>
 
           <h2 id="collaboration">Collaboration</h2>
@@ -317,14 +338,14 @@ export default function Protocol() {
           <ul>
             <li>
               <strong>Versioning</strong> — Every push creates a new immutable version. The full
-              history is always available. Versions use optimistic locking:{' '}
-              <code>base_version</code> must match the current latest, or the push is rejected with
-              a 409 conflict.
+              history is always available. Versions are identified by semver strings and use
+              optimistic locking: <code>base_version</code> (a semver string, or null for the first
+              push) must match the current latest, or the push is rejected with a 409 conflict.
             </li>
             <li>
               <strong>Diffing</strong> — Any two versions of a collection can be diffed (
-              <code>GET .../versions/5/diff?from=3</code>), returning added, updated, and removed
-              records with hash-level comparison.
+              <code>GET .../versions/v2.0.0/diff?from=v1.1.0</code>), returning added, updated, and
+              removed records with hash-level comparison.
             </li>
             <li>
               <strong>Cross-collection references</strong> — Records reference each other by ID.

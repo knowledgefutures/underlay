@@ -658,9 +658,7 @@ export default function CollectionVersionPage() {
               <tbody>
                 <tr className="border-rule border-b">
                   <td className="text-ink-muted w-40 py-3 pr-6 font-medium">Version</td>
-                  <td className="py-3">
-                    {version.number} ({version.semver})
-                  </td>
+                  <td className="py-3">{version.semver}</td>
                 </tr>
                 <tr className="border-rule border-b">
                   <td className="text-ink-muted py-3 pr-6 font-medium">Hash</td>
@@ -678,15 +676,15 @@ export default function CollectionVersionPage() {
                     })}
                   </td>
                 </tr>
-                {version.baseNumber !== null && version.baseNumber !== undefined && (
+                {version.baseSemver && (
                   <tr className="border-rule border-b">
                     <td className="text-ink-muted py-3 pr-6 font-medium">Base version</td>
                     <td className="py-3">
                       <Link
-                        to={`/${owner}/${collection}/v/${version.baseNumber}`}
+                        to={`/${owner}/${collection}/v/${version.baseSemver}`}
                         className="text-link hover:underline"
                       >
-                        v{version.baseNumber}
+                        {version.baseSemver}
                       </Link>
                     </td>
                   </tr>

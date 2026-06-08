@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
@@ -11,6 +11,7 @@ import {
   getOrMintShoulder,
   parseArkPath,
 } from '../lib/ark.js'
+import { parseSemver } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
 // --- Resolution ---
@@ -78,10 +79,9 @@ export async function resolve(c: Context<AuthEnv>) {
   // --- Resolve version ---
   let versionRow: {
     id: number
-    number: number
     semver: string
     message: string | null
-    readme: string | null
+    metadata: unknown
     pushedBy: string | null
     appId: string | null
     actorId: string | null
@@ -89,13 +89,13 @@ export async function resolve(c: Context<AuthEnv>) {
   } | null = null
 
   if (version !== undefined) {
+    const versionSemver = parseSemver(String(version)).semver
     const [row] = await db
       .select({
         id: schema.versions.id,
-        number: schema.versions.number,
         semver: schema.versions.semver,
         message: schema.versions.message,
-        readme: schema.versions.readme,
+        metadata: schema.versions.metadata,
         pushedBy: schema.versions.pushedBy,
         appId: schema.versions.appId,
         actorId: schema.versions.actorId,
@@ -103,7 +103,10 @@ export async function resolve(c: Context<AuthEnv>) {
       })
       .from(schema.versions)
       .where(
-        and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.number, version)),
+        and(
+          eq(schema.versions.collectionId, collectionId),
+          eq(schema.versions.semver, versionSemver),
+        ),
       )
       .limit(1)
     if (!row) return c.json({ type: 'not_found' }, 404)
@@ -112,10 +115,9 @@ export async function resolve(c: Context<AuthEnv>) {
     const [row] = await db
       .select({
         id: schema.versions.id,
-        number: schema.versions.number,
         semver: schema.versions.semver,
         message: schema.versions.message,
-        readme: schema.versions.readme,
+        metadata: schema.versions.metadata,
         pushedBy: schema.versions.pushedBy,
         appId: schema.versions.appId,
         actorId: schema.versions.actorId,
@@ -123,12 +125,21 @@ export async function resolve(c: Context<AuthEnv>) {
       })
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, collectionId))
-      .orderBy(desc(schema.versions.number))
+      .orderBy(sql`major desc, minor desc, patch desc`)
       .limit(1)
     versionRow = row ?? null
   }
 
-  const arkUrl = buildArkUrl(resolvedNaan, shoulder, collectionArkId, version, recordType, recordId)
+  const versionSemverForUrl =
+    version !== undefined ? parseSemver(String(version)).semver : undefined
+  const arkUrl = buildArkUrl(
+    resolvedNaan,
+    shoulder,
+    collectionArkId,
+    versionSemverForUrl,
+    recordType,
+    recordId,
+  )
 
   // --- Record resolution ---
   if (recordType && recordId) {
@@ -196,7 +207,6 @@ export async function resolve(c: Context<AuthEnv>) {
         naan: resolvedNaan,
         collectionName,
         ownerName,
-        versionNumber: versionRow.number,
         semver: versionRow.semver,
         recordType,
         recordId,
@@ -224,7 +234,6 @@ export async function resolve(c: Context<AuthEnv>) {
         naan: resolvedNaan,
         collectionName,
         ownerName,
-        versionNumber: versionRow?.number,
         semver: versionRow?.semver,
         message: versionRow?.message,
         pushedBy: versionRow?.pushedBy,
@@ -237,7 +246,7 @@ export async function resolve(c: Context<AuthEnv>) {
   }
 
   if (version !== undefined && versionRow) {
-    const url = `/${ownerSlug}/${collectionSlug}/v/${versionRow.number}`
+    const url = `/${ownerSlug}/${collectionSlug}/v/${versionRow.semver}`
     return c.json({
       type: 'redirect' as const,
       url,
@@ -250,7 +259,6 @@ export async function resolve(c: Context<AuthEnv>) {
         naan: resolvedNaan,
         collectionName,
         ownerName,
-        versionNumber: versionRow.number,
         semver: versionRow.semver,
         message: versionRow.message,
         pushedBy: versionRow.pushedBy,
@@ -276,7 +284,6 @@ export async function resolve(c: Context<AuthEnv>) {
       naan: resolvedNaan,
       collectionName,
       ownerName,
-      versionNumber: versionRow?.number,
       semver: versionRow?.semver,
       createdAt: versionRow?.createdAt,
       arkUrl,

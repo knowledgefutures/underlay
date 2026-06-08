@@ -34,7 +34,7 @@ function computeVersionHash(
   schemaSet: { slug: string; schemaHash: string }[],
   records: { recordId: string; type: string; data: unknown }[],
   fileHashes: string[],
-  readme: string | null,
+  metadata: Record<string, unknown> | null,
 ): string {
   const recordHashes = records.map((r) => hashRecord(r).hash)
   const canonical = JSON.stringify({
@@ -43,7 +43,7 @@ function computeVersionHash(
     ),
     records: [...recordHashes].sort(),
     files: fileHashes.sort(),
-    readme: readme ?? null,
+    metadata: metadata ? canonicalize(metadata) : null,
   })
   return 'private:' + createHash('sha256').update(canonical).digest('hex')
 }
@@ -176,8 +176,6 @@ async function seed() {
     organizationId: kfId,
     slug: 'pubpub-archive',
     name: 'PubPub Archive',
-    description:
-      'Archive of publications from PubPub communities. Includes pubs, authors, communities, and review data.',
     public: true,
   })
 
@@ -367,12 +365,13 @@ async function seed() {
   ]
 
   const pubpubSchemaEntries = await upsertSchemas(pubpubSchema)
-  const pubpubHash = computeVersionHash(
-    pubpubSchemaEntries,
-    pubpubRecords,
-    [],
-    `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`,
-  )
+  const pubpubReadme = `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`
+  const pubpubMetadata = {
+    description:
+      'Archive of publications from PubPub communities. Includes pubs, authors, communities, and review data.',
+    readme: pubpubReadme,
+  }
+  const pubpubHash = computeVersionHash(pubpubSchemaEntries, pubpubRecords, [], pubpubMetadata)
   const pubpubTotalBytes = pubpubRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -381,12 +380,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: pubpubId,
-      number: 1,
       semver: 'v1.0.0',
+      major: 1,
+      minor: 0,
+      patch: 0,
       hash: pubpubHash,
-      baseNumber: null,
+      baseSemver: null,
       message: 'Initial PubPub archive import',
-      readme: `# PubPub Archive\n\nA structured archive of publications from [PubPub](https://www.pubpub.org/) communities, maintained by Knowledge Futures.\n\n## What's included\n\nThis collection contains four record types:\n\n- **Community** — PubPub communities (journals, books, conference proceedings)\n- **Pub** — Individual publications with DOIs, abstracts, and licensing info\n- **Author** — Researcher profiles with ORCID identifiers\n- **PubAuthor** — Join records linking authors to pubs with ordering\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Communities | 3 |\n| Publications | 4 |\n| Authors | 5 |\n| Pub-Author links | 5 |\n\n## Source\n\nSample data drawn from real PubPub communities including the Journal of Trial and Error, Collective Intelligence, and Frankenbook.`,
+      metadata: pubpubMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',
@@ -461,7 +462,7 @@ async function seed() {
     // Removed: pubauthor-002 (dropped by filtering above)
   ]
 
-  const pubpubV2Hash = computeVersionHash(pubpubSchemaEntries, pubpubV2Records, [], null)
+  const pubpubV2Hash = computeVersionHash(pubpubSchemaEntries, pubpubV2Records, [], pubpubMetadata)
   const pubpubV2TotalBytes = pubpubV2Records.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -470,12 +471,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: pubpubId,
-      number: 2,
       semver: 'v1.1.0',
+      major: 1,
+      minor: 1,
+      patch: 0,
       hash: pubpubV2Hash,
-      baseNumber: 1,
+      baseSemver: 'v1.0.0',
       message: 'Add Nakamura pub, update failure paper description, remove duplicate author link',
-      readme: null,
+      metadata: pubpubMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',
@@ -642,7 +645,12 @@ async function seed() {
   ]
 
   const pubpubV3SchemaEntries = await upsertSchemas(pubpubV3Schema)
-  const pubpubV3Hash = computeVersionHash(pubpubV3SchemaEntries, pubpubV3Records, [], null)
+  const pubpubV3Hash = computeVersionHash(
+    pubpubV3SchemaEntries,
+    pubpubV3Records,
+    [],
+    pubpubMetadata,
+  )
   const pubpubV3TotalBytes = pubpubV3Records.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -651,12 +659,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: pubpubId,
-      number: 3,
       semver: 'v2.0.0',
+      major: 2,
+      minor: 0,
+      patch: 0,
       hash: pubpubV3Hash,
-      baseNumber: 2,
+      baseSemver: 'v1.1.0',
       message: 'Add abstracts to pubs, add Review type with peer review data',
-      readme: null,
+      metadata: pubpubMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',
@@ -685,8 +695,6 @@ async function seed() {
     organizationId: kfId,
     slug: 'open-grants',
     name: 'Open Grants Dataset',
-    description:
-      'A curated dataset of research grants with funding amounts, topics, and PI information. Sourced from public funders.',
     public: true,
   })
 
@@ -819,12 +827,13 @@ async function seed() {
   ]
 
   const grantsSchemaEntries = await upsertSchemas(grantsSchema)
-  const grantsHash = computeVersionHash(
-    grantsSchemaEntries,
-    grantsRecords,
-    [],
-    `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`,
-  )
+  const grantsReadme = `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`
+  const grantsMetadata = {
+    description:
+      'A curated dataset of research grants with funding amounts, topics, and PI information. Sourced from public funders.',
+    readme: grantsReadme,
+  }
+  const grantsHash = computeVersionHash(grantsSchemaEntries, grantsRecords, [], grantsMetadata)
   const grantsTotalBytes = grantsRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -833,12 +842,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: grantsId,
-      number: 1,
       semver: 'v1.0.0',
+      major: 1,
+      minor: 0,
+      patch: 0,
       hash: grantsHash,
-      baseNumber: null,
+      baseSemver: null,
       message: 'Initial grants dataset',
-      readme: `# Open Grants Dataset\n\nA curated dataset of research grants with funding amounts, topics, and PI information sourced from public funders.\n\n## What's included\n\n- **Funder** — Funding organizations (NSF, Wellcome Trust, Sloan Foundation)\n- **Grant** — Individual grants with title, PI, institution, amount, dates, abstract, and topic tags\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Funders | 3 |\n| Grants | 5 |\n\nGrants span 2022–2026 across the US and UK, covering topics like open access, machine learning, knowledge graphs, and decentralized identifiers.\n\n## Source\n\nSample data based on publicly available grant information from NSF, Wellcome Trust, and the Alfred P. Sloan Foundation.`,
+      metadata: grantsMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',
@@ -867,8 +878,6 @@ async function seed() {
     organizationId: kfId,
     slug: 'climate-observations',
     name: 'Global Climate Observations',
-    description:
-      'Structured records of climate monitoring stations and their annual temperature and precipitation observations.',
     public: true,
   })
 
@@ -1040,12 +1049,13 @@ async function seed() {
   ]
 
   const climateSchemaEntries = await upsertSchemas(climateSchema)
-  const climateHash = computeVersionHash(
-    climateSchemaEntries,
-    climateRecords,
-    [],
-    `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`,
-  )
+  const climateReadme = `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`
+  const climateMetadata = {
+    description:
+      'Structured records of climate monitoring stations and their annual temperature and precipitation observations.',
+    readme: climateReadme,
+  }
+  const climateHash = computeVersionHash(climateSchemaEntries, climateRecords, [], climateMetadata)
   const climateTotalBytes = climateRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -1054,12 +1064,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: climateId,
-      number: 1,
       semver: 'v1.0.0',
+      major: 1,
+      minor: 0,
+      patch: 0,
       hash: climateHash,
-      baseNumber: null,
+      baseSemver: null,
       message: 'Initial climate observations — 4 stations, 2023-2024 data',
-      readme: `# Global Climate Observations\n\nStructured records of climate monitoring stations and their annual temperature and precipitation observations.\n\n## What's included\n\n- **Station** — Monitoring stations with name, country, coordinates, and elevation\n- **Observation** — Annual readings per station: mean temperature, precipitation, and extreme day counts\n\n## Coverage\n\n| Station | Country | Elevation | Years |\n|---------|---------|-----------|-------|\n| Mauna Loa Observatory | US | 3,397m | 2023–2024 |\n| Cape Grim | AU | 94m | 2023–2024 |\n| Ny-Ålesund | NO | 11m | 2023–2024 |\n| Izaña Observatory | ES | 2,373m | 2023–2024 |\n\nStations span from Arctic (78°N) to Southern Ocean (40°S), providing a cross-section of global climate conditions.\n\n## Source\n\nSample data based on publicly available observations from the World Meteorological Organization (WMO) Global Atmosphere Watch network.`,
+      metadata: climateMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',
@@ -1088,8 +1100,6 @@ async function seed() {
     organizationId: kfId,
     slug: 'pub-notes',
     name: 'Pub Notes',
-    description:
-      'Personal research notes linked to authors from the PubPub archive. Author schema shared with pubpub-archive via content-addressing.',
     public: true,
   })
 
@@ -1187,13 +1197,18 @@ async function seed() {
   ]
 
   const pubnotesReadme = `# Pub Notes\n\nPersonal research notes linked to authors from the [PubPub Archive](../pubpub-archive) collection.\n\n## What's included\n\n- **Author** — Researcher profiles (schema shared with pubpub-archive via content-addressing)\n- **Note** — Annotated reading notes with tags and timestamps\n\n## Coverage\n\n| Type | Count |\n|------|-------|\n| Authors | 3 |\n| Notes | 4 |\n\n## Schema reuse\n\nThe Author schema in this collection is identical to the one in pubpub-archive. Because schemas are content-addressed by hash, both collections reference the same underlying schema row — no duplication.`
+  const pubnotesMetadata = {
+    description:
+      'Personal research notes linked to authors from the PubPub archive. Author schema shared with pubpub-archive via content-addressing.',
+    readme: pubnotesReadme,
+  }
 
   const pubnotesSchemaEntries = await upsertSchemas(pubnotesSchema)
   const pubnotesHash = computeVersionHash(
     pubnotesSchemaEntries,
     pubnotesRecords,
     [],
-    pubnotesReadme,
+    pubnotesMetadata,
   )
   const pubnotesTotalBytes = pubnotesRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
@@ -1203,12 +1218,14 @@ async function seed() {
     .insert(schema.versions)
     .values({
       collectionId: pubnotesId,
-      number: 1,
       semver: 'v1.0.0',
+      major: 1,
+      minor: 0,
+      patch: 0,
       hash: pubnotesHash,
-      baseNumber: null,
+      baseSemver: null,
       message: 'Initial pub notes',
-      readme: pubnotesReadme,
+      metadata: pubnotesMetadata,
       pushedBy: adminId,
       appId: 'underlay-seed/1.0',
       actorId: 'admin',

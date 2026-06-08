@@ -200,7 +200,6 @@ export async function getSchema(c: Context<AuthEnv>) {
     .select({
       slug: schema.versionSchemas.slug,
       semver: schema.versions.semver,
-      versionNumber: schema.versions.number,
       collectionSlug: schema.collections.slug,
       owner: schema.organization.slug,
       isPublic: schema.collections.public,
@@ -219,7 +218,6 @@ export async function getSchema(c: Context<AuthEnv>) {
     usage: usage.map((u) => ({
       slug: u.slug,
       semver: u.semver,
-      versionNumber: u.versionNumber,
       collection: `${u.owner}/${u.collectionSlug}`,
     })),
   })
@@ -255,18 +253,21 @@ export async function collectionSchemas(c: Context<AuthEnv>) {
   // Resolve version
   const versionConditions = [eq(schema.versions.collectionId, collection.id)]
   if (versionParam) {
-    versionConditions.push(eq(schema.versions.number, parseInt(versionParam, 10)))
+    const { parseSemver } = await import('../lib/version-helpers.server.js')
+    const { semver: vSemver } = parseSemver(versionParam)
+    versionConditions.push(eq(schema.versions.semver, vSemver))
   }
 
   const [version] = await db
     .select({
       id: schema.versions.id,
-      number: schema.versions.number,
       semver: schema.versions.semver,
     })
     .from(schema.versions)
     .where(and(...versionConditions))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!version) return c.json({ error: 'No versions found', statusCode: 404 }, 404)
@@ -299,7 +300,7 @@ export async function collectionSchemas(c: Context<AuthEnv>) {
   }
 
   return c.json({
-    version: version.number,
+    version: version.semver,
     semver: version.semver,
     schemas: entries.map((e) => {
       const labels = labelsMap.get(e.schemaId) ?? []

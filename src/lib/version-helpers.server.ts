@@ -13,7 +13,9 @@ export {
   getPrivateTypes,
   hashRecord,
   hashSchema,
+  parseSemver,
   type SchemaEntry,
+  type SemverComponents,
   stripToSchema,
 } from './core/index.js'
 

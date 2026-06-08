@@ -96,11 +96,12 @@ export default function CollectionPage() {
   )
 
   const readmeHtml = useMemo(() => {
-    const source = data?.latestVersion?.readme || data?.latestVersion?.message || null
+    const meta = data?.latestVersion?.metadata as Record<string, unknown> | null | undefined
+    const source = (meta?.readme as string) || data?.latestVersion?.message || null
     return source ? (marked.parse(source) as string) : null
   }, [data])
 
-  const totalVersions = data.latestVersion?.number ?? 0
+  const totalVersions = data.versionCount ?? 0
   const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
   const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type))
   const collectionArkPath: string | null = data.ark ? new URL(data.ark).pathname : null
@@ -147,7 +148,7 @@ export default function CollectionPage() {
               <div className="border-rule bg-parchment-dark mb-6 flex items-center justify-between rounded border px-4 py-2.5">
                 <div className="flex items-center gap-3 text-sm">
                   <Link
-                    to={`/${owner}/${collection}/v/${data.latestVersion.number}`}
+                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}`}
                     className="text-link font-medium hover:underline"
                   >
                     {data.latestVersion.semver}
@@ -199,7 +200,7 @@ export default function CollectionPage() {
                 {allTypes.map((t: any, i: number) => (
                   <Link
                     key={t.type}
-                    to={`/${owner}/${collection}/v/${data.latestVersion.number}?type=${t.type}`}
+                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}?type=${t.type}`}
                     className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                       i < allTypes.length - 1 ? 'border-rule border-b' : ''
                     }`}

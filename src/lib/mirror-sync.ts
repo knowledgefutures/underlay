@@ -231,7 +231,6 @@ interface UpstreamCollection {
   id: string
   slug: string
   name: string
-  description: string | null
   ownerSlug: string
   ownerName: string
   createdAt: string
@@ -239,8 +238,10 @@ interface UpstreamCollection {
 }
 
 interface UpstreamVersion {
-  number: number
   semver: string
+  major: number
+  minor: number
+  patch: number
   hash: string
   message: string | null
   appId: string | null
@@ -252,7 +253,6 @@ interface UpstreamVersion {
 }
 
 interface UpstreamManifest {
-  version: number
   semver: string
   hash: string
   schemas: Record<string, string>
@@ -438,7 +438,6 @@ async function syncCollection(
         organizationId,
         slug: uc.slug,
         name: uc.name,
-        description: uc.description,
         public: true,
       })
       .returning({ id: schema.collections.id })
@@ -448,15 +447,22 @@ async function syncCollection(
     collectionId = localColl.id
   }
 
-  // Get the latest local version number
+  // Get the latest local version by semver components
   const [latestLocal] = await db
-    .select({ number: schema.versions.number })
+    .select({
+      semver: schema.versions.semver,
+      major: schema.versions.major,
+      minor: schema.versions.minor,
+      patch: schema.versions.patch,
+    })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collectionId))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(sql`major desc, minor desc, patch desc`)
     .limit(1)
 
-  const localVersionNum = latestLocal?.number ?? 0
+  const localMajor = latestLocal?.major ?? 0
+  const localMinor = latestLocal?.minor ?? 0
+  const localPatch = latestLocal?.patch ?? 0
 
   // Fetch upstream versions we don't have
   const upstreamVersions = await fetchUpstream<UpstreamVersion[]>(
@@ -466,8 +472,13 @@ async function syncCollection(
 
   // Sort ascending to apply in order
   const newVersions = upstreamVersions
-    .filter((v) => v.number > localVersionNum)
-    .sort((a, b) => a.number - b.number)
+    .filter(
+      (v) =>
+        v.major > localMajor ||
+        (v.major === localMajor && v.minor > localMinor) ||
+        (v.major === localMajor && v.minor === localMinor && v.patch > localPatch),
+    )
+    .sort((a, b) => a.major - b.major || a.minor - b.minor || a.patch - b.patch)
 
   if (newVersions.length === 0) return
 
@@ -494,7 +505,7 @@ async function pullVersion(
   // Get the version manifest (schemas + file list)
   const manifest = await fetchUpstream<UpstreamManifest>(
     upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/manifest`,
+    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/manifest`,
   )
 
   // Determine which records we already have locally
@@ -540,8 +551,8 @@ async function pullVersion(
         let hasMore = true
         while (hasMore) {
           const recordsPath: string = cursor
-            ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
-            : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+            ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${cursor}`
+            : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000`
           const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
           fetchedRecords.push(...page.records)
           hasMore = page.pagination.hasMore
@@ -554,8 +565,8 @@ async function pullVersion(
       let hasMore = true
       while (hasMore) {
         const recordsPath: string = cursor
-          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
-          : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${cursor}`
+          : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000`
         const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
         fetchedRecords.push(...page.records)
         hasMore = page.pagination.hasMore
@@ -564,7 +575,7 @@ async function pullVersion(
     }
     emit(
       'version',
-      `${uc.ownerSlug}/${uc.slug} v${uv.number}: fetched ${fetchedRecords.length} records (${manifestHashes.length - neededHashes.length} already local)`,
+      `${uc.ownerSlug}/${uc.slug} ${uv.semver}: fetched ${fetchedRecords.length} records (${manifestHashes.length - neededHashes.length} already local)`,
     )
   }
 
@@ -629,7 +640,7 @@ async function pullVersion(
   // We need to fetch the actual schema bodies from the upstream version
   const upstreamSchemas = await fetchUpstream<Record<string, unknown>>(
     upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=0`,
+    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=0`,
   ).catch(() => null)
 
   // Fetch schema bodies from the manifest endpoint — the manifest only has hashes.
@@ -637,12 +648,11 @@ async function pullVersion(
   // Actually, let's fetch schemas from the upstream schemas API if available,
   // or infer from the version data. For now, we'll pull full version detail.
   const versionDetail = await fetchUpstream<{
-    number: number
     semver: string
     hash: string
     schemas: Record<string, unknown>
-    readme?: string
-  }>(upstream, `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}`).catch(
+    metadata?: unknown
+  }>(upstream, `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}`).catch(
     () => null,
   )
 
@@ -651,10 +661,13 @@ async function pullVersion(
     .insert(schema.versions)
     .values({
       collectionId,
-      number: uv.number,
       semver: uv.semver,
+      major: uv.major,
+      minor: uv.minor,
+      patch: uv.patch,
       hash: uv.hash,
       message: uv.message,
+      metadata: versionDetail?.metadata ?? null,
       appId: uv.appId,
       actorId: uv.actorId,
       recordCount: manifest.records.length,
@@ -786,7 +799,7 @@ export async function getMirrorStatus(): Promise<{
           eq(schema.collections.organizationId, schema.organization.id),
         )
         .where(and(eq(schema.organization.slug, c.ownerSlug), eq(schema.collections.slug, c.slug)))
-        .orderBy(sql`${schema.versions.number} desc`)
+        .orderBy(sql`major desc, minor desc, patch desc`)
         .limit(1)
 
       return {

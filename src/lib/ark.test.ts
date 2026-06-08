@@ -104,10 +104,10 @@ describe('nextShoulderCounter', () => {
 
 describe('parseArkPath', () => {
   // Helper: build a valid path from components
-  function makeValidPath(shoulder: string, arkId: string, version?: number) {
+  function makeValidPath(shoulder: string, arkId: string, semver?: string) {
     const check = computeNcdaCheckChar(arkId)
     let path = `${shoulder}${arkId}${check}`
-    if (version !== undefined) path += `.v${version}`
+    if (semver !== undefined) path += `.${semver}`
     return path
   }
 
@@ -123,12 +123,12 @@ describe('parseArkPath', () => {
 
   test('parses ARK with version suffix', () => {
     const arkId = collectionToArkId('550e8400-e29b-41d4-a716-446655440000')
-    const path = makeValidPath('ulb3', arkId, 5)
+    const path = makeValidPath('ulb3', arkId, 'v5.0.0')
     const result = parseArkPath(path)
     expect(result).toMatchObject({
       shoulder: 'ulb3',
       collectionArkId: arkId,
-      version: 5,
+      version: 'v5.0.0',
     })
   })
 
@@ -182,9 +182,9 @@ describe('buildArkUrl', () => {
   })
 
   test('includes version suffix', () => {
-    const url = buildArkUrl('12345', 'ulb3', 'bcdfghjkmn', 2)
+    const url = buildArkUrl('12345', 'ulb3', 'bcdfghjkmn', 'v2.0.0')
     const check = computeNcdaCheckChar('bcdfghjkmn')
-    expect(url).toBe(`https://underlay.org/ark:12345/ulb3bcdfghjkmn${check}.v2`)
+    expect(url).toBe(`https://underlay.org/ark:12345/ulb3bcdfghjkmn${check}.v2.0.0`)
   })
 
   test('includes record type and record ID', () => {
@@ -198,7 +198,7 @@ describe('buildArkUrl', () => {
     const shoulder = 'ulb3'
     const arkId = collectionToArkId('550e8400-e29b-41d4-a716-446655440000')
 
-    const url = buildArkUrl(naan, shoulder, arkId, 3, 'Article', 'rec-001')
+    const url = buildArkUrl(naan, shoulder, arkId, 'v3.0.0', 'Article', 'rec-001')
     // Extract the path after "ark:NAAN/"
     const pathAfterNaan = url.split(`ark:${naan}/`)[1]!
     const parsed = parseArkPath(pathAfterNaan)
@@ -206,7 +206,7 @@ describe('buildArkUrl', () => {
     expect(parsed).toMatchObject({
       shoulder,
       collectionArkId: arkId,
-      version: 3,
+      version: 'v3.0.0',
       recordType: 'Article',
       recordId: 'rec-001',
     })

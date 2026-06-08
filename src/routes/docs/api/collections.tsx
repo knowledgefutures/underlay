@@ -8,6 +8,7 @@ const browseRes = `[
     "description": "Full archive of PubPub publications",
     "ownerSlug": "knowledge-futures",
     "ownerName": "Knowledge Futures",
+    "latestVersion": "v3.2.0",
     "createdAt": "2026-01-15T00:00:00.000Z",
     "updatedAt": "2026-04-01T00:00:00.000Z"
   }
@@ -16,7 +17,6 @@ const browseRes = `[
 const createReq = `{
   "slug": "my-dataset",
   "name": "My Dataset",
-  "description": "Optional description",
   "public": true
 }`
 
@@ -35,15 +35,14 @@ const getRes = `{
   "public": true,
   "ownerSlug": "knowledge-futures",
   "ownerName": "Knowledge Futures",
-  "ownerType": "org",
   "createdAt": "2026-01-15T00:00:00.000Z",
   "updatedAt": "2026-04-01T00:00:00.000Z",
   "latestVersion": {
-    "number": 12,
     "semver": "v3.2.0",
     "recordCount": 4521,
     "fileCount": 892,
     "totalBytes": 1073741824,
+    "metadata": { "description": "Full archive...", "readme": "..." },
     "createdAt": "2026-04-01T00:00:00.000Z",
     "message": "April sync"
   }
@@ -51,7 +50,6 @@ const getRes = `{
 
 const updateReq = `{
   "name": "New Name",
-  "description": "Updated description",
   "public": false
 }`
 
@@ -62,7 +60,6 @@ const listRes = `[
     "id": "uuid",
     "slug": "pubpub-archive",
     "name": "PubPub Archive",
-    "description": "...",
     "public": true,
     "createdAt": "2026-01-15T00:00:00.000Z",
     "updatedAt": "2026-04-01T00:00:00.000Z"
@@ -90,7 +87,7 @@ export default function DocsApiCollections() {
               <td>
                 <code>q</code>
               </td>
-              <td>Search name and description</td>
+              <td>Search by collection name</td>
             </tr>
             <tr>
               <td>

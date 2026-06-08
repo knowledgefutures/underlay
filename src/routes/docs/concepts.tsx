@@ -48,17 +48,19 @@ export default function DocsConcepts() {
           References to <strong>files</strong> — binary assets
         </li>
         <li>
-          <strong>Metadata</strong> — who pushed it, when, from which app, with what message
+          A <strong>metadata</strong> bag — a JSON object that can contain <code>readme</code>,{' '}
+          <code>license</code>, and other fields
         </li>
       </ul>
       <p>
-        Versions are numbered sequentially (1, 2, 3…) and also carry a semver label. The semver is
-        derived automatically:
+        Versions are identified by <strong>semver</strong> (e.g. <code>v1.0.0</code>,{' '}
+        <code>v1.1.0</code>, <code>v2.0.0</code>). The semver is derived automatically from what
+        changed:
       </p>
       <ul>
         <li>Schema changes → major bump</li>
-        <li>Record changes → minor bump</li>
-        <li>Metadata-only changes → patch bump</li>
+        <li>Record or file changes → minor bump</li>
+        <li>Metadata-only changes (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
         Each version also has a <strong>hash</strong> — a SHA-256 digest of the canonical

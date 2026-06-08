@@ -202,7 +202,6 @@ export const collections = pgTable(
       .references(() => organization.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull(),
     name: text('name').notNull(),
-    description: text('description'),
     public: boolean('public').default(false).notNull(),
     forkedFrom: uuid('forked_from').references((): any => collections.id),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -223,13 +222,15 @@ export const versions = pgTable(
     collectionId: uuid('collection_id')
       .notNull()
       .references(() => collections.id, { onDelete: 'cascade' }),
-    number: integer('number').notNull(),
     semver: text('semver').notNull(),
+    major: integer('major').notNull(),
+    minor: integer('minor').notNull(),
+    patch: integer('patch').notNull(),
     hash: text('hash').notNull(),
     publicHash: text('public_hash'),
-    baseNumber: integer('base_number'),
+    baseSemver: text('base_semver'),
     message: text('message'),
-    readme: text('readme'),
+    metadata: jsonb('metadata'),
     pushedBy: text('pushed_by').references(() => user.id),
     appId: text('app_id'),
     actorId: text('actor_id'),
@@ -239,7 +240,11 @@ export const versions = pgTable(
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique().on(t.collectionId, t.number), unique().on(t.collectionId, t.hash)],
+  (t) => [
+    unique().on(t.collectionId, t.semver),
+    unique().on(t.collectionId, t.hash),
+    index('versions_ordering_idx').on(t.collectionId, t.major, t.minor, t.patch),
+  ],
 )
 
 // --- Records (globally deduplicated, content-addressed) ---
@@ -351,9 +356,9 @@ export const uploadSessions = pgTable('upload_sessions', {
   userId: text('user_id')
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
-  baseVersion: integer('base_version'),
+  baseSemver: text('base_semver'),
   message: text('message'),
-  readme: text('readme'),
+  metadata: jsonb('metadata'),
   appId: text('app_id'),
   actorId: text('actor_id'),
   schemas: jsonb('schemas'),

@@ -40,7 +40,9 @@ async function isFilePubliclyAccessible(
     .select({ id: schema.versions.id })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!latest) return false

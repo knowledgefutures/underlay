@@ -21,7 +21,6 @@ interface RecordRow {
 }
 
 interface VersionInfo {
-  number: number
   semver: string
   hash: string
   recordCount: number
@@ -38,7 +37,7 @@ export default function DevPage() {
   const [records, setRecords] = useState<RecordRow[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [latestVersion, setLatestVersion] = useState<VersionInfo | null>(null)
-  const [baseVersion, setBaseVersion] = useState<number | null>(null)
+  const [baseVersion, setBaseVersion] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [batchSize, setBatchSize] = useState(5)
   const [working, setWorking] = useState(false)
@@ -110,7 +109,7 @@ export default function DevPage() {
     if (res.ok) {
       const data = await res.json()
       setLatestVersion(data)
-      setBaseVersion(data.number)
+      setBaseVersion(data.semver)
     } else {
       setLatestVersion(null)
       setBaseVersion(null)
@@ -135,7 +134,7 @@ export default function DevPage() {
         if (cursor) params.set('after', cursor)
         const res = await apiFetch(
           'GET',
-          `${collectionBase}/versions/${latestVersion.number}/records?${params}`,
+          `${collectionBase}/versions/${latestVersion.semver}/records?${params}`,
         )
         if (!res.ok) break
         const data = await res.json()
@@ -164,7 +163,7 @@ export default function DevPage() {
   }, [apiFetch, collectionBase, latestVersion, log])
 
   const fetchSchemas = useCallback(async () => {
-    const version = latestVersion?.number
+    const version = latestVersion?.semver
     if (!version) return
     const res = await apiFetch('GET', `${collectionBase}/schemas?version=${version}&raw=true`)
     if (res.ok) {
@@ -534,13 +533,12 @@ export default function DevPage() {
           </button>
           {latestVersion && (
             <span className="text-ink-muted text-xs">
-              v{latestVersion.number} ({latestVersion.semver}) &middot; {latestVersion.recordCount}{' '}
-              records &middot; base:{' '}
+              {latestVersion.semver} &middot; {latestVersion.recordCount} records &middot; base:{' '}
               <input
-                className="border-rule w-12 rounded border px-1 text-center font-mono text-xs"
-                type="number"
+                className="border-rule w-20 rounded border px-1 text-center font-mono text-xs"
+                type="text"
                 value={baseVersion ?? ''}
-                onChange={(e) => setBaseVersion(e.target.value ? Number(e.target.value) : null)}
+                onChange={(e) => setBaseVersion(e.target.value || null)}
               />
             </span>
           )}

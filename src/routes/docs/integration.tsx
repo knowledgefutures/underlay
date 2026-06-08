@@ -6,24 +6,25 @@ const pushExample = `{
   "base_version": null,
   "message": "Initial import",
   "app_id": "my-app",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "Article": {
-        "type": "object",
-        "properties": {
-          "title": {"type": "string"},
-          "body": {"type": "string"},
-          "authorId": {"type": "string"},
-          "publishedAt": {"type": "string", "format": "date-time"}
-        }
-      },
-      "Author": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "email": {"type": "string"}
-        }
+  "metadata": {
+    "description": "Articles and authors from my app",
+    "readme": "# My App Data\\nExported from the app database."
+  },
+  "schemas": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "authorId": {"type": "string"},
+        "publishedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "Author": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "email": {"type": "string"}
       }
     }
   },
@@ -47,7 +48,7 @@ const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- becomes a "Publication" type with properties {title: string, doi: string, authorId: string}
 -- The record id is the primary key value.`
 
-const diffPush = `# 1. Get current state
+const diffPush = `# 1. Get current state (returns the latest version's semver, e.g. "v1.2.0")
 curl https://underlay.org/api/collections/:owner/:slug/versions/latest
 
 # 2. Upload any new files
@@ -57,12 +58,12 @@ curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:$HAS
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 
-# 3. Push changes (only what changed since base_version)
+# 3. Push changes (only what changed since base_version semver)
 curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
-    "base_version": 42,
+    "base_version": "v1.2.0",
     "message": "Daily sync",
     "app_id": "my-app",
     "changes": {
@@ -95,7 +96,7 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Version</strong> — An immutable snapshot: JSON Schema + records + file references
-          + metadata. Numbered sequentially.
+          + metadata. Identified by semver (e.g. <code>v1.0.0</code>).
         </li>
         <li>
           <strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>,
@@ -122,7 +123,7 @@ export default function DocsIntegration() {
 
       <h2>The Push Flow</h2>
       <ol>
-        <li>Get the current latest version number</li>
+        <li>Get the current latest version (its semver string)</li>
         <li>Upload any new binary files by hash</li>
         <li>
           Push a version with <code>base_version</code>, schema (if changed), and record changes
@@ -150,8 +151,25 @@ export default function DocsIntegration() {
         <li>No joins, no nesting — keep records flat</li>
       </ul>
 
+      <h2>Metadata</h2>
+      <p>
+        Each version carries a <code>metadata</code> object that can include{' '}
+        <code>description</code>, <code>readme</code>, <code>license</code>, and any other key-value
+        pairs. Metadata lives on the version, not the collection — it's versioned alongside your
+        data. Set it on your first push and update it via subsequent pushes or the metadata
+        endpoint.
+      </p>
+      <p>
+        To update metadata without changing records or schemas (e.g. editing the readme),{' '}
+        <code>PATCH /api/collections/:owner/:slug/metadata</code> with the fields to change. This
+        creates a patch version automatically.
+      </p>
+
       <h2>First Push Example</h2>
-      <p>To push the first version of a collection (creates the initial snapshot):</p>
+      <p>
+        To push the first version of a collection. Include <code>schemas</code> (a per-type JSON
+        Schema map) and <code>metadata</code> (description, readme, etc.):
+      </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{pushExample}</code>
       </pre>
@@ -175,20 +193,25 @@ export default function DocsIntegration() {
       </ul>
 
       <h2>Versioning</h2>
-      <p>Versions are numbered sequentially and also carry a semver tag derived automatically:</p>
+      <p>
+        Versions are identified by <strong>semver</strong> (e.g. <code>v1.0.0</code>). The semver is
+        derived automatically from what changed:
+      </p>
       <ul>
         <li>
           Schema changes → <strong>major</strong> bump
         </li>
         <li>
-          Record changes → <strong>minor</strong> bump
+          Record or file changes → <strong>minor</strong> bump
         </li>
         <li>
-          Metadata-only changes → <strong>patch</strong> bump
+          Metadata-only changes (readme, license, etc.) → <strong>patch</strong> bump
         </li>
       </ul>
       <p>
-        Version 1 is always <code>v1.0.0</code>.
+        The first version of a collection is always <code>v1.0.0</code>. The{' '}
+        <code>base_version</code> in a push request is a semver string (or <code>null</code> for the
+        first push).
       </p>
 
       <h2>Privacy</h2>
@@ -239,7 +262,7 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
-              <code>GET .../versions/:n/records</code>
+              <code>GET .../versions/:semver/records</code>
             </td>
             <td>Get records</td>
           </tr>
@@ -336,6 +359,46 @@ export default function DocsIntegration() {
           <code>400 Bad Request</code> — Malformed request body or hash mismatch on file upload.
         </li>
       </ul>
+
+      <h2>Pushing from Scripts</h2>
+      <p>The most common pattern for pushing data from a script, cron job, or CI pipeline:</p>
+      <ol>
+        <li>
+          <strong>Query your source</strong> (database, API, filesystem) and build an array of
+          records in <code>{'{id, type, data}'}</code> format.
+        </li>
+        <li>
+          <strong>Choose a push mode</strong> based on size:
+          <ul>
+            <li>
+              Under 100MB / 50k records → <strong>simple push</strong> (
+              <code>POST .../versions</code>). Send everything in one request.
+            </li>
+            <li>
+              Over 100MB or 50k+ records → <strong>chunked upload</strong> (
+              <code>POST .../versions/upload</code>). Stream records in batches of 10,000.
+            </li>
+            <li>
+              Mostly unchanged between pushes → <strong>negotiate</strong> (
+              <code>POST .../versions/negotiate</code>). Hash locally, send only what's new.
+            </li>
+          </ul>
+        </li>
+        <li>
+          <strong>For recurring syncs</strong>, fetch the latest version first (
+          <code>GET .../versions/latest</code>) and use its semver as <code>base_version</code>.
+          Only send <code>changes.added</code>, <code>changes.updated</code>, and{' '}
+          <code>changes.removed</code> — not the full dataset.
+        </li>
+      </ol>
+      <p>
+        A minimal Node.js/Python script typically takes 30-50 lines: query your data, map rows to
+        records, POST to the versions endpoint. No SDK needed. See the{' '}
+        <Link to="/docs/quickstart" className="text-link underline">
+          Quickstart
+        </Link>{' '}
+        for a curl-based walkthrough.
+      </p>
 
       <h2>Source Code</h2>
       <p>

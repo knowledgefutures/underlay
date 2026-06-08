@@ -7,7 +7,6 @@ interface Reference {
   owner: string
   collection: string
   collectionName: string
-  version: number
   semver: string
   versionCreatedAt: string
 }
@@ -158,8 +157,8 @@ export default function RecordDetailPage() {
             <div className="border-rule overflow-hidden rounded border">
               {record.references.map((ref, i) => (
                 <Link
-                  key={`${ref.owner}/${ref.collection}-v${ref.version}`}
-                  to={`/${ref.owner}/${ref.collection}/v/${ref.version}?type=${record.type}`}
+                  key={`${ref.owner}/${ref.collection}-${ref.semver}`}
+                  to={`/${ref.owner}/${ref.collection}/v/${ref.semver}?type=${record.type}`}
                   className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                     i < record.references.length - 1 ? 'border-rule border-b' : ''
                   }`}
@@ -168,10 +167,9 @@ export default function RecordDetailPage() {
                     <span className="font-medium">
                       {ref.owner}/{ref.collection}
                     </span>
-                    <span className="text-ink-muted text-xs">v{ref.version}</span>
+                    <span className="text-ink-muted text-xs">{ref.semver}</span>
                   </div>
                   <span className="text-ink-muted text-xs">
-                    {ref.semver} &middot;{' '}
                     {new Date(ref.versionCreatedAt).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',

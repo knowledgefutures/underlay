@@ -16,10 +16,22 @@ import {
   hashRecord,
   hashSchema,
   loadVersionSchemas,
+  parseSemver,
   type SchemaEntry,
   stripToSchema,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
+
+/** Deterministic JSON canonicalization for metadata hashing */
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
+  }
+  return sorted
+}
 
 /** Session expiry: 1 hour from creation */
 const SESSION_TTL_MS = 60 * 60 * 1000
@@ -46,9 +58,9 @@ export async function startSession(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const body = await c.req.json<{
-    base_version: number | null
+    base_version: string | null
     message?: string
-    readme?: string
+    metadata?: Record<string, unknown>
     app_id?: string
     actor_id?: string
     schemas?: Record<string, object>
@@ -59,22 +71,28 @@ export async function startSession(c: Context<AuthEnv>) {
 
   // Optimistic lock check at session creation time
   const [latest] = await db
-    .select({ number: schema.versions.number })
+    .select({ semver: schema.versions.semver })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
-  const currentNumber = latest?.number ?? 0
-  if (body.base_version !== null && body.base_version !== currentNumber) {
-    return c.json(
-      {
-        error: 'Version conflict',
-        currentVersion: currentNumber,
-        statusCode: 409,
-      },
-      409,
-    )
+  const currentSemver = latest?.semver ?? null
+  if (body.base_version !== null) {
+    const normalizedBase = parseSemver(body.base_version).semver
+    const normalizedCurrent = currentSemver ? parseSemver(currentSemver).semver : null
+    if (normalizedBase !== normalizedCurrent) {
+      return c.json(
+        {
+          error: 'Version conflict',
+          currentVersion: currentSemver,
+          statusCode: 409,
+        },
+        409,
+      )
+    }
   }
 
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS)
@@ -84,9 +102,9 @@ export async function startSession(c: Context<AuthEnv>) {
     .values({
       collectionId: collection.id,
       userId: c.get('userId')!,
-      baseVersion: body.base_version ?? null,
+      baseSemver: body.base_version ?? null,
       message: body.message ?? null,
-      readme: body.readme ?? null,
+      metadata: body.metadata ? (body.metadata as any) : null,
       appId: body.app_id ?? null,
       actorId: body.actor_id ?? null,
       schemas: body.schemas ? (body.schemas as any) : null,
@@ -271,7 +289,7 @@ export async function getSession(c: Context<AuthEnv>) {
     sessionId: session.id,
     status: session.status,
     recordCount: session.recordCount,
-    baseVersion: session.baseVersion,
+    baseSemver: session.baseSemver,
     expiresAt: session.expiresAt,
     createdAt: session.createdAt,
   })
@@ -330,23 +348,29 @@ export async function finalize(c: Context<AuthEnv>) {
       .select()
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, collection.id))
-      .orderBy(sql`${schema.versions.number} desc`)
+      .orderBy(
+        sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+      )
       .limit(1)
 
-    const currentNumber = latest?.number ?? 0
-    if (session.baseVersion !== null && session.baseVersion !== currentNumber) {
-      await db
-        .update(schema.uploadSessions)
-        .set({ status: 'failed' })
-        .where(eq(schema.uploadSessions.id, sessionId))
-      return c.json(
-        {
-          error: 'Version conflict',
-          currentVersion: currentNumber,
-          statusCode: 409,
-        },
-        409,
-      )
+    const currentSemver = latest?.semver ?? null
+    if (session.baseSemver !== null) {
+      const normalizedBase = parseSemver(session.baseSemver).semver
+      const normalizedCurrent = currentSemver ? parseSemver(currentSemver).semver : null
+      if (normalizedBase !== normalizedCurrent) {
+        await db
+          .update(schema.uploadSessions)
+          .set({ status: 'failed' })
+          .where(eq(schema.uploadSessions.id, sessionId))
+        return c.json(
+          {
+            error: 'Version conflict',
+            currentVersion: currentSemver,
+            statusCode: 409,
+          },
+          409,
+        )
+      }
     }
 
     // --- Resolve schemas ---
@@ -543,9 +567,13 @@ export async function finalize(c: Context<AuthEnv>) {
       .where(eq(schema.uploadRecords.sessionId, sessionId))
     hasChanges = (stagedCount?.count ?? 0) > 0
 
-    const readmeValue = session.readme !== null ? session.readme : (latest?.readme ?? null)
-    const semver = deriveSemver(latest?.semver ?? null, schemaChanged, hasChanges)
-    const newNumber = currentNumber + 1
+    const metadataValue: Record<string, unknown> | null =
+      session.metadata !== null
+        ? (session.metadata as Record<string, unknown>)
+        : latest?.metadata
+          ? (latest.metadata as Record<string, unknown>)
+          : null
+    const sv = deriveSemver(latest?.semver ?? null, schemaChanged, hasChanges)
 
     while (hasMore) {
       const batch = (await db.execute(sql`
@@ -779,7 +807,7 @@ export async function finalize(c: Context<AuthEnv>) {
       schemas: Object.fromEntries(schemaSetForHash.map((s) => [s.slug, s.schemaHash])),
       records: [...allRecordHashes].sort(),
       files: allFileHashes.sort(),
-      readme: readmeValue ?? null,
+      metadata: metadataValue !== null ? canonicalize(metadataValue) : null,
     })
     const versionHash = 'private:' + createHash('sha256').update(versionHashCanonical).digest('hex')
 
@@ -787,13 +815,13 @@ export async function finalize(c: Context<AuthEnv>) {
       schemas: Object.fromEntries(publicSchemaSet.map((s) => [s.slug, s.schemaHash])),
       records: [...publicRecordHashes].sort(),
       files: allFileHashes.sort(),
-      readme: readmeValue ?? null,
+      metadata: metadataValue !== null ? canonicalize(metadataValue) : null,
     })
     const publicHash = 'public:' + createHash('sha256').update(publicHashCanonical).digest('hex')
 
     // Check for duplicate hash
     const [existingHash] = await db
-      .select({ number: schema.versions.number })
+      .select({ semver: schema.versions.semver })
       .from(schema.versions)
       .where(
         and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.hash, versionHash)),
@@ -809,8 +837,8 @@ export async function finalize(c: Context<AuthEnv>) {
       return c.json(
         {
           error: 'No changes detected',
-          message: `Version ${existingHash.number} already has identical content`,
-          existingVersion: existingHash.number,
+          message: `Version ${existingHash.semver} already has identical content`,
+          existingVersion: existingHash.semver,
         },
         409,
       )
@@ -830,13 +858,15 @@ export async function finalize(c: Context<AuthEnv>) {
       .insert(schema.versions)
       .values({
         collectionId: collection.id,
-        number: newNumber,
-        semver,
+        semver: sv.semver,
+        major: sv.major,
+        minor: sv.minor,
+        patch: sv.patch,
         hash: versionHash,
         publicHash,
-        baseNumber: session.baseVersion,
+        baseSemver: session.baseSemver,
         message: session.message ?? null,
-        readme: readmeValue,
+        metadata: metadataValue as any,
         pushedBy: c.get('userId') ?? null,
         appId: session.appId ?? null,
         actorId: session.actorId ?? null,
@@ -910,8 +940,7 @@ export async function finalize(c: Context<AuthEnv>) {
 
     return c.json(
       {
-        version: newNumber,
-        semver,
+        semver: sv.semver,
         hash: versionHash,
         recordCount,
         fileCount: allFileHashes.length,

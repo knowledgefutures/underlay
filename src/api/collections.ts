@@ -21,12 +21,7 @@ export async function list(c: Context<AuthEnv>) {
 
   const conditions = [eq(schema.collections.public, true)]
   if (q) {
-    conditions.push(
-      or(
-        ilike(schema.collections.name, `%${q}%`),
-        ilike(schema.collections.description, `%${q}%`),
-      )!,
-    )
+    conditions.push(ilike(schema.collections.name, `%${q}%`))
   }
   if (owner) {
     conditions.push(eq(schema.organization.slug, owner))
@@ -37,7 +32,6 @@ export async function list(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
       createdAt: schema.collections.createdAt,
@@ -55,8 +49,8 @@ export async function list(c: Context<AuthEnv>) {
     string,
     {
       collectionId: string
-      number: number
       semver: string
+      metadata: unknown
       recordCount: number
       fileCount: number
       totalBytes: number
@@ -68,8 +62,8 @@ export async function list(c: Context<AuthEnv>) {
     const allVersions = await db
       .select({
         collectionId: schema.versions.collectionId,
-        number: schema.versions.number,
         semver: schema.versions.semver,
+        metadata: schema.versions.metadata,
         recordCount: schema.versions.recordCount,
         fileCount: schema.versions.fileCount,
         totalBytes: schema.versions.totalBytes,
@@ -77,7 +71,9 @@ export async function list(c: Context<AuthEnv>) {
       })
       .from(schema.versions)
       .where(inArray(schema.versions.collectionId, ids))
-      .orderBy(desc(schema.versions.number))
+      .orderBy(
+        sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+      )
 
     for (const v of allVersions) {
       if (!statsMap.has(v.collectionId)) {
@@ -88,12 +84,7 @@ export async function list(c: Context<AuthEnv>) {
 
   const facetConditions = [eq(schema.collections.public, true)]
   if (q) {
-    facetConditions.push(
-      or(
-        ilike(schema.collections.name, `%${q}%`),
-        ilike(schema.collections.description, `%${q}%`),
-      )!,
-    )
+    facetConditions.push(ilike(schema.collections.name, `%${q}%`))
   }
 
   const ownerFacets = await db
@@ -111,10 +102,11 @@ export async function list(c: Context<AuthEnv>) {
   return c.json({
     collections: results.map((r) => {
       const stats = statsMap.get(r.id)
+      const meta = stats?.metadata as Record<string, unknown> | null | undefined
       return {
         ...r,
-        latestVersion: stats?.number ?? null,
-        semver: stats?.semver ?? null,
+        description: (meta?.description as string) ?? null,
+        latestVersion: stats?.semver ?? null,
         recordCount: stats?.recordCount ?? null,
         fileCount: stats?.fileCount ?? null,
         totalBytes: stats?.totalBytes ?? null,
@@ -131,12 +123,10 @@ export async function create(c: Context<AuthEnv>) {
   const {
     slug,
     name,
-    description,
     public: isPublic,
   } = await c.req.json<{
     slug: string
     name: string
-    description?: string
     public?: boolean
   }>()
 
@@ -180,7 +170,6 @@ export async function create(c: Context<AuthEnv>) {
     organizationId: org.id,
     slug,
     name,
-    description: description ?? null,
     public: isPublic ?? false,
   })
 
@@ -208,7 +197,6 @@ export async function get(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
@@ -256,18 +244,19 @@ export async function get(c: Context<AuthEnv>) {
   const [latestVersion] = await db
     .select({
       id: schema.versions.id,
-      number: schema.versions.number,
       semver: schema.versions.semver,
       recordCount: schema.versions.recordCount,
       fileCount: schema.versions.fileCount,
       totalBytes: schema.versions.totalBytes,
       createdAt: schema.versions.createdAt,
       message: schema.versions.message,
-      readme: schema.versions.readme,
+      metadata: schema.versions.metadata,
     })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, result.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   // Get per-type record counts for latest version
@@ -314,10 +303,19 @@ export async function get(c: Context<AuthEnv>) {
     // Non-fatal
   }
 
+  const [vcRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.versions)
+    .where(eq(schema.versions.collectionId, result.id))
+  const versionCount = vcRow?.count ?? 0
+
   const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined }
+  const meta = latestVersion?.metadata as Record<string, unknown> | null | undefined
   return c.json({
     ...result,
+    description: (meta?.description as string) ?? null,
     ark,
+    versionCount,
     latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null,
   })
 }
@@ -329,7 +327,6 @@ export async function update(c: Context<AuthEnv>) {
   const updates = await c.req.json<{
     name?: string
     slug?: string
-    description?: string
     public?: boolean
   }>()
 
@@ -548,7 +545,6 @@ export async function listByOwner(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       createdAt: schema.collections.createdAt,
       updatedAt: schema.collections.updatedAt,
@@ -572,7 +568,6 @@ export async function exportArchive(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       organizationId: schema.collections.organizationId,
     })
@@ -592,14 +587,16 @@ export async function exportArchive(c: Context<AuthEnv>) {
   // Resolve version (latest if not specified)
   const versionConditions = [eq(schema.versions.collectionId, collection.id)]
   if (versionParam) {
-    versionConditions.push(eq(schema.versions.number, parseInt(versionParam, 10)))
+    versionConditions.push(eq(schema.versions.semver, versionParam))
   }
 
   const [version] = await db
     .select()
     .from(schema.versions)
     .where(and(...versionConditions))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!version) {
@@ -644,10 +641,15 @@ export async function exportArchive(c: Context<AuthEnv>) {
   const schemasMap = Object.fromEntries(versionSchemaEntries.map((e) => [e.slug, e.schemaBody]))
 
   // Add manifest.json
+  const versionMeta = version.metadata as Record<string, unknown> | null
   const manifest = {
-    collection: { owner, slug, name: collection.name, description: collection.description },
+    collection: {
+      owner,
+      slug,
+      name: collection.name,
+      description: (versionMeta?.description as string) ?? null,
+    },
     version: {
-      number: version.number,
       semver: version.semver,
       hash: version.hash,
       message: version.message,
@@ -663,7 +665,7 @@ export async function exportArchive(c: Context<AuthEnv>) {
   const pack = tarPack()
   const gzip = createGzip()
 
-  const filename = `${owner}-${slug}-v${version.number}.tar.gz`
+  const filename = `${owner}-${slug}-${version.semver}.tar.gz`
 
   // Add manifest
   const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
@@ -734,7 +736,6 @@ export async function fork(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       organizationId: schema.collections.organizationId,
     })
@@ -798,7 +799,9 @@ export async function fork(c: Context<AuthEnv>) {
     .select()
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, source.id))
-    .orderBy(desc(schema.versions.number))
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!latestVersion) {
@@ -812,7 +815,6 @@ export async function fork(c: Context<AuthEnv>) {
     organizationId: targetOrgRow.id,
     slug: newSlug,
     name: source.name,
-    description: source.description,
     public: false,
     forkedFrom: source.id,
   })
@@ -822,13 +824,15 @@ export async function fork(c: Context<AuthEnv>) {
     .insert(schema.versions)
     .values({
       collectionId: newCollectionId,
-      number: 1,
       semver: 'v1.0.0',
+      major: 1,
+      minor: 0,
+      patch: 0,
       hash: latestVersion.hash,
       publicHash: latestVersion.publicHash,
-      baseNumber: null,
-      message: `Forked from ${sourceOwner}/${sourceSlug} v${latestVersion.number}`,
-      readme: latestVersion.readme,
+      baseSemver: null,
+      message: `Forked from ${sourceOwner}/${sourceSlug} ${latestVersion.semver}`,
+      metadata: latestVersion.metadata,
       pushedBy: c.get('userId') ?? null,
       appId: 'fork',
       recordCount: latestVersion.recordCount,
@@ -872,15 +876,13 @@ export async function fork(c: Context<AuthEnv>) {
     .where(eq(schema.versionSchemas.versionId, latestVersion.id))
 
   if (sourceSchemas.length > 0) {
-    await db
-      .insert(schema.versionSchemas)
-      .values(
-        sourceSchemas.map((s) => ({
-          versionId: newVersion.id,
-          slug: s.slug,
-          schemaId: s.schemaId,
-        })),
-      )
+    await db.insert(schema.versionSchemas).values(
+      sourceSchemas.map((s) => ({
+        versionId: newVersion.id,
+        slug: s.slug,
+        schemaId: s.schemaId,
+      })),
+    )
   }
 
   return c.json(
@@ -889,8 +891,8 @@ export async function fork(c: Context<AuthEnv>) {
       owner: targetOrg,
       slug: newSlug,
       name: source.name,
-      forkedFrom: { owner: sourceOwner, slug: sourceSlug, version: latestVersion.number },
-      version: { number: 1, semver: 'v1.0.0', recordCount: latestVersion.recordCount },
+      forkedFrom: { owner: sourceOwner, slug: sourceSlug, version: latestVersion.semver },
+      version: { semver: 'v1.0.0', recordCount: latestVersion.recordCount },
     },
     201,
   )

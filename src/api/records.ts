@@ -28,7 +28,6 @@ export async function provenance(c: Context<AuthEnv>) {
       ownerSlug: schema.organization.slug,
       collectionSlug: schema.collections.slug,
       collectionName: schema.collections.name,
-      versionNumber: schema.versions.number,
       versionSemver: schema.versions.semver,
       versionCreatedAt: schema.versions.createdAt,
     })
@@ -53,7 +52,6 @@ export async function provenance(c: Context<AuthEnv>) {
       owner: r.ownerSlug,
       collection: r.collectionSlug,
       collectionName: r.collectionName,
-      version: r.versionNumber,
       semver: r.versionSemver,
       versionCreatedAt: r.versionCreatedAt,
     })),

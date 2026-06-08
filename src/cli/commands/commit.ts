@@ -63,12 +63,12 @@ export function commit(message: string): void {
     ? recordHashes.length !== prev.records.length ||
       recordHashes.some((h, i) => h !== prev.records[i])
     : true
-  const semver = deriveSemver(prev?.semver ?? null, schemaChanged, recordsChanged)
+  const sv = deriveSemver(prev?.semver ?? null, schemaChanged, recordsChanged)
 
   const newNumber = head + 1
   const manifest: VersionManifest = {
     number: newNumber,
-    semver,
+    semver: sv.semver,
     hash,
     message,
     schemas,
@@ -81,7 +81,7 @@ export function commit(message: string): void {
   setHead(root, newNumber)
   clearStaging(root)
 
-  console.log(`Version ${newNumber} (${semver}) committed: ${message}`)
+  console.log(`Version ${newNumber} (${sv.semver}) committed: ${message}`)
   console.log(`  ${Object.keys(schemas).length} type(s), ${recordHashes.length} record(s)`)
   console.log(`  Hash: ${hash.slice(0, 20)}...`)
 }

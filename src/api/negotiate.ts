@@ -15,6 +15,7 @@ import {
   hashRecord,
   hashSchema,
   loadVersionSchemas,
+  parseSemver,
   type SchemaEntry,
   stripToSchema,
 } from '../lib/version-helpers.server.js'
@@ -27,14 +28,14 @@ const sessions = new Map<
     collectionId: string
     owner: string
     slug: string
-    baseVersion: number | null
+    baseSemver: string | null
     schemas: Record<string, object>
     manifest: { id: string; type: string; hash: string; private?: boolean }[]
     fileHashes: string[]
     neededRecords: string[]
     neededFiles: string[]
     message: string | null
-    readme: string | null
+    metadata: Record<string, unknown> | null
     appId: string | null
     actorId: string | null
     stripUnknownFields: boolean
@@ -65,11 +66,21 @@ async function resolveCollection(owner: string, slug: string) {
   return result ?? null
 }
 
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
+  }
+  return sorted
+}
+
 function computeVersionHash(
   schemaSet: { slug: string; schemaHash: string }[],
   recordHashes: string[],
   fileHashes: string[],
-  readme: string | null,
+  metadata: Record<string, unknown> | null,
 ): string {
   const canonical = JSON.stringify({
     schemas: Object.fromEntries(
@@ -77,7 +88,7 @@ function computeVersionHash(
     ),
     records: [...recordHashes].sort(),
     files: fileHashes.sort(),
-    readme: readme ?? null,
+    metadata: metadata ? canonicalize(metadata) : null,
   })
   return 'private:' + createHash('sha256').update(canonical).digest('hex')
 }
@@ -86,7 +97,7 @@ function computePublicHash(
   schemaEntries: SchemaEntry[],
   recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
   fileHashes: string[],
-  readme: string | null,
+  metadata: Record<string, unknown> | null,
 ): string {
   const privateTypes = getPrivateTypes(schemaEntries)
   const publicSchemaSet: { slug: string; schemaHash: string }[] = []
@@ -103,7 +114,7 @@ function computePublicHash(
       const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data
       return hashRecord({ id: r.recordId, type: r.type, data }).hash
     })
-  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, readme).replace(
+  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, metadata).replace(
     'private:',
     'public:',
   )
@@ -114,12 +125,12 @@ export async function negotiate(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const body = (await c.req.json()) as {
-    base_version: number | null
+    base_version: string | null
     schemas: Record<string, object>
     manifest: { id: string; type: string; hash: string; private?: boolean }[]
     files?: string[]
     message?: string
-    readme?: string
+    metadata?: Record<string, unknown>
     app_id?: string
     actor_id?: string
     strip_unknown_fields?: boolean
@@ -134,18 +145,24 @@ export async function negotiate(c: Context<AuthEnv>) {
 
   // Check latest version for optimistic lock
   const [latest] = await db
-    .select({ number: schema.versions.number })
+    .select({ semver: schema.versions.semver })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
-  const currentNumber = latest?.number ?? 0
-  if (body.base_version !== null && body.base_version !== currentNumber) {
-    return c.json(
-      { error: 'Version conflict', currentVersion: currentNumber, statusCode: 409 },
-      409,
-    )
+  const currentSemver = latest?.semver ?? null
+  if (body.base_version !== null && body.base_version !== currentSemver) {
+    // Normalize and compare
+    const normalized = body.base_version ? parseSemver(body.base_version).semver : null
+    if (normalized !== currentSemver) {
+      return c.json(
+        { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
+        409,
+      )
+    }
   }
 
   // Check which record hashes already exist in record_objects
@@ -177,14 +194,14 @@ export async function negotiate(c: Context<AuthEnv>) {
     collectionId: collection.id,
     owner,
     slug,
-    baseVersion: body.base_version,
+    baseSemver: body.base_version,
     schemas: body.schemas,
     manifest: body.manifest,
     fileHashes,
     neededRecords,
     neededFiles,
     message: body.message ?? null,
-    readme: body.readme ?? null,
+    metadata: body.metadata ?? null,
     appId: body.app_id ?? null,
     actorId: body.actor_id ?? null,
     stripUnknownFields: body.strip_unknown_fields ?? false,
@@ -450,21 +467,27 @@ export async function commit(c: Context<AuthEnv>) {
     }
   }
 
-  // Determine version number + semver
+  // Determine semver
   const [latest] = await db
     .select()
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, session.collectionId))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
-  const currentNumber = latest?.number ?? 0
-  if (session.baseVersion !== null && session.baseVersion !== currentNumber) {
-    sessions.delete(sessionId)
-    return c.json(
-      { error: 'Version conflict', currentVersion: currentNumber, statusCode: 409 },
-      409,
-    )
+  const currentSemver = latest?.semver ?? null
+  if (session.baseSemver !== null && session.baseSemver !== currentSemver) {
+    // Normalize and compare
+    const normalized = session.baseSemver ? parseSemver(session.baseSemver).semver : null
+    if (normalized !== currentSemver) {
+      sessions.delete(sessionId)
+      return c.json(
+        { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
+        409,
+      )
+    }
   }
 
   const prevSchemaEntries = latest ? await loadVersionSchemas(latest.id) : []
@@ -492,14 +515,17 @@ export async function commit(c: Context<AuthEnv>) {
     recordsChanged = prevSet.size !== newSet.size || [...newSet].some((h) => !prevSet.has(h))
   }
 
-  const readmeValue = session.readme !== undefined ? session.readme : (latest?.readme ?? null)
+  const metadataValue =
+    session.metadata !== undefined
+      ? session.metadata
+      : ((latest?.metadata as Record<string, unknown> | null) ?? null)
   const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
   const allRecordHashes = session.manifest.map((r) => r.hash)
   const versionHash = computeVersionHash(
     schemaSetForHash,
     allRecordHashes,
     session.fileHashes,
-    readmeValue,
+    metadataValue,
   )
 
   const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
@@ -517,15 +543,14 @@ export async function commit(c: Context<AuthEnv>) {
       private: r.private,
     })),
     session.fileHashes,
-    readmeValue,
+    metadataValue,
   )
 
-  const semver = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged)
-  const newNumber = currentNumber + 1
+  const sv = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged)
 
   // Check for duplicate
   const [existingHash] = await db
-    .select({ number: schema.versions.number })
+    .select({ semver: schema.versions.semver })
     .from(schema.versions)
     .where(
       and(
@@ -539,8 +564,8 @@ export async function commit(c: Context<AuthEnv>) {
     return c.json(
       {
         error: 'No changes detected',
-        message: `Version ${existingHash.number} already has identical content.`,
-        existingVersion: existingHash.number,
+        message: `Version ${existingHash.semver} already has identical content.`,
+        existingVersion: existingHash.semver,
       },
       409,
     )
@@ -562,13 +587,15 @@ export async function commit(c: Context<AuthEnv>) {
     .insert(schema.versions)
     .values({
       collectionId: session.collectionId,
-      number: newNumber,
-      semver,
+      semver: sv.semver,
+      major: sv.major,
+      minor: sv.minor,
+      patch: sv.patch,
       hash: versionHash,
       publicHash,
-      baseNumber: session.baseVersion,
+      baseSemver: session.baseSemver,
       message: session.message,
-      readme: readmeValue,
+      metadata: metadataValue,
       pushedBy: c.get('userId') ?? null,
       appId: session.appId,
       actorId: session.actorId,
@@ -623,8 +650,7 @@ export async function commit(c: Context<AuthEnv>) {
 
   return c.json(
     {
-      version: newNumber,
-      semver,
+      semver: sv.semver,
       hash: versionHash,
       recordCount: allRecords.length,
       fileCount: session.fileHashes.length,
