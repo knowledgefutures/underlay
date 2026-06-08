@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { hashSchema } from '@underlay/core'
-
+import { hashSchema } from '../../lib/core/index.js'
 import { setStagedSchema } from '../lib/staging.js'
 import { requireRoot } from '../lib/store.js'
 import { writeSchema } from '../lib/store.js'

@@ -1,5 +1,4 @@
-import { hashRecord, hashSchema } from '@underlay/core'
-
+import { hashRecord, hashSchema } from '../../lib/core/index.js'
 import { getStagedSchema, getStagedRecords } from '../lib/staging.js'
 import { requireRoot, getHead, readVersion } from '../lib/store.js'
 

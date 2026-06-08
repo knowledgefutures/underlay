@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { hashRecord } from '@underlay/core'
-
+import { hashRecord } from '../../lib/core/index.js'
 import { appendStagedRecords } from '../lib/staging.js'
 import { requireRoot, writeObject } from '../lib/store.js'
 

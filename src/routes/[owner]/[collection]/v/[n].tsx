@@ -297,13 +297,14 @@ export default function CollectionVersionPage() {
                           {records[0]?.ark && (
                             <th className="border-rule border-b p-2 text-left font-medium">ARK</th>
                           )}
+                          <th className="border-rule w-8 border-b" />
                         </tr>
                       </thead>
                       <tbody>
                         {records.map((r: any) => (
                           <tr
                             key={r.id}
-                            className="border-rule hover:bg-parchment-dark/50 border-t"
+                            className="border-rule group hover:bg-parchment-dark/50 border-t"
                           >
                             <td className="text-ink-muted p-2 font-mono">{r.id}</td>
                             {currentTypeFields.map((f: string) => {
@@ -376,6 +377,29 @@ export default function CollectionVersionPage() {
                                 </Link>
                               </td>
                             )}
+                            <td className="w-8 p-2">
+                              {r.hash && (
+                                <Link
+                                  to={`/records/${r.hash}`}
+                                  className="text-ink-muted hover:text-ink invisible inline-flex items-center group-hover:visible"
+                                  title="View record provenance"
+                                >
+                                  <svg
+                                    className="h-3.5 w-3.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                                    />
+                                  </svg>
+                                </Link>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

@@ -1,5 +1,4 @@
-import { hashRecord } from '@underlay/core'
-
+import { hashRecord } from '../../lib/core/index.js'
 import { readConfig } from '../lib/config.js'
 import {
   requireRoot,

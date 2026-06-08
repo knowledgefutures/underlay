@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { hashRecord, hashSchema, deriveSemver } from '@underlay/core'
-
+import { hashRecord, hashSchema, deriveSemver } from '../../lib/core/index.js'
 import { getStagedSchema, getStagedRecords, clearStaging } from '../lib/staging.js'
 import {
   requireRoot,

@@ -5,8 +5,8 @@ import { underlayDir } from './store.js'
 
 export type Remote = {
   url: string
-  token?: string
-  collection?: string
+  token?: string | undefined
+  collection?: string | undefined
 }
 
 export type Config = {

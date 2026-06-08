@@ -12,9 +12,9 @@ export {
   hashRecord,
   hashSchema,
   type SchemaEntry,
-} from '@underlay/core'
+} from './core/index.js'
 
-import type { SchemaEntry } from '@underlay/core'
+import type { SchemaEntry } from './core/index.js'
 
 /** Load the full schema set for a version (slug → schema body + metadata) */
 export async function loadVersionSchemas(versionId: number): Promise<SchemaEntry[]> {

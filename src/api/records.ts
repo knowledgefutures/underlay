@@ -13,6 +13,7 @@ export async function provenance(c: Context<AuthEnv>) {
     .select({
       recordId: schema.recordObjects.recordId,
       type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
       size: schema.recordObjects.size,
       createdAt: schema.recordObjects.createdAt,
     })
@@ -44,6 +45,7 @@ export async function provenance(c: Context<AuthEnv>) {
     hash,
     recordId: record.recordId,
     type: record.type,
+    data: record.data,
     size: record.size,
     createdAt: record.createdAt,
     firstSeen,

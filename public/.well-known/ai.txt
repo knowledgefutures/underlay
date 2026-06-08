@@ -1,4 +1,4 @@
-# Underlay — AI Integration Guide
+# Underlay - AI Integration Guide
 
 Underlay is a versioned, content-addressed registry for structured knowledge.
 Apps push snapshots of their data; Underlay preserves them and serves them via HTTPS API.
