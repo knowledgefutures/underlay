@@ -275,12 +275,16 @@ export async function get(c: Context<AuthEnv>) {
   if (latestVersion) {
     const rows = await db
       .select({
-        type: schema.records.type,
+        type: schema.recordObjects.type,
         count: sql<number>`count(*)::int`,
       })
-      .from(schema.records)
-      .where(eq(schema.records.versionId, latestVersion.id))
-      .groupBy(schema.records.type)
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
+      .where(eq(schema.versionRecords.versionId, latestVersion.id))
+      .groupBy(schema.recordObjects.type)
     typeCounts = rows.map((r) => ({ type: r.type, count: r.count }))
   }
 
@@ -605,12 +609,16 @@ export async function exportArchive(c: Context<AuthEnv>) {
   // Fetch records and files for this version
   const records = await db
     .select({
-      recordId: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
     })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   const versionFiles = await db
     .select({

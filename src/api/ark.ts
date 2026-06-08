@@ -148,13 +148,17 @@ export async function resolve(c: Context<AuthEnv>) {
     if (!versionRow) return c.json({ type: 'not_found' }, 404)
 
     const [recordRow] = await db
-      .select({ data: schema.records.data })
-      .from(schema.records)
+      .select({ data: schema.recordObjects.data })
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
       .where(
         and(
-          eq(schema.records.versionId, versionRow.id),
-          eq(schema.records.recordId, recordId),
-          eq(schema.records.type, recordType),
+          eq(schema.versionRecords.versionId, versionRow.id),
+          eq(schema.recordObjects.recordId, recordId),
+          eq(schema.recordObjects.type, recordType),
         ),
       )
       .limit(1)

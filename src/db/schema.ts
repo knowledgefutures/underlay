@@ -242,22 +242,35 @@ export const versions = pgTable(
   (t) => [unique().on(t.collectionId, t.number), unique().on(t.collectionId, t.hash)],
 )
 
-// --- Records ---
+// --- Records (globally deduplicated, content-addressed) ---
 
-export const records = pgTable(
-  'records',
+export const recordObjects = pgTable(
+  'record_objects',
   {
-    versionId: bigint('version_id', { mode: 'number' })
-      .notNull()
-      .references(() => versions.id, { onDelete: 'cascade' }),
+    hash: text('hash').primaryKey(),
     recordId: text('record_id').notNull(),
     type: text('type').notNull(),
     data: jsonb('data').notNull(),
     private: boolean('private').default(false).notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('record_objects_record_id_idx').on(t.recordId)],
+)
+
+export const versionRecords = pgTable(
+  'version_records',
+  {
+    versionId: bigint('version_id', { mode: 'number' })
+      .notNull()
+      .references(() => versions.id, { onDelete: 'cascade' }),
+    recordHash: text('record_hash')
+      .notNull()
+      .references(() => recordObjects.hash),
   },
   (t) => [
-    primaryKey({ columns: [t.versionId, t.recordId] }),
-    index('records_version_id_type_idx').on(t.versionId, t.type),
+    primaryKey({ columns: [t.versionId, t.recordHash] }),
+    index('version_records_record_hash_idx').on(t.recordHash),
   ],
 )
 

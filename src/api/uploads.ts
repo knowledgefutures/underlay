@@ -12,6 +12,7 @@ import {
   filterTypeSchema,
   getPrivateFields,
   getPrivateTypes,
+  hashRecord,
   hashSchema,
   loadVersionSchemas,
   type SchemaEntry,
@@ -471,9 +472,10 @@ export async function finalize(c: Context<AuthEnv>) {
     if (latest) {
       await db.execute(sql`
           INSERT INTO _finalize_records (record_id, type, data, private)
-          SELECT record_id, type, data, private
-          FROM records
-          WHERE version_id = ${latest.id}
+          SELECT ro.record_id, ro.type, ro.data, ro.private
+          FROM version_records vr
+          INNER JOIN record_objects ro ON vr.record_hash = ro.hash
+          WHERE vr.version_id = ${latest.id}
         `)
     }
 
@@ -527,42 +529,22 @@ export async function finalize(c: Context<AuthEnv>) {
     }
 
     // --- Stream through records in sorted batches ---
-    // We compute hashes incrementally and validate + collect file refs + insert records
+    // Validate, compute record hashes, collect file refs
     const STREAM_BATCH = 5000
     const privateTypes = getPrivateTypes(newSchemaSet as SchemaEntry[])
 
-    // Streaming hash state
-    const privateHasher = createHash('sha256')
-    const publicHasher = createHash('sha256')
-
-    // We build the canonical hash as: {"schemas":{...},"records":[<records>],"files":[...],"readme":...}
-    // For streaming, we compute records portion incrementally
-    const schemaSetForHash = newSchemaSet
-      .map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-      .sort((a, b) => a.slug.localeCompare(b.slug))
-    const publicSchemaSet = newSchemaSet
-      .filter((e) => !privateTypes.has(e.slug))
-      .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
-      .sort((a, b) => a.slug.localeCompare(b.slug))
-
-    // We'll collect all record canonical forms for hashing
-    // Using incremental approach: hash prefix, then each record, then suffix
-    const schemasCanonical = JSON.stringify(
-      Object.fromEntries(schemaSetForHash.map((s) => [s.slug, s.schemaHash])),
-    )
-    const publicSchemasCanonical = JSON.stringify(
-      Object.fromEntries(publicSchemaSet.map((s) => [s.slug, s.schemaHash])),
-    )
-
-    // Start building canonical: {"schemas":...,"records":[
-    privateHasher.update(`{"schemas":${schemasCanonical},"records":[`)
-    publicHasher.update(`{"schemas":${publicSchemasCanonical},"records":[`)
-
     const referencedHashes = new Set(existingFileHashes)
     const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
+    const allRecordEntries: {
+      hash: string
+      recordId: string
+      type: string
+      data: unknown
+      private: boolean
+      size: number
+    }[] = []
+    const publicRecordHashes: string[] = []
     let totalBytes = 0
-    let recordCount = 0
-    let publicRecordCount = 0
     let hasChanges = false
     let cursor = ''
     let hasMore = true
@@ -574,16 +556,9 @@ export async function finalize(c: Context<AuthEnv>) {
       .where(eq(schema.uploadRecords.sessionId, sessionId))
     hasChanges = (stagedCount?.count ?? 0) > 0
 
-    // Insert the new version early to get its ID for record insertion
-    // We'll update the hash fields after streaming
     const readmeValue = session.readme !== null ? session.readme : (latest?.readme ?? null)
     const semver = deriveSemver(latest?.semver ?? null, schemaChanged, hasChanges)
     const newNumber = currentNumber + 1
-
-    // We need to process all records before we can insert the version (need hashes)
-    // So we stream in two phases:
-    // Phase 1: validate + compute hashes + collect file refs + count bytes
-    // Phase 2: insert records (re-stream from temp table)
 
     while (hasMore) {
       const batch = (await db.execute(sql`
@@ -619,27 +594,40 @@ export async function finalize(c: Context<AuthEnv>) {
           })
         }
 
-        // Feed into private hash (all records)
-        const recCanonical = JSON.stringify({ id: rec.record_id, type: rec.type, data: rec.data })
-        if (recordCount > 0) privateHasher.update(',')
-        privateHasher.update(recCanonical)
-        recordCount++
+        // Hash the record
+        const { hash: recHash, canonical } = hashRecord({
+          id: rec.record_id,
+          type: rec.type,
+          data: rec.data,
+        })
+        const size = Buffer.byteLength(canonical, 'utf-8')
 
-        // Feed into public hash (non-private records only, with private fields stripped)
+        allRecordEntries.push({
+          hash: recHash,
+          recordId: rec.record_id,
+          type: rec.type,
+          data: rec.data,
+          private: rec.private === true,
+          size,
+        })
+
+        // Track public record hashes for public version hash
         const isPrivateRecord = rec.private === true
         const isPrivateType = privateTypes.has(rec.type)
         if (!isPrivateRecord && !isPrivateType) {
           const entry = newSchemaSet.find((e) => e.slug === rec.type)
           const privFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
-          const pubData = privFields.size > 0 ? filterRecordData(rec.data, privFields) : rec.data
-          const pubCanonical = JSON.stringify({ id: rec.record_id, type: rec.type, data: pubData })
-          if (publicRecordCount > 0) publicHasher.update(',')
-          publicHasher.update(pubCanonical)
-          publicRecordCount++
+          if (privFields.size > 0) {
+            const pubData = filterRecordData(rec.data, privFields)
+            publicRecordHashes.push(
+              hashRecord({ id: rec.record_id, type: rec.type, data: pubData }).hash,
+            )
+          } else {
+            publicRecordHashes.push(recHash)
+          }
         }
 
-        // Compute bytes
-        totalBytes += Buffer.byteLength(JSON.stringify(rec.data), 'utf-8')
+        totalBytes += size
 
         // Scan for $file references
         const data = rec.data as Record<string, unknown>
@@ -727,16 +715,33 @@ export async function finalize(c: Context<AuthEnv>) {
       }
     }
 
-    // Finalize hash computation
-    const sortedFileHashes = allFileHashes.sort()
-    const filesCanonical = JSON.stringify(sortedFileHashes)
-    const readmeCanonical = JSON.stringify(readmeValue ?? null)
+    // Compute version hashes from record hashes
+    const schemaSetForHash = newSchemaSet
+      .map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
+      .sort((a, b) => a.slug.localeCompare(b.slug))
+    const publicSchemaSet = newSchemaSet
+      .filter((e) => !privateTypes.has(e.slug))
+      .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
+      .sort((a, b) => a.slug.localeCompare(b.slug))
 
-    privateHasher.update(`],"files":${filesCanonical},"readme":${readmeCanonical}}`)
-    publicHasher.update(`],"files":${filesCanonical},"readme":${readmeCanonical}}`)
+    const allRecordHashes = allRecordEntries.map((r) => r.hash)
+    const recordCount = allRecordEntries.length
 
-    const versionHash = 'private:' + privateHasher.digest('hex')
-    const publicHash = 'public:' + publicHasher.digest('hex')
+    const versionHashCanonical = JSON.stringify({
+      schemas: Object.fromEntries(schemaSetForHash.map((s) => [s.slug, s.schemaHash])),
+      records: [...allRecordHashes].sort(),
+      files: allFileHashes.sort(),
+      readme: readmeValue ?? null,
+    })
+    const versionHash = 'private:' + createHash('sha256').update(versionHashCanonical).digest('hex')
+
+    const publicHashCanonical = JSON.stringify({
+      schemas: Object.fromEntries(publicSchemaSet.map((s) => [s.slug, s.schemaHash])),
+      records: [...publicRecordHashes].sort(),
+      files: allFileHashes.sort(),
+      readme: readmeValue ?? null,
+    })
+    const publicHash = 'public:' + createHash('sha256').update(publicHashCanonical).digest('hex')
 
     // Check for duplicate hash
     const [existingHash] = await db
@@ -793,12 +798,35 @@ export async function finalize(c: Context<AuthEnv>) {
       })
       .returning()
 
-    // Phase 2: Insert records from temp table into the real records table (in batches)
-    await db.execute(sql`
-        INSERT INTO records (version_id, record_id, type, data, private)
-        SELECT ${version!.id}, record_id, type, data, private
-        FROM _finalize_records
-      `)
+    // Upsert record objects (content-addressed, deduplicated)
+    const RECORD_BATCH = 1000
+    for (let i = 0; i < allRecordEntries.length; i += RECORD_BATCH) {
+      const batch = allRecordEntries.slice(i, i + RECORD_BATCH)
+      await db
+        .insert(schema.recordObjects)
+        .values(
+          batch.map((r) => ({
+            hash: r.hash,
+            recordId: r.recordId,
+            type: r.type,
+            data: r.data as any,
+            private: r.private,
+            size: r.size,
+          })),
+        )
+        .onConflictDoNothing()
+    }
+
+    // Insert version_records manifest
+    for (let i = 0; i < allRecordEntries.length; i += RECORD_BATCH) {
+      const batch = allRecordEntries.slice(i, i + RECORD_BATCH)
+      await db.insert(schema.versionRecords).values(
+        batch.map((r) => ({
+          versionId: version!.id,
+          recordHash: r.hash,
+        })),
+      )
+    }
 
     // Clean up temp table
     await db.execute(sql`DROP TABLE IF EXISTS _finalize_records`)

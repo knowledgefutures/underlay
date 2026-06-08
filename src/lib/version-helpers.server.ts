@@ -82,6 +82,17 @@ export function hashSchema(schemaBody: unknown): string {
   return createHash('sha256').update(JSON.stringify(schemaBody)).digest('hex')
 }
 
+/** Compute SHA-256 hash of a record's canonical JSONL representation.
+ *  The private flag is excluded — identity is determined by id + type + data. */
+export function hashRecord(record: { id: string; type: string; data: unknown }): {
+  hash: string
+  canonical: string
+} {
+  const canonical = JSON.stringify({ id: record.id, type: record.type, data: record.data })
+  const hash = createHash('sha256').update(canonical).digest('hex')
+  return { hash, canonical }
+}
+
 /** Derive next semver from previous, based on what changed */
 export function deriveSemver(
   prevSemver: string | null,

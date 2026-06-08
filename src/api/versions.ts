@@ -12,6 +12,7 @@ import {
   filterTypeSchema,
   getPrivateFields,
   getPrivateTypes,
+  hashRecord,
   hashSchema,
   loadVersionSchemas,
   type SchemaEntry,
@@ -41,7 +42,7 @@ async function hasOrgAccess(userId: string | undefined, orgId: string): Promise<
 
 function computeVersionHash(
   schemaSet: { slug: string; schemaHash: string }[],
-  recordRows: { recordId: string; type: string; data: unknown }[],
+  recordHashes: string[],
   fileHashes: string[],
   readme: string | null,
 ): string {
@@ -49,16 +50,15 @@ function computeVersionHash(
     schemas: Object.fromEntries(
       schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
     ),
-    records: recordRows
-      .sort((a, b) => a.recordId.localeCompare(b.recordId))
-      .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
+    records: [...recordHashes].sort(),
     files: fileHashes.sort(),
     readme: readme ?? null,
   })
   return 'private:' + createHash('sha256').update(canonical).digest('hex')
 }
 
-/** Compute a public hash that only covers non-private content */
+/** Compute a public hash that only covers non-private content.
+ *  Re-hashes public records with private fields stripped. */
 function computePublicHash(
   schemaEntries: SchemaEntry[],
   recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
@@ -67,7 +67,6 @@ function computePublicHash(
 ): string {
   const privateTypes = getPrivateTypes(schemaEntries)
 
-  // Build public schema set (non-private types, with private fields stripped)
   const publicSchemaSet: { slug: string; schemaHash: string }[] = []
   for (const entry of schemaEntries) {
     if (privateTypes.has(entry.slug)) continue
@@ -75,28 +74,19 @@ function computePublicHash(
     publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
   }
 
-  // Filter to public records only, and strip private fields
-  const publicRecords = recordRows
+  const publicRecordHashes = recordRows
     .filter((r) => !r.private && !privateTypes.has(r.type))
     .map((r) => {
       const entry = schemaEntries.find((e) => e.slug === r.type)
       const privateFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
       const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data
-      return { id: r.recordId, type: r.type, data }
+      return hashRecord({ id: r.recordId, type: r.type, data }).hash
     })
-    .sort((a, b) => a.id.localeCompare(b.id))
 
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      publicSchemaSet
-        .sort((a, b) => a.slug.localeCompare(b.slug))
-        .map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: publicRecords,
-    files: fileHashes.sort(),
-    readme: readme ?? null,
-  })
-  return 'public:' + createHash('sha256').update(canonical).digest('hex')
+  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, readme).replace(
+    'private:',
+    'public:',
+  )
 }
 
 // Lazily backfill totalBytes for versions that were created before we tracked it
@@ -114,15 +104,16 @@ async function backfillTotalBytes(version: {
     return version.totalBytes
   }
 
-  const records = await db
-    .select({ data: schema.records.data })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+  const recordSizes = await db
+    .select({ total: sql<number>`coalesce(sum(${schema.recordObjects.size}), 0)` })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
-  let totalBytes = 0
-  for (const r of records) {
-    totalBytes += Buffer.byteLength(JSON.stringify(r.data), 'utf-8')
-  }
+  let totalBytes = Number(recordSizes[0]?.total ?? 0)
 
   const [fileSizeResult] = await db
     .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
@@ -288,12 +279,12 @@ export async function records(c: Context<AuthEnv>) {
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
-  const conditions = [eq(schema.records.versionId, version.id)]
-  if (type) conditions.push(eq(schema.records.type, type))
+  const conditions = [eq(schema.versionRecords.versionId, version.id)]
+  if (type) conditions.push(eq(schema.recordObjects.type, type))
 
   // Cursor-based pagination: ?after=recordId (keyset pagination)
   if (after) {
-    conditions.push(sql`${schema.records.recordId} > ${after}`)
+    conditions.push(sql`${schema.recordObjects.recordId} > ${after}`)
   }
 
   // Determine visibility
@@ -310,24 +301,29 @@ export async function records(c: Context<AuthEnv>) {
         return c.json([]) // requesting a private type as non-owner
       }
       for (const pt of privateTypes) {
-        conditions.push(sql`${schema.records.type} != ${pt}`)
+        conditions.push(sql`${schema.recordObjects.type} != ${pt}`)
       }
     }
     // Exclude record-level private records
-    conditions.push(eq(schema.records.private, false))
+    conditions.push(eq(schema.recordObjects.private, false))
   }
 
   const pageLimit = Math.min(parseInt(limit ?? '100', 10), 1000)
 
   const records = await db
     .select({
-      id: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      id: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
+      hash: schema.recordObjects.hash,
     })
-    .from(schema.records)
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
     .where(and(...conditions))
-    .orderBy(schema.records.recordId)
+    .orderBy(schema.recordObjects.recordId)
     .limit(pageLimit + 1)
     .offset(after ? 0 : parseInt(offset ?? '0', 10))
 
@@ -427,12 +423,16 @@ export async function files(c: Context<AuthEnv>) {
   // Build file→record reference map by scanning record data for $file refs
   const allRecords = await db
     .select({
-      recordId: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
     })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>()
   for (const rec of allRecords) {
@@ -475,10 +475,18 @@ export async function manifest(c: Context<AuthEnv>) {
 
   if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
-  const recordIds = await db
-    .select({ id: schema.records.recordId, type: schema.records.type })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+  const recordRows = await db
+    .select({
+      id: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      hash: schema.recordObjects.hash,
+    })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   const fileHashes = await db
     .select({ hash: schema.versionFiles.fileHash })
@@ -492,7 +500,7 @@ export async function manifest(c: Context<AuthEnv>) {
     semver: version.semver,
     hash: version.hash,
     schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
-    records: recordIds,
+    records: recordRows,
     files: fileHashes.map((f) => f.hash),
   })
 }
@@ -542,37 +550,60 @@ export async function push(c: Context<AuthEnv>) {
     )
   }
 
-  // Build the full record set for this version
-  let existingRecords: { recordId: string; type: string; data: unknown; private: boolean }[] = []
-  if (latest) {
-    existingRecords = await db
-      .select({
-        recordId: schema.records.recordId,
-        type: schema.records.type,
-        data: schema.records.data,
-        private: schema.records.private,
-      })
-      .from(schema.records)
-      .where(eq(schema.records.versionId, latest.id))
+  // Build the full record manifest for this version using content-addressed records
+  type RecordEntry = {
+    recordId: string
+    type: string
+    data: unknown
+    private: boolean
+    hash: string
+    size: number
   }
 
-  // Apply changes
-  const recordMap = new Map(existingRecords.map((r) => [r.recordId, r]))
+  // Load previous version's records as a map of recordId -> entry
+  let existingMap = new Map<string, RecordEntry>()
+  if (latest) {
+    const existing = await db
+      .select({
+        recordId: schema.recordObjects.recordId,
+        type: schema.recordObjects.type,
+        data: schema.recordObjects.data,
+        private: schema.recordObjects.private,
+        hash: schema.recordObjects.hash,
+        size: schema.recordObjects.size,
+      })
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
+      .where(eq(schema.versionRecords.versionId, latest.id))
+    existingMap = new Map(existing.map((r) => [r.recordId, r]))
+  }
+
+  // Apply changes — hash new/updated records on the fly
+  const recordMap = new Map(existingMap)
 
   for (const rec of body.changes.added ?? []) {
+    const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
     recordMap.set(rec.id, {
       recordId: rec.id,
       type: rec.type,
       data: rec.data,
       private: rec.private ?? false,
+      hash,
+      size: Buffer.byteLength(canonical, 'utf-8'),
     })
   }
   for (const rec of body.changes.updated ?? []) {
+    const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
     recordMap.set(rec.id, {
       recordId: rec.id,
       type: rec.type,
       data: rec.data,
       private: rec.private ?? false,
+      hash,
+      size: Buffer.byteLength(canonical, 'utf-8'),
     })
   }
   for (const id of body.changes.removed ?? []) {
@@ -766,7 +797,13 @@ export async function push(c: Context<AuthEnv>) {
 
   // Compute hashes and semver
   const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-  const versionHash = computeVersionHash(schemaSetForHash, newRecords, allFileHashes, readmeValue)
+  const allRecordHashes = newRecords.map((r) => r.hash)
+  const versionHash = computeVersionHash(
+    schemaSetForHash,
+    allRecordHashes,
+    allFileHashes,
+    readmeValue,
+  )
 
   const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
     slug: e.slug,
@@ -806,7 +843,7 @@ export async function push(c: Context<AuthEnv>) {
   // Compute total bytes
   let totalBytes = 0
   for (const rec of newRecords) {
-    totalBytes += Buffer.byteLength(JSON.stringify(rec.data), 'utf-8')
+    totalBytes += rec.size
   }
   if (allFileHashes.length > 0) {
     const [fileSizeSum] = await db
@@ -837,18 +874,33 @@ export async function push(c: Context<AuthEnv>) {
     })
     .returning()
 
-  // Insert records (in batches)
+  // Upsert record objects (content-addressed, deduplicated)
   if (newRecords.length > 0) {
     const RECORD_BATCH = 1000
     for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
       const batch = newRecords.slice(i, i + RECORD_BATCH)
-      await db.insert(schema.records).values(
+      await db
+        .insert(schema.recordObjects)
+        .values(
+          batch.map((r) => ({
+            hash: r.hash,
+            recordId: r.recordId,
+            type: r.type,
+            data: r.data as any,
+            private: r.private,
+            size: r.size,
+          })),
+        )
+        .onConflictDoNothing()
+    }
+
+    // Insert version_records manifest
+    for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
+      const batch = newRecords.slice(i, i + RECORD_BATCH)
+      await db.insert(schema.versionRecords).values(
         batch.map((r) => ({
           versionId: version!.id,
-          recordId: r.recordId,
-          type: r.type,
-          data: r.data as any,
-          private: r.private,
+          recordHash: r.hash,
         })),
       )
     }
@@ -919,13 +971,24 @@ export async function diff(c: Context<AuthEnv>) {
     return c.json({ error: 'Version not found', statusCode: 404 }, 404)
   }
 
+  type DiffRecord = { recordId: string; type: string; data: unknown; hash: string }
+
   const targetRecords = await db
-    .select()
-    .from(schema.records)
-    .where(eq(schema.records.versionId, targetVersion.id))
+    .select({
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
+      hash: schema.recordObjects.hash,
+    })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, targetVersion.id))
 
   let fromVersion: typeof targetVersion | null = null
-  let fromRecords: typeof targetRecords = []
+  let fromRecords: DiffRecord[] = []
   if (fromNum > 0) {
     const [fv] = await db
       .select()
@@ -938,9 +1001,18 @@ export async function diff(c: Context<AuthEnv>) {
     if (fv) {
       fromVersion = fv
       fromRecords = await db
-        .select()
-        .from(schema.records)
-        .where(eq(schema.records.versionId, fv.id))
+        .select({
+          recordId: schema.recordObjects.recordId,
+          type: schema.recordObjects.type,
+          data: schema.recordObjects.data,
+          hash: schema.recordObjects.hash,
+        })
+        .from(schema.versionRecords)
+        .innerJoin(
+          schema.recordObjects,
+          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+        )
+        .where(eq(schema.versionRecords.versionId, fv.id))
     }
   }
 
@@ -949,9 +1021,10 @@ export async function diff(c: Context<AuthEnv>) {
 
   const added = targetRecords.filter((r) => !fromMap.has(r.recordId))
   const removed = fromRecords.filter((r) => !targetMap.has(r.recordId))
+  // Hash comparison instead of JSON.stringify comparison
   const updated = targetRecords.filter((r) => {
     const prev = fromMap.get(r.recordId)
-    return prev && JSON.stringify(prev.data) !== JSON.stringify(r.data)
+    return prev && prev.hash !== r.hash
   })
 
   // Compare schema sets

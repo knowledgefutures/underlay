@@ -1,5 +1,5 @@
 {
-  "id": "18f75d75-9ad4-4456-b6ce-32e3ff1e3eb4",
+  "id": "583dd075-d913-455d-b3cc-4b4424337450",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -962,14 +962,14 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.records": {
-      "name": "records",
+    "public.record_objects": {
+      "name": "record_objects",
       "schema": "",
       "columns": {
-        "version_id": {
-          "name": "version_id",
-          "type": "bigint",
-          "primaryKey": false,
+        "hash": {
+          "name": "hash",
+          "type": "text",
+          "primaryKey": true,
           "notNull": true
         },
         "record_id": {
@@ -996,20 +996,27 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "size": {
+          "name": "size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "records_version_id_type_idx": {
-          "name": "records_version_id_type_idx",
+        "record_objects_record_id_idx": {
+          "name": "record_objects_record_id_idx",
           "columns": [
             {
-              "expression": "version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "type",
+              "expression": "record_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1021,23 +1028,8 @@
           "with": {}
         }
       },
-      "foreignKeys": {
-        "records_version_id_versions_id_fk": {
-          "name": "records_version_id_versions_id_fk",
-          "tableFrom": "records",
-          "tableTo": "versions",
-          "columnsFrom": ["version_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "records_version_id_record_id_pk": {
-          "name": "records_version_id_record_id_pk",
-          "columns": ["version_id", "record_id"]
-        }
-      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -1728,6 +1720,71 @@
         "version_files_version_id_file_hash_pk": {
           "name": "version_files_version_id_file_hash_pk",
           "columns": ["version_id", "file_hash"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.version_records": {
+      "name": "version_records",
+      "schema": "",
+      "columns": {
+        "version_id": {
+          "name": "version_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_hash": {
+          "name": "record_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "version_records_record_hash_idx": {
+          "name": "version_records_record_hash_idx",
+          "columns": [
+            {
+              "expression": "record_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "version_records_version_id_versions_id_fk": {
+          "name": "version_records_version_id_versions_id_fk",
+          "tableFrom": "version_records",
+          "tableTo": "versions",
+          "columnsFrom": ["version_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "version_records_record_hash_record_objects_hash_fk": {
+          "name": "version_records_record_hash_record_objects_hash_fk",
+          "tableFrom": "version_records",
+          "tableTo": "record_objects",
+          "columnsFrom": ["record_hash"],
+          "columnsTo": ["hash"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "version_records_version_id_record_hash_pk": {
+          "name": "version_records_version_id_record_hash_pk",
+          "columns": ["version_id", "record_hash"]
         }
       },
       "uniqueConstraints": {},

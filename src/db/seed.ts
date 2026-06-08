@@ -9,23 +9,53 @@ function hashSchema(schemaBody: unknown): string {
   return createHash('sha256').update(JSON.stringify(schemaBody)).digest('hex')
 }
 
+function hashRecord(record: { recordId: string; type: string; data: unknown }): {
+  hash: string
+  canonical: string
+} {
+  const canonical = JSON.stringify({ id: record.recordId, type: record.type, data: record.data })
+  const hash = createHash('sha256').update(canonical).digest('hex')
+  return { hash, canonical }
+}
+
 function computeVersionHash(
   schemaSet: { slug: string; schemaHash: string }[],
   records: { recordId: string; type: string; data: unknown }[],
   fileHashes: string[],
   readme: string | null,
 ): string {
+  const recordHashes = records.map((r) => hashRecord(r).hash)
   const canonical = JSON.stringify({
     schemas: Object.fromEntries(
       schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
     ),
-    records: records
-      .sort((a, b) => a.recordId.localeCompare(b.recordId))
-      .map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
+    records: [...recordHashes].sort(),
     files: fileHashes.sort(),
     readme: readme ?? null,
   })
   return 'private:' + createHash('sha256').update(canonical).digest('hex')
+}
+
+/** Insert records as content-addressed objects and link to a version */
+async function insertRecords(
+  versionId: number,
+  records: { recordId: string; type: string; data: unknown }[],
+): Promise<void> {
+  const objectRows = records.map((r) => {
+    const { hash, canonical } = hashRecord(r)
+    return {
+      hash,
+      recordId: r.recordId,
+      type: r.type,
+      data: r.data as any,
+      private: false,
+      size: Buffer.byteLength(canonical, 'utf8'),
+    }
+  })
+  await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
+  await db
+    .insert(schema.versionRecords)
+    .values(objectRows.map((r) => ({ versionId, recordHash: r.hash })))
 }
 
 /** Insert schemas into global table, returning schema IDs. Deduplicates by hash. */
@@ -69,7 +99,8 @@ async function seed() {
 
   if (existing.length > 0 && force) {
     console.log('[seed] --force: clearing existing data...')
-    await db.delete(schema.records)
+    await db.delete(schema.versionRecords)
+    await db.delete(schema.recordObjects)
     await db.delete(schema.versionSchemas)
     await db.delete(schema.versionFiles)
     await db.delete(schema.files)
@@ -361,14 +392,7 @@ async function seed() {
     })),
   )
 
-  await db.insert(schema.records).values(
-    pubpubRecords.map((r) => ({
-      versionId: pubpubVersion!.id,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data,
-    })),
-  )
+  await insertRecords(pubpubVersion!.id, pubpubRecords)
 
   console.log('[seed] Created collection: knowledge-futures/pubpub-archive (17 records)')
 
@@ -550,14 +574,7 @@ async function seed() {
     })),
   )
 
-  await db.insert(schema.records).values(
-    grantsRecords.map((r) => ({
-      versionId: grantsVersion!.id,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data,
-    })),
-  )
+  await insertRecords(grantsVersion!.id, grantsRecords)
 
   console.log('[seed] Created collection: knowledge-futures/open-grants (8 records)')
 
@@ -778,14 +795,7 @@ async function seed() {
     })),
   )
 
-  await db.insert(schema.records).values(
-    climateRecords.map((r) => ({
-      versionId: climateVersion!.id,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data,
-    })),
-  )
+  await insertRecords(climateVersion!.id, climateRecords)
 
   console.log('[seed] Created collection: knowledge-futures/climate-observations (12 records)')
 
@@ -934,14 +944,7 @@ async function seed() {
     })),
   )
 
-  await db.insert(schema.records).values(
-    pubnotesRecords.map((r) => ({
-      versionId: pubnotesVersion!.id,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data,
-    })),
-  )
+  await insertRecords(pubnotesVersion!.id, pubnotesRecords)
 
   console.log('[seed] Created collection: knowledge-futures/pub-notes (7 records)')
   console.log('[seed] Done.')

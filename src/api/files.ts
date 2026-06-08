@@ -77,13 +77,17 @@ async function isFilePubliclyAccessible(
   // Find public records that reference this file hash
   // A record references a file if its data JSON contains the hash string
   const records = await db
-    .select({ type: schema.records.type, data: schema.records.data })
-    .from(schema.records)
+    .select({ type: schema.recordObjects.type, data: schema.recordObjects.data })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
     .where(
       and(
-        eq(schema.records.versionId, latest.id),
-        eq(schema.records.private, false),
-        sql`${schema.records.data}::text LIKE ${'%' + fileHash + '%'}`,
+        eq(schema.versionRecords.versionId, latest.id),
+        eq(schema.recordObjects.private, false),
+        sql`${schema.recordObjects.data}::text LIKE ${'%' + fileHash + '%'}`,
       ),
     )
     .limit(10)

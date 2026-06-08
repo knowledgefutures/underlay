@@ -93,12 +93,16 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
   // Load records
   const records = await db
     .select({
-      recordId: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
     })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   // Build SQLite
   const buffer = buildSqliteBuffer(schemasMap, records as any)

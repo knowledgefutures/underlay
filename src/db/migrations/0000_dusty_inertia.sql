@@ -120,13 +120,14 @@ CREATE TABLE "organization" (
 	CONSTRAINT "organization_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
-CREATE TABLE "records" (
-	"version_id" bigint NOT NULL,
+CREATE TABLE "record_objects" (
+	"hash" text PRIMARY KEY NOT NULL,
 	"record_id" text NOT NULL,
 	"type" text NOT NULL,
 	"data" jsonb NOT NULL,
 	"private" boolean DEFAULT false NOT NULL,
-	CONSTRAINT "records_version_id_record_id_pk" PRIMARY KEY("version_id","record_id")
+	"size" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "schema_labels" (
@@ -226,6 +227,12 @@ CREATE TABLE "version_files" (
 	CONSTRAINT "version_files_version_id_file_hash_pk" PRIMARY KEY("version_id","file_hash")
 );
 --> statement-breakpoint
+CREATE TABLE "version_records" (
+	"version_id" bigint NOT NULL,
+	"record_hash" text NOT NULL,
+	CONSTRAINT "version_records_version_id_record_hash_pk" PRIMARY KEY("version_id","record_hash")
+);
+--> statement-breakpoint
 CREATE TABLE "version_schemas" (
 	"version_id" bigint NOT NULL,
 	"slug" text NOT NULL,
@@ -265,7 +272,6 @@ ALTER TABLE "invitation" ADD CONSTRAINT "invitation_organization_id_organization
 ALTER TABLE "invitation" ADD CONSTRAINT "invitation_inviter_id_user_id_fk" FOREIGN KEY ("inviter_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member" ADD CONSTRAINT "member_organization_id_organization_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organization"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "member" ADD CONSTRAINT "member_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "records" ADD CONSTRAINT "records_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "schema_labels" ADD CONSTRAINT "schema_labels_schema_id_schemas_id_fk" FOREIGN KEY ("schema_id") REFERENCES "public"."schemas"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "upload_records" ADD CONSTRAINT "upload_records_session_id_upload_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."upload_sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -273,6 +279,8 @@ ALTER TABLE "upload_sessions" ADD CONSTRAINT "upload_sessions_collection_id_coll
 ALTER TABLE "upload_sessions" ADD CONSTRAINT "upload_sessions_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_files" ADD CONSTRAINT "version_files_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_files" ADD CONSTRAINT "version_files_file_hash_files_hash_fk" FOREIGN KEY ("file_hash") REFERENCES "public"."files"("hash") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "version_records" ADD CONSTRAINT "version_records_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "version_records" ADD CONSTRAINT "version_records_record_hash_record_objects_hash_fk" FOREIGN KEY ("record_hash") REFERENCES "public"."record_objects"("hash") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_schemas" ADD CONSTRAINT "version_schemas_version_id_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."versions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "version_schemas" ADD CONSTRAINT "version_schemas_schema_id_schemas_id_fk" FOREIGN KEY ("schema_id") REFERENCES "public"."schemas"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "versions" ADD CONSTRAINT "versions_collection_id_collections_id_fk" FOREIGN KEY ("collection_id") REFERENCES "public"."collections"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -287,9 +295,10 @@ CREATE INDEX "invitation_email_idx" ON "invitation" USING btree ("email");--> st
 CREATE INDEX "member_organization_id_idx" ON "member" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "member_user_id_idx" ON "member" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "organization_slug_uidx" ON "organization" USING btree ("slug");--> statement-breakpoint
-CREATE INDEX "records_version_id_type_idx" ON "records" USING btree ("version_id","type");--> statement-breakpoint
+CREATE INDEX "record_objects_record_id_idx" ON "record_objects" USING btree ("record_id");--> statement-breakpoint
 CREATE INDEX "schema_labels_label_idx" ON "schema_labels" USING btree ("label");--> statement-breakpoint
 CREATE INDEX "session_user_id_idx" ON "session" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");--> statement-breakpoint
 CREATE INDEX "version_files_file_hash_idx" ON "version_files" USING btree ("file_hash");--> statement-breakpoint
+CREATE INDEX "version_records_record_hash_idx" ON "version_records" USING btree ("record_hash");--> statement-breakpoint
 CREATE INDEX "version_schemas_schema_id_idx" ON "version_schemas" USING btree ("schema_id");

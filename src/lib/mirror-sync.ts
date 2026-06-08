@@ -621,19 +621,31 @@ async function pullVersion(
     }
   }
 
-  // Insert records in batches
+  // Hash and upsert record objects, then link to version
+  const recordHashes: { versionId: number; recordHash: string }[] = []
   const BATCH_SIZE = 500
   for (let i = 0; i < allRecords.length; i += BATCH_SIZE) {
     const batch = allRecords.slice(i, i + BATCH_SIZE)
-    await db.insert(schema.records).values(
-      batch.map((r) => ({
-        versionId,
+    const objectRows = batch.map((r) => {
+      const canonical = JSON.stringify({ id: r.id, type: r.type, data: r.data })
+      const hash = createHash('sha256').update(canonical).digest('hex')
+      recordHashes.push({ versionId, recordHash: hash })
+      return {
+        hash,
         recordId: r.id,
         type: r.type,
         data: r.data as any,
         private: false,
-      })),
-    )
+        size: Buffer.byteLength(canonical, 'utf8'),
+      }
+    })
+    await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
+  }
+
+  // Insert version_records manifest in batches
+  for (let i = 0; i < recordHashes.length; i += BATCH_SIZE) {
+    const batch = recordHashes.slice(i, i + BATCH_SIZE)
+    await db.insert(schema.versionRecords).values(batch)
   }
 
   // Link files to version
