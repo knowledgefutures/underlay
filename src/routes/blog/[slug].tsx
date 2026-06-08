@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router'
 
 import BlogLayout from '~/components/BlogLayout'
-import { useSSRData } from '~/lib/ssr-data'
 
 // Blog post metadata
 const posts: Record<string, { title: string; subtitle: string; date: string }> = {

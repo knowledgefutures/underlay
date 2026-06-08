@@ -2,15 +2,15 @@ import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 export default function SettingsAvatar() {
-  const me = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [avatarUrl, setAvatarUrl] = useState(me?.avatarUrl ?? '')
+  const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatarUrl ?? '')
 
   async function handleUpload(e: FormEvent) {
     e.preventDefault()
@@ -49,8 +49,6 @@ export default function SettingsAvatar() {
       setSubmitting(false)
     }
   }
-
-  if (!me) return null
 
   return (
     <BaseLayout>
@@ -100,7 +98,7 @@ export default function SettingsAvatar() {
               />
             ) : (
               <div className="bg-parchment-dark border-rule text-ink-muted flex h-24 w-24 items-center justify-center rounded-full border text-2xl font-semibold">
-                {me.displayName?.charAt(0)?.toUpperCase() ?? '?'}
+                {currentUser.displayName?.charAt(0)?.toUpperCase() ?? '?'}
               </div>
             )}
             <div className="text-ink-muted text-sm">

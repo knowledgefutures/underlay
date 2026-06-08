@@ -3,13 +3,13 @@ import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
 
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [data, setData] = useState<any>(null)
   const [arkSettings, setArkSettings] = useState<any>({

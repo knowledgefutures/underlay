@@ -1,74 +1,92 @@
 import { PassThrough } from 'node:stream'
 
 import { renderToPipeableStream } from 'react-dom/server'
-import { StaticRouter } from 'react-router'
+import { createStaticHandler, createStaticRouter, StaticRouterProvider } from 'react-router'
 
-import App, { routes } from '~/App'
-import { SSRDataProvider } from '~/lib/ssr-data'
-import { runLoaders } from '~/loaders.server'
-import { matchRoutes } from '~/route-gen'
+import { routes } from '~/App'
 
-type LoaderResult = {
-  data: Record<string, unknown>
-  redirect?: string
-  statusCode?: number
-  title?: string
-  description?: string
-}
-
-export async function loadData(request: Request): Promise<LoaderResult> {
-  return runLoaders(matchRoutes(routes, request.url), request)
-}
+const handler = createStaticHandler(routes, { future: { v8_middleware: true } })
 
 export async function render(request: Request): Promise<{
   html: string
-  ssrData: Record<string, unknown>
+  hydrationData: string
   redirect?: string
   statusCode?: number
   title?: string
   description?: string
 }> {
-  const pathname = new URL(request.url, 'http://localhost').pathname
+  const context = await handler.query(request)
 
-  const result = await loadData(request).catch((err: unknown) => {
-    console.error('Loader error:', err)
-    return { data: {}, statusCode: 500 } as LoaderResult
-  })
-
-  if (result.redirect) {
+  if (context instanceof Response) {
     return {
       html: '',
-      ssrData: {},
-      redirect: result.redirect,
-      statusCode: result.statusCode ?? 302,
+      hydrationData: '{}',
+      redirect: context.headers.get('Location') ?? '/',
+      statusCode: context.status,
     }
   }
+
+  // Extract title from deepest matched route's handle
+  let title: string | undefined
+  let description: string | undefined
+  for (let i = context.matches.length - 1; i >= 0; i--) {
+    const match = context.matches[i]!
+    const handle = match.route.handle as
+      | {
+          title?: string | ((p: Record<string, string>, d: unknown) => string)
+          description?: string | ((p: Record<string, string>, d: unknown) => string)
+        }
+      | undefined
+    if (handle?.title && !title) {
+      title =
+        typeof handle.title === 'function'
+          ? handle.title(
+              match.params as Record<string, string>,
+              context.loaderData[match.route.id!],
+            )
+          : handle.title
+    }
+    if (handle?.description && !description) {
+      description =
+        typeof handle.description === 'function'
+          ? handle.description(
+              match.params as Record<string, string>,
+              context.loaderData[match.route.id!],
+            )
+          : handle.description
+    }
+    if (title && description) break
+  }
+
+  const router = createStaticRouter(handler.dataRoutes, context)
 
   return new Promise((resolve, reject) => {
     let html = ''
     const passthrough = new PassThrough()
-    passthrough.on('data', (chunk) => {
+    passthrough.on('data', (chunk: Buffer) => {
       html += chunk.toString()
     })
 
     const { pipe } = renderToPipeableStream(
-      <StaticRouter location={pathname}>
-        <SSRDataProvider data={result.data}>
-          <App />
-        </SSRDataProvider>
-      </StaticRouter>,
+      <StaticRouterProvider router={router} context={context} />,
       {
         onAllReady() {
           pipe(passthrough)
-          passthrough.on('end', () =>
+          passthrough.on('end', () => {
+            const hydrationData = JSON.stringify({
+              loaderData: context.loaderData,
+              actionData: context.actionData ?? null,
+              errors: context.errors ?? null,
+            }).replace(/</g, '\\u003c')
+
             resolve({
               html,
-              ssrData: result.data,
-              ...(result.statusCode !== undefined && { statusCode: result.statusCode }),
-              ...(result.title !== undefined && { title: result.title }),
-              ...(result.description !== undefined && { description: result.description }),
-            }),
-          )
+              hydrationData,
+              ...(context.statusCode !== 200 && { statusCode: context.statusCode }),
+              ...(title !== undefined && { title }),
+              ...(description !== undefined && { description }),
+            })
+          })
         },
         onError: reject,
       },

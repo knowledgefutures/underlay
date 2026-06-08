@@ -2,14 +2,10 @@ import { Link } from 'react-router'
 
 import QueryExplorer from '~/components/QueryExplorer'
 import UserMenu from '~/components/UserMenu'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 export default function QueryPage() {
-  const currentUser = useSSRData<{
-    slug: string
-    displayName: string
-    orgs?: { slug: string; displayName: string }[]
-  } | null>('currentUser')
+  const { currentUser } = useAppContext()
 
   return (
     <div className="flex h-screen flex-col overflow-hidden font-sans text-[15px] leading-relaxed">

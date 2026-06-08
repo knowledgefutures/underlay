@@ -1,27 +1,35 @@
-import { lazy, Suspense } from 'react'
-import { Route, Routes } from 'react-router'
+import type { LoaderFunctionArgs, RouteObject } from 'react-router'
 
-import { AppErrorBoundary } from '~/components/NotFound'
-import { buildRoutes } from '~/route-gen'
+import Root from '~/components/Root'
+import { buildDataRoutes } from '~/route-gen'
 
-const modules = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
-const routes = buildRoutes(modules)
+const components = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
+const dataModules = import.meta.glob<{
+  loader?: RouteObject['loader']
+  handle?: unknown
+  middleware?: RouteObject['middleware']
+}>('./routes/**/*.data.ts', { eager: true })
 
-const componentMap = new Map(routes.map((r) => [r.path, lazy(modules[r.filePath]!)]))
-
-export { routes }
-
-export default function App() {
-  return (
-    <AppErrorBoundary>
-      <Suspense>
-        <Routes>
-          {routes.map((r) => {
-            const Page = componentMap.get(r.path)
-            return Page ? <Route key={r.path} path={r.path} element={<Page />} /> : null
-          })}
-        </Routes>
-      </Suspense>
-    </AppErrorBoundary>
-  )
+async function rootLoader({ request }: LoaderFunctionArgs) {
+  const res = await fetch(new URL('/api/context', request.url), {
+    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+  })
+  if (!res.ok) {
+    return {
+      currentUser: null,
+      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '', apiKey: '' },
+      kfAccountUrl: '',
+      kfAuthUrl: '',
+    }
+  }
+  return res.json()
 }
+
+export const routes: RouteObject[] = [
+  {
+    id: 'root',
+    Component: Root,
+    loader: rootLoader,
+    children: buildDataRoutes(components, dataModules),
+  },
+]

@@ -2,10 +2,10 @@ import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 export default function InvitationsAccept() {
-  const me = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
   const token = params.get('token') ?? ''
@@ -63,7 +63,7 @@ export default function InvitationsAccept() {
         ) : error ? (
           <div className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
             <p>{error}</p>
-            {!me && token && (
+            {!currentUser && token && (
               <p className="mt-2 text-xs">
                 You may need to{' '}
                 <a
@@ -85,7 +85,7 @@ export default function InvitationsAccept() {
           </div>
         ) : (
           <>
-            {!me ? (
+            {!currentUser ? (
               <div className="space-y-3">
                 <p className="text-ink-muted text-sm">
                   You've been invited to join an organization. Please log in or sign up to accept.

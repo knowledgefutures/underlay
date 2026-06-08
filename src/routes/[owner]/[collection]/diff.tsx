@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
 
@@ -19,7 +19,7 @@ function groupByType(records: any[]) {
 export default function CollectionDiffPage() {
   const { owner, collection } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [data, setData] = useState<any>(null)
   const [versions, setVersions] = useState<any[]>([])
