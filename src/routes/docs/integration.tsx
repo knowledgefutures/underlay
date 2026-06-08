@@ -258,6 +258,34 @@ export default function DocsIntegration() {
         </tbody>
       </table>
 
+      <h2>Efficient Pushes (Hash Negotiation)</h2>
+      <p>
+        For collections where most records are unchanged between versions, the{' '}
+        <Link to="/protocol#push" className="text-link underline">
+          negotiate protocol
+        </Link>{' '}
+        avoids transferring data the server already has:
+      </p>
+      <ol>
+        <li>
+          <strong>Negotiate:</strong> <code>POST .../versions/negotiate</code> with your schemas and
+          a manifest of record hashes. The server responds with which hashes it needs.
+        </li>
+        <li>
+          <strong>Commit:</strong> <code>POST .../versions/negotiate/:sessionId/commit</code> with
+          only the missing records as JSONL. If 100,000 records already exist and 5 are new, only 5
+          lines are sent.
+        </li>
+      </ol>
+      <p>
+        Record hashes are SHA-256 of the canonical JSON:{' '}
+        <code>{'JSON.stringify({id, type, data})'}</code>. Sessions expire after 10 minutes. See the{' '}
+        <Link to="/protocol" className="text-link underline">
+          Protocol spec
+        </Link>{' '}
+        for the full hashing specification.
+      </p>
+
       <h2>Large Pushes (Chunked Upload)</h2>
       <p>
         For pushes exceeding 100MB or containing hundreds of thousands of records, use the chunked

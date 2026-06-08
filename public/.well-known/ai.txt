@@ -52,7 +52,7 @@ To get the higher limit, authenticate with an API key (recommended for any autom
 - Organization: an entity that owns collections. Every user gets a default organization on signup. Identified by :slug. Managed via better-auth's organization plugin at /api/auth/organization/*.
 - Collection: a named, versioned body of data owned by an organization. Identified by :owner/:slug.
 - Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
-- Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
+- Record: a flat JSON object with { id, type, data }. Records are content-addressed: the SHA-256 hash of the canonical JSON `{"id":...,"type":...,"data":...}` is the record's identity. Records are stored globally and deduplicated — the same record in ten collections is stored once. Records reference other records by id and files by hash. Wire format is JSONL (one record per line).
 - File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
 - Schema: a JSON Schema document for a single record type, stored as a global, immutable, content-addressed entity. Each type gets its own schema. Schema changes trigger a major version bump.
 - Schema labeling: schemas can be labeled post-hoc with URIs or names (e.g. "schema.org/Person") for cross-collection discovery.
@@ -72,9 +72,13 @@ GET /api/collections/:owner/:slug/versions/:n            → specific version by
 
 ### Read records and files
 GET /api/collections/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&after=recordId)
-GET /api/collections/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
+GET /api/collections/:owner/:slug/versions/:n/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=M for delta)
 GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
 HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
+
+### Records (global, content-addressed)
+GET /api/records/:hash/provenance                        → find all collections/versions containing this record hash
+POST /api/records/batch                                  → fetch records by hash: {"hashes": ["abc..."]} → JSONL stream
 
 ### Diff
 GET /api/collections/:owner/:slug/versions/:n/diff?from=:m → diff between version m and n (added, updated, removed records)
@@ -103,9 +107,14 @@ Response:
   "version": 3,
   "semver": "v1.2.0",
   "hash": "abc123...",
-  "records": [{"id": "rec-1", "type": "Article"}, ...],
+  "schemas": {"Article": "schema-hash...", ...},
+  "records": [{"id": "rec-1", "type": "Article", "hash": "record-hash..."}, ...],
   "files": ["deadbeef...", ...]
 }
+
+For delta manifests, add ?since=M to get only the changes between version M and N:
+GET /api/collections/:owner/:slug/versions/:n/manifest?since=:m
+Response includes "delta": { "added": [...], "updated": [...], "removed": [...] }
 
 Compare this against your local data to determine what changed.
 
@@ -184,6 +193,61 @@ Missing files (422 — records reference files not yet uploaded):
 
 ### First push (no existing versions)
 Set base_version to null. Put all records in changes.added. Include schemas for all types.
+
+---
+
+## Negotiate Push: Hash-Efficient Transfers
+
+For large collections where most records are unchanged between versions, the negotiate protocol
+avoids transferring data the server already has — similar to git's pack negotiation.
+
+### Step 1: Send the manifest
+POST /api/collections/:owner/:slug/versions/negotiate
+Authorization: Bearer ul_<key>
+
+{
+  "base_version": 3,
+  "schemas": { "Article": { ... } },
+  "manifest": [
+    {"id": "article-1", "type": "Article", "hash": "abc123..."},
+    {"id": "article-2", "type": "Article", "hash": "def456..."}
+  ],
+  "files": ["7a8b9c..."],
+  "message": "Daily update"
+}
+
+Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`.
+
+Response:
+{
+  "session_id": "uuid",
+  "needed_records": ["def456..."],
+  "needed_files": [],
+  "total_records": 2,
+  "already_have_records": 1
+}
+
+### Step 2: Send only the missing records
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+Content-Type: application/x-ndjson
+Authorization: Bearer ul_<key>
+
+{"id":"article-2","type":"Article","data":{"title":"New Paper","body":"..."}}
+
+Each line is one record as JSON. The server verifies each record hashes to an expected hash from step 1.
+If 100,000 records already exist and only 5 are new, only 5 lines are sent.
+
+Response (201):
+{
+  "version": 4,
+  "semver": "v1.3.0",
+  "hash": "...",
+  "recordCount": 2,
+  "records_transferred": 1,
+  "records_deduplicated": 1
+}
+
+Sessions expire after 10 minutes. If the session expires, re-negotiate.
 
 ---
 
@@ -340,8 +404,10 @@ When schemas are returned via the collection schemas endpoint, known labels are 
 - Versions are sequential integers (1, 2, 3, ...).
 - Semver is derived automatically: schema change → major, record change → minor, metadata-only → patch.
 - Schema change = any type's schema_id changed, or types added/removed between versions.
-- Each version has a content-addressed hash computed from sorted type→schema_hash map + sorted records + sorted file hashes.
+- Each version has a content-addressed hash computed from sorted schema hashes + sorted record hashes + sorted file hashes + readme.
+- Records are content-addressed: SHA-256 of canonical JSON `{"id":...,"type":...,"data":...}`. Records are globally deduplicated.
 - Versions are immutable once created.
+- The provenance endpoint (GET /api/records/:hash/provenance) shows every collection and version that includes a given record.
 
 ---
 
@@ -446,5 +512,6 @@ POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 ---
 
 Full documentation: https://underlay.org/docs
+Protocol specification: https://underlay.org/protocol
 Integration guide: https://underlay.org/docs/integration
 Source code: https://github.com/knowledgefutures/underlay
