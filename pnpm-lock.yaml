@@ -38,6 +38,9 @@ importers:
       '@sinclair/typebox':
         specifier: ^0.34.0
         version: 0.34.49
+      '@underlay/core':
+        specifier: workspace:*
+        version: link:packages/core
       ajv:
         specifier: ^8.17.0
         version: 8.20.0
@@ -162,6 +165,35 @@ importers:
       vitest:
         specifier: ^4.1.6
         version: 4.1.6(@types/node@25.6.2)(happy-dom@20.9.0)(vite@6.4.2(@types/node@25.6.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))
+
+  packages/cli:
+    dependencies:
+      '@underlay/core':
+        specifier: workspace:*
+        version: link:../core
+      commander:
+        specifier: ^14.0.0
+        version: 14.0.3
+    devDependencies:
+      '@types/node':
+        specifier: ^25.0.0
+        version: 25.6.2
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+
+  packages/core:
+    dependencies:
+      ajv:
+        specifier: ^8.17.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.0
+        version: 3.0.1(ajv@8.20.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^25.0.0
+        version: 25.6.2
 
 packages:
 
@@ -2042,6 +2074,10 @@ packages:
 
   codemirror@6.0.2:
     resolution: {integrity: sha512-VhydHotNW5w1UGK0Qj96BwSk/Zqbp9WbnyK2W/eVMv4QyF41INRGpjUhFJY7/uDNuudSc33a/PKr4iDqRduvHw==}
+
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -4788,6 +4824,8 @@ snapshots:
       '@codemirror/search': 6.7.0
       '@codemirror/state': 6.6.0
       '@codemirror/view': 6.42.1
+
+  commander@14.0.3: {}
 
   convert-source-map@2.0.0: {}
 

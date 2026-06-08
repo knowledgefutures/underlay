@@ -718,3 +718,180 @@ export async function exportArchive(c: Context<AuthEnv>) {
     'Content-Disposition': `attachment; filename="${filename}"`,
   })
 }
+
+// Fork a collection into the caller's org
+export async function fork(c: Context<AuthEnv>) {
+  const sourceOwner = c.req.param('owner')!
+  const sourceSlug = c.req.param('slug')!
+  const { targetOrg, slug: targetSlug } = await c.req.json<{
+    targetOrg: string
+    slug?: string
+  }>()
+
+  // Resolve source collection
+  const [source] = await db
+    .select({
+      id: schema.collections.id,
+      slug: schema.collections.slug,
+      name: schema.collections.name,
+      description: schema.collections.description,
+      public: schema.collections.public,
+      organizationId: schema.collections.organizationId,
+    })
+    .from(schema.collections)
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, sourceOwner), eq(schema.collections.slug, sourceSlug)))
+    .limit(1)
+
+  if (!source) {
+    return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+  }
+  if (!source.public) {
+    return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+  }
+
+  // Resolve target org and verify membership
+  const [targetOrgRow] = await db
+    .select()
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, targetOrg))
+    .limit(1)
+
+  if (!targetOrgRow) {
+    return c.json({ error: 'Target org not found', statusCode: 404 }, 404)
+  }
+
+  const [membership] = await db
+    .select()
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, targetOrgRow.id),
+        eq(schema.member.userId, c.get('userId')!),
+      ),
+    )
+    .limit(1)
+  if (!membership) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+
+  const newSlug = targetSlug ?? source.slug
+
+  // Check for existing collection with same slug
+  const [existing] = await db
+    .select({ id: schema.collections.id })
+    .from(schema.collections)
+    .where(
+      and(
+        eq(schema.collections.organizationId, targetOrgRow.id),
+        eq(schema.collections.slug, newSlug),
+      ),
+    )
+    .limit(1)
+
+  if (existing) {
+    return c.json({ error: 'Collection already exists in target org', statusCode: 409 }, 409)
+  }
+
+  // Get latest version of source
+  const [latestVersion] = await db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.collectionId, source.id))
+    .orderBy(desc(schema.versions.number))
+    .limit(1)
+
+  if (!latestVersion) {
+    return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)
+  }
+
+  // Create forked collection
+  const newCollectionId = uuidv4()
+  await db.insert(schema.collections).values({
+    id: newCollectionId,
+    organizationId: targetOrgRow.id,
+    slug: newSlug,
+    name: source.name,
+    description: source.description,
+    public: false,
+    forkedFrom: source.id,
+  })
+
+  // Create version 1 in the fork referencing the same objects
+  const [newVersion] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId: newCollectionId,
+      number: 1,
+      semver: 'v1.0.0',
+      hash: latestVersion.hash,
+      publicHash: latestVersion.publicHash,
+      baseNumber: null,
+      message: `Forked from ${sourceOwner}/${sourceSlug} v${latestVersion.number}`,
+      readme: latestVersion.readme,
+      pushedBy: c.get('userId') ?? null,
+      appId: 'fork',
+      recordCount: latestVersion.recordCount,
+      fileCount: latestVersion.fileCount,
+      totalBytes: latestVersion.totalBytes,
+    })
+    .returning({ id: schema.versions.id })
+
+  if (!newVersion) {
+    return c.json({ error: 'Failed to create version', statusCode: 500 }, 500)
+  }
+
+  // Copy version_records (references same record_objects — zero storage cost)
+  const sourceRecords = await db
+    .select({ recordHash: schema.versionRecords.recordHash })
+    .from(schema.versionRecords)
+    .where(eq(schema.versionRecords.versionId, latestVersion.id))
+
+  if (sourceRecords.length > 0) {
+    await db
+      .insert(schema.versionRecords)
+      .values(sourceRecords.map((r) => ({ versionId: newVersion.id, recordHash: r.recordHash })))
+  }
+
+  // Copy version_files
+  const sourceFiles = await db
+    .select({ fileHash: schema.versionFiles.fileHash })
+    .from(schema.versionFiles)
+    .where(eq(schema.versionFiles.versionId, latestVersion.id))
+
+  if (sourceFiles.length > 0) {
+    await db
+      .insert(schema.versionFiles)
+      .values(sourceFiles.map((f) => ({ versionId: newVersion.id, fileHash: f.fileHash })))
+  }
+
+  // Copy version_schemas
+  const sourceSchemas = await db
+    .select({ slug: schema.versionSchemas.slug, schemaId: schema.versionSchemas.schemaId })
+    .from(schema.versionSchemas)
+    .where(eq(schema.versionSchemas.versionId, latestVersion.id))
+
+  if (sourceSchemas.length > 0) {
+    await db
+      .insert(schema.versionSchemas)
+      .values(
+        sourceSchemas.map((s) => ({
+          versionId: newVersion.id,
+          slug: s.slug,
+          schemaId: s.schemaId,
+        })),
+      )
+  }
+
+  return c.json(
+    {
+      id: newCollectionId,
+      owner: targetOrg,
+      slug: newSlug,
+      name: source.name,
+      forkedFrom: { owner: sourceOwner, slug: sourceSlug, version: latestVersion.number },
+      version: { number: 1, semver: 'v1.0.0', recordCount: latestVersion.recordCount },
+    },
+    201,
+  )
+}

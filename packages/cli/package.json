@@ -1,0 +1,23 @@
+{
+  "name": "@underlay/cli",
+  "version": "0.1.0",
+  "bin": {
+    "underlay": "./dist/cli.js"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsx src/cli.ts --help > /dev/null",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@underlay/core": "workspace:*",
+    "commander": "^14.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.0",
+    "tsx": "^4.19.0"
+  }
+}

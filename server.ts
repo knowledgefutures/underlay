@@ -172,6 +172,7 @@ app.delete('/api/collections/:owner/:slug', requireAuth('admin'), collections.re
 app.post('/api/collections/:owner/:slug/transfer', requireAuth(), collections.transfer)
 app.get('/api/accounts/:owner/collections', collections.listByOwner)
 app.get('/api/collections/:owner/:slug/export', collections.exportArchive)
+app.post('/api/collections/:owner/:slug/fork', requireAuth('write'), collections.fork)
 
 // Files
 app.on('HEAD', '/api/collections/:owner/:slug/files/:hash', files.headFile)

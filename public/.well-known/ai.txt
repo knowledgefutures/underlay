@@ -87,6 +87,13 @@ GET /api/collections/:owner/:slug/versions/:n/diff?from=:m → diff between vers
 GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
 GET /api/collections/:owner/:slug/export?version=3      → export a specific version
 
+### Fork
+POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth)
+  Body: { "targetOrg": "my-org", "slug": "optional-new-slug" }
+  Creates a new collection under targetOrg with the source's latest version.
+  Records, schemas, and files are referenced (not copied) — zero additional storage.
+  Response includes { id, owner, slug, forkedFrom: { owner, slug, version } }.
+
 ---
 
 ## Writing Data: The Push Flow

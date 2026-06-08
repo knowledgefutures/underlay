@@ -39,6 +39,7 @@
     "@codemirror/view": "^6.41.1",
     "@hono/node-server": "^1",
     "@sinclair/typebox": "^0.34.0",
+    "@underlay/core": "workspace:*",
     "ajv": "^8.17.0",
     "ajv-formats": "^3.0.0",
     "bcrypt": "^6.0.0",

@@ -320,6 +320,12 @@ export default function Protocol() {
               <strong>Mirroring</strong> — Any Underlay instance can pull from another, using hash
               negotiation to transfer only new data. Mirrors maintain verified, independent copies.
             </li>
+            <li>
+              <strong>Forking</strong> — <code>POST .../fork</code> creates a new collection under
+              your org with the source's latest version. Because records, schemas, and files are
+              content-addressed, forking copies only the manifest — zero additional storage. The
+              fork tracks its origin via <code>forkedFrom</code>.
+            </li>
           </ul>
 
           <h2 id="errors">Errors</h2>
