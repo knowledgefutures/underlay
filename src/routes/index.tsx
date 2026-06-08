@@ -1,16 +1,10 @@
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useSSRData } from '~/lib/ssr-data'
-
-interface MirrorConfig {
-  enabled: boolean
-  nodeName: string
-  upstream: string
-}
+import { useAppContext } from '~/lib/app-context'
 
 export default function Home() {
-  const mirrorConfig = useSSRData<MirrorConfig>('mirrorConfig')
+  const { mirrorConfig } = useAppContext()
 
   if (mirrorConfig?.enabled) {
     return (

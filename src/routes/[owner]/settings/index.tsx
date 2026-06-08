@@ -3,11 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
-import { useSSRData } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 export default function OwnerSettings() {
   const { owner } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [orgData, setOrgData] = useState<any>(null)
   const [isOwner, setIsOwner] = useState(false)

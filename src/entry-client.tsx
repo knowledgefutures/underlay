@@ -1,18 +1,25 @@
 import { hydrateRoot } from 'react-dom/client'
-import { BrowserRouter } from 'react-router'
+import { createBrowserRouter, RouterProvider } from 'react-router'
 
-import App from '~/App'
-import { getClientSSRData, SSRDataProvider } from '~/lib/ssr-data'
+import { routes } from '~/App'
 
 import '~/global.css'
 
-const ssrData = getClientSSRData()
+const router = createBrowserRouter(routes, {
+  hydrationData: (window as any).__staticRouterHydrationData,
+  future: { v8_middleware: true },
+})
 
-hydrateRoot(
-  document.getElementById('root')!,
-  <BrowserRouter>
-    <SSRDataProvider data={ssrData}>
-      <App />
-    </SSRDataProvider>
-  </BrowserRouter>,
-)
+// Wait for React.lazy route components to resolve before hydrating
+if (!router.state.initialized) {
+  await new Promise<void>((resolve) => {
+    const unsub = router.subscribe((state) => {
+      if (state.initialized) {
+        unsub()
+        resolve()
+      }
+    })
+  })
+}
+
+hydrateRoot(document.getElementById('root')!, <RouterProvider router={router} />)

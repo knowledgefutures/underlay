@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { useSSRData } from '~/lib/ssr-data'
 
 export default function LogoutPage() {
-  const kfAuthUrl = useSSRData<string>('kfAuthUrl')
+  const { kfAuthUrl } = useAppContext()
 
   useEffect(() => {
     authClient.signOut().then(() => {

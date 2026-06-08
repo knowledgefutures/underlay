@@ -10,7 +10,7 @@ function serverOnly(): import('vite').Plugin {
     resolveId(source, importer) {
       if (source.endsWith('.server') || source.includes('.server.')) {
         if (importer && !importer.includes('.server.') && !importer.includes('entry-server')) {
-          if (importer.endsWith('server.ts') || importer.includes('loaders.server')) {
+          if (importer.endsWith('server.ts')) {
             return null
           }
           this.error(`Cannot import server-only module "${source}" from client code "${importer}"`)

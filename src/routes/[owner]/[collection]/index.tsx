@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { marked } from 'marked'
+import { useMemo } from 'react'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
-import { useSSRData, useSSRNavigating } from '~/lib/ssr-data'
+import { useAppContext } from '~/lib/app-context'
 
 function CollectionNav({
   owner,
@@ -85,11 +85,8 @@ function formatBytes(bytes: number): string {
 
 export default function CollectionPage() {
   const { owner, collection } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
-  const mirrorConfig = useSSRData<any>('mirrorConfig')
-  const data = useSSRData<any>('collection')
-  const navigating = useSSRNavigating()
-  const [readmeHtml, setReadmeHtml] = useState<string | null>(null)
+  const { currentUser, mirrorConfig } = useAppContext()
+  const data = useLoaderData() as any
 
   const isOwner = useMemo(
     () =>
@@ -98,46 +95,10 @@ export default function CollectionPage() {
     [currentUser, owner],
   )
 
-  useEffect(() => {
-    const readmeSource = data?.latestVersion?.readme || data?.latestVersion?.message || null
-    if (readmeSource) {
-      import('marked').then(({ marked }) => {
-        setReadmeHtml(marked.parse(readmeSource) as string)
-      })
-    } else {
-      setReadmeHtml(null)
-    }
+  const readmeHtml = useMemo(() => {
+    const source = data?.latestVersion?.readme || data?.latestVersion?.message || null
+    return source ? (marked.parse(source) as string) : null
   }, [data])
-
-  // Client navigation: data hasn't arrived yet — show skeleton
-  if (navigating && !data) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-5xl px-4 py-8">
-          <div className="mb-2 flex items-center gap-1.5 text-lg">
-            <span className="text-link">{owner}</span>
-            <span className="text-ink-muted">/</span>
-            <span className="font-semibold">{collection}</span>
-          </div>
-          <div className="border-rule mb-6 border-b pb-2" />
-          <div className="grid grid-cols-[1fr_260px] gap-8">
-            <div className="space-y-4">
-              <div className="border-rule bg-parchment-dark h-14 animate-pulse rounded border" />
-              <div className="border-rule bg-parchment-dark h-48 animate-pulse rounded border" />
-              <div className="border-rule bg-parchment-dark h-32 animate-pulse rounded border" />
-            </div>
-            <div className="space-y-4">
-              <div className="border-rule bg-parchment-dark h-24 animate-pulse rounded border" />
-              <div className="border-rule bg-parchment-dark h-32 animate-pulse rounded border" />
-            </div>
-          </div>
-        </div>
-      </BaseLayout>
-    )
-  }
-
-  // SSR or data arrived: no collection found
-  if (!data) throw new NotFoundError()
 
   const totalVersions = data.latestVersion?.number ?? 0
   const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
@@ -210,6 +171,7 @@ export default function CollectionPage() {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
+                      timeZone: 'UTC',
                     })}
                   </span>
                   <Link

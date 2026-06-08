@@ -4,8 +4,8 @@ import { Link, useParams } from 'react-router'
 import { ApiPlayground } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { useSSRData } from '~/lib/ssr-data'
 
 interface Key {
   id: string
@@ -37,7 +37,7 @@ function getScope(permissions?: Record<string, string[]>): string {
 
 export default function OwnerSettingsKeys() {
   const { owner } = useParams()
-  const currentUser = useSSRData<any>('currentUser')
+  const { currentUser } = useAppContext()
 
   const [orgData, setOrgData] = useState<any>(null)
   const [isAdmin, setIsAdmin] = useState(false)
