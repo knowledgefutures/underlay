@@ -15,7 +15,7 @@ export default function LogoutPage() {
         : '/'
       window.location.href = signoutUrl
     })
-  }, [])
+  }, [kfAuthUrl])
 
   return (
     <BaseLayout>

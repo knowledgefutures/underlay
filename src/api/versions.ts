@@ -25,6 +25,8 @@ import {
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv, requireAuth } from './auth.server.js'
 
+const MAX_METADATA_BYTES = 64 * 1024
+
 const app = new Hono<AuthEnv>()
   // List versions
   .get(
@@ -860,13 +862,25 @@ const app = new Hono<AuthEnv>()
       summary: 'Update collection metadata, creating a new patch version',
       request: {
         param: z.object({ owner: z.string(), slug: z.string() }),
-        json: z.any(),
+        // Metadata is a free-form JSON object (readme, description, license, ...)
+        json: z.record(z.string(), z.unknown()),
       },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const body = c.req.valid('json') as Record<string, unknown>
+      const body = c.req.valid('json')
+
+      // Metadata is hashed and stored on every version row — keep it bounded
+      if (JSON.stringify(body).length > MAX_METADATA_BYTES) {
+        return c.json(
+          {
+            error: `Metadata exceeds maximum size of ${MAX_METADATA_BYTES} bytes`,
+            statusCode: 413,
+          },
+          413,
+        )
+      }
 
       const collection = await resolveCollection(owner, slug)
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
