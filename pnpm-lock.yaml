@@ -72,8 +72,8 @@ importers:
         specifier: ^4
         version: 4.12.18
       hono-zod-openapi:
-        specifier: ^0.5.0
-        version: 0.5.0(hono@4.12.18)(zod@3.25.76)
+        specifier: ^1.1.1
+        version: 1.1.1(hono@4.12.18)(zod@4.4.3)
       lucide-react:
         specifier: ^1.11.0
         version: 1.14.0(react@19.2.6)
@@ -111,8 +111,8 @@ importers:
         specifier: ^14.0.0
         version: 14.0.0
       zod:
-        specifier: ^3
-        version: 3.25.76
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.1.0
@@ -997,11 +997,11 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@hono/zod-validator@0.4.3':
-    resolution: {integrity: sha512-xIgMYXDyJ4Hj6ekm9T9Y27s080Nl9NXHcJkOvkXPhubOLj8hZkOL8pDnnXfvCf5xEE8Q4oMFenQUZZREUY2gqQ==}
+  '@hono/zod-validator@0.7.6':
+    resolution: {integrity: sha512-Io1B6d011Gj1KknV4rXYz4le5+5EubcWEU/speUjuw9XMMIaP3n78yXLhjd2A3PXaXaUwEAluOiAyLqhBEJgsw==}
     peerDependencies:
       hono: '>=3.9.0'
-      zod: ^3.19.1
+      zod: ^3.25.0 || ^4.0.0
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -2362,11 +2362,12 @@ packages:
     resolution: {integrity: sha512-GZZ9mKe8r646NUAf/zemnGbjYh4Bt8/MqASJY+pSm5ZDtc3YQox+4gsLI7yi1hba6o+eCsGxpHn5+iEVn31/FQ==}
     engines: {node: '>=20.0.0'}
 
-  hono-zod-openapi@0.5.0:
-    resolution: {integrity: sha512-jXRvuqa2n1DmwRpAFCluiBd7JupM7cE6vAM5CZM9LsLwZqtadwePzbdLe+t7F5fC3p1DXulKOZ2nj09X6+87tg==}
+  hono-zod-openapi@1.1.1:
+    resolution: {integrity: sha512-L8ZRSxOYnPYxEmj2O1MgRKzEpa0nW3ThZyczwvq6kc9q2pwAyys5qKkEi2AYRfIMgu6eXptgM9QaoqZbZJeYfw==}
+    engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4.6.10
-      zod: ^3.21.4
+      hono: ^4.8.0
+      zod: ^4.0.0
 
   hono@4.12.18:
     resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
@@ -3005,14 +3006,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  zod-openapi@4.2.4:
-    resolution: {integrity: sha512-tsrQpbpqFCXqVXUzi3TPwFhuMtLN3oNZobOtYnK6/5VkXsNdnIgyNr4r8no4wmYluaxzN3F7iS+8xCW8BmMQ8g==}
-    engines: {node: '>=18'}
+  zod-openapi@5.4.6:
+    resolution: {integrity: sha512-P2jsOOBAq/6hCwUsMCjUATZ8szkMsV5VAwZENfyxp2Hc/XPJQpVwAgevWZc65xZauCwWB9LAn7zYeiCJFAEL+A==}
+    engines: {node: '>=20'}
     peerDependencies:
-      zod: ^3.21.4
-
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+      zod: ^3.25.74 || ^4.0.0
 
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
@@ -3593,7 +3591,7 @@ snapshots:
       '@better-fetch/fetch': 1.1.21
       '@opentelemetry/semantic-conventions': 1.41.1
       '@standard-schema/spec': 1.1.0
-      better-call: 1.3.5(zod@3.25.76)
+      better-call: 1.3.5(zod@4.4.3)
       jose: 6.2.3
       kysely: 0.28.17
       nanostores: 1.3.0
@@ -3933,10 +3931,10 @@ snapshots:
     dependencies:
       hono: 4.12.18
 
-  '@hono/zod-validator@0.4.3(hono@4.12.18)(zod@3.25.76)':
+  '@hono/zod-validator@0.7.6(hono@4.12.18)(zod@4.4.3)':
     dependencies:
       hono: 4.12.18
-      zod: 3.25.76
+      zod: 4.4.3
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -4836,7 +4834,7 @@ snapshots:
       '@better-fetch/fetch': 1.1.21
       '@noble/ciphers': 2.2.0
       '@noble/hashes': 2.2.0
-      better-call: 1.3.5(zod@3.25.76)
+      better-call: 1.3.5(zod@4.4.3)
       defu: 6.1.7
       jose: 6.2.3
       kysely: 0.28.17
@@ -4853,14 +4851,14 @@ snapshots:
       - '@cloudflare/workers-types'
       - '@opentelemetry/api'
 
-  better-call@1.3.5(zod@3.25.76):
+  better-call@1.3.5(zod@4.4.3):
     dependencies:
       '@better-auth/utils': 0.4.0
       '@better-fetch/fetch': 1.1.21
       rou3: 0.7.12
       set-cookie-parser: 3.1.0
     optionalDependencies:
-      zod: 3.25.76
+      zod: 4.4.3
 
   better-sqlite3@12.9.0:
     dependencies:
@@ -5135,12 +5133,12 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  hono-zod-openapi@0.5.0(hono@4.12.18)(zod@3.25.76):
+  hono-zod-openapi@1.1.1(hono@4.12.18)(zod@4.4.3):
     dependencies:
-      '@hono/zod-validator': 0.4.3(hono@4.12.18)(zod@3.25.76)
+      '@hono/zod-validator': 0.7.6(hono@4.12.18)(zod@4.4.3)
       hono: 4.12.18
-      zod: 3.25.76
-      zod-openapi: 4.2.4(zod@3.25.76)
+      zod: 4.4.3
+      zod-openapi: 5.4.6(zod@4.4.3)
 
   hono@4.12.18: {}
 
@@ -5716,10 +5714,8 @@ snapshots:
   yaml@2.9.0:
     optional: true
 
-  zod-openapi@4.2.4(zod@3.25.76):
+  zod-openapi@5.4.6(zod@4.4.3):
     dependencies:
-      zod: 3.25.76
-
-  zod@3.25.76: {}
+      zod: 4.4.3
 
   zod@4.4.3: {}
