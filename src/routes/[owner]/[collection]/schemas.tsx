@@ -1,8 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
@@ -10,54 +9,31 @@ import { CollectionNav } from '.'
 export default function CollectionSchemasPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
+  const { data, schemas: schemasData } = useLoaderData() as { data: any; schemas: any }
 
-  const [data, setData] = useState<any>(null)
-  const [isOwner, setIsOwner] = useState(false)
-  const [schemas, setSchemas] = useState<any[]>([])
-  const [schemasData, setSchemasData] = useState<any>({})
+  const isOwner =
+    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+
+  const schemas: any[] = schemasData?.schemas ?? []
+
   const [arkRecordTypes, setArkRecordTypes] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
   const [arkSuccess, setArkSuccess] = useState('')
   const [arkError, setArkError] = useState('')
 
   useEffect(() => {
-    if (!owner || !collection) return
-
-    const ownerFlag =
-      currentUser &&
-      (currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner))
-    setIsOwner(!!ownerFlag)
-
-    Promise.all([
-      fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      fetch(`/api/collections/${owner}/${collection}/schemas`, { credentials: 'include' }).then(
-        (r) => (r.ok ? r.json() : { schemas: [], version: null, semver: null }),
-      ),
-      ownerFlag
-        ? fetch(`/api/collections/${owner}/${collection}/ark/record-types`, {
-            credentials: 'include',
-          }).then((r) => (r.ok ? r.json() : []))
-        : Promise.resolve([]),
-    ]).then(([col, sd, arkTypes]) => {
-      if (!col) {
-        setLoading(false)
-        return
-      }
-      setData(col)
-      setSchemasData(sd)
-      setSchemas(sd.schemas ?? [])
-
-      const types: Record<string, string> = {}
-      for (const entry of arkTypes) {
-        types[entry.recordType] = entry.redirectUrlField
-      }
-      setArkRecordTypes(types)
-
-      setLoading(false)
+    if (!isOwner || !owner || !collection) return
+    fetch(`/api/collections/${owner}/${collection}/ark/record-types`, {
+      credentials: 'include',
     })
-  }, [owner, collection, currentUser])
+      .then((r) => (r.ok ? r.json() : []))
+      .then((arkTypes: any[]) => {
+        const types: Record<string, string> = {}
+        for (const entry of arkTypes) {
+          types[entry.recordType] = entry.redirectUrlField
+        }
+        setArkRecordTypes(types)
+      })
+  }, [isOwner, owner, collection])
 
   async function handleUpdateArkType(e: FormEvent, slug: string) {
     e.preventDefault()
@@ -90,15 +66,6 @@ export default function CollectionSchemasPage() {
     }
   }
 
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!data) throw new NotFoundError()
-
   return (
     <BaseLayout>
       <div className="mx-auto max-w-5xl px-4 py-8">
@@ -106,7 +73,7 @@ export default function CollectionSchemasPage() {
           owner={owner!}
           collection={collection!}
           isPublic={data.public}
-          isOwner={isOwner}
+          isOwner={!!isOwner}
           active="schemas"
         />
 
@@ -124,7 +91,7 @@ export default function CollectionSchemasPage() {
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-ink-muted text-sm font-semibold">
             {schemas.length} type{schemas.length !== 1 ? 's' : ''}
-            {schemasData.semver && (
+            {schemasData?.semver && (
               <span className="ml-1 font-normal">in {schemasData.semver}</span>
             )}
           </h2>

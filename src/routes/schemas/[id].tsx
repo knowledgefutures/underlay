@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
@@ -14,45 +13,7 @@ interface SchemaData {
 }
 
 export default function SchemaDetailPage() {
-  const params = useParams()
-  const schemaId = params.id
-  const [schema, setSchema] = useState<SchemaData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!schemaId) return
-    fetch(`/api/schemas/${schemaId}`, { credentials: 'same-origin' })
-      .then(async (res) => {
-        if (!res.ok) {
-          setError('Schema not found.')
-          return
-        }
-        setSchema(await res.json())
-      })
-      .catch(() => setError('Failed to load schema.'))
-      .finally(() => setLoading(false))
-  }, [schemaId])
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-5xl px-4 py-10">
-          <p className="text-ink-muted text-sm">Loading…</p>
-        </div>
-      </BaseLayout>
-    )
-  }
-
-  if (error || !schema) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-5xl px-4 py-10">
-          <p className="text-sm text-red-700">{error || 'Schema not found.'}</p>
-        </div>
-      </BaseLayout>
-    )
-  }
+  const schema = useLoaderData() as SchemaData
 
   const properties = (schema.schema as any)?.properties ?? {}
   const fields = Object.entries(properties)

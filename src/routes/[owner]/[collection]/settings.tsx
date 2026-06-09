@@ -1,8 +1,7 @@
-import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { type FormEvent, useState } from 'react'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
@@ -10,76 +9,34 @@ import { CollectionNav } from '.'
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
+  const loaderData = useLoaderData() as { data: any; arkSettings: any }
 
-  const [data, setData] = useState<any>(null)
-  const [arkSettings, setArkSettings] = useState<any>({
-    enabled: false,
-    customUrl: null,
-    arkUrl: null,
-  })
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState<any>(loaderData.data)
+  const [arkSettings, setArkSettings] = useState<any>(loaderData.arkSettings)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState('')
 
   // Form state
-  const [name, setName] = useState('')
-  const [slugValue, setSlugValue] = useState('')
-  const [isPublic, setIsPublic] = useState(false)
+  const [name, setName] = useState(data.name)
+  const [slugValue, setSlugValue] = useState(data.slug)
+  const [isPublic, setIsPublic] = useState(data.public)
 
   // Metadata form
-  const [description, setDescription] = useState('')
-  const [readme, setReadme] = useState('')
-  const [license, setLicense] = useState('')
+  const meta = data.latestVersion?.metadata as Record<string, unknown> | null | undefined
+  const [description, setDescription] = useState((meta?.description as string) ?? '')
+  const [readme, setReadme] = useState((meta?.readme as string) ?? '')
+  const [license, setLicense] = useState((meta?.license as string) ?? '')
 
   // ARK form
-  const [arkEnabled, setArkEnabled] = useState(false)
-  const [arkCustomUrl, setArkCustomUrl] = useState('')
+  const [arkEnabled, setArkEnabled] = useState(arkSettings.enabled)
+  const [arkCustomUrl, setArkCustomUrl] = useState(arkSettings.customUrl ?? '')
 
   // Delete form
   const [confirmSlug, setConfirmSlug] = useState('')
 
   // Transfer form
   const [transferTarget, setTransferTarget] = useState('')
-
-  useEffect(() => {
-    if (!owner || !collection || !currentUser) return
-
-    const isOrgMember = currentUser.orgs?.some((o: any) => o.slug === owner)
-    if (currentUser.slug !== owner && !isOrgMember) {
-      window.location.href = `/${owner}/${collection}`
-      return
-    }
-
-    Promise.all([
-      fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      fetch(`/api/collections/${owner}/${collection}/ark`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : { enabled: false, customUrl: null, arkUrl: null },
-      ),
-    ]).then(([col, ark]) => {
-      if (!col) {
-        setLoading(false)
-        return
-      }
-      setData(col)
-      setName(col.name)
-      setSlugValue(col.slug)
-      setIsPublic(col.public)
-
-      const meta = col.latestVersion?.metadata as Record<string, unknown> | null | undefined
-      setDescription((meta?.description as string) ?? '')
-      setReadme((meta?.readme as string) ?? '')
-      setLicense((meta?.license as string) ?? '')
-
-      setArkSettings(ark)
-      setArkEnabled(ark.enabled)
-      setArkCustomUrl(ark.customUrl ?? '')
-
-      setLoading(false)
-    })
-  }, [owner, collection, currentUser])
 
   if (!currentUser) {
     window.location.href = '/login'
@@ -217,15 +174,6 @@ export default function CollectionSettingsPage() {
       setSubmitting('')
     }
   }
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!data) throw new NotFoundError()
 
   const arkPath: string | null = arkSettings.arkUrl ? new URL(arkSettings.arkUrl).pathname : null
 

@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
 export const handle = {
-  title: (params: Record<string, string>) => `${params.owner}/${params.collection} — Underlay`,
+  title: (params: Record<string, string>) => `${params.owner}/${params.collection} · Underlay`,
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {

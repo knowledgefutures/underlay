@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
@@ -20,59 +19,21 @@ export default function CollectionDiffPage() {
   const { owner, collection } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const { currentUser } = useAppContext()
+  const { data, versions } = useLoaderData() as { data: any; versions: any[] }
 
-  const [data, setData] = useState<any>(null)
-  const [versions, setVersions] = useState<any[]>([])
-  const [isOwner, setIsOwner] = useState(false)
+  const isOwner =
+    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+
   const [diff, setDiff] = useState<any>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
   const [diffLoading, setDiffLoading] = useState(false)
 
-  // Version selectors (semver strings, empty string = none/empty)
-  const [fromVer, setFromVer] = useState<string>('')
-  const [toVer, setToVer] = useState<string>('')
+  const latestSemver = versions.length > 0 ? versions[0].semver : ''
+  const [fromVer, setFromVer] = useState<string>(searchParams.get('from') ?? '')
+  const [toVer, setToVer] = useState<string>(searchParams.get('to') || latestSemver)
 
   useEffect(() => {
-    if (!owner || !collection) return
-
-    Promise.all([
-      fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      fetch(`/api/collections/${owner}/${collection}/versions?limit=100`, {
-        credentials: 'include',
-      }).then((r) => (r.ok ? r.json() : [])),
-    ]).then(([col, vers]) => {
-      if (!col) {
-        setLoading(false)
-        return
-      }
-      setData(col)
-      setVersions(vers)
-
-      if (currentUser) {
-        setIsOwner(
-          currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner),
-        )
-      }
-
-      // Determine from/to from URL
-      const latestSemver = vers.length > 0 ? vers[0].semver : ''
-      const urlTo = searchParams.get('to')
-      const urlFrom = searchParams.get('from')
-      const target = urlTo || latestSemver
-      const base = urlFrom ?? ''
-      setToVer(target)
-      setFromVer(base)
-
-      setLoading(false)
-    })
-  }, [owner, collection, currentUser])
-
-  // Fetch diff when from/to change
-  useEffect(() => {
-    if (!toVer || loading) return
+    if (!toVer) return
     setDiffLoading(true)
     setDiff(null)
     setDiffError(null)
@@ -90,7 +51,7 @@ export default function CollectionDiffPage() {
         }
       })
       .finally(() => setDiffLoading(false))
-  }, [fromVer, toVer, loading, owner, collection])
+  }, [fromVer, toVer, owner, collection])
 
   function handleCompare(e: React.FormEvent) {
     e.preventDefault()
@@ -104,15 +65,6 @@ export default function CollectionDiffPage() {
     if (f) params.from = f
     setSearchParams(params)
   }
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!data) throw new NotFoundError()
 
   const targetVersion = versions.find((v: any) => v.semver === toVer)
   const baseVersion = versions.find((v: any) => v.semver === fromVer)
@@ -137,7 +89,7 @@ export default function CollectionDiffPage() {
           owner={owner!}
           collection={collection!}
           isPublic={data.public}
-          isOwner={isOwner}
+          isOwner={!!isOwner}
           active="versions"
         />
 
