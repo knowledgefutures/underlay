@@ -17,7 +17,11 @@ curl -X POST https://underlay.org/api/accounts/yourname/collections \\
     "public": true
   }'`
 
-const pushCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions \\
+const negotiateCode = `# Step 1: Hash your records and negotiate with the server
+# Record hash = SHA-256 of canonical JSON: {"id","type","data"} with keys sorted recursively
+# For this example we'll use pre-computed hashes.
+
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -38,13 +42,26 @@ const pushCode = `curl -X POST https://underlay.org/api/collections/yourname/my-
         }
       }
     },
-    "changes": {
-      "added": [
-        {"id": "book-1", "type": "Book", "data": {"title": "Gödel, Escher, Bach", "author": "Douglas Hofstadter", "year": 1979}},
-        {"id": "book-2", "type": "Book", "data": {"title": "The Structure of Scientific Revolutions", "author": "Thomas Kuhn", "year": 1962}}
-      ]
-    }
+    "manifest": [
+      {"id": "book-1", "type": "Book", "hash": "a1b2c3..."},
+      {"id": "book-2", "type": "Book", "hash": "d4e5f6..."}
+    ]
   }'
+# → {"session_id":"abc123","needed_records":["a1b2c3...","d4e5f6..."],...}`
+
+const sendRecordsCode = `# Step 2: Send the records the server needs (as JSONL)
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate/SESSION_ID/records \\
+  -H "Content-Type: application/x-ndjson" \\
+  -H "Authorization: Bearer $KEY" \\
+  --data-binary @- << 'EOF'
+{"id":"book-1","type":"Book","data":{"author":"Douglas Hofstadter","title":"Gödel, Escher, Bach","year":1979}}
+{"id":"book-2","type":"Book","data":{"author":"Thomas Kuhn","title":"The Structure of Scientific Revolutions","year":1962}}
+EOF
+# → {"received":2,"remaining":0}`
+
+const commitCode = `# Step 3: Commit the version
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate/SESSION_ID/commit \\
+  -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.0.0","hash":"...","recordCount":2,"fileCount":0}`
 
 const readCode = `# Get collection info
@@ -53,24 +70,34 @@ curl https://underlay.org/api/collections/yourname/my-dataset
 # Get latest version records
 curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
 
-# Get the manifest
+# Get the manifest (list of record hashes)
 curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
 
-const updateCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions \\
+const updateCode = `# To push an update, negotiate again with base_version set.
+# The server already has book-1 and book-2, so needed_records
+# will only include the new/changed records.
+
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
     "base_version": "v1.0.0",
-    "message": "Add third book, fix year",
-    "changes": {
-      "added": [
-        {"id": "book-3", "type": "Book", "data": {"title": "Philosophical Investigations", "author": "Ludwig Wittgenstein", "year": 1953}}
-      ],
-      "updated": [
-        {"id": "book-1", "type": "Book", "data": {"title": "Gödel, Escher, Bach", "author": "Douglas Hofstadter", "year": 1979}}
-      ]
-    }
+    "message": "Add third book",
+    "manifest": [
+      {"id": "book-1", "type": "Book", "hash": "a1b2c3..."},
+      {"id": "book-2", "type": "Book", "hash": "d4e5f6..."},
+      {"id": "book-3", "type": "Book", "hash": "g7h8i9..."}
+    ]
   }'
+# → {"session_id":"xyz789","needed_records":["g7h8i9..."],...}
+
+# Send only the new record, then commit
+curl -X POST .../negotiate/SESSION_ID/records \\
+  -H "Content-Type: application/x-ndjson" \\
+  -H "Authorization: Bearer $KEY" \\
+  --data-binary '{"id":"book-3","type":"Book","data":{"author":"Ludwig Wittgenstein","title":"Philosophical Investigations","year":1953}}'
+
+curl -X POST .../negotiate/SESSION_ID/commit -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.1.0","hash":"...","recordCount":3,"fileCount":0}`
 
 const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
@@ -87,6 +114,31 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 
 # Reference in a record
 # {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}`
+
+const hashingNote = `# Record hashing: SHA-256 of canonical JSON
+# 1. Build object: {id, type, data}
+# 2. Sort all keys recursively (including nested objects in data)
+# 3. JSON.stringify the sorted object
+# 4. SHA-256 hex digest
+
+# Example in Node.js:
+import { createHash } from 'node:crypto'
+
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted = {}
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = canonicalize(value[key])
+  }
+  return sorted
+}
+
+function hashRecord(record) {
+  const obj = { id: record.id, type: record.type, data: canonicalize(record.data) }
+  const json = JSON.stringify(obj)
+  return createHash('sha256').update(json).digest('hex')
+}`
 
 export default function DocsQuickstart() {
   return (
@@ -121,8 +173,35 @@ export default function DocsQuickstart() {
       </pre>
 
       <h2>3. Push a version</h2>
+      <p>
+        Pushes use a three-step{' '}
+        <Link to="/protocol" className="text-link hover:underline">
+          negotiate protocol
+        </Link>
+        : send a manifest of record hashes, upload only the records the server needs, then commit.
+      </p>
+
+      <h3>3a. Negotiate</h3>
+      <p>
+        Hash each record and send the manifest. The server tells you which records it already has.
+      </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-        <code>{pushCode}</code>
+        <code>{negotiateCode}</code>
+      </pre>
+
+      <h3>3b. Send records</h3>
+      <p>
+        Send the needed records as JSONL (one JSON object per line). For large datasets, send in
+        batches of up to 10,000 records per request. Skip this step if <code>needed_records</code>{' '}
+        is empty.
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{sendRecordsCode}</code>
+      </pre>
+
+      <h3>3c. Commit</h3>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{commitCode}</code>
       </pre>
 
       <h2>4. Read it back</h2>
@@ -131,6 +210,10 @@ export default function DocsQuickstart() {
       </pre>
 
       <h2>5. Push an update</h2>
+      <p>
+        On subsequent pushes, set <code>base_version</code> to the current latest. The server
+        deduplicates — only new or changed records need to be sent.
+      </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{updateCode}</code>
       </pre>
@@ -138,6 +221,17 @@ export default function DocsQuickstart() {
       <h2>6. Diff versions</h2>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{diffCode}</code>
+      </pre>
+
+      <h2>Record hashing</h2>
+      <p>
+        Each record must be hashed client-side before negotiating. The hash is the SHA-256 of{' '}
+        <code>{'JSON.stringify({id, type, data})'}</code> with all object keys sorted recursively.
+        This ensures any client produces the same hash for the same data regardless of key insertion
+        order.
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{hashingNote}</code>
       </pre>
 
       <h2>Working with files</h2>
@@ -152,10 +246,11 @@ export default function DocsQuickstart() {
           <Link to="/docs/concepts">Core concepts</Link> — understand the data model
         </li>
         <li>
-          <Link to="/docs/api/versions">Versions API</Link> — full reference for push/pull
+          <Link to="/docs/integration">Integration guide</Link> — full push protocol, SQL mapping,
+          privacy controls
         </li>
         <li>
-          <Link to="/docs/api/files">Files API</Link> — content-addressed file storage
+          <Link to="/protocol">Protocol spec</Link> — precise hashing algorithm and negotiate flow
         </li>
       </ul>
     </DocsLayout>

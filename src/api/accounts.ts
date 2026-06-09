@@ -211,10 +211,11 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Accounts'],
       summary: 'Update own profile',
+      request: { json: z.any() },
       responses: { 200: z.any() },
     }),
     async (c) => {
-      const { slug, displayName, bio, website } = await c.req.json()
+      const { slug, displayName, bio, website } = c.req.valid('json')
       const userId = c.get('userId')!
 
       const [defaultMembership] = await db
@@ -320,10 +321,11 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Accounts'],
       summary: 'Delete own account',
+      request: { json: z.object({ confirmSlug: z.string() }) },
       responses: { 200: z.any() },
     }),
     async (c) => {
-      const { confirmSlug } = await c.req.json()
+      const { confirmSlug } = c.req.valid('json')
       const userId = c.get('userId')!
 
       const [defaultOrg] = await db
@@ -363,7 +365,10 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Accounts'],
       summary: 'Update an organization by slug',
-      request: { param: z.object({ slug: z.string() }) },
+      request: {
+        param: z.object({ slug: z.string() }),
+        json: z.any(),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
@@ -380,7 +385,7 @@ const app = new Hono<AuthEnv>()
         )
       }
 
-      const { slug, displayName, bio, website, location, kfOrgId } = await c.req.json()
+      const { slug, displayName, bio, website, location, kfOrgId } = c.req.valid('json')
 
       if (slug !== undefined) {
         const slugErr = validateSlug(slug)

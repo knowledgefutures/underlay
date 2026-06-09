@@ -38,6 +38,9 @@ export default defineConfig({
       },
     },
   },
+  server: {
+    hmr: { port: 24688 },
+  },
   ssr: {
     external: ['react', 'react-dom', 'react-router', 'postgres', 'better-sqlite3', 'bcrypt'],
   },

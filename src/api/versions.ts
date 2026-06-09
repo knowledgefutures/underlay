@@ -792,12 +792,15 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Versions'],
       summary: 'Update collection metadata, creating a new patch version',
-      request: { param: z.object({ owner: z.string(), slug: z.string() }) },
+      request: {
+        param: z.object({ owner: z.string(), slug: z.string() }),
+        json: z.any(),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const body = (await c.req.json()) as Record<string, unknown>
+      const body = c.req.valid('json') as Record<string, unknown>
 
       const collection = await resolveCollection(owner, slug)
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
@@ -858,7 +861,7 @@ const app = new Hono<AuthEnv>()
       const versionHash = computeVersionHash(schemaSet, recordHashes, fileHashes, newMetadata)
       const publicHash = computePublicHash(schemaEntries, recordRows, fileHashes, newMetadata)
 
-      const sv = deriveSemver(latest.semver, false, true)
+      const sv = deriveSemver(latest.semver, false, false, true)
 
       await db.transaction(async (tx) => {
         const [version] = await tx

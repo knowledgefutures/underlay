@@ -64,8 +64,10 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         }
         return next()
       }
-    } catch {
-      // Invalid key — fall through
+    } catch (err: any) {
+      if (err?.status === 'TOO_MANY_REQUESTS' || err?.statusCode === 429) {
+        return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)
+      }
     }
     return c.json({ error: 'Invalid API key', statusCode: 401 }, 401)
   }

@@ -63,6 +63,9 @@ export const auth = betterAuth({
         return `ul_${generateRandomString(length, 'a-z', 'A-Z')}`
       },
       enableMetadata: true,
+      rateLimit: {
+        enabled: false,
+      },
       permissions: {
         defaultPermissions: async (_referenceId, ctx) => {
           const scope = ctx.body?.metadata?.scope ?? 'read'

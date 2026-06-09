@@ -142,20 +142,15 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Collections'],
       summary: 'Create a collection',
-      request: { param: z.object({ owner: z.string() }) },
+      request: {
+        param: z.object({ owner: z.string() }),
+        json: z.object({ slug: z.string(), name: z.string(), public: z.boolean().optional() }),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner } = c.req.valid('param')
-      const {
-        slug,
-        name,
-        public: isPublic,
-      } = await c.req.json<{
-        slug: string
-        name: string
-        public?: boolean
-      }>()
+      const { slug, name, public: isPublic } = c.req.valid('json')
 
       // Resolve owner org
       const [org] = await db
@@ -376,16 +371,19 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Collections'],
       summary: 'Update a collection',
-      request: { param: z.object({ owner: z.string(), slug: z.string() }) },
+      request: {
+        param: z.object({ owner: z.string(), slug: z.string() }),
+        json: z.object({
+          name: z.string().optional(),
+          slug: z.string().optional(),
+          public: z.boolean().optional(),
+        }),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const updates = await c.req.json<{
-        name?: string
-        slug?: string
-        public?: boolean
-      }>()
+      const updates = c.req.valid('json')
 
       const [org] = await db
         .select()
@@ -495,16 +493,15 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Collections'],
       summary: 'Transfer a collection to another org',
-      request: { param: z.object({ owner: z.string(), slug: z.string() }) },
+      request: {
+        param: z.object({ owner: z.string(), slug: z.string() }),
+        json: z.object({ targetOrgSlug: z.string() }),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const { targetOrgSlug } = await c.req.json()
-
-      if (!targetOrgSlug || typeof targetOrgSlug !== 'string') {
-        return c.json({ error: 'targetOrgSlug is required', statusCode: 422 }, 422)
-      }
+      const { targetOrgSlug } = c.req.valid('json')
 
       const callerId = c.get('userId')!
 
@@ -861,15 +858,15 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Collections'],
       summary: "Fork a collection into the caller's org",
-      request: { param: z.object({ owner: z.string(), slug: z.string() }) },
+      request: {
+        param: z.object({ owner: z.string(), slug: z.string() }),
+        json: z.object({ targetOrg: z.string(), slug: z.string().optional() }),
+      },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner: sourceOwner, slug: sourceSlug } = c.req.valid('param')
-      const { targetOrg, slug: targetSlug } = await c.req.json<{
-        targetOrg: string
-        slug?: string
-      }>()
+      const { targetOrg, slug: targetSlug } = c.req.valid('json')
 
       // Resolve source collection
       const [source] = await db

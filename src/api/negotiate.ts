@@ -36,12 +36,15 @@ app.post(
   openApi({
     tags: ['Negotiate'],
     summary: 'Start a negotiate session',
-    request: { param: z.object({ owner: z.string(), slug: z.string() }) },
+    request: {
+      param: z.object({ owner: z.string(), slug: z.string() }),
+      json: z.any(),
+    },
     responses: { 200: z.any() },
   }),
   async (c) => {
     const { owner, slug } = c.req.valid('param')
-    const body = (await c.req.json()) as {
+    const body = c.req.valid('json') as {
       base_version: string | null
       schemas: Record<string, object>
       manifest: { id: string; type: string; hash: string; private?: boolean }[]
@@ -834,11 +837,7 @@ app.post(
       metadataValue,
     ).replace('private:', 'public:')
 
-    const sv = deriveSemver(
-      latest?.semver ?? null,
-      schemaChanged,
-      recordsChanged || metadataChanged,
-    )
+    const sv = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged, metadataChanged)
 
     // Check for duplicate
     const [existingHash] = await db

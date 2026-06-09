@@ -360,12 +360,15 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Schemas'],
       summary: 'Add a label to a schema',
-      request: { param: z.object({ id: z.string() }) },
+      request: {
+        param: z.object({ id: z.string() }),
+        json: z.object({ label: z.string() }),
+      },
       responses: { 200: z.any(), 201: z.any() },
     }),
     async (c) => {
       const { id } = c.req.valid('param')
-      const { label } = await c.req.json()
+      const { label } = c.req.valid('json')
 
       if (!label || typeof label !== 'string' || label.trim().length === 0) {
         return c.json({ error: 'Label is required', statusCode: 400 }, 400)

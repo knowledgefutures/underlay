@@ -28,19 +28,17 @@ const pushExample = `{
       }
     }
   },
-  "changes": {
-    "added": [
-      {"id": "author-1", "type": "Author", "data": {"name": "Jane Doe", "email": "jane@example.com"}},
-      {"id": "article-1", "type": "Article", "data": {"title": "Hello World", "body": "...", "authorId": "author-1", "publishedAt": "2026-04-01T00:00:00Z"}}
-    ]
-  }
+  "manifest": [
+    {"id": "author-1", "type": "Author", "hash": "a1b2c3..."},
+    {"id": "article-1", "type": "Article", "hash": "d4e5f6..."}
+  ]
 }`
 
 const fileRef = '{"$file": "sha256:<hex>"}'
 
 const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- table name → type name
--- column name → property name  
+-- column name → property name
 -- column type → JSON Schema type (text→string, integer→integer, etc.)
 -- foreign keys → note as ID references in the schema description
 
@@ -58,20 +56,47 @@ curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:$HAS
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 
-# 3. Push changes (only what changed since base_version semver)
-curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
+# 3. Hash your records and negotiate
+curl -X POST https://underlay.org/api/collections/:owner/:slug/versions/negotiate \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
     "base_version": "v1.2.0",
     "message": "Daily sync",
-    "app_id": "my-app",
-    "changes": {
-      "added": [...],
-      "updated": [...],
-      "removed": ["old-record-id"]
-    }
-  }'`
+    "schemas": { ... },
+    "manifest": [
+      {"id": "record-1", "type": "Article", "hash": "abc123..."},
+      {"id": "record-2", "type": "Article", "hash": "def456..."}
+    ]
+  }'
+# → {"session_id":"...","needed_records":["def456..."],...}
+
+# 4. Send only the records the server needs (as JSONL)
+curl -X POST .../negotiate/SESSION_ID/records \\
+  -H "Content-Type: application/x-ndjson" \\
+  -H "Authorization: Bearer $KEY" \\
+  --data-binary '{"id":"record-2","type":"Article","data":{...}}'
+
+# 5. Commit
+curl -X POST .../negotiate/SESSION_ID/commit \\
+  -H "Authorization: Bearer $KEY"`
+
+const hashExample = `import { createHash } from 'node:crypto'
+
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted = {}
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = canonicalize(value[key])
+  }
+  return sorted
+}
+
+function hashRecord(record) {
+  const obj = { id: record.id, type: record.type, data: canonicalize(record.data) }
+  return createHash('sha256').update(JSON.stringify(obj)).digest('hex')
+}`
 
 export default function DocsIntegration() {
   return (
@@ -84,8 +109,8 @@ export default function DocsIntegration() {
       <h2>What is Underlay?</h2>
       <p>
         Underlay is a versioned registry for structured knowledge. Apps push snapshots of their
-        data; Underlay preserves them, deduplicates files, and serves them via a stable API. Think
-        npm for data, or Docker Hub for structured content.
+        data; Underlay preserves them, deduplicates records and files, and serves them via a stable
+        API. Think npm for data, or Docker Hub for structured content.
       </p>
 
       <h2>Core Concepts</h2>
@@ -100,7 +125,8 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>,
-          and a <code>data</code> payload conforming to the schema.
+          and a <code>data</code> payload conforming to the schema. Content-addressed by SHA-256
+          hash.
         </li>
         <li>
           <strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash.
@@ -122,19 +148,52 @@ export default function DocsIntegration() {
       </p>
 
       <h2>The Push Flow</h2>
+      <p>
+        All pushes use the{' '}
+        <Link to="/protocol" className="text-link underline">
+          negotiate protocol
+        </Link>
+        , a three-step flow similar to git's pack negotiation:
+      </p>
       <ol>
         <li>Get the current latest version (its semver string)</li>
         <li>Upload any new binary files by hash</li>
         <li>
-          Push a version with <code>base_version</code>, schema (if changed), and record changes
+          Hash your records and <strong>negotiate</strong> — send a manifest of record hashes. The
+          server responds with which records it needs.
         </li>
         <li>
-          On <code>409 Conflict</code>, re-fetch latest and retry
+          <strong>Send records</strong> — upload only the needed records as JSONL (up to 10,000 per
+          batch). Skip if the server already has everything.
+        </li>
+        <li>
+          <strong>Commit</strong> — finalize and create the version.
+        </li>
+        <li>
+          On <code>409 Conflict</code>, re-fetch latest and retry from step 3
         </li>
       </ol>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
+
+      <h2>Record Hashing</h2>
+      <p>
+        Before negotiating, you must hash each record client-side. The hash is the SHA-256 of the
+        canonical JSON representation of <code>{'{ id, type, data }'}</code> with all object keys
+        sorted recursively. This ensures any implementation produces the same hash for the same
+        content.
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{hashExample}</code>
+      </pre>
+      <p>
+        See the{' '}
+        <Link to="/protocol" className="text-link underline">
+          Protocol spec
+        </Link>{' '}
+        for the full hashing specification with worked examples.
+      </p>
 
       <h2>Record Format</h2>
       <p>
@@ -167,12 +226,19 @@ export default function DocsIntegration() {
 
       <h2>First Push Example</h2>
       <p>
-        To push the first version of a collection. Include <code>schemas</code> (a per-type JSON
-        Schema map) and <code>metadata</code> (description, readme, etc.):
+        The negotiate request for a first push. Include <code>schemas</code> (a per-type JSON Schema
+        map), <code>metadata</code>, and a <code>manifest</code> of record hashes:
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{pushExample}</code>
       </pre>
+      <p>
+        After negotiating, send the needed records as JSONL, then commit. See the{' '}
+        <Link to="/docs/quickstart" className="text-link underline">
+          Quickstart
+        </Link>{' '}
+        for the complete curl walkthrough.
+      </p>
 
       <h2>Mapping a SQL Database</h2>
       <p>Most apps store data in SQL. Here's how to map it to Underlay records:</p>
@@ -210,8 +276,8 @@ export default function DocsIntegration() {
       </ul>
       <p>
         The first version of a collection is always <code>v1.0.0</code>. The{' '}
-        <code>base_version</code> in a push request is a semver string (or <code>null</code> for the
-        first push).
+        <code>base_version</code> in a negotiate request is a semver string (or <code>null</code>{' '}
+        for the first push).
       </p>
 
       <h2>Privacy</h2>
@@ -227,7 +293,7 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Private records:</strong> Add <code>"private": true</code> to individual records
-          when pushing. Those records are hidden from public queries.
+          in the manifest when negotiating. Those records are hidden from public queries.
         </li>
       </ul>
       <p>
@@ -262,6 +328,12 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
+              <code>DELETE .../negotiate/:id</code>
+            </td>
+            <td>Cancel a negotiate session</td>
+          </tr>
+          <tr>
+            <td>
               <code>GET .../versions/latest</code>
             </td>
             <td>Get latest version</td>
@@ -270,7 +342,19 @@ export default function DocsIntegration() {
             <td>
               <code>GET .../versions/:semver/records</code>
             </td>
-            <td>Get records</td>
+            <td>Get records (paginated)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>GET .../versions/:semver/manifest</code>
+            </td>
+            <td>Get record hash manifest (supports delta via ?since=)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>GET .../versions/:semver/diff?from=</code>
+            </td>
+            <td>Diff two versions</td>
           </tr>
           <tr>
             <td>
@@ -280,50 +364,24 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
+              <code>POST /api/records/batch</code>
+            </td>
+            <td>Fetch records by hash (NDJSON response)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>GET /api/records/:hash/provenance</code>
+            </td>
+            <td>Find which collections contain a record</td>
+          </tr>
+          <tr>
+            <td>
               <code>GET /api/collections</code>
             </td>
             <td>Browse public collections</td>
           </tr>
         </tbody>
       </table>
-
-      <h2>Push Protocol</h2>
-      <p>
-        All pushes use the{' '}
-        <Link to="/protocol#push" className="text-link underline">
-          negotiate protocol
-        </Link>
-        , a three-step flow similar to git's pack negotiation:
-      </p>
-      <ol>
-        <li>
-          <strong>Negotiate:</strong> <code>POST .../versions/negotiate</code> with your schemas and
-          a manifest of record hashes. The server responds with which hashes it needs.
-        </li>
-        <li>
-          <strong>Send records:</strong> <code>POST .../negotiate/:id/records</code> with the needed
-          records as JSONL. Call this endpoint multiple times for large datasets (up to 10,000
-          records per batch). Skip this step if the server already has all records.
-        </li>
-        <li>
-          <strong>Commit:</strong> <code>POST .../negotiate/:id/commit</code> to validate and create
-          the version.
-        </li>
-      </ol>
-      <p>
-        Record hashes are SHA-256 of the canonical JSON:{' '}
-        <code>{'JSON.stringify({id, type, data})'}</code>. Sessions expire after 10 minutes. See the{' '}
-        <Link to="/protocol" className="text-link underline">
-          Protocol spec
-        </Link>{' '}
-        for the full hashing specification.
-      </p>
-      <p>
-        This protocol is efficient at every scale: for a small push of 5 new records, only those 5
-        are transferred. For a push of 100,000 records where only 5 changed, only 5 are transferred.
-        For large initial imports, records are streamed in batches with per-batch progress and retry
-        granularity.
-      </p>
 
       <h2>Unknown Fields</h2>
       <p>
@@ -359,8 +417,12 @@ export default function DocsIntegration() {
           records in <code>{'{id, type, data}'}</code> format.
         </li>
         <li>
-          <strong>Hash each record:</strong> SHA-256 of{' '}
-          <code>{'JSON.stringify({id, type, data})'}</code> with keys sorted recursively.
+          <strong>Hash each record:</strong> SHA-256 of the canonical JSON with keys sorted
+          recursively. See the hashing section above or the{' '}
+          <Link to="/protocol" className="text-link underline">
+            Protocol spec
+          </Link>
+          .
         </li>
         <li>
           <strong>Negotiate:</strong> send the manifest of <code>{'{ id, type, hash }'}</code>{' '}
@@ -376,7 +438,7 @@ export default function DocsIntegration() {
       </ol>
       <p>
         A minimal Node.js/Python script typically takes 30-50 lines: query your data, map rows to
-        records, POST to the versions endpoint. No SDK needed. See the{' '}
+        records, hash them, POST to negotiate. No SDK needed. See the{' '}
         <Link to="/docs/quickstart" className="text-link underline">
           Quickstart
         </Link>{' '}
