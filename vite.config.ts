@@ -31,6 +31,7 @@ export default defineConfig({
     alias: { '~': resolve(__dirname, 'src') },
   },
   build: {
+    target: 'es2022',
     rollupOptions: {
       input: {
         client: resolve(__dirname, 'index.html'),
