@@ -287,61 +287,35 @@ function V1() {
 }
 
 // ─── Variant 2: Primitive ────────────────────────────────────────────────────
-// Dark hero emphasizing "the simplicity is the point". Below: CLI workflow
-// showing how it actually works. Then the registry table.
+// Light hero, dark CLI section below. Shows the workflow and the argument.
 function V2() {
   return (
     <div className="min-h-screen font-sans">
-      <section className="bg-ink text-parchment">
-        <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2.5">
-            <img
-              src="https://docs.underlay.org/logoLight.svg"
-              alt="Underlay"
-              className="h-6 invert"
-            />
-            <span className="text-base font-semibold tracking-tight">Underlay</span>
-          </div>
-          <div className="flex items-center gap-5 text-sm opacity-60">
-            <Link to="/explore" className="hover:opacity-100">
-              Explore
-            </Link>
-            <Link to="/schemas" className="hover:opacity-100">
-              Schemas
-            </Link>
-            <Link to="/docs" className="hover:opacity-100">
-              Docs
-            </Link>
-            <a href="/login" className="hover:opacity-100">
-              Log in
-            </a>
-          </div>
-        </nav>
+      <Header />
 
-        <div className="mx-auto max-w-5xl px-4 pt-16 pb-20">
-          <h1 className="mb-6 max-w-2xl text-4xl leading-[1.15] font-extralight tracking-tight">
-            Permanent addresses <br />
-            for structured data
+      <section className="border-rule border-b py-16">
+        <div className="mx-auto max-w-5xl px-4">
+          <h1 className="text-ink mb-5 max-w-2xl text-3xl leading-snug font-normal tracking-tight">
+            Permanent addresses for structured data
           </h1>
-          <p className="mb-4 max-w-lg text-sm leading-relaxed opacity-60">
+          <p className="text-ink-muted mb-4 max-w-lg text-sm leading-relaxed">
             Push records and a schema. Get back a versioned, content-addressed snapshot you can
             point to forever. An agent, an application, a scraper, a researcher — they all interact
             with the same primitive.
           </p>
-          <p className="mb-10 max-w-lg text-sm leading-relaxed opacity-40">
+          <p className="text-ink-muted mb-8 max-w-lg text-sm leading-relaxed italic">
             The intelligence lives in the actors, not the store.
           </p>
           <div className="flex gap-3">
             <Link
               to="/explore"
-              className="bg-parchment text-ink hover:bg-parchment-dark px-5 py-2.5 text-sm font-medium transition-colors"
+              className="bg-ink text-parchment hover:bg-ink-light px-5 py-2.5 text-sm font-medium transition-colors"
             >
               Explore the registry
             </Link>
             <Link
               to="/docs/quickstart"
-              className="px-5 py-2.5 text-sm font-medium opacity-60 transition-opacity hover:opacity-100"
-              style={{ border: '1px solid currentColor' }}
+              className="border-rule hover:bg-parchment-dark border px-5 py-2.5 text-sm font-medium transition-colors"
             >
               Read the docs
             </Link>
@@ -349,16 +323,16 @@ function V2() {
         </div>
       </section>
 
-      {/* CLI workflow */}
-      <section className="py-14">
+      {/* Dark CLI section */}
+      <section className="bg-ink text-parchment py-14">
         <div className="mx-auto max-w-5xl px-4">
           <div className="grid grid-cols-[1fr_1fr] items-start gap-12">
             <div>
-              <h2 className="text-ink-muted mb-6 font-mono text-[11px] tracking-widest uppercase">
+              <h2 className="mb-6 font-mono text-[11px] tracking-widest uppercase opacity-40">
                 The workflow
               </h2>
-              <div className="bg-ink text-parchment overflow-hidden font-mono text-[12px] leading-relaxed">
-                <div className="border-b border-white/10 px-4 py-2 text-[10px] text-white/30">
+              <div className="overflow-hidden rounded border border-white/10 font-mono text-[12px] leading-relaxed">
+                <div className="border-b border-white/10 bg-white/5 px-4 py-2 text-[10px] opacity-30">
                   terminal
                 </div>
                 <div className="space-y-1 px-4 py-4">
@@ -391,17 +365,17 @@ function V2() {
               </div>
             </div>
             <div className="pt-10">
-              <p className="text-ink-muted mb-4 text-sm leading-relaxed">
+              <p className="mb-4 text-sm leading-relaxed opacity-60">
                 Push what you have, in whatever structure you have it. The schemas make it legible.
                 The models make it interoperable.
               </p>
-              <p className="text-ink-muted mb-4 text-sm leading-relaxed">
+              <p className="mb-4 text-sm leading-relaxed opacity-60">
                 You don't need to agree on anything before contributing. Previous attempts at
                 structured data sharing required agreement before contribution — a coordination
                 problem that doesn't scale. LLMs change this: alignment happens after the fact, not
                 before.
               </p>
-              <p className="text-ink-muted text-sm leading-relaxed">
+              <p className="text-sm leading-relaxed opacity-40">
                 Schemas are first-class, content-addressed objects. Two collections that
                 independently define the same Author type produce the same schema hash. Alignment
                 falls out of the data model automatically.
@@ -603,46 +577,23 @@ function V3() {
 }
 
 // ─── Variant 4: Durable ──────────────────────────────────────────────────────
-// Full-width dark hero with the strongest line from the blog. Below:
-// the contract, the activity log, and the registry. Maximum gravitas.
+// Light hero with the strongest line from the blog. Dark section below with
+// the contract and activity log. Maximum gravitas.
 function V4() {
   return (
     <div className="min-h-screen font-sans">
-      <section className="bg-ink text-parchment">
-        <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2.5">
-            <img
-              src="https://docs.underlay.org/logoLight.svg"
-              alt="Underlay"
-              className="h-6 invert"
-            />
-            <span className="text-base font-semibold tracking-tight">Underlay</span>
-          </div>
-          <div className="flex items-center gap-5 text-sm opacity-60">
-            <Link to="/explore" className="hover:opacity-100">
-              Explore
-            </Link>
-            <Link to="/schemas" className="hover:opacity-100">
-              Schemas
-            </Link>
-            <Link to="/docs" className="hover:opacity-100">
-              Docs
-            </Link>
-            <a href="/login" className="hover:opacity-100">
-              Log in
-            </a>
-          </div>
-        </nav>
+      <Header />
 
-        <div className="mx-auto max-w-5xl px-4 pt-20 pb-24">
-          <p className="mb-4 font-mono text-[11px] tracking-widest uppercase opacity-40">
+      <section className="border-rule border-b py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <p className="text-ink-muted mb-4 font-mono text-[11px] tracking-widest uppercase">
             Permanently addressable structured data
           </p>
-          <h1 className="mb-8 max-w-3xl text-4xl leading-[1.15] font-extralight tracking-tight">
+          <h1 className="text-ink mb-8 max-w-3xl text-4xl leading-[1.15] font-extralight tracking-tight">
             Underlay does not need to be smart. <br />
             It needs to be reliable, durable, and clear.
           </h1>
-          <p className="mb-10 max-w-lg text-sm leading-relaxed opacity-50">
+          <p className="text-ink-muted mb-10 max-w-lg text-sm leading-relaxed">
             A protocol for giving structured data a permanent address. Push what you have. It gets a
             permanent address. Anyone can point to it, build on it, or align it with something else.
             The intelligence lives in the actors. The infrastructure holds the pieces.
@@ -650,14 +601,13 @@ function V4() {
           <div className="flex gap-4">
             <Link
               to="/explore"
-              className="bg-parchment text-ink hover:bg-parchment-dark px-6 py-3 text-sm font-medium transition-colors"
+              className="bg-ink text-parchment hover:bg-ink-light px-6 py-3 text-sm font-medium transition-colors"
             >
               Explore the registry
             </Link>
             <Link
               to="/docs/quickstart"
-              className="px-6 py-3 text-sm font-medium opacity-50 transition-opacity hover:opacity-100"
-              style={{ border: '1px solid currentColor' }}
+              className="border-rule hover:bg-parchment-dark border px-6 py-3 text-sm font-medium transition-colors"
             >
               Start publishing
             </Link>
@@ -665,52 +615,52 @@ function V4() {
         </div>
       </section>
 
-      <section className="py-14">
+      <section className="bg-ink text-parchment py-14">
         <div className="mx-auto max-w-5xl px-4">
           <div className="grid grid-cols-[1fr_1fr] items-start gap-12">
             {/* The contract */}
             <div>
-              <h2 className="text-ink-muted mb-6 font-mono text-[11px] tracking-widest uppercase">
+              <h2 className="mb-6 font-mono text-[11px] tracking-widest uppercase opacity-40">
                 The contract
               </h2>
               <div className="space-y-4 text-sm">
                 <div className="flex gap-4">
-                  <span className="text-rule w-6 flex-shrink-0 font-mono text-lg font-extralight">
+                  <span className="w-6 flex-shrink-0 font-mono text-lg font-extralight opacity-30">
                     1
                   </span>
-                  <p className="text-ink-muted leading-relaxed">
+                  <p className="leading-relaxed opacity-60">
                     Push JSON records conforming to a JSON Schema.
                   </p>
                 </div>
                 <div className="flex gap-4">
-                  <span className="text-rule w-6 flex-shrink-0 font-mono text-lg font-extralight">
+                  <span className="w-6 flex-shrink-0 font-mono text-lg font-extralight opacity-30">
                     2
                   </span>
-                  <p className="text-ink-muted leading-relaxed">
+                  <p className="leading-relaxed opacity-60">
                     Underlay stores them as an immutable, content-addressed version.
                   </p>
                 </div>
                 <div className="flex gap-4">
-                  <span className="text-rule w-6 flex-shrink-0 font-mono text-lg font-extralight">
+                  <span className="w-6 flex-shrink-0 font-mono text-lg font-extralight opacity-30">
                     3
                   </span>
-                  <p className="text-ink-muted leading-relaxed">
+                  <p className="leading-relaxed opacity-60">
                     Each version gets a semver: schema changed (major), records changed (minor).
                   </p>
                 </div>
                 <div className="flex gap-4">
-                  <span className="text-rule w-6 flex-shrink-0 font-mono text-lg font-extralight">
+                  <span className="w-6 flex-shrink-0 font-mono text-lg font-extralight opacity-30">
                     4
                   </span>
-                  <p className="text-ink-muted leading-relaxed">
+                  <p className="leading-relaxed opacity-60">
                     Version v2.3.0 will always return exactly the same records and schema.
                   </p>
                 </div>
                 <div className="flex gap-4">
-                  <span className="text-rule w-6 flex-shrink-0 font-mono text-lg font-extralight">
+                  <span className="w-6 flex-shrink-0 font-mono text-lg font-extralight opacity-30">
                     5
                   </span>
-                  <p className="text-ink-muted leading-relaxed">
+                  <p className="leading-relaxed opacity-60">
                     Diff any two versions to see what changed.
                   </p>
                 </div>
