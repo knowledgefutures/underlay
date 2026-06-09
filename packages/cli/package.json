@@ -10,5 +10,8 @@
   "type": "module",
   "scripts": {
     "build": "esbuild ../../src/cli/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js --banner:js='#!/usr/bin/env node'"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }

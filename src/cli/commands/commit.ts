@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto'
-
-import { hashRecord, hashSchema, deriveSemver } from '../../lib/core/index.js'
+import { computeVersionHash, deriveSemver, hashRecord, hashSchema } from '../../lib/core/index.js'
+import { parseJsonOrExit } from '../lib/json.js'
 import { getStagedSchema, getStagedRecords, clearStaging } from '../lib/staging.js'
 import {
   requireRoot,
@@ -39,25 +38,21 @@ export function commit(message: string): void {
   const prevRecordSet = new Set(prev?.records ?? [])
   const recordHashes: string[] = [...prevRecordSet]
 
-  if (stagedRecordLines.length > 0) {
-    for (const line of stagedRecordLines) {
-      const record = JSON.parse(line) as { id: string; type: string; data: unknown }
-      const { hash } = hashRecord(record)
-      if (!prevRecordSet.has(hash)) {
-        recordHashes.push(hash)
-      }
+  for (const [i, line] of stagedRecordLines.entries()) {
+    const record = parseJsonOrExit<{ id: string; type: string; data: unknown }>(
+      line,
+      `staged records (.underlay/staging/records.jsonl), line ${i + 1}`,
+      'Fix the corrupt line, or clear staging and re-run `underlay add`.',
+    )
+    const { hash } = hashRecord(record)
+    if (!prevRecordSet.has(hash)) {
+      recordHashes.push(hash)
     }
   }
 
   recordHashes.sort()
-  const sortedSchemaEntries = Object.entries(schemas).sort(([a], [b]) => a.localeCompare(b))
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(sortedSchemaEntries),
-    records: recordHashes,
-    files: [],
-    metadata: null,
-  })
-  const hash = 'private:' + createHash('sha256').update(canonical).digest('hex')
+  const schemaSet = Object.entries(schemas).map(([slug, schemaHash]) => ({ slug, schemaHash }))
+  const hash = computeVersionHash(schemaSet, recordHashes, [], null)
 
   const schemaChanged = prev ? JSON.stringify(prev.schemas) !== JSON.stringify(schemas) : true
   const recordsChanged = prev
@@ -91,7 +86,11 @@ function rebuildSchemas(root: string, prev: VersionManifest): Record<string, unk
   for (const [slug, hash] of Object.entries(prev.schemas)) {
     const body = readSchema(root, hash)
     if (!body) return null
-    result[slug] = JSON.parse(body)
+    result[slug] = parseJsonOrExit(
+      body,
+      `stored schema "${slug}" (.underlay/schemas object ${hash})`,
+      'The local store is corrupt. Re-run `underlay schema-set` or re-pull from the remote.',
+    )
   }
   return Object.keys(result).length > 0 ? result : null
 }

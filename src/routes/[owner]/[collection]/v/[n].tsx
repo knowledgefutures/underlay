@@ -22,9 +22,11 @@ export default function CollectionVersionPage() {
 
   useEffect(() => {
     if (!readmeSource) return
-    import('marked').then(({ marked }) => {
-      setReadmeHtml(marked.parse(readmeSource) as string)
-    })
+    Promise.all([import('marked'), import('isomorphic-dompurify')]).then(
+      ([{ marked }, { default: DOMPurify }]) => {
+        setReadmeHtml(DOMPurify.sanitize(marked.parse(readmeSource) as string))
+      },
+    )
   }, [readmeSource])
 
   // Tab state
@@ -38,7 +40,10 @@ export default function CollectionVersionPage() {
   // Files state
   const [files, setFiles] = useState<any[]>([])
 
-  const schemasMap = (version.schemas ?? {}) as Record<string, any>
+  const schemasMap = useMemo(
+    () => (version.schemas ?? {}) as Record<string, any>,
+    [version.schemas],
+  )
   const allTypes = useMemo(() => Object.keys(schemasMap).sort(), [schemasMap])
   const currentType = selectedType || (allTypes.length > 0 ? allTypes[0] : null)
 

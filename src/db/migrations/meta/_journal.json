@@ -22,6 +22,13 @@
       "when": 1780972844504,
       "tag": "0002_cute_lady_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781037800686,
+      "tag": "0003_right_hellcat",
+      "breakpoints": true
     }
   ]
 }

@@ -136,12 +136,12 @@ export default function QueryExplorer() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [showCollections])
 
-  // Sync nextId with loaded history
+  // Keep nextId above every id in history
   useEffect(() => {
     if (history.length > 0) {
       nextId.current = Math.max(...history.map((h) => h.id)) + 1
     }
-  }, [])
+  }, [history])
 
   // Persist history to localStorage
   useEffect(() => {
@@ -725,7 +725,7 @@ export default function QueryExplorer() {
     } catch {
       /* invalid hash, ignore */
     }
-  }, [sqlJs])
+  }, [sqlJs, loadCollection])
 
   return (
     <div className="flex h-full overflow-hidden">

@@ -17,6 +17,31 @@ async function getUsageCount(schemaId: string): Promise<number> {
   return result?.count ?? 0
 }
 
+/**
+ * SQL condition: the schema is visible to the caller — used in at least one
+ * version of a public collection (and not a private type), or used by a
+ * collection in an org the caller belongs to.
+ */
+function visibleSchemaCondition(userId: string | undefined) {
+  const publicUsage = sql`(
+    (${schema.schemas.schema} ->> 'private') IS DISTINCT FROM 'true'
+    AND EXISTS (
+      SELECT 1 FROM version_schemas vs
+      JOIN versions v ON vs.version_id = v.id
+      JOIN collections col ON v.collection_id = col.id
+      WHERE vs.schema_id = ${schema.schemas.id} AND col.public = true
+    )
+  )`
+  if (!userId) return publicUsage
+  return sql`(${publicUsage} OR EXISTS (
+    SELECT 1 FROM version_schemas vs
+    JOIN versions v ON vs.version_id = v.id
+    JOIN collections col ON v.collection_id = col.id
+    JOIN member m ON m.organization_id = col.organization_id
+    WHERE vs.schema_id = ${schema.schemas.id} AND m.user_id = ${userId}
+  ))`
+}
+
 const app = new Hono<AuthEnv>()
   .get(
     '/schemas',
@@ -36,11 +61,13 @@ const app = new Hono<AuthEnv>()
       const pageLimit = Math.min(parseInt(limit ?? '50', 10), 100)
       const pageOffset = parseInt(offset ?? '0', 10)
 
+      const visible = visibleSchemaCondition(c.get('userId'))
+
       if (schema_hash) {
         const [row] = await db
           .select()
           .from(schema.schemas)
-          .where(eq(schema.schemas.schemaHash, schema_hash))
+          .where(and(eq(schema.schemas.schemaHash, schema_hash), visible))
           .limit(1)
 
         if (!row) return c.json({ error: 'Schema not found', statusCode: 404 }, 404)
@@ -74,7 +101,7 @@ const app = new Hono<AuthEnv>()
         const schemaRows = await db
           .select()
           .from(schema.schemas)
-          .where(inArray(schema.schemas.id, schemaIds))
+          .where(and(inArray(schema.schemas.id, schemaIds), visible))
 
         const allLabels = await db
           .select({ schemaId: schema.schemaLabels.schemaId, label: schema.schemaLabels.label })
@@ -112,7 +139,7 @@ const app = new Hono<AuthEnv>()
         const schemaRows = await db
           .select()
           .from(schema.schemas)
-          .where(inArray(schema.schemas.id, schemaIds))
+          .where(and(inArray(schema.schemas.id, schemaIds), visible))
 
         const allLabels = await db
           .select({ schemaId: schema.schemaLabels.schemaId, label: schema.schemaLabels.label })
@@ -137,7 +164,7 @@ const app = new Hono<AuthEnv>()
         const rows = await db
           .select()
           .from(schema.schemas)
-          .where(sql`${schema.schemas.schema}::text ILIKE ${'%' + q + '%'}`)
+          .where(and(sql`${schema.schemas.schema}::text ILIKE ${'%' + q + '%'}`, visible))
           .limit(pageLimit)
           .offset(pageOffset)
 
@@ -170,6 +197,7 @@ const app = new Hono<AuthEnv>()
       const rows = await db
         .select()
         .from(schema.schemas)
+        .where(visible)
         .orderBy(sql`${schema.schemas.createdAt} desc`)
         .limit(pageLimit)
         .offset(pageOffset)
@@ -211,7 +239,11 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { id } = c.req.valid('param')
 
-      const [row] = await db.select().from(schema.schemas).where(eq(schema.schemas.id, id)).limit(1)
+      const [row] = await db
+        .select()
+        .from(schema.schemas)
+        .where(and(eq(schema.schemas.id, id), visibleSchemaCondition(c.get('userId'))))
+        .limit(1)
 
       if (!row) return c.json({ error: 'Schema not found', statusCode: 404 }, 404)
 

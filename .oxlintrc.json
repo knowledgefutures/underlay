@@ -1,0 +1,9 @@
+{
+  "plugins": ["typescript", "react", "import", "oxc"],
+  "rules": {
+    "no-unused-vars": "error",
+    "no-console": "off",
+    "eqeqeq": ["error", "always", { "null": "ignore" }]
+  },
+  "ignorePatterns": ["node_modules", "dist"]
+}

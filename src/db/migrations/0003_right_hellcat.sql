@@ -1,0 +1,2 @@
+ALTER TABLE "version_records" ADD COLUMN "public_record_hash" text;--> statement-breakpoint
+CREATE INDEX "version_records_public_record_hash_idx" ON "version_records" USING btree ("public_record_hash") WHERE public_record_hash IS NOT NULL;

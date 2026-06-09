@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   bigint,
   bigserial,
@@ -273,10 +274,18 @@ export const versionRecords = pgTable(
     recordHash: text('record_hash')
       .notNull()
       .references(() => recordObjects.hash),
+    // Public content-address of the record under this version's schema binding:
+    // sha256 of {id, type, data-with-private-fields-stripped}. NULL when it
+    // equals record_hash (i.e. the type has no private fields), which is the
+    // common case — only private-field bindings pay the storage cost.
+    publicRecordHash: text('public_record_hash'),
   },
   (t) => [
     primaryKey({ columns: [t.versionId, t.recordHash] }),
     index('version_records_record_hash_idx').on(t.recordHash),
+    index('version_records_public_record_hash_idx')
+      .on(t.publicRecordHash)
+      .where(sql`public_record_hash IS NOT NULL`),
   ],
 )
 

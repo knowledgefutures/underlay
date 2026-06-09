@@ -37,7 +37,7 @@ function getScope(permissions?: Record<string, string[]>): string {
 export default function OwnerSettingsKeys() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
-  const { orgData, collections } = useLoaderData() as { orgData: any; collections: any[] }
+  const { collections } = useLoaderData() as { collections: any[] }
 
   const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
   const isAdmin = org?.role === 'admin' || org?.role === 'owner'

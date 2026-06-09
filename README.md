@@ -69,7 +69,7 @@ pnpm cli schema-set schema.json
 pnpm cli add records.jsonl
 pnpm cli status
 pnpm cli commit -m "initial load"
-pnpm cli remote add origin https://underlay.org my-org/my-collection
+pnpm cli remote add origin https://underlay.org -t ul_mykey -c my-org/my-collection
 pnpm cli push
 ```
 
@@ -80,10 +80,10 @@ The CLI source lives in `src/cli/`. For npm distribution, `packages/cli/` is a t
 ```
 .underlay/
   config.json               # remotes (url, token, collection)
-  HEAD                      # current version number
+  HEAD                      # current version semver (e.g. v1.2.0)
   objects/ab/cd/abcd1234... # record content, keyed by hash
   schemas/ef/01/ef012345... # schema JSON, keyed by hash
-  versions/1.json           # version manifest (schemas, records, files, semver)
+  versions/v1.0.0.json      # version manifest (schemas, records, files, semver)
   staging/records.jsonl     # staged records before commit
   staging/schema.json       # staged schema before commit
 ```
@@ -114,20 +114,21 @@ src/
 ├── entry-client.tsx      # Client hydration entry
 ├── entry-server.tsx      # SSR rendering (renderToPipeableStream)
 ├── App.tsx               # React Router routes (filesystem-based)
-├── route-gen.ts          # Filesystem → route pattern conversion
-├── loaders.server.ts     # Server-side data loaders per route
+├── route-gen.ts          # Filesystem → route pattern conversion (wires *.data.ts loaders)
+├── global.css            # Tailwind theme
 ├── api/                  # API route handlers
-│   ├── auth.server.ts    # Auth middleware + session helpers
-│   ├── accounts.ts       # Signup, login, API key CRUD, orgs
-│   ├── collections.ts    # Collection CRUD + fork
-│   ├── versions.ts       # Version push/pull/diff + privacy filtering
-│   ├── negotiate.ts      # Hash negotiation protocol (negotiate + commit)
+│   ├── auth.server.ts    # API auth middleware (API keys, internal tokens)
+│   ├── accounts.ts       # Account/org profiles, members, avatars
+│   ├── collections.ts    # Collection CRUD + export, transfer, fork
+│   ├── versions.ts       # Version read APIs (manifest, records, diff) + privacy filtering
+│   ├── negotiate.ts      # Push protocol: hash negotiation, record upload, commit
 │   ├── records.ts        # Provenance + batch record fetch
-│   ├── uploads.ts        # Chunked upload sessions
 │   ├── files.ts          # Content-addressed file storage
 │   ├── schemas.ts        # Schema discovery, search, labeling
-│   ├── query.ts          # SQL query tool
+│   ├── query.ts          # SQL query tool (SQLite export + LLM SQL generation)
 │   ├── ark.ts            # ARK identifier management
+│   ├── ark-middleware.server.ts # ARK resolution middleware
+│   ├── kf-summary.ts     # Internal summary endpoint for KF dashboards
 │   ├── admin.ts          # Admin endpoints (mirror mode)
 │   └── health.ts         # Health check
 ├── db/
@@ -137,27 +138,35 @@ src/
 │   ├── seed.ts           # Seed data
 │   └── migrations/       # Generated SQL migrations
 ├── lib/
-│   ├── core/             # Pure functions shared by server and CLI
+│   ├── core/             # Pure functions shared by server and CLI (each with *.test.ts)
 │   │   ├── hash.ts       # hashRecord, hashSchema (SHA-256)
 │   │   ├── semver.ts     # deriveSemver
+│   │   ├── version-hash.ts # computeVersionHash, computePublicHash
 │   │   ├── privacy.ts    # getPrivateTypes, getPrivateFields, filterRecordData
 │   │   ├── validate.ts   # AJV schema validation
 │   │   ├── types.ts      # Shared type definitions
 │   │   └── index.ts      # Re-exports
 │   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers
+│   ├── auth.ts           # better-auth config (KF Auth OIDC, API keys, orgs)
+│   ├── auth.server.ts    # Session helpers
+│   ├── auth-client.ts    # better-auth React client
+│   ├── auth-middleware.ts # React Router requireAuth middleware
+│   ├── auth-internal.server.ts # KF Auth internal API client (optional)
+│   ├── mirror-config.ts  # Mirror mode config (UNDERLAY_* env vars)
 │   ├── mirror-sync.ts    # Server-to-server mirroring
+│   ├── sqlite-gen.ts     # Version → SQLite database generation
 │   ├── s3.ts             # S3 client
-│   ├── ark.ts            # ARK identifier utilities
-│   └── page-utils.ts     # SSR utilities
+│   └── ark.ts            # ARK identifier utilities
 ├── cli/                  # CLI source (local versioning + push/pull)
 │   ├── cli.ts            # Commander entry point
 │   ├── commands/         # init, schema-set, add, status, commit, log, diff, remote, push, pull
 │   └── lib/              # Local store, config, staging helpers
-├── routes/               # React pages (filesystem routing)
+├── routes/               # React pages (filesystem routing; sibling *.data.ts = server loaders)
 │   ├── index.tsx         # Landing page
 │   ├── explore.tsx       # Browse public collections
 │   ├── dashboard.tsx     # User's collections
 │   ├── protocol.tsx      # Protocol specification
+│   ├── query.tsx         # SQL query explorer
 │   ├── records/[hash].tsx # Record detail + provenance
 │   ├── schemas/          # Schema browser
 │   ├── settings/         # Account settings + API keys
@@ -168,11 +177,11 @@ src/
 │       └── [collection]/
 │           ├── index.tsx
 │           ├── versions.tsx
+│           ├── schemas.tsx
 │           ├── v/[n].tsx
 │           ├── diff.tsx
 │           └── settings.tsx
 ├── components/           # Shared React components
-├── styles/global.css     # Tailwind theme
 packages/
 └── cli/                  # npm publish wrapper (@underlay/cli)
     └── package.json      # esbuild bundles src/cli → dist/cli.js
@@ -180,7 +189,10 @@ public/
 ├── .well-known/ai.txt    # Machine-readable API docs
 tools/
 ├── backupDb.ts           # Postgres backup → S3
-└── cron.ts               # Scheduled task runner
+├── restore.ts            # Restore database from an S3 backup
+├── pruneBackups.ts       # Retention pruning of old backups
+├── seedMirror.ts         # Minimal seed for mirror instances
+└── cron.ts               # Scheduled task runner (backup, prune, mirror sync)
 ```
 
 ## Protocol and Documentation
@@ -195,18 +207,20 @@ The protocol and the platform are documented together:
 
 ### Key API endpoints
 
-| Endpoint                            | Purpose                                               |
-| ----------------------------------- | ----------------------------------------------------- |
-| `POST .../versions`                 | Simple push (server computes hashes)                  |
-| `POST .../versions/negotiate`       | Hash negotiation push (only transfer missing records) |
-| `POST .../versions/upload`          | Chunked upload for large pushes                       |
-| `GET .../versions/:n/manifest`      | Version manifest (add `?since=M` for delta)           |
-| `GET .../versions/:n/records`       | Paginated records                                     |
-| `GET .../versions/:n/diff?from=M`   | Diff between two versions                             |
-| `POST /api/records/batch`           | Fetch records by hash (JSONL stream)                  |
-| `GET /api/records/:hash/provenance` | Find all collections containing a record              |
-| `POST .../fork`                     | Fork a collection (copies manifest, not data)         |
-| `GET /api/schemas`                  | Search schemas across all collections                 |
+All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation:
+
+| Endpoint                                         | Purpose                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------- |
+| `POST .../versions/negotiate`                    | Start a push session (server returns which hashes it needs) |
+| `POST .../versions/negotiate/:sessionId/records` | Send only the needed records (NDJSON)                       |
+| `POST .../versions/negotiate/:sessionId/commit`  | Validate, hash, and create the immutable version            |
+| `GET .../versions/:semver/manifest`              | Version manifest (add `?since=` for delta)                  |
+| `GET .../versions/:semver/records`               | Paginated records                                           |
+| `GET .../versions/:semver/diff?from=...`         | Diff between two versions                                   |
+| `POST /api/records/batch`                        | Fetch records by hash (JSONL stream)                        |
+| `GET /api/records/:hash/provenance`              | Find all collections containing a record                    |
+| `POST .../fork`                                  | Fork a collection (copies manifest, not data)               |
+| `GET /api/schemas`                               | Search schemas across all collections                       |
 
 ## Privacy
 
@@ -229,17 +243,26 @@ Underlay uses **globally deduplicated, content-addressed schemas** for record va
 - If two collections define the same fields and types for a record type, they produce the same schema hash. Alignment is automatic.
 - Schemas are never modified. Evolving a type produces a new hash and a new row.
 
-### Push payload
+### Push payload (negotiate)
 
 ```json
 {
+  "base_version": null,
   "schemas": {
     "Author": { "type": "object", "properties": { "name": { "type": "string" } } },
-    "Pub": { "type": "object", "properties": { "title": { "type": "string" }, "authorId": { "type": "string", "x-ref-type": "Author" } } }
+    "Pub": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "authorId": { "type": "string", "x-ref-type": "Author" }
+      }
+    }
   },
-  "changes": { "added": [...] }
+  "manifest": [{ "id": "auth-1", "type": "Author", "hash": "abc123..." }]
 }
 ```
+
+The server replies with the record hashes it doesn't have; the client streams just those records (NDJSON) and commits.
 
 ### Relationship annotations
 
@@ -314,16 +337,54 @@ Supporting files live in `selfhost/` (Caddyfile, Postgres init script).
 
 ## Environment Variables
 
-| Variable         | Description                        |
-| ---------------- | ---------------------------------- |
-| `DATABASE_URL`   | PostgreSQL connection string       |
-| `SESSION_SECRET` | Secret for signing session cookies |
-| `PORT`           | Server port (default: 3000)        |
-| `S3_BUCKET`      | S3 bucket name                     |
-| `S3_REGION`      | S3 region (`auto` for R2)          |
-| `S3_ENDPOINT`    | S3 endpoint URL                    |
-| `S3_ACCESS_KEY`  | S3 access key                      |
-| `S3_SECRET_KEY`  | S3 secret key                      |
+### Core
+
+| Variable         | Description                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`   | PostgreSQL connection string                                                                           |
+| `SESSION_SECRET` | Secret for signing session cookies (**required in production** — the app throws at startup without it) |
+| `PORT`           | Server port (default: 3000)                                                                            |
+| `APP_URL`        | Public base URL of this instance (default: `http://localhost:4100`)                                    |
+
+### S3 storage
+
+| Variable          | Description                                                                                         |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| `S3_BUCKET`       | S3 bucket name                                                                                      |
+| `S3_REGION`       | S3 region (`auto` for R2)                                                                           |
+| `S3_ENDPOINT`     | S3 endpoint URL                                                                                     |
+| `S3_ACCESS_KEY`   | S3 access key                                                                                       |
+| `S3_SECRET_KEY`   | S3 secret key                                                                                       |
+| `ASSETS_BASE_URL` | Public base URL for uploaded assets like avatars (optional, default: `https://assets.underlay.org`) |
+
+### Auth (KF Auth OIDC)
+
+| Variable                   | Description                                                                      |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `OIDC_ISSUER_URL`          | KF Auth issuer URL                                                               |
+| `OIDC_ISSUER_INTERNAL_URL` | Issuer URL for server-to-server calls (optional, defaults to `OIDC_ISSUER_URL`)  |
+| `OIDC_CLIENT_ID`           | OAuth client ID (default: `kf_underlay`)                                         |
+| `OIDC_CLIENT_SECRET`       | OAuth client secret                                                              |
+| `OIDC_ACCOUNT_URL`         | KF Account UI URL (account management links)                                     |
+| `AUTH_INTERNAL_API_KEY`    | Key for KF Auth's internal API (optional; also authenticates `/api/kf/summary`)  |
+| `AUTH_INTERNAL_API_URL`    | KF Auth internal API base URL (optional, defaults to `OIDC_ISSUER_INTERNAL_URL`) |
+| `INTERNAL_API_TOKEN`       | Legacy `x-internal-token` for internal service calls (optional)                  |
+
+### Optional features
+
+| Variable                    | Description                                                               |
+| --------------------------- | ------------------------------------------------------------------------- |
+| `ARK_DEFAULT_NAAN`          | Default NAAN for ARK identifiers                                          |
+| `CF_ACCOUNT_ID`             | Cloudflare account ID for LLM-powered natural-language SQL (optional)     |
+| `CF_API_TOKEN`              | Cloudflare API token for LLM-powered natural-language SQL (optional)      |
+| `UNDERLAY_MODE`             | `origin` (default) or `mirror` — read-only mirror of an upstream instance |
+| `UNDERLAY_NODE_NAME`        | Display name for this mirror node                                         |
+| `UNDERLAY_UPSTREAM`         | Upstream Underlay URL to mirror from                                      |
+| `UNDERLAY_UPSTREAM_API_KEY` | API key for the upstream instance                                         |
+| `UNDERLAY_SYNC_SCHEDULE`    | Cron schedule for mirror sync (default: `0 0 * * 0`)                      |
+| `MIRROR_ADMIN_EMAILS`       | Comma-separated emails allowed to use the mirror admin UI/API             |
+| `CORS_ORIGINS`              | Extra allowed CORS origins, comma-separated (APP_URL is always allowed)   |
+| `MAX_FILE_UPLOAD_BYTES`     | Max file upload size in bytes (default: 100 MB)                           |
 
 `NODE_ENV` is set in `docker-compose.yml` `environment:` block (not in .env files).
 
@@ -342,6 +403,8 @@ pnpm typecheck        # TypeScript type checking
 pnpm lint             # Lint with oxlint
 pnpm fmt              # Format with oxfmt
 pnpm fmt:check        # Check formatting
+pnpm test             # Run tests (Vitest)
+pnpm test:watch       # Run tests in watch mode
 
 # Database
 pnpm db:generate      # Generate Drizzle migrations from schema changes
@@ -349,9 +412,10 @@ pnpm db:migrate       # Run pending migrations
 pnpm db:seed          # Seed database
 
 # Tools
-pnpm tool:backup      # Manual database backup to S3
-pnpm tool:restore     # Restore database from backup
-pnpm tool:pruneBackups # Prune old backups
+pnpm tool:backup       # Manual database backup to S3
+pnpm tool:restore      # List S3 backups; restore one with `-- <s3-key> --yes`
+pnpm tool:pruneBackups # Prune old backups (supports `-- --dry-run`)
+pnpm tool:seed-mirror  # Seed a mirror instance (admin org only)
 
 # Secrets (SOPS + age)
 pnpm secrets:encrypt:local  # Encrypt .env.local → .env.local.enc
@@ -379,7 +443,7 @@ When adding or changing features, update these locations:
 | Core library      | `src/lib/core/`                         | Hashing, semver, privacy, validation       |
 | CLI commands      | `src/cli/commands/`                     | Local versioning and sync                  |
 | Schema discovery  | `src/api/schemas.ts`                    | Schema search, labeling, cross-referencing |
-| Encrypted secrets | `.env.enc` / `.env.dev.enc`             | Re-encrypt after changing .env files       |
+| Encrypted secrets | `.env.{local,dev,prod}.enc`             | Re-encrypt after changing .env files       |
 
 ### Privacy features
 

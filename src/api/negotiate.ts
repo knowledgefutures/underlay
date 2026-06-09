@@ -7,15 +7,18 @@ import { db, schema } from '../db/client.server.js'
 import {
   ajv,
   canonicalize,
+  checkSchemaBounds,
   computeVersionHash,
   deriveSemver,
   filterRecordData,
   filterTypeSchema,
   findExtraFields,
+  getLatestReadyVersion,
   getPrivateFields,
   getPrivateTypes,
   hashRecord,
   hashSchema,
+  hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
   resolveCollection,
@@ -26,6 +29,32 @@ import { requireAuth, type AuthEnv } from './auth.server.js'
 
 const SESSION_TTL_MS = 10 * 60 * 1000
 const MAX_BATCH_RECORDS = 10_000
+
+const NegotiateBody = z.object({
+  base_version: z.string().nullable().optional(),
+  schemas: z.record(z.string(), z.record(z.string(), z.unknown())),
+  manifest: z.array(
+    z.object({
+      id: z.string(),
+      type: z.string(),
+      hash: z.string().regex(/^[0-9a-f]{64}$/, 'must be a lowercase hex sha256'),
+      private: z.boolean().optional(),
+    }),
+  ),
+  files: z.array(z.string().regex(/^[0-9a-f]{64}$/)).optional(),
+  message: z.string().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  app_id: z.string().optional(),
+  actor_id: z.string().optional(),
+  strip_unknown_fields: z.boolean().optional(),
+})
+
+async function expireSession(sessionId: string) {
+  await db
+    .update(schema.negotiateSessions)
+    .set({ status: 'expired' })
+    .where(eq(schema.negotiateSessions.id, sessionId))
+}
 
 const app = new Hono<AuthEnv>()
 
@@ -38,41 +67,32 @@ app.post(
     summary: 'Start a negotiate session',
     request: {
       param: z.object({ owner: z.string(), slug: z.string() }),
-      json: z.any(),
+      json: NegotiateBody,
     },
     responses: { 200: z.any() },
   }),
   async (c) => {
     const { owner, slug } = c.req.valid('param')
-    const body = c.req.valid('json') as {
-      base_version: string | null
-      schemas: Record<string, object>
-      manifest: { id: string; type: string; hash: string; private?: boolean }[]
-      files?: string[]
-      message?: string
-      metadata?: Record<string, unknown>
-      app_id?: string
-      actor_id?: string
-      strip_unknown_fields?: boolean
-    }
+    const body = c.req.valid('json')
 
-    if (!body.schemas || !body.manifest) {
-      return c.json({ error: 'schemas and manifest are required' }, 400)
+    const boundsError = checkSchemaBounds(body.schemas)
+    if (boundsError) {
+      return c.json({ error: boundsError, statusCode: 422 }, 422)
     }
 
     const collection = await resolveCollection(owner, slug)
     if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-    const [latest] = await db
-      .select({ semver: schema.versions.semver })
-      .from(schema.versions)
-      .where(
-        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
-      )
-      .orderBy(
-        sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-      )
-      .limit(1)
+    if (!(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
+      return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+    }
+
+    const scopedCollections = c.get('apiKeyCollectionIds')
+    if (scopedCollections && !scopedCollections.includes(collection.id)) {
+      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+    }
+
+    const latest = await getLatestReadyVersion(collection.id)
 
     const currentSemver = latest?.semver ?? null
     if (body.base_version !== null && body.base_version !== currentSemver) {
@@ -125,7 +145,7 @@ app.post(
       .values({
         collectionId: collection.id,
         userId: c.get('userId')!,
-        baseSemver: body.base_version,
+        baseSemver: body.base_version ?? null,
         schemas: body.schemas as any,
         fileHashes,
         neededFiles,
@@ -238,10 +258,7 @@ app.post(
 
     if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
       if (sessionRow) {
-        await db
-          .update(schema.negotiateSessions)
-          .set({ status: 'expired' })
-          .where(eq(schema.negotiateSessions.id, sessionId))
+        await expireSession(sessionId)
       }
       return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
     }
@@ -475,16 +492,27 @@ app.post(
 
     if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
       if (sessionRow?.status === 'open') {
-        await db
-          .update(schema.negotiateSessions)
-          .set({ status: 'expired' })
-          .where(eq(schema.negotiateSessions.id, sessionId))
+        await expireSession(sessionId)
       }
       return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
     }
 
     if (sessionRow.userId !== userId) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+
+    // Re-verify org membership at commit (it may have been revoked mid-session)
+    const [sessionCollection] = await db
+      .select({ organizationId: schema.collections.organizationId })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, sessionRow.collectionId))
+      .limit(1)
+    if (!sessionCollection || !(await hasOrgAccess(userId, sessionCollection.organizationId))) {
+      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+    const scopedCollections = c.get('apiKeyCollectionIds')
+    if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
+      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
     }
 
     const session = {
@@ -625,6 +653,8 @@ app.post(
     const manifestPrivateMap = new Map(manifestEntries.map((r) => [r.hash, r.private]))
     const finalRecordHashes: string[] = []
     const publicRecordHashes: string[] = []
+    // record hash → public record hash, only where they differ (private-field types)
+    const publicHashByRecordHash = new Map<string, string>()
     const strippedRecordObjects: {
       hash: string
       recordId: string
@@ -712,26 +742,21 @@ app.post(
           const privateFields = privateFieldsByType.get(rec.type)
           const publicData =
             privateFields && privateFields.size > 0 ? filterRecordData(data, privateFields) : data
-          publicRecordHashes.push(
-            hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash,
-          )
+          const publicHash = hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash
+          publicRecordHashes.push(publicHash)
+          // Persist the public address only when filtering changed the content
+          if (publicHash !== hash) publicHashByRecordHash.set(hash, publicHash)
         }
       }
     }
 
     if (validationErrors.length > 0) {
-      await db
-        .update(schema.negotiateSessions)
-        .set({ status: 'expired' })
-        .where(eq(schema.negotiateSessions.id, sessionId))
+      await expireSession(sessionId)
       return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
     }
 
     if (extraFieldWarnings.length > 0) {
-      await db
-        .update(schema.negotiateSessions)
-        .set({ status: 'expired' })
-        .where(eq(schema.negotiateSessions.id, sessionId))
+      await expireSession(sessionId)
       return c.json(
         {
           error: 'Records contain fields not defined in schema',
@@ -753,28 +778,13 @@ app.post(
     }
 
     // Determine semver
-    const [latest] = await db
-      .select()
-      .from(schema.versions)
-      .where(
-        and(
-          eq(schema.versions.collectionId, session.collectionId),
-          eq(schema.versions.status, 'ready'),
-        ),
-      )
-      .orderBy(
-        sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-      )
-      .limit(1)
+    const latest = await getLatestReadyVersion(session.collectionId)
 
     const currentSemver = latest?.semver ?? null
     if (session.baseSemver !== null && session.baseSemver !== currentSemver) {
       const normalized = session.baseSemver ? parseSemver(session.baseSemver).semver : null
       if (normalized !== currentSemver) {
-        await db
-          .update(schema.negotiateSessions)
-          .set({ status: 'expired' })
-          .where(eq(schema.negotiateSessions.id, sessionId))
+        await expireSession(sessionId)
         return c.json(
           { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
           409,
@@ -852,10 +862,7 @@ app.post(
       )
       .limit(1)
     if (existingHash) {
-      await db
-        .update(schema.negotiateSessions)
-        .set({ status: 'expired' })
-        .where(eq(schema.negotiateSessions.id, sessionId))
+      await expireSession(sessionId)
       return c.json(
         {
           error: 'No changes detected',
@@ -937,9 +944,13 @@ app.post(
       const VR_BATCH = 5000
       for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
         const batch = finalRecordHashes.slice(i, i + VR_BATCH)
-        await db
-          .insert(schema.versionRecords)
-          .values(batch.map((hash) => ({ versionId: versionId!, recordHash: hash })))
+        await db.insert(schema.versionRecords).values(
+          batch.map((hash) => ({
+            versionId: versionId!,
+            recordHash: hash,
+            publicRecordHash: publicHashByRecordHash.get(hash) ?? null,
+          })),
+        )
       }
     } catch (err) {
       await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))
@@ -1004,10 +1015,7 @@ app.delete(
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
 
-    await db
-      .update(schema.negotiateSessions)
-      .set({ status: 'expired' })
-      .where(eq(schema.negotiateSessions.id, sessionId))
+    await expireSession(sessionId)
 
     return c.body(null, 204)
   },

@@ -1,5 +1,6 @@
 node_modules
 dist
+package-lock.json
 .env
 .env.*
 !.env.enc
@@ -24,4 +25,3 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
-coverage/

@@ -13,14 +13,14 @@ import { db, schema } from '../db/client.server.js'
 export async function summary(c: Context) {
   const kfOrgId = c.req.query('kf_org_id')
   if (!kfOrgId) {
-    return c.json({ error: 'kf_org_id is required' }, 400)
+    return c.json({ error: 'kf_org_id is required', statusCode: 400 }, 400)
   }
 
   // Verify internal API key
   const authHeader = c.req.header('Authorization')
   const expectedKey = process.env.AUTH_INTERNAL_API_KEY
   if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
-    return c.json({ error: 'Unauthorized' }, 401)
+    return c.json({ error: 'Unauthorized', statusCode: 401 }, 401)
   }
 
   const APP_URL = process.env.APP_URL ?? 'http://localhost:4100'
