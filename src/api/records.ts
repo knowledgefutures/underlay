@@ -18,7 +18,7 @@ const app = new Hono<AuthEnv>()
       tags: ['Records'],
       summary: 'Get provenance for a record by hash',
       request: { param: z.object({ hash: z.string() }) },
-      responses: { 200: z.object({ hash: z.string(), recordId: z.string() }) },
+      responses: { 200: z.any() },
     }),
     async (c) => {
       const { hash } = c.req.valid('param')

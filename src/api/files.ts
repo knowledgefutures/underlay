@@ -165,7 +165,7 @@ const app = new Hono<AuthEnv>()
       tags: ['Files'],
       summary: 'Download a file by hash',
       request: { param: fileParams },
-      responses: { 200: z.any(), 404: z.object({ error: z.string() }) },
+      responses: { 302: z.any(), 404: z.object({ error: z.string() }) },
     }),
     async (c) => {
       const { owner, slug, hash } = c.req.valid('param')

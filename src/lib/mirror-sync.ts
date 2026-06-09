@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
+import { hashRecord } from './core/index.js'
 import { getMirrorConfig } from './mirror-config.js'
 import { headS3Object, uploadToS3 } from './s3.js'
 
@@ -532,8 +533,7 @@ async function pullVersion(
     const insertRecordBatch = async (records: { id: string; type: string; data: unknown }[]) => {
       if (records.length === 0) return
       const rows = records.map((r) => {
-        const canonical = JSON.stringify({ id: r.id, type: r.type, data: r.data })
-        const hash = createHash('sha256').update(canonical).digest('hex')
+        const { hash, canonical } = hashRecord({ id: r.id, type: r.type, data: r.data })
         return {
           hash,
           recordId: r.id,
@@ -694,29 +694,37 @@ async function pullVersion(
 
   const versionId = newVersion!.id
 
-  if (versionDetail?.schemas) {
-    for (const [slug, schemaBody] of Object.entries(versionDetail.schemas)) {
-      const schemaId = await ensureSchema(schemaBody)
-      await db.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
+  try {
+    if (versionDetail?.schemas) {
+      for (const [slug, schemaBody] of Object.entries(versionDetail.schemas)) {
+        const schemaId = await ensureSchema(schemaBody)
+        await db.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
+      }
     }
-  }
 
-  for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
-    const batch = manifestHashes.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
+      const batch = manifestHashes.slice(i, i + BATCH_SIZE)
+      await db
+        .insert(schema.versionRecords)
+        .values(batch.map((hash) => ({ versionId, recordHash: hash })))
+    }
+
+    const fileHashList = manifest.files.filter((h) => availableFileHashes.has(h))
+    for (let i = 0; i < fileHashList.length; i += BATCH_SIZE) {
+      const batch = fileHashList.slice(i, i + BATCH_SIZE)
+      await db
+        .insert(schema.versionFiles)
+        .values(batch.map((hash) => ({ versionId, fileHash: hash })))
+    }
+
     await db
-      .insert(schema.versionRecords)
-      .values(batch.map((hash) => ({ versionId, recordHash: hash })))
+      .update(schema.versions)
+      .set({ status: 'ready' })
+      .where(eq(schema.versions.id, versionId))
+  } catch (err) {
+    await db.delete(schema.versions).where(eq(schema.versions.id, versionId))
+    throw err
   }
-
-  const fileHashList = manifest.files.filter((h) => availableFileHashes.has(h))
-  for (let i = 0; i < fileHashList.length; i += BATCH_SIZE) {
-    const batch = fileHashList.slice(i, i + BATCH_SIZE)
-    await db
-      .insert(schema.versionFiles)
-      .values(batch.map((hash) => ({ versionId, fileHash: hash })))
-  }
-
-  await db.update(schema.versions).set({ status: 'ready' }).where(eq(schema.versions.id, versionId))
 }
 
 /**

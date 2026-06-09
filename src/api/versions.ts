@@ -538,6 +538,9 @@ const app = new Hono<AuthEnv>()
           )
           .limit(limit)
 
+        const truncated =
+          added.length === limit || updated.length === limit || removed.length === limit
+
         return c.json({
           semver: version.semver,
           hash: version.hash,
@@ -545,6 +548,7 @@ const app = new Hono<AuthEnv>()
           schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
           delta: { added, updated, removed },
           files: fileHashes.map((f) => f.hash),
+          truncated,
         })
       }
 

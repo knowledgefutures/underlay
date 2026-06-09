@@ -6,7 +6,7 @@ import {
 } from '@tanstack/react-query'
 
 type AnyRpcResponse = { ok: boolean; status: number; json(): Promise<unknown> }
-type OkJson<R> = R extends { ok: true; json(): Promise<infer T> } ? T : never
+type OkJson<R> = R extends { json(): Promise<infer T> } ? T : never
 
 export async function unwrap<R extends AnyRpcResponse>(promise: Promise<R>): Promise<OkJson<R>> {
   const res = await promise

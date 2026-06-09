@@ -4,6 +4,7 @@ import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { hasOrgAccess } from '../lib/version-helpers.server.js'
 import type { AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
@@ -11,7 +12,8 @@ async function getUsageCount(schemaId: string): Promise<number> {
   const [result] = await db
     .select({ count: sql<number>`count(distinct ${schema.versionSchemas.versionId})::int` })
     .from(schema.versionSchemas)
-    .where(eq(schema.versionSchemas.schemaId, schemaId))
+    .innerJoin(schema.versions, eq(schema.versionSchemas.versionId, schema.versions.id))
+    .where(and(eq(schema.versionSchemas.schemaId, schemaId), eq(schema.versions.status, 'ready')))
   return result?.count ?? 0
 }
 
@@ -277,7 +279,7 @@ const app = new Hono<AuthEnv>()
 
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-      if (!collection.public && c.get('userId') !== collection.organizationId) {
+      if (!collection.public && !(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 

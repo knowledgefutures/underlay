@@ -330,17 +330,50 @@ app.post(
       )
     }
 
-    // Query manifest and needed hashes from edge table
-    const manifestRows = await db
-      .select({
-        hash: schema.negotiateSessionManifest.hash,
-        needed: schema.negotiateSessionManifest.needed,
-      })
-      .from(schema.negotiateSessionManifest)
-      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
+    // Hash submitted records and collect their hashes for a targeted query
+    const hashedRecords: {
+      rec: (typeof submittedRecords)[number]
+      hash: string
+      canonical: string
+      data: unknown
+    }[] = []
+    const batchHashes: string[] = []
+    for (const rec of submittedRecords) {
+      let data = rec.data
+      if (sessionRow.stripUnknownFields) {
+        const typeSchema = schemasForCheck[rec.type]
+        if (typeSchema?.properties && typeof data === 'object' && data !== null) {
+          data = stripToSchema(data as Record<string, unknown>, typeSchema.properties)
+        }
+      }
+      const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data })
+      hashedRecords.push({ rec, hash, canonical, data })
+      batchHashes.push(hash)
+    }
 
-    const manifestHashSet = new Set(manifestRows.map((r) => r.hash))
-    const neededSet = new Set(manifestRows.filter((r) => r.needed).map((r) => r.hash))
+    // Query only the hashes present in this batch from the edge table
+    const manifestHashSet = new Set<string>()
+    const neededSet = new Set<string>()
+    for (let i = 0; i < batchHashes.length; i += 5000) {
+      const chunk = batchHashes.slice(i, i + 5000)
+      const rows = await db
+        .select({
+          hash: schema.negotiateSessionManifest.hash,
+          needed: schema.negotiateSessionManifest.needed,
+        })
+        .from(schema.negotiateSessionManifest)
+        .where(
+          and(
+            eq(schema.negotiateSessionManifest.sessionId, sessionId),
+            inArray(schema.negotiateSessionManifest.hash, chunk),
+          ),
+        )
+      for (const r of rows) {
+        manifestHashSet.add(r.hash)
+        if (r.needed) neededSet.add(r.hash)
+      }
+    }
+
     const receivedHashes = new Set<string>()
     const recordObjects: {
       hash: string
@@ -351,17 +384,7 @@ app.post(
       size: number
     }[] = []
 
-    for (const rec of submittedRecords) {
-      let data = rec.data
-      // Strip extra fields if requested (before hashing)
-      if (sessionRow.stripUnknownFields) {
-        const typeSchema = schemasForCheck[rec.type]
-        if (typeSchema?.properties && typeof data === 'object' && data !== null) {
-          data = stripToSchema(data as Record<string, unknown>, typeSchema.properties)
-        }
-      }
-
-      const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data })
+    for (const { rec, hash, canonical, data } of hashedRecords) {
       if (!manifestHashSet.has(hash)) {
         return c.json(
           {
@@ -428,7 +451,7 @@ app.post(
     request: {
       param: z.object({ owner: z.string(), slug: z.string(), sessionId: z.string() }),
     },
-    responses: { 200: z.any() },
+    responses: { 201: z.any() },
   }),
   async (c) => {
     const { sessionId } = c.req.valid('param')
@@ -943,7 +966,7 @@ app.delete(
     request: {
       param: z.object({ owner: z.string(), slug: z.string(), sessionId: z.string() }),
     },
-    responses: { 200: z.any() },
+    responses: { 204: z.any() },
   }),
   async (c) => {
     const { sessionId } = c.req.valid('param')
