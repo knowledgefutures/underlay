@@ -106,6 +106,7 @@ export async function resolve(c: Context<AuthEnv>) {
         and(
           eq(schema.versions.collectionId, collectionId),
           eq(schema.versions.semver, versionSemver),
+          eq(schema.versions.status, 'ready'),
         ),
       )
       .limit(1)
@@ -124,7 +125,9 @@ export async function resolve(c: Context<AuthEnv>) {
         createdAt: schema.versions.createdAt,
       })
       .from(schema.versions)
-      .where(eq(schema.versions.collectionId, collectionId))
+      .where(
+        and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.status, 'ready')),
+      )
       .orderBy(sql`major desc, minor desc, patch desc`)
       .limit(1)
     versionRow = row ?? null

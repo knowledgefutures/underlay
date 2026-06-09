@@ -84,7 +84,9 @@ const app = new Hono<AuthEnv>()
             lastPushAt: schema.versions.createdAt,
           })
           .from(schema.versions)
-          .where(inArray(schema.versions.collectionId, ids))
+          .where(
+            and(inArray(schema.versions.collectionId, ids), eq(schema.versions.status, 'ready')),
+          )
           .orderBy(
             sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
           )
@@ -291,7 +293,9 @@ const app = new Hono<AuthEnv>()
           metadata: schema.versions.metadata,
         })
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, result.id))
+        .where(
+          and(eq(schema.versions.collectionId, result.id), eq(schema.versions.status, 'ready')),
+        )
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )
@@ -350,7 +354,9 @@ const app = new Hono<AuthEnv>()
       const [vcRow] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, result.id))
+        .where(
+          and(eq(schema.versions.collectionId, result.id), eq(schema.versions.status, 'ready')),
+        )
       const versionCount = vcRow?.count ?? 0
 
       const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined }
@@ -691,7 +697,10 @@ const app = new Hono<AuthEnv>()
       }
 
       // Resolve version (latest if not specified)
-      const versionConditions = [eq(schema.versions.collectionId, collection.id)]
+      const versionConditions = [
+        eq(schema.versions.collectionId, collection.id),
+        eq(schema.versions.status, 'ready'),
+      ]
       if (versionParam) {
         versionConditions.push(eq(schema.versions.semver, versionParam))
       }
@@ -708,20 +717,6 @@ const app = new Hono<AuthEnv>()
       if (!version) {
         return c.json({ error: 'No versions found', statusCode: 404 }, 404)
       }
-
-      // Fetch records and files for this version
-      const records = await db
-        .select({
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-        })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(eq(schema.versionRecords.versionId, version.id))
 
       const versionFiles = await db
         .select({
@@ -777,18 +772,51 @@ const app = new Hono<AuthEnv>()
       const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
       pack.entry({ name: 'manifest.json', size: manifestBuf.length }, manifestBuf)
 
-      // Add records as NDJSON grouped by type
-      const recordsByType = new Map<string, typeof records>()
-      for (const rec of records) {
-        const existing = recordsByType.get(rec.type) ?? []
-        existing.push(rec)
-        recordsByType.set(rec.type, existing)
-      }
-
-      for (const [type, typeRecords] of recordsByType) {
-        const lines = typeRecords.map((r) =>
-          JSON.stringify({ id: r.recordId, type: r.type, data: r.data }),
+      // Stream records per-type into tar — avoids loading all records at once
+      const types = await db
+        .selectDistinct({ type: schema.recordObjects.type })
+        .from(schema.versionRecords)
+        .innerJoin(
+          schema.recordObjects,
+          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
         )
+        .where(eq(schema.versionRecords.versionId, version.id))
+
+      for (const { type } of types) {
+        const lines: string[] = []
+        let batchCursor: string | null = null
+        let batchHasMore = true
+        while (batchHasMore) {
+          const conditions = [
+            eq(schema.versionRecords.versionId, version.id),
+            eq(schema.recordObjects.type, type),
+          ]
+          if (batchCursor) {
+            conditions.push(sql`${schema.recordObjects.hash} > ${batchCursor}`)
+          }
+          const batch = await db
+            .select({
+              recordId: schema.recordObjects.recordId,
+              type: schema.recordObjects.type,
+              data: schema.recordObjects.data,
+              hash: schema.recordObjects.hash,
+            })
+            .from(schema.versionRecords)
+            .innerJoin(
+              schema.recordObjects,
+              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+            )
+            .where(and(...conditions))
+            .orderBy(schema.recordObjects.hash)
+            .limit(5001)
+
+          batchHasMore = batch.length > 5000
+          const page = batchHasMore ? batch.slice(0, 5000) : batch
+          if (page.length > 0) batchCursor = page[page.length - 1]!.hash
+          for (const r of page) {
+            lines.push(JSON.stringify({ id: r.recordId, type: r.type, data: r.data }))
+          }
+        }
         const buf = Buffer.from(lines.join('\n') + '\n')
         pack.entry({ name: `records/${type}.ndjson`, size: buf.length }, buf)
       }
@@ -917,7 +945,9 @@ const app = new Hono<AuthEnv>()
       const [latestVersion] = await db
         .select()
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, source.id))
+        .where(
+          and(eq(schema.versions.collectionId, source.id), eq(schema.versions.status, 'ready')),
+        )
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )

@@ -1,0 +1,1 @@
+ALTER TABLE "versions" ADD COLUMN "status" text DEFAULT 'ready' NOT NULL;

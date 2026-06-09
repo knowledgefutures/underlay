@@ -1,5 +1,6 @@
 import { PassThrough } from 'node:stream'
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToPipeableStream } from 'react-dom/server'
 import { createStaticHandler, createStaticRouter, StaticRouterProvider } from 'react-router'
 
@@ -67,8 +68,11 @@ export async function render(request: Request): Promise<{
       html += chunk.toString()
     })
 
+    const queryClient = new QueryClient()
     const { pipe } = renderToPipeableStream(
-      <StaticRouterProvider router={router} context={context} />,
+      <QueryClientProvider client={queryClient}>
+        <StaticRouterProvider router={router} context={context} />
+      </QueryClientProvider>,
       {
         onAllReady() {
           pipe(passthrough)

@@ -7,10 +7,13 @@ import { db, schema } from '../db/client.server.js'
 import {
   ajv,
   canonicalize,
-  computePublicHash,
   computeVersionHash,
   deriveSemver,
+  filterRecordData,
+  filterTypeSchema,
   findExtraFields,
+  getPrivateFields,
+  getPrivateTypes,
   hashRecord,
   hashSchema,
   loadVersionSchemas,
@@ -60,7 +63,9 @@ app.post(
     const [latest] = await db
       .select({ semver: schema.versions.semver })
       .from(schema.versions)
-      .where(eq(schema.versions.collectionId, collection.id))
+      .where(
+        and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
+      )
       .orderBy(
         sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
       )
@@ -108,9 +113,7 @@ app.post(
         userId: c.get('userId')!,
         baseSemver: body.base_version,
         schemas: body.schemas as any,
-        manifest: body.manifest as any,
         fileHashes,
-        neededRecords,
         neededFiles,
         message: body.message ?? null,
         metadata: body.metadata ?? null,
@@ -120,6 +123,23 @@ app.post(
         expiresAt: new Date(Date.now() + SESSION_TTL_MS),
       })
       .returning({ id: schema.negotiateSessions.id })
+
+    // Insert manifest entries into edge table
+    const neededSet = new Set(neededRecords)
+    const MANIFEST_BATCH = 1000
+    for (let i = 0; i < body.manifest.length; i += MANIFEST_BATCH) {
+      const batch = body.manifest.slice(i, i + MANIFEST_BATCH)
+      await db.insert(schema.negotiateSessionManifest).values(
+        batch.map((r) => ({
+          sessionId: session!.id,
+          recordId: r.id,
+          type: r.type,
+          hash: r.hash,
+          private: r.private ?? false,
+          needed: neededSet.has(r.hash),
+        })),
+      )
+    }
 
     return c.json({
       session_id: session!.id,
@@ -161,10 +181,19 @@ app.get(
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
 
+    const [manifestCounts] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        needed: sql<number>`count(*) filter (where ${schema.negotiateSessionManifest.needed})::int`,
+      })
+      .from(schema.negotiateSessionManifest)
+      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
+
     return c.json({
       session_id: session.id,
       status: session.status,
-      needed_records: session.neededRecords,
+      total_records: manifestCounts?.total ?? 0,
+      needed_records: manifestCounts?.needed ?? 0,
       needed_files: session.neededFiles,
       expires_at: session.expiresAt,
       created_at: session.createdAt,
@@ -235,8 +264,72 @@ app.post(
       }
     }
 
-    const manifestHashSet = new Set((sessionRow.manifest as { hash: string }[]).map((r) => r.hash))
-    const neededSet = new Set(sessionRow.neededRecords)
+    // Validate submitted records against session schemas
+    const sessionSchemas = sessionRow.schemas as Record<string, object>
+    const validators = new Map<string, ReturnType<typeof ajv.compile>>()
+    for (const [typeSlug, typeSchema] of Object.entries(sessionSchemas)) {
+      validators.set(typeSlug, ajv.compile(typeSchema))
+    }
+
+    const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+    for (const [typeSlug, typeSchema] of Object.entries(sessionSchemas)) {
+      schemasForCheck[typeSlug] = typeSchema as { properties?: Record<string, unknown> }
+    }
+
+    const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
+    for (const rec of submittedRecords) {
+      const validate = validators.get(rec.type)
+      if (!validate) {
+        validationErrors.push({
+          recordId: rec.id,
+          type: rec.type,
+          errors: [`No schema defined for record type "${rec.type}"`],
+        })
+        continue
+      }
+      if (!validate(rec.data)) {
+        validationErrors.push({
+          recordId: rec.id,
+          type: rec.type,
+          errors: (validate.errors ?? []).map(
+            (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
+          ),
+        })
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
+    }
+
+    // Check for extra fields
+    const extraFieldWarnings = findExtraFields(
+      submittedRecords.map((r) => ({ recordId: r.id, type: r.type, data: r.data })),
+      schemasForCheck,
+    )
+    if (extraFieldWarnings.length > 0 && !sessionRow.stripUnknownFields) {
+      return c.json(
+        {
+          error: 'Records contain fields not defined in schema',
+          extraFields: extraFieldWarnings,
+          hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
+          statusCode: 422,
+        },
+        422,
+      )
+    }
+
+    // Query manifest and needed hashes from edge table
+    const manifestRows = await db
+      .select({
+        hash: schema.negotiateSessionManifest.hash,
+        needed: schema.negotiateSessionManifest.needed,
+      })
+      .from(schema.negotiateSessionManifest)
+      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
+
+    const manifestHashSet = new Set(manifestRows.map((r) => r.hash))
+    const neededSet = new Set(manifestRows.filter((r) => r.needed).map((r) => r.hash))
     const receivedHashes = new Set<string>()
     const recordObjects: {
       hash: string
@@ -248,7 +341,16 @@ app.post(
     }[] = []
 
     for (const rec of submittedRecords) {
-      const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data: rec.data })
+      let data = rec.data
+      // Strip extra fields if requested (before hashing)
+      if (sessionRow.stripUnknownFields) {
+        const typeSchema = schemasForCheck[rec.type]
+        if (typeSchema?.properties && typeof data === 'object' && data !== null) {
+          data = stripToSchema(data as Record<string, unknown>, typeSchema.properties)
+        }
+      }
+
+      const { hash, canonical } = hashRecord({ id: rec.id, type: rec.type, data })
       if (!manifestHashSet.has(hash)) {
         return c.json(
           {
@@ -267,7 +369,7 @@ app.post(
           hash,
           recordId: rec.id,
           type: rec.type,
-          data: rec.data,
+          data,
           private: rec.private ?? false,
           size: Buffer.byteLength(canonical, 'utf-8'),
         })
@@ -282,16 +384,25 @@ app.post(
       }
     }
 
-    const remainingNeeded = sessionRow.neededRecords.filter((h) => !receivedHashes.has(h))
-    await db
-      .update(schema.negotiateSessions)
-      .set({ neededRecords: remainingNeeded })
-      .where(eq(schema.negotiateSessions.id, sessionId))
+    // Mark received hashes as no longer needed (single-row updates, not JSONB rewrite)
+    if (receivedHashes.size > 0) {
+      await db
+        .update(schema.negotiateSessionManifest)
+        .set({ needed: false })
+        .where(
+          and(
+            eq(schema.negotiateSessionManifest.sessionId, sessionId),
+            inArray(schema.negotiateSessionManifest.hash, [...receivedHashes]),
+          ),
+        )
+    }
+
+    const remainingNeeded = neededSet.size - receivedHashes.size
 
     return c.json({
       received: receivedHashes.size,
-      remaining: remainingNeeded.length,
-      total_needed: sessionRow.neededRecords.length,
+      remaining: remainingNeeded,
+      total_needed: neededSet.size,
     })
   },
 )
@@ -330,14 +441,7 @@ app.post(
       collectionId: sessionRow.collectionId,
       baseSemver: sessionRow.baseSemver,
       schemas: sessionRow.schemas as Record<string, object>,
-      manifest: sessionRow.manifest as {
-        id: string
-        type: string
-        hash: string
-        private?: boolean
-      }[],
       fileHashes: sessionRow.fileHashes,
-      neededRecords: sessionRow.neededRecords,
       neededFiles: sessionRow.neededFiles,
       message: sessionRow.message,
       metadata: sessionRow.metadata as Record<string, unknown> | null,
@@ -346,48 +450,43 @@ app.post(
       stripUnknownFields: sessionRow.stripUnknownFields,
     }
 
-    // All needed records must have been submitted via /records
-    if (session.neededRecords.length > 0) {
+    // Check if any needed records remain
+    const [neededCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.negotiateSessionManifest)
+      .where(
+        and(
+          eq(schema.negotiateSessionManifest.sessionId, sessionId),
+          eq(schema.negotiateSessionManifest.needed, true),
+        ),
+      )
+    if ((neededCount?.count ?? 0) > 0) {
+      const neededRows = await db
+        .select({ hash: schema.negotiateSessionManifest.hash })
+        .from(schema.negotiateSessionManifest)
+        .where(
+          and(
+            eq(schema.negotiateSessionManifest.sessionId, sessionId),
+            eq(schema.negotiateSessionManifest.needed, true),
+          ),
+        )
+        .limit(100)
       return c.json(
         {
           error: 'Missing records',
-          missing_hashes: session.neededRecords,
-          message: `${session.neededRecords.length} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
+          missing_hashes: neededRows.map((r) => r.hash),
+          message: `${neededCount!.count} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
           statusCode: 400,
         },
         400,
       )
     }
 
-    // Load ALL manifest records from record_objects
-    const manifestHashes = session.manifest.map((r) => r.hash)
-    const allRecords: {
-      hash: string
-      recordId: string
-      type: string
-      data: unknown
-      private: boolean
-      size: number
-    }[] = []
-
-    if (manifestHashes.length > 0) {
-      const LOAD_BATCH = 1000
-      for (let i = 0; i < manifestHashes.length; i += LOAD_BATCH) {
-        const batch = manifestHashes.slice(i, i + LOAD_BATCH)
-        const rows = await db
-          .select({
-            hash: schema.recordObjects.hash,
-            recordId: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            data: schema.recordObjects.data,
-            private: schema.recordObjects.private,
-            size: schema.recordObjects.size,
-          })
-          .from(schema.recordObjects)
-          .where(inArray(schema.recordObjects.hash, batch))
-        allRecords.push(...rows)
-      }
-    }
+    // Load manifest entries from edge table
+    const manifestEntries = await db
+      .select()
+      .from(schema.negotiateSessionManifest)
+      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
 
     // --- Schema resolution ---
     const newSchemaSet: {
@@ -422,89 +521,6 @@ app.post(
       })
     }
 
-    // Validate ALL records against schemas
-    const validators = new Map<string, ReturnType<typeof ajv.compile>>()
-    for (const entry of newSchemaSet) {
-      validators.set(entry.slug, ajv.compile(entry.schema as object))
-    }
-
-    const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
-    for (const rec of allRecords) {
-      const validate = validators.get(rec.type)
-      if (!validate) {
-        validationErrors.push({
-          recordId: rec.recordId,
-          type: rec.type,
-          errors: [`No schema defined for record type "${rec.type}"`],
-        })
-        continue
-      }
-      if (!validate(rec.data)) {
-        validationErrors.push({
-          recordId: rec.recordId,
-          type: rec.type,
-          errors: (validate.errors ?? []).map(
-            (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
-          ),
-        })
-      }
-    }
-
-    if (validationErrors.length > 0) {
-      await db
-        .update(schema.negotiateSessions)
-        .set({ status: 'expired' })
-        .where(eq(schema.negotiateSessions.id, sessionId))
-      return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
-    }
-
-    // Check for extra fields not defined in schemas
-    const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
-    for (const entry of newSchemaSet) {
-      schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
-    }
-    const extraFieldWarnings = findExtraFields(
-      allRecords.map((r) => ({ recordId: r.recordId, type: r.type, data: r.data })),
-      schemasForCheck,
-    )
-
-    const strippedRecordObjects: (typeof allRecords)[number][] = []
-
-    if (extraFieldWarnings.length > 0) {
-      if (!session.stripUnknownFields) {
-        await db
-          .update(schema.negotiateSessions)
-          .set({ status: 'expired' })
-          .where(eq(schema.negotiateSessions.id, sessionId))
-        return c.json(
-          {
-            error: 'Records contain fields not defined in schema',
-            extraFields: extraFieldWarnings,
-            hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
-            statusCode: 422,
-          },
-          422,
-        )
-      }
-      const affectedIds = new Set(extraFieldWarnings.map((w) => w.recordId))
-      for (const rec of allRecords) {
-        if (!affectedIds.has(rec.recordId)) continue
-        const typeSchema = schemasForCheck[rec.type]
-        if (!typeSchema?.properties || typeof rec.data !== 'object' || rec.data === null) continue
-        rec.data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
-        const { hash: newHash, canonical } = hashRecord({
-          id: rec.recordId,
-          type: rec.type,
-          data: rec.data,
-        })
-        if (rec.hash !== newHash) {
-          rec.hash = newHash
-          rec.size = Buffer.byteLength(canonical, 'utf-8')
-          strippedRecordObjects.push(rec)
-        }
-      }
-    }
-
     // Check files exist
     if (session.fileHashes.length > 0) {
       const existingFiles = await db
@@ -525,11 +541,174 @@ app.post(
       }
     }
 
+    // --- Streaming validation + hash accumulation ---
+    // Process records in batches instead of loading all into memory at once.
+    // Newly submitted records were validated during submitRecords(); existing
+    // records are validated here against the current schemas.
+    const validators = new Map<string, ReturnType<typeof ajv.compile>>()
+    for (const entry of newSchemaSet) {
+      validators.set(entry.slug, ajv.compile(entry.schema as object))
+    }
+
+    const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+    for (const entry of newSchemaSet) {
+      schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
+    }
+
+    const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
+      slug: e.slug,
+      schemaId: e.schemaId,
+      schema: e.schema,
+      schemaHash: e.schemaHash,
+    }))
+    const privateTypes = getPrivateTypes(schemaEntriesForPublicHash)
+    const privateFieldsByType = new Map<string, Set<string>>()
+    for (const entry of schemaEntriesForPublicHash) {
+      const fields = getPrivateFields(entry.schema)
+      if (fields.size > 0) privateFieldsByType.set(entry.slug, fields)
+    }
+
+    const manifestHashes = manifestEntries.map((r) => r.hash)
+    const manifestPrivateMap = new Map(manifestEntries.map((r) => [r.hash, r.private]))
+    const finalRecordHashes: string[] = []
+    const publicRecordHashes: string[] = []
+    const strippedRecordObjects: {
+      hash: string
+      recordId: string
+      type: string
+      data: unknown
+      private: boolean
+      size: number
+    }[] = []
+    const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
+    const extraFieldWarnings: { recordId: string; type: string; fields: string[] }[] = []
+    let totalBytes = 0
+
+    const LOAD_BATCH = 1000
+    for (let i = 0; i < manifestHashes.length; i += LOAD_BATCH) {
+      const batchHashes = manifestHashes.slice(i, i + LOAD_BATCH)
+      const rows = await db
+        .select({
+          hash: schema.recordObjects.hash,
+          recordId: schema.recordObjects.recordId,
+          type: schema.recordObjects.type,
+          data: schema.recordObjects.data,
+          private: schema.recordObjects.private,
+          size: schema.recordObjects.size,
+        })
+        .from(schema.recordObjects)
+        .where(inArray(schema.recordObjects.hash, batchHashes))
+
+      for (const rec of rows) {
+        const validate = validators.get(rec.type)
+        if (!validate) {
+          validationErrors.push({
+            recordId: rec.recordId,
+            type: rec.type,
+            errors: [`No schema defined for record type "${rec.type}"`],
+          })
+          continue
+        }
+        if (!validate(rec.data)) {
+          validationErrors.push({
+            recordId: rec.recordId,
+            type: rec.type,
+            errors: (validate.errors ?? []).map(
+              (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
+            ),
+          })
+          continue
+        }
+
+        let data = rec.data
+        let hash = rec.hash
+        let size = rec.size
+
+        // Check for extra fields
+        const typeSchema = schemasForCheck[rec.type]
+        if (typeSchema?.properties && typeof data === 'object' && data !== null) {
+          const extra = Object.keys(data).filter((k) => !(k in typeSchema.properties!))
+          if (extra.length > 0) {
+            if (!session.stripUnknownFields) {
+              extraFieldWarnings.push({ recordId: rec.recordId, type: rec.type, fields: extra })
+            } else {
+              data = stripToSchema(data as Record<string, unknown>, typeSchema.properties)
+              const result = hashRecord({ id: rec.recordId, type: rec.type, data })
+              if (hash !== result.hash) {
+                hash = result.hash
+                size = Buffer.byteLength(result.canonical, 'utf-8')
+                strippedRecordObjects.push({
+                  hash,
+                  recordId: rec.recordId,
+                  type: rec.type,
+                  data,
+                  private: rec.private,
+                  size,
+                })
+              }
+            }
+          }
+        }
+
+        finalRecordHashes.push(hash)
+        totalBytes += size
+
+        // Compute public record hash inline
+        const isPrivate = rec.private || manifestPrivateMap.get(rec.hash) || false
+        if (!isPrivate && !privateTypes.has(rec.type)) {
+          const privateFields = privateFieldsByType.get(rec.type)
+          const publicData =
+            privateFields && privateFields.size > 0 ? filterRecordData(data, privateFields) : data
+          publicRecordHashes.push(
+            hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash,
+          )
+        }
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
+      return c.json({ error: 'Schema validation failed', validationErrors, statusCode: 422 }, 422)
+    }
+
+    if (extraFieldWarnings.length > 0) {
+      await db
+        .update(schema.negotiateSessions)
+        .set({ status: 'expired' })
+        .where(eq(schema.negotiateSessions.id, sessionId))
+      return c.json(
+        {
+          error: 'Records contain fields not defined in schema',
+          extraFields: extraFieldWarnings,
+          hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
+          statusCode: 422,
+        },
+        422,
+      )
+    }
+
+    // Add file sizes
+    if (session.fileHashes.length > 0) {
+      const [fileSizeSum] = await db
+        .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
+        .from(schema.files)
+        .where(inArray(schema.files.hash, session.fileHashes))
+      totalBytes += Number(fileSizeSum?.total ?? 0)
+    }
+
     // Determine semver
     const [latest] = await db
       .select()
       .from(schema.versions)
-      .where(eq(schema.versions.collectionId, session.collectionId))
+      .where(
+        and(
+          eq(schema.versions.collectionId, session.collectionId),
+          eq(schema.versions.status, 'ready'),
+        ),
+      )
       .orderBy(
         sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
       )
@@ -571,7 +750,7 @@ app.post(
         .from(schema.versionRecords)
         .where(eq(schema.versionRecords.versionId, latest.id))
       const prevSet = new Set(prevHashes.map((r) => r.hash))
-      const newSet = new Set(allRecords.map((r) => r.hash))
+      const newSet = new Set(finalRecordHashes)
       recordsChanged = prevSet.size !== newSet.size || [...newSet].some((h) => !prevSet.has(h))
     }
 
@@ -584,31 +763,26 @@ app.post(
       JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
 
     const schemaSetForHash = newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-    const allRecordHashes = allRecords.map((r) => r.hash)
     const versionHash = computeVersionHash(
       schemaSetForHash,
-      allRecordHashes,
+      finalRecordHashes,
       session.fileHashes,
       metadataValue,
     )
 
-    const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
-      slug: e.slug,
-      schemaId: e.schemaId,
-      schema: e.schema,
-      schemaHash: e.schemaHash,
-    }))
-    const publicHash = computePublicHash(
-      schemaEntriesForPublicHash,
-      allRecords.map((r) => ({
-        recordId: r.recordId,
-        type: r.type,
-        data: r.data,
-        private: r.private,
-      })),
+    // Compute public hash from pre-accumulated public record hashes
+    const publicSchemaSet: { slug: string; schemaHash: string }[] = []
+    for (const entry of schemaEntriesForPublicHash) {
+      if (privateTypes.has(entry.slug)) continue
+      const filtered = filterTypeSchema(entry.schema)
+      publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
+    }
+    const publicHash = computeVersionHash(
+      publicSchemaSet,
+      publicRecordHashes,
       session.fileHashes,
       metadataValue,
-    )
+    ).replace('private:', 'public:')
 
     const sv = deriveSemver(
       latest?.semver ?? null,
@@ -624,6 +798,7 @@ app.post(
         and(
           eq(schema.versions.collectionId, session.collectionId),
           eq(schema.versions.hash, versionHash),
+          eq(schema.versions.status, 'ready'),
         ),
       )
       .limit(1)
@@ -642,18 +817,11 @@ app.post(
       )
     }
 
-    // Compute total bytes
-    let totalBytes = 0
-    for (const rec of allRecords) totalBytes += rec.size
-    if (session.fileHashes.length > 0) {
-      const [fileSizeSum] = await db
-        .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
-        .from(schema.files)
-        .where(inArray(schema.files.hash, session.fileHashes))
-      totalBytes += Number(fileSizeSum?.total ?? 0)
-    }
+    // Insert version row + small join tables in a transaction (status = 'creating')
+    // Then batch-insert version_records outside the transaction to avoid long locks.
+    // Finally mark the version as 'ready'.
+    let versionId: number
 
-    // Insert version + all related rows in a transaction
     await db.transaction(async (tx) => {
       const [version] = await tx
         .insert(schema.versions)
@@ -671,13 +839,15 @@ app.post(
           pushedBy: c.get('userId') ?? null,
           appId: session.appId,
           actorId: session.actorId,
-          recordCount: allRecords.length,
+          recordCount: finalRecordHashes.length,
           fileCount: session.fileHashes.length,
           totalBytes,
+          status: 'creating',
         })
         .returning()
 
-      // Store any record_objects created by field stripping
+      versionId = version!.id
+
       if (strippedRecordObjects.length > 0) {
         const BATCH = 1000
         for (let i = 0; i < strippedRecordObjects.length; i += BATCH) {
@@ -698,27 +868,36 @@ app.post(
         }
       }
 
-      const BATCH = 1000
-      for (let i = 0; i < allRecords.length; i += BATCH) {
-        const batch = allRecords.slice(i, i + BATCH)
-        await tx
-          .insert(schema.versionRecords)
-          .values(batch.map((r) => ({ versionId: version!.id, recordHash: r.hash })))
-      }
-
       if (session.fileHashes.length > 0) {
         await tx
           .insert(schema.versionFiles)
-          .values(session.fileHashes.map((hash) => ({ versionId: version!.id, fileHash: hash })))
+          .values(session.fileHashes.map((hash) => ({ versionId: versionId, fileHash: hash })))
       }
 
       await tx.insert(schema.versionSchemas).values(
         newSchemaSet.map((entry) => ({
-          versionId: version!.id,
+          versionId: versionId,
           slug: entry.slug,
           schemaId: entry.schemaId,
         })),
       )
+    })
+
+    // Batch-insert version_records outside the main transaction
+    const VR_BATCH = 5000
+    for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
+      const batch = finalRecordHashes.slice(i, i + VR_BATCH)
+      await db
+        .insert(schema.versionRecords)
+        .values(batch.map((hash) => ({ versionId: versionId!, recordHash: hash })))
+    }
+
+    // Mark version as ready and update collection timestamp
+    await db.transaction(async (tx) => {
+      await tx
+        .update(schema.versions)
+        .set({ status: 'ready' })
+        .where(eq(schema.versions.id, versionId!))
 
       await tx
         .update(schema.collections)
@@ -735,7 +914,7 @@ app.post(
       {
         semver: sv.semver,
         hash: versionHash,
-        recordCount: allRecords.length,
+        recordCount: finalRecordHashes.length,
         fileCount: session.fileHashes.length,
       },
       201,

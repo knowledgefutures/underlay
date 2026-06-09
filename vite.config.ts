@@ -22,7 +22,11 @@ function serverOnly(): import('vite').Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), serverOnly()],
+  plugins: [
+    react({ babel: { plugins: [['babel-plugin-react-compiler']] } }),
+    tailwindcss(),
+    serverOnly(),
+  ],
   resolve: {
     alias: { '~': resolve(__dirname, 'src') },
   },

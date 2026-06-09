@@ -281,7 +281,10 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
-      const versionConditions = [eq(schema.versions.collectionId, collection.id)]
+      const versionConditions = [
+        eq(schema.versions.collectionId, collection.id),
+        eq(schema.versions.status, 'ready'),
+      ]
       if (versionParam) {
         const { parseSemver } = await import('../lib/version-helpers.server.js')
         const { semver: vSemver } = parseSemver(versionParam)

@@ -280,7 +280,7 @@ if (isProd) {
   devHttpServer = createHttpServer()
   const { createServer: createViteServer } = await import('vite')
   vite = await createViteServer({
-    server: { middlewareMode: true, hmr: { server: devHttpServer } },
+    server: { middlewareMode: true, hmr: { server: devHttpServer, port: 24678 } },
     appType: 'custom',
   })
 

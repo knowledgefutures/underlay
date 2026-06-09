@@ -57,7 +57,9 @@ const app = new Hono<AuthEnv>()
           createdAt: schema.versions.createdAt,
         })
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, collection.id))
+        .where(
+          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
+        )
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )
@@ -99,7 +101,9 @@ const app = new Hono<AuthEnv>()
       const [version] = await db
         .select()
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, collection.id))
+        .where(
+          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
+        )
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )
@@ -144,7 +148,11 @@ const app = new Hono<AuthEnv>()
         .select()
         .from(schema.versions)
         .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)),
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
         )
         .limit(1)
 
@@ -192,7 +200,11 @@ const app = new Hono<AuthEnv>()
         .select()
         .from(schema.versions)
         .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)),
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
         )
         .limit(1)
 
@@ -326,7 +338,11 @@ const app = new Hono<AuthEnv>()
         .select()
         .from(schema.versions)
         .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)),
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
         )
         .limit(1)
 
@@ -343,8 +359,8 @@ const app = new Hono<AuthEnv>()
         .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
         .where(eq(schema.versionFiles.versionId, version.id))
 
-      // Build file→record reference map by scanning record data for $file refs
-      const allRecords = await db
+      // Only load records that contain $file references (DB-level filter)
+      const fileRefRecords = await db
         .select({
           recordId: schema.recordObjects.recordId,
           type: schema.recordObjects.type,
@@ -355,10 +371,15 @@ const app = new Hono<AuthEnv>()
           schema.recordObjects,
           eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
         )
-        .where(eq(schema.versionRecords.versionId, version.id))
+        .where(
+          and(
+            eq(schema.versionRecords.versionId, version.id),
+            sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
+          ),
+        )
 
       const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>()
-      for (const rec of allRecords) {
+      for (const rec of fileRefRecords) {
         const data = rec.data as Record<string, unknown>
         for (const [field, val] of Object.entries(data)) {
           if (val && typeof val === 'object' && '$file' in (val as any)) {
@@ -397,11 +418,138 @@ const app = new Hono<AuthEnv>()
         .select()
         .from(schema.versions)
         .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.semver, semver)),
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
         )
         .limit(1)
 
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
+
+      const limit = Math.min(parseInt(c.req.query('limit') ?? '10000', 10), 50000)
+      const cursor = c.req.query('cursor')
+
+      const fileHashes = await db
+        .select({ hash: schema.versionFiles.fileHash })
+        .from(schema.versionFiles)
+        .where(eq(schema.versionFiles.versionId, version.id))
+
+      const schemaEntries = await loadVersionSchemas(version.id)
+
+      // Delta manifest via SQL set operations — no in-memory Maps
+      if (sinceParam) {
+        const { semver: sinceSemver } = parseSemver(sinceParam)
+
+        const [sinceVersion] = await db
+          .select({ id: schema.versions.id })
+          .from(schema.versions)
+          .where(
+            and(
+              eq(schema.versions.collectionId, collection.id),
+              eq(schema.versions.semver, sinceSemver),
+              eq(schema.versions.status, 'ready'),
+            ),
+          )
+          .limit(1)
+
+        if (!sinceVersion) return c.json({ error: `Version ${sinceSemver} not found` }, 404)
+
+        const targetId = version.id
+        const sinceId = sinceVersion.id
+
+        const added = await db
+          .select({
+            id: schema.recordObjects.recordId,
+            type: schema.recordObjects.type,
+            hash: schema.recordObjects.hash,
+          })
+          .from(schema.versionRecords)
+          .innerJoin(
+            schema.recordObjects,
+            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+          )
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, targetId),
+              sql`NOT EXISTS (
+                SELECT 1 FROM version_records svr
+                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                WHERE svr.version_id = ${sinceId}
+                AND sro.record_id = ${schema.recordObjects.recordId}
+              )`,
+            ),
+          )
+
+        const removed = await db
+          .select({
+            id: schema.recordObjects.recordId,
+            type: schema.recordObjects.type,
+            hash: schema.recordObjects.hash,
+          })
+          .from(schema.versionRecords)
+          .innerJoin(
+            schema.recordObjects,
+            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+          )
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, sinceId),
+              sql`NOT EXISTS (
+                SELECT 1 FROM version_records svr
+                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                WHERE svr.version_id = ${targetId}
+                AND sro.record_id = ${schema.recordObjects.recordId}
+              )`,
+            ),
+          )
+
+        const updated = await db
+          .select({
+            id: schema.recordObjects.recordId,
+            type: schema.recordObjects.type,
+            hash: schema.recordObjects.hash,
+            previousHash: sql<string>`(
+              SELECT sro.hash FROM version_records svr
+              INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+              WHERE svr.version_id = ${sinceId}
+              AND sro.record_id = ${schema.recordObjects.recordId}
+            )`,
+          })
+          .from(schema.versionRecords)
+          .innerJoin(
+            schema.recordObjects,
+            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+          )
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, targetId),
+              sql`EXISTS (
+                SELECT 1 FROM version_records svr
+                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                WHERE svr.version_id = ${sinceId}
+                AND sro.record_id = ${schema.recordObjects.recordId}
+                AND sro.hash != ${schema.recordObjects.hash}
+              )`,
+            ),
+          )
+
+        return c.json({
+          semver: version.semver,
+          hash: version.hash,
+          since: sinceSemver,
+          schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
+          delta: { added, updated, removed },
+          files: fileHashes.map((f) => f.hash),
+        })
+      }
+
+      // Full manifest with cursor-based pagination
+      const recordConditions = [eq(schema.versionRecords.versionId, version.id)]
+      if (cursor) {
+        recordConditions.push(sql`${schema.recordObjects.hash} > ${cursor}`)
+      }
 
       const recordRows = await db
         .select({
@@ -414,80 +562,21 @@ const app = new Hono<AuthEnv>()
           schema.recordObjects,
           eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
         )
-        .where(eq(schema.versionRecords.versionId, version.id))
+        .where(and(...recordConditions))
+        .orderBy(schema.recordObjects.hash)
+        .limit(limit + 1)
 
-      const fileHashes = await db
-        .select({ hash: schema.versionFiles.fileHash })
-        .from(schema.versionFiles)
-        .where(eq(schema.versionFiles.versionId, version.id))
-
-      const schemaEntries = await loadVersionSchemas(version.id)
-
-      // If ?since=vX.Y.Z is provided, return a delta instead of the full manifest
-      if (sinceParam) {
-        const { semver: sinceSemver } = parseSemver(sinceParam)
-
-        const [sinceVersion] = await db
-          .select({ id: schema.versions.id })
-          .from(schema.versions)
-          .where(
-            and(
-              eq(schema.versions.collectionId, collection.id),
-              eq(schema.versions.semver, sinceSemver),
-            ),
-          )
-          .limit(1)
-
-        if (!sinceVersion) return c.json({ error: `Version ${sinceSemver} not found` }, 404)
-
-        const sinceRecords = await db
-          .select({
-            id: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            hash: schema.recordObjects.hash,
-          })
-          .from(schema.versionRecords)
-          .innerJoin(
-            schema.recordObjects,
-            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-          )
-          .where(eq(schema.versionRecords.versionId, sinceVersion.id))
-
-        const sinceMap = new Map(sinceRecords.map((r) => [r.id, r]))
-        const targetMap = new Map(recordRows.map((r) => [r.id, r]))
-
-        const added: typeof recordRows = []
-        const updated: { id: string; type: string; hash: string; previousHash: string }[] = []
-        const removed: typeof recordRows = []
-
-        for (const [id, rec] of targetMap) {
-          const prev = sinceMap.get(id)
-          if (!prev) {
-            added.push(rec)
-          } else if (prev.hash !== rec.hash) {
-            updated.push({ ...rec, previousHash: prev.hash })
-          }
-        }
-        for (const [id, rec] of sinceMap) {
-          if (!targetMap.has(id)) removed.push(rec)
-        }
-
-        return c.json({
-          semver: version.semver,
-          hash: version.hash,
-          since: sinceSemver,
-          schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
-          delta: { added, updated, removed },
-          files: fileHashes.map((f) => f.hash),
-        })
-      }
+      const hasMore = recordRows.length > limit
+      const page = hasMore ? recordRows.slice(0, limit) : recordRows
+      const nextCursor = hasMore ? page[page.length - 1]!.hash : null
 
       return c.json({
         semver: version.semver,
         hash: version.hash,
         schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
-        records: recordRows,
+        records: page,
         files: fileHashes.map((f) => f.hash),
+        pagination: { limit, hasMore, nextCursor },
       })
     },
   )
@@ -503,6 +592,7 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const from = c.req.query('from')
+      const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000)
 
       const collection = await resolveCollection(owner, slug)
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
@@ -516,6 +606,7 @@ const app = new Hono<AuthEnv>()
           and(
             eq(schema.versions.collectionId, collection.id),
             eq(schema.versions.semver, targetSemver),
+            eq(schema.versions.status, 'ready'),
           ),
         )
         .limit(1)
@@ -524,24 +615,8 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Version not found', statusCode: 404 }, 404)
       }
 
-      type DiffRecord = { recordId: string; type: string; data: unknown; hash: string }
-
-      const targetRecords = await db
-        .select({
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-          hash: schema.recordObjects.hash,
-        })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(eq(schema.versionRecords.versionId, targetVersion.id))
-
+      const targetId = targetVersion.id
       let fromVersion: typeof targetVersion | null = null
-      let fromRecords: DiffRecord[] = []
       if (from) {
         const { semver: fromSemver } = parseSemver(from)
         const [fv] = await db
@@ -551,38 +626,102 @@ const app = new Hono<AuthEnv>()
             and(
               eq(schema.versions.collectionId, collection.id),
               eq(schema.versions.semver, fromSemver),
+              eq(schema.versions.status, 'ready'),
             ),
           )
           .limit(1)
+        if (fv) fromVersion = fv
+      }
 
-        if (fv) {
-          fromVersion = fv
-          fromRecords = await db
+      const fromId = fromVersion?.id
+
+      // SQL set operations — only fetch diff rows, not all records from both versions
+      const added = fromId
+        ? await db
             .select({
-              recordId: schema.recordObjects.recordId,
+              id: schema.recordObjects.recordId,
               type: schema.recordObjects.type,
               data: schema.recordObjects.data,
-              hash: schema.recordObjects.hash,
             })
             .from(schema.versionRecords)
             .innerJoin(
               schema.recordObjects,
               eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
             )
-            .where(eq(schema.versionRecords.versionId, fv.id))
-        }
-      }
+            .where(
+              and(
+                eq(schema.versionRecords.versionId, targetId),
+                sql`NOT EXISTS (
+                  SELECT 1 FROM version_records svr
+                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                  WHERE svr.version_id = ${fromId}
+                  AND sro.record_id = ${schema.recordObjects.recordId}
+                )`,
+              ),
+            )
+            .limit(diffLimit)
+        : await db
+            .select({
+              id: schema.recordObjects.recordId,
+              type: schema.recordObjects.type,
+              data: schema.recordObjects.data,
+            })
+            .from(schema.versionRecords)
+            .innerJoin(
+              schema.recordObjects,
+              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+            )
+            .where(eq(schema.versionRecords.versionId, targetId))
+            .limit(diffLimit)
 
-      const fromMap = new Map(fromRecords.map((r) => [r.recordId, r]))
-      const targetMap = new Map(targetRecords.map((r) => [r.recordId, r]))
+      const removed = fromId
+        ? await db
+            .select({ id: schema.recordObjects.recordId })
+            .from(schema.versionRecords)
+            .innerJoin(
+              schema.recordObjects,
+              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+            )
+            .where(
+              and(
+                eq(schema.versionRecords.versionId, fromId),
+                sql`NOT EXISTS (
+                  SELECT 1 FROM version_records svr
+                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                  WHERE svr.version_id = ${targetId}
+                  AND sro.record_id = ${schema.recordObjects.recordId}
+                )`,
+              ),
+            )
+            .limit(diffLimit)
+        : []
 
-      const added = targetRecords.filter((r) => !fromMap.has(r.recordId))
-      const removed = fromRecords.filter((r) => !targetMap.has(r.recordId))
-      // Hash comparison instead of JSON.stringify comparison
-      const updated = targetRecords.filter((r) => {
-        const prev = fromMap.get(r.recordId)
-        return prev && prev.hash !== r.hash
-      })
+      const updated = fromId
+        ? await db
+            .select({
+              id: schema.recordObjects.recordId,
+              type: schema.recordObjects.type,
+              data: schema.recordObjects.data,
+            })
+            .from(schema.versionRecords)
+            .innerJoin(
+              schema.recordObjects,
+              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+            )
+            .where(
+              and(
+                eq(schema.versionRecords.versionId, targetId),
+                sql`EXISTS (
+                  SELECT 1 FROM version_records svr
+                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+                  WHERE svr.version_id = ${fromId}
+                  AND sro.record_id = ${schema.recordObjects.recordId}
+                  AND sro.hash != ${schema.recordObjects.hash}
+                )`,
+              ),
+            )
+            .limit(diffLimit)
+        : []
 
       // Compare schema sets
       const targetSchemas = await loadVersionSchemas(targetVersion.id)
@@ -622,9 +761,13 @@ const app = new Hono<AuthEnv>()
       return c.json({
         from: fromVersion?.semver ?? null,
         to: targetVersion.semver,
-        added: added.map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
-        updated: updated.map((r) => ({ id: r.recordId, type: r.type, data: r.data })),
-        removed: removed.map((r) => r.recordId),
+        added: added.map((r) => ({ id: r.id, type: r.type, data: r.data })),
+        updated: (updated as { id: string; type: string; data: unknown }[]).map((r) => ({
+          id: r.id,
+          type: r.type,
+          data: r.data,
+        })),
+        removed: (removed as { id: string }[]).map((r) => r.id),
         meta: {
           schemaChanged,
           metadataChanged,
@@ -659,7 +802,9 @@ const app = new Hono<AuthEnv>()
       const [latest] = await db
         .select()
         .from(schema.versions)
-        .where(eq(schema.versions.collectionId, collection.id))
+        .where(
+          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
+        )
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )
