@@ -1,22 +1,22 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 
 export default function OwnerSettingsMembers() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
+  const { orgData } = useLoaderData() as { orgData: any }
 
-  const [orgData, setOrgData] = useState<any>(null)
-  const [orgId, setOrgId] = useState<string | null>(null)
-  const [isOwner, setIsOwner] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
+  const orgId = org?.organizationId ?? null
+  const isOwner = org?.role === 'owner'
+  const isAdmin = org?.role === 'admin' || isOwner
+
   const [members, setMembers] = useState<any[]>([])
   const [invitations, setInvitations] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -39,33 +39,18 @@ export default function OwnerSettingsMembers() {
   }
 
   useEffect(() => {
-    if (!owner || !currentUser) return
-
-    const org = currentUser.orgs?.find((o: any) => o.slug === owner)
-    if (!org) {
-      window.location.href = `/${owner}`
-      return
-    }
-
-    const id = org.organizationId
-    setOrgId(id)
-    setIsOwner(org.role === 'owner')
-    setIsAdmin(org.role === 'admin' || org.role === 'owner')
-
-    Promise.all([
-      fetch(`/api/accounts/${owner}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      loadMembers(id),
-      loadInvitations(id),
-    ]).then(([orgResult]) => {
-      if (orgResult) setOrgData(orgResult)
-      setLoading(false)
-    })
-  }, [owner, currentUser])
+    if (!orgId) return
+    loadMembers(orgId)
+    loadInvitations(orgId)
+  }, [orgId])
 
   if (!currentUser) {
     window.location.href = '/login'
+    return null
+  }
+
+  if (!org) {
+    window.location.href = `/${owner}`
     return null
   }
 
@@ -153,15 +138,6 @@ export default function OwnerSettingsMembers() {
       if (orgId) await loadInvitations(orgId)
     }
   }
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-4xl px-4 py-10 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!orgData) throw new NotFoundError()
 
   const pendingInvitations = invitations.filter((i: any) => i.status === 'pending')
 

@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 
@@ -25,42 +24,7 @@ interface RecordData {
 export default function RecordDetailPage() {
   const params = useParams()
   const hash = params.hash!
-  const [record, setRecord] = useState<RecordData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    fetch(`/api/records/${hash}/provenance`, { credentials: 'same-origin' })
-      .then(async (res) => {
-        if (!res.ok) {
-          setError('Record not found.')
-          return
-        }
-        setRecord(await res.json())
-      })
-      .catch(() => setError('Failed to load record.'))
-      .finally(() => setLoading(false))
-  }, [hash])
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-5xl px-4 py-10">
-          <p className="text-ink-muted text-sm">Loading…</p>
-        </div>
-      </BaseLayout>
-    )
-  }
-
-  if (error || !record) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-5xl px-4 py-10">
-          <p className="text-sm text-red-700">{error || 'Record not found.'}</p>
-        </div>
-      </BaseLayout>
-    )
-  }
+  const record = useLoaderData() as RecordData
 
   const fields = Object.entries(record.data)
 

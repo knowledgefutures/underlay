@@ -1,57 +1,14 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router'
+import { useLoaderData, useParams } from 'react-router'
 
 import BlogLayout from '~/components/BlogLayout'
 
-// Blog post metadata
-const posts: Record<string, { title: string; subtitle: string; date: string }> = {
-  '2024-04-27-underlay-revived': {
-    title: 'Underlay, Revived',
-    subtitle: 'The landscape changed. The project can finally be simple.',
-    date: '2024-04-27',
-  },
-  '2024-04-27-institutional-repositories': {
-    title: 'Institutional Repositories',
-    subtitle: 'Why universities need better infrastructure for structured data.',
-    date: '2024-04-27',
-  },
-  '2026-04-28-atproto-integration': {
-    title: 'AT Protocol Integration',
-    subtitle: 'Connecting Underlay to the decentralized social web.',
-    date: '2026-04-28',
-  },
-  '2026-04-30-schema-evolution': {
-    title: 'Schema Evolution',
-    subtitle: 'How Underlay handles schema changes across versions.',
-    date: '2026-04-30',
-  },
-  '2026-06-08-content-addressed-records': {
-    title: 'Content-Addressed Records',
-    subtitle:
-      'Applying the insight that already works for schemas and files to the records themselves.',
-    date: '2026-06-08',
-  },
-  '2026-06-08-permanently-addressable-structured-data': {
-    title: 'Permanently Addressable Structured Data',
-    subtitle: 'What Underlay is, why it matters now, and how it works.',
-    date: '2026-06-08',
-  },
-}
+import { posts } from './[slug].data'
 
 export default function BlogPost() {
   const { slug } = useParams()
-  const [content, setContent] = useState<string | null>(null)
+  const { content } = useLoaderData() as { content: string }
 
   const meta = slug ? posts[slug] : undefined
-
-  useEffect(() => {
-    if (!slug) return
-    // Fetch the rendered markdown from an API endpoint or static file
-    fetch(`/api/blog/${slug}`)
-      .then((res) => (res.ok ? res.text() : ''))
-      .then(setContent)
-      .catch(() => setContent(''))
-  }, [slug])
 
   if (!meta) {
     return (
@@ -63,10 +20,10 @@ export default function BlogPost() {
 
   return (
     <BlogLayout title={meta.title} subtitle={meta.subtitle} date={meta.date}>
-      {content === null ? (
-        <p className="text-ink-muted">Loading...</p>
-      ) : (
+      {content ? (
         <div dangerouslySetInnerHTML={{ __html: content }} />
+      ) : (
+        <p className="text-ink-muted">Post content unavailable.</p>
       )}
     </BlogLayout>
   )

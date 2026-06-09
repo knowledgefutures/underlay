@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav, formatBytes } from '.'
@@ -10,48 +8,10 @@ import { CollectionNav, formatBytes } from '.'
 export default function CollectionVersionsPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
+  const { data, versions } = useLoaderData() as { data: any; versions: any[] }
 
-  const [data, setData] = useState<any>(null)
-  const [versions, setVersions] = useState<any[]>([])
-  const [isOwner, setIsOwner] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!owner || !collection) return
-
-    Promise.all([
-      fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      fetch(`/api/collections/${owner}/${collection}/versions?limit=100`, {
-        credentials: 'include',
-      }).then((r) => (r.ok ? r.json() : [])),
-    ]).then(([col, vers]) => {
-      if (!col) {
-        setLoading(false)
-        return
-      }
-      setData(col)
-      setVersions(vers)
-
-      if (currentUser) {
-        setIsOwner(
-          currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner),
-        )
-      }
-
-      setLoading(false)
-    })
-  }, [owner, collection, currentUser])
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!data) throw new NotFoundError()
+  const isOwner =
+    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
 
   return (
     <BaseLayout>
@@ -60,7 +20,7 @@ export default function CollectionVersionsPage() {
           owner={owner!}
           collection={collection!}
           isPublic={data.public}
-          isOwner={isOwner}
+          isOwner={!!isOwner}
           active="versions"
         />
 

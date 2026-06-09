@@ -1,85 +1,48 @@
-import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { type FormEvent, useState } from 'react'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 export default function OwnerSettings() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
+  const { orgData: initialOrgData, kfOrgs } = useLoaderData() as {
+    orgData: any
+    kfOrgs: { id: string; name: string }[]
+  }
 
-  const [orgData, setOrgData] = useState<any>(null)
-  const [isOwner, setIsOwner] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
+  const isOwner = org?.role === 'owner'
+  const isAdmin = org?.role === 'admin' || isOwner
+
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState('')
 
   // Profile form
-  const [displayName, setDisplayName] = useState('')
-  const [slugValue, setSlugValue] = useState('')
-  const [bio, setBio] = useState('')
-  const [website, setWebsite] = useState('')
-  const [location, setLocation] = useState('')
+  const [displayName, setDisplayName] = useState(initialOrgData.displayName ?? '')
+  const [slugValue, setSlugValue] = useState(initialOrgData.slug ?? owner)
+  const [bio, setBio] = useState(initialOrgData.bio ?? '')
+  const [website, setWebsite] = useState(initialOrgData.website ?? '')
+  const [location, setLocation] = useState(initialOrgData.location ?? '')
 
   // KF org link
-  const [kfOrgId, setKfOrgId] = useState('')
-  const [kfOrgs, setKfOrgs] = useState<{ id: string; name: string }[]>([])
-  const [kfOrgsLoading, setKfOrgsLoading] = useState(false)
+  const [kfOrgId, setKfOrgId] = useState(initialOrgData.kfOrgId ?? '')
 
   // ARK form
-  const [arkNaan, setArkNaan] = useState('')
+  const [arkNaan, setArkNaan] = useState(initialOrgData.arkNaan ?? '')
 
   // Delete form
   const [confirmSlug, setConfirmSlug] = useState('')
 
-  useEffect(() => {
-    if (!owner || !currentUser) return
-
-    const org = currentUser.orgs?.find((o: any) => o.slug === owner)
-    if (!org) {
-      window.location.href = `/${owner}`
-      return
-    }
-
-    const ownerRole = org.role === 'owner'
-    const adminRole = org.role === 'admin' || ownerRole
-    setIsOwner(ownerRole)
-    setIsAdmin(adminRole)
-
-    fetch(`/api/accounts/${owner}`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (!data) {
-          setLoading(false)
-          return
-        }
-        setOrgData(data)
-        setDisplayName(data.displayName ?? '')
-        setSlugValue(data.slug ?? owner)
-        setBio(data.bio ?? '')
-        setWebsite(data.website ?? '')
-        setLocation(data.location ?? '')
-        setKfOrgId(data.kfOrgId ?? '')
-        setArkNaan(data.arkNaan ?? '')
-        setLoading(false)
-      })
-
-    // Fetch available KF orgs for the transfer UI
-    setKfOrgsLoading(true)
-    fetch('/api/accounts/available-kf-orgs', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((orgs) => {
-        setKfOrgs(Array.isArray(orgs) ? orgs : [])
-        setKfOrgsLoading(false)
-      })
-      .catch(() => setKfOrgsLoading(false))
-  }, [owner, currentUser])
-
   if (!currentUser) {
     window.location.href = '/login'
+    return null
+  }
+
+  if (!org) {
+    window.location.href = `/${owner}`
     return null
   }
 
@@ -165,15 +128,6 @@ export default function OwnerSettings() {
     }
   }
 
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-4xl px-4 py-10 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!orgData) throw new NotFoundError()
-
   return (
     <BaseLayout>
       <div className="mx-auto max-w-4xl px-4 py-10">
@@ -216,19 +170,19 @@ export default function OwnerSettings() {
         {isOwner ? (
           <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
             <div className="mb-4 flex items-center gap-4">
-              {orgData.avatarUrl ? (
+              {initialOrgData.avatarUrl ? (
                 <img
-                  src={orgData.avatarUrl}
+                  src={initialOrgData.avatarUrl}
                   alt="Avatar"
                   className="border-rule h-16 w-16 rounded-full border object-cover"
                 />
               ) : (
                 <div className="bg-parchment-dark border-rule text-ink-muted flex h-16 w-16 items-center justify-center rounded-full border text-lg font-semibold">
-                  {orgData.displayName?.charAt(0)?.toUpperCase() ?? '?'}
+                  {initialOrgData.displayName?.charAt(0)?.toUpperCase() ?? '?'}
                 </div>
               )}
               <div>
-                <p className="text-sm font-medium">{orgData.displayName}</p>
+                <p className="text-sm font-medium">{initialOrgData.displayName}</p>
                 <p className="text-ink-muted font-mono text-xs">@{owner}</p>
               </div>
             </div>
@@ -328,11 +282,11 @@ export default function OwnerSettings() {
               ARK Identifiers
             </h2>
 
-            {orgData.arkShoulder && (
+            {initialOrgData.arkShoulder && (
               <div className="mb-4">
                 <p className="text-ink-muted mb-1 text-xs">Assigned shoulder</p>
                 <code className="bg-parchment-dark border-rule border px-2 py-1 font-mono text-xs">
-                  {orgData.arkShoulder}
+                  {initialOrgData.arkShoulder}
                 </code>
               </div>
             )}
@@ -377,60 +331,56 @@ export default function OwnerSettings() {
               changes which KF Account is responsible for billing and ownership, but does not affect
               permissions or membership on the Underlay side.
             </p>
-            {kfOrgsLoading ? (
-              <p className="text-ink-muted text-sm">Loading KF Accounts…</p>
-            ) : (
-              <form
-                onSubmit={async (e: FormEvent) => {
-                  e.preventDefault()
-                  clearMessages()
-                  setSubmitting('kforg')
-                  try {
-                    const res = await fetch(`/api/accounts/${owner}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ kfOrgId }),
-                    })
-                    if (res.ok) {
-                      setSuccess('Ownership transferred.')
-                    } else {
-                      const body = await res.json().catch(() => ({}))
-                      setError(body.error ?? 'Failed to transfer ownership.')
-                    }
-                  } finally {
-                    setSubmitting('')
+            <form
+              onSubmit={async (e: FormEvent) => {
+                e.preventDefault()
+                clearMessages()
+                setSubmitting('kforg')
+                try {
+                  const res = await fetch(`/api/accounts/${owner}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ kfOrgId }),
+                  })
+                  if (res.ok) {
+                    setSuccess('Ownership transferred.')
+                  } else {
+                    const body = await res.json().catch(() => ({}))
+                    setError(body.error ?? 'Failed to transfer ownership.')
                   }
-                }}
-                className="space-y-3"
-              >
-                <div>
-                  <label htmlFor="kfOrgId" className="mb-1 block text-xs font-medium">
-                    KF Account
-                  </label>
-                  <select
-                    id="kfOrgId"
-                    value={kfOrgId}
-                    onChange={(e) => setKfOrgId(e.target.value)}
-                    className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
-                  >
-                    <option value="">— None —</option>
-                    {kfOrgs.map((org) => (
-                      <option key={org.id} value={org.id}>
-                        {org.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  type="submit"
-                  disabled={submitting === 'kforg'}
-                  className="bg-ink text-parchment px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
+                } finally {
+                  setSubmitting('')
+                }
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label htmlFor="kfOrgId" className="mb-1 block text-xs font-medium">
+                  KF Account
+                </label>
+                <select
+                  id="kfOrgId"
+                  value={kfOrgId}
+                  onChange={(e) => setKfOrgId(e.target.value)}
+                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
                 >
-                  Save
-                </button>
-              </form>
-            )}
+                  <option value="">— None —</option>
+                  {kfOrgs.map((kfOrg) => (
+                    <option key={kfOrg.id} value={kfOrg.id}>
+                      {kfOrg.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={submitting === 'kforg'}
+                className="bg-ink text-parchment px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
+              >
+                Save
+              </button>
+            </form>
           </div>
         )}
 

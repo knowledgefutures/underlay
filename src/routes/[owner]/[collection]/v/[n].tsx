@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav, formatBytes } from '..'
@@ -11,12 +10,22 @@ export default function CollectionVersionPage() {
   const { owner, collection, n } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const { currentUser } = useAppContext()
+  const { version, collectionData } = useLoaderData() as { version: any; collectionData: any }
 
-  const [version, setVersion] = useState<any>(null)
-  const [collectionData, setCollectionData] = useState<any>(null)
-  const [isOwner, setIsOwner] = useState(false)
+  const isOwner =
+    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+
+  const readmeSource = (version.metadata as Record<string, unknown> | null | undefined)?.readme as
+    | string
+    | null
   const [readmeHtml, setReadmeHtml] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!readmeSource) return
+    import('marked').then(({ marked }) => {
+      setReadmeHtml(marked.parse(readmeSource) as string)
+    })
+  }, [readmeSource])
 
   // Tab state
   const tab = searchParams.get('tab') ?? 'records'
@@ -29,41 +38,9 @@ export default function CollectionVersionPage() {
   // Files state
   const [files, setFiles] = useState<any[]>([])
 
-  useEffect(() => {
-    if (!owner || !collection || !n) return
-
-    Promise.all([
-      fetch(`/api/collections/${owner}/${collection}/versions/${n}`, {
-        credentials: 'include',
-      }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/collections/${owner}/${collection}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-    ]).then(([ver, col]) => {
-      if (!ver) {
-        setLoading(false)
-        return
-      }
-      setVersion(ver)
-      setCollectionData(col)
-
-      const meta = ver.metadata as Record<string, unknown> | null | undefined
-      const readmeSource = (meta?.readme as string) || null
-      if (readmeSource) {
-        import('marked').then(({ marked }) => {
-          setReadmeHtml(marked.parse(readmeSource) as string)
-        })
-      }
-
-      if (currentUser) {
-        setIsOwner(
-          currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner),
-        )
-      }
-
-      setLoading(false)
-    })
-  }, [owner, collection, n, currentUser])
+  const schemasMap = (version.schemas ?? {}) as Record<string, any>
+  const allTypes = useMemo(() => Object.keys(schemasMap).sort(), [schemasMap])
+  const currentType = selectedType || (allTypes.length > 0 ? allTypes[0] : null)
 
   // Fetch records when tab/type/page changes
   const page = parseInt(searchParams.get('page') ?? '1', 10)
@@ -71,11 +48,6 @@ export default function CollectionVersionPage() {
 
   useEffect(() => {
     if (!version || tab !== 'records') return
-
-    const schemasMap = (version.schemas ?? {}) as Record<string, any>
-    const allTypes = Object.keys(schemasMap).sort()
-    const currentType = selectedType || (allTypes.length > 0 ? allTypes[0] : null)
-
     if (!currentType) return
 
     const offset = (page - 1) * pageSize
@@ -88,7 +60,7 @@ export default function CollectionVersionPage() {
         setRecords(body.records ?? body)
         setTotalRecords(body.pagination?.total ?? version.recordCount ?? 0)
       })
-  }, [version, tab, selectedType, page, owner, collection, n])
+  }, [version, tab, currentType, page, owner, collection, n])
 
   // Fetch files when files tab selected
   useEffect(() => {
@@ -100,19 +72,6 @@ export default function CollectionVersionPage() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setFiles)
   }, [version, tab, owner, collection, n])
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!version) throw new NotFoundError()
-
-  const schemasMap = (version.schemas ?? {}) as Record<string, any>
-  const allTypes = Object.keys(schemasMap).sort()
-  const currentType = selectedType || (allTypes.length > 0 ? allTypes[0] : null)
 
   const currentTypeFields: string[] = currentType
     ? schemasMap[currentType]?.properties
@@ -161,7 +120,7 @@ export default function CollectionVersionPage() {
           owner={owner!}
           collection={collection!}
           isPublic={collectionData?.public}
-          isOwner={isOwner}
+          isOwner={!!isOwner}
           active="versions"
           versionLabel={version.semver}
         />

@@ -1,9 +1,8 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import { ApiPlayground } from '~/components/ApiPlayground'
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 
@@ -38,12 +37,12 @@ function getScope(permissions?: Record<string, string[]>): string {
 export default function OwnerSettingsKeys() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
+  const { orgData, collections } = useLoaderData() as { orgData: any; collections: any[] }
 
-  const [orgData, setOrgData] = useState<any>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
+  const isAdmin = org?.role === 'admin' || org?.role === 'owner'
+
   const [keys, setKeys] = useState<Key[]>([])
-  const [collections, setCollections] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [newKeyResult, setNewKeyResult] = useState<{ key: string; name: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -59,35 +58,8 @@ export default function OwnerSettingsKeys() {
   }
 
   useEffect(() => {
-    if (!owner || !currentUser) return
-
-    const org = currentUser.orgs?.find((o: any) => o.slug === owner)
-    if (!org) {
-      window.location.href = `/${owner}`
-      return
-    }
-
-    const adminRole = org.role === 'admin' || org.role === 'owner'
-    setIsAdmin(adminRole)
-
-    Promise.all([
-      fetch(`/api/accounts/${owner}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      loadKeys(),
-      fetch(`/api/accounts/${owner}/collections`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-    ]).then(([org, , cols]) => {
-      if (!org) {
-        setLoading(false)
-        return
-      }
-      setOrgData(org)
-      setCollections(cols as any)
-      setLoading(false)
-    })
-  }, [owner, currentUser])
+    loadKeys()
+  }, [])
 
   if (!currentUser) {
     window.location.href = '/login'
@@ -125,15 +97,6 @@ export default function OwnerSettingsKeys() {
     await authClient.apiKey.delete({ keyId } as any)
     setKeys((prev) => prev.filter((k) => k.id !== keyId))
   }
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-4xl px-4 py-10 text-sm">Loading…</div>
-      </BaseLayout>
-    )
-  }
-  if (!orgData) throw new NotFoundError()
 
   return (
     <BaseLayout>

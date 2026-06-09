@@ -1,60 +1,18 @@
-import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { NotFoundError } from '~/components/NotFound'
 import { useAppContext } from '~/lib/app-context'
 
 export default function OwnerPage() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
-
-  const [account, setAccount] = useState<any>(null)
-  const [collections, setCollections] = useState<any[]>([])
-  const [members, setMembers] = useState<any[]>([])
-  const [isMember, setIsMember] = useState(false)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!owner) return
-    setLoading(true)
-
-    Promise.all([
-      fetch(`/api/accounts/${owner}`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-      fetch(`/api/accounts/${owner}/collections`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-      fetch(`/api/accounts/${owner}/members`, { credentials: 'include' }).then((r) =>
-        r.ok ? r.json() : [],
-      ),
-    ]).then(([acct, cols, mems]) => {
-      if (!acct) {
-        setLoading(false)
-        return
-      }
-      setAccount(acct)
-      setCollections(cols)
-      setMembers(mems)
-
-      if (currentUser) {
-        setIsMember(currentUser.orgs?.some((o: any) => o.slug === owner) ?? false)
-      }
-
-      setLoading(false)
-    })
-  }, [owner, currentUser])
-
-  if (loading) {
-    return (
-      <BaseLayout>
-        <div className="text-ink-muted mx-auto max-w-5xl px-4 py-8 text-sm">Loading…</div>
-      </BaseLayout>
-    )
+  const { account, collections, members } = useLoaderData() as {
+    account: any
+    collections: any[]
+    members: any[]
   }
-  if (!account) throw new NotFoundError()
 
+  const isMember = currentUser?.orgs?.some((o: any) => o.slug === owner) ?? false
   const totalVersions = collections.reduce((sum: number, c: any) => sum + (c.versionCount ?? 0), 0)
 
   return (
