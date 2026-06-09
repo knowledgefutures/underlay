@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
 import { downloadFromS3 } from '../lib/s3.js'
+import { getOrgRole, hasOrgAccess } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
@@ -407,6 +408,10 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Not found', statusCode: 404 }, 404)
       }
 
+      if (!(await hasOrgAccess(c.get('userId'), org.id))) {
+        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+      }
+
       // Validate new slug if provided
       if (updates.slug !== undefined) {
         const newSlug = updates.slug
@@ -450,7 +455,7 @@ const app = new Hono<AuthEnv>()
   // Delete collection
   .delete(
     '/collections/:owner/:slug',
-    requireAuth('admin'),
+    requireAuth('write'),
     openApi({
       tags: ['Collections'],
       summary: 'Delete a collection',
@@ -480,6 +485,12 @@ const app = new Hono<AuthEnv>()
 
       if (!collection) {
         return c.json({ error: 'Not found', statusCode: 404 }, 404)
+      }
+
+      // Deleting a collection requires owner/admin role in the owning org
+      const role = await getOrgRole(c.get('userId'), org.id)
+      if (role !== 'owner' && role !== 'admin') {
+        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
       }
 
       await db.delete(schema.collections).where(eq(schema.collections.id, collection.id))

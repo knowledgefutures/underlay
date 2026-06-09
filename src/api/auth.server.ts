@@ -21,13 +21,13 @@ export type AuthEnv = {
 
 const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 
-const internalToken = process.env.INTERNAL_API_TOKEN ?? 'internal-dev-token'
+const internalToken = process.env.INTERNAL_API_TOKEN ?? ''
 const authInternalApiKey = process.env.AUTH_INTERNAL_API_KEY ?? ''
 
 export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
-  // Internal service calls (legacy header)
+  // Internal service calls (legacy header); only honored when a token is configured
   const internalHeader = c.req.header('x-internal-token')
-  if (internalHeader && timingSafeEquals(internalHeader, internalToken)) {
+  if (internalToken && internalHeader && timingSafeEquals(internalHeader, internalToken)) {
     c.set('apiKeyScope', 'read')
     return next()
   }
@@ -78,7 +78,9 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     if (session) {
       c.set('sessionUserId', session.user.id)
       c.set('userId', session.user.id)
-      c.set('apiKeyScope', 'admin')
+      // Sessions get write scope; destructive/admin actions are gated by
+      // per-resource org-role checks, not a blanket admin scope.
+      c.set('apiKeyScope', 'write')
     }
   } catch {
     // Invalid or expired session — ignore

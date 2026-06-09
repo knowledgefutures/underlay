@@ -187,7 +187,8 @@ app.patch(
   requireAuth('write'),
   ark.updateArkRecordTypes,
 )
-app.patch('/api/accounts/:slug/ark', requireAuth('admin'), ark.updateAccountArk)
+// updateAccountArk enforces org owner/admin role internally
+app.patch('/api/accounts/:slug/ark', requireAuth('write'), ark.updateAccountArk)
 
 // --- OpenAPI doc + Scalar reference UI ---
 createOpenApiDocument(

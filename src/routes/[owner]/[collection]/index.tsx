@@ -1,3 +1,4 @@
+import DOMPurify from 'isomorphic-dompurify'
 import { marked } from 'marked'
 import { useMemo } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
@@ -98,7 +99,7 @@ export default function CollectionPage() {
   const readmeHtml = useMemo(() => {
     const meta = data?.latestVersion?.metadata as Record<string, unknown> | null | undefined
     const source = (meta?.readme as string) || data?.latestVersion?.message || null
-    return source ? (marked.parse(source) as string) : null
+    return source ? DOMPurify.sanitize(marked.parse(source) as string) : null
   }, [data])
 
   const totalVersions = data.versionCount ?? 0

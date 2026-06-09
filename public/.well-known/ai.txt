@@ -477,14 +477,12 @@ Mark individual fields as private within a type's schema. The type itself is vis
 Public readers see Author records with only "name". The owner sees all fields.
 
 ### Private Records
-Mark individual records as private when pushing. The type and schema are visible, but that specific record is hidden.
+Mark individual records as private in the negotiate manifest. The type and schema are visible, but that specific record is hidden.
 
-"changes": {
-  "added": [
-    {"id": "article-1", "type": "Article", "data": {...}},
-    {"id": "article-2", "type": "Article", "data": {...}, "private": true}
-  ]
-}
+"manifest": [
+  {"id": "article-1", "type": "Article", "hash": "<sha256>"},
+  {"id": "article-2", "type": "Article", "hash": "<sha256>", "private": true}
+]
 
 article-2 is only visible to the collection owner. Public readers see article-1 only.
 

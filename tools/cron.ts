@@ -31,6 +31,11 @@ if (process.env.NODE_ENV === 'production') {
     timezone: 'UTC',
   })
 
+  // Weekly on Sunday at 4 AM UTC (after the daily backup slot) — prune old S3 backups
+  cron.schedule('0 4 * * 0', () => run('Prune backups', 'tool:pruneBackups'), {
+    timezone: 'UTC',
+  })
+
   // Mirror sync — only if mirror mode is enabled
   const mirrorConfig = getMirrorConfig()
   if (mirrorConfig.enabled) {

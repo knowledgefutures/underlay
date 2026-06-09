@@ -16,6 +16,7 @@ import {
   getPrivateTypes,
   hashRecord,
   hashSchema,
+  hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
   resolveCollection,
@@ -62,6 +63,10 @@ app.post(
 
     const collection = await resolveCollection(owner, slug)
     if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+
+    if (!(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
+      return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+    }
 
     const [latest] = await db
       .select({ semver: schema.versions.semver })
@@ -484,6 +489,16 @@ app.post(
     }
 
     if (sessionRow.userId !== userId) {
+      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+
+    // Re-verify org membership at commit (it may have been revoked mid-session)
+    const [sessionCollection] = await db
+      .select({ organizationId: schema.collections.organizationId })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, sessionRow.collectionId))
+      .limit(1)
+    if (!sessionCollection || !(await hasOrgAccess(userId, sessionCollection.organizationId))) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
 

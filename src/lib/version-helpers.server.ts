@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 import { and, eq } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
@@ -7,9 +5,12 @@ import { db, schema } from '../db/client.server.js'
 export {
   ajv,
   canonicalize,
+  computePublicHash,
+  computeVersionHash,
   deriveSemver,
   type ExtraFieldWarning,
   filterRecordData,
+  filterSchemasForPublic,
   filterTypeSchema,
   findExtraFields,
   getPrivateFields,
@@ -22,16 +23,7 @@ export {
   stripToSchema,
 } from './core/index.js'
 
-import {
-  canonicalize,
-  filterRecordData,
-  filterTypeSchema,
-  getPrivateFields,
-  getPrivateTypes,
-  hashRecord,
-  hashSchema,
-  type SchemaEntry,
-} from './core/index.js'
+import { type SchemaEntry } from './core/index.js'
 
 /** Load the full schema set for a version (slug → schema body + metadata) */
 export async function loadVersionSchemas(versionId: number): Promise<SchemaEntry[]> {
@@ -64,6 +56,34 @@ export async function resolveCollection(owner: string, slug: string) {
   return result ?? null
 }
 
+/**
+ * Resolve a collection and determine the caller's read access.
+ * Returns null when the collection doesn't exist OR is private and the caller
+ * isn't an org member — indistinguishable to the caller (404 either way).
+ * `ownerAccess` is true when the caller is a member of the owning org.
+ */
+export async function resolveAccessibleCollection(
+  owner: string,
+  slug: string,
+  userId: string | undefined,
+) {
+  const [result] = await db
+    .select({
+      id: schema.collections.id,
+      organizationId: schema.collections.organizationId,
+      slug: schema.collections.slug,
+      public: schema.collections.public,
+    })
+    .from(schema.collections)
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
+    .limit(1)
+  if (!result) return null
+  const ownerAccess = await hasOrgAccess(userId, result.organizationId)
+  if (!result.public && !ownerAccess) return null
+  return { ...result, ownerAccess }
+}
+
 /** Check if a user is a member of an organization */
 export async function hasOrgAccess(userId: string | undefined, orgId: string): Promise<boolean> {
   if (!userId) return false
@@ -75,63 +95,16 @@ export async function hasOrgAccess(userId: string | undefined, orgId: string): P
   return !!membership
 }
 
-/** Compute the private (all-content) version hash */
-export function computeVersionHash(
-  schemaSet: { slug: string; schemaHash: string }[],
-  recordHashes: string[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      [...schemaSet]
-        .sort((a, b) => a.slug.localeCompare(b.slug))
-        .map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: [...recordHashes].sort(),
-    files: [...fileHashes].sort(),
-    metadata: metadata ? canonicalize(metadata) : null,
-  })
-  return 'private:' + createHash('sha256').update(canonical).digest('hex')
-}
-
-/** Build a public-facing schemas map (excluding private types, stripping private fields) */
-export function filterSchemasForPublic(schemaEntries: SchemaEntry[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const entry of schemaEntries) {
-    if ((entry.schema as any)?.private === true) continue
-    result[entry.slug] = filterTypeSchema(entry.schema)
-  }
-  return result
-}
-
-/** Compute the public (privacy-filtered) version hash */
-export function computePublicHash(
-  schemaEntries: SchemaEntry[],
-  recordRows: { recordId: string; type: string; data: unknown; private: boolean }[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const privateTypes = getPrivateTypes(schemaEntries)
-
-  const publicSchemaSet: { slug: string; schemaHash: string }[] = []
-  for (const entry of schemaEntries) {
-    if (privateTypes.has(entry.slug)) continue
-    const filtered = filterTypeSchema(entry.schema)
-    publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
-  }
-
-  const publicRecordHashes = recordRows
-    .filter((r) => !r.private && !privateTypes.has(r.type))
-    .map((r) => {
-      const entry = schemaEntries.find((e) => e.slug === r.type)
-      const privateFields = entry ? getPrivateFields(entry.schema) : new Set<string>()
-      const data = privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data
-      return hashRecord({ id: r.recordId, type: r.type, data }).hash
-    })
-
-  return computeVersionHash(publicSchemaSet, publicRecordHashes, fileHashes, metadata).replace(
-    'private:',
-    'public:',
-  )
+/** Get a user's role in an organization, or null if not a member */
+export async function getOrgRole(
+  userId: string | undefined,
+  orgId: string,
+): Promise<string | null> {
+  if (!userId) return null
+  const [membership] = await db
+    .select({ role: schema.member.role })
+    .from(schema.member)
+    .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
+    .limit(1)
+  return membership?.role ?? null
 }

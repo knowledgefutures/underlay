@@ -12,11 +12,14 @@ import {
   deriveSemver,
   filterRecordData,
   filterSchemasForPublic,
+  filterTypeSchema,
   getPrivateFields,
   getPrivateTypes,
+  hashSchema,
   hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
+  resolveAccessibleCollection,
   resolveCollection,
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
@@ -37,10 +40,10 @@ const app = new Hono<AuthEnv>()
       const limit = c.req.query('limit')
       const offset = c.req.query('offset')
 
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-      const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
+      const ownerAccess = collection.ownerAccess
       const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
       const rows = await db
@@ -95,7 +98,7 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const [version] = await db
@@ -112,7 +115,7 @@ const app = new Hono<AuthEnv>()
       if (!version) return c.json({ error: 'No versions', statusCode: 404 }, 404)
 
       const schemaEntries = await loadVersionSchemas(version.id)
-      const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
+      const ownerAccess = collection.ownerAccess
       const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
       const schemasMap = ownerAccess
@@ -140,7 +143,7 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -159,7 +162,7 @@ const app = new Hono<AuthEnv>()
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
       const schemaEntries = await loadVersionSchemas(version.id)
-      const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
+      const ownerAccess = collection.ownerAccess
       const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
 
       const schemasMap = ownerAccess
@@ -192,7 +195,7 @@ const app = new Hono<AuthEnv>()
       const offset = c.req.query('offset')
       const after = c.req.query('after')
 
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -219,7 +222,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Determine visibility
-      const ownerAccess = await hasOrgAccess(c.get('userId'), collection.organizationId)
+      const ownerAccess = collection.ownerAccess
 
       let privateTypes = new Set<string>()
       let schemaEntries: SchemaEntry[] = []
@@ -330,7 +333,7 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -410,7 +413,7 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const sinceParam = c.req.query('since')
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -437,6 +440,27 @@ const app = new Hono<AuthEnv>()
         .where(eq(schema.versionFiles.versionId, version.id))
 
       const schemaEntries = await loadVersionSchemas(version.id)
+
+      // Privacy filtering for non-owners: hide private types and private records.
+      // Note: records whose type has private *fields* are listed under their full-content
+      // hash; the record endpoints serve them with those fields stripped.
+      const ownerAccess = collection.ownerAccess
+      const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaEntries)
+      const privacyConditions = []
+      if (!ownerAccess) {
+        privacyConditions.push(eq(schema.recordObjects.private, false))
+        for (const pt of privateTypes) {
+          privacyConditions.push(sql`${schema.recordObjects.type} != ${pt}`)
+        }
+      }
+      const manifestHash = ownerAccess ? version.hash : (version.publicHash ?? version.hash)
+      const schemasOut = ownerAccess
+        ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash]))
+        : Object.fromEntries(
+            schemaEntries
+              .filter((e) => !privateTypes.has(e.slug))
+              .map((e) => [e.slug, hashSchema(filterTypeSchema(e.schema))]),
+          )
 
       // Delta manifest via SQL set operations — no in-memory Maps
       if (sinceParam) {
@@ -479,6 +503,7 @@ const app = new Hono<AuthEnv>()
                 WHERE svr.version_id = ${sinceId}
                 AND sro.record_id = ${schema.recordObjects.recordId}
               )`,
+              ...privacyConditions,
             ),
           )
           .limit(limit)
@@ -503,6 +528,7 @@ const app = new Hono<AuthEnv>()
                 WHERE svr.version_id = ${targetId}
                 AND sro.record_id = ${schema.recordObjects.recordId}
               )`,
+              ...privacyConditions,
             ),
           )
           .limit(limit)
@@ -534,6 +560,7 @@ const app = new Hono<AuthEnv>()
                 AND sro.record_id = ${schema.recordObjects.recordId}
                 AND sro.hash != ${schema.recordObjects.hash}
               )`,
+              ...privacyConditions,
             ),
           )
           .limit(limit)
@@ -543,9 +570,9 @@ const app = new Hono<AuthEnv>()
 
         return c.json({
           semver: version.semver,
-          hash: version.hash,
+          hash: manifestHash,
           since: sinceSemver,
-          schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
+          schemas: schemasOut,
           delta: { added, updated, removed },
           files: fileHashes.map((f) => f.hash),
           truncated,
@@ -553,7 +580,10 @@ const app = new Hono<AuthEnv>()
       }
 
       // Full manifest with cursor-based pagination
-      const recordConditions = [eq(schema.versionRecords.versionId, version.id)]
+      const recordConditions = [
+        eq(schema.versionRecords.versionId, version.id),
+        ...privacyConditions,
+      ]
       if (cursor) {
         recordConditions.push(sql`${schema.recordObjects.hash} > ${cursor}`)
       }
@@ -579,8 +609,8 @@ const app = new Hono<AuthEnv>()
 
       return c.json({
         semver: version.semver,
-        hash: version.hash,
-        schemas: Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash])),
+        hash: manifestHash,
+        schemas: schemasOut,
         records: page,
         files: fileHashes.map((f) => f.hash),
         pagination: { limit, hasMore, nextCursor },
@@ -601,7 +631,7 @@ const app = new Hono<AuthEnv>()
       const from = c.req.query('from')
       const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000)
 
-      const collection = await resolveCollection(owner, slug)
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver: targetSemver } = parseSemver(n)
@@ -643,6 +673,18 @@ const app = new Hono<AuthEnv>()
 
       const fromId = fromVersion?.id
 
+      // Privacy filtering for non-owners: hide private types and private records
+      const targetSchemas = await loadVersionSchemas(targetVersion.id)
+      const ownerAccess = collection.ownerAccess
+      const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(targetSchemas)
+      const privacyConditions = []
+      if (!ownerAccess) {
+        privacyConditions.push(eq(schema.recordObjects.private, false))
+        for (const pt of privateTypes) {
+          privacyConditions.push(sql`${schema.recordObjects.type} != ${pt}`)
+        }
+      }
+
       // SQL set operations — only fetch diff rows, not all records from both versions
       const added = fromId
         ? await db
@@ -665,6 +707,7 @@ const app = new Hono<AuthEnv>()
                   WHERE svr.version_id = ${fromId}
                   AND sro.record_id = ${schema.recordObjects.recordId}
                 )`,
+                ...privacyConditions,
               ),
             )
             .limit(diffLimit)
@@ -679,7 +722,7 @@ const app = new Hono<AuthEnv>()
               schema.recordObjects,
               eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
             )
-            .where(eq(schema.versionRecords.versionId, targetId))
+            .where(and(eq(schema.versionRecords.versionId, targetId), ...privacyConditions))
             .limit(diffLimit)
 
       const removed = fromId
@@ -699,6 +742,7 @@ const app = new Hono<AuthEnv>()
                   WHERE svr.version_id = ${targetId}
                   AND sro.record_id = ${schema.recordObjects.recordId}
                 )`,
+                ...privacyConditions,
               ),
             )
             .limit(diffLimit)
@@ -726,13 +770,13 @@ const app = new Hono<AuthEnv>()
                   AND sro.record_id = ${schema.recordObjects.recordId}
                   AND sro.hash != ${schema.recordObjects.hash}
                 )`,
+                ...privacyConditions,
               ),
             )
             .limit(diffLimit)
         : []
 
       // Compare schema sets
-      const targetSchemas = await loadVersionSchemas(targetVersion.id)
       const fromSchemas = fromVersion ? await loadVersionSchemas(fromVersion.id) : []
       const targetSchemaMap = new Map(targetSchemas.map((e) => [e.slug, e.schemaHash]))
       const fromSchemaMap = new Map(fromSchemas.map((e) => [e.slug, e.schemaHash]))
@@ -766,15 +810,27 @@ const app = new Hono<AuthEnv>()
       const filesAdded = targetFiles.filter((f) => !fromFileSet.has(f.hash)).map((f) => f.hash)
       const filesRemoved = fromFiles.filter((f) => !targetFileSet.has(f.hash)).map((f) => f.hash)
 
+      // Strip private fields from record data if not owner
+      const fieldCache = new Map<string, Set<string>>()
+      const stripPrivateFields = (r: { id: string; type: string; data: unknown }) => {
+        if (ownerAccess) return { id: r.id, type: r.type, data: r.data }
+        if (!fieldCache.has(r.type)) {
+          const entry = targetSchemas.find((e) => e.slug === r.type)
+          fieldCache.set(r.type, entry ? getPrivateFields(entry.schema) : new Set())
+        }
+        const privateFields = fieldCache.get(r.type)!
+        return {
+          id: r.id,
+          type: r.type,
+          data: privateFields.size > 0 ? filterRecordData(r.data, privateFields) : r.data,
+        }
+      }
+
       return c.json({
         from: fromVersion?.semver ?? null,
         to: targetVersion.semver,
-        added: added.map((r) => ({ id: r.id, type: r.type, data: r.data })),
-        updated: (updated as { id: string; type: string; data: unknown }[]).map((r) => ({
-          id: r.id,
-          type: r.type,
-          data: r.data,
-        })),
+        added: added.map(stripPrivateFields),
+        updated: (updated as { id: string; type: string; data: unknown }[]).map(stripPrivateFields),
         removed: (removed as { id: string }[]).map((r) => r.id),
         meta: {
           schemaChanged,

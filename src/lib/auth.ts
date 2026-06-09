@@ -10,6 +10,10 @@ import { db, schema } from '../db/client.server.js'
 const KF_AUTH_URL = process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
 const KF_AUTH_INTERNAL_URL = process.env.OIDC_ISSUER_INTERNAL_URL ?? KF_AUTH_URL
 
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET must be set in production')
+}
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg' }),
   baseURL: process.env.APP_URL ?? 'http://localhost:4100',

@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto'
-
-import { hashRecord, hashSchema, deriveSemver } from '../../lib/core/index.js'
+import { computeVersionHash, deriveSemver, hashRecord, hashSchema } from '../../lib/core/index.js'
 import { getStagedSchema, getStagedRecords, clearStaging } from '../lib/staging.js'
 import {
   requireRoot,
@@ -50,14 +48,8 @@ export function commit(message: string): void {
   }
 
   recordHashes.sort()
-  const sortedSchemaEntries = Object.entries(schemas).sort(([a], [b]) => a.localeCompare(b))
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(sortedSchemaEntries),
-    records: recordHashes,
-    files: [],
-    metadata: null,
-  })
-  const hash = 'private:' + createHash('sha256').update(canonical).digest('hex')
+  const schemaSet = Object.entries(schemas).map(([slug, schemaHash]) => ({ slug, schemaHash }))
+  const hash = computeVersionHash(schemaSet, recordHashes, [], null)
 
   const schemaChanged = prev ? JSON.stringify(prev.schemas) !== JSON.stringify(schemas) : true
   const recordsChanged = prev

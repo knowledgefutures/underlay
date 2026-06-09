@@ -22,9 +22,11 @@ export default function CollectionVersionPage() {
 
   useEffect(() => {
     if (!readmeSource) return
-    import('marked').then(({ marked }) => {
-      setReadmeHtml(marked.parse(readmeSource) as string)
-    })
+    Promise.all([import('marked'), import('isomorphic-dompurify')]).then(
+      ([{ marked }, { default: DOMPurify }]) => {
+        setReadmeHtml(DOMPurify.sanitize(marked.parse(readmeSource) as string))
+      },
+    )
   }, [readmeSource])
 
   // Tab state
