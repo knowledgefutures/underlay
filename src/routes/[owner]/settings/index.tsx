@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { NotFoundError } from '~/components/NotFound'

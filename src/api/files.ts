@@ -200,7 +200,7 @@ const app = new Hono<AuthEnv>()
       responses: { 200: z.any(), 201: z.any() },
     }),
     async (c) => {
-      const { owner, slug, hash } = c.req.valid('param')
+      const { hash } = c.req.valid('param')
       const cleanHash = hash.replace('sha256:', '')
 
       const [existing] = await db

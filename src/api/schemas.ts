@@ -391,7 +391,7 @@ const app = new Hono<AuthEnv>()
         }
 
         return c.json({ status: 'created', schemaId: id, label: label.trim() }, 201)
-      } catch (err: any) {
+      } catch {
         return c.json({ error: 'Failed to add label', statusCode: 500 }, 500)
       }
     },

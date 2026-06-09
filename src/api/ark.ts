@@ -4,7 +4,6 @@ import type { Context } from 'hono'
 import { db, schema } from '../db/client.server.js'
 import {
   buildArkUrl,
-  buildErc,
   collectionToArkId,
   DEFAULT_NAAN,
   formatErcDate,

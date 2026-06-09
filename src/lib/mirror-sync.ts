@@ -660,17 +660,7 @@ async function pullVersion(
     }
   }
 
-  // Get or create schema records for this version
-  // We need to fetch the actual schema bodies from the upstream version
-  const upstreamSchemas = await fetchUpstream<Record<string, unknown>>(
-    upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=0`,
-  ).catch(() => null)
-
-  // Fetch schema bodies from the manifest endpoint — the manifest only has hashes.
-  // We'll reconstruct from the records' types + the schema lookup endpoint.
-  // Actually, let's fetch schemas from the upstream schemas API if available,
-  // or infer from the version data. For now, we'll pull full version detail.
+  // Fetch version detail to get schema bodies
   const versionDetail = await fetchUpstream<{
     semver: string
     hash: string
@@ -748,9 +738,6 @@ export async function testUpstreamConnection(upstream: string): Promise<{
       return { ok: false, error: 'Upstream health check failed' }
     }
 
-    const collections = await fetchUpstream<unknown[]>(upstream, '/api/collections?limit=1')
-
-    // Get full count by fetching with limit=100
     const allColls = await fetchUpstream<unknown[]>(upstream, '/api/collections?limit=100')
 
     return {

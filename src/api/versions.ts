@@ -819,7 +819,7 @@ const app = new Hono<AuthEnv>()
       }
 
       const prevMetadata = (latest.metadata as Record<string, unknown>) ?? null
-      const newMetadata = { ...(prevMetadata ?? {}), ...body }
+      const newMetadata = { ...prevMetadata, ...body }
 
       if (
         JSON.stringify(canonicalize(newMetadata)) === JSON.stringify(canonicalize(prevMetadata))

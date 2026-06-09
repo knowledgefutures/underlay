@@ -767,7 +767,7 @@ app.post(
 
     const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
     const metadataValue = session.metadata
-      ? { ...(prevMetadata ?? {}), ...(session.metadata as Record<string, unknown>) }
+      ? { ...prevMetadata, ...(session.metadata as Record<string, unknown>) }
       : prevMetadata
     const metadataChanged =
       JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==

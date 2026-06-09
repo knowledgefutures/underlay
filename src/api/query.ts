@@ -195,7 +195,6 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   // Build DDL with sample rows server-side
   let combinedDdl: string
-  let totalRecords = 0
 
   if (collectionRefs.length === 1) {
     const ref = collectionRefs[0]
