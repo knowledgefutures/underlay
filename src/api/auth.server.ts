@@ -13,6 +13,7 @@ function timingSafeEquals(a: string, b: string): boolean {
 export type AuthEnv = {
   Variables: {
     userId?: string
+    userEmail?: string
     apiKeyScope?: 'read' | 'write' | 'admin'
     apiKeyCollectionIds?: string[]
     sessionUserId?: string
@@ -78,6 +79,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     if (session) {
       c.set('sessionUserId', session.user.id)
       c.set('userId', session.user.id)
+      c.set('userEmail', session.user.email)
       // Sessions get write scope; destructive/admin actions are gated by
       // per-resource org-role checks, not a blanket admin scope.
       c.set('apiKeyScope', 'write')

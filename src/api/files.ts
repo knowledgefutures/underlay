@@ -10,6 +10,8 @@ import { getS3ObjectMeta, uploadToS3 } from '../lib/s3.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
+const MAX_UPLOAD_BYTES = parseInt(process.env.MAX_FILE_UPLOAD_BYTES ?? '', 10) || 100 * 1024 * 1024 // 100 MB
+
 async function isFilePubliclyAccessible(
   owner: string,
   slug: string,
@@ -230,6 +232,17 @@ const app = new Hono<AuthEnv>()
 
       const contentType = c.req.header('content-type') ?? 'application/octet-stream'
 
+      // Uploads are buffered in memory for hashing, so cap the size (the
+      // container heap is small). Reject early via Content-Length, and
+      // re-check after reading since the header can be absent or wrong.
+      const declaredLength = parseInt(c.req.header('content-length') ?? '0', 10)
+      if (declaredLength > MAX_UPLOAD_BYTES) {
+        return c.json(
+          { error: `File exceeds upload limit of ${MAX_UPLOAD_BYTES} bytes`, statusCode: 413 },
+          413,
+        )
+      }
+
       let buffer: Buffer
       let mimeType: string
 
@@ -247,6 +260,13 @@ const app = new Hono<AuthEnv>()
         const ab = await c.req.arrayBuffer()
         buffer = Buffer.from(ab)
         mimeType = contentType
+      }
+
+      if (buffer.length > MAX_UPLOAD_BYTES) {
+        return c.json(
+          { error: `File exceeds upload limit of ${MAX_UPLOAD_BYTES} bytes`, statusCode: 413 },
+          413,
+        )
       }
 
       const computedHash = createHash('sha256').update(buffer).digest('hex')

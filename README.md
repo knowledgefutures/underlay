@@ -382,6 +382,9 @@ Supporting files live in `selfhost/` (Caddyfile, Postgres init script).
 | `UNDERLAY_UPSTREAM`         | Upstream Underlay URL to mirror from                                      |
 | `UNDERLAY_UPSTREAM_API_KEY` | API key for the upstream instance                                         |
 | `UNDERLAY_SYNC_SCHEDULE`    | Cron schedule for mirror sync (default: `0 0 * * 0`)                      |
+| `MIRROR_ADMIN_EMAILS`       | Comma-separated emails allowed to use the mirror admin UI/API             |
+| `CORS_ORIGINS`              | Extra allowed CORS origins, comma-separated (APP_URL is always allowed)   |
+| `MAX_FILE_UPLOAD_BYTES`     | Max file upload size in bytes (default: 100 MB)                           |
 
 `NODE_ENV` is set in `docker-compose.yml` `environment:` block (not in .env files).
 

@@ -249,7 +249,11 @@ const app = new Hono<AuthEnv>()
           id: schema.recordObjects.recordId,
           type: schema.recordObjects.type,
           data: schema.recordObjects.data,
-          hash: schema.recordObjects.hash,
+          // Non-owners see the public content-address (hash of the
+          // private-field-stripped record they receive)
+          hash: ownerAccess
+            ? sql<string>`${schema.recordObjects.hash}`
+            : sql<string>`coalesce(${schema.versionRecords.publicRecordHash}, ${schema.recordObjects.hash})`,
         })
         .from(schema.versionRecords)
         .innerJoin(
@@ -442,8 +446,9 @@ const app = new Hono<AuthEnv>()
       const schemaEntries = await loadVersionSchemas(version.id)
 
       // Privacy filtering for non-owners: hide private types and private records.
-      // Note: records whose type has private *fields* are listed under their full-content
-      // hash; the record endpoints serve them with those fields stripped.
+      // Records whose type has private *fields* are listed under their public
+      // content-address (hash of the filtered record), so readers can verify
+      // what they actually receive.
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaEntries)
       const privacyConditions = []
@@ -453,6 +458,9 @@ const app = new Hono<AuthEnv>()
           privacyConditions.push(sql`${schema.recordObjects.type} != ${pt}`)
         }
       }
+      const servedHash = ownerAccess
+        ? sql<string>`${schema.recordObjects.hash}`
+        : sql<string>`coalesce(${schema.versionRecords.publicRecordHash}, ${schema.recordObjects.hash})`
       const manifestHash = ownerAccess ? version.hash : (version.publicHash ?? version.hash)
       const schemasOut = ownerAccess
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash]))
@@ -487,7 +495,7 @@ const app = new Hono<AuthEnv>()
           .select({
             id: schema.recordObjects.recordId,
             type: schema.recordObjects.type,
-            hash: schema.recordObjects.hash,
+            hash: servedHash,
           })
           .from(schema.versionRecords)
           .innerJoin(
@@ -512,7 +520,7 @@ const app = new Hono<AuthEnv>()
           .select({
             id: schema.recordObjects.recordId,
             type: schema.recordObjects.type,
-            hash: schema.recordObjects.hash,
+            hash: servedHash,
           })
           .from(schema.versionRecords)
           .innerJoin(
@@ -533,17 +541,26 @@ const app = new Hono<AuthEnv>()
           )
           .limit(limit)
 
-        const updated = await db
-          .select({
-            id: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            hash: schema.recordObjects.hash,
-            previousHash: sql<string>`(
+        const previousServedHash = ownerAccess
+          ? sql<string>`(
               SELECT sro.hash FROM version_records svr
               INNER JOIN record_objects sro ON svr.record_hash = sro.hash
               WHERE svr.version_id = ${sinceId}
               AND sro.record_id = ${schema.recordObjects.recordId}
-            )`,
+            )`
+          : sql<string>`(
+              SELECT coalesce(svr.public_record_hash, sro.hash) FROM version_records svr
+              INNER JOIN record_objects sro ON svr.record_hash = sro.hash
+              WHERE svr.version_id = ${sinceId}
+              AND sro.record_id = ${schema.recordObjects.recordId}
+            )`
+
+        const updated = await db
+          .select({
+            id: schema.recordObjects.recordId,
+            type: schema.recordObjects.type,
+            hash: servedHash,
+            previousHash: previousServedHash,
           })
           .from(schema.versionRecords)
           .innerJoin(
@@ -579,20 +596,21 @@ const app = new Hono<AuthEnv>()
         })
       }
 
-      // Full manifest with cursor-based pagination
+      // Full manifest with cursor-based pagination (keyed on the served hash so
+      // public readers can resume with the hashes they were given)
       const recordConditions = [
         eq(schema.versionRecords.versionId, version.id),
         ...privacyConditions,
       ]
       if (cursor) {
-        recordConditions.push(sql`${schema.recordObjects.hash} > ${cursor}`)
+        recordConditions.push(sql`${servedHash} > ${cursor}`)
       }
 
       const recordRows = await db
         .select({
           id: schema.recordObjects.recordId,
           type: schema.recordObjects.type,
-          hash: schema.recordObjects.hash,
+          hash: servedHash,
         })
         .from(schema.versionRecords)
         .innerJoin(
@@ -600,7 +618,7 @@ const app = new Hono<AuthEnv>()
           eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
         )
         .where(and(...recordConditions))
-        .orderBy(schema.recordObjects.hash)
+        .orderBy(servedHash)
         .limit(limit + 1)
 
       const hasMore = recordRows.length > limit
@@ -866,6 +884,11 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
       }
 
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(collection.id)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+
       const [latest] = await db
         .select()
         .from(schema.versions)
@@ -895,6 +918,7 @@ const app = new Hono<AuthEnv>()
       const recordRows = await db
         .select({
           hash: schema.versionRecords.recordHash,
+          publicRecordHash: schema.versionRecords.publicRecordHash,
           recordId: schema.recordObjects.recordId,
           type: schema.recordObjects.type,
           data: schema.recordObjects.data,
@@ -950,10 +974,15 @@ const app = new Hono<AuthEnv>()
           )
         }
 
-        if (recordHashes.length > 0) {
-          await tx
-            .insert(schema.versionRecords)
-            .values(recordHashes.map((h) => ({ versionId: version!.id, recordHash: h })))
+        if (recordRows.length > 0) {
+          // Same schema set as the previous version, so public hashes carry over
+          await tx.insert(schema.versionRecords).values(
+            recordRows.map((r) => ({
+              versionId: version!.id,
+              recordHash: r.hash,
+              publicRecordHash: r.publicRecordHash,
+            })),
+          )
         }
 
         if (fileHashes.length > 0) {

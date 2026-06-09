@@ -412,6 +412,11 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
       }
 
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(collection.id)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+
       // Validate new slug if provided
       if (updates.slug !== undefined) {
         const newSlug = updates.slug
@@ -491,6 +496,11 @@ const app = new Hono<AuthEnv>()
       const role = await getOrgRole(c.get('userId'), org.id)
       if (role !== 'owner' && role !== 'admin') {
         return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+      }
+
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(collection.id)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
       }
 
       await db.delete(schema.collections).where(eq(schema.collections.id, collection.id))
@@ -998,16 +1008,23 @@ const app = new Hono<AuthEnv>()
           .returning({ id: schema.versions.id })
 
         const sourceRecords = await tx
-          .select({ recordHash: schema.versionRecords.recordHash })
+          .select({
+            recordHash: schema.versionRecords.recordHash,
+            publicRecordHash: schema.versionRecords.publicRecordHash,
+          })
           .from(schema.versionRecords)
           .where(eq(schema.versionRecords.versionId, latestVersion.id))
 
         const FORK_BATCH = 5000
         for (let i = 0; i < sourceRecords.length; i += FORK_BATCH) {
           const batch = sourceRecords.slice(i, i + FORK_BATCH)
-          await tx
-            .insert(schema.versionRecords)
-            .values(batch.map((r) => ({ versionId: newVersion!.id, recordHash: r.recordHash })))
+          await tx.insert(schema.versionRecords).values(
+            batch.map((r) => ({
+              versionId: newVersion!.id,
+              recordHash: r.recordHash,
+              publicRecordHash: r.publicRecordHash,
+            })),
+          )
         }
 
         const sourceFiles = await tx

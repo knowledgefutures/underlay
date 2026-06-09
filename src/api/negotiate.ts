@@ -7,6 +7,7 @@ import { db, schema } from '../db/client.server.js'
 import {
   ajv,
   canonicalize,
+  checkSchemaBounds,
   computeVersionHash,
   deriveSemver,
   filterRecordData,
@@ -61,11 +62,21 @@ app.post(
       return c.json({ error: 'schemas and manifest are required' }, 400)
     }
 
+    const boundsError = checkSchemaBounds(body.schemas)
+    if (boundsError) {
+      return c.json({ error: boundsError, statusCode: 422 }, 422)
+    }
+
     const collection = await resolveCollection(owner, slug)
     if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
     if (!(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
       return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+    }
+
+    const scopedCollections = c.get('apiKeyCollectionIds')
+    if (scopedCollections && !scopedCollections.includes(collection.id)) {
+      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
     }
 
     const [latest] = await db
@@ -501,6 +512,10 @@ app.post(
     if (!sessionCollection || !(await hasOrgAccess(userId, sessionCollection.organizationId))) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
+    const scopedCollections = c.get('apiKeyCollectionIds')
+    if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
+      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+    }
 
     const session = {
       collectionId: sessionRow.collectionId,
@@ -640,6 +655,8 @@ app.post(
     const manifestPrivateMap = new Map(manifestEntries.map((r) => [r.hash, r.private]))
     const finalRecordHashes: string[] = []
     const publicRecordHashes: string[] = []
+    // record hash → public record hash, only where they differ (private-field types)
+    const publicHashByRecordHash = new Map<string, string>()
     const strippedRecordObjects: {
       hash: string
       recordId: string
@@ -727,9 +744,10 @@ app.post(
           const privateFields = privateFieldsByType.get(rec.type)
           const publicData =
             privateFields && privateFields.size > 0 ? filterRecordData(data, privateFields) : data
-          publicRecordHashes.push(
-            hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash,
-          )
+          const publicHash = hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash
+          publicRecordHashes.push(publicHash)
+          // Persist the public address only when filtering changed the content
+          if (publicHash !== hash) publicHashByRecordHash.set(hash, publicHash)
         }
       }
     }
@@ -952,9 +970,13 @@ app.post(
       const VR_BATCH = 5000
       for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
         const batch = finalRecordHashes.slice(i, i + VR_BATCH)
-        await db
-          .insert(schema.versionRecords)
-          .values(batch.map((hash) => ({ versionId: versionId!, recordHash: hash })))
+        await db.insert(schema.versionRecords).values(
+          batch.map((hash) => ({
+            versionId: versionId!,
+            recordHash: hash,
+            publicRecordHash: publicHashByRecordHash.get(hash) ?? null,
+          })),
+        )
       }
     } catch (err) {
       await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))

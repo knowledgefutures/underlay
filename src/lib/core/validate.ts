@@ -4,6 +4,48 @@ import addFormats from 'ajv-formats'
 export const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)
 
+const MAX_SCHEMA_BYTES = 256 * 1024
+const MAX_PATTERN_LENGTH = 256
+
+/**
+ * Bound caller-supplied JSON Schemas before they are compiled and run
+ * server-side: caps total size and the length of regex `pattern` values
+ * (long patterns are the main catastrophic-backtracking ReDoS vector).
+ * Returns an error message, or null if the schema set is acceptable.
+ */
+export function checkSchemaBounds(schemas: Record<string, unknown>): string | null {
+  for (const [slug, body] of Object.entries(schemas)) {
+    const json = JSON.stringify(body)
+    if (json.length > MAX_SCHEMA_BYTES) {
+      return `Schema "${slug}" exceeds maximum size of ${MAX_SCHEMA_BYTES} bytes`
+    }
+    const longPattern = findLongPattern(body)
+    if (longPattern !== null) {
+      return `Schema "${slug}" has a "pattern" longer than ${MAX_PATTERN_LENGTH} characters`
+    }
+  }
+  return null
+}
+
+function findLongPattern(node: unknown): string | null {
+  if (node === null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findLongPattern(item)
+      if (found !== null) return found
+    }
+    return null
+  }
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === 'pattern' && typeof value === 'string' && value.length > MAX_PATTERN_LENGTH) {
+      return value
+    }
+    const found = findLongPattern(value)
+    if (found !== null) return found
+  }
+  return null
+}
+
 export interface ExtraFieldWarning {
   recordId: string
   type: string

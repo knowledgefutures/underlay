@@ -14,6 +14,52 @@ const BatchRequest = z.object({
 
 type RecordAccess = { full: boolean; privateFields: Set<string> }
 
+type PublicHashEntry = { recordHash: string; privateFields: Set<string> }
+
+/**
+ * Map requested public record hashes (the content-address of a record's
+ * private-field-stripped projection, as listed in public manifests) to their
+ * underlying records, along with the private-field set of the schema binding
+ * that produced each public hash.
+ */
+async function resolvePublicHashes(hashes: string[]): Promise<Map<string, PublicHashEntry>> {
+  const map = new Map<string, PublicHashEntry>()
+  if (hashes.length === 0) return map
+  const rows = await db
+    .select({
+      publicRecordHash: schema.versionRecords.publicRecordHash,
+      recordHash: schema.versionRecords.recordHash,
+      schemaBody: schema.schemas.schema,
+    })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .innerJoin(
+      schema.versionSchemas,
+      and(
+        eq(schema.versionSchemas.versionId, schema.versionRecords.versionId),
+        eq(schema.versionSchemas.slug, schema.recordObjects.type),
+      ),
+    )
+    .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
+    .where(inArray(schema.versionRecords.publicRecordHash, hashes))
+    .groupBy(
+      schema.versionRecords.publicRecordHash,
+      schema.versionRecords.recordHash,
+      schema.schemas.schema,
+    )
+  for (const row of rows) {
+    if (!row.publicRecordHash || map.has(row.publicRecordHash)) continue
+    map.set(row.publicRecordHash, {
+      recordHash: row.recordHash,
+      privateFields: getPrivateFields(row.schemaBody as Record<string, unknown>),
+    })
+  }
+  return map
+}
+
 /**
  * Determine which record objects the caller may read, and at what level.
  * - Full access: the record appears in a collection owned by an org the caller belongs to.
@@ -109,21 +155,38 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { hash } = c.req.valid('param')
 
-      const [record] = await db
-        .select({
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-          size: schema.recordObjects.size,
-          createdAt: schema.recordObjects.createdAt,
-        })
-        .from(schema.recordObjects)
-        .where(eq(schema.recordObjects.hash, hash))
-        .limit(1)
+      const lookup = async (h: string) => {
+        const [row] = await db
+          .select({
+            recordId: schema.recordObjects.recordId,
+            type: schema.recordObjects.type,
+            data: schema.recordObjects.data,
+            size: schema.recordObjects.size,
+            createdAt: schema.recordObjects.createdAt,
+          })
+          .from(schema.recordObjects)
+          .where(eq(schema.recordObjects.hash, h))
+          .limit(1)
+        return row
+      }
+
+      // The hash may be a full record hash or a public record hash (the
+      // address of the private-field-stripped projection)
+      let recordHash = hash
+      let publicProjection: Set<string> | null = null
+      let record = await lookup(hash)
+      if (!record) {
+        const pub = (await resolvePublicHashes([hash])).get(hash)
+        if (pub) {
+          recordHash = pub.recordHash
+          publicProjection = pub.privateFields
+          record = await lookup(pub.recordHash)
+        }
+      }
 
       if (!record) return c.json({ error: 'Record not found', statusCode: 404 }, 404)
 
-      const accessEntry = (await resolveRecordAccess([hash], c.get('userId'))).get(hash)
+      const accessEntry = (await resolveRecordAccess([recordHash], c.get('userId'))).get(recordHash)
       if (!accessEntry) return c.json({ error: 'Record not found', statusCode: 404 }, 404)
 
       const references = await db
@@ -141,13 +204,20 @@ const app = new Hono<AuthEnv>()
           schema.organization,
           eq(schema.collections.organizationId, schema.organization.id),
         )
-        .where(and(eq(schema.versionRecords.recordHash, hash), eq(schema.collections.public, true)))
+        .where(
+          and(
+            eq(schema.versionRecords.recordHash, recordHash),
+            eq(schema.collections.public, true),
+          ),
+        )
         .orderBy(sql`${schema.versions.createdAt} asc`)
 
       const firstSeen = references.length > 0 ? references[0]!.versionCreatedAt : record.createdAt
 
-      const data =
-        !accessEntry.full && accessEntry.privateFields.size > 0
+      // When addressed by public hash, always serve the matching projection
+      const data = publicProjection
+        ? filterRecordData(record.data, publicProjection)
+        : !accessEntry.full && accessEntry.privateFields.size > 0
           ? filterRecordData(record.data, accessEntry.privateFields)
           : record.data
 
@@ -186,8 +256,14 @@ const app = new Hono<AuthEnv>()
       return streamText(c, async (stream) => {
         for (let i = 0; i < hashes.length; i += CHUNK) {
           const chunk = hashes.slice(i, i + CHUNK)
-          const access = await resolveRecordAccess(chunk, userId)
-          const readable = chunk.filter((h) => access.has(h))
+
+          // Requested hashes may be full record hashes or public record hashes
+          const publicMap = await resolvePublicHashes(chunk)
+          const lookupHashes = [
+            ...new Set([...chunk, ...[...publicMap.values()].map((e) => e.recordHash)]),
+          ]
+          const access = await resolveRecordAccess(lookupHashes, userId)
+          const readable = lookupHashes.filter((h) => access.has(h))
           if (readable.length === 0) continue
 
           const rows = await db
@@ -200,20 +276,41 @@ const app = new Hono<AuthEnv>()
             })
             .from(schema.recordObjects)
             .where(inArray(schema.recordObjects.hash, readable))
+          const rowByHash = new Map(rows.map((r) => [r.hash, r]))
 
-          for (const row of rows) {
-            const accessEntry = access.get(row.hash)!
-            const data =
-              !accessEntry.full && accessEntry.privateFields.size > 0
-                ? filterRecordData(row.data, accessEntry.privateFields)
-                : row.data
+          for (const requested of chunk) {
+            const direct = rowByHash.get(requested)
+            if (direct && access.has(requested)) {
+              const accessEntry = access.get(requested)!
+              const data =
+                !accessEntry.full && accessEntry.privateFields.size > 0
+                  ? filterRecordData(direct.data, accessEntry.privateFields)
+                  : direct.data
+              await stream.write(
+                JSON.stringify({
+                  id: direct.recordId,
+                  type: direct.type,
+                  data,
+                  private: direct.private,
+                  hash: direct.hash,
+                }) + '\n',
+              )
+              continue
+            }
+
+            // Public-address request: always serve the projection that hashes
+            // to the requested address, regardless of the caller's access level
+            const pub = publicMap.get(requested)
+            if (!pub || !access.has(pub.recordHash)) continue
+            const row = rowByHash.get(pub.recordHash)
+            if (!row) continue
             await stream.write(
               JSON.stringify({
                 id: row.recordId,
                 type: row.type,
-                data,
+                data: filterRecordData(row.data, pub.privateFields),
                 private: row.private,
-                hash: row.hash,
+                hash: requested,
               }) + '\n',
             )
           }

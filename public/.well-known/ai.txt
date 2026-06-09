@@ -488,6 +488,10 @@ article-2 is only visible to the collection owner. Public readers see article-1 
 
 ### How it works
 - Public hash: computed from public content only (excludes private types, records, fields, and metadata)
+- Public record hash: a record of a type with private fields is listed in public manifests under
+  the hash of its filtered projection ({"id", "type", "data"} with private fields stripped).
+  Record endpoints resolve either address; hashing the document you receive always reproduces
+  the address you requested.
 - Private hash: computed from all content including metadata (used by the owner for integrity verification)
 - Schema filtering: the schema returned to public readers omits private types and private fields
 - Record filtering: queries by non-owners automatically exclude private records and strip private fields

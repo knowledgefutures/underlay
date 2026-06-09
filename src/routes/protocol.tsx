@@ -168,6 +168,14 @@ export default function Protocol() {
             privacy flags produce the same hash. This is intentional — the record's content identity
             doesn't change when you change who can see it.
           </p>
+          <p>
+            A record whose type declares private <em>fields</em> has a second address: its{' '}
+            <strong>public record hash</strong> — the SHA-256 of the same canonical form with the
+            private fields stripped. Public manifests list records by their public hash, and the
+            record endpoints resolve either address, so a public reader can always verify that
+            hashing the document they received reproduces the address they requested. When a type
+            has no private fields the two addresses coincide.
+          </p>
           <p>Wire format is JSONL — one record per line, independently hashable and streamable:</p>
           <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
             <code>{recordExample}</code>

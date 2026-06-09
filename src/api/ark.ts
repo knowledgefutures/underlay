@@ -10,7 +10,12 @@ import {
   getOrMintShoulder,
   parseArkPath,
 } from '../lib/ark.js'
-import { parseSemver } from '../lib/version-helpers.server.js'
+import {
+  filterRecordData,
+  filterTypeSchema,
+  getPrivateFields,
+  parseSemver,
+} from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
 // --- Resolution ---
@@ -161,7 +166,7 @@ export async function resolve(c: Context<AuthEnv>) {
     if (!versionRow) return c.json({ type: 'not_found' }, 404)
 
     const [recordRow] = await db
-      .select({ data: schema.recordObjects.data })
+      .select({ data: schema.recordObjects.data, private: schema.recordObjects.private })
       .from(schema.versionRecords)
       .innerJoin(
         schema.recordObjects,
@@ -178,13 +183,7 @@ export async function resolve(c: Context<AuthEnv>) {
 
     if (!recordRow) return c.json({ type: 'not_found' }, 404)
 
-    const data = recordRow.data as Record<string, unknown>
-    const redirectUrl = data[artRow.redirectUrlField]
-    if (typeof redirectUrl !== 'string') {
-      return c.json({ type: 'not_found', error: 'No URL found for this record' }, 404)
-    }
-
-    // Fetch the type schema for metadata
+    // Fetch the type schema for metadata + privacy filtering
     const [vs] = await db
       .select({ schema: schema.schemas.schema })
       .from(schema.versionSchemas)
@@ -196,6 +195,20 @@ export async function resolve(c: Context<AuthEnv>) {
         ),
       )
       .limit(1)
+
+    // ARK resolution is a public read: honor record-, type-, and field-level privacy
+    const typeSchema = (vs?.schema ?? null) as Record<string, unknown> | null
+    if (recordRow.private || typeSchema?.private === true) {
+      return c.json({ type: 'not_found' }, 404)
+    }
+    const privateFields = typeSchema ? getPrivateFields(typeSchema) : new Set<string>()
+    const data = filterRecordData(recordRow.data, privateFields) as Record<string, unknown>
+    const publicSchema = typeSchema ? filterTypeSchema(typeSchema) : null
+
+    const redirectUrl = data[artRow.redirectUrlField]
+    if (typeof redirectUrl !== 'string') {
+      return c.json({ type: 'not_found', error: 'No URL found for this record' }, 404)
+    }
 
     return c.json({
       type: 'redirect' as const,
@@ -212,7 +225,7 @@ export async function resolve(c: Context<AuthEnv>) {
         semver: versionRow.semver,
         recordType,
         recordId,
-        schema: vs?.schema ?? null,
+        schema: publicSchema,
         data,
         createdAt: versionRow.createdAt,
         arkUrl,

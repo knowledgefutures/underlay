@@ -34,6 +34,9 @@ const isProd = process.env.NODE_ENV === 'production'
 let vite: ViteDevServer | undefined
 let devHttpServer: import('node:http').Server | undefined
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
 // In dev, proxy API modules through Vite's SSR loader for hot reload
 function hot<T extends Record<string, any>>(staticMod: T, modulePath: string): T {
   if (isProd) return staticMod
@@ -71,18 +74,44 @@ app.get('/.well-known/ai.txt', async (c) => {
 })
 
 // --- CORS ---
-app.use('/api/*', cors({ origin: '*', credentials: true }))
+// Credentialed requests are only allowed from the app's own origin (plus any
+// extras in CORS_ORIGINS, comma-separated). Non-browser API clients are unaffected.
+const corsAllowlist = [process.env.APP_URL, ...(process.env.CORS_ORIGINS ?? '').split(',')]
+  .map((s) => s?.trim().replace(/\/$/, ''))
+  .filter((s): s is string => !!s)
+app.use(
+  '/api/*',
+  cors({
+    origin: (origin) => (corsAllowlist.includes(origin) ? origin : null),
+    credentials: true,
+  }),
+)
 
 // --- Auth middleware for API routes ---
 app.use('/api/*', authMiddleware)
 
 // --- Mirror mode guard for admin routes ---
+// Operator-only: admin-scoped API key, or a session user listed in MIRROR_ADMIN_EMAILS
 app.use('/api/admin/*', async (c, next) => {
   const config = getMirrorConfig()
   if (!config.enabled) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
   }
-  await next()
+  if (c.get('apiKeyScope') === 'admin') return next()
+  const adminEmails = (process.env.MIRROR_ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const email = c.get('userEmail')?.toLowerCase()
+  if (email && adminEmails.includes(email)) return next()
+  return c.json(
+    {
+      error:
+        'Forbidden — mirror admin requires an admin API key or a user listed in MIRROR_ADMIN_EMAILS',
+      statusCode: 403,
+    },
+    403,
+  )
 })
 
 // --- ARK resolution middleware ---
@@ -266,12 +295,12 @@ if (isProd) {
       )
 
     if (title) {
-      page = page.replace('<title>Underlay</title>', `<title>${title}</title>`)
+      page = page.replace('<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
     }
     if (description) {
       page = page.replace(
         '</head>',
-        `<meta name="description" content="${description.replace(/"/g, '&quot;')}" />\n</head>`,
+        `<meta name="description" content="${escapeHtml(description)}" />\n</head>`,
       )
     }
 
@@ -315,12 +344,12 @@ if (isProd) {
       )
 
     if (title) {
-      page = page.replace('<title>Underlay</title>', `<title>${title}</title>`)
+      page = page.replace('<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
     }
     if (description) {
       page = page.replace(
         '</head>',
-        `<meta name="description" content="${description.replace(/"/g, '&quot;')}" />\n</head>`,
+        `<meta name="description" content="${escapeHtml(description)}" />\n</head>`,
       )
     }
 

@@ -5,6 +5,7 @@ import { db, schema } from '../db/client.server.js'
 export {
   ajv,
   canonicalize,
+  checkSchemaBounds,
   computePublicHash,
   computeVersionHash,
   deriveSemver,
