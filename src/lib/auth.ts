@@ -57,6 +57,11 @@ export const auth = betterAuth({
       },
     }),
     apiKey({
+      defaultPrefix: 'ul',
+      customKeyGenerator: async ({ length }) => {
+        const { generateRandomString } = await import('better-auth/crypto')
+        return `ul_${generateRandomString(length, 'a-z', 'A-Z')}`
+      },
       enableMetadata: true,
       permissions: {
         defaultPermissions: async (_referenceId, ctx) => {

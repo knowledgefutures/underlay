@@ -238,6 +238,7 @@ export const versions = pgTable(
     recordCount: integer('record_count').notNull(),
     fileCount: integer('file_count').notNull(),
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
+    status: text('status').notNull().default('ready'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -358,9 +359,7 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
     .references(() => user.id, { onDelete: 'cascade' }),
   baseSemver: text('base_semver'),
   schemas: jsonb('schemas').notNull(),
-  manifest: jsonb('manifest').notNull(),
   fileHashes: jsonb('file_hashes').$type<string[]>().notNull().default([]),
-  neededRecords: jsonb('needed_records').$type<string[]>().notNull().default([]),
   neededFiles: jsonb('needed_files').$type<string[]>().notNull().default([]),
   message: text('message'),
   metadata: jsonb('metadata'),
@@ -373,6 +372,24 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 })
+
+export const negotiateSessionManifest = pgTable(
+  'negotiate_session_manifest',
+  {
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => negotiateSessions.id, { onDelete: 'cascade' }),
+    recordId: text('record_id').notNull(),
+    type: text('type').notNull(),
+    hash: text('hash').notNull(),
+    private: boolean('private').notNull().default(false),
+    needed: boolean('needed').notNull().default(true),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sessionId, t.hash] }),
+    index('nsm_session_needed_idx').on(t.sessionId, t.needed),
+  ],
+)
 
 // --- Sync Runs (mirror mode) ---
 

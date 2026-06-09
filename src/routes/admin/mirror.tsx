@@ -3,7 +3,7 @@ import MirrorAdmin from '~/components/MirrorAdmin'
 import { useAppContext } from '~/lib/app-context'
 
 export default function AdminMirror() {
-  const { currentUser, mirrorConfig } = useAppContext()
+  const { mirrorConfig } = useAppContext()
 
   if (!mirrorConfig?.enabled) {
     if (typeof window !== 'undefined') {

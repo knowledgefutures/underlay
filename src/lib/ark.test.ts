@@ -159,8 +159,9 @@ describe('parseArkPath', () => {
     const arkId = collectionToArkId('550e8400-e29b-41d4-a716-446655440000')
     const path = makeValidPath('ulb3', arkId) + '.v0'
     // version 0 is replaced by the full arkIdWithCheck since .v0 causes vNum < 1
-    expect(parseArkPath(path.replace(makeValidPath('ulb3', arkId), makeValidPath('ulb3', arkId))))
-      .toBeNull
+    expect(
+      parseArkPath(path.replace(makeValidPath('ulb3', arkId), makeValidPath('ulb3', arkId))),
+    ).toBeNull()
   })
 
   test('handles multi-character shoulder counters', () => {

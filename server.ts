@@ -4,26 +4,28 @@ import { resolve } from 'node:path'
 
 import { getRequestListener, serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
+import { Scalar } from '@scalar/hono-api-reference'
 import { Hono } from 'hono'
+import { createOpenApiDocument } from 'hono-zod-openapi'
 import { cors } from 'hono/cors'
 import { marked } from 'marked'
 import type { ViteDevServer } from 'vite'
 
-import * as _accounts from '~/api/accounts'
+import _accounts from '~/api/accounts'
 import * as _admin from '~/api/admin'
 import * as _ark from '~/api/ark'
 import { arkMiddleware } from '~/api/ark-middleware.server'
 import type { AuthEnv } from '~/api/auth.server'
 import { authMiddleware, requireAuth } from '~/api/auth.server'
-import * as _collections from '~/api/collections'
-import * as _files from '~/api/files'
+import _collections from '~/api/collections'
+import _files from '~/api/files'
 import * as _health from '~/api/health'
 import * as _kfSummary from '~/api/kf-summary'
-import * as _negotiate from '~/api/negotiate'
+import _negotiate from '~/api/negotiate'
 import * as _query from '~/api/query'
-import * as _records from '~/api/records'
-import * as _schemas from '~/api/schemas'
-import * as _versions from '~/api/versions'
+import _records from '~/api/records'
+import _schemas from '~/api/schemas'
+import _versions from '~/api/versions'
 import { auth } from '~/lib/auth'
 import { getSessionUser } from '~/lib/auth.server'
 import { getMirrorConfig } from '~/lib/mirror-config'
@@ -46,18 +48,19 @@ function hot<T extends Record<string, any>>(staticMod: T, modulePath: string): T
   }) as T
 }
 
-const accounts = hot(_accounts, '/src/api/accounts.ts')
 const admin = hot(_admin, '/src/api/admin.ts')
 const ark = hot(_ark, '/src/api/ark.ts')
-const collections = hot(_collections, '/src/api/collections.ts')
-const files = hot(_files, '/src/api/files.ts')
 const health = hot(_health, '/src/api/health.ts')
-const negotiate = hot(_negotiate, '/src/api/negotiate.ts')
 const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
 const query = hot(_query, '/src/api/query.ts')
-const records = hot(_records, '/src/api/records.ts')
-const schemas = hot(_schemas, '/src/api/schemas.ts')
-const versions = hot(_versions, '/src/api/versions.ts')
+
+// --- API subapps (Hono Stacks with dev hot reload) ---
+const hotApiModules: Array<{ mount: string; source: string }> = []
+
+function api<M extends string, A>(mount: M, source: string, app: A): [M, A] {
+  if (!isProd) hotApiModules.push({ mount, source })
+  return [mount, app]
+}
 
 const app = new Hono<AuthEnv>()
 
@@ -84,6 +87,24 @@ app.use('/api/admin/*', async (c, next) => {
 
 // --- ARK resolution middleware ---
 app.use('/ark\\:*', arkMiddleware)
+
+// Dev only: re-evaluate converted subapps through Vite on each API request.
+// Falls through to next() if the fresh router doesn't match the URL,
+// so unconverted routes (below) still run normally.
+if (!isProd) {
+  app.use('/api/*', async (c, next) => {
+    if (!vite || hotApiModules.length === 0) return next()
+    const router = new Hono<AuthEnv>()
+    router.use('*', authMiddleware)
+    for (const { mount, source } of hotApiModules) {
+      const mod = await vite.ssrLoadModule(source)
+      router.route(mount, mod.default)
+    }
+    const res = await router.fetch(c.req.raw)
+    if (res.status === 404) return next()
+    return res
+  })
+}
 
 // --- Better-auth handler (OIDC login, sessions, API keys) ---
 app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
@@ -118,7 +139,19 @@ app.get('/login', async (c, next) => {
   await next()
 })
 
-// --- API routes ---
+// --- Chained subapp mounts (produces AppType for hc client) ---
+const routes = app
+  .route(...api('/api/records', './src/api/records.ts', _records))
+  .route(...api('/api/collections', './src/api/files.ts', _files))
+  .route(...api('/api/accounts', './src/api/accounts.ts', _accounts))
+  .route(...api('/api', './src/api/schemas.ts', _schemas))
+  .route(...api('/api', './src/api/collections.ts', _collections))
+  .route(...api('/api/collections', './src/api/versions.ts', _versions))
+  .route(...api('/api/collections', './src/api/negotiate.ts', _negotiate))
+
+export type AppType = typeof routes
+
+// --- Legacy API routes (not yet converted to subapp pattern) ---
 app.get('/api/health', health.check)
 
 // KF internal (service-to-service)
@@ -140,17 +173,6 @@ app.post('/api/query/generate-sql', query.generateSql)
 app.get('/api/query/collections/search', query.searchCollections)
 app.get('/api/query/collections/:owner/:slug/versions', query.collectionVersions)
 
-// Records
-app.get('/api/records/:hash/provenance', records.provenance)
-app.post('/api/records/batch', records.batch)
-
-// Schemas
-app.get('/api/schemas', schemas.listSchemas)
-app.get('/api/schemas/:id', schemas.getSchema)
-app.get('/api/collections/:owner/:slug/schemas', schemas.collectionSchemas)
-app.post('/api/schemas/:id/labels', requireAuth('write'), schemas.addLabel)
-app.delete('/api/schemas/:id/labels/:label', requireAuth('admin'), schemas.removeLabel)
-
 // ARK
 app.get('/api/ark/resolve', ark.resolve)
 app.get('/api/collections/:owner/:slug/ark', requireAuth('read'), ark.getArk)
@@ -167,65 +189,14 @@ app.patch(
 )
 app.patch('/api/accounts/:slug/ark', requireAuth('admin'), ark.updateAccountArk)
 
-// Collections
-app.get('/api/collections', collections.list)
-app.post('/api/accounts/:owner/collections', requireAuth('write'), collections.create)
-app.get('/api/collections/:owner/:slug', collections.get)
-app.patch('/api/collections/:owner/:slug', requireAuth('write'), collections.update)
-app.delete('/api/collections/:owner/:slug', requireAuth('admin'), collections.remove)
-app.post('/api/collections/:owner/:slug/transfer', requireAuth(), collections.transfer)
-app.get('/api/accounts/:owner/collections', collections.listByOwner)
-app.get('/api/collections/:owner/:slug/export', collections.exportArchive)
-app.post('/api/collections/:owner/:slug/fork', requireAuth('write'), collections.fork)
+// --- OpenAPI doc + Scalar reference UI ---
+createOpenApiDocument(
+  app,
+  { info: { title: 'Underlay API', version: '1.0.0' } },
+  { routeName: '/api/openapi.json' },
+)
 
-// Files
-app.on('HEAD', '/api/collections/:owner/:slug/files/:hash', files.headFile)
-app.get('/api/collections/:owner/:slug/files/:hash', files.getFile)
-app.put('/api/collections/:owner/:slug/files/:hash', requireAuth('write'), files.putFile)
-
-// Versions
-app.get('/api/collections/:owner/:slug/versions', versions.list)
-app.get('/api/collections/:owner/:slug/versions/latest', versions.latest)
-app.get('/api/collections/:owner/:slug/versions/:n', versions.getBySemver)
-app.get('/api/collections/:owner/:slug/versions/:n/records', versions.records)
-app.get('/api/collections/:owner/:slug/versions/:n/files', versions.files)
-app.get('/api/collections/:owner/:slug/versions/:n/manifest', versions.manifest)
-app.post(
-  '/api/collections/:owner/:slug/versions/negotiate',
-  requireAuth('write'),
-  negotiate.negotiate,
-)
-app.get(
-  '/api/collections/:owner/:slug/versions/negotiate/:sessionId',
-  requireAuth('read'),
-  negotiate.getSession,
-)
-app.post(
-  '/api/collections/:owner/:slug/versions/negotiate/:sessionId/records',
-  requireAuth('write'),
-  negotiate.submitRecords,
-)
-app.post(
-  '/api/collections/:owner/:slug/versions/negotiate/:sessionId/commit',
-  requireAuth('write'),
-  negotiate.commit,
-)
-app.delete(
-  '/api/collections/:owner/:slug/versions/negotiate/:sessionId',
-  requireAuth('write'),
-  negotiate.cancelSession,
-)
-app.get('/api/collections/:owner/:slug/versions/:n/diff', versions.diff)
-app.patch('/api/collections/:owner/:slug/metadata', requireAuth('write'), versions.updateMetadata)
-
-// Accounts (custom routes — org CRUD, members, invitations, API keys handled by /api/auth/*)
-app.get('/api/accounts/me', requireAuth(), accounts.getMe)
-app.get('/api/accounts/available-kf-orgs', requireAuth(), accounts.availableKfOrgs)
-app.get('/api/accounts/:slug', accounts.getBySlug)
-app.get('/api/accounts/:slug/members', accounts.listMembers)
-app.patch('/api/accounts/me', requireAuth(), accounts.updateMe)
-app.post('/api/accounts/:slug/avatar', requireAuth(), accounts.uploadOrgAvatar)
-app.delete('/api/accounts/me', requireAuth(), accounts.deleteMe)
+app.get('/api/reference', Scalar({ url: '/api/openapi.json', pageTitle: 'Underlay API' }))
 
 // --- Blog content API (serves rendered markdown) ---
 app.get('/api/blog/:slug', (c) => {
@@ -309,7 +280,7 @@ if (isProd) {
   devHttpServer = createHttpServer()
   const { createServer: createViteServer } = await import('vite')
   vite = await createViteServer({
-    server: { middlewareMode: true, hmr: { server: devHttpServer } },
+    server: { middlewareMode: true, hmr: { server: devHttpServer, port: 24678 } },
     appType: 'custom',
   })
 

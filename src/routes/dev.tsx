@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
+
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonicalize)
+  const sorted: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
+  }
+  return sorted
+}
 
 interface LogEntry {
   time: string
@@ -228,7 +238,7 @@ export default function DevPage() {
 
       for (const r of allRecords) {
         const data = tryParse(r.data)
-        const canonical = JSON.stringify({ id: r.id, type: r.type, data })
+        const canonical = JSON.stringify({ id: r.id, type: r.type, data: canonicalize(data) })
         const hashBuffer = await crypto.subtle.digest(
           'SHA-256',
           new TextEncoder().encode(canonical),

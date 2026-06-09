@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
@@ -76,10 +76,13 @@ export async function summary(c: Context) {
       })
       .from(schema.versions)
       .where(
-        sql`${schema.versions.collectionId} IN (${sql.join(
-          collections.map((c) => sql`${c.id}`),
-          sql`, `,
-        )})`,
+        and(
+          sql`${schema.versions.collectionId} IN (${sql.join(
+            collections.map((c) => sql`${c.id}`),
+            sql`, `,
+          )})`,
+          eq(schema.versions.status, 'ready'),
+        ),
       )
       .groupBy(schema.versions.collectionId)
 

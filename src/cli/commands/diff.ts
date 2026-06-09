@@ -14,9 +14,6 @@ export function diff(from: string, to: string): void {
     process.exit(1)
   }
 
-  const fromHashes = new Set(fromVersion.records)
-  const toHashes = new Set(toVersion.records)
-
   const fromRecords = new Map<string, string>()
   const toRecords = new Map<string, string>()
 

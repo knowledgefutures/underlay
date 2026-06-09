@@ -673,13 +673,6 @@ export default function QueryExplorer() {
     return () => container.removeEventListener('cm-submit', handler)
   }, [isRunning, handleSubmit])
 
-  const placeholder =
-    loadedCollections.length === 0
-      ? 'Add a collection to start querying...'
-      : loadedCollections.length === 1
-        ? `SELECT * FROM "${Object.keys(JSON.parse('{}'))[0] || '...'}" LIMIT 10`
-        : 'SELECT * FROM ...'
-
   // Share: encode current state to URL hash
   const [copied, setCopied] = useState(false)
   const shareQuery = useCallback(

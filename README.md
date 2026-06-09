@@ -187,26 +187,26 @@ tools/
 
 The protocol and the platform are documented together:
 
-| Resource | URL | Purpose |
-| -------- | --- | ------- |
-| Protocol spec | [/protocol](https://underlay.org/protocol) | Full protocol: data model, hashing, push, pull, provenance, privacy |
-| User docs | [/docs](https://underlay.org/docs) | Concepts, integration guide, API reference, quickstart |
-| ai.txt | [/.well-known/ai.txt](https://underlay.org/.well-known/ai.txt) | Machine-readable API docs for LLMs and bots |
+| Resource      | URL                                                            | Purpose                                                             |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Protocol spec | [/protocol](https://underlay.org/protocol)                     | Full protocol: data model, hashing, push, pull, provenance, privacy |
+| User docs     | [/docs](https://underlay.org/docs)                             | Concepts, integration guide, API reference, quickstart              |
+| ai.txt        | [/.well-known/ai.txt](https://underlay.org/.well-known/ai.txt) | Machine-readable API docs for LLMs and bots                         |
 
 ### Key API endpoints
 
-| Endpoint | Purpose |
-| -------- | ------- |
-| `POST .../versions` | Simple push (server computes hashes) |
-| `POST .../versions/negotiate` | Hash negotiation push (only transfer missing records) |
-| `POST .../versions/upload` | Chunked upload for large pushes |
-| `GET .../versions/:n/manifest` | Version manifest (add `?since=M` for delta) |
-| `GET .../versions/:n/records` | Paginated records |
-| `GET .../versions/:n/diff?from=M` | Diff between two versions |
-| `POST /api/records/batch` | Fetch records by hash (JSONL stream) |
-| `GET /api/records/:hash/provenance` | Find all collections containing a record |
-| `POST .../fork` | Fork a collection (copies manifest, not data) |
-| `GET /api/schemas` | Search schemas across all collections |
+| Endpoint                            | Purpose                                               |
+| ----------------------------------- | ----------------------------------------------------- |
+| `POST .../versions`                 | Simple push (server computes hashes)                  |
+| `POST .../versions/negotiate`       | Hash negotiation push (only transfer missing records) |
+| `POST .../versions/upload`          | Chunked upload for large pushes                       |
+| `GET .../versions/:n/manifest`      | Version manifest (add `?since=M` for delta)           |
+| `GET .../versions/:n/records`       | Paginated records                                     |
+| `GET .../versions/:n/diff?from=M`   | Diff between two versions                             |
+| `POST /api/records/batch`           | Fetch records by hash (JSONL stream)                  |
+| `GET /api/records/:hash/provenance` | Find all collections containing a record              |
+| `POST .../fork`                     | Fork a collection (copies manifest, not data)         |
+| `GET /api/schemas`                  | Search schemas across all collections                 |
 
 ## Privacy
 

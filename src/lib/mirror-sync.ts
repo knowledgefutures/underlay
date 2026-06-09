@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
+import { hashRecord } from './core/index.js'
 import { getMirrorConfig } from './mirror-config.js'
 import { headS3Object, uploadToS3 } from './s3.js'
 
@@ -456,7 +457,7 @@ async function syncCollection(
       patch: schema.versions.patch,
     })
     .from(schema.versions)
-    .where(eq(schema.versions.collectionId, collectionId))
+    .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.status, 'ready')))
     .orderBy(sql`major desc, minor desc, patch desc`)
     .limit(1)
 
@@ -525,9 +526,30 @@ async function pullVersion(
     neededHashes = manifestHashes.filter((h) => !existingSet.has(h))
   }
 
-  // Fetch only missing records via batch endpoint (or fall back to paginated records API)
-  const fetchedRecords: { id: string; type: string; data: unknown }[] = []
+  // Fetch and insert missing records in batches instead of accumulating all in memory
+  const BATCH_SIZE = 500
+  let fetchedCount = 0
   if (neededHashes.length > 0) {
+    const insertRecordBatch = async (records: { id: string; type: string; data: unknown }[]) => {
+      if (records.length === 0) return
+      const rows = records.map((r) => {
+        const { hash, canonical } = hashRecord({ id: r.id, type: r.type, data: r.data })
+        return {
+          hash,
+          recordId: r.id,
+          type: r.type,
+          data: r.data as any,
+          private: false,
+          size: Buffer.byteLength(canonical, 'utf8'),
+        }
+      })
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+        const chunk = rows.slice(i, i + BATCH_SIZE)
+        await db.insert(schema.recordObjects).values(chunk).onConflictDoNothing()
+      }
+      fetchedCount += records.length
+    }
+
     const fetchAllPaginated = async () => {
       let cursor: string | null = null
       let hasMore = true
@@ -536,7 +558,7 @@ async function pullVersion(
           ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${cursor}`
           : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000`
         const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
-        fetchedRecords.push(...page.records)
+        await insertRecordBatch(page.records)
         hasMore = page.pagination.hasMore
         cursor = page.pagination.nextCursor
       }
@@ -548,30 +570,38 @@ async function pullVersion(
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`
 
-      const res = await fetch(batchUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ hashes: neededHashes }),
-      })
+      const CHUNK_SIZE = 500
+      for (let i = 0; i < neededHashes.length; i += CHUNK_SIZE) {
+        const hashChunk = neededHashes.slice(i, i + CHUNK_SIZE)
+        const res = await fetch(batchUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ hashes: hashChunk }),
+        })
 
-      if (res.ok) {
-        const text = await res.text()
-        for (const line of text.split('\n').filter((l) => l.trim())) {
-          fetchedRecords.push(JSON.parse(line))
+        if (res.ok) {
+          const text = await res.text()
+          const records = text
+            .split('\n')
+            .filter((l) => l.trim())
+            .map((l) => JSON.parse(l) as { id: string; type: string; data: unknown })
+          await insertRecordBatch(records)
+        } else {
+          await fetchAllPaginated()
+          break
         }
-      } else {
-        await fetchAllPaginated()
       }
     } catch {
       await fetchAllPaginated()
     }
     emit(
       'version',
-      `${uc.ownerSlug}/${uc.slug} ${uv.semver}: fetched ${fetchedRecords.length} records (${manifestHashes.length - neededHashes.length} already local)`,
+      `${uc.ownerSlug}/${uc.slug} ${uv.semver}: fetched ${fetchedCount} records (${manifestHashes.length - neededHashes.length} already local)`,
     )
   }
 
-  // Pull files
+  // Pull files — track which hashes succeed for version_files FK
+  const availableFileHashes = new Set<string>()
   for (const fileHash of manifest.files) {
     const storageKey = `files/${fileHash.slice(0, 2)}/${fileHash.slice(2, 4)}/${fileHash}`
 
@@ -589,6 +619,7 @@ async function pullVersion(
         })
         .onConflictDoNothing()
 
+      availableFileHashes.add(fileHash)
       result.files.skipped++
       progress.filesSkipped++
       continue
@@ -619,6 +650,7 @@ async function pullVersion(
         })
         .onConflictDoNothing()
 
+      availableFileHashes.add(fileHash)
       result.files.downloaded++
       progress.filesDownloaded++
       emit('file', `Downloaded file ${fileHash.slice(0, 8)}… (${buffer.length} bytes)`)
@@ -628,17 +660,7 @@ async function pullVersion(
     }
   }
 
-  // Get or create schema records for this version
-  // We need to fetch the actual schema bodies from the upstream version
-  const upstreamSchemas = await fetchUpstream<Record<string, unknown>>(
-    upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=0`,
-  ).catch(() => null)
-
-  // Fetch schema bodies from the manifest endpoint — the manifest only has hashes.
-  // We'll reconstruct from the records' types + the schema lookup endpoint.
-  // Actually, let's fetch schemas from the upstream schemas API if available,
-  // or infer from the version data. For now, we'll pull full version detail.
+  // Fetch version detail to get schema bodies
   const versionDetail = await fetchUpstream<{
     semver: string
     hash: string
@@ -648,69 +670,61 @@ async function pullVersion(
     () => null,
   )
 
-  // Build record objects from fetched records
-  const BATCH_SIZE = 500
-  const recordObjectRows = fetchedRecords.map((r) => {
-    const canonical = JSON.stringify({ id: r.id, type: r.type, data: r.data })
-    const hash = createHash('sha256').update(canonical).digest('hex')
-    return {
-      hash,
-      recordId: r.id,
-      type: r.type,
-      data: r.data as any,
-      private: false,
-      size: Buffer.byteLength(canonical, 'utf8'),
-    }
-  })
+  // Record objects already inserted during fetch. Create version with status='creating',
+  // insert version_records in batches outside transaction, then mark 'ready'.
+  const [newVersion] = await db
+    .insert(schema.versions)
+    .values({
+      collectionId,
+      semver: uv.semver,
+      major: uv.major,
+      minor: uv.minor,
+      patch: uv.patch,
+      hash: uv.hash,
+      message: uv.message,
+      metadata: versionDetail?.metadata ?? null,
+      appId: uv.appId,
+      actorId: uv.actorId,
+      recordCount: manifest.records.length,
+      fileCount: manifest.files.length,
+      totalBytes: uv.totalBytes,
+      status: 'creating',
+    })
+    .returning({ id: schema.versions.id })
 
-  // Insert version + all related rows in a transaction
-  await db.transaction(async (tx) => {
-    const [newVersion] = await tx
-      .insert(schema.versions)
-      .values({
-        collectionId,
-        semver: uv.semver,
-        major: uv.major,
-        minor: uv.minor,
-        patch: uv.patch,
-        hash: uv.hash,
-        message: uv.message,
-        metadata: versionDetail?.metadata ?? null,
-        appId: uv.appId,
-        actorId: uv.actorId,
-        recordCount: manifest.records.length,
-        fileCount: manifest.files.length,
-        totalBytes: uv.totalBytes,
-      })
-      .returning({ id: schema.versions.id })
+  const versionId = newVersion!.id
 
-    const versionId = newVersion!.id
-
+  try {
     if (versionDetail?.schemas) {
       for (const [slug, schemaBody] of Object.entries(versionDetail.schemas)) {
         const schemaId = await ensureSchema(schemaBody)
-        await tx.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
+        await db.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
       }
-    }
-
-    for (let i = 0; i < recordObjectRows.length; i += BATCH_SIZE) {
-      const batch = recordObjectRows.slice(i, i + BATCH_SIZE)
-      await tx.insert(schema.recordObjects).values(batch).onConflictDoNothing()
     }
 
     for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
       const batch = manifestHashes.slice(i, i + BATCH_SIZE)
-      await tx
+      await db
         .insert(schema.versionRecords)
         .values(batch.map((hash) => ({ versionId, recordHash: hash })))
     }
 
-    if (manifest.files.length > 0) {
-      await tx
+    const fileHashList = manifest.files.filter((h) => availableFileHashes.has(h))
+    for (let i = 0; i < fileHashList.length; i += BATCH_SIZE) {
+      const batch = fileHashList.slice(i, i + BATCH_SIZE)
+      await db
         .insert(schema.versionFiles)
-        .values(manifest.files.map((hash) => ({ versionId, fileHash: hash })))
+        .values(batch.map((hash) => ({ versionId, fileHash: hash })))
     }
-  })
+
+    await db
+      .update(schema.versions)
+      .set({ status: 'ready' })
+      .where(eq(schema.versions.id, versionId))
+  } catch (err) {
+    await db.delete(schema.versions).where(eq(schema.versions.id, versionId))
+    throw err
+  }
 }
 
 /**
@@ -732,9 +746,6 @@ export async function testUpstreamConnection(upstream: string): Promise<{
       return { ok: false, error: 'Upstream health check failed' }
     }
 
-    const collections = await fetchUpstream<unknown[]>(upstream, '/api/collections?limit=1')
-
-    // Get full count by fetching with limit=100
     const allColls = await fetchUpstream<unknown[]>(upstream, '/api/collections?limit=100')
 
     return {
@@ -790,7 +801,13 @@ export async function getMirrorStatus(): Promise<{
           schema.organization,
           eq(schema.collections.organizationId, schema.organization.id),
         )
-        .where(and(eq(schema.organization.slug, c.ownerSlug), eq(schema.collections.slug, c.slug)))
+        .where(
+          and(
+            eq(schema.organization.slug, c.ownerSlug),
+            eq(schema.collections.slug, c.slug),
+            eq(schema.versions.status, 'ready'),
+          ),
+        )
         .orderBy(sql`major desc, minor desc, patch desc`)
         .limit(1)
 

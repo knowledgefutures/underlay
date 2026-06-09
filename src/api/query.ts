@@ -64,6 +64,7 @@ async function getOrBuildSqlite(owner: string, slug: string, versionSemver: stri
       and(
         eq(schema.versions.collectionId, collection.id),
         eq(schema.versions.semver, normalizedSemver),
+        eq(schema.versions.status, 'ready'),
       ),
     )
     .limit(1)
@@ -194,7 +195,6 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   // Build DDL with sample rows server-side
   let combinedDdl: string
-  let totalRecords = 0
 
   if (collectionRefs.length === 1) {
     const ref = collectionRefs[0]
@@ -395,7 +395,13 @@ export async function searchCollections(c: Context<AuthEnv>) {
       .from(schema.versions)
       .innerJoin(schema.collections, eq(schema.collections.id, schema.versions.collectionId))
       .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
-      .where(and(eq(schema.organization.slug, c2.ownerSlug), eq(schema.collections.slug, c2.slug)))
+      .where(
+        and(
+          eq(schema.organization.slug, c2.ownerSlug),
+          eq(schema.collections.slug, c2.slug),
+          eq(schema.versions.status, 'ready'),
+        ),
+      )
       .orderBy(
         desc(schema.versions.major),
         desc(schema.versions.minor),
@@ -436,6 +442,7 @@ export async function collectionVersions(c: Context<AuthEnv>) {
         eq(schema.organization.slug, owner),
         eq(schema.collections.slug, slug),
         eq(schema.collections.public, true),
+        eq(schema.versions.status, 'ready'),
       ),
     )
     .orderBy(desc(schema.versions.major), desc(schema.versions.minor), desc(schema.versions.patch))
