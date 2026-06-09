@@ -82,29 +82,40 @@ app.post(
       }
     }
 
-    // Check which record hashes already exist in record_objects
-    const manifestHashes = body.manifest.map((r) => r.hash)
-    let neededRecords: string[] = manifestHashes
-    if (manifestHashes.length > 0) {
+    // Deduplicate manifest entries by hash (PK is sessionId+hash)
+    const seenHashes = new Set<string>()
+    const dedupedManifest = body.manifest.filter((r) => {
+      if (seenHashes.has(r.hash)) return false
+      seenHashes.add(r.hash)
+      return true
+    })
+
+    // Check which record hashes already exist in record_objects (batched for large manifests)
+    const manifestHashes = dedupedManifest.map((r) => r.hash)
+    const existingRecordSet = new Set<string>()
+    const HASH_CHECK_BATCH = 5000
+    for (let i = 0; i < manifestHashes.length; i += HASH_CHECK_BATCH) {
+      const chunk = manifestHashes.slice(i, i + HASH_CHECK_BATCH)
       const existing = await db
         .select({ hash: schema.recordObjects.hash })
         .from(schema.recordObjects)
-        .where(inArray(schema.recordObjects.hash, manifestHashes))
-      const existingSet = new Set(existing.map((r) => r.hash))
-      neededRecords = manifestHashes.filter((h) => !existingSet.has(h))
+        .where(inArray(schema.recordObjects.hash, chunk))
+      for (const r of existing) existingRecordSet.add(r.hash)
     }
+    const neededRecords = manifestHashes.filter((h) => !existingRecordSet.has(h))
 
-    // Check which file hashes already exist
+    // Check which file hashes already exist (batched)
     const fileHashes = body.files ?? []
-    let neededFiles: string[] = fileHashes
-    if (fileHashes.length > 0) {
+    const existingFileSet = new Set<string>()
+    for (let i = 0; i < fileHashes.length; i += HASH_CHECK_BATCH) {
+      const chunk = fileHashes.slice(i, i + HASH_CHECK_BATCH)
       const existing = await db
         .select({ hash: schema.files.hash })
         .from(schema.files)
-        .where(inArray(schema.files.hash, fileHashes))
-      const existingSet = new Set(existing.map((r) => r.hash))
-      neededFiles = fileHashes.filter((h) => !existingSet.has(h))
+        .where(inArray(schema.files.hash, chunk))
+      for (const r of existing) existingFileSet.add(r.hash)
     }
+    const neededFiles = fileHashes.filter((h) => !existingFileSet.has(h))
 
     const [session] = await db
       .insert(schema.negotiateSessions)
@@ -127,8 +138,8 @@ app.post(
     // Insert manifest entries into edge table
     const neededSet = new Set(neededRecords)
     const MANIFEST_BATCH = 1000
-    for (let i = 0; i < body.manifest.length; i += MANIFEST_BATCH) {
-      const batch = body.manifest.slice(i, i + MANIFEST_BATCH)
+    for (let i = 0; i < dedupedManifest.length; i += MANIFEST_BATCH) {
+      const batch = dedupedManifest.slice(i, i + MANIFEST_BATCH)
       await db.insert(schema.negotiateSessionManifest).values(
         batch.map((r) => ({
           sessionId: session!.id,

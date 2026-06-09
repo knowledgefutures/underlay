@@ -481,6 +481,7 @@ const app = new Hono<AuthEnv>()
               )`,
             ),
           )
+          .limit(limit)
 
         const removed = await db
           .select({
@@ -504,6 +505,7 @@ const app = new Hono<AuthEnv>()
               )`,
             ),
           )
+          .limit(limit)
 
         const updated = await db
           .select({
@@ -534,6 +536,7 @@ const app = new Hono<AuthEnv>()
               )`,
             ),
           )
+          .limit(limit)
 
         return c.json({
           semver: version.semver,
@@ -630,7 +633,8 @@ const app = new Hono<AuthEnv>()
             ),
           )
           .limit(1)
-        if (fv) fromVersion = fv
+        if (!fv) return c.json({ error: `Version ${fromSemver} not found`, statusCode: 404 }, 404)
+        fromVersion = fv
       }
 
       const fromId = fromVersion?.id

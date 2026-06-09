@@ -1,9 +1,8 @@
 import { createGzip } from 'node:zlib'
 
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
-import { stream } from 'hono/streaming'
 import { pack as tarPack } from 'tar-stream'
 import { v4 as uuidv4 } from 'uuid'
 import { z } from 'zod'
@@ -995,12 +994,12 @@ const app = new Hono<AuthEnv>()
           .from(schema.versionRecords)
           .where(eq(schema.versionRecords.versionId, latestVersion.id))
 
-        if (sourceRecords.length > 0) {
+        const FORK_BATCH = 5000
+        for (let i = 0; i < sourceRecords.length; i += FORK_BATCH) {
+          const batch = sourceRecords.slice(i, i + FORK_BATCH)
           await tx
             .insert(schema.versionRecords)
-            .values(
-              sourceRecords.map((r) => ({ versionId: newVersion!.id, recordHash: r.recordHash })),
-            )
+            .values(batch.map((r) => ({ versionId: newVersion!.id, recordHash: r.recordHash })))
         }
 
         const sourceFiles = await tx
@@ -1008,10 +1007,11 @@ const app = new Hono<AuthEnv>()
           .from(schema.versionFiles)
           .where(eq(schema.versionFiles.versionId, latestVersion.id))
 
-        if (sourceFiles.length > 0) {
+        for (let i = 0; i < sourceFiles.length; i += FORK_BATCH) {
+          const batch = sourceFiles.slice(i, i + FORK_BATCH)
           await tx
             .insert(schema.versionFiles)
-            .values(sourceFiles.map((f) => ({ versionId: newVersion!.id, fileHash: f.fileHash })))
+            .values(batch.map((f) => ({ versionId: newVersion!.id, fileHash: f.fileHash })))
         }
 
         const sourceSchemas = await tx

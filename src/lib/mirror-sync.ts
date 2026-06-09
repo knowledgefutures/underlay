@@ -526,6 +526,7 @@ async function pullVersion(
   }
 
   // Fetch and insert missing records in batches instead of accumulating all in memory
+  const BATCH_SIZE = 500
   let fetchedCount = 0
   if (neededHashes.length > 0) {
     const insertRecordBatch = async (records: { id: string; type: string; data: unknown }[]) => {
@@ -599,7 +600,8 @@ async function pullVersion(
     )
   }
 
-  // Pull files
+  // Pull files — track which hashes succeed for version_files FK
+  const availableFileHashes = new Set<string>()
   for (const fileHash of manifest.files) {
     const storageKey = `files/${fileHash.slice(0, 2)}/${fileHash.slice(2, 4)}/${fileHash}`
 
@@ -617,6 +619,7 @@ async function pullVersion(
         })
         .onConflictDoNothing()
 
+      availableFileHashes.add(fileHash)
       result.files.skipped++
       progress.filesSkipped++
       continue
@@ -647,6 +650,7 @@ async function pullVersion(
         })
         .onConflictDoNothing()
 
+      availableFileHashes.add(fileHash)
       result.files.downloaded++
       progress.filesDownloaded++
       emit('file', `Downloaded file ${fileHash.slice(0, 8)}… (${buffer.length} bytes)`)
@@ -678,8 +682,6 @@ async function pullVersion(
 
   // Record objects already inserted during fetch. Create version with status='creating',
   // insert version_records in batches outside transaction, then mark 'ready'.
-  const BATCH_SIZE = 500
-
   const [newVersion] = await db
     .insert(schema.versions)
     .values({
@@ -716,13 +718,12 @@ async function pullVersion(
       .values(batch.map((hash) => ({ versionId, recordHash: hash })))
   }
 
-  if (manifest.files.length > 0) {
-    for (let i = 0; i < manifest.files.length; i += BATCH_SIZE) {
-      const batch = manifest.files.slice(i, i + BATCH_SIZE)
-      await db
-        .insert(schema.versionFiles)
-        .values(batch.map((hash) => ({ versionId, fileHash: hash })))
-    }
+  const fileHashList = manifest.files.filter((h) => availableFileHashes.has(h))
+  for (let i = 0; i < fileHashList.length; i += BATCH_SIZE) {
+    const batch = fileHashList.slice(i, i + BATCH_SIZE)
+    await db
+      .insert(schema.versionFiles)
+      .values(batch.map((hash) => ({ versionId, fileHash: hash })))
   }
 
   await db.update(schema.versions).set({ status: 'ready' }).where(eq(schema.versions.id, versionId))
