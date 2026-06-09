@@ -75,7 +75,6 @@ export default function SettingsKeys() {
         name: label,
         metadata: { scope },
         expiresIn: expiresIn ? parseInt(expiresIn) * 24 * 60 * 60 : undefined,
-        prefix: 'ul',
       } as any)
       if (err) {
         setError(err.message ?? 'Failed to create key.')

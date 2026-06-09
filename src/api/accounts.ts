@@ -156,7 +156,11 @@ const app = new Hono<AuthEnv>()
         .where(eq(schema.arkShoulders.organizationId, org.id))
         .limit(1)
 
-      return c.json({ ...org, arkShoulder: shoulderRow?.shoulder ?? null })
+      return c.json({
+        ...org,
+        displayName: org.name,
+        arkShoulder: shoulderRow?.shoulder ?? null,
+      })
     },
   )
   .get(
@@ -350,6 +354,98 @@ const app = new Hono<AuthEnv>()
       await db.delete(schema.account).where(eq(schema.account.userId, userId))
       await db.delete(schema.organization).where(eq(schema.organization.id, defaultOrg.id))
       await db.delete(schema.user).where(eq(schema.user.id, userId))
+      return c.json({ ok: true })
+    },
+  )
+  .patch(
+    '/:slug',
+    requireAuth(),
+    openApi({
+      tags: ['Accounts'],
+      summary: 'Update an organization by slug',
+      request: { param: z.object({ slug: z.string() }) },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { slug: orgSlug } = c.req.valid('param')
+      const userId = c.get('userId')!
+
+      const org = await findOrgBySlug(orgSlug)
+      if (!org) return c.json({ error: 'Organization not found', statusCode: 404 }, 404)
+
+      if (!(await requireOrgMembership(org.id, userId, 'owner'))) {
+        return c.json(
+          { error: 'Must be an owner to update the organization', statusCode: 403 },
+          403,
+        )
+      }
+
+      const { slug, displayName, bio, website, location, kfOrgId } = await c.req.json()
+
+      if (slug !== undefined) {
+        const slugErr = validateSlug(slug)
+        if (slugErr) return c.json({ error: slugErr, statusCode: 422 }, 422)
+
+        const [existing] = await db
+          .select({ id: schema.organization.id })
+          .from(schema.organization)
+          .where(eq(schema.organization.slug, slug))
+          .limit(1)
+
+        if (existing && existing.id !== org.id) {
+          return c.json({ error: 'That slug is already taken', statusCode: 409 }, 409)
+        }
+      }
+
+      const updates: Record<string, any> = {}
+      if (slug !== undefined) updates.slug = slug
+      if (displayName !== undefined) updates.name = displayName
+      if (bio !== undefined) updates.bio = bio
+      if (website !== undefined) updates.website = website
+      if (location !== undefined) updates.location = location
+      if (kfOrgId !== undefined) updates.kfOrgId = kfOrgId
+
+      if (Object.keys(updates).length > 0) {
+        await db.update(schema.organization).set(updates).where(eq(schema.organization.id, org.id))
+      }
+
+      return c.json({ ok: true, slug: slug ?? orgSlug })
+    },
+  )
+  .delete(
+    '/:slug',
+    requireAuth(),
+    openApi({
+      tags: ['Accounts'],
+      summary: 'Delete an organization by slug',
+      request: { param: z.object({ slug: z.string() }) },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { slug } = c.req.valid('param')
+      const userId = c.get('userId')!
+
+      const org = await findOrgBySlug(slug)
+      if (!org) return c.json({ error: 'Organization not found', statusCode: 404 }, 404)
+
+      if (!(await requireOrgMembership(org.id, userId, 'owner'))) {
+        return c.json(
+          { error: 'Must be an owner to delete the organization', statusCode: 403 },
+          403,
+        )
+      }
+
+      try {
+        const avatarKeys = await listS3Objects(`avatars/${org.id}/`)
+        if (avatarKeys.length > 0) await deleteS3Objects(avatarKeys)
+      } catch {
+        // Non-fatal
+      }
+
+      await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id))
+      await db.delete(schema.invitation).where(eq(schema.invitation.organizationId, org.id))
+      await db.delete(schema.member).where(eq(schema.member.organizationId, org.id))
+      await db.delete(schema.organization).where(eq(schema.organization.id, org.id))
       return c.json({ ok: true })
     },
   )

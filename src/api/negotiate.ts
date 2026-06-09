@@ -431,12 +431,20 @@ app.post(
         )
     }
 
-    const remainingNeeded = neededSet.size - receivedHashes.size
+    const [remainingRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.negotiateSessionManifest)
+      .where(
+        and(
+          eq(schema.negotiateSessionManifest.sessionId, sessionId),
+          eq(schema.negotiateSessionManifest.needed, true),
+        ),
+      )
+    const remaining = remainingRow?.count ?? 0
 
     return c.json({
       received: receivedHashes.size,
-      remaining: remainingNeeded,
-      total_needed: neededSet.size,
+      remaining,
     })
   },
 )
@@ -455,6 +463,7 @@ app.post(
   }),
   async (c) => {
     const { sessionId } = c.req.valid('param')
+    const userId = c.get('userId')
     const [sessionRow] = await db
       .select()
       .from(schema.negotiateSessions)
@@ -462,13 +471,17 @@ app.post(
       .limit(1)
 
     if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
-      if (sessionRow) {
+      if (sessionRow?.status === 'open') {
         await db
           .update(schema.negotiateSessions)
           .set({ status: 'expired' })
           .where(eq(schema.negotiateSessions.id, sessionId))
       }
       return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
+    }
+
+    if (sessionRow.userId !== userId) {
+      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
 
     const session = {
@@ -516,9 +529,12 @@ app.post(
       )
     }
 
-    // Load manifest entries from edge table
     const manifestEntries = await db
-      .select()
+      .select({
+        hash: schema.negotiateSessionManifest.hash,
+        needed: schema.negotiateSessionManifest.needed,
+        private: schema.negotiateSessionManifest.private,
+      })
       .from(schema.negotiateSessionManifest)
       .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
 
@@ -918,12 +934,17 @@ app.post(
     })
 
     // Batch-insert version_records outside the main transaction
-    const VR_BATCH = 5000
-    for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
-      const batch = finalRecordHashes.slice(i, i + VR_BATCH)
-      await db
-        .insert(schema.versionRecords)
-        .values(batch.map((hash) => ({ versionId: versionId!, recordHash: hash })))
+    try {
+      const VR_BATCH = 5000
+      for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
+        const batch = finalRecordHashes.slice(i, i + VR_BATCH)
+        await db
+          .insert(schema.versionRecords)
+          .values(batch.map((hash) => ({ versionId: versionId!, recordHash: hash })))
+      }
+    } catch (err) {
+      await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))
+      throw err
     }
 
     // Mark version as ready and update collection timestamp

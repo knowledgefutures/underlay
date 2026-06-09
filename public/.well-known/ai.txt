@@ -13,7 +13,8 @@ Base URL: https://underlay.org/api
 There are two auth methods:
 
 1. API Key (for programmatic access):
-   Header: Authorization: Bearer ul_<key>
+   Header: Authorization: Bearer <key>
+   Keys are prefixed with "ul_" (e.g. ul_abc123...) when created through the UI.
    Keys have scopes: read, write, admin.
    Keys can optionally be scoped to specific collections via metadata.
    Create keys at https://underlay.org/settings/keys (personal) or /:owner/settings/keys (organization).
@@ -178,8 +179,9 @@ Authorization: Bearer ul_<key>
   }
 }
 
-Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`
-with object keys sorted recursively.
+Each record hash is SHA-256 of the canonical JSON — see "Record Hashing" section below for
+the exact algorithm. Clients MUST canonicalize data (sort object keys recursively) before
+hashing, or the server will reject the records.
 
 Field reference:
 - base_version: the semver string of the version you diffed against (e.g. "v1.2.0"). null for first push. Used for optimistic locking.
@@ -215,7 +217,7 @@ Call this endpoint multiple times for large datasets (up to 10,000 records per b
 If needed_records was empty, skip this step entirely.
 
 Response:
-{ "received": 1, "remaining": 0, "total_needed": 1 }
+{ "received": 1, "remaining": 0 }
 
 When remaining reaches 0, all needed records have been received.
 
@@ -311,6 +313,85 @@ The schema declares which fields are references, so tools can resolve them at re
 
 ---
 
+## Record Hashing (required for push)
+
+Records are content-addressed. The hash is the record's identity across the system — it determines
+deduplication, manifest membership, and version integrity. Any client that pushes data must compute
+hashes exactly as the server does, or the push will fail with "Unexpected record hash".
+
+### Algorithm
+
+1. Build the canonical object: `{"id": <id>, "type": <type>, "data": <canonicalized_data>}`
+   - The top-level keys MUST appear in this exact order: id, type, data.
+   - The `data` value MUST be canonicalized (see below).
+   - The `private` flag is NOT part of the hash. Two records with identical id/type/data
+     but different privacy flags produce the same hash.
+
+2. Serialize to JSON with no extra whitespace (standard JSON.stringify behavior).
+
+3. Compute SHA-256 over the UTF-8 bytes of that JSON string.
+
+4. Encode as lowercase hex (64 characters).
+
+### Canonicalization
+
+Canonicalization recursively sorts all object keys alphabetically. This ensures that
+`{"b":1,"a":2}` and `{"a":2,"b":1}` produce the same hash.
+
+Rules:
+- Objects: sort keys lexicographically (by Unicode code point), recurse into values.
+- Arrays: preserve order, recurse into elements.
+- Primitives (strings, numbers, booleans, null): unchanged.
+
+Reference implementation (JavaScript):
+
+```javascript
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const sorted = {};
+  for (const key of Object.keys(value).sort()) {
+    sorted[key] = canonicalize(value[key]);
+  }
+  return sorted;
+}
+
+function hashRecord(record) {
+  const canonical = JSON.stringify({
+    id: record.id,
+    type: record.type,
+    data: canonicalize(record.data),
+  });
+  // Node.js:
+  // const hash = createHash('sha256').update(canonical).digest('hex');
+  // Browser:
+  // const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  // const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return { hash, canonical };
+}
+```
+
+### Example
+
+Input record:
+  { "id": "article-1", "type": "Article", "data": { "title": "Hello", "body": "World" } }
+
+Canonical JSON (data keys already sorted):
+  {"id":"article-1","type":"Article","data":{"body":"World","title":"Hello"}}
+
+SHA-256 hash:
+  e3b7a... (64 hex characters)
+
+Note: if data keys were in a different order (e.g. `{"title":"Hello","body":"World"}`),
+canonicalization sorts them to `{"body":"World","title":"Hello"}` — producing the same hash.
+
+### Schema hashing
+
+Schemas are also content-addressed. The hash is SHA-256 of `JSON.stringify(canonicalize(schemaBody))`.
+The same canonicalization rules apply.
+
+---
+
 ## Schema Discovery
 
 Schemas are globally deduplicated by content hash. If two collections use the same type shape, they share the same schema row. This enables cross-collection discovery.
@@ -331,7 +412,7 @@ When schemas are returned via the collection schemas endpoint, known labels are 
 - Semver semantics: major bump = schema change (types added/removed or schema_id changed), minor bump = records/files change, patch bump = metadata-only change.
 - Each version has a content-addressed hash computed from sorted schema hashes + sorted record hashes + sorted file hashes + metadata.
 - Each version has a `metadata` field: a JSON object that can contain `readme`, `license`, and other arbitrary metadata.
-- Records are content-addressed: SHA-256 of canonical JSON `{"id":...,"type":...,"data":...}`. Records are globally deduplicated.
+- Records are content-addressed: SHA-256 of canonical JSON (see "Record Hashing" section). Records are globally deduplicated.
 - Versions are immutable once created.
 - The provenance endpoint (GET /api/records/:hash/provenance) shows every collection and version that includes a given record.
 
