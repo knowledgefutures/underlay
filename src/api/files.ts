@@ -31,8 +31,18 @@ async function isFilePubliclyAccessible(
   if (!collection) return false
 
   // Org member always has access
-  if (userId != null && userId === collection.organizationId) {
-    return true
+  if (userId != null) {
+    const [membership] = await db
+      .select()
+      .from(schema.member)
+      .where(
+        and(
+          eq(schema.member.organizationId, collection.organizationId),
+          eq(schema.member.userId, userId),
+        ),
+      )
+      .limit(1)
+    if (membership) return true
   }
 
   // Get the latest version
@@ -40,7 +50,9 @@ async function isFilePubliclyAccessible(
     .select({ id: schema.versions.id })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collection.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!latest) return false
@@ -77,13 +89,17 @@ async function isFilePubliclyAccessible(
   // Find public records that reference this file hash
   // A record references a file if its data JSON contains the hash string
   const records = await db
-    .select({ type: schema.records.type, data: schema.records.data })
-    .from(schema.records)
+    .select({ type: schema.recordObjects.type, data: schema.recordObjects.data })
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
     .where(
       and(
-        eq(schema.records.versionId, latest.id),
-        eq(schema.records.private, false),
-        sql`${schema.records.data}::text LIKE ${'%' + fileHash + '%'}`,
+        eq(schema.versionRecords.versionId, latest.id),
+        eq(schema.recordObjects.private, false),
+        sql`${schema.recordObjects.data}::text LIKE ${'%' + fileHash + '%'}`,
       ),
     )
     .limit(10)

@@ -1,3 +1,5 @@
+import { Link } from 'react-router'
+
 import DocsLayout from '~/components/DocsLayout'
 
 const recordExample = `{
@@ -46,17 +48,19 @@ export default function DocsConcepts() {
           References to <strong>files</strong> — binary assets
         </li>
         <li>
-          <strong>Metadata</strong> — who pushed it, when, from which app, with what message
+          A <strong>metadata</strong> bag — a JSON object that can contain <code>readme</code>,{' '}
+          <code>license</code>, and other fields
         </li>
       </ul>
       <p>
-        Versions are numbered sequentially (1, 2, 3…) and also carry a semver label. The semver is
-        derived automatically:
+        Versions are identified by <strong>semver</strong> (e.g. <code>v1.0.0</code>,{' '}
+        <code>v1.1.0</code>, <code>v2.0.0</code>). The semver is derived automatically from what
+        changed:
       </p>
       <ul>
         <li>Schema changes → major bump</li>
-        <li>Record changes → minor bump</li>
-        <li>Metadata-only changes → patch bump</li>
+        <li>Record or file changes → minor bump</li>
+        <li>Metadata-only changes (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
         Each version also has a <strong>hash</strong> — a SHA-256 digest of the canonical
@@ -66,20 +70,47 @@ export default function DocsConcepts() {
 
       <h2>Record</h2>
       <p>
-        A <strong>record</strong> is a flat JSON object with an <code>id</code> and a{' '}
-        <code>type</code>. Records are the rows of your data.
+        A <strong>record</strong> is a flat JSON object with an <code>id</code>, a <code>type</code>
+        , and a <code>data</code> payload. Records are the rows of your data.
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{recordExample}</code>
       </pre>
+      <p>
+        Records are <strong>content-addressed</strong>: each record is identified by the SHA-256
+        hash of its canonical JSON (<code>{'{"id":...,"type":...,"data":...}'}</code>). This means:
+      </p>
+      <ul>
+        <li>The same record appearing in multiple collections is stored only once.</li>
+        <li>
+          Pushing a new version only transfers records the server doesn't already have (via the{' '}
+          <Link to="/protocol#push" className="text-link underline">
+            negotiate protocol
+          </Link>
+          ).
+        </li>
+        <li>
+          Any record can be traced back to every collection and version that includes it (
+          <Link to="/protocol#provenance" className="text-link underline">
+            provenance
+          </Link>
+          ).
+        </li>
+      </ul>
       <p>
         Relationships between records are expressed as ID references — just strings. There are no
         joins, no foreign keys. An LLM or application can resolve references by reading the schema
         and records together.
       </p>
       <p>
+        Records are validated against the schema on push. If a record contains fields not defined in
+        the schema, the push is rejected with a 422 listing the extra fields. Set{' '}
+        <code>strip_unknown_fields</code> to accept stripping them automatically.
+      </p>
+      <p>
         Binary data is referenced via <code>{fileRef}</code> — a pointer to a content-addressed file
-        in the registry.
+        in the registry. The wire format for records is JSONL — one record per line, independently
+        hashable and streamable.
       </p>
 
       <h2>File</h2>

@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { getMirrorConfig } from './mirror-config.js'
@@ -231,7 +231,6 @@ interface UpstreamCollection {
   id: string
   slug: string
   name: string
-  description: string | null
   ownerSlug: string
   ownerName: string
   createdAt: string
@@ -239,8 +238,10 @@ interface UpstreamCollection {
 }
 
 interface UpstreamVersion {
-  number: number
   semver: string
+  major: number
+  minor: number
+  patch: number
   hash: string
   message: string | null
   appId: string | null
@@ -252,11 +253,10 @@ interface UpstreamVersion {
 }
 
 interface UpstreamManifest {
-  version: number
   semver: string
   hash: string
   schemas: Record<string, string>
-  records: { id: string; type: string }[]
+  records: { id: string; type: string; hash: string }[]
   files: string[]
 }
 
@@ -331,10 +331,10 @@ export async function runMirrorSync(trigger: 'manual' | 'cron' = 'manual'): Prom
   // 1. Fetch all public collections from upstream
   let upstreamCollections: UpstreamCollection[]
   try {
-    upstreamCollections = await fetchUpstream<UpstreamCollection[]>(
-      upstream,
-      '/api/collections?limit=100',
-    )
+    const collectionsResponse = await fetchUpstream<{
+      collections: UpstreamCollection[]
+    }>(upstream, '/api/collections?limit=100')
+    upstreamCollections = collectionsResponse.collections
   } catch (err) {
     result.errors.push(`Failed to fetch collections: ${err}`)
     result.finishedAt = new Date().toISOString()
@@ -438,7 +438,6 @@ async function syncCollection(
         organizationId,
         slug: uc.slug,
         name: uc.name,
-        description: uc.description,
         public: true,
       })
       .returning({ id: schema.collections.id })
@@ -448,15 +447,22 @@ async function syncCollection(
     collectionId = localColl.id
   }
 
-  // Get the latest local version number
+  // Get the latest local version by semver components
   const [latestLocal] = await db
-    .select({ number: schema.versions.number })
+    .select({
+      semver: schema.versions.semver,
+      major: schema.versions.major,
+      minor: schema.versions.minor,
+      patch: schema.versions.patch,
+    })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, collectionId))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(sql`major desc, minor desc, patch desc`)
     .limit(1)
 
-  const localVersionNum = latestLocal?.number ?? 0
+  const localMajor = latestLocal?.major ?? 0
+  const localMinor = latestLocal?.minor ?? 0
+  const localPatch = latestLocal?.patch ?? 0
 
   // Fetch upstream versions we don't have
   const upstreamVersions = await fetchUpstream<UpstreamVersion[]>(
@@ -466,8 +472,13 @@ async function syncCollection(
 
   // Sort ascending to apply in order
   const newVersions = upstreamVersions
-    .filter((v) => v.number > localVersionNum)
-    .sort((a, b) => a.number - b.number)
+    .filter(
+      (v) =>
+        v.major > localMajor ||
+        (v.major === localMajor && v.minor > localMinor) ||
+        (v.major === localMajor && v.minor === localMinor && v.patch > localPatch),
+    )
+    .sort((a, b) => a.major - b.major || a.minor - b.minor || a.patch - b.patch)
 
   if (newVersions.length === 0) return
 
@@ -494,26 +505,70 @@ async function pullVersion(
   // Get the version manifest (schemas + file list)
   const manifest = await fetchUpstream<UpstreamManifest>(
     upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/manifest`,
+    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/manifest`,
   )
 
-  // Pull all records (paginated)
-  const allRecords: { id: string; type: string; data: unknown }[] = []
-  let cursor: string | null = null
-  let hasMore = true
+  // Determine which records we already have locally
+  const manifestHashes = manifest.records.map((r) => r.hash)
+  let neededHashes: string[] = manifestHashes
+  if (manifestHashes.length > 0) {
+    const CHUNK = 500
+    const existingSet = new Set<string>()
+    for (let i = 0; i < manifestHashes.length; i += CHUNK) {
+      const chunk = manifestHashes.slice(i, i + CHUNK)
+      const rows = await db
+        .select({ hash: schema.recordObjects.hash })
+        .from(schema.recordObjects)
+        .where(inArray(schema.recordObjects.hash, chunk))
+      for (const r of rows) existingSet.add(r.hash)
+    }
+    neededHashes = manifestHashes.filter((h) => !existingSet.has(h))
+  }
 
-  while (hasMore) {
-    const recordsPath: string = cursor
-      ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000&after=${cursor}`
-      : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=1000`
+  // Fetch only missing records via batch endpoint (or fall back to paginated records API)
+  const fetchedRecords: { id: string; type: string; data: unknown }[] = []
+  if (neededHashes.length > 0) {
+    const fetchAllPaginated = async () => {
+      let cursor: string | null = null
+      let hasMore = true
+      while (hasMore) {
+        const recordsPath: string = cursor
+          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${cursor}`
+          : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000`
+        const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
+        fetchedRecords.push(...page.records)
+        hasMore = page.pagination.hasMore
+        cursor = page.pagination.nextCursor
+      }
+    }
 
-    const page: UpstreamRecordsResponse = await fetchUpstream<UpstreamRecordsResponse>(
-      upstream,
-      recordsPath,
+    try {
+      const config = getMirrorConfig()
+      const batchUrl = `${upstream.replace(/\/$/, '')}/api/records/batch`
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`
+
+      const res = await fetch(batchUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ hashes: neededHashes }),
+      })
+
+      if (res.ok) {
+        const text = await res.text()
+        for (const line of text.split('\n').filter((l) => l.trim())) {
+          fetchedRecords.push(JSON.parse(line))
+        }
+      } else {
+        await fetchAllPaginated()
+      }
+    } catch {
+      await fetchAllPaginated()
+    }
+    emit(
+      'version',
+      `${uc.ownerSlug}/${uc.slug} ${uv.semver}: fetched ${fetchedRecords.length} records (${manifestHashes.length - neededHashes.length} already local)`,
     )
-    allRecords.push(...page.records)
-    hasMore = page.pagination.hasMore
-    cursor = page.pagination.nextCursor
   }
 
   // Pull files
@@ -577,7 +632,7 @@ async function pullVersion(
   // We need to fetch the actual schema bodies from the upstream version
   const upstreamSchemas = await fetchUpstream<Record<string, unknown>>(
     upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}/records?limit=0`,
+    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=0`,
   ).catch(() => null)
 
   // Fetch schema bodies from the manifest endpoint — the manifest only has hashes.
@@ -585,63 +640,77 @@ async function pullVersion(
   // Actually, let's fetch schemas from the upstream schemas API if available,
   // or infer from the version data. For now, we'll pull full version detail.
   const versionDetail = await fetchUpstream<{
-    number: number
     semver: string
     hash: string
     schemas: Record<string, unknown>
-    readme?: string
-  }>(upstream, `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.number}`).catch(
+    metadata?: unknown
+  }>(upstream, `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}`).catch(
     () => null,
   )
 
-  // Create the version record
-  const [newVersion] = await db
-    .insert(schema.versions)
-    .values({
-      collectionId,
-      number: uv.number,
-      semver: uv.semver,
-      hash: uv.hash,
-      message: uv.message,
-      appId: uv.appId,
-      actorId: uv.actorId,
-      recordCount: allRecords.length,
-      fileCount: manifest.files.length,
-      totalBytes: uv.totalBytes,
-    })
-    .returning({ id: schema.versions.id })
-
-  const versionId = newVersion!.id
-
-  // Insert schemas
-  if (versionDetail?.schemas) {
-    for (const [slug, schemaBody] of Object.entries(versionDetail.schemas)) {
-      const schemaId = await ensureSchema(schemaBody)
-      await db.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
-    }
-  }
-
-  // Insert records in batches
+  // Build record objects from fetched records
   const BATCH_SIZE = 500
-  for (let i = 0; i < allRecords.length; i += BATCH_SIZE) {
-    const batch = allRecords.slice(i, i + BATCH_SIZE)
-    await db.insert(schema.records).values(
-      batch.map((r) => ({
-        versionId,
-        recordId: r.id,
-        type: r.type,
-        data: r.data as any,
-        private: false,
-      })),
-    )
-  }
+  const recordObjectRows = fetchedRecords.map((r) => {
+    const canonical = JSON.stringify({ id: r.id, type: r.type, data: r.data })
+    const hash = createHash('sha256').update(canonical).digest('hex')
+    return {
+      hash,
+      recordId: r.id,
+      type: r.type,
+      data: r.data as any,
+      private: false,
+      size: Buffer.byteLength(canonical, 'utf8'),
+    }
+  })
 
-  // Link files to version
-  if (manifest.files.length > 0) {
-    await db
-      .insert(schema.versionFiles)
-      .values(manifest.files.map((hash) => ({ versionId, fileHash: hash })))
-  }
+  // Insert version + all related rows in a transaction
+  await db.transaction(async (tx) => {
+    const [newVersion] = await tx
+      .insert(schema.versions)
+      .values({
+        collectionId,
+        semver: uv.semver,
+        major: uv.major,
+        minor: uv.minor,
+        patch: uv.patch,
+        hash: uv.hash,
+        message: uv.message,
+        metadata: versionDetail?.metadata ?? null,
+        appId: uv.appId,
+        actorId: uv.actorId,
+        recordCount: manifest.records.length,
+        fileCount: manifest.files.length,
+        totalBytes: uv.totalBytes,
+      })
+      .returning({ id: schema.versions.id })
+
+    const versionId = newVersion!.id
+
+    if (versionDetail?.schemas) {
+      for (const [slug, schemaBody] of Object.entries(versionDetail.schemas)) {
+        const schemaId = await ensureSchema(schemaBody)
+        await tx.insert(schema.versionSchemas).values({ versionId, slug, schemaId })
+      }
+    }
+
+    for (let i = 0; i < recordObjectRows.length; i += BATCH_SIZE) {
+      const batch = recordObjectRows.slice(i, i + BATCH_SIZE)
+      await tx.insert(schema.recordObjects).values(batch).onConflictDoNothing()
+    }
+
+    for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
+      const batch = manifestHashes.slice(i, i + BATCH_SIZE)
+      await tx
+        .insert(schema.versionRecords)
+        .values(batch.map((hash) => ({ versionId, recordHash: hash })))
+    }
+
+    if (manifest.files.length > 0) {
+      await tx
+        .insert(schema.versionFiles)
+        .values(manifest.files.map((hash) => ({ versionId, fileHash: hash })))
+    }
+  })
 }
 
 /**
@@ -722,7 +791,7 @@ export async function getMirrorStatus(): Promise<{
           eq(schema.collections.organizationId, schema.organization.id),
         )
         .where(and(eq(schema.organization.slug, c.ownerSlug), eq(schema.collections.slug, c.slug)))
-        .orderBy(sql`${schema.versions.number} desc`)
+        .orderBy(sql`major desc, minor desc, patch desc`)
         .limit(1)
 
       return {

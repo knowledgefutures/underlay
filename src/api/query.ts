@@ -3,9 +3,10 @@ import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
 import { buildSqliteBuffer, generateAllDDL, generateDDL } from '../lib/sqlite-gen.js'
+import { parseSemver } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
-// In-memory LRU cache: key = `${collectionId}:${versionNumber}`, value = { buffer, expiresAt }
+// In-memory LRU cache: key = `${collectionId}:${semver}`, value = { buffer, expiresAt }
 const sqliteCache = new Map<
   string,
   {
@@ -38,7 +39,9 @@ function evictIfNeeded() {
 // Run cleanup every 5 minutes
 setInterval(cleanExpired, 5 * 60 * 1000)
 
-async function getOrBuildSqlite(owner: string, slug: string, versionNumber: number) {
+async function getOrBuildSqlite(owner: string, slug: string, versionSemver: string) {
+  const { semver: normalizedSemver } = parseSemver(versionSemver)
+
   // Resolve collection
   const [collection] = await db
     .select({
@@ -55,19 +58,19 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
 
   // Resolve version
   const [version] = await db
-    .select({ id: schema.versions.id, number: schema.versions.number })
+    .select({ id: schema.versions.id, semver: schema.versions.semver })
     .from(schema.versions)
     .where(
       and(
         eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.number, versionNumber),
+        eq(schema.versions.semver, normalizedSemver),
       ),
     )
     .limit(1)
 
   if (!version) return null
 
-  const cacheKey = `${collection.id}:${version.number}`
+  const cacheKey = `${collection.id}:${version.semver}`
 
   // Check cache (re-insert to move to end for LRU ordering)
   const cached = sqliteCache.get(cacheKey)
@@ -93,12 +96,16 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
   // Load records
   const records = await db
     .select({
-      recordId: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
     })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   // Build SQLite
   const buffer = buildSqliteBuffer(schemasMap, records as any)
@@ -135,18 +142,17 @@ async function getOrBuildSqlite(owner: string, slug: string, versionNumber: numb
 export async function sqlite(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
-  const version = c.req.param('version')!
-  const versionNum = parseInt(version, 10)
-  if (isNaN(versionNum)) return c.json({ error: 'Invalid version number' }, 400)
+  const versionSemver = c.req.param('version')!
+  const { semver } = parseSemver(versionSemver)
 
-  const result = await getOrBuildSqlite(owner, slug, versionNum)
+  const result = await getOrBuildSqlite(owner, slug, versionSemver)
   if (!result) return c.json({ error: 'Collection or version not found' }, 404)
 
   return new Response(new Uint8Array(result.buffer), {
     status: 200,
     headers: {
       'Content-Type': 'application/x-sqlite3',
-      'Content-Disposition': `attachment; filename="${slug}-v${versionNum}.sqlite"`,
+      'Content-Disposition': `attachment; filename="${slug}-${semver}.sqlite"`,
       'Cache-Control': 'public, max-age=86400',
     },
   })
@@ -156,11 +162,9 @@ export async function sqlite(c: Context<AuthEnv>) {
 export async function ddl(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
-  const version = c.req.param('version')!
-  const versionNum = parseInt(version, 10)
-  if (isNaN(versionNum)) return c.json({ error: 'Invalid version number' }, 400)
+  const versionSemver = c.req.param('version')!
 
-  const result = await getOrBuildSqlite(owner, slug, versionNum)
+  const result = await getOrBuildSqlite(owner, slug, versionSemver)
   if (!result) return c.json({ error: 'Collection or version not found' }, 404)
 
   return c.json({ ddl: result.ddl })
@@ -373,7 +377,6 @@ export async function searchCollections(c: Context<AuthEnv>) {
       ownerSlug: schema.organization.slug,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
     })
     .from(schema.collections)
@@ -386,7 +389,6 @@ export async function searchCollections(c: Context<AuthEnv>) {
   for (const c2 of collections) {
     const [latestVersion] = await db
       .select({
-        number: schema.versions.number,
         semver: schema.versions.semver,
         recordCount: schema.versions.recordCount,
       })
@@ -394,16 +396,18 @@ export async function searchCollections(c: Context<AuthEnv>) {
       .innerJoin(schema.collections, eq(schema.collections.id, schema.versions.collectionId))
       .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
       .where(and(eq(schema.organization.slug, c2.ownerSlug), eq(schema.collections.slug, c2.slug)))
-      .orderBy(desc(schema.versions.number))
+      .orderBy(
+        desc(schema.versions.major),
+        desc(schema.versions.minor),
+        desc(schema.versions.patch),
+      )
       .limit(1)
 
     result.push({
       ownerSlug: c2.ownerSlug,
       slug: c2.slug,
       name: c2.name,
-      description: c2.description,
       public: c2.public,
-      latestVersion: latestVersion?.number ?? null,
       latestSemver: latestVersion?.semver ?? null,
       recordCount: latestVersion?.recordCount ?? 0,
     })
@@ -419,7 +423,6 @@ export async function collectionVersions(c: Context<AuthEnv>) {
 
   const versions = await db
     .select({
-      number: schema.versions.number,
       semver: schema.versions.semver,
       recordCount: schema.versions.recordCount,
       createdAt: schema.versions.createdAt,
@@ -435,7 +438,7 @@ export async function collectionVersions(c: Context<AuthEnv>) {
         eq(schema.collections.public, true),
       ),
     )
-    .orderBy(desc(schema.versions.number))
+    .orderBy(desc(schema.versions.major), desc(schema.versions.minor), desc(schema.versions.patch))
 
   if (versions.length === 0) {
     return c.json({ error: 'Collection not found or not public' }, 404)

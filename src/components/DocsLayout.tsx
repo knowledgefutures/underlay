@@ -26,6 +26,10 @@ const nav = [
     section: 'Infrastructure',
     items: [{ label: 'Self-hosting', href: '/docs/self-host' }],
   },
+  {
+    section: 'Specification',
+    items: [{ label: 'Protocol', href: '/protocol' }],
+  },
 ]
 
 export default function DocsLayout({

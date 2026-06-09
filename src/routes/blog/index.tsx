@@ -4,6 +4,19 @@ import BaseLayout from '~/components/BaseLayout'
 
 const posts: { title: string; subtitle: string; date: string; url: string }[] = [
   {
+    title: 'Permanently Addressable Structured Data',
+    subtitle: 'What Underlay is, why it matters now, and how it works.',
+    date: '2026-06-08',
+    url: '/blog/2026-06-08-permanently-addressable-structured-data',
+  },
+  {
+    title: 'Content-Addressed Records',
+    subtitle:
+      'Applying the insight that already works for schemas and files to the records themselves.',
+    date: '2026-06-08',
+    url: '/blog/2026-06-08-content-addressed-records',
+  },
+  {
     title: 'Schema Evolution',
     subtitle: 'How Underlay handles schema changes across versions.',
     date: '2026-04-30',

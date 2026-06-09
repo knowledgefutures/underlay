@@ -25,8 +25,12 @@ export default function CollectionSettingsPage() {
   // Form state
   const [name, setName] = useState('')
   const [slugValue, setSlugValue] = useState('')
-  const [description, setDescription] = useState('')
   const [isPublic, setIsPublic] = useState(false)
+
+  // Metadata form
+  const [description, setDescription] = useState('')
+  const [readme, setReadme] = useState('')
+  const [license, setLicense] = useState('')
 
   // ARK form
   const [arkEnabled, setArkEnabled] = useState(false)
@@ -62,8 +66,12 @@ export default function CollectionSettingsPage() {
       setData(col)
       setName(col.name)
       setSlugValue(col.slug)
-      setDescription(col.description ?? '')
       setIsPublic(col.public)
+
+      const meta = col.latestVersion?.metadata as Record<string, unknown> | null | undefined
+      setDescription((meta?.description as string) ?? '')
+      setReadme((meta?.readme as string) ?? '')
+      setLicense((meta?.license as string) ?? '')
 
       setArkSettings(ark)
       setArkEnabled(ark.enabled)
@@ -89,7 +97,7 @@ export default function CollectionSettingsPage() {
     setSubmitting('update')
     const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== collection
     try {
-      const payload: Record<string, any> = { name, description, public: isPublic }
+      const payload: Record<string, any> = { name, public: isPublic }
       if (slugChanged) payload.slug = slugValue.trim()
 
       const res = await fetch(`/api/collections/${owner}/${collection}`, {
@@ -115,6 +123,45 @@ export default function CollectionSettingsPage() {
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Update failed.')
+      }
+    } finally {
+      setSubmitting('')
+    }
+  }
+
+  async function handleUpdateMetadata(e: FormEvent) {
+    e.preventDefault()
+    clearMessages()
+    setSubmitting('metadata')
+    try {
+      const payload: Record<string, unknown> = {}
+      if (description.trim()) payload.description = description.trim()
+      else payload.description = null
+      if (readme.trim()) payload.readme = readme.trim()
+      else payload.readme = null
+      if (license.trim()) payload.license = license.trim()
+      else payload.license = null
+
+      const res = await fetch(`/api/collections/${owner}/${collection}/metadata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        const body = await res.json()
+        if (body.unchanged) {
+          setSuccess('No changes to save.')
+        } else {
+          setSuccess(`Metadata updated (${body.semver}).`)
+        }
+        const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
+          credentials: 'include',
+        })
+        if (refreshed.ok) setData(await refreshed.json())
+      } else {
+        const body = await res.json().catch(() => ({}))
+        setError(body.error ?? 'Metadata update failed.')
       }
     } finally {
       setSubmitting('')
@@ -242,19 +289,6 @@ export default function CollectionSettingsPage() {
               )}
             </div>
 
-            <div>
-              <label htmlFor="description" className="mb-1 block text-sm font-medium">
-                Description
-              </label>
-              <textarea
-                id="description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={3}
-                className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
-              />
-            </div>
-
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -278,6 +312,66 @@ export default function CollectionSettingsPage() {
               </button>
             </div>
           </form>
+
+          {/* Metadata */}
+          <div className="border-rule mb-10 border-t pt-6">
+            <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
+              Metadata
+            </h2>
+            <p className="text-ink-muted mb-3 text-sm">
+              Description, readme, and license are versioned — saving creates a patch version.
+            </p>
+            <form onSubmit={handleUpdateMetadata} className="space-y-4">
+              <div>
+                <label htmlFor="description" className="mb-1 block text-sm font-medium">
+                  Description
+                </label>
+                <input
+                  type="text"
+                  id="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="A short description of this collection"
+                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="readme" className="mb-1 block text-sm font-medium">
+                  Readme <span className="text-ink-muted font-normal">(Markdown)</span>
+                </label>
+                <textarea
+                  id="readme"
+                  value={readme}
+                  onChange={(e) => setReadme(e.target.value)}
+                  rows={8}
+                  placeholder="# My Collection&#10;&#10;Detailed description in Markdown..."
+                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 font-mono text-sm focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="license" className="mb-1 block text-sm font-medium">
+                  License
+                </label>
+                <input
+                  type="text"
+                  id="license"
+                  value={license}
+                  onChange={(e) => setLicense(e.target.value)}
+                  placeholder="e.g. CC-BY-4.0, MIT, Public Domain"
+                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
+                />
+              </div>
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={submitting === 'metadata'}
+                  className="bg-ink text-parchment px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
+                >
+                  Save metadata
+                </button>
+              </div>
+            </form>
+          </div>
 
           {/* Export */}
           <div className="border-rule mb-10 border-t pt-6">

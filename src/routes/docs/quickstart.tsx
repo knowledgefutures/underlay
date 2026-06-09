@@ -14,7 +14,6 @@ curl -X POST https://underlay.org/api/accounts/yourname/collections \\
   -d '{
     "slug": "my-dataset",
     "name": "My Dataset",
-    "description": "A test collection",
     "public": true
   }'`
 
@@ -25,16 +24,17 @@ const pushCode = `curl -X POST https://underlay.org/api/collections/yourname/my-
     "base_version": null,
     "message": "Initial import",
     "app_id": "my-app",
-    "schema": {
-      "type": "object",
-      "properties": {
-        "Book": {
-          "type": "object",
-          "properties": {
-            "title": {"type": "string"},
-            "author": {"type": "string"},
-            "year": {"type": "integer"}
-          }
+    "metadata": {
+      "description": "A curated book list",
+      "readme": "# My Dataset\\nA collection of notable books."
+    },
+    "schemas": {
+      "Book": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "author": {"type": "string"},
+          "year": {"type": "integer"}
         }
       }
     },
@@ -45,22 +45,22 @@ const pushCode = `curl -X POST https://underlay.org/api/collections/yourname/my-
       ]
     }
   }'
-# → {"version":1,"semver":"v1.0.0","hash":"...","recordCount":2,"fileCount":0}`
+# → {"semver":"v1.0.0","hash":"...","recordCount":2,"fileCount":0}`
 
 const readCode = `# Get collection info
 curl https://underlay.org/api/collections/yourname/my-dataset
 
-# Get version 1 records
-curl https://underlay.org/api/collections/yourname/my-dataset/versions/1/records
+# Get latest version records
+curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
 
 # Get the manifest
-curl https://underlay.org/api/collections/yourname/my-dataset/versions/1/manifest`
+curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
 
 const updateCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
-    "base_version": 1,
+    "base_version": "v1.0.0",
     "message": "Add third book, fix year",
     "changes": {
       "added": [
@@ -71,10 +71,10 @@ const updateCode = `curl -X POST https://underlay.org/api/collections/yourname/m
       ]
     }
   }'
-# → {"version":2,"semver":"v1.1.0","hash":"...","recordCount":3,"fileCount":0}`
+# → {"semver":"v1.1.0","hash":"...","recordCount":3,"fileCount":0}`
 
-const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/2/diff?from=1
-# → {"from":1,"to":2,"added":[...],"updated":[...],"removed":[]}`
+const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
+# → {"from":"v1.0.0","to":"v1.1.0","added":[...],"updated":[...],"removed":[]}`
 
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)

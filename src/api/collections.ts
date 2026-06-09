@@ -21,12 +21,7 @@ export async function list(c: Context<AuthEnv>) {
 
   const conditions = [eq(schema.collections.public, true)]
   if (q) {
-    conditions.push(
-      or(
-        ilike(schema.collections.name, `%${q}%`),
-        ilike(schema.collections.description, `%${q}%`),
-      )!,
-    )
+    conditions.push(ilike(schema.collections.name, `%${q}%`))
   }
   if (owner) {
     conditions.push(eq(schema.organization.slug, owner))
@@ -37,7 +32,6 @@ export async function list(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
       createdAt: schema.collections.createdAt,
@@ -55,8 +49,8 @@ export async function list(c: Context<AuthEnv>) {
     string,
     {
       collectionId: string
-      number: number
       semver: string
+      metadata: unknown
       recordCount: number
       fileCount: number
       totalBytes: number
@@ -68,8 +62,8 @@ export async function list(c: Context<AuthEnv>) {
     const allVersions = await db
       .select({
         collectionId: schema.versions.collectionId,
-        number: schema.versions.number,
         semver: schema.versions.semver,
+        metadata: schema.versions.metadata,
         recordCount: schema.versions.recordCount,
         fileCount: schema.versions.fileCount,
         totalBytes: schema.versions.totalBytes,
@@ -77,7 +71,9 @@ export async function list(c: Context<AuthEnv>) {
       })
       .from(schema.versions)
       .where(inArray(schema.versions.collectionId, ids))
-      .orderBy(desc(schema.versions.number))
+      .orderBy(
+        sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+      )
 
     for (const v of allVersions) {
       if (!statsMap.has(v.collectionId)) {
@@ -88,12 +84,7 @@ export async function list(c: Context<AuthEnv>) {
 
   const facetConditions = [eq(schema.collections.public, true)]
   if (q) {
-    facetConditions.push(
-      or(
-        ilike(schema.collections.name, `%${q}%`),
-        ilike(schema.collections.description, `%${q}%`),
-      )!,
-    )
+    facetConditions.push(ilike(schema.collections.name, `%${q}%`))
   }
 
   const ownerFacets = await db
@@ -111,10 +102,11 @@ export async function list(c: Context<AuthEnv>) {
   return c.json({
     collections: results.map((r) => {
       const stats = statsMap.get(r.id)
+      const meta = stats?.metadata as Record<string, unknown> | null | undefined
       return {
         ...r,
-        latestVersion: stats?.number ?? null,
-        semver: stats?.semver ?? null,
+        description: (meta?.description as string) ?? null,
+        latestVersion: stats?.semver ?? null,
         recordCount: stats?.recordCount ?? null,
         fileCount: stats?.fileCount ?? null,
         totalBytes: stats?.totalBytes ?? null,
@@ -131,12 +123,10 @@ export async function create(c: Context<AuthEnv>) {
   const {
     slug,
     name,
-    description,
     public: isPublic,
   } = await c.req.json<{
     slug: string
     name: string
-    description?: string
     public?: boolean
   }>()
 
@@ -180,7 +170,6 @@ export async function create(c: Context<AuthEnv>) {
     organizationId: org.id,
     slug,
     name,
-    description: description ?? null,
     public: isPublic ?? false,
   })
 
@@ -208,7 +197,6 @@ export async function get(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
@@ -256,18 +244,19 @@ export async function get(c: Context<AuthEnv>) {
   const [latestVersion] = await db
     .select({
       id: schema.versions.id,
-      number: schema.versions.number,
       semver: schema.versions.semver,
       recordCount: schema.versions.recordCount,
       fileCount: schema.versions.fileCount,
       totalBytes: schema.versions.totalBytes,
       createdAt: schema.versions.createdAt,
       message: schema.versions.message,
-      readme: schema.versions.readme,
+      metadata: schema.versions.metadata,
     })
     .from(schema.versions)
     .where(eq(schema.versions.collectionId, result.id))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   // Get per-type record counts for latest version
@@ -275,12 +264,16 @@ export async function get(c: Context<AuthEnv>) {
   if (latestVersion) {
     const rows = await db
       .select({
-        type: schema.records.type,
+        type: schema.recordObjects.type,
         count: sql<number>`count(*)::int`,
       })
-      .from(schema.records)
-      .where(eq(schema.records.versionId, latestVersion.id))
-      .groupBy(schema.records.type)
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
+      .where(eq(schema.versionRecords.versionId, latestVersion.id))
+      .groupBy(schema.recordObjects.type)
     typeCounts = rows.map((r) => ({ type: r.type, count: r.count }))
   }
 
@@ -310,10 +303,19 @@ export async function get(c: Context<AuthEnv>) {
     // Non-fatal
   }
 
+  const [vcRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.versions)
+    .where(eq(schema.versions.collectionId, result.id))
+  const versionCount = vcRow?.count ?? 0
+
   const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined }
+  const meta = latestVersion?.metadata as Record<string, unknown> | null | undefined
   return c.json({
     ...result,
+    description: (meta?.description as string) ?? null,
     ark,
+    versionCount,
     latestVersion: latestVersion ? { ...latestVersionData, typeCounts } : null,
   })
 }
@@ -325,7 +327,6 @@ export async function update(c: Context<AuthEnv>) {
   const updates = await c.req.json<{
     name?: string
     slug?: string
-    description?: string
     public?: boolean
   }>()
 
@@ -544,7 +545,6 @@ export async function listByOwner(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       createdAt: schema.collections.createdAt,
       updatedAt: schema.collections.updatedAt,
@@ -568,7 +568,6 @@ export async function exportArchive(c: Context<AuthEnv>) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
-      description: schema.collections.description,
       public: schema.collections.public,
       organizationId: schema.collections.organizationId,
     })
@@ -588,14 +587,16 @@ export async function exportArchive(c: Context<AuthEnv>) {
   // Resolve version (latest if not specified)
   const versionConditions = [eq(schema.versions.collectionId, collection.id)]
   if (versionParam) {
-    versionConditions.push(eq(schema.versions.number, parseInt(versionParam, 10)))
+    versionConditions.push(eq(schema.versions.semver, versionParam))
   }
 
   const [version] = await db
     .select()
     .from(schema.versions)
     .where(and(...versionConditions))
-    .orderBy(sql`${schema.versions.number} desc`)
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
     .limit(1)
 
   if (!version) {
@@ -605,12 +606,16 @@ export async function exportArchive(c: Context<AuthEnv>) {
   // Fetch records and files for this version
   const records = await db
     .select({
-      recordId: schema.records.recordId,
-      type: schema.records.type,
-      data: schema.records.data,
+      recordId: schema.recordObjects.recordId,
+      type: schema.recordObjects.type,
+      data: schema.recordObjects.data,
     })
-    .from(schema.records)
-    .where(eq(schema.records.versionId, version.id))
+    .from(schema.versionRecords)
+    .innerJoin(
+      schema.recordObjects,
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+    )
+    .where(eq(schema.versionRecords.versionId, version.id))
 
   const versionFiles = await db
     .select({
@@ -636,10 +641,15 @@ export async function exportArchive(c: Context<AuthEnv>) {
   const schemasMap = Object.fromEntries(versionSchemaEntries.map((e) => [e.slug, e.schemaBody]))
 
   // Add manifest.json
+  const versionMeta = version.metadata as Record<string, unknown> | null
   const manifest = {
-    collection: { owner, slug, name: collection.name, description: collection.description },
+    collection: {
+      owner,
+      slug,
+      name: collection.name,
+      description: (versionMeta?.description as string) ?? null,
+    },
     version: {
-      number: version.number,
       semver: version.semver,
       hash: version.hash,
       message: version.message,
@@ -655,7 +665,7 @@ export async function exportArchive(c: Context<AuthEnv>) {
   const pack = tarPack()
   const gzip = createGzip()
 
-  const filename = `${owner}-${slug}-v${version.number}.tar.gz`
+  const filename = `${owner}-${slug}-${version.semver}.tar.gz`
 
   // Add manifest
   const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
@@ -709,4 +719,175 @@ export async function exportArchive(c: Context<AuthEnv>) {
     'Content-Type': 'application/gzip',
     'Content-Disposition': `attachment; filename="${filename}"`,
   })
+}
+
+// Fork a collection into the caller's org
+export async function fork(c: Context<AuthEnv>) {
+  const sourceOwner = c.req.param('owner')!
+  const sourceSlug = c.req.param('slug')!
+  const { targetOrg, slug: targetSlug } = await c.req.json<{
+    targetOrg: string
+    slug?: string
+  }>()
+
+  // Resolve source collection
+  const [source] = await db
+    .select({
+      id: schema.collections.id,
+      slug: schema.collections.slug,
+      name: schema.collections.name,
+      public: schema.collections.public,
+      organizationId: schema.collections.organizationId,
+    })
+    .from(schema.collections)
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(and(eq(schema.organization.slug, sourceOwner), eq(schema.collections.slug, sourceSlug)))
+    .limit(1)
+
+  if (!source) {
+    return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+  }
+  if (!source.public) {
+    return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+  }
+
+  // Resolve target org and verify membership
+  const [targetOrgRow] = await db
+    .select()
+    .from(schema.organization)
+    .where(eq(schema.organization.slug, targetOrg))
+    .limit(1)
+
+  if (!targetOrgRow) {
+    return c.json({ error: 'Target org not found', statusCode: 404 }, 404)
+  }
+
+  const [membership] = await db
+    .select()
+    .from(schema.member)
+    .where(
+      and(
+        eq(schema.member.organizationId, targetOrgRow.id),
+        eq(schema.member.userId, c.get('userId')!),
+      ),
+    )
+    .limit(1)
+  if (!membership) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+
+  const newSlug = targetSlug ?? source.slug
+
+  // Check for existing collection with same slug
+  const [existing] = await db
+    .select({ id: schema.collections.id })
+    .from(schema.collections)
+    .where(
+      and(
+        eq(schema.collections.organizationId, targetOrgRow.id),
+        eq(schema.collections.slug, newSlug),
+      ),
+    )
+    .limit(1)
+
+  if (existing) {
+    return c.json({ error: 'Collection already exists in target org', statusCode: 409 }, 409)
+  }
+
+  // Get latest version of source
+  const [latestVersion] = await db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.collectionId, source.id))
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
+    .limit(1)
+
+  if (!latestVersion) {
+    return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)
+  }
+
+  // Create forked collection + version in a transaction
+  const newCollectionId = uuidv4()
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.collections).values({
+      id: newCollectionId,
+      organizationId: targetOrgRow.id,
+      slug: newSlug,
+      name: source.name,
+      public: false,
+      forkedFrom: source.id,
+    })
+
+    const [newVersion] = await tx
+      .insert(schema.versions)
+      .values({
+        collectionId: newCollectionId,
+        semver: 'v1.0.0',
+        major: 1,
+        minor: 0,
+        patch: 0,
+        hash: latestVersion.hash,
+        publicHash: latestVersion.publicHash,
+        baseSemver: null,
+        message: `Forked from ${sourceOwner}/${sourceSlug} ${latestVersion.semver}`,
+        metadata: latestVersion.metadata,
+        pushedBy: c.get('userId') ?? null,
+        appId: 'fork',
+        recordCount: latestVersion.recordCount,
+        fileCount: latestVersion.fileCount,
+        totalBytes: latestVersion.totalBytes,
+      })
+      .returning({ id: schema.versions.id })
+
+    const sourceRecords = await tx
+      .select({ recordHash: schema.versionRecords.recordHash })
+      .from(schema.versionRecords)
+      .where(eq(schema.versionRecords.versionId, latestVersion.id))
+
+    if (sourceRecords.length > 0) {
+      await tx
+        .insert(schema.versionRecords)
+        .values(sourceRecords.map((r) => ({ versionId: newVersion!.id, recordHash: r.recordHash })))
+    }
+
+    const sourceFiles = await tx
+      .select({ fileHash: schema.versionFiles.fileHash })
+      .from(schema.versionFiles)
+      .where(eq(schema.versionFiles.versionId, latestVersion.id))
+
+    if (sourceFiles.length > 0) {
+      await tx
+        .insert(schema.versionFiles)
+        .values(sourceFiles.map((f) => ({ versionId: newVersion!.id, fileHash: f.fileHash })))
+    }
+
+    const sourceSchemas = await tx
+      .select({ slug: schema.versionSchemas.slug, schemaId: schema.versionSchemas.schemaId })
+      .from(schema.versionSchemas)
+      .where(eq(schema.versionSchemas.versionId, latestVersion.id))
+
+    if (sourceSchemas.length > 0) {
+      await tx.insert(schema.versionSchemas).values(
+        sourceSchemas.map((s) => ({
+          versionId: newVersion!.id,
+          slug: s.slug,
+          schemaId: s.schemaId,
+        })),
+      )
+    }
+  })
+
+  return c.json(
+    {
+      id: newCollectionId,
+      owner: targetOrg,
+      slug: newSlug,
+      name: source.name,
+      forkedFrom: { owner: sourceOwner, slug: sourceSlug, version: latestVersion.semver },
+      version: { semver: 'v1.0.0', recordCount: latestVersion.recordCount },
+    },
+    201,
+  )
 }

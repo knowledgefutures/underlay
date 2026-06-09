@@ -10,7 +10,7 @@ interface SchemaData {
   schema: Record<string, any>
   createdAt: string
   labels?: { label: string; createdAt: string }[]
-  usage?: { slug: string; semver: string; versionNumber: number; collection: string }[]
+  usage?: { slug: string; semver: string; collection: string }[]
 }
 
 export default function SchemaDetailPage() {
@@ -58,8 +58,7 @@ export default function SchemaDetailPage() {
   const fields = Object.entries(properties)
   const isPrivate = (schema.schema as any)?.private === true
   const labels: { label: string; createdAt: string }[] = schema.labels ?? []
-  const usage: { slug: string; semver: string; versionNumber: number; collection: string }[] =
-    schema.usage ?? []
+  const usage: { slug: string; semver: string; collection: string }[] = schema.usage ?? []
 
   return (
     <BaseLayout>
@@ -174,7 +173,7 @@ export default function SchemaDetailPage() {
               {usage.map((u, i) => (
                 <Link
                   key={`${u.collection}-${u.slug}`}
-                  to={`/${u.collection}/v/${u.versionNumber}?type=${u.slug}`}
+                  to={`/${u.collection}/v/${u.semver}?type=${u.slug}`}
                   className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                     i < usage.length - 1 ? 'border-rule border-b' : ''
                   }`}

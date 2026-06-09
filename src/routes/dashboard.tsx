@@ -9,7 +9,6 @@ interface Collection {
   id: string
   slug: string
   name: string
-  description?: string
   public: boolean
 }
 
@@ -45,7 +44,6 @@ export default function Dashboard() {
   const [showCreateCollection, setShowCreateCollection] = useState(false)
   const [colSlug, setColSlug] = useState('')
   const [colName, setColName] = useState('')
-  const [colDescription, setColDescription] = useState('')
   const [colPublic, setColPublic] = useState(false)
   const [colOwner, setColOwner] = useState('')
   const [colError, setColError] = useState('')
@@ -117,7 +115,6 @@ export default function Dashboard() {
         body: JSON.stringify({
           slug: colSlug,
           name: colName,
-          description: colDescription || undefined,
           public: colPublic,
         }),
       })
@@ -187,9 +184,7 @@ export default function Dashboard() {
                 ) : (
                   <div className="space-y-1">
                     {org.collections
-                      .filter((c) =>
-                        matchesFilter(`${org.slug}/${c.slug} ${c.name} ${c.description ?? ''}`),
-                      )
+                      .filter((c) => matchesFilter(`${org.slug}/${c.slug} ${c.name}`))
                       .map((c) => (
                         <Link
                           key={c.slug}
@@ -200,11 +195,6 @@ export default function Dashboard() {
                             <span className="text-sm font-medium">
                               {org.slug}/{c.slug}
                             </span>
-                            {c.description && (
-                              <p className="text-ink-muted mt-0.5 truncate text-xs">
-                                {c.description}
-                              </p>
-                            )}
                           </div>
                           <span className="text-ink-muted border-rule ml-2 flex-shrink-0 border px-1.5 py-0.5 text-[10px]">
                             {c.public ? 'public' : 'private'}
@@ -279,16 +269,6 @@ export default function Dashboard() {
                       placeholder="my-dataset"
                       value={colSlug}
                       onChange={(e) => setColSlug(e.target.value)}
-                      className="border-rule bg-parchment focus:border-ink w-full border px-2 py-1 text-xs focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-ink-muted mb-0.5 block text-[10px]">Description</label>
-                    <input
-                      type="text"
-                      placeholder="Optional"
-                      value={colDescription}
-                      onChange={(e) => setColDescription(e.target.value)}
                       className="border-rule bg-parchment focus:border-ink w-full border px-2 py-1 text-xs focus:outline-none"
                     />
                   </div>

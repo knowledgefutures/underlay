@@ -202,7 +202,6 @@ export const collections = pgTable(
       .references(() => organization.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull(),
     name: text('name').notNull(),
-    description: text('description'),
     public: boolean('public').default(false).notNull(),
     forkedFrom: uuid('forked_from').references((): any => collections.id),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -223,13 +222,15 @@ export const versions = pgTable(
     collectionId: uuid('collection_id')
       .notNull()
       .references(() => collections.id, { onDelete: 'cascade' }),
-    number: integer('number').notNull(),
     semver: text('semver').notNull(),
+    major: integer('major').notNull(),
+    minor: integer('minor').notNull(),
+    patch: integer('patch').notNull(),
     hash: text('hash').notNull(),
     publicHash: text('public_hash'),
-    baseNumber: integer('base_number'),
+    baseSemver: text('base_semver'),
     message: text('message'),
-    readme: text('readme'),
+    metadata: jsonb('metadata'),
     pushedBy: text('pushed_by').references(() => user.id),
     appId: text('app_id'),
     actorId: text('actor_id'),
@@ -239,25 +240,42 @@ export const versions = pgTable(
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique().on(t.collectionId, t.number), unique().on(t.collectionId, t.hash)],
+  (t) => [
+    unique().on(t.collectionId, t.semver),
+    unique().on(t.collectionId, t.hash),
+    index('versions_ordering_idx').on(t.collectionId, t.major, t.minor, t.patch),
+  ],
 )
 
-// --- Records ---
+// --- Records (globally deduplicated, content-addressed) ---
 
-export const records = pgTable(
-  'records',
+export const recordObjects = pgTable(
+  'record_objects',
   {
-    versionId: bigint('version_id', { mode: 'number' })
-      .notNull()
-      .references(() => versions.id, { onDelete: 'cascade' }),
+    hash: text('hash').primaryKey(),
     recordId: text('record_id').notNull(),
     type: text('type').notNull(),
     data: jsonb('data').notNull(),
     private: boolean('private').default(false).notNull(),
+    size: integer('size').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('record_objects_record_id_idx').on(t.recordId)],
+)
+
+export const versionRecords = pgTable(
+  'version_records',
+  {
+    versionId: bigint('version_id', { mode: 'number' })
+      .notNull()
+      .references(() => versions.id, { onDelete: 'cascade' }),
+    recordHash: text('record_hash')
+      .notNull()
+      .references(() => recordObjects.hash),
   },
   (t) => [
-    primaryKey({ columns: [t.versionId, t.recordId] }),
-    index('records_version_id_type_idx').on(t.versionId, t.type),
+    primaryKey({ columns: [t.versionId, t.recordHash] }),
+    index('version_records_record_hash_idx').on(t.recordHash),
   ],
 )
 
@@ -328,9 +346,9 @@ export const schemaLabels = pgTable(
   (t) => [unique().on(t.schemaId, t.label), index('schema_labels_label_idx').on(t.label)],
 )
 
-// --- Upload Sessions (chunked push) ---
+// --- Negotiate Sessions (push protocol) ---
 
-export const uploadSessions = pgTable('upload_sessions', {
+export const negotiateSessions = pgTable('negotiate_sessions', {
   id: uuid('id').defaultRandom().primaryKey(),
   collectionId: uuid('collection_id')
     .notNull()
@@ -338,34 +356,23 @@ export const uploadSessions = pgTable('upload_sessions', {
   userId: text('user_id')
     .notNull()
     .references(() => user.id, { onDelete: 'cascade' }),
-  baseVersion: integer('base_version'),
+  baseSemver: text('base_semver'),
+  schemas: jsonb('schemas').notNull(),
+  manifest: jsonb('manifest').notNull(),
+  fileHashes: jsonb('file_hashes').$type<string[]>().notNull().default([]),
+  neededRecords: jsonb('needed_records').$type<string[]>().notNull().default([]),
+  neededFiles: jsonb('needed_files').$type<string[]>().notNull().default([]),
   message: text('message'),
-  readme: text('readme'),
+  metadata: jsonb('metadata'),
   appId: text('app_id'),
   actorId: text('actor_id'),
-  schemas: jsonb('schemas'),
-  status: text('status', { enum: ['open', 'finalizing', 'completed', 'failed', 'expired'] })
+  stripUnknownFields: boolean('strip_unknown_fields').notNull().default(false),
+  status: text('status', { enum: ['open', 'committed', 'expired'] })
     .notNull()
     .default('open'),
-  recordCount: integer('record_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 })
-
-export const uploadRecords = pgTable(
-  'upload_records',
-  {
-    sessionId: uuid('session_id')
-      .notNull()
-      .references(() => uploadSessions.id, { onDelete: 'cascade' }),
-    recordId: text('record_id').notNull(),
-    type: text('type'),
-    data: jsonb('data'),
-    private: boolean('private').default(false),
-    operation: text('operation', { enum: ['add', 'update', 'remove'] }).notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.sessionId, t.recordId] })],
-)
 
 // --- Sync Runs (mirror mode) ---
 

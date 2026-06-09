@@ -47,9 +47,11 @@ export default function CollectionVersionPage() {
       setVersion(ver)
       setCollectionData(col)
 
-      if (ver.readme) {
+      const meta = ver.metadata as Record<string, unknown> | null | undefined
+      const readmeSource = (meta?.readme as string) || null
+      if (readmeSource) {
         import('marked').then(({ marked }) => {
-          setReadmeHtml(marked.parse(ver.readme) as string)
+          setReadmeHtml(marked.parse(readmeSource) as string)
         })
       }
 
@@ -297,13 +299,14 @@ export default function CollectionVersionPage() {
                           {records[0]?.ark && (
                             <th className="border-rule border-b p-2 text-left font-medium">ARK</th>
                           )}
+                          <th className="border-rule w-8 border-b" />
                         </tr>
                       </thead>
                       <tbody>
                         {records.map((r: any) => (
                           <tr
                             key={r.id}
-                            className="border-rule hover:bg-parchment-dark/50 border-t"
+                            className="border-rule group hover:bg-parchment-dark/50 border-t"
                           >
                             <td className="text-ink-muted p-2 font-mono">{r.id}</td>
                             {currentTypeFields.map((f: string) => {
@@ -376,6 +379,29 @@ export default function CollectionVersionPage() {
                                 </Link>
                               </td>
                             )}
+                            <td className="w-8 p-2">
+                              {r.hash && (
+                                <Link
+                                  to={`/records/${r.hash}`}
+                                  className="text-ink-muted hover:text-ink invisible inline-flex items-center group-hover:visible"
+                                  title="View record provenance"
+                                >
+                                  <svg
+                                    className="h-3.5 w-3.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+                                    />
+                                  </svg>
+                                </Link>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -634,9 +660,7 @@ export default function CollectionVersionPage() {
               <tbody>
                 <tr className="border-rule border-b">
                   <td className="text-ink-muted w-40 py-3 pr-6 font-medium">Version</td>
-                  <td className="py-3">
-                    {version.number} ({version.semver})
-                  </td>
+                  <td className="py-3">{version.semver}</td>
                 </tr>
                 <tr className="border-rule border-b">
                   <td className="text-ink-muted py-3 pr-6 font-medium">Hash</td>
@@ -654,15 +678,15 @@ export default function CollectionVersionPage() {
                     })}
                   </td>
                 </tr>
-                {version.baseNumber !== null && version.baseNumber !== undefined && (
+                {version.baseSemver && (
                   <tr className="border-rule border-b">
                     <td className="text-ink-muted py-3 pr-6 font-medium">Base version</td>
                     <td className="py-3">
                       <Link
-                        to={`/${owner}/${collection}/v/${version.baseNumber}`}
+                        to={`/${owner}/${collection}/v/${version.baseSemver}`}
                         className="text-link hover:underline"
                       >
-                        v{version.baseNumber}
+                        {version.baseSemver}
                       </Link>
                     </td>
                   </tr>
@@ -726,7 +750,7 @@ export default function CollectionVersionPage() {
             </table>
 
             {/* README */}
-            {version.readme && readmeHtml && (
+            {readmeHtml && (
               <div>
                 <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
                   README

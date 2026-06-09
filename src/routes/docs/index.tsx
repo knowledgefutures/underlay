@@ -90,6 +90,20 @@ export default function Docs() {
             </li>
           </ul>
         </section>
+
+        <section>
+          <h2>Specification</h2>
+          <ul className="space-y-1 pl-0.5">
+            <li>
+              <Link to="/protocol" className="text-link underline">
+                Protocol
+              </Link>{' '}
+              <span className="text-ink-muted text-xs">
+                — Content-addressed data model, hashing spec, negotiate push/pull
+              </span>
+            </li>
+          </ul>
+        </section>
       </nav>
     </DocsLayout>
   )

@@ -18,18 +18,20 @@ const accountRes = `{
 }`
 
 const createKeyReq = `{
-  "label": "my-sync-script",
-  "scope": "write",
-  "collectionId": "uuid (optional — scope key to one collection)"
+  "name": "my-sync-script",
+  "metadata": { "scope": "write" },
+  "prefix": "ul"
 }`
 
 const createKeyRes = `{
   "id": "uuid",
   "key": "ul_a1b2c3d4e5...",
-  "label": "my-sync-script",
-  "scope": "write",
-  "collectionId": null
+  "name": "my-sync-script",
+  "metadata": { "scope": "write" },
+  "prefix": "ul"
 }`
+
+const deleteKeyReq = `{ "keyId": "uuid" }`
 
 const deleteKeyRes = `{"ok": true}`
 
@@ -42,11 +44,11 @@ export default function DocsApiAccounts() {
       <p>There are two authentication methods:</p>
       <ul>
         <li>
-          <strong>Session cookies</strong> — set via SSO login through{' '}
+          <strong>Session cookies</strong> — set via OAuth2/PKCE sign-in through{' '}
           <a href="https://auth.knowledgefutures.org" className="text-link hover:underline">
             KF Auth
-          </a>
-          , used by the web UI
+          </a>{' '}
+          (handled by better-auth at <code>/api/auth/*</code>), used by the web UI
         </li>
         <li>
           <strong>API keys</strong> — <code>Authorization: Bearer ul_...</code>, used by apps and
@@ -54,12 +56,13 @@ export default function DocsApiAccounts() {
         </li>
       </ul>
       <p>
-        User accounts are created automatically on first sign-in via KF Auth (OIDC SSO). There are
-        no local signup or login endpoints.
+        User accounts are created automatically on first sign-in via KF Auth (OAuth2/PKCE). There
+        are no local signup or login endpoints.
       </p>
       <p>
-        API keys have three scopes: <code>read</code>, <code>write</code>, <code>admin</code>. A key
-        can optionally be scoped to a single collection.
+        API keys have three scopes: <code>read</code>, <code>write</code>, <code>admin</code>. The
+        scope is stored in key metadata and translated to permissions server-side. A key can
+        optionally be scoped to a single collection.
       </p>
 
       <hr className="border-rule my-6" />
@@ -93,15 +96,18 @@ export default function DocsApiAccounts() {
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>POST /api/accounts/keys</h2>
+        <h2>POST /api/auth/api-key/create</h2>
         <p className="scope">Auth: session or API key (any scope)</p>
-        <p>Create a new API key. The raw key is returned only once.</p>
+        <p>
+          Create a new API key. The raw key is returned only once. Managed by better-auth's apiKey
+          plugin.
+        </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{createKeyReq}</code>
         </pre>
         <h3>
-          Response <span className="text-ink-muted font-normal">201</span>
+          Response <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{createKeyRes}</code>
@@ -111,17 +117,24 @@ export default function DocsApiAccounts() {
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>GET /api/accounts/keys</h2>
+        <h2>GET /api/auth/api-key/list</h2>
         <p className="scope">Auth: session or API key (any scope)</p>
-        <p>List all API keys for the authenticated account. The raw key is not included.</p>
+        <p>
+          List all API keys for the authenticated account. Returns id, name, start, permissions,
+          metadata, createdAt, and expiresAt. The raw key is not included.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>DELETE /api/accounts/keys/:id</h2>
+        <h2>POST /api/auth/api-key/delete</h2>
         <p className="scope">Auth: session or API key (any scope)</p>
         <p>Revoke an API key.</p>
+        <h3>Request</h3>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{deleteKeyReq}</code>
+        </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>

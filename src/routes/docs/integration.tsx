@@ -6,24 +6,25 @@ const pushExample = `{
   "base_version": null,
   "message": "Initial import",
   "app_id": "my-app",
-  "schema": {
-    "type": "object",
-    "properties": {
-      "Article": {
-        "type": "object",
-        "properties": {
-          "title": {"type": "string"},
-          "body": {"type": "string"},
-          "authorId": {"type": "string"},
-          "publishedAt": {"type": "string", "format": "date-time"}
-        }
-      },
-      "Author": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "email": {"type": "string"}
-        }
+  "metadata": {
+    "description": "Articles and authors from my app",
+    "readme": "# My App Data\\nExported from the app database."
+  },
+  "schemas": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "authorId": {"type": "string"},
+        "publishedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "Author": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "email": {"type": "string"}
       }
     }
   },
@@ -47,7 +48,7 @@ const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- becomes a "Publication" type with properties {title: string, doi: string, authorId: string}
 -- The record id is the primary key value.`
 
-const diffPush = `# 1. Get current state
+const diffPush = `# 1. Get current state (returns the latest version's semver, e.g. "v1.2.0")
 curl https://underlay.org/api/collections/:owner/:slug/versions/latest
 
 # 2. Upload any new files
@@ -57,12 +58,12 @@ curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:$HAS
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 
-# 3. Push changes (only what changed since base_version)
+# 3. Push changes (only what changed since base_version semver)
 curl -X POST https://underlay.org/api/collections/:owner/:slug/versions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
-    "base_version": 42,
+    "base_version": "v1.2.0",
     "message": "Daily sync",
     "app_id": "my-app",
     "changes": {
@@ -95,7 +96,7 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Version</strong> — An immutable snapshot: JSON Schema + records + file references
-          + metadata. Numbered sequentially.
+          + metadata. Identified by semver (e.g. <code>v1.0.0</code>).
         </li>
         <li>
           <strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>,
@@ -122,7 +123,7 @@ export default function DocsIntegration() {
 
       <h2>The Push Flow</h2>
       <ol>
-        <li>Get the current latest version number</li>
+        <li>Get the current latest version (its semver string)</li>
         <li>Upload any new binary files by hash</li>
         <li>
           Push a version with <code>base_version</code>, schema (if changed), and record changes
@@ -150,8 +151,25 @@ export default function DocsIntegration() {
         <li>No joins, no nesting — keep records flat</li>
       </ul>
 
+      <h2>Metadata</h2>
+      <p>
+        Each version carries a <code>metadata</code> object that can include{' '}
+        <code>description</code>, <code>readme</code>, <code>license</code>, and any other key-value
+        pairs. Metadata lives on the version, not the collection — it's versioned alongside your
+        data. Set it on your first push and update it via subsequent pushes or the metadata
+        endpoint.
+      </p>
+      <p>
+        To update metadata without changing records or schemas (e.g. editing the readme),{' '}
+        <code>PATCH /api/collections/:owner/:slug/metadata</code> with the fields to change. This
+        creates a patch version automatically.
+      </p>
+
       <h2>First Push Example</h2>
-      <p>To push the first version of a collection (creates the initial snapshot):</p>
+      <p>
+        To push the first version of a collection. Include <code>schemas</code> (a per-type JSON
+        Schema map) and <code>metadata</code> (description, readme, etc.):
+      </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{pushExample}</code>
       </pre>
@@ -175,20 +193,25 @@ export default function DocsIntegration() {
       </ul>
 
       <h2>Versioning</h2>
-      <p>Versions are numbered sequentially and also carry a semver tag derived automatically:</p>
+      <p>
+        Versions are identified by <strong>semver</strong> (e.g. <code>v1.0.0</code>). The semver is
+        derived automatically from what changed:
+      </p>
       <ul>
         <li>
           Schema changes → <strong>major</strong> bump
         </li>
         <li>
-          Record changes → <strong>minor</strong> bump
+          Record or file changes → <strong>minor</strong> bump
         </li>
         <li>
-          Metadata-only changes → <strong>patch</strong> bump
+          Metadata-only changes (readme, license, etc.) → <strong>patch</strong> bump
         </li>
       </ul>
       <p>
-        Version 1 is always <code>v1.0.0</code>.
+        The first version of a collection is always <code>v1.0.0</code>. The{' '}
+        <code>base_version</code> in a push request is a semver string (or <code>null</code> for the
+        first push).
       </p>
 
       <h2>Privacy</h2>
@@ -221,15 +244,21 @@ export default function DocsIntegration() {
         <tbody>
           <tr>
             <td>
-              <code>POST .../versions</code>
+              <code>POST .../versions/negotiate</code>
             </td>
-            <td>Push a new version (up to 100MB)</td>
+            <td>Start a push (hash negotiation)</td>
           </tr>
           <tr>
             <td>
-              <code>POST .../versions/upload</code>
+              <code>POST .../negotiate/:id/records</code>
             </td>
-            <td>Start chunked upload (for large pushes)</td>
+            <td>Send needed records (JSONL, repeatable)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>POST .../negotiate/:id/commit</code>
+            </td>
+            <td>Finalize and create the version</td>
           </tr>
           <tr>
             <td>
@@ -239,7 +268,7 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
-              <code>GET .../versions/:n/records</code>
+              <code>GET .../versions/:semver/records</code>
             </td>
             <td>Get records</td>
           </tr>
@@ -258,44 +287,101 @@ export default function DocsIntegration() {
         </tbody>
       </table>
 
-      <h2>Large Pushes (Chunked Upload)</h2>
+      <h2>Push Protocol</h2>
       <p>
-        For pushes exceeding 100MB or containing hundreds of thousands of records, use the chunked
-        upload protocol:
+        All pushes use the{' '}
+        <Link to="/protocol#push" className="text-link underline">
+          negotiate protocol
+        </Link>
+        , a three-step flow similar to git's pack negotiation:
       </p>
       <ol>
         <li>
-          <strong>Start session:</strong> <code>POST .../versions/upload</code> with metadata
-          (base_version, schemas, message). Returns a <code>sessionId</code>.
+          <strong>Negotiate:</strong> <code>POST .../versions/negotiate</code> with your schemas and
+          a manifest of record hashes. The server responds with which hashes it needs.
         </li>
         <li>
-          <strong>Append batches:</strong> <code>PUT .../versions/upload/:sessionId</code> with up
-          to 10,000 records per batch. Repeat as needed.
+          <strong>Send records:</strong> <code>POST .../negotiate/:id/records</code> with the needed
+          records as JSONL. Call this endpoint multiple times for large datasets (up to 10,000
+          records per batch). Skip this step if the server already has all records.
         </li>
         <li>
-          <strong>Finalize:</strong> <code>POST .../versions/upload/:sessionId/finalize</code> to
-          validate and create the version.
+          <strong>Commit:</strong> <code>POST .../negotiate/:id/commit</code> to validate and create
+          the version.
         </li>
       </ol>
       <p>
-        Sessions expire after 1 hour. If the same record ID appears in multiple batches, last write
-        wins. See the <Link to="/docs/api/versions">Versions API docs</Link> for full details.
+        Record hashes are SHA-256 of the canonical JSON:{' '}
+        <code>{'JSON.stringify({id, type, data})'}</code>. Sessions expire after 10 minutes. See the{' '}
+        <Link to="/protocol" className="text-link underline">
+          Protocol spec
+        </Link>{' '}
+        for the full hashing specification.
+      </p>
+      <p>
+        This protocol is efficient at every scale: for a small push of 5 new records, only those 5
+        are transferred. For a push of 100,000 records where only 5 changed, only 5 are transferred.
+        For large initial imports, records are streamed in batches with per-batch progress and retry
+        granularity.
+      </p>
+
+      <h2>Unknown Fields</h2>
+      <p>
+        If records contain fields not defined in the schema, the commit returns <code>422</code>{' '}
+        with a list of extra fields per record. To accept stripping those fields before storage, set{' '}
+        <code>"strip_unknown_fields": true</code> in the negotiate request.
+      </p>
+      <p>
+        When stripping is enabled, the server removes extra fields, recomputes record hashes, and
+        stores only the schema-conformant data.
       </p>
 
       <h2>Error Handling</h2>
       <ul>
         <li>
           <code>409 Conflict</code> — Another version was pushed since your{' '}
-          <code>base_version</code>. Re-fetch and retry.
+          <code>base_version</code>. Re-negotiate.
         </li>
         <li>
-          <code>422 Unprocessable</code> — Records reference files that haven't been uploaded.
-          Upload them first.
+          <code>422 Unprocessable</code> — Records reference files that haven't been uploaded,
+          schema validation failed, or records contain fields not in the schema.
         </li>
         <li>
-          <code>400 Bad Request</code> — Schema validation failed or hash mismatch on file upload.
+          <code>400 Bad Request</code> — Malformed JSONL, hash mismatch, or missing records.
         </li>
       </ul>
+
+      <h2>Pushing from Scripts</h2>
+      <p>The most common pattern for pushing data from a script, cron job, or CI pipeline:</p>
+      <ol>
+        <li>
+          <strong>Query your source</strong> (database, API, filesystem) and build an array of
+          records in <code>{'{id, type, data}'}</code> format.
+        </li>
+        <li>
+          <strong>Hash each record:</strong> SHA-256 of{' '}
+          <code>{'JSON.stringify({id, type, data})'}</code> with keys sorted recursively.
+        </li>
+        <li>
+          <strong>Negotiate:</strong> send the manifest of <code>{'{ id, type, hash }'}</code>{' '}
+          entries. The server tells you which records it already has.
+        </li>
+        <li>
+          <strong>Send missing records</strong> as JSONL. For large datasets, batch into groups of
+          5,000–10,000 records per request.
+        </li>
+        <li>
+          <strong>Commit</strong> to create the version.
+        </li>
+      </ol>
+      <p>
+        A minimal Node.js/Python script typically takes 30-50 lines: query your data, map rows to
+        records, POST to the versions endpoint. No SDK needed. See the{' '}
+        <Link to="/docs/quickstart" className="text-link underline">
+          Quickstart
+        </Link>{' '}
+        for a curl-based walkthrough.
+      </p>
 
       <h2>Source Code</h2>
       <p>

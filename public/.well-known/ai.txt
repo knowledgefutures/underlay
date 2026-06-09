@@ -1,4 +1,4 @@
-# Underlay — AI Integration Guide
+# Underlay - AI Integration Guide
 
 Underlay is a versioned, content-addressed registry for structured knowledge.
 Apps push snapshots of their data; Underlay preserves them and serves them via HTTPS API.
@@ -51,8 +51,8 @@ To get the higher limit, authenticate with an API key (recommended for any autom
 
 - Organization: an entity that owns collections. Every user gets a default organization on signup. Identified by :slug. Managed via better-auth's organization plugin at /api/auth/organization/*.
 - Collection: a named, versioned body of data owned by an organization. Identified by :owner/:slug.
-- Version: an immutable snapshot containing a JSON Schema, records, and file references. Sequential integer numbers, auto-derived semver.
-- Record: a flat JSON object with { id, type, data }. Records reference other records by id and files by hash.
+- Version: an immutable snapshot containing a JSON Schema, records, and file references. Identified by semver (e.g. "v1.0.0"). Major = schema change, Minor = records/files change, Patch = metadata-only change.
+- Record: a flat JSON object with { id, type, data }. Records are content-addressed: the SHA-256 hash of the canonical JSON `{"id":...,"type":...,"data":...}` is the record's identity. Records are stored globally and deduplicated — the same record in ten collections is stored once. Records reference other records by id and files by hash. Wire format is JSONL (one record per line).
 - File: a binary blob stored by SHA-256 hash, referenced in record data as {"$file": "sha256:<hex>"}.
 - Schema: a JSON Schema document for a single record type, stored as a global, immutable, content-addressed entity. Each type gets its own schema. Schema changes trigger a major version bump.
 - Schema labeling: schemas can be labeled post-hoc with URIs or names (e.g. "schema.org/Person") for cross-collection discovery.
@@ -68,20 +68,31 @@ GET /api/collections/:owner/:slug                       → collection metadata 
 ### Read versions
 GET /api/collections/:owner/:slug/versions              → list versions (newest first, ?limit=50&offset=0)
 GET /api/collections/:owner/:slug/versions/latest       → latest version with full metadata
-GET /api/collections/:owner/:slug/versions/:n            → specific version by number
+GET /api/collections/:owner/:slug/versions/:semver      → specific version by semver (e.g. /versions/v1.2.0)
 
 ### Read records and files
-GET /api/collections/:owner/:slug/versions/:n/records   → records for a version (?type=TypeName&limit=100&after=recordId)
-GET /api/collections/:owner/:slug/versions/:n/manifest  → lightweight manifest: record ids/types + file hashes
+GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=recordId)
+GET /api/collections/:owner/:slug/versions/:semver/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=v1.0.0 for delta)
 GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
 HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
 
+### Records (global, content-addressed)
+GET /api/records/:hash/provenance                        → find all collections/versions containing this record hash
+POST /api/records/batch                                  → fetch records by hash: {"hashes": ["abc..."]} → JSONL stream
+
 ### Diff
-GET /api/collections/:owner/:slug/versions/:n/diff?from=:m → diff between version m and n (added, updated, removed records)
+GET /api/collections/:owner/:slug/versions/:semver/diff?from=:semver → diff between two versions (added, updated, removed records)
 
 ### Export
 GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
-GET /api/collections/:owner/:slug/export?version=3      → export a specific version
+GET /api/collections/:owner/:slug/export?version=v2.0.0  → export a specific version
+
+### Fork
+POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth)
+  Body: { "targetOrg": "my-org", "slug": "optional-new-slug" }
+  Creates a new collection under targetOrg with the source's latest version.
+  Records, schemas, and files are referenced (not copied) — zero additional storage.
+  Response includes { id, owner, slug, forkedFrom: { owner, slug, version } }.
 
 ---
 
@@ -92,20 +103,24 @@ This is the canonical workflow for syncing an app's data to Underlay:
 ### Step 1: Get current state
 GET /api/collections/:owner/:slug/versions/latest
 
-Response includes { number, semver, hash, recordCount, fileCount }.
+Response includes { semver, hash, recordCount, fileCount }.
 If 404, no versions exist yet — your first push should use base_version: null.
 
 ### Step 2: Fetch the manifest (optional, for diffing)
-GET /api/collections/:owner/:slug/versions/:n/manifest
+GET /api/collections/:owner/:slug/versions/:semver/manifest
 
 Response:
 {
-  "version": 3,
   "semver": "v1.2.0",
   "hash": "abc123...",
-  "records": [{"id": "rec-1", "type": "Article"}, ...],
+  "schemas": {"Article": "schema-hash...", ...},
+  "records": [{"id": "rec-1", "type": "Article", "hash": "record-hash..."}, ...],
   "files": ["deadbeef...", ...]
 }
+
+For delta manifests, add ?since=<semver> to get only the changes between two versions:
+GET /api/collections/:owner/:slug/versions/:semver/manifest?since=:semver
+Response includes "delta": { "added": [...], "updated": [...], "removed": [...] }
 
 Compare this against your local data to determine what changed.
 
@@ -119,13 +134,19 @@ Body: raw file bytes
 The server verifies the SHA-256 hash matches the body. Existing hashes are idempotent (200 OK).
 Check existence first with HEAD if you want to skip uploads.
 
-### Step 4: Push the version
-POST /api/collections/:owner/:slug/versions
+### Step 4: Push the version (negotiate protocol)
+
+All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation.
+The client sends a manifest of record hashes; the server says which it needs; the client sends
+only those records; then commits.
+
+#### Step 4a: Negotiate
+POST /api/collections/:owner/:slug/versions/negotiate
 Content-Type: application/json
 Authorization: Bearer ul_<key>
 
 {
-  "base_version": 3,
+  "base_version": "v1.2.0",
   "message": "Daily archive 2026-04-27",
   "app_id": "my-app",
   "actor_id": "my-app:cron-job",
@@ -147,125 +168,94 @@ Authorization: Bearer ul_<key>
       }
     }
   },
-  "changes": {
-    "added": [
-      {"id": "article-42", "type": "Article", "data": {"title": "New Paper", "body": "...", "publishedAt": "2026-04-27T00:00:00Z", "authorId": "author-1"}}
-    ],
-    "updated": [
-      {"id": "article-10", "type": "Article", "data": {"title": "Updated Title", "body": "...", "publishedAt": "2025-01-01T00:00:00Z", "authorId": "author-2"}}
-    ],
-    "removed": ["article-5"]
+  "manifest": [
+    {"id": "article-42", "type": "Article", "hash": "abc123..."},
+    {"id": "article-10", "type": "Article", "hash": "def456..."}
+  ],
+  "files": ["7a8b9c..."],
+  "metadata": {
+    "description": "Daily archive of publications"
   }
 }
 
+Each record hash is SHA-256 of the canonical JSON: `{"id":"...","type":"...","data":{...}}`
+with object keys sorted recursively.
+
 Field reference:
-- base_version: the version number you diffed against. null for first push. Used for optimistic locking.
-- schemas: per-type JSON Schema map. Required on first push. If omitted on subsequent pushes and records validate against carried-forward schemas, they are carried forward automatically.
-- schemas[TypeName]: JSON Schema for that record type. Use "x-ref-type" to annotate foreign key fields.
+- base_version: the semver string of the version you diffed against (e.g. "v1.2.0"). null for first push. Used for optimistic locking.
+- schemas: per-type JSON Schema map. Required on every push.
+- manifest: array of {id, type, hash} for every record in the new version.
+- files: array of file hashes (SHA-256 hex strings) referenced by records.
+- metadata: optional JSON object for version metadata (description, readme, license, etc.). Merged with previous version's metadata.
 - message: human-readable commit message (optional).
 - app_id: identifier for the pushing application (optional).
 - actor_id: identifier for the user or process that triggered the push (optional).
-- changes.added: new records to insert.
-- changes.updated: existing records to replace (full record, not a patch).
-- changes.removed: record ids to delete.
-
-### Step 5: Handle the response
-
-Success (201):
-{ "version": 4, "semver": "v1.3.0", "hash": "def456...", "recordCount": 100, "fileCount": 5 }
-
-Conflict (409 — someone pushed while you were diffing):
-{ "error": "Version conflict", "currentVersion": 4, "statusCode": 409 }
-→ Re-fetch latest, re-diff, re-push with the new base_version.
-
-Missing files (422 — records reference files not yet uploaded):
-{ "error": "Missing files", "filesNeeded": ["sha256:abc...", "sha256:def..."], "statusCode": 422 }
-→ Upload the listed files, then retry the push.
-
-### First push (no existing versions)
-Set base_version to null. Put all records in changes.added. Include schemas for all types.
-
----
-
-## Chunked Push: Large Uploads
-
-For pushes exceeding 100MB (or millions of records), use the chunked upload protocol. This avoids
-body size limits and memory pressure by streaming changes in batches.
-
-### Step 1: Start an upload session
-POST /api/collections/:owner/:slug/versions/upload
-Authorization: Bearer ul_<key>
-
-{
-  "base_version": 3,
-  "message": "Bulk import 2M records",
-  "app_id": "my-app",
-  "schemas": { ... }
-}
-
-Response (201):
-{
-  "sessionId": "uuid-of-session",
-  "expiresAt": "2026-04-30T01:00:00.000Z"
-}
-
-Sessions expire after 1 hour.
-
-### Step 2: Append batches (repeat as needed)
-PUT /api/collections/:owner/:slug/versions/upload/:sessionId
-Authorization: Bearer ul_<key>
-
-{
-  "changes": {
-    "added": [ ...up to 10,000 records... ],
-    "updated": [ ... ],
-    "removed": ["id-1", "id-2"]
-  }
-}
+- strip_unknown_fields: if true, records with fields not defined in the schema will have those fields silently stripped. Default: false (returns 422 with extra field list).
 
 Response:
 {
-  "received": { "added": 5000, "updated": 0, "removed": 0 },
-  "totalStaged": 15000
+  "session_id": "uuid",
+  "needed_records": ["def456..."],
+  "needed_files": [],
+  "total_records": 2,
+  "total_files": 1,
+  "already_have_records": 1,
+  "already_have_files": 1
 }
 
-Each batch can contain up to 10,000 records. Call this endpoint as many times as needed.
-If a record ID is sent more than once, the last write wins (upsert semantics).
-
-### Step 3: Finalize the version
-POST /api/collections/:owner/:slug/versions/upload/:sessionId/finalize
+#### Step 4b: Send needed records
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
+Content-Type: application/x-ndjson
 Authorization: Bearer ul_<key>
 
-Response (201): same as regular push
-{
-  "version": 4,
-  "semver": "v1.3.0",
-  "hash": "...",
-  "recordCount": 2000000,
-  "fileCount": 5
-}
+{"id":"article-10","type":"Article","data":{"title":"Updated Title","body":"..."}}
 
-Finalize applies all staged changes to the base version, validates against schemas,
-computes hashes, and creates the new immutable version.
+Each line is one JSON record. Only send records whose hashes appear in needed_records.
+Call this endpoint multiple times for large datasets (up to 10,000 records per batch).
+If needed_records was empty, skip this step entirely.
 
-### Errors during finalize
-- 409 Version conflict: someone pushed since your base_version. Start a new session.
-- 422 Schema validation failed: one or more records don't match. Fix and re-upload.
-- 422 Missing files: records reference files not yet uploaded. Upload them and retry finalize.
-- 410 Session expired: the 1-hour window elapsed. Start a new session.
+Response:
+{ "received": 1, "remaining": 0, "total_needed": 1 }
 
-### Cancel a session
-DELETE /api/collections/:owner/:slug/versions/upload/:sessionId
-Response: 204 (staged records are discarded)
+When remaining reaches 0, all needed records have been received.
 
-### Check session status
-GET /api/collections/:owner/:slug/versions/upload/:sessionId
-Response: { sessionId, status, recordCount, baseVersion, expiresAt, createdAt }
+#### Step 4c: Commit
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
+Authorization: Bearer ul_<key>
 
-Status values: open, finalizing, completed, failed, expired.
+No request body needed. The server validates all records against schemas, computes
+version hashes, and creates the new immutable version.
 
-Note: On successful finalize, the session and all staged records are deleted from the database.
-There is no need to manually clean up completed sessions.
+Response (201):
+{ "semver": "v1.3.0", "hash": "def456...", "recordCount": 2, "fileCount": 1 }
+
+### Step 5: Handle errors
+
+Conflict (409 — someone pushed while you were diffing):
+{ "error": "Version conflict", "currentVersion": "v1.3.0", "statusCode": 409 }
+→ Re-negotiate with the new base_version.
+
+Missing records (400 — commit called before all records submitted):
+{ "error": "Missing records", "missing_hashes": ["def456..."], "statusCode": 400 }
+→ Send the remaining records via the /records endpoint, then retry commit.
+
+Missing files (422 — records reference files not yet uploaded):
+{ "error": "Missing files", "filesNeeded": ["sha256:abc..."], "statusCode": 422 }
+→ Upload the listed files, then retry commit.
+
+Extra fields (422 — records contain fields not in the schema):
+{ "error": "Records contain fields not defined in schema", "extraFields": [...], "statusCode": 422 }
+→ Either fix the records, or re-negotiate with "strip_unknown_fields": true.
+
+Sessions expire after 10 minutes. If the session expires, re-negotiate.
+
+### Session management
+GET  /api/collections/:owner/:slug/versions/negotiate/:sessionId  → check session status
+DELETE /api/collections/:owner/:slug/versions/negotiate/:sessionId → cancel session (204)
+
+### First push (no existing versions)
+Set base_version to null. Include all records in the manifest. Include schemas for all types.
+The first version will be v1.0.0.
 
 ---
 
@@ -273,7 +263,7 @@ There is no need to manually clean up completed sessions.
 
 The records endpoint uses cursor-based pagination for efficient traversal of large collections.
 
-GET /api/collections/:owner/:slug/versions/:n/records?limit=100&after=record-id-42
+GET /api/collections/:owner/:slug/versions/:semver/records?limit=100&after=record-id-42
 
 Response:
 {
@@ -327,7 +317,7 @@ Schemas are globally deduplicated by content hash. If two collections use the sa
 
 GET /api/schemas                                        → search schemas (?q=text&slug=TypeName&label=uri&schema_hash=sha256:...&limit=50&offset=0)
 GET /api/schemas/:id                                    → single schema with labels and usage info
-GET /api/collections/:owner/:slug/schemas               → schemas for latest version (?version=N for specific, ?raw=true to skip label enrichment)
+GET /api/collections/:owner/:slug/schemas               → schemas for latest version (?version=v1.2.0 for specific, ?raw=true to skip label enrichment)
 POST /api/schemas/:id/labels                            → add label {"label": "schema.org/Person"} (requires write scope)
 DELETE /api/schemas/:id/labels/:label                   → remove label (requires admin scope)
 
@@ -337,11 +327,13 @@ When schemas are returned via the collection schemas endpoint, known labels are 
 
 ## Versioning
 
-- Versions are sequential integers (1, 2, 3, ...).
-- Semver is derived automatically: schema change → major, record change → minor, metadata-only → patch.
-- Schema change = any type's schema_id changed, or types added/removed between versions.
-- Each version has a content-addressed hash computed from sorted type→schema_hash map + sorted records + sorted file hashes.
+- Versions are identified solely by semver (e.g. "v1.0.0", "v1.2.3").
+- Semver semantics: major bump = schema change (types added/removed or schema_id changed), minor bump = records/files change, patch bump = metadata-only change.
+- Each version has a content-addressed hash computed from sorted schema hashes + sorted record hashes + sorted file hashes + metadata.
+- Each version has a `metadata` field: a JSON object that can contain `readme`, `license`, and other arbitrary metadata.
+- Records are content-addressed: SHA-256 of canonical JSON `{"id":...,"type":...,"data":...}`. Records are globally deduplicated.
 - Versions are immutable once created.
+- The provenance endpoint (GET /api/records/:hash/provenance) shows every collection and version that includes a given record.
 
 ---
 
@@ -359,8 +351,9 @@ Member management (invite, remove, update roles) is also under /api/auth/organiz
 
 ## Collection Management
 
-POST /api/accounts/:owner/collections              → create collection {"slug", "name", "description", "public"}
-PATCH /api/collections/:owner/:slug                → update {"name", "description", "public"}
+POST /api/accounts/:owner/collections              → create collection {"slug", "name", "public"}
+PATCH /api/collections/:owner/:slug                → update {"name", "slug", "public"}
+PATCH /api/collections/:owner/:slug/metadata       → update version metadata {"description", "readme", "license", ...} — creates a patch version (requires write scope)
 DELETE /api/collections/:owner/:slug               → delete collection (requires admin scope)
 GET /api/accounts/:owner/collections               → list collections for an organization
 
@@ -415,8 +408,8 @@ Mark individual records as private when pushing. The type and schema are visible
 article-2 is only visible to the collection owner. Public readers see article-1 only.
 
 ### How it works
-- Public hash: computed from public content only (excludes private types, records, and fields)
-- Private hash: computed from all content (used by the owner for integrity verification)
+- Public hash: computed from public content only (excludes private types, records, fields, and metadata)
+- Private hash: computed from all content including metadata (used by the owner for integrity verification)
 - Schema filtering: the schema returned to public readers omits private types and private fields
 - Record filtering: queries by non-owners automatically exclude private records and strip private fields
 
@@ -441,10 +434,11 @@ POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 403 — Insufficient scope (e.g. read key used for write)
 404 — Not found (or private collection you can't access)
 409 — Version conflict (re-fetch and retry with new base_version)
-422 — Missing files (upload them first, then retry push)
+422 — Missing files, schema validation failed, or records contain extra fields not in the schema
 
 ---
 
 Full documentation: https://underlay.org/docs
+Protocol specification: https://underlay.org/protocol
 Integration guide: https://underlay.org/docs/integration
 Source code: https://github.com/knowledgefutures/underlay

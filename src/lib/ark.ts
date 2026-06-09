@@ -85,7 +85,7 @@ export async function getOrMintShoulder(organizationId: string): Promise<string>
 export interface ArkComponents {
   shoulder: string
   collectionArkId: string
-  version?: number
+  version?: string
   recordType?: string
   recordId?: string
 }
@@ -105,16 +105,13 @@ export function parseArkPath(pathAfterNaan: string): ArkComponents | null {
   const shoulder = firstSeg.slice(0, i + 1)
   const remainder = firstSeg.slice(i + 1)
 
-  // remainder = arkId + check char (with optional .vN suffix)
-  const dotVIdx = remainder.lastIndexOf('.v')
+  // remainder = arkId + check char (with optional .vX.Y.Z suffix)
+  const dotVMatch = remainder.match(/\.v(\d+\.\d+\.\d+)$/)
   let arkIdWithCheck: string
-  let version: number | undefined
-  if (dotVIdx !== -1) {
-    arkIdWithCheck = remainder.slice(0, dotVIdx)
-    const vStr = remainder.slice(dotVIdx + 2)
-    const vNum = parseInt(vStr, 10)
-    if (isNaN(vNum) || vNum < 1) return null
-    version = vNum
+  let version: string | undefined
+  if (dotVMatch) {
+    arkIdWithCheck = remainder.slice(0, dotVMatch.index!)
+    version = `v${dotVMatch[1]}`
   } else {
     arkIdWithCheck = remainder
   }
@@ -137,13 +134,13 @@ export function buildArkUrl(
   naan: string,
   shoulder: string,
   collectionArkId: string,
-  version?: number,
+  semver?: string,
   recordType?: string,
   recordId?: string,
 ): string {
   const check = computeNcdaCheckChar(collectionArkId)
   let name = shoulder + collectionArkId + check
-  if (version !== undefined) name += `.v${version}`
+  if (semver !== undefined) name += `.${semver}`
   if (recordType && recordId)
     name += `/${encodeURIComponent(recordType)}/${encodeURIComponent(recordId)}`
   return `${SITE_URL}/ark:${naan}/${name}`

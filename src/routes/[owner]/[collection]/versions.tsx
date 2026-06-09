@@ -74,20 +74,19 @@ export default function CollectionVersionsPage() {
           <div className="border-rule overflow-hidden rounded border">
             {versions.map((v: any, i: number) => (
               <div
-                key={v.number}
+                key={v.semver}
                 className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-3 transition-colors ${
                   i < versions.length - 1 ? 'border-rule border-b' : ''
                 }`}
               >
                 <Link
-                  to={`/${owner}/${collection}/v/${v.number}`}
+                  to={`/${owner}/${collection}/v/${v.semver}`}
                   className="flex min-w-0 items-center gap-4"
                 >
                   <div className="flex items-center gap-2">
                     <span className="bg-parchment-dark border-rule rounded border px-1.5 py-0.5 font-mono text-xs">
-                      v{v.number}
+                      {v.semver}
                     </span>
-                    <span className="text-sm font-medium">{v.semver}</span>
                   </div>
                   {v.message && (
                     <span className="text-ink-muted truncate text-xs">{v.message}</span>
@@ -118,11 +117,11 @@ export default function CollectionVersionsPage() {
                       ark
                     </Link>
                   )}
-                  {v.number > 1 ? (
+                  {i < versions.length - 1 ? (
                     <Link
-                      to={`/${owner}/${collection}/diff?from=${v.number - 1}&to=${v.number}`}
+                      to={`/${owner}/${collection}/diff?from=${versions[i + 1].semver}&to=${v.semver}`}
                       className="text-link w-8 text-right hover:underline"
-                      title={`Diff v${v.number - 1} → v${v.number}`}
+                      title={`Diff ${versions[i + 1].semver} → ${v.semver}`}
                     >
                       diff
                     </Link>
