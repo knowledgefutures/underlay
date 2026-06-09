@@ -344,8 +344,9 @@ const app = new Hono<AuthEnv>()
       try {
         const avatarKeys = await listS3Objects(`avatars/${defaultOrg.id}/`)
         if (avatarKeys.length > 0) await deleteS3Objects(avatarKeys)
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        // Non-fatal — orphaned avatars are harmless
+        console.error(`[accounts] Failed to delete avatars for org ${defaultOrg.id}:`, err)
       }
 
       await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId))
@@ -443,8 +444,9 @@ const app = new Hono<AuthEnv>()
       try {
         const avatarKeys = await listS3Objects(`avatars/${org.id}/`)
         if (avatarKeys.length > 0) await deleteS3Objects(avatarKeys)
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        // Non-fatal — orphaned avatars are harmless
+        console.error(`[accounts] Failed to delete avatars for org ${org.id}:`, err)
       }
 
       await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id))

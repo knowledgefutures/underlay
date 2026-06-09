@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { compareSemver } from '../../lib/core/index.js'
+import { parseJsonOrExit } from './json.js'
+
 const UNDERLAY_DIR = '.underlay'
 
 export function findRoot(startDir: string = process.cwd()): string | null {
@@ -100,7 +103,11 @@ export type VersionManifest = {
 export function readVersion(root: string, semver: string): VersionManifest | null {
   const p = join(underlayDir(root), 'versions', `${semver}.json`)
   if (!existsSync(p)) return null
-  return JSON.parse(readFileSync(p, 'utf-8')) as VersionManifest
+  return parseJsonOrExit<VersionManifest>(
+    readFileSync(p, 'utf-8'),
+    `version manifest ${p}`,
+    'The file is corrupt. Restore it from a backup, or delete it and re-pull from the remote.',
+  )
 }
 
 export function writeVersion(root: string, manifest: VersionManifest): void {
@@ -115,13 +122,4 @@ export function listVersions(root: string): string[] {
     .filter((f) => f.endsWith('.json'))
     .map((f) => f.replace('.json', ''))
     .sort(compareSemver)
-}
-
-function compareSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, '').split('.').map(Number)
-  const pb = b.replace(/^v/, '').split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0)
-  }
-  return 0
 }

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 
@@ -94,6 +94,19 @@ export async function hasOrgAccess(userId: string | undefined, orgId: string): P
     .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
     .limit(1)
   return !!membership
+}
+
+/** Get the latest ready version of a collection (highest semver), or null */
+export async function getLatestReadyVersion(collectionId: string) {
+  const [version] = await db
+    .select()
+    .from(schema.versions)
+    .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.status, 'ready')))
+    .orderBy(
+      sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
+    )
+    .limit(1)
+  return version ?? null
 }
 
 /** Get a user's role in an organization, or null if not a member */

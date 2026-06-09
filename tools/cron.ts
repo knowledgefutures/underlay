@@ -36,6 +36,11 @@ if (process.env.NODE_ENV === 'production') {
     timezone: 'UTC',
   })
 
+  // Daily at 3:30 AM UTC — delete expired negotiate sessions + manifest rows
+  cron.schedule('30 3 * * *', () => run('Cleanup negotiate sessions', 'tool:cleanupSessions'), {
+    timezone: 'UTC',
+  })
+
   // Mirror sync — only if mirror mode is enabled
   const mirrorConfig = getMirrorConfig()
   if (mirrorConfig.enabled) {

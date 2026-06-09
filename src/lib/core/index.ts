@@ -1,5 +1,5 @@
 export { canonicalize, hashRecord, hashSchema } from './hash.js'
-export { deriveSemver, parseSemver, type SemverComponents } from './semver.js'
+export { compareSemver, deriveSemver, parseSemver, type SemverComponents } from './semver.js'
 export { filterRecordData, filterTypeSchema, getPrivateFields, getPrivateTypes } from './privacy.js'
 export {
   ajv,

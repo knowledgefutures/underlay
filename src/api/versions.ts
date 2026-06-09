@@ -7,12 +7,12 @@ import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import {
   canonicalize,
-  computePublicHash,
   computeVersionHash,
   deriveSemver,
   filterRecordData,
   filterSchemasForPublic,
   filterTypeSchema,
+  getLatestReadyVersion,
   getPrivateFields,
   getPrivateTypes,
   hashSchema,
@@ -44,7 +44,7 @@ const app = new Hono<AuthEnv>()
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const ownerAccess = collection.ownerAccess
-      const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
+      const arkInfo = await getCollectionArkInfo(collection.id)
 
       const rows = await db
         .select({
@@ -101,22 +101,13 @@ const app = new Hono<AuthEnv>()
       const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-      const [version] = await db
-        .select()
-        .from(schema.versions)
-        .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
-        )
-        .orderBy(
-          sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-        )
-        .limit(1)
+      const version = await getLatestReadyVersion(collection.id)
 
       if (!version) return c.json({ error: 'No versions', statusCode: 404 }, 404)
 
       const schemaEntries = await loadVersionSchemas(version.id)
       const ownerAccess = collection.ownerAccess
-      const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
+      const arkInfo = await getCollectionArkInfo(collection.id)
 
       const schemasMap = ownerAccess
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
@@ -163,7 +154,7 @@ const app = new Hono<AuthEnv>()
 
       const schemaEntries = await loadVersionSchemas(version.id)
       const ownerAccess = collection.ownerAccess
-      const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
+      const arkInfo = await getCollectionArkInfo(collection.id)
 
       const schemasMap = ownerAccess
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
@@ -287,7 +278,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Add ARK URLs for record types that have ARKs enabled
-      const arkInfo = await getCollectionArkInfo(collection.id).catch(() => null)
+      const arkInfo = await getCollectionArkInfo(collection.id)
       let arkEnabledTypes = new Map<string, string>() // recordType → redirectUrlField
       if (arkInfo) {
         const artRows = await db
@@ -486,7 +477,8 @@ const app = new Hono<AuthEnv>()
           )
           .limit(1)
 
-        if (!sinceVersion) return c.json({ error: `Version ${sinceSemver} not found` }, 404)
+        if (!sinceVersion)
+          return c.json({ error: `Version ${sinceSemver} not found`, statusCode: 404 }, 404)
 
         const targetId = version.id
         const sinceId = sinceVersion.id
@@ -889,16 +881,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
       }
 
-      const [latest] = await db
-        .select()
-        .from(schema.versions)
-        .where(
-          and(eq(schema.versions.collectionId, collection.id), eq(schema.versions.status, 'ready')),
-        )
-        .orderBy(
-          sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-        )
-        .limit(1)
+      const latest = await getLatestReadyVersion(collection.id)
 
       if (!latest) {
         return c.json({ error: 'No versions exist yet', statusCode: 422 }, 422)
@@ -915,13 +898,13 @@ const app = new Hono<AuthEnv>()
 
       const schemaEntries = await loadVersionSchemas(latest.id)
       const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
+      // Hash-only load: public hashes were computed and stored at commit time,
+      // so a metadata-only version never needs the record bodies
       const recordRows = await db
         .select({
           hash: schema.versionRecords.recordHash,
           publicRecordHash: schema.versionRecords.publicRecordHash,
-          recordId: schema.recordObjects.recordId,
           type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
           private: schema.recordObjects.private,
         })
         .from(schema.versionRecords)
@@ -939,7 +922,20 @@ const app = new Hono<AuthEnv>()
       ).map((f) => f.hash)
 
       const versionHash = computeVersionHash(schemaSet, recordHashes, fileHashes, newMetadata)
-      const publicHash = computePublicHash(schemaEntries, recordRows, fileHashes, newMetadata)
+
+      const privateTypes = getPrivateTypes(schemaEntries)
+      const publicSchemaSet = schemaEntries
+        .filter((e) => !privateTypes.has(e.slug))
+        .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
+      const publicRecordHashes = recordRows
+        .filter((r) => !r.private && !privateTypes.has(r.type))
+        .map((r) => r.publicRecordHash ?? r.hash)
+      const publicHash = computeVersionHash(
+        publicSchemaSet,
+        publicRecordHashes,
+        fileHashes,
+        newMetadata,
+      ).replace('private:', 'public:')
 
       const sv = deriveSemver(latest.semver, false, false, true)
 
@@ -1001,28 +997,37 @@ const app = new Hono<AuthEnv>()
     },
   )
 
+/** ARK info is decorative on these endpoints — failures are logged, not fatal */
 async function getCollectionArkInfo(
   collectionId: string,
 ): Promise<{ shoulder: string; arkId: string; naan: string } | null> {
-  const [row] = await db
-    .select({
-      shoulder: schema.arkShoulders.shoulder,
-      arkId: schema.arkCollections.arkId,
-      naan: schema.organization.arkNaan,
-    })
-    .from(schema.arkCollections)
-    .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .innerJoin(schema.arkShoulders, eq(schema.arkShoulders.organizationId, schema.organization.id))
-    .where(
-      and(
-        eq(schema.arkCollections.collectionId, collectionId),
-        eq(schema.arkCollections.enabled, true),
-      ),
-    )
-    .limit(1)
-  if (!row) return null
-  return { shoulder: row.shoulder, arkId: row.arkId, naan: row.naan ?? DEFAULT_NAAN }
+  try {
+    const [row] = await db
+      .select({
+        shoulder: schema.arkShoulders.shoulder,
+        arkId: schema.arkCollections.arkId,
+        naan: schema.organization.arkNaan,
+      })
+      .from(schema.arkCollections)
+      .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
+      .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+      .innerJoin(
+        schema.arkShoulders,
+        eq(schema.arkShoulders.organizationId, schema.organization.id),
+      )
+      .where(
+        and(
+          eq(schema.arkCollections.collectionId, collectionId),
+          eq(schema.arkCollections.enabled, true),
+        ),
+      )
+      .limit(1)
+    if (!row) return null
+    return { shoulder: row.shoulder, arkId: row.arkId, naan: row.naan ?? DEFAULT_NAAN }
+  } catch (err) {
+    console.error(`[ark] Failed to load ARK info for collection ${collectionId}:`, err)
+    return null
+  }
 }
 
 export default app

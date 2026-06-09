@@ -28,10 +28,30 @@ const sqliteCache = new Map<
 const CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 const CACHE_MAX_ENTRIES = 10
 
+// In-memory rate limit for the LLM endpoint (public path, spends CF AI credits)
+const RATE_LIMIT_WINDOW_MS = 60_000
+const RATE_LIMIT_MAX = 10 // requests per key per window
+const rateBuckets = new Map<string, { count: number; resetAt: number }>()
+
+/** Returns true if the request is within the rate limit */
+function checkRateLimit(key: string): boolean {
+  const now = Date.now()
+  const bucket = rateBuckets.get(key)
+  if (!bucket || bucket.resetAt < now) {
+    rateBuckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
+    return true
+  }
+  bucket.count++
+  return bucket.count <= RATE_LIMIT_MAX
+}
+
 function cleanExpired() {
   const now = Date.now()
   for (const [key, entry] of sqliteCache) {
     if (entry.expiresAt < now) sqliteCache.delete(key)
+  }
+  for (const [key, bucket] of rateBuckets) {
+    if (bucket.resetAt < now) rateBuckets.delete(key)
   }
 }
 
@@ -195,7 +215,7 @@ export async function sqlite(c: Context<AuthEnv>) {
   const { semver } = parseSemver(versionSemver)
 
   const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
-  if (!result) return c.json({ error: 'Collection or version not found' }, 404)
+  if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
 
   return new Response(new Uint8Array(result.buffer), {
     status: 200,
@@ -214,17 +234,27 @@ export async function ddl(c: Context<AuthEnv>) {
   const versionSemver = c.req.param('version')!
 
   const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
-  if (!result) return c.json({ error: 'Collection or version not found' }, 404)
+  if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
 
   return c.json({ ddl: result.ddl })
 }
 
 // POST /query/generate-sql — LLM-powered SQL generation from natural language
 export async function generateSql(c: Context<AuthEnv>) {
+  // Public endpoint that spends Cloudflare AI credits — rate-limit per user/IP
+  const ip =
+    c.req.header('cf-connecting-ip') ??
+    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+    'unknown'
+  const rateKey = c.get('userId') ?? `ip:${ip}`
+  if (!checkRateLimit(rateKey)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute', statusCode: 429 }, 429)
+  }
+
   const { collections: collectionRefs, question } = await c.req.json()
 
   if (!collectionRefs?.length || !question) {
-    return c.json({ error: 'collections and question are required' }, 400)
+    return c.json({ error: 'collections and question are required', statusCode: 400 }, 400)
   }
 
   const cfAccountId = process.env.CF_ACCOUNT_ID
@@ -248,7 +278,10 @@ export async function generateSql(c: Context<AuthEnv>) {
     const ref = collectionRefs[0]
     const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version, c.get('userId'))
     if (!result)
-      return c.json({ error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found` }, 404)
+      return c.json(
+        { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found`, statusCode: 404 },
+        404,
+      )
     combinedDdl = result.ddlWithSamples
     // Count records from cache (approximation from the version table already captured)
   } else {
@@ -325,7 +358,7 @@ Important rules:
     if (!response.ok) {
       const text = await response.text()
       console.error(`Cloudflare AI error: ${response.status} ${text}`)
-      return c.json({ error: 'LLM request failed', rawResponse: text }, 502)
+      return c.json({ error: 'LLM request failed', rawResponse: text, statusCode: 502 }, 502)
     }
 
     const data = (await response.json()) as any
@@ -377,7 +410,7 @@ Important rules:
     return c.json({ sql, reasoning })
   } catch (err: any) {
     console.error(`LLM generation error: ${err.message}`)
-    return c.json({ error: 'Failed to generate SQL' }, 500)
+    return c.json({ error: 'Failed to generate SQL', statusCode: 500 }, 500)
   }
 }
 
@@ -495,7 +528,7 @@ export async function collectionVersions(c: Context<AuthEnv>) {
     .orderBy(desc(schema.versions.major), desc(schema.versions.minor), desc(schema.versions.patch))
 
   if (versions.length === 0) {
-    return c.json({ error: 'Collection not found or not public' }, 404)
+    return c.json({ error: 'Collection not found or not public', statusCode: 404 }, 404)
   }
 
   return c.json(versions)

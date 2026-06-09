@@ -1,5 +1,6 @@
 import { hashRecord, hashSchema } from '../../lib/core/index.js'
 import { readConfig } from '../lib/config.js'
+import { parseJsonOrExit } from '../lib/json.js'
 import {
   requireRoot,
   getHead,
@@ -155,7 +156,11 @@ export async function pull(remoteName: string = 'origin'): Promise<void> {
 
     const received = new Set<string>()
     const storeLine = (line: string): void => {
-      const rec = JSON.parse(line) as { id: string; type: string; data: unknown; hash?: string }
+      const rec = parseJsonOrExit<{ id: string; type: string; data: unknown; hash?: string }>(
+        line,
+        'a record line in the server batch response',
+        'The server response was malformed; local version and HEAD were not updated. Retry the pull.',
+      )
       const { hash, canonical } = hashRecord(rec)
       writeObject(root, hash, canonical)
       received.add(rec.hash ?? hash)

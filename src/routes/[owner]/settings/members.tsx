@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useLoaderData, useParams } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
@@ -8,7 +8,6 @@ import { authClient } from '~/lib/auth-client'
 export default function OwnerSettingsMembers() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
-  const { orgData } = useLoaderData() as { orgData: any }
 
   const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
   const orgId = org?.organizationId ?? null

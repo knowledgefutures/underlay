@@ -233,7 +233,7 @@ app.get('/api/blog/:slug', (c) => {
   const slug = c.req.param('slug')
   const mdPath = resolve('content/blog', `${slug}.md`)
   if (!existsSync(mdPath)) {
-    return c.json({ error: 'Not found' }, 404)
+    return c.json({ error: 'Not found', statusCode: 404 }, 404)
   }
   const raw = readFileSync(mdPath, 'utf-8')
   // Strip frontmatter

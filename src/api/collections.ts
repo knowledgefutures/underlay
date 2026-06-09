@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
 import { downloadFromS3 } from '../lib/s3.js'
-import { getOrgRole, hasOrgAccess } from '../lib/version-helpers.server.js'
+import { getLatestReadyVersion, getOrgRole, hasOrgAccess } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
@@ -206,8 +206,9 @@ const app = new Hono<AuthEnv>()
         const naan = org.arkNaan ?? DEFAULT_NAAN
         const arkUrl = buildArkUrl(naan, shoulder, arkId)
         return c.json({ id, owner, slug, name, ark: arkUrl }, 201)
-      } catch {
+      } catch (err) {
         // ARK minting failure is non-fatal
+        console.error(`[ark] Failed to mint ARK for new collection ${owner}/${slug}:`, err)
         return c.json({ id, owner, slug, name }, 201)
       }
     },
@@ -276,25 +277,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Get latest version info
-      const [latestVersion] = await db
-        .select({
-          id: schema.versions.id,
-          semver: schema.versions.semver,
-          recordCount: schema.versions.recordCount,
-          fileCount: schema.versions.fileCount,
-          totalBytes: schema.versions.totalBytes,
-          createdAt: schema.versions.createdAt,
-          message: schema.versions.message,
-          metadata: schema.versions.metadata,
-        })
-        .from(schema.versions)
-        .where(
-          and(eq(schema.versions.collectionId, result.id), eq(schema.versions.status, 'ready')),
-        )
-        .orderBy(
-          sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-        )
-        .limit(1)
+      const latestVersion = await getLatestReadyVersion(result.id)
 
       // Get per-type record counts for latest version
       let typeCounts: { type: string; count: number }[] = []
@@ -342,8 +325,9 @@ const app = new Hono<AuthEnv>()
         if (arkRow?.enabled) {
           ark = buildArkUrl(arkRow.ownerNaan ?? DEFAULT_NAAN, arkRow.shoulder, arkRow.arkId)
         }
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        // Non-fatal — ARK URL is decorative here
+        console.error(`[ark] Failed to load ARK info for collection ${owner}/${slug}:`, err)
       }
 
       const [vcRow] = await db
@@ -758,7 +742,8 @@ const app = new Hono<AuthEnv>()
 
       const schemasMap = Object.fromEntries(versionSchemaEntries.map((e) => [e.slug, e.schemaBody]))
 
-      // Add manifest.json
+      // Build manifest.json (packed last, so it can report any files that
+      // failed to download)
       const versionMeta = version.metadata as Record<string, unknown> | null
       const manifest = {
         collection: {
@@ -777,6 +762,7 @@ const app = new Hono<AuthEnv>()
           createdAt: version.createdAt,
         },
         schemas: schemasMap,
+        files_missing: [] as string[],
       }
 
       // Build tar.gz stream
@@ -784,10 +770,6 @@ const app = new Hono<AuthEnv>()
       const gzip = createGzip()
 
       const filename = `${owner}-${slug}-${version.semver}.tar.gz`
-
-      // Add manifest
-      const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
-      pack.entry({ name: 'manifest.json', size: manifestBuf.length }, manifestBuf)
 
       // Stream records per-type into tar — avoids loading all records at once
       const types = await db
@@ -843,10 +825,14 @@ const app = new Hono<AuthEnv>()
         try {
           const fileBuffer = await downloadFromS3(file.storageKey)
           pack.entry({ name: `files/${file.hash}`, size: fileBuffer.length }, fileBuffer)
-        } catch {
-          // Skip files that can't be downloaded (shouldn't happen in normal operation)
+        } catch (err) {
+          console.error(`[export] Failed to download file ${file.hash} (${file.storageKey}):`, err)
+          manifest.files_missing.push(file.hash)
         }
       }
+
+      const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
+      pack.entry({ name: 'manifest.json', size: manifestBuf.length }, manifestBuf)
 
       pack.finalize()
 
@@ -959,16 +945,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Get latest version of source
-      const [latestVersion] = await db
-        .select()
-        .from(schema.versions)
-        .where(
-          and(eq(schema.versions.collectionId, source.id), eq(schema.versions.status, 'ready')),
-        )
-        .orderBy(
-          sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
-        )
-        .limit(1)
+      const latestVersion = await getLatestReadyVersion(source.id)
 
       if (!latestVersion) {
         return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)

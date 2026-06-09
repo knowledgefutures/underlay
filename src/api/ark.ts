@@ -22,11 +22,11 @@ import { type AuthEnv } from './auth.server.js'
 
 export async function resolve(c: Context<AuthEnv>) {
   const path = c.req.query('path')
-  if (!path) return c.json({ error: 'Missing path' }, 400)
+  if (!path) return c.json({ error: 'Missing path', statusCode: 400 }, 400)
 
   // path = "ark:NAAN/shoulder+collection..."
   const arkLabelIdx = path.indexOf('ark:')
-  if (arkLabelIdx === -1) return c.json({ error: 'Invalid ARK path' }, 400)
+  if (arkLabelIdx === -1) return c.json({ error: 'Invalid ARK path', statusCode: 400 }, 400)
 
   const afterLabel = path.slice(arkLabelIdx + 4) // strip "ark:"
   const slashIdx = afterLabel.indexOf('/')
@@ -322,11 +322,11 @@ export async function getArk(c: Context<AuthEnv>) {
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found' }, 404)
+  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   // Must be owner/member
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
-  if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
+  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const naan = coll.ownerNaan ?? DEFAULT_NAAN
 
@@ -367,10 +367,10 @@ export async function updateArk(c: Context<AuthEnv>) {
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found' }, 404)
+  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
-  if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
+  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const [existing] = await db
     .select({ collectionId: schema.arkCollections.collectionId })
@@ -415,10 +415,10 @@ export async function getArkRecordTypes(c: Context<AuthEnv>) {
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found' }, 404)
+  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
-  if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
+  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const rows = await db
     .select({
@@ -436,7 +436,7 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
   const slug = c.req.param('slug')!
   const { recordType, redirectUrlField } = await c.req.json()
 
-  if (!recordType) return c.json({ error: 'recordType required' }, 400)
+  if (!recordType) return c.json({ error: 'recordType required', statusCode: 400 }, 400)
 
   const [coll] = await db
     .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
@@ -444,10 +444,10 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found' }, 404)
+  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
-  if (!hasAccess) return c.json({ error: 'Forbidden' }, 403)
+  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   if (redirectUrlField === null) {
     await db
@@ -478,7 +478,7 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
   const { naan } = await c.req.json()
 
   if (naan !== null && !/^\d{1,16}$/.test(naan)) {
-    return c.json({ error: 'NAAN must be numeric (up to 16 digits)' }, 400)
+    return c.json({ error: 'NAAN must be numeric (up to 16 digits)', statusCode: 400 }, 400)
   }
 
   const [org] = await db
@@ -486,7 +486,7 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
     .from(schema.organization)
     .where(eq(schema.organization.slug, slug))
     .limit(1)
-  if (!org) return c.json({ error: 'Org not found' }, 404)
+  if (!org) return c.json({ error: 'Org not found', statusCode: 404 }, 404)
 
   // Must be owner/admin of the org
   const [membership] = await db
@@ -497,7 +497,7 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
     )
     .limit(1)
   if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
-    return c.json({ error: 'Forbidden' }, 403)
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
 
   await db
