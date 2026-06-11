@@ -107,7 +107,7 @@ export async function agentPage(c: Context) {
   const origin = new URL(c.req.url).origin
   const collPath = `${coll.ownerSlug}/${coll.slug}`
   const negotiateUrl = `${origin}/api/collections/${collPath}/versions/negotiate`
-  const aiTxtUrl = `${origin}/.well-known/ai.txt`
+  const llmsTxtUrl = `${origin}/llms.txt`
 
   const displaySchemas = hasSchemas
     ? schemaEntries
@@ -213,7 +213,7 @@ ${
 <p>All writes use the <strong>negotiate protocol</strong> &mdash; a three-step flow (similar to git&rsquo;s pack negotiation) that handles deduplication, schema validation, and version creation. Authenticate every request with the API key above.</p>
 
 <div class="note">
-<strong>Full protocol details</strong> including record hashing, canonicalization, file uploads, and privacy controls are documented in <a href="${escapeHtml(aiTxtUrl)}">${escapeHtml(aiTxtUrl)}</a>. Read that file for the complete reference. The summary below covers the essential steps.
+<strong>Full protocol details</strong> including record hashing, canonicalization, file uploads, and privacy controls are documented in <a href="${escapeHtml(llmsTxtUrl)}">${escapeHtml(llmsTxtUrl)}</a>. Read that file for the complete reference. The summary below covers the essential steps.
 </div>
 
 <h3>Step 1: Negotiate</h3>
@@ -228,7 +228,7 @@ Content-Type: application/json</pre>
 <table class="kv">
 <tr><th>base_version</th><td>The semver of the version you&rsquo;re building on (e.g. <code>${latest ? escapeHtml(latest.semver) : 'null'}</code>). Use <code>null</code> for the first push.</td></tr>
 <tr><th>schemas</th><td><strong>Required.</strong> A map of type name &rarr; JSON Schema for every type in this version.</td></tr>
-<tr><th>manifest</th><td><strong>Required.</strong> Array of <code>{id, type, hash}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see ai.txt for the exact algorithm).</td></tr>
+<tr><th>manifest</th><td><strong>Required.</strong> Array of <code>{id, type, hash}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see llms.txt for the exact algorithm).</td></tr>
 <tr><th>files</th><td>Array of file hashes referenced by records. Empty array if none.</td></tr>
 <tr><th>message</th><td>Optional commit message describing this update.</td></tr>
 </table>
@@ -257,7 +257,7 @@ Authorization: Bearer ${escapeHtml(token)}</pre>
 
 <h2>References</h2>
 <table class="kv">
-<tr><th>AI integration guide</th><td><a href="${escapeHtml(aiTxtUrl)}">${escapeHtml(aiTxtUrl)}</a> &mdash; complete API reference including record hashing algorithm, canonicalization, file uploads, privacy, and error handling</td></tr>
+<tr><th>AI integration guide</th><td><a href="${escapeHtml(llmsTxtUrl)}">${escapeHtml(llmsTxtUrl)}</a> &mdash; complete API reference including record hashing algorithm, canonicalization, file uploads, privacy, and error handling</td></tr>
 <tr><th>Documentation</th><td><a href="${escapeHtml(origin)}/docs">${escapeHtml(origin)}/docs</a></td></tr>
 <tr><th>Platform</th><td><a href="https://www.knowledgefutures.org">Knowledge Futures</a> (501c3)</td></tr>
 </table>

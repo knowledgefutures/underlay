@@ -25,6 +25,7 @@ import * as _health from '~/api/health'
 import * as _kfSummary from '~/api/kf-summary'
 import _negotiate from '~/api/negotiate'
 import * as _query from '~/api/query'
+import { rateLimitMiddleware } from '~/api/rate-limit.server'
 import _records from '~/api/records'
 import _schemas from '~/api/schemas'
 import _versions from '~/api/versions'
@@ -70,9 +71,9 @@ function api<M extends string, A>(mount: M, source: string, app: A): [M, A] {
 
 const app = new Hono<AuthEnv>()
 
-// --- ai.txt with explicit charset (browsers default to Latin-1 for text/plain) ---
-app.get('/.well-known/ai.txt', async (c) => {
-  const content = readFileSync(resolve('public/.well-known/ai.txt'), 'utf-8')
+// --- llms.txt with explicit charset (browsers default to Latin-1 for text/plain) ---
+app.get('/llms.txt', async (c) => {
+  const content = readFileSync(resolve('public/llms.txt'), 'utf-8')
   return c.text(content, 200, { 'Content-Type': 'text/plain; charset=utf-8' })
 })
 
@@ -93,8 +94,9 @@ app.use(
 // --- Agent share pages (token-authenticated, no session/API-key middleware) ---
 app.get('/agent/:token', agentHandlers.agentPage)
 
-// --- Auth middleware for API routes ---
+// --- Auth + rate limiting for API routes ---
 app.use('/api/*', authMiddleware)
+app.use('/api/*', rateLimitMiddleware)
 
 // --- Mirror mode guard for admin routes ---
 // Operator-only: admin-scoped API key, or a session user listed in MIRROR_ADMIN_EMAILS
@@ -277,7 +279,7 @@ if (isProd) {
 
   // Serve Vite build assets (hashed JS/CSS bundles)
   app.use('/assets/*', serveStatic({ root: './dist/client' }))
-  // Serve public/ folder files (favicon, wasm, .well-known, etc.)
+  // Serve public/ folder files (favicon, wasm, llms.txt, etc.)
   app.use('/*', serveStatic({ root: './public' }))
 
   // Run migrations on startup

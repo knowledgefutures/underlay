@@ -8,8 +8,8 @@ export default function Docs() {
       <p>
         Underlay has a small API surface. These docs are the SDK. Read them, point your LLM at them,
         or just curl the endpoints. For a machine-readable version, see{' '}
-        <Link to="/.well-known/ai.txt" className="text-link underline">
-          ai.txt
+        <Link to="/llms.txt" className="text-link underline">
+          llms.txt
         </Link>
         .
       </p>

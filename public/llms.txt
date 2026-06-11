@@ -31,7 +31,7 @@ If a Bearer token is provided but invalid, the request is rejected immediately (
 
 ## Rate Limits
 
-Requests are rate-limited per IP (unauthenticated) or per account (authenticated).
+All API requests are rate-limited per IP (unauthenticated) or per account (authenticated).
 
 | Auth status       | Limit         |
 |-------------------|---------------|
@@ -74,6 +74,7 @@ GET /api/collections/:owner/:slug/versions/:semver      → specific version by 
 ### Read records and files
 GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=recordId)
 GET /api/collections/:owner/:slug/versions/:semver/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=v1.0.0 for delta)
+GET /api/collections/:owner/:slug/versions/:semver/files     → list files for a version (hash, size, content type)
 GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
 HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
 
@@ -517,7 +518,9 @@ POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 403 — Insufficient scope (e.g. read key used for write)
 404 — Not found (or private collection you can't access)
 409 — Version conflict (re-fetch and retry with new base_version)
+413 — Payload too large (file upload exceeds size limit)
 422 — Missing files, schema validation failed, or records contain extra fields not in the schema
+429 — Rate limited (wait and retry)
 
 ---
 

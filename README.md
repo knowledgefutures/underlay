@@ -118,8 +118,11 @@ src/
 ├── global.css            # Tailwind theme
 ├── api/                  # API route handlers
 │   ├── auth.server.ts    # API auth middleware (API keys, internal tokens)
+│   ├── rate-limit.server.ts # Global API rate limiting (60/min anon, 5k/min authed)
 │   ├── accounts.ts       # Account/org profiles, members, avatars
+│   ├── agent.ts          # Agent share page (token-authenticated HTML instructions)
 │   ├── collections.ts    # Collection CRUD + export, transfer, fork
+│   ├── discussion.ts     # Page-anchored discussion threads
 │   ├── versions.ts       # Version read APIs (manifest, records, diff) + privacy filtering
 │   ├── negotiate.ts      # Push protocol: hash negotiation, record upload, commit
 │   ├── records.ts        # Provenance + batch record fetch
@@ -174,6 +177,10 @@ src/
 │   ├── docs/             # Documentation
 │   └── [owner]/          # Dynamic owner routes
 │       ├── index.tsx
+│       ├── settings/     # Org settings
+│       │   ├── index.tsx
+│       │   ├── members.tsx
+│       │   └── keys.tsx
 │       └── [collection]/
 │           ├── index.tsx
 │           ├── versions.tsx
@@ -186,11 +193,12 @@ packages/
 └── cli/                  # npm publish wrapper (@underlay/cli)
     └── package.json      # esbuild bundles src/cli → dist/cli.js
 public/
-├── .well-known/ai.txt    # Machine-readable API docs
+├── llms.txt              # Machine-readable API docs for LLMs
 tools/
 ├── backupDb.ts           # Postgres backup → S3
 ├── restore.ts            # Restore database from an S3 backup
 ├── pruneBackups.ts       # Retention pruning of old backups
+├── cleanupSessions.ts    # Prune expired negotiate sessions
 ├── seedMirror.ts         # Minimal seed for mirror instances
 └── cron.ts               # Scheduled task runner (backup, prune, mirror sync)
 ```
@@ -203,7 +211,7 @@ The protocol and the platform are documented together:
 | ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Protocol spec | [/protocol](https://underlay.org/protocol)                     | Full protocol: data model, hashing, push, pull, provenance, privacy |
 | User docs     | [/docs](https://underlay.org/docs)                             | Concepts, integration guide, API reference, quickstart              |
-| ai.txt        | [/.well-known/ai.txt](https://underlay.org/.well-known/ai.txt) | Machine-readable API docs for LLMs and bots                         |
+| llms.txt      | [/llms.txt](https://underlay.org/llms.txt)                     | Machine-readable API docs for LLMs and bots                         |
 
 ### Key API endpoints
 
@@ -414,8 +422,9 @@ pnpm db:seed          # Seed database
 # Tools
 pnpm tool:backup       # Manual database backup to S3
 pnpm tool:restore      # List S3 backups; restore one with `-- <s3-key> --yes`
-pnpm tool:pruneBackups # Prune old backups (supports `-- --dry-run`)
-pnpm tool:seed-mirror  # Seed a mirror instance (admin org only)
+pnpm tool:pruneBackups       # Prune old backups (supports `-- --dry-run`)
+pnpm tool:cleanupSessions  # Prune expired negotiate sessions
+pnpm tool:seed-mirror      # Seed a mirror instance (admin org only)
 
 # Secrets (SOPS + age)
 pnpm secrets:encrypt:local  # Encrypt .env.local → .env.local.enc
@@ -433,7 +442,7 @@ When adding or changing features, update these locations:
 | What              | Where                                   | Purpose                                    |
 | ----------------- | --------------------------------------- | ------------------------------------------ |
 | Protocol spec     | `src/routes/protocol.tsx`               | Protocol documentation page                |
-| API documentation | `public/.well-known/ai.txt`             | Machine-readable docs for LLMs and bots    |
+| API documentation | `public/llms.txt`                       | Machine-readable docs for LLMs and bots    |
 | Concepts          | `src/routes/docs/concepts.tsx`          | Core concepts explanation                  |
 | API reference     | `src/routes/docs/api/*.tsx`             | Endpoint-level docs with examples          |
 | Integration guide | `src/routes/docs/integration.tsx`       | Developer onboarding guide                 |
@@ -454,7 +463,7 @@ Privacy is part of the protocol. The system supports three levels (type-level, f
 - `src/api/files.ts` - file access checks
 - `src/api/schemas.ts` - public schema filtering
 - `src/routes/protocol.tsx` - protocol spec
-- `public/.well-known/ai.txt` - Privacy section
+- `public/llms.txt` - Privacy section
 - `src/routes/docs/concepts.tsx` - Privacy section
 - `src/routes/docs/integration.tsx` - Privacy section
 

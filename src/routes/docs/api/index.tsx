@@ -9,8 +9,8 @@ export default function DocsApi() {
         The Underlay API is a JSON REST API served at <code>/api</code>. All request and response
         bodies are JSON (except file uploads/downloads). A machine-readable reference is available
         at{' '}
-        <Link to="/.well-known/ai.txt" className="text-link underline">
-          /.well-known/ai.txt
+        <Link to="/llms.txt" className="text-link underline">
+          /llms.txt
         </Link>
         .
       </p>
@@ -73,7 +73,8 @@ export default function DocsApi() {
 
       <h2>Rate Limits</h2>
       <p>
-        All requests are rate-limited. Authenticated requests get a significantly higher allowance:
+        All API requests are rate-limited per IP (unauthenticated) or per account (authenticated).
+        Authenticated requests get a significantly higher allowance:
       </p>
 
       <table className="w-full border-collapse text-sm">
@@ -145,6 +146,9 @@ export default function DocsApi() {
         </li>
         <li>
           <code>409</code> — Version conflict (re-fetch and retry)
+        </li>
+        <li>
+          <code>413</code> — Payload too large (file upload exceeds size limit)
         </li>
         <li>
           <code>422</code> — Validation error (e.g. missing files)
