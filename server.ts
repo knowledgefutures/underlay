@@ -13,6 +13,7 @@ import type { ViteDevServer } from 'vite'
 
 import _accounts from '~/api/accounts'
 import * as _admin from '~/api/admin'
+import * as _agentHandlers from '~/api/agent'
 import * as _ark from '~/api/ark'
 import { arkMiddleware } from '~/api/ark-middleware.server'
 import type { AuthEnv } from '~/api/auth.server'
@@ -53,6 +54,7 @@ function hot<T extends Record<string, any>>(staticMod: T, modulePath: string): T
 }
 
 const admin = hot(_admin, '/src/api/admin.ts')
+const agentHandlers = hot(_agentHandlers, '/src/api/agent.ts')
 const ark = hot(_ark, '/src/api/ark.ts')
 const health = hot(_health, '/src/api/health.ts')
 const kfSummary = hot(_kfSummary, '/src/api/kf-summary.ts')
@@ -87,6 +89,9 @@ app.use(
     credentials: true,
   }),
 )
+
+// --- Agent share pages (token-authenticated, no session/API-key middleware) ---
+app.get('/agent/:token', agentHandlers.agentPage)
 
 // --- Auth middleware for API routes ---
 app.use('/api/*', authMiddleware)
