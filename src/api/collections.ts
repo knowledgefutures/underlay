@@ -694,7 +694,10 @@ const app = new Hono<AuthEnv>()
       }
 
       if (!collection.public) {
-        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+        const userId = c.get('userId')
+        if (!userId || !(await hasOrgAccess(userId, collection.organizationId))) {
+          return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+        }
       }
 
       // Resolve version (latest if not specified)

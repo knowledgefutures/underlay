@@ -67,6 +67,9 @@ export const auth = betterAuth({
         return `ul_${generateRandomString(length, 'a-z', 'A-Z')}`
       },
       enableMetadata: true,
+      keyExpiration: {
+        minExpiresIn: 0,
+      },
       rateLimit: {
         enabled: false,
       },
