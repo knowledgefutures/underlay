@@ -1,10 +1,11 @@
 import DOMPurify from 'isomorphic-dompurify'
 import { marked } from 'marked'
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
+import { authClient } from '~/lib/auth-client'
 
 function CollectionNav({
   owner,
@@ -92,7 +93,9 @@ export default function CollectionPage() {
   const isOwner = useMemo(
     () =>
       !!currentUser &&
-      (currentUser.slug === owner || currentUser.orgs?.some((o: any) => o.slug === owner)),
+      (currentUser.kfRole === 'admin' ||
+        currentUser.slug === owner ||
+        currentUser.orgs?.some((o: any) => o.slug === owner)),
     [currentUser, owner],
   )
 
@@ -387,6 +390,9 @@ export default function CollectionPage() {
               </div>
             </div>
 
+            {/* Agent Share */}
+            {isOwner && <AgentShareSection collection={collection!} collectionId={data.id} />}
+
             {/* ARK */}
             {collectionArkPath && (
               <div className="mb-6">
@@ -405,6 +411,147 @@ export default function CollectionPage() {
         </div>
       </div>
     </BaseLayout>
+  )
+}
+
+function AgentShareSection({
+  collection,
+  collectionId,
+}: {
+  collection: string
+  collectionId: string
+}) {
+  const [showModal, setShowModal] = useState(false)
+  const [agentUrl, setAgentUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [copied, setCopied] = useState<'link' | 'blurb' | null>(null)
+
+  const generate = useCallback(async () => {
+    setLoading(true)
+    setCopied(null)
+    try {
+      const { data: keyData } = await authClient.apiKey.create({
+        name: `agent-${collection}`,
+        metadata: {
+          scope: 'write',
+          collectionIds: [collectionId],
+          agentShare: true,
+        },
+        expiresIn: 3600,
+        prefix: 'ul',
+      } as any)
+      if (keyData) {
+        const url = `${window.location.origin}/agent/${(keyData as any).key}`
+        setAgentUrl(url)
+        setShowModal(true)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [collection, collectionId])
+
+  const copyLink = useCallback(() => {
+    if (!agentUrl) return
+    navigator.clipboard.writeText(agentUrl)
+    setCopied('link')
+    setTimeout(() => setCopied(null), 2000)
+  }, [agentUrl])
+
+  const copyBlurb = useCallback(() => {
+    if (!agentUrl) return
+    const blurb = `Will you create an update that captures this conversation. Here is a link with reference how to do that: ${agentUrl}`
+    navigator.clipboard.writeText(blurb)
+    setCopied('blurb')
+    setTimeout(() => setCopied(null), 2000)
+  }, [agentUrl])
+
+  return (
+    <>
+      <div className="mb-6">
+        <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
+          Share via Agent
+        </h3>
+        <button
+          onClick={generate}
+          disabled={loading}
+          className="bg-parchment border-rule hover:bg-parchment-dark w-full border px-3 py-1.5 text-xs font-medium transition-colors"
+        >
+          {loading ? 'Generating...' : 'Generate agent link'}
+        </button>
+      </div>
+
+      {showModal && agentUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowModal(false)
+          }}
+        >
+          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Agent Share Link</h2>
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-ink-muted hover:text-ink text-lg leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-ink-muted mb-4 text-xs leading-relaxed">
+              This link gives an AI agent temporary write access to this collection (expires in 1
+              hour). Paste the link or the prompt below into any AI chat. The agent will read the
+              page to learn the collection&rsquo;s schema and push protocol, then write structured
+              updates back.
+            </p>
+
+            <div className="mb-4">
+              <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
+                Link
+              </label>
+              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+                {agentUrl}
+              </div>
+              <button
+                onClick={copyLink}
+                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
+              >
+                {copied === 'link' ? 'Copied!' : 'Copy link'}
+              </button>
+            </div>
+
+            <div className="mb-4">
+              <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
+                Prompt
+              </label>
+              <div className="bg-parchment-dark border-rule overflow-hidden rounded border px-3 py-2 text-xs leading-relaxed break-all">
+                Will you create an update that captures this conversation. Here is a link with
+                reference how to do that: {agentUrl}
+              </div>
+              <button
+                onClick={copyBlurb}
+                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
+              >
+                {copied === 'blurb' ? 'Copied!' : 'Copy prompt'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-ink-muted text-[10px]">Expires in 1 hour.</p>
+              <button
+                onClick={() => {
+                  setShowModal(false)
+                  generate()
+                }}
+                className="text-ink-muted text-xs underline hover:no-underline"
+              >
+                Regenerate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
