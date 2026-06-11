@@ -10,9 +10,15 @@ interface UserMenuProps {
   slug: string
   displayName?: string | null
   orgs?: Org[]
+  isSteward?: boolean
 }
 
-export default function UserMenu({ slug, displayName, orgs = [] }: UserMenuProps) {
+export default function UserMenu({
+  slug,
+  displayName,
+  orgs = [],
+  isSteward = false,
+}: UserMenuProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const hideTimeout = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -66,6 +72,14 @@ export default function UserMenu({ slug, displayName, orgs = [] }: UserMenuProps
             >
               Settings
             </Link>
+            {isSteward && (
+              <Link
+                to="/superadmin"
+                className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
+              >
+                Admin
+              </Link>
+            )}
             {orgs.length > 0 && (
               <>
                 <hr className="border-rule" />

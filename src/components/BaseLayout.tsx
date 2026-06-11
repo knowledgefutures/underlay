@@ -5,6 +5,7 @@ import { useAppContext } from '~/lib/app-context'
 
 export default function BaseLayout({ children }: { children: React.ReactNode }) {
   const { currentUser, mirrorConfig } = useAppContext()
+  const isSteward = currentUser?.kfRole === 'admin'
 
   return (
     <>
@@ -49,6 +50,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
                 slug={currentUser.slug}
                 displayName={currentUser.displayName}
                 orgs={currentUser.orgs ?? []}
+                isSteward={isSteward}
               />
             ) : (
               <a href="/login" className="hover:text-ink transition-colors">

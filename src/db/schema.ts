@@ -441,6 +441,37 @@ export const arkCollections = pgTable('ark_collections', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
+// --- Page Comments (living RFC discussion) ---
+
+export const pageComments = pgTable(
+  'page_comments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    page: text('page').notNull(),
+    anchor: text('anchor').notNull(),
+    quote: text('quote'),
+    quoteContext: jsonb('quote_context').$type<{ prefix: string; suffix: string }>(),
+    parentId: uuid('parent_id'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    approvedBy: text('approved_by'),
+    status: text('status', { enum: ['open', 'answered', 'decided', 'changed'] })
+      .notNull()
+      .default('open'),
+    resolutionNote: text('resolution_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('page_comments_page_anchor_idx').on(t.page, t.anchor),
+    index('page_comments_user_id_idx').on(t.userId),
+  ],
+)
+
 export const arkRecordTypes = pgTable(
   'ark_record_types',
   {

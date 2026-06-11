@@ -2,7 +2,7 @@ import { useRouteLoaderData } from 'react-router'
 
 export function useAppContext() {
   return useRouteLoaderData('root') as {
-    currentUser: any
+    currentUser: any // includes kfRole: string | null
     mirrorConfig: {
       enabled: boolean
       upstream: string

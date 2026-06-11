@@ -18,6 +18,7 @@ import { arkMiddleware } from '~/api/ark-middleware.server'
 import type { AuthEnv } from '~/api/auth.server'
 import { authMiddleware, requireAuth } from '~/api/auth.server'
 import _collections from '~/api/collections'
+import _discussion from '~/api/discussion'
 import _files from '~/api/files'
 import * as _health from '~/api/health'
 import * as _kfSummary from '~/api/kf-summary'
@@ -177,6 +178,7 @@ const routes = app
   .route(...api('/api', './src/api/collections.ts', _collections))
   .route(...api('/api/collections', './src/api/versions.ts', _versions))
   .route(...api('/api/collections', './src/api/negotiate.ts', _negotiate))
+  .route(...api('/api', './src/api/discussion.ts', _discussion))
 
 export type AppType = typeof routes
 
