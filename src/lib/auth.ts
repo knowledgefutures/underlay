@@ -14,11 +14,14 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be set in production')
 }
 
+const APP_URL = process.env.APP_URL ?? 'http://localhost:4100'
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg' }),
-  baseURL: process.env.APP_URL ?? 'http://localhost:4100',
+  baseURL: APP_URL,
   basePath: '/api/auth',
   secret: process.env.SESSION_SECRET ?? 'dev-secret-change-me',
+  trustedOrigins: [APP_URL, new URL(APP_URL).origin.replace('https://', 'http://')],
 
   advanced: {
     database: {

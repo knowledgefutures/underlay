@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 interface Collection {
   id: string
@@ -60,10 +60,14 @@ function timeAgo(dateStr: string): string {
 type SortKey = 'featured' | 'updated' | 'name' | 'records'
 
 export default function CollectionExplorer() {
-  const [query, setQuery] = useState('')
-  const [selectedOwner, setSelectedOwner] = useState<string | null>(null)
-  const [selectedTag, setSelectedTag] = useState<string | null>(null)
-  const [sort, setSort] = useState<SortKey>('featured')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [query, setQuery] = useState(searchParams.get('q') ?? '')
+  const [selectedOwner, setSelectedOwner] = useState<string | null>(searchParams.get('owner'))
+  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag'))
+  const initSort = searchParams.get('sort')
+  const [sort, setSort] = useState<SortKey>(
+    initSort === 'updated' || initSort === 'name' || initSort === 'records' ? initSort : 'featured',
+  )
   const [collections, setCollections] = useState<Collection[]>([])
   const [owners, setOwners] = useState<OwnerFacet[]>([])
   const [tagFacets, setTagFacets] = useState<TagFacet[]>([])
@@ -74,6 +78,15 @@ export default function CollectionExplorer() {
 
   const isFiltered = !!(query || selectedOwner || selectedTag)
 
+  function syncUrl(q: string, owner: string | null, sortBy: SortKey, tag: string | null) {
+    const next = new URLSearchParams()
+    if (q) next.set('q', q)
+    if (owner) next.set('owner', owner)
+    if (tag) next.set('tag', tag)
+    if (sortBy !== 'featured') next.set('sort', sortBy)
+    setSearchParams(next, { replace: true })
+  }
+
   async function load(
     q = '',
     owner: string | null = null,
@@ -81,6 +94,7 @@ export default function CollectionExplorer() {
     tag: string | null = selectedTag,
   ) {
     setLoading(true)
+    syncUrl(q, owner, sortBy, tag)
     const params = new URLSearchParams()
     if (q) params.set('q', q)
     if (owner) params.set('owner', owner)
@@ -103,7 +117,7 @@ export default function CollectionExplorer() {
   }
 
   useEffect(() => {
-    load()
+    load(query, selectedOwner, sort, selectedTag)
   }, [])
 
   function handleInput(value: string) {
