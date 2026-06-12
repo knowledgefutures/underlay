@@ -104,7 +104,7 @@ export default function NewOrg() {
               <input
                 type="text"
                 required
-                pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
+                pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
                 minLength={2}
                 placeholder="my-org"
                 value={slug}
@@ -151,7 +151,7 @@ export default function NewOrg() {
 
             <button
               type="submit"
-              disabled={submitting || !slug || !displayName || !kfOrgId}
+              disabled={submitting || !slug || !displayName || (kfAccounts.length > 1 && !kfOrgId)}
               className="bg-ink text-parchment w-full rounded px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {submitting ? 'Creating...' : 'Create organization'}

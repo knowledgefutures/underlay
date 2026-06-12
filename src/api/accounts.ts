@@ -128,6 +128,51 @@ const app = new Hono<AuthEnv>()
       return c.json(orgs)
     },
   )
+  .post(
+    '/',
+    requireAuth('write'),
+    openApi({
+      tags: ['Accounts'],
+      summary: 'Create an organization',
+      request: {
+        json: z.object({
+          slug: z.string(),
+          name: z.string().optional(),
+        }),
+      },
+      responses: {
+        201: z.any(),
+        409: z.object({ error: z.string() }),
+        422: z.object({ error: z.string() }),
+      },
+    }),
+    async (c) => {
+      const { slug, name } = c.req.valid('json')
+      const userId = c.get('userId')!
+
+      const slugErr = validateSlug(slug)
+      if (slugErr) return c.json({ error: slugErr, statusCode: 422 }, 422)
+
+      const existing = await findOrgBySlug(slug)
+      if (existing) return c.json({ error: 'That slug is already taken', statusCode: 409 }, 409)
+
+      const orgId = crypto.randomUUID()
+      await db.insert(schema.organization).values({
+        id: orgId,
+        name: name || slug,
+        slug,
+        isDefault: false,
+      })
+      await db.insert(schema.member).values({
+        id: crypto.randomUUID(),
+        organizationId: orgId,
+        userId,
+        role: 'owner',
+      })
+
+      return c.json({ id: orgId, slug, name: name || slug }, 201)
+    },
+  )
   .get(
     '/:slug',
     openApi({
