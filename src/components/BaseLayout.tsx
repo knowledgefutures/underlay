@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 
+import CreateMenu from '~/components/CreateMenu'
 import UserMenu from '~/components/UserMenu'
 import { useAppContext } from '~/lib/app-context'
 
@@ -12,7 +13,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
       <header className="border-rule border-b">
         <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <Link to="/" className="flex items-center gap-2.5 no-underline">
-            <img src="https://docs.underlay.org/logoLight.svg" alt="Underlay" className="h-6" />
+            <img src="/logoLight.svg" alt="Underlay" className="h-6" />
             <span className="text-ink text-base font-semibold tracking-tight">Underlay</span>
             {mirrorConfig?.enabled && (
               <span className="text-ink-muted ml-1 self-center text-sm font-medium">
@@ -43,13 +44,16 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
                 </a>
               )
             ) : currentUser ? (
-              <UserMenu
-                slug={currentUser.slug}
-                displayName={currentUser.displayName}
-                avatarUrl={currentUser.avatarUrl}
-                orgs={currentUser.orgs ?? []}
-                isSteward={isSteward}
-              />
+              <>
+                <CreateMenu />
+                <UserMenu
+                  slug={currentUser.slug}
+                  displayName={currentUser.displayName}
+                  avatarUrl={currentUser.avatarUrl}
+                  orgs={currentUser.orgs ?? []}
+                  isSteward={isSteward}
+                />
+              </>
             ) : (
               <a href="/login" className="hover:text-ink transition-colors">
                 Log in

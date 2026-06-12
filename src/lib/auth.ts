@@ -88,54 +88,64 @@ export const auth = betterAuth({
     account: {
       create: {
         after: async (account) => {
-          await db
-            .delete(schema.account)
-            .where(
-              and(
-                eq(schema.account.userId, account.userId),
-                eq(schema.account.providerId, account.providerId),
-                ne(schema.account.id, account.id),
-              ),
-            )
+          try {
+            await db
+              .delete(schema.account)
+              .where(
+                and(
+                  eq(schema.account.userId, account.userId),
+                  eq(schema.account.providerId, account.providerId),
+                  ne(schema.account.id, account.id),
+                ),
+              )
+          } catch (err) {
+            console.error('[auth hook] account.create.after failed:', err)
+          }
         },
       },
     },
     user: {
       create: {
         after: async (user) => {
-          const baseSlug = (user.email.split('@')[0] ?? 'user')
-            .toLowerCase()
-            .replace(/[^a-z0-9-]/g, '-')
-            .replace(/-+/g, '-')
-            .slice(0, 30)
+          console.log('[auth hook] user.create.after starting for:', user.email)
+          try {
+            const baseSlug = (user.email.split('@')[0] ?? 'user')
+              .toLowerCase()
+              .replace(/[^a-z0-9-]/g, '-')
+              .replace(/-+/g, '-')
+              .slice(0, 30)
 
-          let slug = baseSlug
-          let attempt = 0
-          while (true) {
-            const [conflict] = await db
-              .select({ id: schema.organization.id })
-              .from(schema.organization)
-              .where(eq(schema.organization.slug, slug))
-              .limit(1)
-            if (!conflict) break
-            attempt++
-            slug = `${baseSlug}-${attempt}`
+            let slug = baseSlug
+            let attempt = 0
+            while (true) {
+              const [conflict] = await db
+                .select({ id: schema.organization.id })
+                .from(schema.organization)
+                .where(eq(schema.organization.slug, slug))
+                .limit(1)
+              if (!conflict) break
+              attempt++
+              slug = `${baseSlug}-${attempt}`
+            }
+
+            const orgId = crypto.randomUUID()
+            await db.insert(schema.organization).values({
+              id: orgId,
+              name: user.name,
+              slug,
+              isDefault: true,
+            })
+
+            await db.insert(schema.member).values({
+              id: crypto.randomUUID(),
+              organizationId: orgId,
+              userId: user.id,
+              role: 'owner',
+            })
+            console.log('[auth hook] default org created:', slug)
+          } catch (err) {
+            console.error('[auth hook] user.create.after failed:', err)
           }
-
-          const orgId = crypto.randomUUID()
-          await db.insert(schema.organization).values({
-            id: orgId,
-            name: user.name,
-            slug,
-            isDefault: true,
-          })
-
-          await db.insert(schema.member).values({
-            id: crypto.randomUUID(),
-            organizationId: orgId,
-            userId: user.id,
-            role: 'owner',
-          })
         },
       },
     },

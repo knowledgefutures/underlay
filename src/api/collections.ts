@@ -204,13 +204,18 @@ const app = new Hono<AuthEnv>()
       summary: 'Create a collection',
       request: {
         param: z.object({ owner: z.string() }),
-        json: z.object({ slug: z.string(), name: z.string(), public: z.boolean().optional() }),
+        json: z.object({
+          slug: z.string(),
+          name: z.string().optional(),
+          public: z.boolean().optional(),
+        }),
       },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner } = c.req.valid('param')
-      const { slug, name, public: isPublic } = c.req.valid('json')
+      const { slug, name: rawName, public: isPublic } = c.req.valid('json')
+      const name = rawName || slug
 
       // Resolve owner org
       const [org] = await db

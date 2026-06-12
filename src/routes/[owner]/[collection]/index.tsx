@@ -143,6 +143,50 @@ export default function CollectionPage() {
           </div>
         )}
 
+        {/* Empty state for new collections */}
+        {!data.latestVersion && isOwner && (
+          <div className="border-rule mb-6 rounded border px-6 py-10 text-center">
+            <h2 className="mb-2 text-base font-semibold">Get started with {collection}</h2>
+            <p className="text-ink-muted mx-auto mb-6 max-w-md text-sm leading-relaxed">
+              This collection is empty. Push your first version using the CLI or API.
+            </p>
+            <div className="bg-ink text-parchment mx-auto max-w-md overflow-hidden rounded text-left font-mono text-[13px] leading-relaxed">
+              <div className="p-4">
+                <div className="text-ink-muted mb-1 text-[11px] select-none">
+                  # initialize and push
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay init --remote {owner}/
+                  {collection}
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay add --schema ./schema.json
+                  ./records.jsonl
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay commit -m &quot;Initial
+                  version&quot;
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay push
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
+              <Link to="/docs/quickstart" className="text-link hover:underline">
+                Read the quickstart
+              </Link>
+              <span className="text-rule">&middot;</span>
+              <span className="text-ink-muted">
+                API:{' '}
+                <code className="bg-parchment-dark rounded px-1.5 py-0.5 text-[11px]">
+                  POST /api/collections/{owner}/{collection}/versions/negotiate
+                </code>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Two-column layout */}
         <div className="grid grid-cols-[1fr_260px] gap-8">
           {/* Main column */}

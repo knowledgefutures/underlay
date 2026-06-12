@@ -138,46 +138,121 @@ export default function CollectionExplorer() {
   return (
     <div className="flex gap-8">
       {/* Sidebar facets */}
-      {owners.length > 0 && (
-        <aside className="hidden w-44 shrink-0 md:block">
-          <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-            Organizations
-          </h3>
-          <ul className="space-y-0.5">
-            <li>
-              <button
-                onClick={() => handleOwnerClick(null)}
-                className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
-                  !selectedOwner
-                    ? 'bg-parchment-dark text-ink font-medium'
-                    : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
-                }`}
-              >
-                <span>All</span>
-                <span className="text-ink-muted text-xs">{totalCount}</span>
-              </button>
-            </li>
-            {owners.map((o) => (
-              <li key={o.slug}>
-                <button
-                  onClick={() => handleOwnerClick(o.slug)}
-                  className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
-                    selectedOwner === o.slug
-                      ? 'bg-parchment-dark text-ink font-medium'
-                      : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
-                  }`}
-                >
-                  <span className="truncate">{o.name ?? o.slug}</span>
-                  <span className="text-ink-muted ml-2 shrink-0 text-xs">{o.count}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+      {(owners.length > 0 || visibleTags.length > 0) && (
+        <aside className="hidden w-44 shrink-0 space-y-6 md:block">
+          {/* Tags */}
+          {visibleTags.length > 0 && (
+            <div>
+              <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
+                Topics
+              </h3>
+              <ul className="space-y-0.5">
+                <li>
+                  <button
+                    onClick={() => handleTagClick(null)}
+                    className={`w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                      !selectedTag
+                        ? 'bg-parchment-dark text-ink font-medium'
+                        : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
+                    }`}
+                  >
+                    All
+                  </button>
+                </li>
+                {visibleTags.map((tag) => (
+                  <li key={tag}>
+                    <button
+                      onClick={() => handleTagClick(tag)}
+                      className={`w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                        selectedTag === tag
+                          ? 'bg-parchment-dark text-ink font-medium'
+                          : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Organizations */}
+          {owners.length > 0 && (
+            <div>
+              <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
+                Organizations
+              </h3>
+              <ul className="space-y-0.5">
+                <li>
+                  <button
+                    onClick={() => handleOwnerClick(null)}
+                    className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                      !selectedOwner
+                        ? 'bg-parchment-dark text-ink font-medium'
+                        : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
+                    }`}
+                  >
+                    <span>All</span>
+                    <span className="text-ink-muted text-xs">{totalCount}</span>
+                  </button>
+                </li>
+                {owners.map((o) => (
+                  <li key={o.slug}>
+                    <button
+                      onClick={() => handleOwnerClick(o.slug)}
+                      className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                        selectedOwner === o.slug
+                          ? 'bg-parchment-dark text-ink font-medium'
+                          : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
+                      }`}
+                    >
+                      <span className="truncate">{o.name ?? o.slug}</span>
+                      <span className="text-ink-muted ml-2 shrink-0 text-xs">{o.count}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </aside>
       )}
 
       {/* Main content */}
       <div className="min-w-0 flex-1">
+        {/* Search + sort bar (always at top, never moves) */}
+        <div className="mb-5 flex gap-3">
+          <div className="relative flex-1">
+            <svg
+              className="text-ink-muted pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <input
+              type="search"
+              placeholder="Search collections..."
+              className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink w-full rounded-sm border py-2 pr-3 pl-10 text-sm focus:outline-none"
+              value={query}
+              onChange={(e) => handleInput(e.target.value)}
+            />
+          </div>
+          <select
+            value={sort}
+            onChange={(e) => handleSortChange(e.target.value)}
+            className="bg-parchment border-rule text-ink-muted rounded-sm border px-3 py-2 text-sm focus:outline-none"
+          >
+            <option value="featured">Featured</option>
+            <option value="records">Most records</option>
+            <option value="updated">Recent</option>
+            <option value="name">Name</option>
+          </select>
+        </div>
+
         {/* Featured collections hero */}
         {featuredCollections.length > 0 && !isFiltered && (
           <div className="mb-6">
@@ -211,68 +286,6 @@ export default function CollectionExplorer() {
                 </Link>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* Search + sort bar */}
-        <div className="mb-5 flex gap-3">
-          <div className="relative flex-1">
-            <svg
-              className="text-ink-muted pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <path d="m21 21-4.35-4.35" />
-            </svg>
-            <input
-              type="search"
-              placeholder="Search collections..."
-              className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink w-full rounded-sm border py-2 pr-3 pl-10 text-sm focus:outline-none"
-              value={query}
-              onChange={(e) => handleInput(e.target.value)}
-            />
-          </div>
-          <select
-            value={sort}
-            onChange={(e) => handleSortChange(e.target.value)}
-            className="bg-parchment border-rule text-ink-muted rounded-sm border px-3 py-2 text-sm focus:outline-none"
-          >
-            <option value="featured">Featured</option>
-            <option value="records">Most records</option>
-            <option value="updated">Recent</option>
-            <option value="name">Name</option>
-          </select>
-        </div>
-
-        {/* Tag filter chips */}
-        {visibleTags.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-1.5">
-            <button
-              onClick={() => handleTagClick(null)}
-              className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                !selectedTag
-                  ? 'bg-ink text-parchment'
-                  : 'bg-parchment-dark text-ink-muted hover:text-ink'
-              }`}
-            >
-              All
-            </button>
-            {visibleTags.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => handleTagClick(tag)}
-                className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                  selectedTag === tag
-                    ? 'bg-ink text-parchment'
-                    : 'bg-parchment-dark text-ink-muted hover:text-ink'
-                }`}
-              >
-                {tag}
-              </button>
-            ))}
           </div>
         )}
 
