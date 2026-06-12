@@ -103,7 +103,7 @@ export default function DocsIntegration() {
     <DocsLayout title="Integration Guide">
       <p>
         Everything a developer or LLM needs to push data to the registry. No SDK required. HTTPS and
-        JSON. For a machine-readable version, see <Link to="/llms.txt">llms.txt</Link>.
+        JSON. For a machine-readable version, see <a href="/llms.txt">llms.txt</a>.
       </p>
 
       <h2>What is Underlay?</h2>

@@ -264,9 +264,9 @@ export default function Protocol() {
             User docs
           </Link>{' '}
           &middot;{' '}
-          <Link to="/llms.txt" className="text-link underline">
+          <a href="/llms.txt" className="text-link underline">
             llms.txt
-          </Link>
+          </a>
           {isSteward && (
             <>
               {' '}

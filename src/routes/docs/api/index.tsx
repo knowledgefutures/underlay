@@ -9,9 +9,9 @@ export default function DocsApi() {
         The Underlay API is a JSON REST API served at <code>/api</code>. All request and response
         bodies are JSON (except file uploads/downloads). A machine-readable reference is available
         at{' '}
-        <Link to="/llms.txt" className="text-link underline">
+        <a href="/llms.txt" className="text-link underline">
           /llms.txt
-        </Link>
+        </a>
         .
       </p>
 
