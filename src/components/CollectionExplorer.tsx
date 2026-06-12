@@ -61,13 +61,16 @@ type SortKey = 'featured' | 'updated' | 'name' | 'records'
 
 export default function CollectionExplorer() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [query, setQuery] = useState(searchParams.get('q') ?? '')
-  const [selectedOwner, setSelectedOwner] = useState<string | null>(searchParams.get('owner'))
-  const [selectedTag, setSelectedTag] = useState<string | null>(searchParams.get('tag'))
+  const initQuery = searchParams.get('q') ?? ''
+  const initOwner = searchParams.get('owner')
+  const initTag = searchParams.get('tag')
   const initSort = searchParams.get('sort')
-  const [sort, setSort] = useState<SortKey>(
-    initSort === 'updated' || initSort === 'name' || initSort === 'records' ? initSort : 'featured',
-  )
+  const initSortKey: SortKey =
+    initSort === 'updated' || initSort === 'name' || initSort === 'records' ? initSort : 'featured'
+  const [query, setQuery] = useState(initQuery)
+  const [selectedOwner, setSelectedOwner] = useState<string | null>(initOwner)
+  const [selectedTag, setSelectedTag] = useState<string | null>(initTag)
+  const [sort, setSort] = useState<SortKey>(initSortKey)
   const [collections, setCollections] = useState<Collection[]>([])
   const [owners, setOwners] = useState<OwnerFacet[]>([])
   const [tagFacets, setTagFacets] = useState<TagFacet[]>([])
@@ -117,7 +120,7 @@ export default function CollectionExplorer() {
   }
 
   useEffect(() => {
-    load(query, selectedOwner, sort, selectedTag)
+    load(initQuery, initOwner, initSortKey, initTag)
   }, [])
 
   function handleInput(value: string) {
@@ -141,8 +144,6 @@ export default function CollectionExplorer() {
     setSort(s)
     load(query, selectedOwner, s, selectedTag)
   }
-
-  const totalCount = owners.reduce((sum, o) => sum + o.count, 0)
 
   const visibleTags =
     featuredTags.length > 0

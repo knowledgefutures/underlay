@@ -1,12 +1,14 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
+import { fetchBase } from '~/lib/fetch-base'
+
 export const handle = {
   title: (params: Record<string, string>) =>
     `Diff — ${params.owner}/${params.collection} · Underlay`,
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const base = new URL(request.url).origin
+  const base = fetchBase(request.url)
   const headers = { Cookie: request.headers.get('Cookie') ?? '' }
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 

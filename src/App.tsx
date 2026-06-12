@@ -1,6 +1,7 @@
 import type { LoaderFunctionArgs, RouteObject } from 'react-router'
 
 import Root from '~/components/Root'
+import { fetchBase } from '~/lib/fetch-base'
 import { buildDataRoutes } from '~/route-gen'
 
 const components = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
@@ -11,7 +12,7 @@ const dataModules = import.meta.glob<{
 }>('./routes/**/*.data.ts', { eager: true })
 
 async function rootLoader({ request }: LoaderFunctionArgs) {
-  const res = await fetch(new URL('/api/context', request.url), {
+  const res = await fetch(`${fetchBase(request.url)}/api/context`, {
     headers: { Cookie: request.headers.get('Cookie') ?? '' },
   })
   if (!res.ok) {

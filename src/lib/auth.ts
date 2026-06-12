@@ -57,7 +57,7 @@ export const auth = betterAuth({
             website: { type: 'string', required: false, input: true },
             avatarUrl: { type: 'string', required: false, input: true },
             arkNaan: { type: 'string', required: false, input: true },
-            kfOrgId: { type: 'string', required: false, input: true },
+            kfOrgId: { type: 'string', required: true, input: true },
             isDefault: { type: 'boolean', required: false, input: true, defaultValue: false },
           },
         },

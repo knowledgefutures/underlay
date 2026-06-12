@@ -130,10 +130,24 @@ const app = new Hono<AuthEnv>()
         .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
         .limit(1)
 
-      if (!acct) return c.json([])
+      if (!acct) {
+        console.warn(`[available-kf-orgs] No kf-auth account row for userId=${userId}`)
+        return c.json([])
+      }
 
-      const { fetchAuthOrgs } = await import('../lib/auth-internal.server.js')
-      return c.json(await fetchAuthOrgs(acct.accountId))
+      const { fetchAuthOrgs, hasInternalApi } = await import('../lib/auth-internal.server.js')
+      if (!hasInternalApi) {
+        console.warn(
+          '[available-kf-orgs] Internal API not configured (AUTH_INTERNAL_API_KEY missing)',
+        )
+        return c.json([])
+      }
+
+      const orgs = await fetchAuthOrgs(acct.accountId)
+      console.log(
+        `[available-kf-orgs] userId=${userId} accountId=${acct.accountId} → ${orgs.length} orgs`,
+      )
+      return c.json(orgs)
     },
   )
   .get(

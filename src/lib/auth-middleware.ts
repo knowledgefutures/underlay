@@ -1,7 +1,9 @@
 import { redirect, type MiddlewareFunction } from 'react-router'
 
+import { fetchBase } from '~/lib/fetch-base'
+
 export const requireAuth: MiddlewareFunction = async ({ request }, next) => {
-  const res = await fetch(new URL('/api/context', request.url), {
+  const res = await fetch(`${fetchBase(request.url)}/api/context`, {
     headers: { Cookie: request.headers.get('Cookie') ?? '' },
   })
   const { currentUser } = await res.json()

@@ -1,5 +1,7 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
+import { fetchBase } from '~/lib/fetch-base'
+
 export const posts: Record<string, { title: string; subtitle: string; date: string }> = {
   '2024-04-27-underlay-revived': {
     title: 'Underlay, Revived',
@@ -42,7 +44,7 @@ export const handle = {
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const base = new URL(request.url).origin
+  const base = fetchBase(request.url)
   const res = await fetch(new URL(`/api/blog/${params.slug}`, base))
   return { content: res.ok ? await res.text() : '' }
 }
