@@ -26,24 +26,25 @@ function HeroBackground() {
 
     const boxes = Array.from({ length: count }, (_, i) => {
       const el = document.createElement('div')
-      const size = 30 + rng(i * 5) * 80
+      const size = 20 + rng(i * 7) * 120
+      const aspect = 0.5 + rng(i * 7 + 5) * 1.0
       el.style.cssText = `
         position:absolute;
         width:${size}px;
-        height:${size}px;
-        border:1px solid rgba(201,193,176,${0.25 + rng(i * 5 + 4) * 0.2});
-        border-radius:3px;
+        height:${size * aspect}px;
+        background:rgba(235,228,214,${0.25 + rng(i * 7 + 6) * 0.3});
+        border-radius:${2 + rng(i * 7 + 4) * 4}px;
         pointer-events:none;
       `
       container.appendChild(el)
       return {
         el,
-        x: rng(i * 5 + 1) * w,
-        y: rng(i * 5 + 2) * h,
-        vx: (rng(i * 5 + 3) - 0.5) * 0.12,
-        vy: (rng(i * 5 + 4) - 0.5) * 0.1,
-        rot: rng(i * 5) * 360,
-        vr: (rng(i * 5 + 3) - 0.5) * 0.04,
+        x: rng(i * 7 + 1) * w,
+        y: rng(i * 7 + 2) * h,
+        vx: (rng(i * 7 + 3) - 0.5) * 0.35,
+        vy: (rng(i * 7 + 4) - 0.5) * 0.3,
+        rot: rng(i * 7 + 5) * 360,
+        vr: (rng(i * 7 + 6) - 0.5) * 0.08,
         size,
       }
     })
@@ -250,7 +251,7 @@ export default function Home() {
       {/* In the registry */}
       {collections.length > 0 && (
         <section className="bg-parchment-dark border-rule border-y">
-          <div className="mx-auto max-w-5xl px-4 py-10">
+          <div className="mx-auto max-w-5xl px-4 py-16">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-ink-muted text-xs font-semibold tracking-widest uppercase">
                 In the registry
@@ -310,7 +311,7 @@ export default function Home() {
 
       {/* The workflow */}
       <section className="border-rule border-t">
-        <div className="mx-auto max-w-5xl px-4 py-10">
+        <div className="mx-auto max-w-5xl px-4 py-16">
           <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_1fr]">
             <div>
               <h2 className="text-ink-muted mb-4 text-xs font-semibold tracking-widest uppercase">
@@ -407,17 +408,6 @@ export default function Home() {
                 Protocol →
               </Link>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer note */}
-      <section className="mx-auto max-w-5xl px-4 py-6">
-        <div className="flex flex-col gap-4 text-sm md:flex-row md:gap-16">
-          <div>
-            <span className="text-ink-muted text-xs">
-              Knowledge Futures &middot; A 501(c)(3) nonprofit &middot; Open source
-            </span>
           </div>
         </div>
       </section>

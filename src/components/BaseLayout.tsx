@@ -69,12 +69,10 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
               Knowledge Futures
             </a>
           </div>
-          <div className="flex items-center gap-4">
+          <div>
             <a href="https://github.com/knowledgefutures/underlay" className="hover:text-ink">
               GitHub
             </a>
-            <span className="text-rule">&middot;</span>
-            <span className="font-mono">v0.1.0</span>
           </div>
         </div>
       </footer>

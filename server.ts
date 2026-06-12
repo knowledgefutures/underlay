@@ -163,15 +163,16 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
 // /login redirect — fall through to React route only when there's an error to display
 app.get('/login', async (c, next) => {
   const url = new URL(c.req.url)
+  const appOrigin = new URL(process.env.APP_URL ?? 'http://localhost:4100').origin
   if (!url.searchParams.has('error')) {
-    const signInUrl = new URL('/api/auth/sign-in/oauth2', url.origin)
+    const signInUrl = new URL('/api/auth/sign-in/oauth2', appOrigin)
     const authRes = await auth.handler(
       new Request(signInUrl, {
         method: 'POST',
         headers: new Headers({
           'Content-Type': 'application/json',
           Cookie: c.req.header('cookie') ?? '',
-          Origin: url.origin,
+          Origin: appOrigin,
         }),
         body: JSON.stringify({ providerId: 'kf-auth', callbackURL: '/dashboard' }),
       }),
