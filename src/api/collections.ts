@@ -195,6 +195,60 @@ const app = new Hono<AuthEnv>()
       })
     },
   )
+  // Create organization
+  .post(
+    '/organizations',
+    requireAuth('write'),
+    openApi({
+      tags: ['Organizations'],
+      summary: 'Create an organization',
+      request: {
+        json: z.object({
+          slug: z.string(),
+          name: z.string().optional(),
+        }),
+      },
+      responses: { 201: z.any() },
+    }),
+    async (c) => {
+      const { slug, name } = c.req.valid('json')
+      const userId = c.get('userId')!
+
+      if (
+        !slug ||
+        slug.length < 2 ||
+        slug.length > 64 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)
+      ) {
+        return c.json({ error: 'Invalid slug', statusCode: 422 }, 422)
+      }
+
+      const [existing] = await db
+        .select({ id: schema.organization.id })
+        .from(schema.organization)
+        .where(eq(schema.organization.slug, slug))
+        .limit(1)
+      if (existing) {
+        return c.json({ error: 'That slug is already taken', statusCode: 409 }, 409)
+      }
+
+      const orgId = uuidv4()
+      await db.insert(schema.organization).values({
+        id: orgId,
+        name: name || slug,
+        slug,
+        isDefault: false,
+      })
+      await db.insert(schema.member).values({
+        id: uuidv4(),
+        organizationId: orgId,
+        userId,
+        role: 'owner',
+      })
+
+      return c.json({ id: orgId, slug, name: name || slug }, 201)
+    },
+  )
   // Create collection
   .post(
     '/accounts/:owner/collections',
