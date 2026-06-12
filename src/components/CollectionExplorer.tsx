@@ -6,6 +6,7 @@ interface Collection {
   slug: string
   name: string
   description?: string
+  tags?: string[]
   ownerSlug: string
   ownerName?: string
   createdAt: string
@@ -21,6 +22,11 @@ interface Collection {
 interface OwnerFacet {
   slug: string
   name: string | null
+  count: number
+}
+
+interface TagFacet {
+  name: string
   count: number
 }
 
@@ -51,29 +57,47 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
+type SortKey = 'featured' | 'updated' | 'name' | 'records'
+
 export default function CollectionExplorer() {
   const [query, setQuery] = useState('')
   const [selectedOwner, setSelectedOwner] = useState<string | null>(null)
-  const [sort, setSort] = useState<'updated' | 'name'>('updated')
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [sort, setSort] = useState<SortKey>('featured')
   const [collections, setCollections] = useState<Collection[]>([])
   const [owners, setOwners] = useState<OwnerFacet[]>([])
+  const [tagFacets, setTagFacets] = useState<TagFacet[]>([])
+  const [featuredTags, setFeaturedTags] = useState<string[]>([])
+  const [featuredCollections, setFeaturedCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
-  async function load(q = '', owner: string | null = null, sortBy = sort) {
+  const isFiltered = !!(query || selectedOwner || selectedTag)
+
+  async function load(
+    q = '',
+    owner: string | null = null,
+    sortBy: SortKey = sort,
+    tag: string | null = selectedTag,
+  ) {
     setLoading(true)
     const params = new URLSearchParams()
     if (q) params.set('q', q)
     if (owner) params.set('owner', owner)
+    if (tag) params.set('tag', tag)
     params.set('sort', sortBy)
     try {
       const res = await fetch(`/api/collections?${params}`)
       const data = await res.json()
       setCollections(data.collections)
       setOwners(data.facets.owners)
+      setTagFacets(data.facets.tags ?? [])
+      if (data.featuredTags) setFeaturedTags(data.featuredTags)
+      if (data.featuredCollections) setFeaturedCollections(data.featuredCollections)
     } catch {
       setCollections([])
       setOwners([])
+      setTagFacets([])
     }
     setLoading(false)
   }
@@ -85,21 +109,31 @@ export default function CollectionExplorer() {
   function handleInput(value: string) {
     setQuery(value)
     clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => load(value, selectedOwner), 300)
+    timerRef.current = setTimeout(() => load(value, selectedOwner, sort, selectedTag), 300)
   }
 
   function handleOwnerClick(ownerSlug: string | null) {
     setSelectedOwner(ownerSlug)
-    load(query, ownerSlug)
+    load(query, ownerSlug, sort, selectedTag)
+  }
+
+  function handleTagClick(tag: string | null) {
+    setSelectedTag(tag)
+    load(query, selectedOwner, sort, tag)
   }
 
   function handleSortChange(value: string) {
-    const s = value as 'updated' | 'name'
+    const s = value as SortKey
     setSort(s)
-    load(query, selectedOwner, s)
+    load(query, selectedOwner, s, selectedTag)
   }
 
   const totalCount = owners.reduce((sum, o) => sum + o.count, 0)
+
+  const visibleTags =
+    featuredTags.length > 0
+      ? featuredTags.filter((t) => tagFacets.some((f) => f.name === t))
+      : tagFacets.slice(0, 12).map((f) => f.name)
 
   return (
     <div className="flex gap-8">
@@ -144,6 +178,42 @@ export default function CollectionExplorer() {
 
       {/* Main content */}
       <div className="min-w-0 flex-1">
+        {/* Featured collections hero */}
+        {featuredCollections.length > 0 && !isFiltered && (
+          <div className="mb-6">
+            <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
+              Featured
+            </h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {featuredCollections.map((c) => (
+                <Link
+                  key={`feat-${c.ownerSlug}/${c.slug}`}
+                  to={`/${c.ownerSlug}/${c.slug}`}
+                  className="border-rule hover:border-ink-muted/50 group rounded-sm border p-4 transition-all hover:shadow-sm"
+                >
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-ink-muted text-xs">{c.ownerSlug}/</span>
+                    <span className="text-sm font-semibold">{c.slug}</span>
+                  </div>
+                  {c.description && (
+                    <p className="text-ink-muted mt-1.5 line-clamp-2 text-xs leading-relaxed">
+                      {c.description}
+                    </p>
+                  )}
+                  <div className="text-ink-muted mt-3 flex items-center gap-3 text-xs tabular-nums">
+                    {c.recordCount != null && <span>{formatCount(c.recordCount)} records</span>}
+                    {c.tags && c.tags.length > 0 && (
+                      <span className="bg-parchment-dark rounded px-1.5 py-0.5 text-[10px] leading-none">
+                        {c.tags[0]}
+                      </span>
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Search + sort bar */}
         <div className="mb-5 flex gap-3">
           <div className="relative flex-1">
@@ -170,10 +240,41 @@ export default function CollectionExplorer() {
             onChange={(e) => handleSortChange(e.target.value)}
             className="bg-parchment border-rule text-ink-muted rounded-sm border px-3 py-2 text-sm focus:outline-none"
           >
+            <option value="featured">Featured</option>
+            <option value="records">Most records</option>
             <option value="updated">Recent</option>
             <option value="name">Name</option>
           </select>
         </div>
+
+        {/* Tag filter chips */}
+        {visibleTags.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => handleTagClick(null)}
+              className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                !selectedTag
+                  ? 'bg-ink text-parchment'
+                  : 'bg-parchment-dark text-ink-muted hover:text-ink'
+              }`}
+            >
+              All
+            </button>
+            {visibleTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => handleTagClick(tag)}
+                className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                  selectedTag === tag
+                    ? 'bg-ink text-parchment'
+                    : 'bg-parchment-dark text-ink-muted hover:text-ink'
+                }`}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Mobile owner filter */}
         {owners.length > 0 && (
@@ -209,8 +310,8 @@ export default function CollectionExplorer() {
         ) : collections.length === 0 ? (
           <div className="py-12 text-center">
             <p className="text-ink-muted text-sm">
-              {query || selectedOwner
-                ? 'No collections match your search.'
+              {query || selectedOwner || selectedTag
+                ? 'No collections match your filters.'
                 : 'No public collections yet.'}
             </p>
           </div>
@@ -218,6 +319,7 @@ export default function CollectionExplorer() {
           <>
             <p className="text-ink-muted mb-3 text-xs">
               {collections.length} collection{collections.length !== 1 ? 's' : ''}
+              {selectedTag && ` in ${selectedTag}`}
               {selectedOwner && ` from ${selectedOwner}`}
               {query && ` matching "${query}"`}
             </p>
@@ -232,6 +334,18 @@ export default function CollectionExplorer() {
                     <div className="flex items-baseline gap-1.5">
                       <span className="text-ink-muted text-xs">{c.ownerSlug}/</span>
                       <span className="text-sm font-semibold">{c.slug}</span>
+                      {c.tags && c.tags.length > 0 && (
+                        <span className="flex gap-1">
+                          {c.tags.slice(0, 2).map((tag) => (
+                            <span
+                              key={tag}
+                              className="bg-parchment-dark text-ink-muted rounded px-1.5 py-0.5 text-[10px] leading-none"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </div>
                     {c.description && (
                       <p className="text-ink-muted mt-0.5 line-clamp-1 text-xs leading-relaxed">

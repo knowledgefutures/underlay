@@ -36,6 +36,13 @@
       "when": 1781195924011,
       "tag": "0004_fancy_nightcrawler",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781223203253,
+      "tag": "0005_instance_settings",
+      "breakpoints": true
     }
   ]
 }

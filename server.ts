@@ -98,9 +98,9 @@ app.get('/agent/:token', agentHandlers.agentPage)
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rateLimitMiddleware)
 
-// --- Mirror mode guard for admin routes ---
-// Operator-only: admin-scoped API key, or a session user listed in MIRROR_ADMIN_EMAILS
-app.use('/api/admin/*', async (c, next) => {
+// --- Admin route guards ---
+// Mirror admin: requires mirror mode + admin API key or MIRROR_ADMIN_EMAILS
+app.use('/api/admin/mirror/*', async (c, next) => {
   const config = getMirrorConfig()
   if (!config.enabled) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
@@ -120,6 +120,18 @@ app.use('/api/admin/*', async (c, next) => {
     },
     403,
   )
+})
+
+// Steward admin: requires kfRole === 'admin'
+// Steward admin: requires kfRole === 'admin'
+app.use('/api/admin/explore-*', async (c, next) => {
+  const userId = c.get('userId')
+  if (!userId) return c.json({ error: 'Unauthorized', statusCode: 401 }, 401)
+  const sessionUser = await getSessionUser(c.req.raw)
+  if (sessionUser?.kfRole !== 'admin') {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+  return next()
 })
 
 // --- ARK resolution middleware ---
@@ -203,6 +215,68 @@ app.post('/api/admin/mirror/sync/stop', admin.mirrorSyncStop)
 app.get('/api/admin/mirror/sync/progress', admin.mirrorSyncProgress)
 app.get('/api/admin/mirror/sync/active', admin.mirrorSyncActive)
 app.get('/api/admin/mirror/history', admin.mirrorHistory)
+
+// Steward-only: explore featured tags
+app.get('/api/admin/explore-tags', async (c) => {
+  const { db, schema } = await import('~/db/client.server')
+  const { eq } = await import('drizzle-orm')
+  const [row] = await db
+    .select({ value: schema.instanceSettings.value })
+    .from(schema.instanceSettings)
+    .where(eq(schema.instanceSettings.key, 'explore_featured_tags'))
+    .limit(1)
+  return c.json({ tags: Array.isArray(row?.value) ? row.value : [] })
+})
+
+app.put('/api/admin/explore-tags', async (c) => {
+  const body = await c.req.json<{ tags: string[] }>()
+  if (!Array.isArray(body.tags) || !body.tags.every((t: unknown) => typeof t === 'string')) {
+    return c.json({ error: 'tags must be an array of strings', statusCode: 422 }, 422)
+  }
+  const { db, schema } = await import('~/db/client.server')
+  await db
+    .insert(schema.instanceSettings)
+    .values({ key: 'explore_featured_tags', value: body.tags, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: schema.instanceSettings.key,
+      set: { value: body.tags, updatedAt: new Date() },
+    })
+  return c.json({ ok: true, tags: body.tags })
+})
+
+// Steward-only: explore featured collections
+app.get('/api/admin/explore-collections', async (c) => {
+  const { db, schema } = await import('~/db/client.server')
+  const { eq } = await import('drizzle-orm')
+  const [row] = await db
+    .select({ value: schema.instanceSettings.value })
+    .from(schema.instanceSettings)
+    .where(eq(schema.instanceSettings.key, 'explore_featured_collections'))
+    .limit(1)
+  return c.json({ collections: Array.isArray(row?.value) ? row.value : [] })
+})
+
+app.put('/api/admin/explore-collections', async (c) => {
+  const body = await c.req.json<{ collections: string[] }>()
+  if (
+    !Array.isArray(body.collections) ||
+    !body.collections.every((s: unknown) => typeof s === 'string')
+  ) {
+    return c.json(
+      { error: 'collections must be an array of "owner/slug" strings', statusCode: 422 },
+      422,
+    )
+  }
+  const { db, schema } = await import('~/db/client.server')
+  await db
+    .insert(schema.instanceSettings)
+    .values({ key: 'explore_featured_collections', value: body.collections, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: schema.instanceSettings.key,
+      set: { value: body.collections, updatedAt: new Date() },
+    })
+  return c.json({ ok: true, collections: body.collections })
+})
 
 // Query
 app.get('/api/query/sqlite/:owner/:slug/:version', query.sqlite)

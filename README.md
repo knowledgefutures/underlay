@@ -329,19 +329,27 @@ Required GitHub secrets: `SSH_PRIVATE_KEY`, `SSH_USER`, `GHCR_USER`, `GHCR_TOKEN
 | ----------------------------- | ---------------------------------------------- |
 | `docker-compose.yml`          | Deployed stacks (prod & dev via Swarm)         |
 | `docker-compose.local.yml`    | Local development (source-mounted, hot reload) |
-| `docker-compose.withauth.yml` | Self-hosted: app + bundled KF Auth stack       |
+| `docker-compose.withauth.yml` | Self-hosted: app + KF Auth + MinIO + Caddy     |
 
 ### Self-Hosting
 
 Run the Underlay with a bundled auth server (no external auth provider needed):
 
 ```bash
-DOMAIN=https://my-instance.com docker compose -f docker-compose.withauth.yml up
+DOMAIN=https://my-instance.com docker compose -f docker-compose.withauth.yml up -d
 ```
 
-This starts Postgres, KF Auth (auth + account), the Underlay app, and Caddy with TLS. On first boot, secrets are auto-generated. Set `SMTP_*` vars for email delivery.
+This starts Postgres, KF Auth (auth + account), MinIO (S3-compatible storage), the Underlay app, and Caddy with automatic TLS. On first boot, an init container auto-generates all secrets (session keys, OAuth client credentials, S3 credentials).
 
-Supporting files live in `selfhost/` (Caddyfile, Postgres init script).
+Optional configuration (via environment variables or `.env` file):
+- `SMTP_*` vars for email delivery (password resets, invitations)
+- `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` for GitHub login
+- `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google login
+- `ORCID_CLIENT_ID`/`ORCID_CLIENT_SECRET` for ORCID login
+
+To use external S3 (AWS, Cloudflare R2, etc.) instead of bundled MinIO, remove the `minio` and `minio-init` services and set `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` in the app environment.
+
+Supporting files live in `selfhost/` (Caddyfile, Postgres init script). See [/docs/self-host](https://underlay.org/docs/self-host) for full details.
 
 ## Environment Variables
 

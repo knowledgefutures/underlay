@@ -1,10 +1,15 @@
 # docker-compose.withauth.yml — Self-hosted Underlay with bundled auth.
 #
-# Runs: Underlay app + KF Auth (auth + account) + Postgres + Caddy
+# Runs: Underlay app + KF Auth (auth + account) + Postgres + MinIO (S3) + Caddy
 # One command: docker compose -f docker-compose.withauth.yml up
 #
 # First run generates secrets automatically via the init container.
 # Set DOMAIN=https://your-domain.com in your shell or .env file.
+#
+# To use external S3 instead of bundled MinIO, remove the minio service and set
+# S3_BUCKET, S3_REGION, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY in the app
+# environment block (or pass them as env vars that the init container writes
+# into .env.app).
 
 name: underlay-withauth
 
@@ -22,8 +27,11 @@ services:
         fi
         apk add --no-cache openssl
         AUTH_SECRET=$$(openssl rand -hex 32)
+        SESSION_SECRET=$$(openssl rand -hex 32)
         CLIENT_SECRET=$$(openssl rand -hex 32)
         INTERNAL_KEY=$$(openssl rand -hex 32)
+        MINIO_ACCESS=$$(openssl rand -hex 16)
+        MINIO_SECRET=$$(openssl rand -hex 32)
         printf '%s\n' \
           "BETTER_AUTH_SECRET=$$AUTH_SECRET" \
           "BETTER_AUTH_URL=$${DOMAIN:-http://localhost}/auth" \
@@ -49,19 +57,30 @@ services:
           "- client_id: underlay" \
           "  client_secret: $$CLIENT_SECRET" \
           "  redirect_uris:" \
-          "    - $${DOMAIN:-http://localhost}/auth/callback" \
+          "    - $${DOMAIN:-http://localhost}/api/auth/oauth2/callback/kf-auth" \
           "  skip_consent: true" \
           "  display_name: \"Underlay\"" \
           "  allow_sign_up: true" \
           > /config/apps.withauth.yaml
         printf '%s\n' \
+          "SESSION_SECRET=$$SESSION_SECRET" \
           "OIDC_ISSUER_URL=$${DOMAIN:-http://localhost}/auth" \
           "OIDC_ISSUER_INTERNAL_URL=http://auth:3000" \
+          "OIDC_ACCOUNT_URL=$${DOMAIN:-http://localhost}/account" \
           "OIDC_CLIENT_ID=underlay" \
           "OIDC_CLIENT_SECRET=$$CLIENT_SECRET" \
           "AUTH_INTERNAL_API_KEY=$$INTERNAL_KEY" \
           "DATABASE_URL=postgres://kfauth:kfauth@postgres:5432/app" \
+          "S3_BUCKET=underlay" \
+          "S3_REGION=us-east-1" \
+          "S3_ENDPOINT=http://minio:9000" \
+          "S3_ACCESS_KEY=$$MINIO_ACCESS" \
+          "S3_SECRET_KEY=$$MINIO_SECRET" \
           > /config/.env.app
+        printf '%s\n' \
+          "MINIO_ROOT_USER=$$MINIO_ACCESS" \
+          "MINIO_ROOT_PASSWORD=$$MINIO_SECRET" \
+          > /config/.env.minio
         echo "Init complete."
     volumes:
       - withauth-config:/config
@@ -95,6 +114,47 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # --- MinIO (S3-compatible object storage) ---
+  # Remove this service if using external S3/R2 — set S3_* vars in app environment instead.
+  minio:
+    image: minio/minio:latest
+    depends_on:
+      withauth-init:
+        condition: service_completed_successfully
+    volumes:
+      - minio-data:/data
+      - withauth-config:/config:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -a && . /config/.env.minio && set +a
+        exec minio server /data --console-address ":9001"
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Create the default bucket on first run
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+      withauth-init:
+        condition: service_completed_successfully
+    volumes:
+      - withauth-config:/config:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -a && . /config/.env.minio && set +a
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing local/underlay
+        echo "Bucket ready."
 
   # --- Auth server (kf-auth) ---
   auth:
@@ -136,13 +196,15 @@ services:
         condition: service_completed_successfully
       auth:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       PORT: 4100
       APP_URL: ${DOMAIN:-http://localhost}
     volumes:
       - withauth-config:/config:ro
-    command: sh -c "set -a && . /config/.env.app && set +a && node dist/server.js"
+    command: sh -c "set -a && . /config/.env.app && set +a && node --import tsx/esm server.ts"
 
   # --- Caddy reverse proxy ---
   caddy:
@@ -164,6 +226,7 @@ services:
 
 volumes:
   pgdata:
+  minio-data:
   withauth-config:
   caddy-data:
   caddy-config:

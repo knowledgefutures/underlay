@@ -5,6 +5,12 @@ import { useAppContext } from '~/lib/app-context'
 
 const tools = [
   {
+    name: 'Explore Page',
+    href: '/admin/explore-tags',
+    description: 'Manage featured collections and tag filters on the explore page.',
+    stewardOnly: true,
+  },
+  {
     name: 'Discussion Review',
     href: '/admin/discussion',
     description:
