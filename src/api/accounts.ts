@@ -123,17 +123,9 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const userId = c.get('userId')!
-
-      const [acct] = await db
-        .select({ accountId: schema.account.accountId })
-        .from(schema.account)
-        .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
-        .limit(1)
-
-      if (!acct) return c.json([])
-
-      const { fetchAuthOrgs } = await import('../lib/auth-internal.server.js')
-      return c.json(await fetchAuthOrgs(acct.accountId))
+      const { resolveUserKfOrgs } = await import('../lib/auth-internal.server.js')
+      const orgs = await resolveUserKfOrgs(userId, db, schema)
+      return c.json(orgs)
     },
   )
   .get(

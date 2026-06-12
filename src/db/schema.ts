@@ -483,3 +483,11 @@ export const arkRecordTypes = pgTable(
   },
   (t) => [primaryKey({ columns: [t.collectionId, t.recordType] })],
 )
+
+// --- Instance-wide settings (key-value) ---
+
+export const instanceSettings = pgTable('instance_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})

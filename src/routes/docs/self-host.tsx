@@ -1,186 +1,222 @@
+import { Link } from 'react-router'
+
 import DocsLayout from '~/components/DocsLayout'
 
-const devShCode = `git clone https://github.com/knowledgefutures/underlay.git
-cd underlay
-./dev.sh`
+const quickStart = `DOMAIN=https://your-domain.com docker compose -f docker-compose.withauth.yml up -d`
 
-const secretsCode = `# Generate a keypair
-age-keygen -o key.txt
+const localStart = `docker compose -f docker-compose.withauth.yml up -d`
 
-# Add the public key to .sops.yaml, then:
-npm run secrets:encrypt       # .env → .env.enc
-npm run secrets:decrypt       # .env.enc → .env
-npm run secrets:encrypt:dev   # .env.dev → .env.dev.enc
-npm run secrets:decrypt:dev   # .env.dev.enc → .env.dev`
+const envExample = `# Required
+DOMAIN=https://your-domain.com
 
-const backupCode = `# Manual backup
-npm run tool:backup
+# Optional: email delivery (for password resets, invitations)
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_FROM=noreply@your-domain.com
+SMTP_USER=apikey
+SMTP_PASS=your-smtp-password
 
-# Backups are stored at:
-# s3://{bucket}/{BACKUP_S3_PREFIX}{timestamp}/underlay.sql.gz`
+# Optional: social login providers
+GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+ORCID_CLIENT_ID=...
+ORCID_CLIENT_SECRET=...`
+
+const externalS3 = `# In docker-compose.withauth.yml, remove the minio and minio-init services,
+# then add these to the app service's environment block:
+S3_BUCKET: your-bucket-name
+S3_REGION: us-east-1
+S3_ENDPOINT: https://your-account-id.r2.cloudflarestorage.com  # omit for AWS S3
+S3_ACCESS_KEY: your-access-key
+S3_SECRET_KEY: your-secret-key`
+
+const resetCmd = `docker compose -f docker-compose.withauth.yml down -v
+docker compose -f docker-compose.withauth.yml up -d`
 
 export default function DocsSelfHost() {
   return (
     <DocsLayout title="Self-Hosting">
       <p>
-        Underlay is designed to be self-hosted. You need three things: a Node.js runtime, a
-        PostgreSQL database, and S3-compatible object storage.
+        The Underlay{' '}
+        <Link to="/protocol" className="text-link underline">
+          protocol
+        </Link>{' '}
+        is an open specification. This repository is the reference implementation, but anyone can
+        build an Underlay-compatible server tailored to their infrastructure, language, or use case
+        — as long as it implements the protocol (content-addressed records, hash negotiation,
+        immutable versioning). The protocol is the contract; the implementation is yours.
+      </p>
+      <p>
+        What follows is how to self-host <em>this</em> implementation. It ships with a
+        self-contained Docker Compose setup that bundles everything you need: the app, auth server,
+        PostgreSQL, S3-compatible storage, and a reverse proxy. One command, no external
+        dependencies.
+      </p>
+
+      <h2>What gets deployed</h2>
+      <ul>
+        <li>
+          <strong>Underlay app</strong> — the main application (API + web UI)
+        </li>
+        <li>
+          <strong>KF Auth</strong> — authentication server (OAuth2/OIDC) + account management UI
+        </li>
+        <li>
+          <strong>PostgreSQL 16</strong> — two databases: one for auth, one for the app
+        </li>
+        <li>
+          <strong>MinIO</strong> — S3-compatible object storage for file uploads (replaceable with
+          external S3)
+        </li>
+        <li>
+          <strong>Caddy</strong> — reverse proxy with automatic TLS
+        </li>
+      </ul>
+      <p>
+        On first boot, an init container auto-generates all secrets (session keys, OAuth client
+        credentials, S3 credentials). No manual secret management required.
       </p>
 
       <h2>Requirements</h2>
       <ul>
         <li>
-          <strong>Node.js</strong> ≥ 22.12
+          <strong>Docker</strong> and <strong>Docker Compose</strong> (v2)
         </li>
         <li>
-          <strong>PostgreSQL</strong> 16+
+          A server with at least <strong>2 GB RAM</strong> and <strong>10 GB disk</strong>
         </li>
         <li>
-          <strong>S3-compatible storage</strong> — AWS S3, MinIO, Cloudflare R2, etc.
-        </li>
-        <li>
-          <strong>Docker</strong> (recommended) — or run directly with Node
+          A domain name pointed at your server (for TLS) — or <code>localhost</code> for local
+          testing
         </li>
       </ul>
 
-      <h2>Quick start with Docker</h2>
+      <h2>Quick start</h2>
       <p>Clone the repo and run:</p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-        <code>{devShCode}</code>
+        <code>{quickStart}</code>
       </pre>
       <p>
-        This starts Postgres, MinIO (S3), and the Underlay app in development mode. The dev script
-        auto-creates a <code>.env.dev</code> from defaults if one doesn't exist.
+        That's it. Caddy handles TLS automatically via Let's Encrypt. Visit your domain to create
+        your first account.
       </p>
-
-      <h2>Environment variables</h2>
-      <table>
-        <tbody>
-          <tr>
-            <td>
-              <code>DATABASE_URL</code>
-            </td>
-            <td>PostgreSQL connection string</td>
-          </tr>
-          <tr>
-            <td>
-              <code>SESSION_SECRET</code>
-            </td>
-            <td>Secret for signing session cookies</td>
-          </tr>
-          <tr>
-            <td>
-              <code>PORT</code>
-            </td>
-            <td>Server port (default: 3000)</td>
-          </tr>
-          <tr>
-            <td>
-              <code>S3_BUCKET</code>
-            </td>
-            <td>S3 bucket name</td>
-          </tr>
-          <tr>
-            <td>
-              <code>S3_REGION</code>
-            </td>
-            <td>S3 region</td>
-          </tr>
-          <tr>
-            <td>
-              <code>S3_ENDPOINT</code>
-            </td>
-            <td>S3 endpoint URL (for MinIO, R2, etc.)</td>
-          </tr>
-          <tr>
-            <td>
-              <code>S3_ACCESS_KEY</code>
-            </td>
-            <td>S3 access key</td>
-          </tr>
-          <tr>
-            <td>
-              <code>S3_SECRET_KEY</code>
-            </td>
-            <td>S3 secret key</td>
-          </tr>
-          <tr>
-            <td>
-              <code>BACKUP_S3_PREFIX</code>
-            </td>
-            <td>S3 key prefix for database backups</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <h2>Production deployment</h2>
-      <p>The recommended production setup:</p>
-      <ol>
-        <li>
-          Build the Docker image: <code>docker build -t underlay .</code>
-        </li>
-        <li>
-          Create a <code>.env</code> with production values (or use SOPS encryption)
-        </li>
-        <li>
-          Run with <code>docker compose up -d</code>
-        </li>
-      </ol>
       <p>
-        The production <code>docker-compose.yml</code> includes:
+        For local testing without a domain, omit <code>DOMAIN</code> — it defaults to{' '}
+        <code>http://localhost</code>:
       </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{localStart}</code>
+      </pre>
+
+      <h2>Configuration</h2>
+      <p>
+        Set environment variables in your shell or create a <code>.env</code> file next to the
+        compose file. Only <code>DOMAIN</code> is required — everything else has sensible defaults
+        or is auto-generated.
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{envExample}</code>
+      </pre>
+
+      <h3>Social login</h3>
+      <p>
+        Without social login configured, users sign up and log in with email/password. To enable
+        GitHub, Google, or ORCID login, set the corresponding client ID and secret. You'll need to
+        register an OAuth app with each provider — use{' '}
+        <code>{'https://your-domain.com/auth/callback/<provider>'}</code> as the callback URL.
+      </p>
+
+      <h2>Using external S3</h2>
+      <p>
+        The bundled MinIO service works out of the box, but you can replace it with any
+        S3-compatible storage (AWS S3, Cloudflare R2, DigitalOcean Spaces, etc.):
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>{externalS3}</code>
+      </pre>
+      <p>
+        Also remove the <code>minio-init</code> service dependency from the <code>app</code>{' '}
+        service. The <code>S3_ENDPOINT</code> variable is only needed for non-AWS providers — omit
+        it for standard AWS S3.
+      </p>
+
+      <h2>Data and persistence</h2>
+      <p>All state is in Docker volumes:</p>
       <ul>
         <li>
-          <strong>postgres</strong> — PostgreSQL 16 with a named volume
+          <code>pgdata</code> — PostgreSQL databases (auth + app)
         </li>
         <li>
-          <strong>app</strong> — Runs migrations, then starts the Hono server
+          <code>minio-data</code> — uploaded files (if using bundled MinIO)
         </li>
         <li>
-          <strong>cron</strong> — Scheduled tasks (database backups)
+          <code>withauth-config</code> — auto-generated secrets and config (created once on first
+          boot)
+        </li>
+        <li>
+          <code>caddy-data</code> — TLS certificates
         </li>
       </ul>
-
-      <h2>Secrets management</h2>
       <p>
-        We use <a href="https://github.com/getsops/sops">SOPS</a> with{' '}
-        <a href="https://github.com/FiloSottile/age">age</a> encryption. Encrypted{' '}
-        <code>.env.enc</code> files are committed to the repo; plaintext <code>.env</code> files are
-        gitignored.
+        To completely reset and start fresh, remove all volumes and re-run. The init container will
+        regenerate secrets:
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-        <code>{secretsCode}</code>
+        <code>{resetCmd}</code>
       </pre>
 
-      <h2>CI/CD</h2>
+      <h2>Updating</h2>
       <p>
-        The included GitHub Actions workflow (<code>.github/workflows/deploy.yml</code>) handles the
-        full pipeline:
+        Pull new images and restart. The app runs database migrations automatically on startup — no
+        manual migration step needed.
       </p>
-      <ol>
-        <li>
-          Push to <code>main</code>
-        </li>
-        <li>Build Docker image → push to GHCR</li>
-        <li>
-          SSH to server → pull image → decrypt secrets → <code>docker compose up</code>
-        </li>
-      </ol>
-      <p>
-        Required GitHub secrets: <code>SSH_PRIVATE_KEY</code>, <code>SSH_HOST</code>,{' '}
-        <code>SSH_USER</code>, <code>GHCR_USER</code>, <code>GHCR_TOKEN</code>.
-      </p>
-
-      <h2>Backups</h2>
-      <p>The cron container runs daily Postgres backups to S3:</p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
-        <code>{backupCode}</code>
+        <code>
+          {`docker compose -f docker-compose.withauth.yml pull\ndocker compose -f docker-compose.withauth.yml up -d`}
+        </code>
       </pre>
 
-      <h2>Reverse proxy</h2>
+      <h2>Architecture</h2>
+      <p>Caddy listens on ports 80 and 443 and routes requests by path:</p>
+      <ul>
+        <li>
+          <code>/auth/*</code> → KF Auth server (authentication, OAuth2)
+        </li>
+        <li>
+          <code>/account/*</code> → KF Auth account UI (profile, password, sessions)
+        </li>
+        <li>
+          Everything else → Underlay app (API at <code>/api/*</code>, web UI for all other paths)
+        </li>
+      </ul>
       <p>
-        Put Caddy, nginx, or Cloudflare in front. The app exposes a single port (default 3000)
-        serving both the API and SSR.
+        The app server handles both the JSON API and server-side rendered React UI on a single port.
+        All services communicate internally over a Docker network — only Caddy is exposed to the
+        internet.
+      </p>
+
+      <h2>Source code</h2>
+      <p>The self-hosting setup lives in the main repo:</p>
+      <ul>
+        <li>
+          <code>docker-compose.withauth.yml</code> — the compose file
+        </li>
+        <li>
+          <code>selfhost/Caddyfile</code> — Caddy reverse proxy config
+        </li>
+        <li>
+          <code>selfhost/init-db.sh</code> — Postgres init script (creates the app database)
+        </li>
+      </ul>
+      <p>
+        Report issues at{' '}
+        <a href="https://github.com/knowledgefutures/underlay">
+          github.com/knowledgefutures/underlay
+        </a>
+        . Built by <a href="https://www.knowledgefutures.org">Knowledge Futures</a>, a 501(c)(3)
+        public charity.
       </p>
     </DocsLayout>
   )

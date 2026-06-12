@@ -27,6 +27,10 @@ export default function CollectionSettingsPage() {
   const [description, setDescription] = useState((meta?.description as string) ?? '')
   const [readme, setReadme] = useState((meta?.readme as string) ?? '')
   const [license, setLicense] = useState((meta?.license as string) ?? '')
+  const [tags, setTags] = useState<string[]>(
+    Array.isArray(meta?.tags) ? (meta.tags as string[]) : [],
+  )
+  const [tagInput, setTagInput] = useState('')
 
   // ARK form
   const [arkEnabled, setArkEnabled] = useState(arkSettings.enabled)
@@ -98,6 +102,7 @@ export default function CollectionSettingsPage() {
       else payload.readme = null
       if (license.trim()) payload.license = license.trim()
       else payload.license = null
+      payload.tags = tags.length > 0 ? tags : null
 
       const res = await fetch(`/api/collections/${owner}/${collection}/metadata`, {
         method: 'PATCH',
@@ -308,6 +313,60 @@ export default function CollectionSettingsPage() {
                   placeholder="e.g. CC-BY-4.0, MIT, Public Domain"
                   className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Tags</label>
+                {tags.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="bg-parchment-dark text-ink-muted flex items-center gap-1 rounded px-2 py-0.5 text-xs"
+                      >
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => setTags(tags.filter((t) => t !== tag))}
+                          className="text-ink-muted hover:text-ink cursor-pointer text-sm leading-none"
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const val = tagInput.trim().toLowerCase()
+                        if (val && !tags.includes(val)) {
+                          setTags([...tags, val])
+                        }
+                        setTagInput('')
+                      }
+                    }}
+                    placeholder="Add a tag and press Enter"
+                    className="bg-parchment border-rule focus:border-ink min-w-0 flex-1 border px-3 py-2 text-sm focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = tagInput.trim().toLowerCase()
+                      if (val && !tags.includes(val)) {
+                        setTags([...tags, val])
+                      }
+                      setTagInput('')
+                    }}
+                    className="border-rule bg-parchment hover:bg-parchment-dark border px-3 py-2 text-sm transition-colors"
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
               <div className="pt-2">
                 <button

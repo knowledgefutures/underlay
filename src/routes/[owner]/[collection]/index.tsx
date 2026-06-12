@@ -143,6 +143,50 @@ export default function CollectionPage() {
           </div>
         )}
 
+        {/* Empty state for new collections */}
+        {!data.latestVersion && isOwner && (
+          <div className="border-rule mb-6 rounded border px-6 py-10 text-center">
+            <h2 className="mb-2 text-base font-semibold">Get started with {collection}</h2>
+            <p className="text-ink-muted mx-auto mb-6 max-w-md text-sm leading-relaxed">
+              This collection is empty. Push your first version using the CLI or API.
+            </p>
+            <div className="bg-ink text-parchment mx-auto max-w-md overflow-hidden rounded text-left font-mono text-[13px] leading-relaxed">
+              <div className="p-4">
+                <div className="text-ink-muted mb-1 text-[11px] select-none">
+                  # initialize and push
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay init --remote {owner}/
+                  {collection}
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay add --schema ./schema.json
+                  ./records.jsonl
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay commit -m &quot;Initial
+                  version&quot;
+                </div>
+                <div>
+                  <span className="text-parchment-dark">$</span> underlay push
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-center gap-4 text-xs">
+              <Link to="/docs/quickstart" className="text-link hover:underline">
+                Read the quickstart
+              </Link>
+              <span className="text-rule">&middot;</span>
+              <span className="text-ink-muted">
+                API:{' '}
+                <code className="bg-parchment-dark rounded px-1.5 py-0.5 text-[11px]">
+                  POST /api/collections/{owner}/{collection}/versions/negotiate
+                </code>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Two-column layout */}
         <div className="grid grid-cols-[1fr_260px] gap-8">
           {/* Main column */}
@@ -267,6 +311,26 @@ export default function CollectionPage() {
                   {data.ownerName}
                 </Link>
               </div>
+              {(() => {
+                const meta = data.latestVersion?.metadata as
+                  | Record<string, unknown>
+                  | null
+                  | undefined
+                const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
+                return tags.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {tags.map((tag: string) => (
+                      <Link
+                        key={tag}
+                        to={`/explore?tag=${encodeURIComponent(tag)}`}
+                        className="bg-parchment-dark text-ink-muted hover:text-ink rounded px-2 py-0.5 text-xs transition-colors"
+                      >
+                        {tag}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null
+              })()}
             </div>
 
             {/* Stats */}
@@ -469,14 +533,17 @@ function AgentShareSection({
     <>
       <div className="mb-6">
         <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-          Share via Agent
+          Update via Agent
         </h3>
+        <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
+          Generate a temporary link that lets an AI agent push updates to this collection.
+        </p>
         <button
           onClick={generate}
           disabled={loading}
-          className="bg-parchment border-rule hover:bg-parchment-dark w-full border px-3 py-1.5 text-xs font-medium transition-colors"
+          className="text-link text-xs font-medium hover:underline"
         >
-          {loading ? 'Generating...' : 'Generate agent link'}
+          {loading ? 'Generating...' : 'Generate agent link →'}
         </button>
       </div>
 
@@ -489,7 +556,7 @@ function AgentShareSection({
         >
           <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Agent Share Link</h2>
+              <h2 className="text-sm font-semibold">Agent Update Link</h2>
               <button
                 onClick={() => setShowModal(false)}
                 className="text-ink-muted hover:text-ink text-lg leading-none"

@@ -98,9 +98,9 @@ app.get('/agent/:token', agentHandlers.agentPage)
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rateLimitMiddleware)
 
-// --- Mirror mode guard for admin routes ---
-// Operator-only: admin-scoped API key, or a session user listed in MIRROR_ADMIN_EMAILS
-app.use('/api/admin/*', async (c, next) => {
+// --- Admin route guards ---
+// Mirror admin: requires mirror mode + admin API key or MIRROR_ADMIN_EMAILS
+app.use('/api/admin/mirror/*', async (c, next) => {
   const config = getMirrorConfig()
   if (!config.enabled) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
@@ -120,6 +120,18 @@ app.use('/api/admin/*', async (c, next) => {
     },
     403,
   )
+})
+
+// Steward admin: requires kfRole === 'admin'
+// Steward admin: requires kfRole === 'admin'
+app.use('/api/admin/explore-*', async (c, next) => {
+  const userId = c.get('userId')
+  if (!userId) return c.json({ error: 'Unauthorized', statusCode: 401 }, 401)
+  const sessionUser = await getSessionUser(c.req.raw)
+  if (sessionUser?.kfRole !== 'admin') {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+  return next()
 })
 
 // --- ARK resolution middleware ---
@@ -145,31 +157,62 @@ if (!isProd) {
 
 // --- Better-auth handler (OIDC login, sessions, API keys) ---
 app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
-  return auth.handler(c.req.raw)
+  const url = new URL(c.req.url)
+  const isCallback = url.pathname.includes('/callback/')
+  if (isCallback) {
+    console.log('[auth callback] incoming:', {
+      method: c.req.method,
+      path: url.pathname,
+      hasCode: url.searchParams.has('code'),
+      hasState: url.searchParams.has('state'),
+      hasError: url.searchParams.has('error'),
+      error: url.searchParams.get('error'),
+      rawUrl: c.req.url,
+      cookieHeader: c.req.header('cookie')?.substring(0, 200),
+    })
+  }
+  const res = await auth.handler(c.req.raw)
+  if (isCallback) {
+    console.log('[auth callback] response:', {
+      status: res.status,
+      location: res.headers.get('location'),
+      setCookies: res.headers.getSetCookie?.()?.map((s: string) => s.substring(0, 80)),
+    })
+  }
+  return res
 })
 
 // /login redirect — fall through to React route only when there's an error to display
 app.get('/login', async (c, next) => {
   const url = new URL(c.req.url)
+  const appOrigin = new URL(process.env.APP_URL ?? 'http://localhost:4100').origin
   if (!url.searchParams.has('error')) {
-    const signInUrl = new URL('/api/auth/sign-in/oauth2', url.origin)
+    const signInUrl = new URL('/api/auth/sign-in/oauth2', appOrigin)
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      Cookie: c.req.header('cookie') ?? '',
+      Origin: appOrigin,
+    })
+    const xff = c.req.header('x-forwarded-for')
+    if (xff) headers.set('X-Forwarded-For', xff)
     const authRes = await auth.handler(
       new Request(signInUrl, {
         method: 'POST',
-        headers: new Headers({
-          'Content-Type': 'application/json',
-          Cookie: c.req.header('cookie') ?? '',
-          Origin: url.origin,
-        }),
+        headers,
         body: JSON.stringify({ providerId: 'kf-auth', callbackURL: '/dashboard' }),
       }),
     )
     const body = await authRes.json()
+    console.log('[login] auth sign-in response:', { status: authRes.status, body })
     if (body.url) {
       const redirect = new Response(null, { status: 302, headers: { Location: body.url } })
-      for (const [key, value] of authRes.headers.entries()) {
-        if (key.toLowerCase() === 'set-cookie') redirect.headers.append(key, value)
+      for (const cookie of authRes.headers.getSetCookie()) {
+        redirect.headers.append('set-cookie', cookie)
       }
+      console.log(
+        '[login] forwarding cookies:',
+        authRes.headers.getSetCookie().map((s: string) => s.substring(0, 80)),
+      )
       return redirect
     }
   }
@@ -203,6 +246,68 @@ app.post('/api/admin/mirror/sync/stop', admin.mirrorSyncStop)
 app.get('/api/admin/mirror/sync/progress', admin.mirrorSyncProgress)
 app.get('/api/admin/mirror/sync/active', admin.mirrorSyncActive)
 app.get('/api/admin/mirror/history', admin.mirrorHistory)
+
+// Steward-only: explore featured tags
+app.get('/api/admin/explore-tags', async (c) => {
+  const { db, schema } = await import('~/db/client.server')
+  const { eq } = await import('drizzle-orm')
+  const [row] = await db
+    .select({ value: schema.instanceSettings.value })
+    .from(schema.instanceSettings)
+    .where(eq(schema.instanceSettings.key, 'explore_featured_tags'))
+    .limit(1)
+  return c.json({ tags: Array.isArray(row?.value) ? row.value : [] })
+})
+
+app.put('/api/admin/explore-tags', async (c) => {
+  const body = await c.req.json<{ tags: string[] }>()
+  if (!Array.isArray(body.tags) || !body.tags.every((t: unknown) => typeof t === 'string')) {
+    return c.json({ error: 'tags must be an array of strings', statusCode: 422 }, 422)
+  }
+  const { db, schema } = await import('~/db/client.server')
+  await db
+    .insert(schema.instanceSettings)
+    .values({ key: 'explore_featured_tags', value: body.tags, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: schema.instanceSettings.key,
+      set: { value: body.tags, updatedAt: new Date() },
+    })
+  return c.json({ ok: true, tags: body.tags })
+})
+
+// Steward-only: explore featured collections
+app.get('/api/admin/explore-collections', async (c) => {
+  const { db, schema } = await import('~/db/client.server')
+  const { eq } = await import('drizzle-orm')
+  const [row] = await db
+    .select({ value: schema.instanceSettings.value })
+    .from(schema.instanceSettings)
+    .where(eq(schema.instanceSettings.key, 'explore_featured_collections'))
+    .limit(1)
+  return c.json({ collections: Array.isArray(row?.value) ? row.value : [] })
+})
+
+app.put('/api/admin/explore-collections', async (c) => {
+  const body = await c.req.json<{ collections: string[] }>()
+  if (
+    !Array.isArray(body.collections) ||
+    !body.collections.every((s: unknown) => typeof s === 'string')
+  ) {
+    return c.json(
+      { error: 'collections must be an array of "owner/slug" strings', statusCode: 422 },
+      422,
+    )
+  }
+  const { db, schema } = await import('~/db/client.server')
+  await db
+    .insert(schema.instanceSettings)
+    .values({ key: 'explore_featured_collections', value: body.collections, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: schema.instanceSettings.key,
+      set: { value: body.collections, updatedAt: new Date() },
+    })
+  return c.json({ ok: true, collections: body.collections })
+})
 
 // Query
 app.get('/api/query/sqlite/:owner/:slug/:version', query.sqlite)

@@ -26,6 +26,7 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const q = c.req.query('q')
       const owner = c.req.query('owner')
+      const tag = c.req.query('tag')
       const sort = c.req.query('sort')
       const take = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100)
       const skip = parseInt(c.req.query('offset') ?? '0', 10)
@@ -54,7 +55,7 @@ const app = new Hono<AuthEnv>()
           eq(schema.collections.organizationId, schema.organization.id),
         )
         .where(and(...conditions))
-        .limit(take)
+        .limit(take + 200)
         .offset(skip)
         .orderBy(sort === 'name' ? schema.collections.name : desc(schema.collections.updatedAt))
 
@@ -98,6 +99,36 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      // Build enriched results with tags, then apply tag filter
+      const enriched = results.map((r) => {
+        const stats = statsMap.get(r.id)
+        const meta = stats?.metadata as Record<string, unknown> | null | undefined
+        const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
+        return {
+          ...r,
+          description: (meta?.description as string) ?? null,
+          tags,
+          latestVersion: stats?.semver ?? null,
+          recordCount: stats?.recordCount ?? null,
+          fileCount: stats?.fileCount ?? null,
+          totalBytes: stats?.totalBytes ?? null,
+          lastPushAt: stats?.lastPushAt ?? null,
+        }
+      })
+
+      const filtered = tag ? enriched.filter((c) => c.tags.includes(tag)) : enriched
+
+      // Compute tag facets from all visible collections (before tag filter, after search/owner)
+      const tagCounts = new Map<string, number>()
+      for (const c of enriched) {
+        for (const t of c.tags) {
+          tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1)
+        }
+      }
+      const tagFacets = [...tagCounts.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+
       const facetConditions = [eq(schema.collections.public, true)]
       if (q) {
         facetConditions.push(ilike(schema.collections.name, `%${q}%`))
@@ -118,21 +149,49 @@ const app = new Hono<AuthEnv>()
         .groupBy(schema.organization.slug, schema.organization.name)
         .orderBy(sql`count(*) DESC`)
 
+      // Load instance settings for explore page
+      const settingsRows = await db
+        .select({ key: schema.instanceSettings.key, value: schema.instanceSettings.value })
+        .from(schema.instanceSettings)
+        .where(
+          inArray(schema.instanceSettings.key, [
+            'explore_featured_tags',
+            'explore_featured_collections',
+          ]),
+        )
+      const settingsMap = new Map(settingsRows.map((r) => [r.key, r.value]))
+      const featuredTags = Array.isArray(settingsMap.get('explore_featured_tags'))
+        ? (settingsMap.get('explore_featured_tags') as string[])
+        : []
+      const featuredSlugs = Array.isArray(settingsMap.get('explore_featured_collections'))
+        ? (settingsMap.get('explore_featured_collections') as string[])
+        : []
+
+      // Apply sort to the full filtered set, then slice for pagination
+      if (sort === 'records') {
+        filtered.sort((a, b) => (b.recordCount ?? 0) - (a.recordCount ?? 0))
+      } else if (sort === 'featured') {
+        const featuredSet = new Set(featuredSlugs)
+        filtered.sort((a, b) => {
+          const aFeat = featuredSet.has(`${a.ownerSlug}/${a.slug}`) ? 0 : 1
+          const bFeat = featuredSet.has(`${b.ownerSlug}/${b.slug}`) ? 0 : 1
+          if (aFeat !== bFeat) return aFeat - bFeat
+          return (a.name ?? '').localeCompare(b.name ?? '')
+        })
+      }
+
+      const page = filtered.slice(0, take)
+
+      // Build featured collections list from the enriched set
+      const featuredCollections = featuredSlugs
+        .map((s) => enriched.find((c) => `${c.ownerSlug}/${c.slug}` === s))
+        .filter(Boolean)
+
       return c.json({
-        collections: results.map((r) => {
-          const stats = statsMap.get(r.id)
-          const meta = stats?.metadata as Record<string, unknown> | null | undefined
-          return {
-            ...r,
-            description: (meta?.description as string) ?? null,
-            latestVersion: stats?.semver ?? null,
-            recordCount: stats?.recordCount ?? null,
-            fileCount: stats?.fileCount ?? null,
-            totalBytes: stats?.totalBytes ?? null,
-            lastPushAt: stats?.lastPushAt ?? null,
-          }
-        }),
-        facets: { owners: ownerFacets },
+        collections: page,
+        facets: { owners: ownerFacets, tags: tagFacets },
+        featuredTags,
+        featuredCollections,
       })
     },
   )
@@ -145,13 +204,18 @@ const app = new Hono<AuthEnv>()
       summary: 'Create a collection',
       request: {
         param: z.object({ owner: z.string() }),
-        json: z.object({ slug: z.string(), name: z.string(), public: z.boolean().optional() }),
+        json: z.object({
+          slug: z.string(),
+          name: z.string().optional(),
+          public: z.boolean().optional(),
+        }),
       },
       responses: { 200: z.any() },
     }),
     async (c) => {
       const { owner } = c.req.valid('param')
-      const { slug, name, public: isPublic } = c.req.valid('json')
+      const { slug, name: rawName, public: isPublic } = c.req.valid('json')
+      const name = rawName || slug
 
       // Resolve owner org
       const [org] = await db

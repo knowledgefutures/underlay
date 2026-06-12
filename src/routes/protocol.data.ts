@@ -1,9 +1,11 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
+import { fetchBase } from '~/lib/fetch-base'
+
 export const handle = { title: 'Protocol · Underlay' }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const base = new URL(request.url).origin
+  const base = fetchBase(request.url)
   const res = await fetch(new URL('/api/pages/protocol/comments', base), {
     headers: { Cookie: request.headers.get('Cookie') ?? '' },
   })

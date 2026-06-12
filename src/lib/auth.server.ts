@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { auth, KF_AUTH_INTERNAL_URL } from './auth.js'
@@ -19,20 +19,80 @@ export interface SessionUser {
   }>
 }
 
-async function fetchKfRole(userId: string): Promise<string | null> {
+async function refreshAccessToken(acct: {
+  refreshToken: string | null
+  accessToken: string | null
+  accessTokenExpiresAt: Date | null
+}): Promise<string | null> {
+  if (
+    acct.accessToken &&
+    acct.accessTokenExpiresAt &&
+    acct.accessTokenExpiresAt.getTime() > Date.now() + 30_000
+  ) {
+    return acct.accessToken
+  }
+  if (!acct.refreshToken) return null
+  try {
+    const tokenUrl = `${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/token`
+    const res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: acct.refreshToken,
+        client_id: process.env.OIDC_CLIENT_ID ?? 'kf_underlay',
+        client_secret: process.env.OIDC_CLIENT_SECRET ?? '',
+      }),
+    })
+    if (!res.ok) return null
+    const tokens = await res.json()
+    if (!tokens.access_token) return null
+    await db
+      .update(schema.account)
+      .set({
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? acct.refreshToken,
+        accessTokenExpiresAt: tokens.expires_in
+          ? new Date(Date.now() + tokens.expires_in * 1000)
+          : null,
+      })
+      .where(eq(schema.account.accessToken, acct.accessToken!))
+    return tokens.access_token
+  } catch {
+    return null
+  }
+}
+
+interface KfProfile {
+  name: string | null
+  image: string | null
+  role: string | null
+}
+
+async function fetchKfProfile(userId: string): Promise<KfProfile | null> {
   try {
     const [acct] = await db
-      .select({ accessToken: schema.account.accessToken })
+      .select({
+        accessToken: schema.account.accessToken,
+        refreshToken: schema.account.refreshToken,
+        accessTokenExpiresAt: schema.account.accessTokenExpiresAt,
+      })
       .from(schema.account)
-      .where(eq(schema.account.userId, userId))
+      .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
       .limit(1)
-    if (!acct?.accessToken) return null
+    if (!acct) return null
+    const token = await refreshAccessToken(acct)
+    if (!token) return null
     const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/userinfo`, {
-      headers: { Authorization: `Bearer ${acct.accessToken}` },
+      headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) return null
     const profile = await res.json()
-    return profile.role ?? null
+    return {
+      name: profile.name ?? null,
+      image: profile.picture ?? null,
+      role: profile['https://knowledgefutures.org/role'] ?? profile.role ?? null,
+    }
   } catch {
     return null
   }
@@ -49,7 +109,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
 
   const u = session.user
 
-  const [memberships, kfRole] = await Promise.all([
+  const [memberships, kfProfile] = await Promise.all([
     db
       .select({
         orgId: schema.organization.id,
@@ -61,7 +121,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
       .from(schema.member)
       .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
       .where(eq(schema.member.userId, u.id)),
-    fetchKfRole(u.id),
+    fetchKfProfile(u.id),
   ])
 
   const defaultOrg = memberships.find((m) => m.isDefault) ?? null
@@ -69,9 +129,9 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
   return {
     id: u.id,
     slug: defaultOrg?.orgSlug ?? null,
-    displayName: defaultOrg?.orgName ?? u.name,
-    avatarUrl: u.image ?? null,
-    kfRole,
+    displayName: kfProfile?.name ?? defaultOrg?.orgName ?? u.name,
+    avatarUrl: kfProfile?.image ?? u.image ?? null,
+    kfRole: kfProfile?.role ?? null,
     defaultOrg: defaultOrg ? { slug: defaultOrg.orgSlug, displayName: defaultOrg.orgName } : null,
     orgs: memberships.map((m) => ({
       organizationId: m.orgId,

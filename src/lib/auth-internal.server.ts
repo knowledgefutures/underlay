@@ -119,4 +119,67 @@ export async function getAuthUserWithEmail(
   }
 }
 
+/**
+ * Resolve a kf-auth user ID by email address using the search endpoint.
+ * Returns the first matching user's ID, or null.
+ */
+export async function resolveKfUserByEmail(email: string): Promise<string | null> {
+  if (!hasInternalApi) return null
+
+  try {
+    const res = await fetch(
+      `${AUTH_INTERNAL_API_URL}/api/internal/users/search?q=${encodeURIComponent(email)}`,
+      { headers: { Authorization: `Bearer ${AUTH_INTERNAL_API_KEY}` } },
+    )
+    if (!res.ok) return null
+    const data = (await res.json()) as { users: { id: string; name: string | null }[] }
+    return data.users?.[0]?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve a user's KF Auth orgs given their Underlay userId.
+ * Tries the account's OIDC subject first, falls back to email-based lookup.
+ */
+export async function resolveUserKfOrgs(userId: string, db: any, schema: any): Promise<AuthOrg[]> {
+  if (!hasInternalApi) return []
+
+  const { and, eq } = await import('drizzle-orm')
+  const [acct] = await db
+    .select({ accountId: schema.account.accountId })
+    .from(schema.account)
+    .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
+    .limit(1)
+  if (!acct) return []
+
+  let orgs = await fetchAuthOrgs(acct.accountId)
+  if (orgs.length === 0) {
+    const [u] = await db
+      .select({ email: schema.user.email })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1)
+    if (u?.email) {
+      const kfUserId = await resolveKfUserByEmail(u.email)
+      if (kfUserId) orgs = await fetchAuthOrgs(kfUserId)
+    }
+  }
+  return orgs
+}
+
+/**
+ * Resolve the personal KF org ID for a user. Returns null if unavailable.
+ */
+export async function resolveDefaultKfOrgId(
+  userId: string,
+  db: any,
+  schema: any,
+): Promise<string | null> {
+  const orgs = await resolveUserKfOrgs(userId, db, schema)
+  const personal = orgs.find((o) => o.type === 'personal')
+  return personal?.id ?? orgs[0]?.id ?? null
+}
+
 export { AUTH_INTERNAL_API_URL, AUTH_INTERNAL_API_KEY, OIDC_ISSUER_INTERNAL_URL }

@@ -148,6 +148,19 @@ export default function DocsQuickstart() {
         Underlay instance.
       </p>
 
+      <div className="border-rule bg-parchment-dark/30 mb-6 rounded border p-4">
+        <p className="mt-0 mb-2 text-sm font-semibold">Fastest path: use an AI agent</p>
+        <p className="text-ink-muted mb-0 text-sm">
+          Point your coding agent at{' '}
+          <Link to="/llms.txt" className="text-link underline">
+            llms.txt
+          </Link>{' '}
+          and tell it what data you want to push. It has everything it needs to create a collection,
+          write the push script, and handle hashing and negotiation for you. The steps below explain
+          the same flow manually.
+        </p>
+      </div>
+
       <h2>1. Sign in and create an API key</h2>
       <p>
         Sign in at{' '}
