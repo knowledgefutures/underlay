@@ -311,6 +311,26 @@ export default function CollectionPage() {
                   {data.ownerName}
                 </Link>
               </div>
+              {(() => {
+                const meta = data.latestVersion?.metadata as
+                  | Record<string, unknown>
+                  | null
+                  | undefined
+                const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
+                return tags.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {tags.map((tag: string) => (
+                      <Link
+                        key={tag}
+                        to={`/explore?tag=${encodeURIComponent(tag)}`}
+                        className="bg-parchment-dark text-ink-muted hover:text-ink rounded px-2 py-0.5 text-xs transition-colors"
+                      >
+                        {tag}
+                      </Link>
+                    ))}
+                  </div>
+                ) : null
+              })()}
             </div>
 
             {/* Stats */}

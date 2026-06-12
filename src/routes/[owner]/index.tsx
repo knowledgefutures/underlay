@@ -27,7 +27,7 @@ export default function OwnerPage() {
   }
 
   const isMember = currentUser?.orgs?.some((o: any) => o.slug === owner) ?? false
-  const isOwnProfile = currentUser?.slug === owner
+  const isOwner = currentUser?.slug === owner
 
   return (
     <BaseLayout>
@@ -53,7 +53,7 @@ export default function OwnerPage() {
                 <span className="text-ink-muted font-mono text-sm">@{account.slug}</span>
               </div>
               <div className="flex items-center gap-3">
-                {(isMember || isOwnProfile) && (
+                {(isMember || isOwner) && (
                   <Link
                     to={`/${owner}/settings`}
                     className="text-ink-muted hover:text-ink text-sm transition-colors"

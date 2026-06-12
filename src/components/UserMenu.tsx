@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 interface Org {
   slug: string
   displayName: string
+  isDefault?: boolean
 }
 
 interface UserMenuProps {
@@ -53,13 +54,6 @@ export default function UserMenu({
         <div className="absolute top-full right-0 z-50 pt-1">
           <div className="bg-parchment border-rule min-w-48 border shadow-sm">
             <Link
-              to={`/${slug}`}
-              className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
-              onClick={() => setOpen(false)}
-            >
-              Your Profile
-            </Link>
-            <Link
               to="/dashboard"
               className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
               onClick={() => setOpen(false)}
@@ -96,6 +90,9 @@ export default function UserMenu({
                     onClick={() => setOpen(false)}
                   >
                     {org.displayName}
+                    {org.isDefault && (
+                      <span className="text-ink-muted ml-1 text-xs">(personal)</span>
+                    )}
                   </Link>
                 ))}
               </>

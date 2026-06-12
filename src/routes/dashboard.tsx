@@ -21,6 +21,7 @@ interface Org {
   slug: string
   displayName: string
   role: string
+  isDefault: boolean
   collections: Collection[]
 }
 
@@ -154,6 +155,7 @@ export default function Dashboard() {
             slug: org.slug,
             displayName: org.name ?? org.displayName,
             role: org.role,
+            isDefault: !!org.isDefault,
             collections: res.ok ? await res.json() : [],
           }
         }),
@@ -216,7 +218,12 @@ export default function Dashboard() {
                 <span className="bg-parchment-dark text-ink-muted flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold">
                   {org.displayName.charAt(0).toUpperCase()}
                 </span>
-                <span className="min-w-0 truncate text-sm font-medium">{org.displayName}</span>
+                <span className="min-w-0 truncate text-sm font-medium">
+                  {org.displayName}
+                  {org.isDefault && (
+                    <span className="text-ink-muted ml-1 font-normal">(personal)</span>
+                  )}
+                </span>
                 <span className="text-ink-muted ml-auto text-[10px]">{org.collections.length}</span>
               </Link>
             ))}
@@ -242,12 +249,6 @@ export default function Dashboard() {
             </Link>
             <Link to="/explore" className="text-link block px-2 py-1 hover:underline">
               Explore
-            </Link>
-            <Link
-              to={`/${currentUser?.slug}`}
-              className="text-link block px-2 py-1 hover:underline"
-            >
-              Your profile
             </Link>
           </div>
         </div>

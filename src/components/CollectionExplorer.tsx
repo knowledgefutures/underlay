@@ -138,7 +138,7 @@ export default function CollectionExplorer() {
   return (
     <div className="flex gap-8">
       {/* Sidebar facets */}
-      {(owners.length > 0 || visibleTags.length > 0) && (
+      {visibleTags.length > 0 && (
         <aside className="hidden w-44 shrink-0 space-y-6 md:block">
           {/* Tags */}
           {visibleTags.length > 0 && (
@@ -170,45 +170,6 @@ export default function CollectionExplorer() {
                       }`}
                     >
                       {tag}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Organizations */}
-          {owners.length > 0 && (
-            <div>
-              <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-                Organizations
-              </h3>
-              <ul className="space-y-0.5">
-                <li>
-                  <button
-                    onClick={() => handleOwnerClick(null)}
-                    className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
-                      !selectedOwner
-                        ? 'bg-parchment-dark text-ink font-medium'
-                        : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
-                    }`}
-                  >
-                    <span>All</span>
-                    <span className="text-ink-muted text-xs">{totalCount}</span>
-                  </button>
-                </li>
-                {owners.map((o) => (
-                  <li key={o.slug}>
-                    <button
-                      onClick={() => handleOwnerClick(o.slug)}
-                      className={`flex w-full items-center justify-between rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
-                        selectedOwner === o.slug
-                          ? 'bg-parchment-dark text-ink font-medium'
-                          : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
-                      }`}
-                    >
-                      <span className="truncate">{o.name ?? o.slug}</span>
-                      <span className="text-ink-muted ml-2 shrink-0 text-xs">{o.count}</span>
                     </button>
                   </li>
                 ))}

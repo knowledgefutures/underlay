@@ -99,7 +99,28 @@ export const auth = betterAuth({
                 ),
               )
           } catch (err) {
-            console.error('[auth hook] account.create.after failed:', err)
+            console.error('[auth hook] account.create.after cleanup failed:', err)
+          }
+          if (account.providerId === 'kf-auth' && account.accessToken) {
+            try {
+              const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/userinfo`, {
+                headers: { Authorization: `Bearer ${account.accessToken}` },
+              })
+              if (res.ok) {
+                const profile = await res.json()
+                const updates: Record<string, string> = {}
+                if (profile.name) updates.name = profile.name
+                if (profile.picture) updates.image = profile.picture
+                if (Object.keys(updates).length > 0) {
+                  await db
+                    .update(schema.user)
+                    .set(updates)
+                    .where(eq(schema.user.id, account.userId))
+                }
+              }
+            } catch (err) {
+              console.error('[auth hook] profile sync failed:', err)
+            }
           }
         },
       },

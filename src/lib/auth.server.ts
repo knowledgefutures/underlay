@@ -63,7 +63,13 @@ async function refreshAccessToken(acct: {
   }
 }
 
-async function fetchKfRole(userId: string): Promise<string | null> {
+interface KfProfile {
+  name: string | null
+  image: string | null
+  role: string | null
+}
+
+async function fetchKfProfile(userId: string): Promise<KfProfile | null> {
   try {
     const [acct] = await db
       .select({
@@ -82,7 +88,11 @@ async function fetchKfRole(userId: string): Promise<string | null> {
     })
     if (!res.ok) return null
     const profile = await res.json()
-    return profile['https://knowledgefutures.org/role'] ?? profile.role ?? null
+    return {
+      name: profile.name ?? null,
+      image: profile.picture ?? null,
+      role: profile['https://knowledgefutures.org/role'] ?? profile.role ?? null,
+    }
   } catch {
     return null
   }
@@ -99,7 +109,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
 
   const u = session.user
 
-  const [memberships, kfRole] = await Promise.all([
+  const [memberships, kfProfile] = await Promise.all([
     db
       .select({
         orgId: schema.organization.id,
@@ -111,7 +121,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
       .from(schema.member)
       .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
       .where(eq(schema.member.userId, u.id)),
-    fetchKfRole(u.id),
+    fetchKfProfile(u.id),
   ])
 
   const defaultOrg = memberships.find((m) => m.isDefault) ?? null
@@ -119,9 +129,9 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
   return {
     id: u.id,
     slug: defaultOrg?.orgSlug ?? null,
-    displayName: defaultOrg?.orgName ?? u.name,
-    avatarUrl: u.image ?? null,
-    kfRole,
+    displayName: kfProfile?.name ?? defaultOrg?.orgName ?? u.name,
+    avatarUrl: kfProfile?.image ?? u.image ?? null,
+    kfRole: kfProfile?.role ?? null,
     defaultOrg: defaultOrg ? { slug: defaultOrg.orgSlug, displayName: defaultOrg.orgName } : null,
     orgs: memberships.map((m) => ({
       organizationId: m.orgId,
