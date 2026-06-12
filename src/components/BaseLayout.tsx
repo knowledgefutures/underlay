@@ -24,9 +24,6 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
             <Link to="/explore" className="hover:text-ink transition-colors">
               Explore
             </Link>
-            <Link to="/schemas" className="hover:text-ink transition-colors">
-              Schemas
-            </Link>
             <Link to="/docs" className="hover:text-ink transition-colors">
               Docs
             </Link>
@@ -49,6 +46,7 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
               <UserMenu
                 slug={currentUser.slug}
                 displayName={currentUser.displayName}
+                avatarUrl={currentUser.avatarUrl}
                 orgs={currentUser.orgs ?? []}
                 isSteward={isSteward}
               />

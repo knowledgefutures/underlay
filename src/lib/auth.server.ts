@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { auth, KF_AUTH_INTERNAL_URL } from './auth.js'
@@ -19,20 +19,70 @@ export interface SessionUser {
   }>
 }
 
+async function refreshAccessToken(acct: {
+  refreshToken: string | null
+  accessToken: string | null
+  accessTokenExpiresAt: Date | null
+}): Promise<string | null> {
+  if (
+    acct.accessToken &&
+    acct.accessTokenExpiresAt &&
+    acct.accessTokenExpiresAt.getTime() > Date.now() + 30_000
+  ) {
+    return acct.accessToken
+  }
+  if (!acct.refreshToken) return null
+  try {
+    const tokenUrl = `${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/token`
+    const res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: acct.refreshToken,
+        client_id: process.env.OIDC_CLIENT_ID ?? 'kf_underlay',
+        client_secret: process.env.OIDC_CLIENT_SECRET ?? '',
+      }),
+    })
+    if (!res.ok) return null
+    const tokens = await res.json()
+    if (!tokens.access_token) return null
+    await db
+      .update(schema.account)
+      .set({
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? acct.refreshToken,
+        accessTokenExpiresAt: tokens.expires_in
+          ? new Date(Date.now() + tokens.expires_in * 1000)
+          : null,
+      })
+      .where(eq(schema.account.accessToken, acct.accessToken!))
+    return tokens.access_token
+  } catch {
+    return null
+  }
+}
+
 async function fetchKfRole(userId: string): Promise<string | null> {
   try {
     const [acct] = await db
-      .select({ accessToken: schema.account.accessToken })
+      .select({
+        accessToken: schema.account.accessToken,
+        refreshToken: schema.account.refreshToken,
+        accessTokenExpiresAt: schema.account.accessTokenExpiresAt,
+      })
       .from(schema.account)
-      .where(eq(schema.account.userId, userId))
+      .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
       .limit(1)
-    if (!acct?.accessToken) return null
+    if (!acct) return null
+    const token = await refreshAccessToken(acct)
+    if (!token) return null
     const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/userinfo`, {
-      headers: { Authorization: `Bearer ${acct.accessToken}` },
+      headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) return null
     const profile = await res.json()
-    return profile.role ?? null
+    return profile['https://knowledgefutures.org/role'] ?? profile.role ?? null
   } catch {
     return null
   }

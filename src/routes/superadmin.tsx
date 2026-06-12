@@ -46,7 +46,7 @@ export default function Superadmin() {
     return (
       <BaseLayout>
         <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-          <p className="text-ink-muted text-sm">This page is only available to stewards.</p>
+          <p className="text-ink-muted text-sm">This page is only available to admins.</p>
         </div>
       </BaseLayout>
     )

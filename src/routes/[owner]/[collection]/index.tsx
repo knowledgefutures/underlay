@@ -469,14 +469,17 @@ function AgentShareSection({
     <>
       <div className="mb-6">
         <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-          Share via Agent
+          Update via Agent
         </h3>
+        <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
+          Generate a temporary link that lets an AI agent push updates to this collection.
+        </p>
         <button
           onClick={generate}
           disabled={loading}
-          className="bg-parchment border-rule hover:bg-parchment-dark w-full border px-3 py-1.5 text-xs font-medium transition-colors"
+          className="text-link text-xs font-medium hover:underline"
         >
-          {loading ? 'Generating...' : 'Generate agent link'}
+          {loading ? 'Generating...' : 'Generate agent link →'}
         </button>
       </div>
 
@@ -489,7 +492,7 @@ function AgentShareSection({
         >
           <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Agent Share Link</h2>
+              <h2 className="text-sm font-semibold">Agent Update Link</h2>
               <button
                 onClick={() => setShowModal(false)}
                 className="text-ink-muted hover:text-ink text-lg leading-none"

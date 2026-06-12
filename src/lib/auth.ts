@@ -3,7 +3,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { genericOAuth } from 'better-auth/plugins'
 import { organization } from 'better-auth/plugins/organization'
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 
@@ -36,7 +36,7 @@ export const auth = betterAuth({
           userInfoUrl: `${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/userinfo`,
           clientId: process.env.OIDC_CLIENT_ID ?? 'kf_underlay',
           clientSecret: process.env.OIDC_CLIENT_SECRET ?? '',
-          scopes: ['openid', 'profile', 'email'],
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
           pkce: true,
           mapProfileToUser: (profile) => ({
             name: profile.name ?? profile.email?.split('@')[0] ?? 'User',
@@ -85,6 +85,21 @@ export const auth = betterAuth({
   ],
 
   databaseHooks: {
+    account: {
+      create: {
+        after: async (account) => {
+          await db
+            .delete(schema.account)
+            .where(
+              and(
+                eq(schema.account.userId, account.userId),
+                eq(schema.account.providerId, account.providerId),
+                ne(schema.account.id, account.id),
+              ),
+            )
+        },
+      },
+    },
     user: {
       create: {
         after: async (user) => {

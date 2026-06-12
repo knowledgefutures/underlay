@@ -177,6 +177,7 @@ app.get('/login', async (c, next) => {
       }),
     )
     const body = await authRes.json()
+    console.log('[login] auth sign-in response:', { status: authRes.status, body })
     if (body.url) {
       const redirect = new Response(null, { status: 302, headers: { Location: body.url } })
       for (const [key, value] of authRes.headers.entries()) {
