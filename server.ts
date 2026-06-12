@@ -24,6 +24,7 @@ import _files from '~/api/files'
 import * as _health from '~/api/health'
 import * as _kfSummary from '~/api/kf-summary'
 import _negotiate from '~/api/negotiate'
+import _organizations from '~/api/organizations'
 import * as _query from '~/api/query'
 import { rateLimitMiddleware } from '~/api/rate-limit.server'
 import _records from '~/api/records'
@@ -229,6 +230,7 @@ const routes = app
   .route(...api('/api/collections', './src/api/versions.ts', _versions))
   .route(...api('/api/collections', './src/api/negotiate.ts', _negotiate))
   .route(...api('/api', './src/api/discussion.ts', _discussion))
+  .route(...api('/api/organizations', './src/api/organizations.ts', _organizations))
 
 export type AppType = typeof routes
 

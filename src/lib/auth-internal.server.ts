@@ -9,7 +9,8 @@
  *   AUTH_INTERNAL_API_KEY — shared secret for service-to-service calls
  */
 
-const OIDC_ISSUER_INTERNAL_URL = process.env.OIDC_ISSUER_INTERNAL_URL ?? 'http://localhost:3000'
+const OIDC_ISSUER_URL = process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
+const OIDC_ISSUER_INTERNAL_URL = process.env.OIDC_ISSUER_INTERNAL_URL ?? OIDC_ISSUER_URL
 const AUTH_INTERNAL_API_URL = process.env.AUTH_INTERNAL_API_URL ?? OIDC_ISSUER_INTERNAL_URL
 
 const AUTH_INTERNAL_API_KEY = process.env.AUTH_INTERNAL_API_KEY ?? ''
