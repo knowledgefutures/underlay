@@ -1,9 +1,8 @@
-import { type FormEvent, useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
-import { authClient } from '~/lib/auth-client'
 
 interface Collection {
   id: string
@@ -25,12 +24,6 @@ interface Org {
   collections: Collection[]
 }
 
-interface KfOrg {
-  id: string
-  name: string
-  slug: string
-}
-
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
   if (seconds < 60) return 'just now'
@@ -45,102 +38,10 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-function NewOrgForm({ availableKfOrgs, onDone }: { availableKfOrgs: KfOrg[]; onDone: () => void }) {
-  const [slug, setSlug] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [kfOrgId, setKfOrgId] = useState(availableKfOrgs.length === 1 ? availableKfOrgs[0]!.id : '')
-  const [error, setError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError('')
-    setSubmitting(true)
-    try {
-      const { data, error: err } = await authClient.organization.create({
-        name: displayName,
-        slug,
-        kfOrgId: kfOrgId || undefined,
-      } as any)
-      if (err) {
-        setError(err.message ?? 'Failed to create organization')
-      } else if (data) {
-        window.location.reload()
-      }
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-2.5">
-      {error && <p className="text-xs text-red-600">{error}</p>}
-      {availableKfOrgs.length > 1 && (
-        <select
-          required
-          value={kfOrgId}
-          onChange={(e) => {
-            setKfOrgId(e.target.value)
-            const kfOrg = availableKfOrgs.find((o) => o.id === e.target.value)
-            if (kfOrg && !displayName) setDisplayName(kfOrg.name)
-          }}
-          className="border-rule bg-parchment focus:border-ink w-full rounded border px-2 py-1.5 text-xs focus:outline-none"
-        >
-          <option value="">KF Organization...</option>
-          {availableKfOrgs.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
-      )}
-      <div className="flex gap-2">
-        <input
-          type="text"
-          required
-          pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
-          minLength={2}
-          placeholder="slug"
-          value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-          className="border-rule bg-parchment focus:border-ink min-w-0 flex-1 rounded border px-2 py-1.5 text-xs focus:outline-none"
-        />
-        <input
-          type="text"
-          required
-          placeholder="Display Name"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          className="border-rule bg-parchment focus:border-ink min-w-0 flex-1 rounded border px-2 py-1.5 text-xs focus:outline-none"
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={submitting}
-          className="bg-ink text-parchment rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-        >
-          {submitting ? 'Creating...' : 'Create'}
-        </button>
-        <button
-          type="button"
-          onClick={onDone}
-          className="text-ink-muted cursor-pointer text-xs hover:underline"
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
-  )
-}
-
 export default function Dashboard() {
   const { currentUser } = useAppContext()
   const [orgs, setOrgs] = useState<Org[]>([])
   const [filter, setFilter] = useState('')
-  const [searchParams] = useSearchParams()
-  const [availableKfOrgs, setAvailableKfOrgs] = useState<KfOrg[]>([])
-  const [showNewOrg, setShowNewOrg] = useState(searchParams.get('newOrg') === '1')
 
   useEffect(() => {
     if (!currentUser) return
@@ -161,10 +62,6 @@ export default function Dashboard() {
         }),
       ).then(setOrgs)
     }
-
-    fetch('/api/accounts/available-kf-orgs', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setAvailableKfOrgs)
   }, [currentUser])
 
   const allCollections = orgs
@@ -198,15 +95,12 @@ export default function Dashboard() {
             <h3 className="text-ink-muted text-[11px] font-semibold tracking-wide uppercase">
               Organizations
             </h3>
-            {!showNewOrg && availableKfOrgs.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowNewOrg(true)}
-                className="text-ink-muted hover:text-ink cursor-pointer text-[11px] transition-colors"
-              >
-                + New
-              </button>
-            )}
+            <Link
+              to="/new-org"
+              className="text-ink-muted hover:text-ink text-[11px] transition-colors"
+            >
+              + New
+            </Link>
           </div>
           <div className="mb-5 space-y-0.5">
             {orgs.map((org) => (
@@ -227,11 +121,6 @@ export default function Dashboard() {
                 <span className="text-ink-muted ml-auto text-[10px]">{org.collections.length}</span>
               </Link>
             ))}
-            {showNewOrg && availableKfOrgs.length > 0 && (
-              <div className="mt-2">
-                <NewOrgForm availableKfOrgs={availableKfOrgs} onDone={() => setShowNewOrg(false)} />
-              </div>
-            )}
           </div>
 
           <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wide uppercase">
@@ -240,6 +129,9 @@ export default function Dashboard() {
           <div className="space-y-0.5 text-sm">
             <Link to="/new" className="text-link block px-2 py-1 hover:underline">
               New collection
+            </Link>
+            <Link to="/new-org" className="text-link block px-2 py-1 hover:underline">
+              New organization
             </Link>
             <Link to="/settings/keys" className="text-link block px-2 py-1 hover:underline">
               API keys

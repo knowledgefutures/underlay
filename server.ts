@@ -157,7 +157,29 @@ if (!isProd) {
 
 // --- Better-auth handler (OIDC login, sessions, API keys) ---
 app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
-  return auth.handler(c.req.raw)
+  const url = new URL(c.req.url)
+  const isCallback = url.pathname.includes('/callback/')
+  if (isCallback) {
+    console.log('[auth callback] incoming:', {
+      method: c.req.method,
+      path: url.pathname,
+      hasCode: url.searchParams.has('code'),
+      hasState: url.searchParams.has('state'),
+      hasError: url.searchParams.has('error'),
+      error: url.searchParams.get('error'),
+      rawUrl: c.req.url,
+      cookieHeader: c.req.header('cookie')?.substring(0, 200),
+    })
+  }
+  const res = await auth.handler(c.req.raw)
+  if (isCallback) {
+    console.log('[auth callback] response:', {
+      status: res.status,
+      location: res.headers.get('location'),
+      setCookies: res.headers.getSetCookie?.()?.map((s: string) => s.substring(0, 80)),
+    })
+  }
+  return res
 })
 
 // /login redirect — fall through to React route only when there's an error to display
@@ -166,14 +188,17 @@ app.get('/login', async (c, next) => {
   const appOrigin = new URL(process.env.APP_URL ?? 'http://localhost:4100').origin
   if (!url.searchParams.has('error')) {
     const signInUrl = new URL('/api/auth/sign-in/oauth2', appOrigin)
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      Cookie: c.req.header('cookie') ?? '',
+      Origin: appOrigin,
+    })
+    const xff = c.req.header('x-forwarded-for')
+    if (xff) headers.set('X-Forwarded-For', xff)
     const authRes = await auth.handler(
       new Request(signInUrl, {
         method: 'POST',
-        headers: new Headers({
-          'Content-Type': 'application/json',
-          Cookie: c.req.header('cookie') ?? '',
-          Origin: appOrigin,
-        }),
+        headers,
         body: JSON.stringify({ providerId: 'kf-auth', callbackURL: '/dashboard' }),
       }),
     )
@@ -181,9 +206,13 @@ app.get('/login', async (c, next) => {
     console.log('[login] auth sign-in response:', { status: authRes.status, body })
     if (body.url) {
       const redirect = new Response(null, { status: 302, headers: { Location: body.url } })
-      for (const [key, value] of authRes.headers.entries()) {
-        if (key.toLowerCase() === 'set-cookie') redirect.headers.append(key, value)
+      for (const cookie of authRes.headers.getSetCookie()) {
+        redirect.headers.append('set-cookie', cookie)
       }
+      console.log(
+        '[login] forwarding cookies:',
+        authRes.headers.getSetCookie().map((s: string) => s.substring(0, 80)),
+      )
       return redirect
     }
   }

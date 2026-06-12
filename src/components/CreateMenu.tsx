@@ -33,7 +33,7 @@ export default function CreateMenu() {
             New collection
           </Link>
           <Link
-            to="/dashboard?newOrg=1"
+            to="/new-org"
             onClick={() => setOpen(false)}
             className="text-ink hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
           >

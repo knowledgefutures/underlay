@@ -207,11 +207,11 @@ tools/
 
 The protocol and the platform are documented together:
 
-| Resource      | URL                                                            | Purpose                                                             |
-| ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Protocol spec | [/protocol](https://underlay.org/protocol)                     | Full protocol: data model, hashing, push, pull, provenance, privacy |
-| User docs     | [/docs](https://underlay.org/docs)                             | Concepts, integration guide, API reference, quickstart              |
-| llms.txt      | [/llms.txt](https://underlay.org/llms.txt)                     | Machine-readable API docs for LLMs and bots                         |
+| Resource      | URL                                        | Purpose                                                             |
+| ------------- | ------------------------------------------ | ------------------------------------------------------------------- |
+| Protocol spec | [/protocol](https://underlay.org/protocol) | Full protocol: data model, hashing, push, pull, provenance, privacy |
+| User docs     | [/docs](https://underlay.org/docs)         | Concepts, integration guide, API reference, quickstart              |
+| llms.txt      | [/llms.txt](https://underlay.org/llms.txt) | Machine-readable API docs for LLMs and bots                         |
 
 ### Key API endpoints
 
@@ -342,6 +342,7 @@ DOMAIN=https://my-instance.com docker compose -f docker-compose.withauth.yml up 
 This starts Postgres, KF Auth (auth + account), MinIO (S3-compatible storage), the Underlay app, and Caddy with automatic TLS. On first boot, an init container auto-generates all secrets (session keys, OAuth client credentials, S3 credentials).
 
 Optional configuration (via environment variables or `.env` file):
+
 - `SMTP_*` vars for email delivery (password resets, invitations)
 - `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` for GitHub login
 - `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for Google login
