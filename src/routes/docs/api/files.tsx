@@ -56,7 +56,7 @@ export default function DocsApiFiles() {
         <li>
           Reference it in records as <code>{fileRefInline}</code>
         </li>
-        <li>Push your version — the server verifies all referenced files exist</li>
+        <li>Push your version. The server verifies all referenced files exist</li>
       </ol>
 
       <hr className="border-rule my-6" />
@@ -181,7 +181,7 @@ export default function DocsApiFiles() {
               <td>
                 <code>400</code>
               </td>
-              <td>Hash mismatch — the uploaded bytes don't match the hash in the URL.</td>
+              <td>Hash mismatch: the uploaded bytes don't match the hash in the URL.</td>
             </tr>
           </tbody>
         </table>

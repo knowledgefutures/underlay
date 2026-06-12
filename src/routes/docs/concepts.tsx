@@ -24,8 +24,7 @@ export default function DocsConcepts() {
       <p>
         A <strong>collection</strong> (plural: <strong>collections</strong>) is a named, versioned
         body of structured data. It belongs to an account (a user or an organization) and is
-        identified by <code>:owner/:slug</code> — for example,{' '}
-        <code>knowledge-futures/pubpub-archive</code>.
+        identified by <code>:owner/:slug</code>, e.g. <code>knowledge-futures/pubpub-archive</code>.
       </p>
       <p>
         A collection can be public (browsable by anyone) or private (visible only to the owner and
@@ -42,13 +41,13 @@ export default function DocsConcepts() {
           A <strong>JSON Schema</strong> describing the structure of the records
         </li>
         <li>
-          A set of <strong>records</strong> — the actual data
+          A set of <strong>records</strong> (the actual data)
         </li>
         <li>
-          References to <strong>files</strong> — binary assets
+          References to <strong>files</strong> (binary assets)
         </li>
         <li>
-          A <strong>metadata</strong> bag — a JSON object that can contain <code>readme</code>,{' '}
+          A <strong>metadata</strong> object that can contain <code>readme</code>,{' '}
           <code>license</code>, and other fields
         </li>
       </ul>
@@ -63,7 +62,7 @@ export default function DocsConcepts() {
         <li>Metadata-only changes (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
-        Each version also has a <strong>hash</strong> — a SHA-256 digest of the canonical
+        Each version also has a <strong>hash</strong>, a SHA-256 digest of the canonical
         representation of the schema, records, and file references. Two versions with the same hash
         have identical content.
       </p>
@@ -98,7 +97,7 @@ export default function DocsConcepts() {
         </li>
       </ul>
       <p>
-        Relationships between records are expressed as ID references — just strings. There are no
+        Relationships between records are expressed as ID references (just strings). There are no
         joins, no foreign keys. An LLM or application can resolve references by reading the schema
         and records together.
       </p>
@@ -108,8 +107,8 @@ export default function DocsConcepts() {
         <code>strip_unknown_fields</code> to accept stripping them automatically.
       </p>
       <p>
-        Binary data is referenced via <code>{fileRef}</code> — a pointer to a content-addressed file
-        in the registry. The wire format for records is JSONL — one record per line, independently
+        Binary data is referenced via <code>{fileRef}</code>, a pointer to a content-addressed file
+        in the registry. The wire format for records is JSONL, one record per line, independently
         hashable and streamable.
       </p>
 
@@ -128,10 +127,10 @@ export default function DocsConcepts() {
       <p>Underlay has two account types:</p>
       <ul>
         <li>
-          <strong>Users</strong> — individual accounts with email/password login
+          <strong>Users</strong>: individual accounts with email/password login
         </li>
         <li>
-          <strong>Organizations</strong> — group accounts with members who have roles (owner, admin,
+          <strong>Organizations</strong>: group accounts with members who have roles (owner, admin,
           member)
         </li>
       </ul>

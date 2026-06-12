@@ -44,14 +44,14 @@ export default function DocsApiAccounts() {
       <p>There are two authentication methods:</p>
       <ul>
         <li>
-          <strong>Session cookies</strong> — set via OAuth2/PKCE sign-in through{' '}
+          <strong>Session cookies</strong>: set via OAuth2/PKCE sign-in through{' '}
           <a href="https://auth.knowledgefutures.org" className="text-link hover:underline">
             KF Auth
           </a>{' '}
           (handled by better-auth at <code>/api/auth/*</code>), used by the web UI
         </li>
         <li>
-          <strong>API keys</strong> — <code>Authorization: Bearer ul_...</code>, used by apps and
+          <strong>API keys</strong>: <code>Authorization: Bearer ul_...</code>, used by apps and
           scripts
         </li>
       </ul>

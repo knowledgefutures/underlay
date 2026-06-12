@@ -283,7 +283,7 @@ export default function Protocol() {
             <h2 id="overview">Overview</h2>
             <p>
               Underlay is a protocol for publishing, versioning, and collaborating on structured
-              data. Every piece of content — records, schemas, and files — is identified by its
+              data. Every piece of content (records, schemas, and files) is identified by its
               SHA-256 hash. Versions are manifests that reference these hashes. This means storage
               is deduplicated globally, transfers only move data the other side doesn't have, and
               provenance is built in: any record can be traced back to every collection and version
@@ -300,22 +300,22 @@ export default function Protocol() {
             <p>The protocol has four primitives:</p>
             <ul>
               <li>
-                <strong>Record</strong> — A JSON object with an <code>id</code>, a <code>type</code>
-                , and a <code>data</code> payload. Records are the rows of your dataset. Each record
+                <strong>Record</strong>: A JSON object with an <code>id</code>, a <code>type</code>,
+                and a <code>data</code> payload. Records are the rows of your dataset. Each record
                 is content-addressed by the SHA-256 hash of its canonical JSON representation.
               </li>
               <li>
-                <strong>Schema</strong> — A JSON Schema document that describes the structure of a
+                <strong>Schema</strong>: A JSON Schema document that describes the structure of a
                 record type. Schemas are also content-addressed. They define validation rules, mark
                 private fields, and annotate cross-record references.
               </li>
               <li>
-                <strong>Version</strong> — An immutable snapshot: a manifest of record hashes,
-                schema hashes, file hashes, and a metadata bag. Versions are identified by semver
-                (e.g. <code>v1.2.0</code>).
+                <strong>Version</strong>: An immutable snapshot: a manifest of record hashes, schema
+                hashes, file hashes, and a metadata bag. Versions are identified by semver (e.g.{' '}
+                <code>v1.2.0</code>).
               </li>
               <li>
-                <strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash.
+                <strong>File</strong>: A binary blob (PDF, image, etc.) stored by SHA-256 hash.
                 Records reference files with the <code>{'{"$file": "sha256:..."}'}</code>{' '}
                 convention.
               </li>
@@ -337,20 +337,18 @@ export default function Protocol() {
             <p>
               The <code>private</code> flag is <strong>not</strong> part of the hash. Two records
               with identical <code>id</code>, <code>type</code>, and <code>data</code> but different
-              privacy flags produce the same hash. This is intentional — the record's content
+              privacy flags produce the same hash. This is intentional. The record's content
               identity doesn't change when you change who can see it.
             </p>
             <p>
               A record whose type declares private <em>fields</em> has a second address: its{' '}
-              <strong>public record hash</strong> — the SHA-256 of the same canonical form with the
+              <strong>public record hash</strong>, the SHA-256 of the same canonical form with the
               private fields stripped. Public manifests list records by their public hash, and the
               record endpoints resolve either address, so a public reader can always verify that
               hashing the document they received reproduces the address they requested. When a type
               has no private fields the two addresses coincide.
             </p>
-            <p>
-              Wire format is JSONL — one record per line, independently hashable and streamable:
-            </p>
+            <p>Wire format is JSONL: one record per line, independently hashable and streamable:</p>
             <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
               <code>{recordExample}</code>
             </pre>
@@ -385,15 +383,15 @@ export default function Protocol() {
             </p>
             <ul>
               <li>
-                <strong>Major bump</strong> — a schema changed (e.g. <code>v1.2.0</code> {'->'}{' '}
+                <strong>Major bump</strong>: a schema changed (e.g. <code>v1.2.0</code> {'->'}{' '}
                 <code>v2.0.0</code>)
               </li>
               <li>
-                <strong>Minor bump</strong> — records or files changed (e.g. <code>v1.2.0</code>{' '}
+                <strong>Minor bump</strong>: records or files changed (e.g. <code>v1.2.0</code>{' '}
                 {'->'} <code>v1.3.0</code>)
               </li>
               <li>
-                <strong>Patch bump</strong> — metadata-only change such as readme or license (e.g.{' '}
+                <strong>Patch bump</strong>: metadata-only change such as readme or license (e.g.{' '}
                 <code>v1.2.0</code> {'->'} <code>v1.2.1</code>)
               </li>
             </ul>
@@ -402,7 +400,7 @@ export default function Protocol() {
           <RfcSection id="push" count={counts['push'] ?? 0} onOpen={openDrawerForSection}>
             <h2 id="push">Push</h2>
             <p>
-              All pushes use the negotiate protocol — a three-step flow similar to git's pack
+              All pushes use the negotiate protocol, a three-step flow similar to git's pack
               negotiation. The client sends a manifest of record hashes, the server says which it
               needs, the client sends those records (in one or more batches), then commits.
             </p>
@@ -452,22 +450,22 @@ export default function Protocol() {
             </pre>
             <ul>
               <li>
-                <code>"private": true</code> on a property — the field is stripped from public views
+                <code>"private": true</code> on a property: the field is stripped from public views
                 and excluded from the public hash.
               </li>
               <li>
-                <code>"private": true</code> on the schema root — the entire type is hidden from
+                <code>"private": true</code> on the schema root: the entire type is hidden from
                 public views.
               </li>
               <li>
-                <code>"x-ref-type": "Author"</code> — marks a field as a reference to another record
+                <code>"x-ref-type": "Author"</code>: marks a field as a reference to another record
                 type (advisory, not enforced).
               </li>
             </ul>
             <p>
               Schemas are content-addressed by their SHA-256 hash. Two collections that use an
-              identical Author schema share the same underlying schema object — zero duplication.
-              Schema changes trigger a major semver bump.
+              identical Author schema share the same underlying schema object, with zero
+              duplication. Schema changes trigger a major semver bump.
             </p>
 
             <h3>Unknown field handling</h3>
@@ -494,7 +492,7 @@ export default function Protocol() {
             </pre>
             <p>
               Files are verified on upload (the server recomputes the hash and rejects mismatches).
-              Like records and schemas, files are globally deduplicated — the same PDF in ten
+              Like records and schemas, files are globally deduplicated. The same PDF in ten
               collections is stored once.
             </p>
           </RfcSection>
@@ -513,7 +511,7 @@ export default function Protocol() {
               <code>{provenanceExample}</code>
             </pre>
             <p>
-              <code>firstSeen</code> is the earliest version creation date across all references —
+              <code>firstSeen</code> is the earliest version creation date across all references,
               the record's birthday on this server. This enables citation-like provenance: "this
               record first appeared in alice/papers v1.2.0 on 2026-01-15."
             </p>
@@ -528,31 +526,31 @@ export default function Protocol() {
             <p>Underlay supports collaboration through a small set of primitives:</p>
             <ul>
               <li>
-                <strong>Versioning</strong> — Every push creates a new immutable version. The full
+                <strong>Versioning</strong>. Every push creates a new immutable version. The full
                 history is always available. Versions are identified by semver strings and use
                 optimistic locking: <code>base_version</code> (a semver string, or null for the
                 first push) must match the current latest, or the push is rejected with a 409
                 conflict.
               </li>
               <li>
-                <strong>Diffing</strong> — Any two versions of a collection can be diffed (
+                <strong>Diffing</strong>. Any two versions of a collection can be diffed (
                 <code>GET .../versions/v2.0.0/diff?from=v1.1.0</code>), returning added, updated,
                 and removed records with hash-level comparison.
               </li>
               <li>
-                <strong>Cross-collection references</strong> — Records reference each other by ID.
+                <strong>Cross-collection references</strong>. Records reference each other by ID.
                 Because record hashes are global, the same record appearing in two collections can
                 be identified as identical content.
               </li>
               <li>
-                <strong>Mirroring</strong> — Any Underlay instance can pull from another, using hash
+                <strong>Mirroring</strong>. Any Underlay instance can pull from another, using hash
                 negotiation to transfer only new data. Mirrors maintain verified, independent
                 copies.
               </li>
               <li>
-                <strong>Forking</strong> — <code>POST .../fork</code> creates a new collection under
+                <strong>Forking</strong>. <code>POST .../fork</code> creates a new collection under
                 your org with the source's latest version. Because records, schemas, and files are
-                content-addressed, forking copies only the manifest — zero additional storage. The
+                content-addressed, forking copies only the manifest; zero additional storage. The
                 fork tracks its origin via <code>forkedFrom</code>.
               </li>
             </ul>
@@ -566,22 +564,22 @@ export default function Protocol() {
             </p>
             <ul>
               <li>
-                <code>400</code> — Bad request (missing fields, invalid JSONL, hash mismatch)
+                <code>400</code> - Bad request (missing fields, invalid JSONL, hash mismatch)
               </li>
               <li>
-                <code>404</code> — Collection, version, or record not found
+                <code>404</code> - Collection, version, or record not found
               </li>
               <li>
-                <code>409</code> — Version conflict (base_version doesn't match) or duplicate
+                <code>409</code> - Version conflict (base_version doesn't match) or duplicate
                 content
               </li>
               <li>
-                <code>422</code> — Schema validation failed, missing schemas/files, or records
+                <code>422</code> - Schema validation failed, missing schemas/files, or records
                 contain fields not defined in the schema (set <code>strip_unknown_fields</code> to
                 accept stripping)
               </li>
               <li>
-                <code>429</code> — Rate limited (includes <code>Retry-After</code> header)
+                <code>429</code> - Rate limited (includes <code>Retry-After</code> header)
               </li>
             </ul>
           </RfcSection>
@@ -639,7 +637,7 @@ export default function Protocol() {
             <a href="https://www.knowledgefutures.org" className="text-link underline">
               Knowledge Futures
             </a>{' '}
-            — we read everything, publish what moves the spec forward, and keep building.
+            . We read everything, publish what moves the spec forward, and keep building.
           </p>
         </div>
       </div>

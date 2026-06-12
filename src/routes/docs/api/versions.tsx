@@ -107,7 +107,7 @@ export default function DocsApiVersions() {
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
         schema + records + file references. Pushing a new version uses the{' '}
-        <strong>negotiate protocol</strong> — a three-step flow similar to git's pack negotiation.
+        <strong>negotiate protocol</strong>, a three-step flow similar to git's pack negotiation.
       </p>
 
       <hr className="border-rule my-6" />
@@ -284,7 +284,7 @@ export default function DocsApiVersions() {
               <td>
                 <code>GET .../negotiate/:sessionId</code>
               </td>
-              <td>Check session status — returns remaining needed records and files.</td>
+              <td>Check session status. Returns remaining needed records and files.</td>
             </tr>
             <tr>
               <td>
@@ -303,7 +303,7 @@ export default function DocsApiVersions() {
                 <code>400</code>
               </td>
               <td>
-                Unexpected record hash — a submitted record doesn't match any needed hash, or the
+                Unexpected record hash. A submitted record doesn't match any needed hash, or the
                 batch is empty/malformed.
               </td>
             </tr>
@@ -318,8 +318,7 @@ export default function DocsApiVersions() {
                 <code>409</code>
               </td>
               <td>
-                Version conflict — someone pushed since your <code>base_version</code>.
-                Re-negotiate.
+                Version conflict. Someone pushed since your <code>base_version</code>. Re-negotiate.
               </td>
             </tr>
             <tr>

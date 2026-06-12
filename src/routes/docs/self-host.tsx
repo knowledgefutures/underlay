@@ -44,8 +44,8 @@ export default function DocsSelfHost() {
           protocol
         </Link>{' '}
         is an open specification. This repository is the reference implementation, but anyone can
-        build an Underlay-compatible server tailored to their infrastructure, language, or use case
-        — as long as it implements the protocol (content-addressed records, hash negotiation,
+        build an Underlay-compatible server tailored to their infrastructure, language, or use case,
+        as long as it implements the protocol (content-addressed records, hash negotiation,
         immutable versioning). The protocol is the contract; the implementation is yours.
       </p>
       <p>
@@ -58,20 +58,20 @@ export default function DocsSelfHost() {
       <h2>What gets deployed</h2>
       <ul>
         <li>
-          <strong>Underlay app</strong> — the main application (API + web UI)
+          <strong>Underlay app</strong>: the main application (API + web UI)
         </li>
         <li>
-          <strong>KF Auth</strong> — authentication server (OAuth2/OIDC) + account management UI
+          <strong>KF Auth</strong>: authentication server (OAuth2/OIDC) + account management UI
         </li>
         <li>
-          <strong>PostgreSQL 16</strong> — two databases: one for auth, one for the app
+          <strong>PostgreSQL 16</strong>: two databases, one for auth and one for the app
         </li>
         <li>
-          <strong>MinIO</strong> — S3-compatible object storage for file uploads (replaceable with
+          <strong>MinIO</strong>: S3-compatible object storage for file uploads (replaceable with
           external S3)
         </li>
         <li>
-          <strong>Caddy</strong> — reverse proxy with automatic TLS
+          <strong>Caddy</strong>: reverse proxy with automatic TLS
         </li>
       </ul>
       <p>
@@ -88,7 +88,7 @@ export default function DocsSelfHost() {
           A server with at least <strong>2 GB RAM</strong> and <strong>10 GB disk</strong>
         </li>
         <li>
-          A domain name pointed at your server (for TLS) — or <code>localhost</code> for local
+          A domain name pointed at your server (for TLS), or <code>localhost</code> for local
           testing
         </li>
       </ul>
@@ -103,7 +103,7 @@ export default function DocsSelfHost() {
         your first account.
       </p>
       <p>
-        For local testing without a domain, omit <code>DOMAIN</code> — it defaults to{' '}
+        For local testing without a domain, omit <code>DOMAIN</code>. It defaults to{' '}
         <code>http://localhost</code>:
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
@@ -113,8 +113,8 @@ export default function DocsSelfHost() {
       <h2>Configuration</h2>
       <p>
         Set environment variables in your shell or create a <code>.env</code> file next to the
-        compose file. Only <code>DOMAIN</code> is required — everything else has sensible defaults
-        or is auto-generated.
+        compose file. Only <code>DOMAIN</code> is required; everything else has sensible defaults or
+        is auto-generated.
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{envExample}</code>
@@ -124,7 +124,7 @@ export default function DocsSelfHost() {
       <p>
         Without social login configured, users sign up and log in with email/password. To enable
         GitHub, Google, or ORCID login, set the corresponding client ID and secret. You'll need to
-        register an OAuth app with each provider — use{' '}
+        register an OAuth app with each provider, using{' '}
         <code>{'https://your-domain.com/auth/callback/<provider>'}</code> as the callback URL.
       </p>
 
@@ -138,25 +138,25 @@ export default function DocsSelfHost() {
       </pre>
       <p>
         Also remove the <code>minio-init</code> service dependency from the <code>app</code>{' '}
-        service. The <code>S3_ENDPOINT</code> variable is only needed for non-AWS providers — omit
-        it for standard AWS S3.
+        service. The <code>S3_ENDPOINT</code> variable is only needed for non-AWS providers; omit it
+        for standard AWS S3.
       </p>
 
       <h2>Data and persistence</h2>
       <p>All state is in Docker volumes:</p>
       <ul>
         <li>
-          <code>pgdata</code> — PostgreSQL databases (auth + app)
+          <code>pgdata</code>: PostgreSQL databases (auth + app)
         </li>
         <li>
-          <code>minio-data</code> — uploaded files (if using bundled MinIO)
+          <code>minio-data</code>: uploaded files (if using bundled MinIO)
         </li>
         <li>
-          <code>withauth-config</code> — auto-generated secrets and config (created once on first
+          <code>withauth-config</code>: auto-generated secrets and config (created once on first
           boot)
         </li>
         <li>
-          <code>caddy-data</code> — TLS certificates
+          <code>caddy-data</code>: TLS certificates
         </li>
       </ul>
       <p>
@@ -169,7 +169,7 @@ export default function DocsSelfHost() {
 
       <h2>Updating</h2>
       <p>
-        Pull new images and restart. The app runs database migrations automatically on startup — no
+        Pull new images and restart. The app runs database migrations automatically on startup. No
         manual migration step needed.
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
@@ -193,7 +193,7 @@ export default function DocsSelfHost() {
       </ul>
       <p>
         The app server handles both the JSON API and server-side rendered React UI on a single port.
-        All services communicate internally over a Docker network — only Caddy is exposed to the
+        All services communicate internally over a Docker network; only Caddy is exposed to the
         internet.
       </p>
 
@@ -201,13 +201,13 @@ export default function DocsSelfHost() {
       <p>The self-hosting setup lives in the main repo:</p>
       <ul>
         <li>
-          <code>docker-compose.withauth.yml</code> — the compose file
+          <code>docker-compose.withauth.yml</code>: the compose file
         </li>
         <li>
-          <code>selfhost/Caddyfile</code> — Caddy reverse proxy config
+          <code>selfhost/Caddyfile</code>: Caddy reverse proxy config
         </li>
         <li>
-          <code>selfhost/init-db.sh</code> — Postgres init script (creates the app database)
+          <code>selfhost/init-db.sh</code>: Postgres init script (creates the app database)
         </li>
       </ul>
       <p>

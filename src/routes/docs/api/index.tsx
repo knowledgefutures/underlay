@@ -24,7 +24,7 @@ export default function DocsApi() {
 
       <h2>Authentication</h2>
       <p>
-        All <code>GET</code> requests are <strong>public</strong> — no authentication required to
+        All <code>GET</code> requests are <strong>public</strong>; no authentication required to
         read public data. All write requests (<code>POST</code>, <code>PATCH</code>,{' '}
         <code>PUT</code>, <code>DELETE</code>) require authentication.
       </p>
@@ -39,13 +39,13 @@ export default function DocsApi() {
       <p>Keys have three scopes:</p>
       <ul>
         <li>
-          <code>read</code> — list and download data
+          <code>read</code>: list and download data
         </li>
         <li>
-          <code>write</code> — push versions, upload files
+          <code>write</code>: push versions, upload files
         </li>
         <li>
-          <code>admin</code> — delete collections, manage keys
+          <code>admin</code>: delete collections, manage keys
         </li>
       </ul>
       <p>
@@ -65,7 +65,7 @@ export default function DocsApi() {
       <h3>Invalid Credentials</h3>
       <p>
         If a <code>Bearer</code> token is provided but does not match any key, the request is{' '}
-        <strong>immediately rejected</strong> with <code>401</code> — it will not fall through to
+        <strong>immediately rejected</strong> with <code>401</code>. It will not fall through to
         anonymous access.
       </p>
 
@@ -99,13 +99,13 @@ export default function DocsApi() {
       <p className="mt-3">Every response includes rate limit headers:</p>
       <ul>
         <li>
-          <code>X-RateLimit-Limit</code> — max requests in the current window
+          <code>X-RateLimit-Limit</code>: max requests in the current window
         </li>
         <li>
-          <code>X-RateLimit-Remaining</code> — requests remaining
+          <code>X-RateLimit-Remaining</code>: requests remaining
         </li>
         <li>
-          <code>X-RateLimit-Reset</code> — seconds until the window resets
+          <code>X-RateLimit-Reset</code>: seconds until the window resets
         </li>
       </ul>
       <p>
@@ -133,28 +133,28 @@ export default function DocsApi() {
       <p>Common status codes:</p>
       <ul>
         <li>
-          <code>400</code> — Bad request (invalid input)
+          <code>400</code>: Bad request (invalid input)
         </li>
         <li>
-          <code>401</code> — Authentication required or invalid credentials
+          <code>401</code>: Authentication required or invalid credentials
         </li>
         <li>
-          <code>403</code> — Insufficient permissions (wrong scope)
+          <code>403</code>: Insufficient permissions (wrong scope)
         </li>
         <li>
-          <code>404</code> — Resource not found
+          <code>404</code>: Resource not found
         </li>
         <li>
-          <code>409</code> — Version conflict (re-fetch and retry)
+          <code>409</code>: Version conflict (re-fetch and retry)
         </li>
         <li>
-          <code>413</code> — Payload too large (file upload exceeds size limit)
+          <code>413</code>: Payload too large (file upload exceeds size limit)
         </li>
         <li>
-          <code>422</code> — Validation error (e.g. missing files)
+          <code>422</code>: Validation error (e.g. missing files)
         </li>
         <li>
-          <code>429</code> — Rate limited (wait and retry)
+          <code>429</code>: Rate limited (wait and retry)
         </li>
       </ul>
 
@@ -165,26 +165,26 @@ export default function DocsApi() {
         <div>
           <Link to="/docs/api/accounts" className="text-link underline">
             Accounts
-          </Link>{' '}
-          — API keys, profiles
+          </Link>
+          : API keys, profiles
         </div>
         <div>
           <Link to="/docs/api/collections" className="text-link underline">
             Collections
-          </Link>{' '}
-          — create, list, update, delete
+          </Link>
+          : create, list, update, delete
         </div>
         <div>
           <Link to="/docs/api/versions" className="text-link underline">
             Versions
-          </Link>{' '}
-          — push snapshots, browse history, diff
+          </Link>
+          : push snapshots, browse history, diff
         </div>
         <div>
           <Link to="/docs/api/files" className="text-link underline">
             Files
-          </Link>{' '}
-          — upload and download content-addressed files
+          </Link>
+          : upload and download content-addressed files
         </div>
       </nav>
     </DocsLayout>

@@ -167,14 +167,14 @@ export default function Home() {
                 <h3 className="mb-1 font-sans font-semibold">A preservation mirror</h3>
                 <p className="text-ink-muted">
                   This server replicates public collections from the canonical Underlay instance.
-                  Each copy is cryptographically verified — tamper-evident by design.
+                  Each copy is cryptographically verified. Tamper-evident by design.
                 </p>
               </div>
               <div>
                 <h3 className="mb-1 font-sans font-semibold">Independent infrastructure</h3>
                 <p className="text-ink-muted">
                   Running on separate hardware with its own database and storage. No single point of
-                  failure — if the upstream goes down, the data persists here.
+                  failure. If the upstream goes down, the data persists here.
                 </p>
               </div>
               <div>
@@ -194,7 +194,7 @@ export default function Home() {
                 <h3 className="mb-1 font-sans font-semibold">Powered by Underlay</h3>
                 <p className="text-ink-muted">
                   Underlay is open-source infrastructure for structured knowledge preservation.
-                  Anyone can run a mirror — same software, different server.
+                  Anyone can run a mirror. Same software, different server.
                 </p>
               </div>
               <div>
@@ -318,7 +318,7 @@ export default function Home() {
                 The workflow
               </h2>
               <p className="text-ink-light mb-4 text-sm leading-relaxed">
-                An agent, an app, a scraper, a researcher — any tool that can push JSON records and
+                An agent, an app, a scraper, a researcher: any tool that can push JSON records and
                 pull versions. Five commands from JSON to a permanent version.
               </p>
               <Link to="/docs/quickstart" className="text-link text-sm hover:underline">
@@ -345,7 +345,7 @@ export default function Home() {
                   refresh&quot;
                 </div>
                 <div className="text-ink-muted mt-3 mb-1 text-[11px] select-none">
-                  # done — versioned and permanent
+                  # done. versioned and permanent
                 </div>
                 <div>
                   <span className="text-parchment-dark">$</span> underlay push

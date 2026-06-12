@@ -294,7 +294,7 @@ export default function DocsApiCollections() {
               <td>
                 <code>422</code>
               </td>
-              <td>No versions exist yet — push a version first before updating metadata.</td>
+              <td>No versions exist yet. Push a version first before updating metadata.</td>
             </tr>
           </tbody>
         </table>
@@ -308,7 +308,7 @@ export default function DocsApiCollections() {
         <p>
           Fork a public collection into a target organization. Creates a new collection under the
           target org with the source's latest version. Records, schemas, and files are referenced
-          (not copied) — zero additional storage.
+          (not copied); zero additional storage.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">

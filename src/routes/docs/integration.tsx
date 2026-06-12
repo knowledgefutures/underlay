@@ -116,21 +116,21 @@ export default function DocsIntegration() {
       <h2>Core Concepts</h2>
       <ul>
         <li>
-          <strong>Collection</strong> — A named, versioned body of structured data. Identified by{' '}
+          <strong>Collection</strong>: A named, versioned body of structured data. Identified by{' '}
           <code>:owner/:slug</code>.
         </li>
         <li>
-          <strong>Version</strong> — An immutable snapshot: JSON Schema + records + file references
-          + metadata. Identified by semver (e.g. <code>v1.0.0</code>).
+          <strong>Version</strong>: An immutable snapshot: JSON Schema + records + file references +
+          metadata. Identified by semver (e.g. <code>v1.0.0</code>).
         </li>
         <li>
-          <strong>Record</strong> — A flat JSON object with an <code>id</code>, a <code>type</code>,
+          <strong>Record</strong>: A flat JSON object with an <code>id</code>, a <code>type</code>,
           and a <code>data</code> payload conforming to the schema. Content-addressed by SHA-256
           hash.
         </li>
         <li>
-          <strong>File</strong> — A binary blob (PDF, image, etc.) stored by SHA-256 hash.
-          Referenced in records via <code>{fileRef}</code>.
+          <strong>File</strong>: A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced
+          in records via <code>{fileRef}</code>.
         </li>
       </ul>
 
@@ -159,15 +159,15 @@ export default function DocsIntegration() {
         <li>Get the current latest version (its semver string)</li>
         <li>Upload any new binary files by hash</li>
         <li>
-          Hash your records and <strong>negotiate</strong> — send a manifest of record hashes. The
+          Hash your records and <strong>negotiate</strong>: send a manifest of record hashes. The
           server responds with which records it needs.
         </li>
         <li>
-          <strong>Send records</strong> — upload only the needed records as JSONL (up to 10,000 per
+          <strong>Send records</strong>: upload only the needed records as JSONL (up to 10,000 per
           batch). Skip if the server already has everything.
         </li>
         <li>
-          <strong>Commit</strong> — finalize and create the version.
+          <strong>Commit</strong>: finalize and create the version.
         </li>
         <li>
           On <code>409 Conflict</code>, re-fetch latest and retry from step 3
@@ -207,14 +207,14 @@ export default function DocsIntegration() {
         <li>
           Files are referenced as <code>{fileRef}</code>
         </li>
-        <li>No joins, no nesting — keep records flat</li>
+        <li>No joins, no nesting. Keep records flat</li>
       </ul>
 
       <h2>Metadata</h2>
       <p>
         Each version carries a <code>metadata</code> object that can include{' '}
         <code>description</code>, <code>readme</code>, <code>license</code>, and any other key-value
-        pairs. Metadata lives on the version, not the collection — it's versioned alongside your
+        pairs. Metadata lives on the version, not the collection; it's versioned alongside your
         data. Set it on your first push and update it via subsequent pushes or the metadata
         endpoint.
       </p>
@@ -297,7 +297,7 @@ export default function DocsIntegration() {
         </li>
       </ul>
       <p>
-        Private content is stored in the same version — the owner always sees everything. Public
+        Private content is stored in the same version; the owner always sees everything. Public
         readers see only the filtered view. The public content hash excludes private data, so
         verifiers can confirm integrity of the public subset.
       </p>
@@ -397,15 +397,15 @@ export default function DocsIntegration() {
       <h2>Error Handling</h2>
       <ul>
         <li>
-          <code>409 Conflict</code> — Another version was pushed since your{' '}
-          <code>base_version</code>. Re-negotiate.
+          <code>409 Conflict</code>: Another version was pushed since your <code>base_version</code>
+          . Re-negotiate.
         </li>
         <li>
-          <code>422 Unprocessable</code> — Records reference files that haven't been uploaded,
-          schema validation failed, or records contain fields not in the schema.
+          <code>422 Unprocessable</code>: Records reference files that haven't been uploaded, schema
+          validation failed, or records contain fields not in the schema.
         </li>
         <li>
-          <code>400 Bad Request</code> — Malformed JSONL, hash mismatch, or missing records.
+          <code>400 Bad Request</code>: Malformed JSONL, hash mismatch, or missing records.
         </li>
       </ul>
 

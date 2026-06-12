@@ -177,7 +177,7 @@ export default function DocsQuickstart() {
         <code>{loginNote}</code>
       </pre>
       <p>
-        Save the <code>key</code> value — it's shown only once.
+        Save the <code>key</code> value. It's shown only once.
       </p>
 
       <h2>2. Create a collection</h2>
@@ -225,7 +225,7 @@ export default function DocsQuickstart() {
       <h2>5. Push an update</h2>
       <p>
         On subsequent pushes, set <code>base_version</code> to the current latest. The server
-        deduplicates — only new or changed records need to be sent.
+        deduplicates, so only new or changed records need to be sent.
       </p>
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{updateCode}</code>
@@ -256,14 +256,14 @@ export default function DocsQuickstart() {
       <h2>Next steps</h2>
       <ul>
         <li>
-          <Link to="/docs/concepts">Core concepts</Link> — understand the data model
+          <Link to="/docs/concepts">Core concepts</Link>: understand the data model
         </li>
         <li>
-          <Link to="/docs/integration">Integration guide</Link> — full push protocol, SQL mapping,
+          <Link to="/docs/integration">Integration guide</Link>: full push protocol, SQL mapping,
           privacy controls
         </li>
         <li>
-          <Link to="/protocol">Protocol spec</Link> — precise hashing algorithm and negotiate flow
+          <Link to="/protocol">Protocol spec</Link>: precise hashing algorithm and negotiate flow
         </li>
       </ul>
     </DocsLayout>
