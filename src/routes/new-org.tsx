@@ -61,10 +61,11 @@ export default function NewOrg() {
     }
   }
 
-  if (!currentUser) {
-    window.location.href = '/login'
-    return null
-  }
+  useEffect(() => {
+    if (!currentUser) navigate('/login')
+  }, [currentUser, navigate])
+
+  if (!currentUser) return null
 
   return (
     <BaseLayout>

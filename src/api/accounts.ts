@@ -131,22 +131,33 @@ const app = new Hono<AuthEnv>()
         .limit(1)
 
       if (!acct) {
-        console.warn(`[available-kf-orgs] No kf-auth account row for userId=${userId}`)
+        console.warn(`[available-kf-orgs] No kf-auth account for userId=${userId}`)
         return c.json([])
       }
 
-      const { fetchAuthOrgs, hasInternalApi } = await import('../lib/auth-internal.server.js')
+      const { fetchAuthOrgs, hasInternalApi, resolveKfUserByEmail } =
+        await import('../lib/auth-internal.server.js')
       if (!hasInternalApi) {
-        console.warn(
-          '[available-kf-orgs] Internal API not configured (AUTH_INTERNAL_API_KEY missing)',
-        )
+        console.warn('[available-kf-orgs] Internal API not configured')
         return c.json([])
       }
 
-      const orgs = await fetchAuthOrgs(acct.accountId)
-      console.log(
-        `[available-kf-orgs] userId=${userId} accountId=${acct.accountId} → ${orgs.length} orgs`,
-      )
+      // The stored accountId may be an OIDC subject identifier that doesn't
+      // match the kf-auth user ID. Try it first; if empty, resolve via email.
+      let orgs = await fetchAuthOrgs(acct.accountId)
+      if (orgs.length === 0) {
+        const [u] = await db
+          .select({ email: schema.user.email })
+          .from(schema.user)
+          .where(eq(schema.user.id, userId))
+          .limit(1)
+        if (u?.email) {
+          const kfUserId = await resolveKfUserByEmail(u.email)
+          if (kfUserId) {
+            orgs = await fetchAuthOrgs(kfUserId)
+          }
+        }
+      }
       return c.json(orgs)
     },
   )
