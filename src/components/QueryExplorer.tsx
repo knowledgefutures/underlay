@@ -15,7 +15,6 @@ interface CollectionInfo {
   name: string
   description?: string
   public: boolean
-  latestVersion: number | null
   latestSemver: string | null
   recordCount: number
 }
@@ -24,7 +23,6 @@ interface LoadedCollection {
   key: string
   ownerSlug: string
   slug: string
-  version: number
   semver: string
   name: string
   public: boolean
@@ -91,7 +89,7 @@ export default function QueryExplorer() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [selectedForVersion, setSelectedForVersion] = useState<CollectionInfo | null>(null)
   const [availableVersions, setAvailableVersions] = useState<
-    { number: number; semver: string; recordCount: number; message?: string }[]
+    { semver: string; recordCount: number; message?: string }[]
   >([])
   const [loadedCollections, setLoadedCollections] = useState<LoadedCollection[]>([])
   const [loading, setLoading] = useState(false)
@@ -367,31 +365,29 @@ export default function QueryExplorer() {
 
   // Load a collection into the workspace
   const loadCollection = useCallback(
-    async (c: CollectionInfo, version?: number, semver?: string) => {
+    async (c: CollectionInfo, semver?: string) => {
       if (!sqlJs) return
-      const v = version ?? c.latestVersion
-      if (v === null) return
-      const sv = semver ?? c.latestSemver ?? `${v}.0.0`
+      const sv = semver ?? c.latestSemver
+      if (!sv) return
 
-      const key = `${c.ownerSlug}/${c.slug}:${v}`
+      const key = `${c.ownerSlug}/${c.slug}:${sv}`
       if (loadedCollections.some((lc) => lc.key === key)) return
 
       setLoading(true)
-      setLoadingMessage(`Loading ${c.ownerSlug}/${c.slug} v${v}...`)
+      setLoadingMessage(`Loading ${c.ownerSlug}/${c.slug} ${sv}...`)
 
       try {
-        const sqliteRes = await fetch(`/api/query/sqlite/${c.ownerSlug}/${c.slug}/${v}`)
+        const sqliteRes = await fetch(`/api/query/sqlite/${c.ownerSlug}/${c.slug}/${sv}`)
         if (!sqliteRes.ok) throw new Error('Failed to fetch SQLite file')
         const arrayBuffer = await sqliteRes.arrayBuffer()
 
-        const ddlRes = await fetch(`/api/query/ddl/${c.ownerSlug}/${c.slug}/${v}`)
+        const ddlRes = await fetch(`/api/query/ddl/${c.ownerSlug}/${c.slug}/${sv}`)
         const { ddl } = await ddlRes.json()
 
         const newLoaded: LoadedCollection = {
           key,
           ownerSlug: c.ownerSlug,
           slug: c.slug,
-          version: v,
           semver: sv,
           name: c.name,
           public: c.public,
@@ -414,7 +410,7 @@ export default function QueryExplorer() {
             const res =
               lc.key === key
                 ? { arrayBuffer: () => Promise.resolve(arrayBuffer) }
-                : await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.version}`)
+                : await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.semver}`)
             const buf = await (res as any).arrayBuffer()
             const tempDb = new sqlJs.Database(new Uint8Array(buf))
 
@@ -480,7 +476,7 @@ export default function QueryExplorer() {
       if (db) db.close()
 
       for (const lc of remaining) {
-        const res = await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.version}`)
+        const res = await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.semver}`)
         const buf = await res.arrayBuffer()
         const tempDb = new sqlJs.Database(new Uint8Array(buf))
 
@@ -553,7 +549,7 @@ export default function QueryExplorer() {
     (sql: string, prompt?: string, reasoning?: string, durationMs?: number) => {
       if (!db) return
       const collectionLabels = loadedCollections.map(
-        (lc) => `${lc.ownerSlug}/${lc.slug} v${lc.version}`,
+        (lc) => `${lc.ownerSlug}/${lc.slug} ${lc.semver}`,
       )
 
       let result: QueryResult | null = null
@@ -606,7 +602,7 @@ export default function QueryExplorer() {
         const collectionRefs = loadedCollections.map((lc) => ({
           owner: lc.ownerSlug,
           slug: lc.slug,
-          version: lc.version,
+          version: lc.semver,
         }))
 
         try {
@@ -629,9 +625,7 @@ export default function QueryExplorer() {
               result: null,
               error: data.error || data.message || 'Failed to generate SQL',
               rawResponse: data.rawResponse,
-              collections: loadedCollections.map(
-                (lc) => `${lc.ownerSlug}/${lc.slug} v${lc.version}`,
-              ),
+              collections: loadedCollections.map((lc) => `${lc.ownerSlug}/${lc.slug} ${lc.semver}`),
               timestamp: Date.now(),
             }
             setHistory((prev) => [entry, ...prev])
@@ -647,7 +641,7 @@ export default function QueryExplorer() {
             prompt: trimmed,
             result: null,
             error: e.message || 'Network error',
-            collections: loadedCollections.map((lc) => `${lc.ownerSlug}/${lc.slug} v${lc.version}`),
+            collections: loadedCollections.map((lc) => `${lc.ownerSlug}/${lc.slug} ${lc.semver}`),
             timestamp: Date.now(),
           }
           setHistory((prev) => [entry, ...prev])
@@ -678,7 +672,7 @@ export default function QueryExplorer() {
   const shareQuery = useCallback(
     (sqlText: string) => {
       const payload = {
-        c: loadedCollections.map((lc) => ({ o: lc.ownerSlug, s: lc.slug, v: lc.version })),
+        c: loadedCollections.map((lc) => ({ o: lc.ownerSlug, s: lc.slug, v: lc.semver })),
         q: sqlText,
       }
       const hash = btoa(JSON.stringify(payload))
@@ -705,8 +699,7 @@ export default function QueryExplorer() {
           slug: ref.s,
           name: `${ref.o}/${ref.s}`,
           public: true,
-          latestVersion: ref.v,
-          latestSemver: '',
+          latestSemver: ref.v,
           recordCount: 0,
         }
         loadCollection(info, ref.v)
@@ -828,7 +821,7 @@ export default function QueryExplorer() {
                                 className="border-rule text-ink-muted hover:bg-parchment-dark hover:text-ink flex w-16 shrink-0 items-center justify-center border-l text-[11px] disabled:cursor-not-allowed"
                                 title="Choose specific version"
                               >
-                                {c.latestSemver ?? `v${c.latestVersion}`}
+                                {c.latestSemver ?? '—'}
                               </button>
                             </div>
                           )
@@ -862,13 +855,13 @@ export default function QueryExplorer() {
                           (lc) =>
                             lc.ownerSlug === selectedForVersion.ownerSlug &&
                             lc.slug === selectedForVersion.slug &&
-                            lc.version === v.number,
+                            lc.semver === v.semver,
                         )
                         return (
                           <button
-                            key={v.number}
+                            key={v.semver}
                             onClick={() => {
-                              loadCollection(selectedForVersion, v.number, v.semver)
+                              loadCollection(selectedForVersion, v.semver)
                               setSelectedForVersion(null)
                             }}
                             disabled={loading || alreadyLoaded}
