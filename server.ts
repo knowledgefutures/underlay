@@ -136,7 +136,7 @@ app.use('/api/admin/explore-*', async (c, next) => {
 })
 
 // --- ARK resolution middleware ---
-app.use('/ark\\:*', arkMiddleware)
+app.use('/:arkpath{ark:.*}', arkMiddleware)
 
 // Dev only: re-evaluate converted subapps through Vite on each API request.
 // Falls through to next() if the fresh router doesn't match the URL,
