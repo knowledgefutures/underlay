@@ -289,6 +289,11 @@ export default function Protocol() {
               provenance is built in: any record can be traced back to every collection and version
               that includes it.
             </p>
+
+            <p>
+              A single-file implementation of the Underlay protocol can be found at{' '}
+              <a href="https://sus.knowledgefutures.org/">sus.knowledgefutures.org/</a>
+            </p>
           </RfcSection>
 
           <RfcSection
