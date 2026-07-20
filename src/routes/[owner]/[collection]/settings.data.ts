@@ -12,13 +12,16 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const headers = { Cookie: request.headers.get('Cookie') ?? '' }
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
-  const [data, arkSettings] = await Promise.all([
+  const [data, arkSettings, webhooksResult] = await Promise.all([
     fetch(new URL(prefix, base), { headers }).then((r) => (r.ok ? r.json() : null)),
     fetch(new URL(`${prefix}/ark`, base), { headers }).then((r) =>
       r.ok ? r.json() : { enabled: false, customUrl: null, arkUrl: null },
     ),
+    fetch(new URL(`${prefix}/webhooks`, base), { headers }).then((r) =>
+      r.ok ? r.json() : { webhooks: [] },
+    ),
   ])
 
   if (!data) throw new Response('Not Found', { status: 404 })
-  return { data, arkSettings }
+  return { data, arkSettings, webhooks: webhooksResult.webhooks ?? [] }
 }

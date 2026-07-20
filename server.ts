@@ -30,9 +30,11 @@ import { rateLimitMiddleware } from '~/api/rate-limit.server'
 import _records from '~/api/records'
 import _schemas from '~/api/schemas'
 import _versions from '~/api/versions'
+import _webhooks from '~/api/webhooks'
 import { auth } from '~/lib/auth'
 import { getSessionUser } from '~/lib/auth.server'
 import { getMirrorConfig } from '~/lib/mirror-config'
+import { startWebhookBackgroundJobs } from '~/lib/webhooks.server'
 
 const isProd = process.env.NODE_ENV === 'production'
 let vite: ViteDevServer | undefined
@@ -229,10 +231,14 @@ const routes = app
   .route(...api('/api', './src/api/collections.ts', _collections))
   .route(...api('/api/collections', './src/api/versions.ts', _versions))
   .route(...api('/api/collections', './src/api/negotiate.ts', _negotiate))
+  .route(...api('/api/collections', './src/api/webhooks.ts', _webhooks))
   .route(...api('/api', './src/api/discussion.ts', _discussion))
   .route(...api('/api/organizations', './src/api/organizations.ts', _organizations))
 
 export type AppType = typeof routes
+
+// Retry sweep + delivery-log purge for webhooks (in-process, unref'd intervals)
+startWebhookBackgroundJobs()
 
 // --- Legacy API routes (not yet converted to subapp pattern) ---
 app.get('/api/health', health.check)

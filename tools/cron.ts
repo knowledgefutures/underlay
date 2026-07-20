@@ -41,6 +41,11 @@ if (process.env.NODE_ENV === 'production') {
     timezone: 'UTC',
   })
 
+  // Daily at 3:45 AM UTC — prune webhook delivery-log rows older than 30 days
+  cron.schedule('45 3 * * *', () => run('Prune webhook logs', 'tool:pruneWebhookLogs'), {
+    timezone: 'UTC',
+  })
+
   // Mirror sync — only if mirror mode is enabled
   const mirrorConfig = getMirrorConfig()
   if (mirrorConfig.enabled) {

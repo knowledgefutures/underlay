@@ -491,3 +491,72 @@ export const instanceSettings = pgTable('instance_settings', {
   value: jsonb('value').notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
+
+// --- Webhooks (fire on new version) ---
+
+export const collectionWebhooks = pgTable(
+  'collection_webhooks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    // Which version bump types trigger this webhook — a subset of major/minor/patch.
+    // All three = fire on every version.
+    bumpFilter: text('bump_filter')
+      .array()
+      .notNull()
+      .default(sql`'{major,minor,patch}'::text[]`),
+    secret: text('secret').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    createdBy: text('created_by').references(() => user.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    lastDeliveryAt: timestamp('last_delivery_at', { withTimezone: true }),
+  },
+  (t) => [index('collection_webhooks_collection_id_idx').on(t.collectionId)],
+)
+
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    webhookId: uuid('webhook_id')
+      .notNull()
+      .references(() => collectionWebhooks.id, { onDelete: 'cascade' }),
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    // The version this delivery is about. NULL-able so the log survives a version
+    // being pruned; semver is denormalized for display.
+    versionId: bigint('version_id', { mode: 'number' }).references(() => versions.id, {
+      onDelete: 'set null',
+    }),
+    semver: text('semver'),
+    bumpType: text('bump_type', { enum: ['major', 'minor', 'patch'] }).notNull(),
+    event: text('event').notNull().default('version.created'),
+    // The core payload (without the per-attempt delivery envelope), sent as the request body.
+    payload: jsonb('payload').notNull(),
+    status: text('status', { enum: ['pending', 'success', 'failed'] })
+      .notNull()
+      .default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    responseCode: integer('response_code'),
+    error: text('error'),
+    durationMs: integer('duration_ms'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('webhook_deliveries_webhook_id_idx').on(t.webhookId),
+    index('webhook_deliveries_collection_id_idx').on(t.collectionId),
+    index('webhook_deliveries_created_at_idx').on(t.createdAt),
+    // Retry sweep scans for due, non-terminal deliveries
+    index('webhook_deliveries_sweep_idx').on(t.status, t.nextAttemptAt),
+  ],
+)
