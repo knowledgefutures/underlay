@@ -336,9 +336,22 @@ app.post(
     responses: { 200: z.any() },
   }),
   async (c) => {
-    const { owner, slug, deliveryId } = c.req.valid('param')
+    const { owner, slug, id, deliveryId } = c.req.valid('param')
     const auth = await authorizeWebhookAccess(c, owner, slug)
     if ('error' in auth) return auth.error
+
+    const [delivery] = await db
+      .select({ id: schema.webhookDeliveries.id })
+      .from(schema.webhookDeliveries)
+      .where(
+        and(
+          eq(schema.webhookDeliveries.id, deliveryId),
+          eq(schema.webhookDeliveries.collectionId, auth.collectionId),
+          eq(schema.webhookDeliveries.webhookId, id),
+        ),
+      )
+      .limit(1)
+    if (!delivery) return c.json({ error: 'Not found', statusCode: 404 }, 404)
 
     const ok = await retryDelivery(deliveryId, auth.collectionId)
     if (!ok) return c.json({ error: 'Not found', statusCode: 404 }, 404)
