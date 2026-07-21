@@ -352,9 +352,7 @@ async function markFailed(
 /** Fire-and-forget dispatch of freshly enqueued deliveries. */
 export function dispatchDeliveries(ids: string[]): void {
   if (ids.length === 0) return
-  void Promise.allSettled(ids.map((id) => deliverOne(id))).catch((err) => {
-    console.error('[webhooks] dispatch error:', err)
-  })
+  void Promise.allSettled(ids.map((id) => deliverOne(id)))
 }
 
 /** Reset a delivery for an immediate manual retry. Returns false if not retriable/not found. */
