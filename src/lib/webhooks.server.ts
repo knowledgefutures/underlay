@@ -65,7 +65,10 @@ export function isPrivateIp(ip: string): boolean {
   if (kind === 6) {
     const norm = ip.toLowerCase()
     if (norm === '::1' || norm === '::') return true
-    if (norm.startsWith('fe80')) return true // link-local
+
+    const firstVal = parseInt(norm.split(':')[0] || '0', 16)
+    if (!Number.isNaN(firstVal) && (firstVal & 0xffc0) === 0xfe80) return true // link-local fe80::/10
+
     if (norm.startsWith('fc') || norm.startsWith('fd')) return true // unique-local
     // IPv4-mapped (::ffff:a.b.c.d)
     const mapped = norm.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)
