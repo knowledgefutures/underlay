@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import WebhooksSettings from '~/components/WebhooksSettings'
 import { useAppContext } from '~/lib/app-context'
 
 import { CollectionNav } from '.'
@@ -9,7 +10,7 @@ import { CollectionNav } from '.'
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
-  const loaderData = useLoaderData() as { data: any; arkSettings: any }
+  const loaderData = useLoaderData() as { data: any; arkSettings: any; webhooks: any[] }
 
   const [data, setData] = useState<any>(loaderData.data)
   const [arkSettings, setArkSettings] = useState<any>(loaderData.arkSettings)
@@ -450,6 +451,13 @@ export default function CollectionSettingsPage() {
               </div>
             </form>
           </div>
+
+          {/* Webhooks */}
+          <WebhooksSettings
+            owner={owner!}
+            collection={collection!}
+            initialWebhooks={loaderData.webhooks ?? []}
+          />
 
           {/* Transfer */}
           <div className="border-rule mb-10 border-t pt-6">

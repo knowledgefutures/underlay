@@ -23,6 +23,7 @@ import {
   resolveCollection,
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
+import { dispatchDeliveries, enqueueWebhookDeliveries } from '../lib/webhooks.server.js'
 import { type AuthEnv, requireAuth } from './auth.server.js'
 
 const MAX_METADATA_BYTES = 64 * 1024
@@ -953,6 +954,7 @@ const app = new Hono<AuthEnv>()
 
       const sv = deriveSemver(latest.semver, false, false, true)
 
+      let newVersionId: number | undefined
       await db.transaction(async (tx) => {
         const [version] = await tx
           .insert(schema.versions)
@@ -973,6 +975,8 @@ const app = new Hono<AuthEnv>()
             totalBytes: latest.totalBytes,
           })
           .returning({ id: schema.versions.id })
+
+        newVersionId = version!.id
 
         if (schemaEntries.length > 0) {
           await tx.insert(schema.versionSchemas).values(
@@ -1006,6 +1010,27 @@ const app = new Hono<AuthEnv>()
           .set({ updatedAt: new Date() })
           .where(eq(schema.collections.id, collection.id))
       })
+
+      // Fire webhooks for the metadata (patch) version — best-effort.
+      try {
+        const deliveryIds = await enqueueWebhookDeliveries(
+          {
+            id: newVersionId!,
+            semver: sv.semver,
+            hash: versionHash,
+            major: sv.major,
+            minor: sv.minor,
+            patch: sv.patch,
+            recordCount: latest.recordCount,
+            fileCount: latest.fileCount,
+          },
+          'patch',
+          collection.id,
+        )
+        dispatchDeliveries(deliveryIds)
+      } catch (err) {
+        console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
+      }
 
       return c.json({ semver: sv.semver, hash: versionHash, metadata: newMetadata }, 201)
     },

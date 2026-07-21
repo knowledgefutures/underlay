@@ -25,6 +25,11 @@ import {
   type SchemaEntry,
   stripToSchema,
 } from '../lib/version-helpers.server.js'
+import {
+  bumpTypeFromChanges,
+  dispatchDeliveries,
+  enqueueWebhookDeliveries,
+} from '../lib/webhooks.server.js'
 import { requireAuth, type AuthEnv } from './auth.server.js'
 
 const SESSION_TTL_MS = 10 * 60 * 1000
@@ -974,6 +979,27 @@ app.post(
       .update(schema.negotiateSessions)
       .set({ status: 'committed' })
       .where(eq(schema.negotiateSessions.id, sessionId))
+
+    // Fire webhooks for the new version — best-effort, never blocks/denies the 201.
+    try {
+      const deliveryIds = await enqueueWebhookDeliveries(
+        {
+          id: versionId!,
+          semver: sv.semver,
+          hash: versionHash,
+          major: sv.major,
+          minor: sv.minor,
+          patch: sv.patch,
+          recordCount: finalRecordHashes.length,
+          fileCount: session.fileHashes.length,
+        },
+        bumpTypeFromChanges(schemaChanged, recordsChanged),
+        session.collectionId,
+      )
+      dispatchDeliveries(deliveryIds)
+    } catch (err) {
+      console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
+    }
 
     return c.json(
       {
