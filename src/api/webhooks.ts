@@ -228,7 +228,8 @@ app.get(
     const auth = await authorizeWebhookAccess(c, owner, slug)
     if ('error' in auth) return auth.error
 
-    const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200)
+    const parsedLimit = Number.parseInt(c.req.query('limit') ?? '50', 10)
+    const limit = Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 50, 200)
 
     // Confirm the webhook belongs to this collection before listing its log.
     const [hook] = await db
