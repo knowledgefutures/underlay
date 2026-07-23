@@ -412,13 +412,19 @@ export default function DocsApiVersions() {
               <td>
                 <code>after</code>
               </td>
-              <td>Cursor: return records with IDs after this value (preferred for large sets)</td>
+              <td>
+                Keyset cursor: return records with IDs after this value. Canonical method — stays
+                fast at any depth. <code>cursor</code> is accepted as an alias.
+              </td>
             </tr>
             <tr>
               <td>
                 <code>offset</code>
               </td>
-              <td>Legacy offset-based pagination (still supported)</td>
+              <td>
+                Legacy offset pagination, capped at 10000 (returns 400 beyond that). Use{' '}
+                <code>after</code> to page deeper.
+              </td>
             </tr>
           </tbody>
         </table>
@@ -430,7 +436,13 @@ export default function DocsApiVersions() {
         </pre>
         <p>
           Use <code>pagination.nextCursor</code> as the <code>after</code> parameter in the next
-          request. When <code>hasMore</code> is false, you've reached the end.
+          request. When <code>hasMore</code> is false, you've reached the end. For large
+          collections, always paginate with <code>after</code> rather than <code>offset</code>.
+        </p>
+        <p className="text-ink-muted">
+          Note: <code>pagination.total</code> is the whole-version record count and is not adjusted
+          when <code>type</code> is set — use <code>hasMore</code> to detect the end of a filtered
+          result set.
         </p>
       </div>
 

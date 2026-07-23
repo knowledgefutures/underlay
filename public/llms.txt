@@ -281,15 +281,27 @@ Response:
 
 Parameters:
 - limit: max records per page (default 100, max 1000)
-- after: cursor (record ID) — return records with IDs lexicographically after this value
-- offset: legacy offset-based pagination (still supported, but cursor is preferred for large sets)
+- after: keyset cursor (record ID) — return records with IDs lexicographically after
+  this value. This is the canonical, scalable method: it is an index seek and stays
+  fast at any depth. `cursor` is accepted as an alias for `after`.
+- offset: legacy offset-based pagination. Cost grows with the offset, so it is capped:
+  an offset greater than 10000 returns 400. Use `after` to page deeper.
 - type: filter by record type
 
-To paginate through all records:
+Notes:
+- `pagination.total` is the whole-version record count. When `type` is set it is NOT
+  the filtered count — use `hasMore` to detect the end of a filtered result set.
+- A query that exceeds the server's statement timeout returns 503 with a Retry-After
+  header. If you hit this on `offset`, switch to `after`.
+
+To paginate through all records (works at any collection size):
 1. First request: GET .../records?limit=1000
 2. If pagination.hasMore is true, use pagination.nextCursor for the next request:
    GET .../records?limit=1000&after=<nextCursor>
 3. Repeat until hasMore is false.
+
+Do NOT paginate large collections with ?offset=; it is capped at 10000 and will 400
+beyond that. Use ?after=<nextCursor> keyset pagination instead.
 
 ---
 
