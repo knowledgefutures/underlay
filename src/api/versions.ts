@@ -28,6 +28,21 @@ import { type AuthEnv, requireAuth } from './auth.server.js'
 
 const MAX_METADATA_BYTES = 64 * 1024
 
+// Offset pagination is O(offset): Postgres must produce and discard every
+// skipped row. Past a few thousand rows on a large version it exceeds the
+// statement timeout. Reject deep offsets with a clear 400 and steer clients to
+// keyset pagination (?after=<pagination.nextCursor>), which is an index seek and
+// stays cheap at any depth. Matches Elasticsearch's default max_result_window.
+const MAX_RECORDS_OFFSET = 10_000
+
+// Per-request cap for the records query so a pathological scan surfaces as a
+// clean 503 (with Retry-After) instead of hanging or returning an opaque 500.
+const RECORDS_STATEMENT_TIMEOUT_MS = 10_000
+
+// Postgres SQLSTATE 57014 = query_canceled, raised when statement_timeout fires.
+const isStatementTimeout = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && 'code' in err && err.code === '57014'
+
 const app = new Hono<AuthEnv>()
   // List versions
   .get(
@@ -187,7 +202,9 @@ const app = new Hono<AuthEnv>()
       const type = c.req.query('type')
       const limit = c.req.query('limit')
       const offset = c.req.query('offset')
-      const after = c.req.query('after')
+      // `after` is the canonical keyset cursor; accept `cursor` as an alias so a
+      // client that sends ?cursor= isn't silently reset to offset 0.
+      const after = c.req.query('after') ?? c.req.query('cursor')
 
       const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
@@ -238,26 +255,66 @@ const app = new Hono<AuthEnv>()
 
       const pageLimit = Math.min(parseInt(limit ?? '100', 10), 1000)
 
-      const records = await db
-        .select({
-          id: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-          // Non-owners see the public content-address (hash of the
-          // private-field-stripped record they receive)
-          hash: ownerAccess
-            ? sql<string>`${schema.recordObjects.hash}`
-            : sql<string>`coalesce(${schema.versionRecords.publicRecordHash}, ${schema.recordObjects.hash})`,
+      // Resolve offset (ignored when a keyset cursor is supplied). Reject deep
+      // offsets with a 400 rather than letting an O(offset) scan time out.
+      let offsetValue = 0
+      if (!after) {
+        offsetValue = parseInt(offset ?? '0', 10)
+        if (Number.isNaN(offsetValue) || offsetValue < 0) offsetValue = 0
+        if (offsetValue > MAX_RECORDS_OFFSET) {
+          return c.json(
+            {
+              error: `offset beyond ${MAX_RECORDS_OFFSET} is not supported; page deeper with keyset pagination using ?after=<pagination.nextCursor>`,
+              statusCode: 400,
+            },
+            400,
+          )
+        }
+      }
+
+      let records: Array<{ id: string; type: string; data: unknown; hash: string }>
+      try {
+        records = await db.transaction(async (tx) => {
+          // Scope a statement timeout to this query only; SET LOCAL is reset when
+          // the transaction ends. Value can't be a bind param, so inline it.
+          await tx.execute(
+            sql`SET LOCAL statement_timeout = ${sql.raw(String(RECORDS_STATEMENT_TIMEOUT_MS))}`,
+          )
+          return tx
+            .select({
+              id: schema.recordObjects.recordId,
+              type: schema.recordObjects.type,
+              data: schema.recordObjects.data,
+              // Non-owners see the public content-address (hash of the
+              // private-field-stripped record they receive)
+              hash: ownerAccess
+                ? sql<string>`${schema.recordObjects.hash}`
+                : sql<string>`coalesce(${schema.versionRecords.publicRecordHash}, ${schema.recordObjects.hash})`,
+            })
+            .from(schema.versionRecords)
+            .innerJoin(
+              schema.recordObjects,
+              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+            )
+            .where(and(...conditions))
+            .orderBy(schema.recordObjects.recordId)
+            .limit(pageLimit + 1)
+            .offset(after ? 0 : offsetValue)
         })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(and(...conditions))
-        .orderBy(schema.recordObjects.recordId)
-        .limit(pageLimit + 1)
-        .offset(after ? 0 : parseInt(offset ?? '0', 10))
+      } catch (err) {
+        if (isStatementTimeout(err)) {
+          c.header('Retry-After', '5')
+          return c.json(
+            {
+              error:
+                'Records query timed out. Use keyset pagination with ?after=<pagination.nextCursor> to page large result sets.',
+              statusCode: 503,
+            },
+            503,
+          )
+        }
+        throw err
+      }
 
       // Determine if there's a next page
       const hasMore = records.length > pageLimit
