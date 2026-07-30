@@ -15,12 +15,15 @@ import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
 const app = new Hono<AuthEnv>()
-  // Browse public collections
+  // Browse collections — public by default, or the caller's own with ?mine=true
   .get(
     '/collections',
     openApi({
       tags: ['Collections'],
-      summary: 'Browse public collections',
+      summary: 'Browse collections',
+      description:
+        'Lists public collections. Pass `mine=true` (authenticated) to list collections belonging ' +
+        'to the organizations the caller is a member of instead, including private ones.',
       responses: { 200: z.any() },
     }),
     async (c) => {
@@ -28,10 +31,30 @@ const app = new Hono<AuthEnv>()
       const owner = c.req.query('owner')
       const tag = c.req.query('tag')
       const sort = c.req.query('sort')
+      const mine = c.req.query('mine') === 'true'
       const take = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100)
       const skip = parseInt(c.req.query('offset') ?? '0', 10)
 
-      const conditions = [eq(schema.collections.public, true)]
+      // Visibility scope. Public collections by default; with ?mine=true, every
+      // collection owned by an org the caller belongs to — private ones included,
+      // since org membership is what grants access elsewhere (hasOrgAccess).
+      if (mine && !c.get('userId')) {
+        return c.json(
+          { error: 'Unauthorized — mine=true requires a session', statusCode: 401 },
+          401,
+        )
+      }
+      const visibility = mine
+        ? inArray(
+            schema.collections.organizationId,
+            db
+              .select({ id: schema.member.organizationId })
+              .from(schema.member)
+              .where(eq(schema.member.userId, c.get('userId')!)),
+          )
+        : eq(schema.collections.public, true)
+
+      const conditions = [visibility]
       if (q) {
         conditions.push(ilike(schema.collections.name, `%${q}%`))
       }
@@ -44,6 +67,7 @@ const app = new Hono<AuthEnv>()
           id: schema.collections.id,
           slug: schema.collections.slug,
           name: schema.collections.name,
+          public: schema.collections.public,
           ownerSlug: schema.organization.slug,
           ownerName: schema.organization.name,
           createdAt: schema.collections.createdAt,
@@ -129,7 +153,9 @@ const app = new Hono<AuthEnv>()
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count)
 
-      const facetConditions = [eq(schema.collections.public, true)]
+      // Facets must describe the same scope as the results, or ?mine=true would
+      // show owner counts for collections the caller can't see.
+      const facetConditions = [visibility]
       if (q) {
         facetConditions.push(ilike(schema.collections.name, `%${q}%`))
       }
