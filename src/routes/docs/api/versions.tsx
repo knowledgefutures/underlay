@@ -86,7 +86,32 @@ const manifestRes = `{
     {"id": "pub-001", "type": "Publication", "hash": "sha256:def456..."},
     {"id": "pub-002", "type": "Publication", "hash": "sha256:789abc..."}
   ],
-  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."]
+  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."],
+  "pagination": {
+    "limit": 10000,
+    "hasMore": true,
+    "nextCursor": "eyJhZGRlZCI6WyJwdWItMDAyIiwiZGVmNDU2Il0..."
+  }
+}`
+
+const manifestDeltaRes = `{
+  "semver": "v1.1.0",
+  "hash": "a1b2c3d4...",
+  "since": "v1.0.0",
+  "schemas": {"Publication": "sha256:abc123..."},
+  "delta": {
+    "added":   [{"id": "pub-003", "type": "Publication", "hash": "sha256:..."}],
+    "updated": [{"id": "pub-001", "type": "Publication", "hash": "sha256:...",
+                 "previousHash": "sha256:..."}],
+    "removed": [{"id": "pub-old", "type": "Publication", "hash": "sha256:..."}]
+  },
+  "files": ["sha256:a1b2c3..."],
+  "pagination": {
+    "limit": 10000,
+    "hasMore": false,
+    "nextCursor": null
+  },
+  "truncated": false
 }`
 
 const diffRes = `{
@@ -98,7 +123,18 @@ const diffRes = `{
   "updated": [
     {"id": "pub-001", "type": "Publication", "data": {...}}
   ],
-  "removed": ["pub-old"]
+  "removed": ["pub-old"],
+  "pagination": {
+    "limit": 500,
+    "hasMore": false,
+    "nextCursor": null
+  },
+  "meta": {
+    "schemaChanged": false,
+    "metadataChanged": false,
+    "filesAdded": 0,
+    "filesRemoved": 0
+  }
 }`
 
 export default function DocsApiVersions() {
@@ -406,7 +442,7 @@ export default function DocsApiVersions() {
               <td>
                 <code>limit</code>
               </td>
-              <td>Max results (default 100, max 1000)</td>
+              <td>Max results (default 100, max 2000)</td>
             </tr>
             <tr>
               <td>
@@ -428,6 +464,11 @@ export default function DocsApiVersions() {
             </tr>
           </tbody>
         </table>
+        <p className="text-ink-muted">
+          Walking a whole collection is bounded by request count, not bytes: 60 requests/minute
+          anonymous, 5,000 authenticated. Ask for the largest page you can handle — a
+          3-million-record collection is 6,200 requests at 500/page and 1,550 at 2,000/page.
+        </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
@@ -440,9 +481,10 @@ export default function DocsApiVersions() {
           collections, always paginate with <code>after</code> rather than <code>offset</code>.
         </p>
         <p className="text-ink-muted">
-          Note: <code>pagination.total</code> is the whole-version record count and is not adjusted
-          when <code>type</code> is set — use <code>hasMore</code> to detect the end of a filtered
-          result set.
+          <code>pagination.total</code> respects the <code>type</code> filter and excludes private
+          types. On collections that mark individual records private it is an upper bound for
+          anonymous callers, since those records are hidden but still counted — use{' '}
+          <code>hasMore</code> if you need an exact end-of-set signal.
         </p>
       </div>
 
@@ -452,15 +494,63 @@ export default function DocsApiVersions() {
         <h2>GET /api/collections/:owner/:slug/versions/:n/manifest</h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get the manifest: a lightweight summary of what's in a version without the full record
-          data.
+          Get the manifest: every record's id, type and content hash, without the bodies. This is
+          the cheapest way to learn what a version contains — at roughly 120 bytes per entry, a
+          million records is one order of magnitude smaller than fetching them.
         </p>
+        <h3>Query parameters</h3>
+        <table>
+          <tbody>
+            <tr>
+              <td>
+                <code>limit</code>
+              </td>
+              <td>Entries per page (default 10000, max 100000)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>cursor</code>
+              </td>
+              <td>
+                Opaque keyset cursor from <code>pagination.nextCursor</code>. Do not construct or
+                parse it — pass back exactly what you were given.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>since</code>
+              </td>
+              <td>
+                Return a delta against this semver instead of the full manifest: which records were
+                added, updated and removed between the two versions.
+              </td>
+            </tr>
+          </tbody>
+        </table>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{manifestRes}</code>
         </pre>
+        <h3>
+          Response with <code>?since=</code> <span className="text-ink-muted font-normal">200</span>
+        </h3>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{manifestDeltaRes}</code>
+        </pre>
+        <p>
+          A delta of any size can be walked to completion: keep re-requesting with{' '}
+          <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false. The three
+          lists drain independently and the cursor tracks each one, so a page late in the walk may
+          contain only <code>updated</code> entries.
+        </p>
+        <p className="text-ink-muted">
+          <code>truncated</code> is retained for older clients, which treated a capped delta as
+          "give up and rebuild from the full manifest". It now simply mirrors{' '}
+          <code>pagination.hasMore</code>. Clients that understand the cursor should page instead of
+          rebuilding.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -481,6 +571,22 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 Semver to diff from (e.g. <code>v1.0.0</code>). Default: previous version.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>limit</code>
+              </td>
+              <td>Entries per list per page (default 500, max 5000)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>cursor</code>
+              </td>
+              <td>
+                Opaque keyset cursor from <code>pagination.nextCursor</code>, as on the manifest
+                endpoint. Diff returns full record bodies, so pages are much larger than manifest
+                pages — prefer <code>manifest?since=</code> when you only need the hashes.
               </td>
             </tr>
           </tbody>

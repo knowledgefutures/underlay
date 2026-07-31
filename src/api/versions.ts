@@ -39,11 +39,136 @@ const MAX_RECORDS_OFFSET = 10_000
 // clean 503 (with Retry-After) instead of hanging or returning an opaque 500.
 const RECORDS_STATEMENT_TIMEOUT_MS = 10_000
 
+// Delta and diff run three set operations per request, so they get more room
+// than a single record page.
+const DELTA_STATEMENT_TIMEOUT_MS = 30_000
+
+// Enumeration caps. Fewer, larger pages is the single biggest lever on the
+// wall-clock of a full-collection walk: an anonymous caller gets 60 requests a
+// minute, an authenticated one 5,000, so a multi-million-record collection is
+// bounded by request count long before it is bounded by bytes.
+//
+// Records carry bodies, so their cap is set by response size (2,000 × ~3 KB ≈
+// 6 MB); manifest entries are ~120 bytes, so 100,000 is ~12 MB.
+const MAX_RECORDS_LIMIT = 2_000
+const MAX_MANIFEST_LIMIT = 100_000
+const MAX_DIFF_LIMIT = 5_000
+
 // Postgres SQLSTATE 57014 = query_canceled, raised when statement_timeout fires.
 const isStatementTimeout = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && 'code' in err && err.code === '57014'
 
+/**
+ * Run `fn` with a scoped statement timeout. SET LOCAL is reset when the
+ * transaction ends, so this bounds one query rather than the connection.
+ */
+async function withStatementTimeout<T>(
+  timeoutMs: number,
+  fn: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    // The timeout value can't be a bind parameter, so it's inlined.
+    await tx.execute(sql`SET LOCAL statement_timeout = ${sql.raw(String(timeoutMs))}`)
+    return fn(tx)
+  })
+}
+
+/**
+ * Keyset position within one of the delta/diff result lists:
+ *   null            — not started, read from the beginning
+ *   [id, hash]      — resume strictly after this row
+ *   DONE            — this list is exhausted, skip its query entirely
+ *
+ * The three lists of a delta drain at different rates, so "exhausted" has to be
+ * distinguishable from "not started". Collapsing them would restart a finished
+ * list on the next page and loop forever.
+ *
+ * A version can legitimately hold two records with the same `record_id` and
+ * different bodies — the manifest is deduplicated by hash, not by id — so the
+ * key is (record_id, record_hash), which is unique per version and matches the
+ * (version_id, record_id) index order.
+ */
+const DONE = 'done'
+type ListCursor = [recordId: string, recordHash: string] | null | typeof DONE
+
+/** Per-list cursors for the three delta lists, carried as one opaque token. */
+interface DeltaCursor {
+  added: ListCursor
+  updated: ListCursor
+  removed: ListCursor
+}
+
+const EMPTY_DELTA_CURSOR: DeltaCursor = { added: null, updated: null, removed: null }
+
+const encodeDeltaCursor = (cursor: DeltaCursor): string =>
+  Buffer.from(JSON.stringify(cursor), 'utf-8').toString('base64url')
+
+/** Malformed cursors restart from the beginning rather than erroring. */
+function decodeDeltaCursor(raw: string | undefined): DeltaCursor {
+  if (!raw) return EMPTY_DELTA_CURSOR
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf-8')) as DeltaCursor
+    const list = (v: unknown): ListCursor => {
+      if (v === DONE) return DONE
+      return Array.isArray(v) &&
+        v.length === 2 &&
+        typeof v[0] === 'string' &&
+        typeof v[1] === 'string'
+        ? [v[0], v[1]]
+        : null
+    }
+    return {
+      added: list(parsed?.added),
+      updated: list(parsed?.updated),
+      removed: list(parsed?.removed),
+    }
+  } catch {
+    return EMPTY_DELTA_CURSOR
+  }
+}
+
+/** `WHERE (record_id, record_hash) > (…)` against the aliased version_records row. */
+const afterCursor = (alias: string, cursor: ListCursor) =>
+  Array.isArray(cursor)
+    ? sql`AND (${sql.raw(alias)}.record_id, ${sql.raw(alias)}.record_hash) > (${cursor[0]}, ${cursor[1]})`
+    : sql``
+
+/** Split a limit+1 fetch into a page plus the cursor for the next one. */
+function paginate<T extends { id: string; recordHash: string }>(
+  rows: T[],
+  limit: number,
+): { page: Omit<T, 'recordHash'>[]; next: ListCursor; hasMore: boolean } {
+  const hasMore = rows.length > limit
+  const page = hasMore ? rows.slice(0, limit) : rows
+  const last = page[page.length - 1]
+  return {
+    page: page.map(({ recordHash: _recordHash, ...rest }) => rest),
+    next: hasMore && last ? [last.id, last.recordHash] : DONE,
+    hasMore,
+  }
+}
+
 const app = new Hono<AuthEnv>()
+  // A query cancelled by its scoped statement_timeout is a load signal, not a
+  // server fault: answer 503 + Retry-After so a client backs off and retries
+  // rather than treating it as a permanent failure.
+  .use('*', async (c, next) => {
+    try {
+      await next()
+    } catch (err) {
+      if (!isStatementTimeout(err)) throw err
+      c.header('Retry-After', '5')
+      return c.json(
+        {
+          error:
+            'Query timed out. Page large result sets with keyset pagination ' +
+            '(?after= on records, ?cursor= on manifest and diff).',
+          statusCode: 503,
+        },
+        503,
+      )
+    }
+  })
   // List versions
   .get(
     '/:owner/:slug/versions',
@@ -224,12 +349,16 @@ const app = new Hono<AuthEnv>()
 
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
+      // Filtering and ordering run entirely off version_records, which carries
+      // denormalized record_id + type and is indexed on
+      // (version_id, [type,] record_id). record_objects is joined only to
+      // fetch bodies for the page that survives the index scan.
       const conditions = [eq(schema.versionRecords.versionId, version.id)]
-      if (type) conditions.push(eq(schema.recordObjects.type, type))
+      if (type) conditions.push(eq(schema.versionRecords.type, type))
 
       // Cursor-based pagination: ?after=recordId (keyset pagination)
       if (after) {
-        conditions.push(sql`${schema.recordObjects.recordId} > ${after}`)
+        conditions.push(sql`${schema.versionRecords.recordId} > ${after}`)
       }
 
       // Determine visibility
@@ -246,14 +375,14 @@ const app = new Hono<AuthEnv>()
             return c.json([]) // requesting a private type as non-owner
           }
           for (const pt of privateTypes) {
-            conditions.push(sql`${schema.recordObjects.type} != ${pt}`)
+            conditions.push(sql`${schema.versionRecords.type} != ${pt}`)
           }
         }
         // Exclude record-level private records
         conditions.push(eq(schema.recordObjects.private, false))
       }
 
-      const pageLimit = Math.min(parseInt(limit ?? '100', 10), 1000)
+      const pageLimit = Math.min(parseInt(limit ?? '100', 10), MAX_RECORDS_LIMIT)
 
       // Resolve offset (ignored when a keyset cursor is supplied). Reject deep
       // offsets with a 400 rather than letting an O(offset) scan time out.
@@ -282,8 +411,8 @@ const app = new Hono<AuthEnv>()
           )
           return tx
             .select({
-              id: schema.recordObjects.recordId,
-              type: schema.recordObjects.type,
+              id: schema.versionRecords.recordId,
+              type: schema.versionRecords.type,
               data: schema.recordObjects.data,
               // Non-owners see the public content-address (hash of the
               // private-field-stripped record they receive)
@@ -297,7 +426,7 @@ const app = new Hono<AuthEnv>()
               eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
             )
             .where(and(...conditions))
-            .orderBy(schema.recordObjects.recordId)
+            .orderBy(schema.versionRecords.recordId)
             .limit(pageLimit + 1)
             .offset(after ? 0 : offsetValue)
         })
@@ -372,7 +501,7 @@ const app = new Hono<AuthEnv>()
           limit: pageLimit,
           hasMore,
           nextCursor,
-          total: version.recordCount,
+          total: await countVersionRecords(version, type, privateTypes),
         },
       })
     },
@@ -486,7 +615,7 @@ const app = new Hono<AuthEnv>()
 
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
-      const limit = Math.min(parseInt(c.req.query('limit') ?? '10000', 10), 50000)
+      const limit = Math.min(parseInt(c.req.query('limit') ?? '10000', 10), MAX_MANIFEST_LIMIT)
       const cursor = c.req.query('cursor')
 
       const fileHashes = await db
@@ -500,18 +629,23 @@ const app = new Hono<AuthEnv>()
       // Records whose type has private *fields* are listed under their public
       // content-address (hash of the filtered record), so readers can verify
       // what they actually receive.
+      //
+      // Type and record id come off version_records, so only the record-level
+      // `private` flag still needs record_objects — the owner path joins
+      // nothing at all.
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaEntries)
-      const privacyConditions = []
-      if (!ownerAccess) {
-        privacyConditions.push(eq(schema.recordObjects.private, false))
-        for (const pt of privateTypes) {
-          privacyConditions.push(sql`${schema.recordObjects.type} != ${pt}`)
-        }
-      }
+      const privacyJoin = ownerAccess
+        ? sql``
+        : sql`INNER JOIN record_objects ro ON ro.hash = vr.record_hash`
+      const privacyWhere = ownerAccess
+        ? sql``
+        : privateTypes.size > 0
+          ? sql`AND ro.private = false AND vr.type NOT IN (${[...privateTypes]})`
+          : sql`AND ro.private = false`
       const servedHash = ownerAccess
-        ? sql<string>`${schema.recordObjects.hash}`
-        : sql<string>`coalesce(${schema.versionRecords.publicRecordHash}, ${schema.recordObjects.hash})`
+        ? sql`vr.record_hash`
+        : sql`coalesce(vr.public_record_hash, vr.record_hash)`
       const manifestHash = ownerAccess ? version.hash : (version.publicHash ?? version.hash)
       const schemasOut = ownerAccess
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schemaHash]))
@@ -521,7 +655,10 @@ const app = new Hono<AuthEnv>()
               .map((e) => [e.slug, hashSchema(filterTypeSchema(e.schema))]),
           )
 
-      // Delta manifest via SQL set operations — no in-memory Maps
+      // Delta manifest. The three set operations run as anti-/semi-joins between
+      // two versions over (version_id, record_id) — no correlated lookup through
+      // record_objects, and each list is keyset-paginated so a delta of any size
+      // can be walked to completion.
       if (sinceParam) {
         const { semver: sinceSemver } = parseSemver(sinceParam)
 
@@ -542,140 +679,117 @@ const app = new Hono<AuthEnv>()
 
         const targetId = version.id
         const sinceId = sinceVersion.id
+        const at = decodeDeltaCursor(cursor)
 
-        const added = await db
-          .select({
-            id: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            hash: servedHash,
-          })
-          .from(schema.versionRecords)
-          .innerJoin(
-            schema.recordObjects,
-            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-          )
-          .where(
-            and(
-              eq(schema.versionRecords.versionId, targetId),
-              sql`NOT EXISTS (
-                SELECT 1 FROM version_records svr
-                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                WHERE svr.version_id = ${sinceId}
-                AND sro.record_id = ${schema.recordObjects.recordId}
-              )`,
-              ...privacyConditions,
-            ),
-          )
-          .limit(limit)
-
-        const removed = await db
-          .select({
-            id: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            hash: servedHash,
-          })
-          .from(schema.versionRecords)
-          .innerJoin(
-            schema.recordObjects,
-            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-          )
-          .where(
-            and(
-              eq(schema.versionRecords.versionId, sinceId),
-              sql`NOT EXISTS (
-                SELECT 1 FROM version_records svr
-                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                WHERE svr.version_id = ${targetId}
-                AND sro.record_id = ${schema.recordObjects.recordId}
-              )`,
-              ...privacyConditions,
-            ),
-          )
-          .limit(limit)
+        type DeltaRow = { id: string; type: string; hash: string; recordHash: string }
+        type UpdatedRow = DeltaRow & { previousHash: string | null }
 
         const previousServedHash = ownerAccess
-          ? sql<string>`(
-              SELECT sro.hash FROM version_records svr
-              INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-              WHERE svr.version_id = ${sinceId}
-              AND sro.record_id = ${schema.recordObjects.recordId}
-            )`
-          : sql<string>`(
-              SELECT coalesce(svr.public_record_hash, sro.hash) FROM version_records svr
-              INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-              WHERE svr.version_id = ${sinceId}
-              AND sro.record_id = ${schema.recordObjects.recordId}
-            )`
+          ? sql`(SELECT s.record_hash FROM version_records s
+                 WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
+          : sql`(SELECT coalesce(s.public_record_hash, s.record_hash) FROM version_records s
+                 WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
 
-        const updated = await db
-          .select({
-            id: schema.recordObjects.recordId,
-            type: schema.recordObjects.type,
-            hash: servedHash,
-            previousHash: previousServedHash,
-          })
-          .from(schema.versionRecords)
-          .innerJoin(
-            schema.recordObjects,
-            eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-          )
-          .where(
-            and(
-              eq(schema.versionRecords.versionId, targetId),
-              sql`EXISTS (
-                SELECT 1 FROM version_records svr
-                INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                WHERE svr.version_id = ${sinceId}
-                AND sro.record_id = ${schema.recordObjects.recordId}
-                AND sro.hash != ${schema.recordObjects.hash}
-              )`,
-              ...privacyConditions,
-            ),
-          )
-          .limit(limit)
+        /** One delta list. `presence` selects the anti- or semi-join. */
+        const deltaQuery = (
+          versionId: number,
+          otherId: number,
+          presence: 'absent' | 'changed',
+          cursor: ListCursor,
+          extraColumn = sql``,
+        ) => sql`
+          SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
+                 vr.record_hash AS "recordHash"${extraColumn}
+          FROM version_records vr ${privacyJoin}
+          WHERE vr.version_id = ${versionId}
+            ${
+              presence === 'absent'
+                ? sql`AND NOT EXISTS (
+                    SELECT 1 FROM version_records s
+                    WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
+                  )`
+                : sql`AND EXISTS (
+                    SELECT 1 FROM version_records s
+                    WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
+                      AND s.record_hash <> vr.record_hash
+                  )`
+            }
+            ${privacyWhere} ${afterCursor('vr', cursor)}
+          ORDER BY vr.record_id, vr.record_hash
+          LIMIT ${limit + 1}
+        `
 
-        const truncated =
-          added.length === limit || updated.length === limit || removed.length === limit
+        const [addedRows, removedRows, updatedRows] = await withStatementTimeout(
+          DELTA_STATEMENT_TIMEOUT_MS,
+          async (tx) => {
+            // A list the caller has already drained is skipped, not re-run.
+            const run = <T>(cursor: ListCursor, query: ReturnType<typeof sql>) =>
+              cursor === DONE
+                ? Promise.resolve([] as T[])
+                : (tx.execute(query) as unknown as Promise<T[]>)
+            return Promise.all([
+              run<DeltaRow>(at.added, deltaQuery(targetId, sinceId, 'absent', at.added)),
+              run<DeltaRow>(at.removed, deltaQuery(sinceId, targetId, 'absent', at.removed)),
+              run<UpdatedRow>(
+                at.updated,
+                deltaQuery(
+                  targetId,
+                  sinceId,
+                  'changed',
+                  at.updated,
+                  sql`, ${previousServedHash} AS "previousHash"`,
+                ),
+              ),
+            ])
+          },
+        )
+
+        const added = paginate(addedRows, limit)
+        const removed = paginate(removedRows, limit)
+        const updated = paginate(updatedRows, limit)
+
+        const hasMore = added.hasMore || removed.hasMore || updated.hasMore
+        const nextCursor = hasMore
+          ? encodeDeltaCursor({
+              added: at.added === DONE ? DONE : added.next,
+              updated: at.updated === DONE ? DONE : updated.next,
+              removed: at.removed === DONE ? DONE : removed.next,
+            })
+          : null
 
         return c.json({
           semver: version.semver,
           hash: manifestHash,
           since: sinceSemver,
           schemas: schemasOut,
-          delta: { added, updated, removed },
+          delta: { added: added.page, updated: updated.page, removed: removed.page },
           files: fileHashes.map((f) => f.hash),
-          truncated,
+          pagination: { limit, hasMore, nextCursor },
+          // Retained for clients written against the pre-cursor response, which
+          // treat a capped delta as "give up and rebuild". They still can; a
+          // client that understands `pagination.nextCursor` should page instead.
+          truncated: hasMore,
         })
       }
 
-      // Full manifest with cursor-based pagination (keyed on the served hash so
-      // public readers can resume with the hashes they were given)
-      const recordConditions = [
-        eq(schema.versionRecords.versionId, version.id),
-        ...privacyConditions,
-      ]
-      if (cursor) {
-        recordConditions.push(sql`${servedHash} > ${cursor}`)
-      }
+      // Full manifest, keyset-paginated on (record_id, record_hash) — the
+      // (version_id, record_id) index order. Previously ordered by the served
+      // hash, which for public readers is a coalesce() expression and therefore
+      // an unindexed sort of the whole version.
+      const at = decodeDeltaCursor(cursor)
+      const recordRows = (await withStatementTimeout(DELTA_STATEMENT_TIMEOUT_MS, async (tx) =>
+        tx.execute(sql`
+            SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
+                   vr.record_hash AS "recordHash"
+            FROM version_records vr ${privacyJoin}
+            WHERE vr.version_id = ${version.id}
+              ${privacyWhere} ${afterCursor('vr', at.added)}
+            ORDER BY vr.record_id, vr.record_hash
+            LIMIT ${limit + 1}
+          `),
+      )) as unknown as { id: string; type: string; hash: string; recordHash: string }[]
 
-      const recordRows = await db
-        .select({
-          id: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          hash: servedHash,
-        })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(and(...recordConditions))
-        .orderBy(servedHash)
-        .limit(limit + 1)
-
-      const hasMore = recordRows.length > limit
-      const page = hasMore ? recordRows.slice(0, limit) : recordRows
-      const nextCursor = hasMore ? page[page.length - 1]!.hash : null
+      const { page, next, hasMore } = paginate(recordRows, limit)
 
       return c.json({
         semver: version.semver,
@@ -683,7 +797,11 @@ const app = new Hono<AuthEnv>()
         schemas: schemasOut,
         records: page,
         files: fileHashes.map((f) => f.hash),
-        pagination: { limit, hasMore, nextCursor },
+        pagination: {
+          limit,
+          hasMore,
+          nextCursor: hasMore ? encodeDeltaCursor({ ...EMPTY_DELTA_CURSOR, added: next }) : null,
+        },
       })
     },
   )
@@ -699,7 +817,8 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const from = c.req.query('from')
-      const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000)
+      const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), MAX_DIFF_LIMIT)
+      const diffCursor = decodeDeltaCursor(c.req.query('cursor'))
 
       const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
@@ -743,108 +862,79 @@ const app = new Hono<AuthEnv>()
 
       const fromId = fromVersion?.id
 
-      // Privacy filtering for non-owners: hide private types and private records
+      // Privacy filtering for non-owners: hide private types and private records.
+      // record_objects is joined for the body (and the record-level `private`
+      // flag); the set operations themselves run on version_records alone.
       const targetSchemas = await loadVersionSchemas(targetVersion.id)
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(targetSchemas)
-      const privacyConditions = []
-      if (!ownerAccess) {
-        privacyConditions.push(eq(schema.recordObjects.private, false))
-        for (const pt of privateTypes) {
-          privacyConditions.push(sql`${schema.recordObjects.type} != ${pt}`)
-        }
-      }
+      const privacyWhere = ownerAccess
+        ? sql``
+        : privateTypes.size > 0
+          ? sql`AND ro.private = false AND vr.type NOT IN (${[...privateTypes]})`
+          : sql`AND ro.private = false`
 
-      // SQL set operations — only fetch diff rows, not all records from both versions
-      const added = fromId
-        ? await db
-            .select({
-              id: schema.recordObjects.recordId,
-              type: schema.recordObjects.type,
-              data: schema.recordObjects.data,
-            })
-            .from(schema.versionRecords)
-            .innerJoin(
-              schema.recordObjects,
-              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-            )
-            .where(
-              and(
-                eq(schema.versionRecords.versionId, targetId),
-                sql`NOT EXISTS (
-                  SELECT 1 FROM version_records svr
-                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                  WHERE svr.version_id = ${fromId}
-                  AND sro.record_id = ${schema.recordObjects.recordId}
-                )`,
-                ...privacyConditions,
-              ),
-            )
-            .limit(diffLimit)
-        : await db
-            .select({
-              id: schema.recordObjects.recordId,
-              type: schema.recordObjects.type,
-              data: schema.recordObjects.data,
-            })
-            .from(schema.versionRecords)
-            .innerJoin(
-              schema.recordObjects,
-              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-            )
-            .where(and(eq(schema.versionRecords.versionId, targetId), ...privacyConditions))
-            .limit(diffLimit)
+      type DiffRow = { id: string; type: string; data: unknown; recordHash: string }
 
-      const removed = fromId
-        ? await db
-            .select({ id: schema.recordObjects.recordId })
-            .from(schema.versionRecords)
-            .innerJoin(
-              schema.recordObjects,
-              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-            )
-            .where(
-              and(
-                eq(schema.versionRecords.versionId, fromId),
-                sql`NOT EXISTS (
-                  SELECT 1 FROM version_records svr
-                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                  WHERE svr.version_id = ${targetId}
-                  AND sro.record_id = ${schema.recordObjects.recordId}
-                )`,
-                ...privacyConditions,
-              ),
-            )
-            .limit(diffLimit)
-        : []
+      /** One side of the diff: rows of `versionId` absent from / changed in `otherId`. */
+      const diffQuery = (
+        versionId: number,
+        otherId: number | undefined,
+        mode: 'absent' | 'changed' | 'all',
+        cursor: ListCursor,
+      ) => sql`
+        SELECT vr.record_id AS id, vr.type, ro.data, vr.record_hash AS "recordHash"
+        FROM version_records vr
+        INNER JOIN record_objects ro ON ro.hash = vr.record_hash
+        WHERE vr.version_id = ${versionId}
+          ${
+            mode === 'absent'
+              ? sql`AND NOT EXISTS (
+                  SELECT 1 FROM version_records s
+                  WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
+                )`
+              : mode === 'changed'
+                ? sql`AND EXISTS (
+                  SELECT 1 FROM version_records s
+                  WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
+                    AND s.record_hash <> vr.record_hash
+                )`
+                : sql``
+          }
+          ${privacyWhere} ${afterCursor('vr', cursor)}
+        ORDER BY vr.record_id, vr.record_hash
+        LIMIT ${diffLimit + 1}
+      `
 
-      const updated = fromId
-        ? await db
-            .select({
-              id: schema.recordObjects.recordId,
-              type: schema.recordObjects.type,
-              data: schema.recordObjects.data,
-            })
-            .from(schema.versionRecords)
-            .innerJoin(
-              schema.recordObjects,
-              eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-            )
-            .where(
-              and(
-                eq(schema.versionRecords.versionId, targetId),
-                sql`EXISTS (
-                  SELECT 1 FROM version_records svr
-                  INNER JOIN record_objects sro ON svr.record_hash = sro.hash
-                  WHERE svr.version_id = ${fromId}
-                  AND sro.record_id = ${schema.recordObjects.recordId}
-                  AND sro.hash != ${schema.recordObjects.hash}
-                )`,
-                ...privacyConditions,
-              ),
-            )
-            .limit(diffLimit)
-        : []
+      const [addedRows, removedRows, updatedRows] = await withStatementTimeout(
+        DELTA_STATEMENT_TIMEOUT_MS,
+        async (tx) => {
+          // Skip lists the caller has already drained, and — with no ?from= —
+          // the two that don't apply.
+          const run = (cursor: ListCursor, query: ReturnType<typeof sql> | null) =>
+            cursor === DONE || !query
+              ? Promise.resolve([] as DiffRow[])
+              : (tx.execute(query) as unknown as Promise<DiffRow[]>)
+          return Promise.all([
+            run(
+              diffCursor.added,
+              diffQuery(targetId, fromId, fromId ? 'absent' : 'all', diffCursor.added),
+            ),
+            run(
+              diffCursor.removed,
+              fromId ? diffQuery(fromId, targetId, 'absent', diffCursor.removed) : null,
+            ),
+            run(
+              diffCursor.updated,
+              fromId ? diffQuery(targetId, fromId, 'changed', diffCursor.updated) : null,
+            ),
+          ])
+        },
+      )
+
+      const added = paginate(addedRows, diffLimit)
+      const removed = paginate(removedRows, diffLimit)
+      const updated = paginate(updatedRows, diffLimit)
 
       // Compare schema sets
       const fromSchemas = fromVersion ? await loadVersionSchemas(fromVersion.id) : []
@@ -896,12 +986,25 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      const hasMore = added.hasMore || removed.hasMore || updated.hasMore
+
       return c.json({
         from: fromVersion?.semver ?? null,
         to: targetVersion.semver,
-        added: added.map(stripPrivateFields),
-        updated: (updated as { id: string; type: string; data: unknown }[]).map(stripPrivateFields),
-        removed: (removed as { id: string }[]).map((r) => r.id),
+        added: added.page.map(stripPrivateFields),
+        updated: updated.page.map(stripPrivateFields),
+        removed: removed.page.map((r) => r.id),
+        pagination: {
+          limit: diffLimit,
+          hasMore,
+          nextCursor: hasMore
+            ? encodeDeltaCursor({
+                added: diffCursor.added === DONE ? DONE : added.next,
+                updated: diffCursor.updated === DONE ? DONE : updated.next,
+                removed: diffCursor.removed === DONE ? DONE : removed.next,
+              })
+            : null,
+        },
         meta: {
           schemaChanged,
           metadataChanged,
@@ -976,10 +1079,13 @@ const app = new Hono<AuthEnv>()
         .select({
           hash: schema.versionRecords.recordHash,
           publicRecordHash: schema.versionRecords.publicRecordHash,
-          type: schema.recordObjects.type,
+          recordId: schema.versionRecords.recordId,
+          type: schema.versionRecords.type,
           private: schema.recordObjects.private,
         })
         .from(schema.versionRecords)
+        // Only `private` still lives on record_objects; record_id and type are
+        // denormalized onto version_records.
         .innerJoin(
           schema.recordObjects,
           eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
@@ -1029,6 +1135,9 @@ const app = new Hono<AuthEnv>()
             pushedBy: userId ?? null,
             recordCount: latest.recordCount,
             fileCount: latest.fileCount,
+            // Same record set as the base version, so the per-type counts carry
+            // over unchanged.
+            typeCounts: latest.typeCounts,
             totalBytes: latest.totalBytes,
           })
           .returning({ id: schema.versions.id })
@@ -1052,6 +1161,8 @@ const app = new Hono<AuthEnv>()
               versionId: version!.id,
               recordHash: r.hash,
               publicRecordHash: r.publicRecordHash,
+              recordId: r.recordId,
+              type: r.type,
             })),
           )
         }
@@ -1092,6 +1203,44 @@ const app = new Hono<AuthEnv>()
       return c.json({ semver: sv.semver, hash: versionHash, metadata: newMetadata }, 201)
     },
   )
+
+/**
+ * Total records in a version under the caller's visibility and an optional
+ * `?type=` filter. Reads the per-type counts stored on the version row at
+ * commit; falls back to a COUNT(*) over the (version_id, type, record_id) index
+ * for versions written before that column existed.
+ *
+ * Row-level private records are not represented in `type_counts`, so on a
+ * collection that uses them this is an upper bound for non-owners rather than
+ * an exact count. It was previously the whole version's `recordCount`
+ * regardless of the filter, which was simply wrong under `?type=`.
+ */
+async function countVersionRecords(
+  version: { id: number; recordCount: number; typeCounts: Record<string, number> | null },
+  type: string | undefined,
+  privateTypes: Set<string>,
+): Promise<number> {
+  const counts = version.typeCounts
+  if (counts) {
+    if (type) return counts[type] ?? 0
+    let total = 0
+    for (const [slug, n] of Object.entries(counts)) {
+      if (!privateTypes.has(slug)) total += n
+    }
+    return total
+  }
+
+  if (!type && privateTypes.size === 0) return version.recordCount
+
+  const conditions = [eq(schema.versionRecords.versionId, version.id)]
+  if (type) conditions.push(eq(schema.versionRecords.type, type))
+  for (const pt of privateTypes) conditions.push(sql`${schema.versionRecords.type} != ${pt}`)
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.versionRecords)
+    .where(and(...conditions))
+  return row?.n ?? 0
+}
 
 /** ARK info is decorative on these endpoints — failures are logged, not fatal */
 async function getCollectionArkInfo(

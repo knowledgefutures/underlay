@@ -238,6 +238,12 @@ export const versions = pgTable(
     signature: text('signature'),
     recordCount: integer('record_count').notNull(),
     fileCount: integer('file_count').notNull(),
+    // { [type]: count } for this version's record set, computed once at commit.
+    // Avoids a COUNT(*) GROUP BY over version_records on every collection page
+    // view and gives `?type=` listings an accurate pagination.total. NULL on
+    // versions written before this column existed — callers fall back to a
+    // count query.
+    typeCounts: jsonb('type_counts').$type<Record<string, number>>(),
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
     status: text('status').notNull().default('ready'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -279,6 +285,14 @@ export const versionRecords = pgTable(
     // equals record_hash (i.e. the type has no private fields), which is the
     // common case — only private-field bindings pay the storage cost.
     publicRecordHash: text('public_record_hash'),
+    // Denormalized from record_objects. Records are immutable and
+    // content-addressed, so these can never drift from the row they were copied
+    // from. Carrying them here is what lets record listing, `?type=` filtering
+    // and the diff/delta set operations run as index-only scans over
+    // version_records instead of joining every candidate row through
+    // record_objects just to order or filter it.
+    recordId: text('record_id').notNull(),
+    type: text('type').notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.versionId, t.recordHash] }),
@@ -286,6 +300,11 @@ export const versionRecords = pgTable(
     index('version_records_public_record_hash_idx')
       .on(t.publicRecordHash)
       .where(sql`public_record_hash IS NOT NULL`),
+    // Drives keyset record listing and the added/removed/updated anti- and
+    // semi-joins between two versions.
+    index('version_records_version_record_idx').on(t.versionId, t.recordId),
+    // Same, for `?type=`-filtered listings.
+    index('version_records_version_type_record_idx').on(t.versionId, t.type, t.recordId),
   ],
 )
 

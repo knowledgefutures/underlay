@@ -670,6 +670,10 @@ app.post(
     }[] = []
     const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
     const extraFieldWarnings: { recordId: string; type: string; fields: string[] }[] = []
+    // Per-type counts, stored on the version row. The commit already walks every
+    // record, so counting here is free and saves a COUNT(*) GROUP BY on every
+    // subsequent collection page view.
+    const typeCounts = new Map<string, number>()
     let totalBytes = 0
 
     const LOAD_BATCH = 1000
@@ -739,6 +743,7 @@ app.post(
         }
 
         finalRecordHashes.push(hash)
+        typeCounts.set(rec.type, (typeCounts.get(rec.type) ?? 0) + 1)
         totalBytes += size
 
         // Compute public record hash inline
@@ -902,6 +907,7 @@ app.post(
           actorId: session.actorId,
           recordCount: finalRecordHashes.length,
           fileCount: session.fileHashes.length,
+          typeCounts: Object.fromEntries(typeCounts),
           totalBytes,
           status: 'creating',
         })
@@ -944,18 +950,27 @@ app.post(
       )
     })
 
-    // Batch-insert version_records outside the main transaction
+    // Batch-insert version_records outside the main transaction.
+    // record_id and type are read back out of record_objects rather than
+    // carried in process: the rows are guaranteed to exist by this point (they
+    // were either already stored or inserted by the transaction above), and at
+    // millions of records two more in-memory string arrays are exactly what the
+    // heap can't afford.
     try {
       const VR_BATCH = 5000
       for (let i = 0; i < finalRecordHashes.length; i += VR_BATCH) {
         const batch = finalRecordHashes.slice(i, i + VR_BATCH)
-        await db.insert(schema.versionRecords).values(
-          batch.map((hash) => ({
-            versionId: versionId!,
-            recordHash: hash,
-            publicRecordHash: publicHashByRecordHash.get(hash) ?? null,
-          })),
-        )
+        const publicHashes = batch.map((hash) => publicHashByRecordHash.get(hash) ?? null)
+        // sql.param binds each list as one array parameter; interpolating a bare
+        // array would expand it to a parenthesized list of placeholders, which
+        // Postgres rejects past 1,664 entries.
+        await db.execute(sql`
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
+          SELECT ${versionId!}, ro.hash, t.public_hash, ro.record_id, ro.type
+          FROM unnest(${sql.param(batch)}::text[], ${sql.param(publicHashes)}::text[])
+            AS t(hash, public_hash)
+          INNER JOIN record_objects ro ON ro.hash = t.hash
+        `)
       }
     } catch (err) {
       await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))

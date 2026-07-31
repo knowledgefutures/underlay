@@ -50,6 +50,13 @@
       "when": 1784050001911,
       "tag": "0006_moaning_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785525852093,
+      "tag": "0007_lucky_rhino",
+      "breakpoints": true
     }
   ]
 }
