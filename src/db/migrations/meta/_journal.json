@@ -57,6 +57,13 @@
       "when": 1785525852093,
       "tag": "0007_lucky_rhino",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785528674026,
+      "tag": "0008_mixed_moonstone",
+      "breakpoints": true
     }
   ]
 }

@@ -22,6 +22,7 @@ export {
   type SchemaEntry,
   type SemverComponents,
   stripToSchema,
+  VersionHashStream,
 } from './core/index.js'
 
 import { type SchemaEntry } from './core/index.js'

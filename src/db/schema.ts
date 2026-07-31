@@ -412,10 +412,25 @@ export const negotiateSessionManifest = pgTable(
     hash: text('hash').notNull(),
     private: boolean('private').notNull().default(false),
     needed: boolean('needed').notNull().default(true),
+    // Commit scratch space. The commit walks every record once to validate and
+    // hash it; rather than accumulating the results in arrays that grow with
+    // collection size, it writes them back here and then streams them out of
+    // Postgres in sorted order. This table already exists per push and is
+    // already the size of the manifest, so it costs nothing new.
+    //
+    // finalHash is the record's hash after strip_unknown_fields rewrote it, or
+    // the submitted hash when nothing was stripped. publicHash is the
+    // content-address of the privacy-filtered record, NULL when the record does
+    // not appear in the public view at all.
+    finalHash: text('final_hash'),
+    publicHash: text('public_hash'),
   },
   (t) => [
     primaryKey({ columns: [t.sessionId, t.hash] }),
     index('nsm_session_needed_idx').on(t.sessionId, t.needed),
+    // Drives the sorted streams that feed the version hash and the
+    // version_records insert.
+    index('nsm_session_final_hash_idx').on(t.sessionId, t.finalHash),
   ],
 )
 
