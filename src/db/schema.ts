@@ -394,9 +394,26 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
   appId: text('app_id'),
   actorId: text('actor_id'),
   stripUnknownFields: boolean('strip_unknown_fields').notNull().default(false),
-  status: text('status', { enum: ['open', 'committed', 'expired'] })
+  // 'committing' is the async-finalize state: the request has returned 202 and
+  // a background task is building the version. It ends at 'committed' or
+  // 'failed', both of which are reported through the session-status endpoint.
+  status: text('status', {
+    enum: ['open', 'committing', 'committed', 'failed', 'expired'],
+  })
     .notNull()
     .default('open'),
+  // Outcome of an async finalize, so a client that polls after the fact gets the
+  // same answer the synchronous path would have returned inline.
+  result: jsonb('result').$type<{
+    semver: string
+    hash: string
+    recordCount: number
+    fileCount: number
+  }>(),
+  error: jsonb('error').$type<{ statusCode: number; error: string; [k: string]: unknown }>(),
+  // When the background finalize started, so a task killed by a restart can be
+  // told apart from one still running.
+  finalizeStartedAt: timestamp('finalize_started_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 })
@@ -412,25 +429,29 @@ export const negotiateSessionManifest = pgTable(
     hash: text('hash').notNull(),
     private: boolean('private').notNull().default(false),
     needed: boolean('needed').notNull().default(true),
-    // Commit scratch space. The commit walks every record once to validate and
-    // hash it; rather than accumulating the results in arrays that grow with
-    // collection size, it writes them back here and then streams them out of
-    // Postgres in sorted order. This table already exists per push and is
-    // already the size of the manifest, so it costs nothing new.
+    // Set when the record arrives through the records endpoint, which validates
+    // it against this session's schemas. Commit uses this to skip re-running AJV
+    // over records that were validated minutes ago — for a first push that is
+    // every record, and revalidation was the single largest cost in the commit.
+    submitted: boolean('submitted').notNull().default(false),
+    // Commit scratch space, written back per record instead of accumulated in
+    // arrays that grow with collection size.
     //
-    // finalHash is the record's hash after strip_unknown_fields rewrote it, or
-    // the submitted hash when nothing was stripped. publicHash is the
-    // content-address of the privacy-filtered record, NULL when the record does
-    // not appear in the public view at all.
+    // Both hash columns mean "unchanged" when NULL, which is the overwhelmingly
+    // common case: finalHash is only set when strip_unknown_fields rewrote the
+    // record, and publicHash only when privacy filtering changed its content. A
+    // push with no private fields and no stripping — the normal case, and the
+    // arXiv case — writes neither, so the walk performs no UPDATEs at all.
+    //
+    // Whether a record appears in the public view is deliberately *not* stored:
+    // it is derivable from the private flags and the type, so materializing it
+    // would cost a full UPDATE pass over every row of every push.
     finalHash: text('final_hash'),
     publicHash: text('public_hash'),
   },
   (t) => [
     primaryKey({ columns: [t.sessionId, t.hash] }),
     index('nsm_session_needed_idx').on(t.sessionId, t.needed),
-    // Drives the sorted streams that feed the version hash and the
-    // version_records insert.
-    index('nsm_session_final_hash_idx').on(t.sessionId, t.finalHash),
   ],
 )
 

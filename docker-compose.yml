@@ -130,6 +130,13 @@ services:
       -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Postgres allocates dynamic shared memory in /dev/shm for parallel query
+    # workers. Docker's 64 MB default is enough for small scans and not enough
+    # for a parallel aggregate over a few million rows, which fails with
+    # "could not resize shared memory segment ... No space left on device" —
+    # observed on a 500k-record commit.
+    tmpfs:
+      - /dev/shm:size=1g
     ports:
       - '${DB_PORT:-5432}:5432'
     networks:

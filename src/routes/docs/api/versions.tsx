@@ -45,6 +45,27 @@ const commitRes = `{
   "fileCount": 1
 }`
 
+const asyncCommitRes = `{
+  "session_id": "uuid",
+  "status": "committing",
+  "message": "Commit accepted. Poll GET .../versions/negotiate/uuid until status is \\"committed\\" or \\"failed\\"."
+}`
+
+const sessionPollRes = `{
+  "session_id": "uuid",
+  "status": "committed",
+  "total_records": 3110000,
+  "needed_records": 0,
+  "finalize_started_at": "2026-07-31T12:00:00.000Z",
+  "result": {
+    "semver": "v1.1.0",
+    "hash": "private:a1b2c3d4...",
+    "recordCount": 3110000,
+    "fileCount": 0
+  },
+  "error": null
+}`
+
 const listRes = `[
   {
     "semver": "v1.1.0",
@@ -278,6 +299,33 @@ export default function DocsApiVersions() {
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{commitRes}</code>
         </pre>
+
+        <h4>Large pushes: async finalize</h4>
+        <p>
+          Commit work is proportional to the size of the collection, so on a very large one it can
+          run for minutes — longer than a proxy or client will hold a request open. Pass{' '}
+          <code>?async=true</code> (or <code>{'{"async": true}'}</code> in the body) and the server
+          answers <code>202</code> immediately and builds the version in the background:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{asyncCommitRes}</code>
+        </pre>
+        <p>
+          Then poll <code>GET .../versions/negotiate/:sessionId</code> until <code>status</code> is{' '}
+          <code>committed</code> or <code>failed</code>. On success <code>result</code> holds
+          exactly what the synchronous <code>201</code> would have returned; on failure{' '}
+          <code>error</code> holds the rejection body it would have returned instead, so the two
+          paths are interchangeable apart from timing.
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{sessionPollRes}</code>
+        </pre>
+        <p className="text-ink-muted">
+          The version is not visible to readers until the finalize completes — it is created in a{' '}
+          <code>creating</code> state and only published at the end, so there is no window where a
+          half-built version can be read. A finalize whose process dies is swept and marked{' '}
+          <code>failed</code>, and its partial version removed.
+        </p>
 
         <h3>Schema privacy</h3>
         <p>

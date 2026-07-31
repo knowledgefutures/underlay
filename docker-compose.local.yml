@@ -18,6 +18,9 @@ services:
       -c work_mem=8MB
       -c maintenance_work_mem=64MB
       -c max_connections=50
+    # Matches the production stack: Docker's 64 MB /dev/shm default is too small
+    # for Postgres parallel query workers once tables get large.
+    shm_size: 1gb
     ports:
       - '5433:5432'
     volumes:

@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
@@ -53,6 +54,9 @@ const NegotiateBody = z.object({
   actor_id: z.string().optional(),
   strip_unknown_fields: z.boolean().optional(),
 })
+
+/** Mirrors `c.json(body, status)` so the finalize body reads unchanged. */
+const reply = (body: unknown, status: ContentfulStatusCode = 200) => ({ status, body })
 
 async function expireSession(sessionId: string) {
   await db
@@ -236,6 +240,11 @@ app.get(
       needed_files: session.neededFiles,
       expires_at: session.expiresAt,
       created_at: session.createdAt,
+      // Populated for an async commit: `result` once status is 'committed',
+      // `error` once it is 'failed'. Both null while status is 'committing'.
+      finalize_started_at: session.finalizeStartedAt,
+      result: session.result ?? null,
+      error: session.error ?? null,
     })
   },
 )
@@ -443,11 +452,13 @@ app.post(
       }
     }
 
-    // Mark received hashes as no longer needed (single-row updates, not JSONB rewrite)
+    // Mark received hashes as no longer needed (single-row updates, not JSONB
+    // rewrite). `submitted` records this record was validated here, against this
+    // session's schemas, so commit can skip revalidating it.
     if (receivedHashes.size > 0) {
       await db
         .update(schema.negotiateSessionManifest)
-        .set({ needed: false })
+        .set({ needed: false, submitted: true })
         .where(
           and(
             eq(schema.negotiateSessionManifest.sessionId, sessionId),
@@ -489,6 +500,17 @@ app.post(
   async (c) => {
     const { sessionId } = c.req.valid('param')
     const userId = c.get('userId')
+
+    // Opt-in async finalize. Accepted as a query param or a JSON body field so a
+    // client can use it without sending a body at all; a commit has no other
+    // payload.
+    const asyncQuery = c.req.query('async')
+    const asyncBody = await c.req.json().catch(() => null)
+    const wantsAsync =
+      asyncQuery === 'true' ||
+      asyncQuery === '1' ||
+      (asyncBody !== null && typeof asyncBody === 'object' && asyncBody.async === true)
+
     const [sessionRow] = await db
       .select()
       .from(schema.negotiateSessions)
@@ -533,19 +555,25 @@ app.post(
       stripUnknownFields: sessionRow.stripUnknownFields,
     }
 
-    // Check if any needed records remain
-    const [neededCount] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(schema.negotiateSessionManifest)
-      .where(
-        and(
-          eq(schema.negotiateSessionManifest.sessionId, sessionId),
-          eq(schema.negotiateSessionManifest.needed, true),
-        ),
-      )
-    if ((neededCount?.count ?? 0) > 0) {
-      const neededRows = await db
-        .select({ hash: schema.negotiateSessionManifest.hash })
+    // Everything past this point is the expensive half of the commit: it walks
+    // the record set, folds two digests over it and writes version_records. At a
+    // few million records that is minutes, which is too long to hold an HTTP
+    // request open — so it is expressed as a value-returning function that the
+    // caller either awaits (the default, unchanged behaviour) or runs in the
+    // background after answering 202.
+    // A rejection inside finalize expires the session synchronously, but in
+    // async mode the terminal status is 'failed' and the caller writes it
+    // alongside the error body. Expiring here first would briefly publish
+    // 'expired', which a poller waiting on committed/failed would either miss or
+    // misread as a terminal state of its own.
+    const abandonSession = async () => {
+      if (!wantsAsync) await expireSession(sessionId)
+    }
+
+    const finalize = async (): Promise<{ status: ContentfulStatusCode; body: unknown }> => {
+      // Check if any needed records remain
+      const [neededCount] = await db
+        .select({ count: sql<number>`count(*)::int` })
         .from(schema.negotiateSessionManifest)
         .where(
           and(
@@ -553,355 +581,409 @@ app.post(
             eq(schema.negotiateSessionManifest.needed, true),
           ),
         )
-        .limit(100)
-      return c.json(
-        {
-          error: 'Missing records',
-          missing_hashes: neededRows.map((r) => r.hash),
-          message: `${neededCount!.count} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
-          statusCode: 400,
-        },
-        400,
-      )
-    }
-
-    // --- Schema resolution ---
-    const newSchemaSet: {
-      slug: string
-      schemaId: string
-      schemaHash: string
-      schema: Record<string, unknown>
-    }[] = []
-    for (const [typeSlug, typeSchema] of Object.entries(session.schemas)) {
-      const hash = hashSchema(typeSchema)
-      const [existing] = await db
-        .select({ id: schema.schemas.id })
-        .from(schema.schemas)
-        .where(eq(schema.schemas.schemaHash, hash))
-        .limit(1)
-
-      let schemaId: string
-      if (existing) {
-        schemaId = existing.id
-      } else {
-        const [inserted] = await db
-          .insert(schema.schemas)
-          .values({ schema: typeSchema as any, schemaHash: hash })
-          .returning({ id: schema.schemas.id })
-        schemaId = inserted!.id
-      }
-      newSchemaSet.push({
-        slug: typeSlug,
-        schemaId,
-        schemaHash: hash,
-        schema: typeSchema as Record<string, unknown>,
-      })
-    }
-
-    // Check files exist
-    if (session.fileHashes.length > 0) {
-      const existingFiles = await db
-        .select({ hash: schema.files.hash })
-        .from(schema.files)
-        .where(inArray(schema.files.hash, session.fileHashes))
-      const existingFileSet = new Set(existingFiles.map((f) => f.hash))
-      const missingFiles = session.fileHashes.filter((h) => !existingFileSet.has(h))
-      if (missingFiles.length > 0) {
-        return c.json(
+      if ((neededCount?.count ?? 0) > 0) {
+        const neededRows = await db
+          .select({ hash: schema.negotiateSessionManifest.hash })
+          .from(schema.negotiateSessionManifest)
+          .where(
+            and(
+              eq(schema.negotiateSessionManifest.sessionId, sessionId),
+              eq(schema.negotiateSessionManifest.needed, true),
+            ),
+          )
+          .limit(100)
+        return reply(
           {
-            error: 'Missing files',
-            filesNeeded: missingFiles.map((h) => `sha256:${h}`),
-            statusCode: 422,
+            error: 'Missing records',
+            missing_hashes: neededRows.map((r) => r.hash),
+            message: `${neededCount!.count} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
+            statusCode: 400,
           },
-          422,
+          400,
         )
       }
-    }
 
-    // --- Streaming validation + hash accumulation ---
-    // Process records in batches instead of loading all into memory at once.
-    // Newly submitted records were validated during submitRecords(); existing
-    // records are validated here against the current schemas.
-    const validators = new Map<string, ReturnType<typeof ajv.compile>>()
-    for (const entry of newSchemaSet) {
-      validators.set(entry.slug, ajv.compile(entry.schema as object))
-    }
-
-    const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
-    for (const entry of newSchemaSet) {
-      schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
-    }
-
-    const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
-      slug: e.slug,
-      schemaId: e.schemaId,
-      schema: e.schema,
-      schemaHash: e.schemaHash,
-    }))
-    const privateTypes = getPrivateTypes(schemaEntriesForPublicHash)
-    const privateFieldsByType = new Map<string, Set<string>>()
-    for (const entry of schemaEntriesForPublicHash) {
-      const fields = getPrivateFields(entry.schema)
-      if (fields.size > 0) privateFieldsByType.set(entry.slug, fields)
-    }
-
-    // Walk the manifest in keyset batches, writing each record's outcome back to
-    // the session manifest row instead of accumulating it in process. Nothing
-    // here grows with collection size: at 3.11M records the old arrays alone
-    // (final hashes, public hashes, the manifest itself) ran to several GB.
-    const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
-    const extraFieldWarnings: { recordId: string; type: string; fields: string[] }[] = []
-    // Errors are reported, not accumulated: a schema change that invalidates
-    // every record would otherwise build a multi-million-entry response.
-    const MAX_REPORTED_ERRORS = 100
-    let validationErrorCount = 0
-    let extraFieldCount = 0
-    let recordCount = 0
-    let totalBytes = 0
-    // Per-type counts, stored on the version row. The commit already walks every
-    // record, so counting here is free and saves a COUNT(*) GROUP BY on every
-    // subsequent collection page view.
-    const typeCounts = new Map<string, number>()
-
-    // Each batch costs a read plus a write-back, so the round-trip count is what
-    // dominates commit wall-clock. 5,000 records of bodies is ~10 MB in flight —
-    // bounded, and constant regardless of how large the collection is.
-    const LOAD_BATCH = 5000
-    let cursor: string | null = null
-    for (;;) {
-      const batch: {
-        hash: string
-        manifestPrivate: boolean
-        recordId: string
-        type: string
-        data: unknown
-        private: boolean
-        size: number
-      }[] = await db
-        .select({
-          hash: schema.negotiateSessionManifest.hash,
-          manifestPrivate: schema.negotiateSessionManifest.private,
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-          private: schema.recordObjects.private,
-          size: schema.recordObjects.size,
-        })
-        .from(schema.negotiateSessionManifest)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.negotiateSessionManifest.hash, schema.recordObjects.hash),
-        )
-        .where(
-          and(
-            eq(schema.negotiateSessionManifest.sessionId, sessionId),
-            ...(cursor ? [sql`${schema.negotiateSessionManifest.hash} > ${cursor}`] : []),
-          ),
-        )
-        .orderBy(schema.negotiateSessionManifest.hash)
-        .limit(LOAD_BATCH)
-
-      if (batch.length === 0) break
-      cursor = batch[batch.length - 1]!.hash
-
-      // Per-batch outcomes, flushed to Postgres before the next batch is read.
-      const stripped: {
-        hash: string
-        recordId: string
-        type: string
-        data: unknown
-        private: boolean
-        size: number
+      // --- Schema resolution ---
+      const newSchemaSet: {
+        slug: string
+        schemaId: string
+        schemaHash: string
+        schema: Record<string, unknown>
       }[] = []
-      const outcomes: { hash: string; finalHash: string; publicHash: string | null }[] = []
+      for (const [typeSlug, typeSchema] of Object.entries(session.schemas)) {
+        const hash = hashSchema(typeSchema)
+        const [existing] = await db
+          .select({ id: schema.schemas.id })
+          .from(schema.schemas)
+          .where(eq(schema.schemas.schemaHash, hash))
+          .limit(1)
 
-      for (const rec of batch) {
-        const validate = validators.get(rec.type)
-        if (!validate) {
-          validationErrorCount++
-          if (validationErrors.length < MAX_REPORTED_ERRORS) {
-            validationErrors.push({
-              recordId: rec.recordId,
-              type: rec.type,
-              errors: [`No schema defined for record type "${rec.type}"`],
-            })
-          }
-          continue
+        let schemaId: string
+        if (existing) {
+          schemaId = existing.id
+        } else {
+          const [inserted] = await db
+            .insert(schema.schemas)
+            .values({ schema: typeSchema as any, schemaHash: hash })
+            .returning({ id: schema.schemas.id })
+          schemaId = inserted!.id
         }
-        if (!validate(rec.data)) {
-          validationErrorCount++
-          if (validationErrors.length < MAX_REPORTED_ERRORS) {
-            validationErrors.push({
-              recordId: rec.recordId,
-              type: rec.type,
-              errors: (validate.errors ?? []).map(
-                (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
-              ),
-            })
-          }
-          continue
+        newSchemaSet.push({
+          slug: typeSlug,
+          schemaId,
+          schemaHash: hash,
+          schema: typeSchema as Record<string, unknown>,
+        })
+      }
+
+      // Check files exist
+      if (session.fileHashes.length > 0) {
+        const existingFiles = await db
+          .select({ hash: schema.files.hash })
+          .from(schema.files)
+          .where(inArray(schema.files.hash, session.fileHashes))
+        const existingFileSet = new Set(existingFiles.map((f) => f.hash))
+        const missingFiles = session.fileHashes.filter((h) => !existingFileSet.has(h))
+        if (missingFiles.length > 0) {
+          return reply(
+            {
+              error: 'Missing files',
+              filesNeeded: missingFiles.map((h) => `sha256:${h}`),
+              statusCode: 422,
+            },
+            422,
+          )
         }
+      }
 
-        let data = rec.data
-        let hash = rec.hash
-        let size = rec.size
+      // --- Streaming validation + hash accumulation ---
+      // Process records in batches instead of loading all into memory at once.
+      // Newly submitted records were validated during submitRecords(); existing
+      // records are validated here against the current schemas.
+      const validators = new Map<string, ReturnType<typeof ajv.compile>>()
+      for (const entry of newSchemaSet) {
+        validators.set(entry.slug, ajv.compile(entry.schema as object))
+      }
 
-        // Check for extra fields
-        const typeSchema = schemasForCheck[rec.type]
-        if (typeSchema?.properties && typeof data === 'object' && data !== null) {
-          const extra = Object.keys(data).filter((k) => !(k in typeSchema.properties!))
-          if (extra.length > 0) {
+      const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
+      for (const entry of newSchemaSet) {
+        schemasForCheck[entry.slug] = entry.schema as { properties?: Record<string, unknown> }
+      }
+
+      const schemaEntriesForPublicHash: SchemaEntry[] = newSchemaSet.map((e) => ({
+        slug: e.slug,
+        schemaId: e.schemaId,
+        schema: e.schema,
+        schemaHash: e.schemaHash,
+      }))
+      const privateTypes = getPrivateTypes(schemaEntriesForPublicHash)
+      const privateFieldsByType = new Map<string, Set<string>>()
+      for (const entry of schemaEntriesForPublicHash) {
+        const fields = getPrivateFields(entry.schema)
+        if (fields.size > 0) privateFieldsByType.set(entry.slug, fields)
+      }
+
+      // The base version, needed early: whether a record still has to be validated
+      // depends on whether it was already in the base under an unchanged schema.
+      const latest = await getLatestReadyVersion(session.collectionId)
+
+      const currentSemver = latest?.semver ?? null
+      if (session.baseSemver !== null && session.baseSemver !== currentSemver) {
+        const normalized = session.baseSemver ? parseSemver(session.baseSemver).semver : null
+        if (normalized !== currentSemver) {
+          await abandonSession()
+          return reply(
+            { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
+            409,
+          )
+        }
+      }
+
+      const prevSchemaEntries = latest ? await loadVersionSchemas(latest.id) : []
+      const prevSchemaMap = new Map(prevSchemaEntries.map((e) => [e.slug, e.schemaHash]))
+      const newSchemaMap = new Map(newSchemaSet.map((e) => [e.slug, e.schemaHash]))
+      let schemaChanged = prevSchemaMap.size !== newSchemaMap.size
+      if (!schemaChanged) {
+        for (const [s, hash] of newSchemaMap) {
+          if (prevSchemaMap.get(s) !== hash) {
+            schemaChanged = true
+            break
+          }
+        }
+      }
+
+      // Which records appear in the public view. Every input — the manifest's
+      // private flag, the record's own flag, the type — is already in Postgres, so
+      // this is a predicate rather than a materialized column: writing it to the
+      // manifest would mean a full UPDATE pass over every row of every push to
+      // record something derivable on the spot.
+      //
+      // `<> ALL` over an empty array is TRUE, so the type clause needs no special
+      // case when nothing is private — which lets the same predicate be written
+      // through drizzle and through the raw driver used for the digest cursors.
+      const privateTypeList = [...privateTypes]
+      const publicRows = sql`NOT m.private AND NOT ro.private
+      AND ro.type <> ALL(${sql.param(privateTypeList)}::text[])`
+
+      const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
+      const extraFieldWarnings: { recordId: string; type: string; fields: string[] }[] = []
+      // Errors are reported, not accumulated: a schema change that invalidates
+      // every record would otherwise build a multi-million-entry response.
+      const MAX_REPORTED_ERRORS = 100
+      let validationErrorCount = 0
+      let extraFieldCount = 0
+
+      // Which records still need validating.
+      //
+      // Records submitted during this session were validated on arrival against
+      // these exact schemas, so re-running AJV over them is pure waste — and on a
+      // first push that is *every* record. Records inherited from the base version
+      // were validated when that version was pushed, so they only need rechecking
+      // when the schema set changed. What remains is the genuinely unchecked set:
+      // records that were already in record_objects (globally, possibly from
+      // another collection) and are new to this collection.
+      const revalidateAll = schemaChanged || !latest
+      const needsValidation = revalidateAll
+        ? sql`NOT m.submitted`
+        : sql`NOT m.submitted AND NOT EXISTS (
+              SELECT 1 FROM version_records vr
+              WHERE vr.version_id = ${latest.id} AND vr.record_hash = m.hash
+            )`
+
+      const WALK_BATCH = 5000
+      let cursor: string | null = null
+      for (;;) {
+        const batch = (await db.execute(sql`
+        SELECT m.hash, ro.record_id AS "recordId", ro.type, ro.data, ro.private, ro.size
+        FROM negotiate_session_manifest m
+        INNER JOIN record_objects ro ON ro.hash = m.hash
+        WHERE m.session_id = ${sessionId} AND (${needsValidation})
+          ${cursor ? sql`AND m.hash > ${cursor}` : sql``}
+        ORDER BY m.hash
+        LIMIT ${WALK_BATCH}
+      `)) as unknown as {
+          hash: string
+          recordId: string
+          type: string
+          data: unknown
+          private: boolean
+          size: number
+        }[]
+
+        if (batch.length === 0) break
+        cursor = batch[batch.length - 1]!.hash
+
+        // Per-batch outcomes, flushed before the next batch is read. Only records
+        // whose hash actually changed are written back — NULL means unchanged, so
+        // a push with no stripping performs no UPDATEs.
+        const stripped: {
+          hash: string
+          recordId: string
+          type: string
+          data: unknown
+          private: boolean
+          size: number
+        }[] = []
+        const rehashed: { hash: string; finalHash: string }[] = []
+
+        for (const rec of batch) {
+          const validate = validators.get(rec.type)
+          if (!validate) {
+            validationErrorCount++
+            if (validationErrors.length < MAX_REPORTED_ERRORS) {
+              validationErrors.push({
+                recordId: rec.recordId,
+                type: rec.type,
+                errors: [`No schema defined for record type "${rec.type}"`],
+              })
+            }
+            continue
+          }
+          if (!validate(rec.data)) {
+            validationErrorCount++
+            if (validationErrors.length < MAX_REPORTED_ERRORS) {
+              validationErrors.push({
+                recordId: rec.recordId,
+                type: rec.type,
+                errors: (validate.errors ?? []).map(
+                  (e) => `${e.instancePath || '/'} ${e.message ?? 'validation failed'}`,
+                ),
+              })
+            }
+            continue
+          }
+
+          // Check for extra fields
+          const typeSchema = schemasForCheck[rec.type]
+          if (typeSchema?.properties && typeof rec.data === 'object' && rec.data !== null) {
+            const extra = Object.keys(rec.data).filter((k) => !(k in typeSchema.properties!))
+            if (extra.length === 0) continue
             if (!session.stripUnknownFields) {
               extraFieldCount++
               if (extraFieldWarnings.length < MAX_REPORTED_ERRORS) {
                 extraFieldWarnings.push({ recordId: rec.recordId, type: rec.type, fields: extra })
               }
-            } else {
-              data = stripToSchema(data as Record<string, unknown>, typeSchema.properties)
-              const result = hashRecord({ id: rec.recordId, type: rec.type, data })
-              if (hash !== result.hash) {
-                hash = result.hash
-                size = Buffer.byteLength(result.canonical, 'utf-8')
-                stripped.push({
-                  hash,
-                  recordId: rec.recordId,
-                  type: rec.type,
-                  data,
-                  private: rec.private,
-                  size,
-                })
-              }
+              continue
+            }
+            const data = stripToSchema(rec.data as Record<string, unknown>, typeSchema.properties)
+            const result = hashRecord({ id: rec.recordId, type: rec.type, data })
+            if (result.hash !== rec.hash) {
+              stripped.push({
+                hash: result.hash,
+                recordId: rec.recordId,
+                type: rec.type,
+                data,
+                private: rec.private,
+                size: Buffer.byteLength(result.canonical, 'utf-8'),
+              })
+              rehashed.push({ hash: rec.hash, finalHash: result.hash })
             }
           }
         }
 
-        recordCount++
-        typeCounts.set(rec.type, (typeCounts.get(rec.type) ?? 0) + 1)
-        totalBytes += size
+        // Stop as soon as the push is known to be rejected — there is no point
+        // walking millions more records to grow an error list we already capped.
+        if (validationErrorCount > 0 || extraFieldCount > 0) break
 
-        // Compute the public record hash inline
-        const isPrivate = rec.private || rec.manifestPrivate
-        let publicHash: string | null = null
-        if (!isPrivate && !privateTypes.has(rec.type)) {
-          const privateFields = privateFieldsByType.get(rec.type)
-          const publicData =
-            privateFields && privateFields.size > 0 ? filterRecordData(data, privateFields) : data
-          publicHash = hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash
-        }
-        outcomes.push({ hash: rec.hash, finalHash: hash, publicHash })
-      }
+        if (stripped.length > 0) {
+          // Record objects are global, immutable and content-addressed, so writing
+          // them before the version exists is safe; a failed commit leaves them
+          // orphaned exactly as a failed record submission already does. Conflicts
+          // are expected and mean the identical body is already stored — stripping
+          // the same records twice is a normal repeat push, not an error.
+          await db
+            .insert(schema.recordObjects)
+            .values(
+              stripped.map((r) => ({
+                hash: r.hash,
+                recordId: r.recordId,
+                type: r.type,
+                data: r.data as any,
+                private: r.private,
+                size: r.size,
+              })),
+            )
+            .onConflictDoNothing()
 
-      // Stop as soon as the push is known to be rejected — there is no point
-      // walking millions more records to grow an error list we already capped.
-      if (validationErrorCount > 0 || extraFieldCount > 0) break
-
-      if (stripped.length > 0) {
-        // Record objects are global, immutable and content-addressed, so writing
-        // them before the version exists is safe; a failed commit leaves them
-        // orphaned exactly as a failed record submission already does. Conflicts
-        // are expected and mean the identical body is already stored — stripping
-        // the same records twice is a normal repeat push, not an error.
-        await db
-          .insert(schema.recordObjects)
-          .values(
-            stripped.map((r) => ({
-              hash: r.hash,
-              recordId: r.recordId,
-              type: r.type,
-              data: r.data as any,
-              private: r.private,
-              size: r.size,
-            })),
-          )
-          .onConflictDoNothing()
-      }
-
-      if (outcomes.length > 0) {
-        await db.execute(sql`
-          UPDATE negotiate_session_manifest m
-          SET final_hash = o.final_hash, public_hash = o.public_hash
+          await db.execute(sql`
+          UPDATE negotiate_session_manifest m SET final_hash = o.final_hash
           FROM unnest(
-            ${sql.param(outcomes.map((o) => o.hash))}::text[],
-            ${sql.param(outcomes.map((o) => o.finalHash))}::text[],
-            ${sql.param(outcomes.map((o) => o.publicHash))}::text[]
-          ) AS o(hash, final_hash, public_hash)
+            ${sql.param(rehashed.map((o) => o.hash))}::text[],
+            ${sql.param(rehashed.map((o) => o.finalHash))}::text[]
+          ) AS o(hash, final_hash)
           WHERE m.session_id = ${sessionId} AND m.hash = o.hash
         `)
-      }
-    }
-
-    if (validationErrorCount > 0) {
-      await expireSession(sessionId)
-      return c.json(
-        {
-          error: 'Schema validation failed',
-          validationErrors,
-          totalErrors: validationErrorCount,
-          statusCode: 422,
-        },
-        422,
-      )
-    }
-
-    if (extraFieldCount > 0) {
-      await expireSession(sessionId)
-      return c.json(
-        {
-          error: 'Records contain fields not defined in schema',
-          extraFields: extraFieldWarnings,
-          totalRecords: extraFieldCount,
-          hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
-          statusCode: 422,
-        },
-        422,
-      )
-    }
-
-    // Add file sizes
-    if (session.fileHashes.length > 0) {
-      const [fileSizeSum] = await db
-        .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
-        .from(schema.files)
-        .where(inArray(schema.files.hash, session.fileHashes))
-      totalBytes += Number(fileSizeSum?.total ?? 0)
-    }
-
-    // Determine semver
-    const latest = await getLatestReadyVersion(session.collectionId)
-
-    const currentSemver = latest?.semver ?? null
-    if (session.baseSemver !== null && session.baseSemver !== currentSemver) {
-      const normalized = session.baseSemver ? parseSemver(session.baseSemver).semver : null
-      if (normalized !== currentSemver) {
-        await expireSession(sessionId)
-        return c.json(
-          { error: 'Version conflict', currentVersion: currentSemver, statusCode: 409 },
-          409,
-        )
-      }
-    }
-
-    const prevSchemaEntries = latest ? await loadVersionSchemas(latest.id) : []
-    const prevSchemaMap = new Map(prevSchemaEntries.map((e) => [e.slug, e.schemaHash]))
-    const newSchemaMap = new Map(newSchemaSet.map((e) => [e.slug, e.schemaHash]))
-    let schemaChanged = prevSchemaMap.size !== newSchemaMap.size
-    if (!schemaChanged) {
-      for (const [s, hash] of newSchemaMap) {
-        if (prevSchemaMap.get(s) !== hash) {
-          schemaChanged = true
-          break
         }
       }
-    }
 
-    // Determine if records changed vs previous version. Set comparison done in
-    // Postgres: loading the previous version's hashes was a second full-size
-    // array on top of everything else.
-    let recordsChanged = true
-    if (latest) {
-      const [cmp] = (await db.execute(sql`
+      if (validationErrorCount > 0) {
+        await abandonSession()
+        return reply(
+          {
+            error: 'Schema validation failed',
+            validationErrors,
+            totalErrors: validationErrorCount,
+            statusCode: 422,
+          },
+          422,
+        )
+      }
+
+      if (extraFieldCount > 0) {
+        await abandonSession()
+        return reply(
+          {
+            error: 'Records contain fields not defined in schema',
+            extraFields: extraFieldWarnings,
+            totalRecords: extraFieldCount,
+            hint: 'Set strip_unknown_fields: true in the negotiate request to strip these fields.',
+            statusCode: 422,
+          },
+          422,
+        )
+      }
+
+      // Public record addresses. Only types that declare private *fields* can have
+      // a public address that differs from the record hash, so this pass reads
+      // bodies for those types alone — for a collection with no private fields,
+      // which is the normal case, it does nothing at all.
+      if (privateFieldsByType.size > 0) {
+        const filteredTypes = [...privateFieldsByType.keys()]
+        let pubCursor: string | null = null
+        for (;;) {
+          const batch = (await db.execute(sql`
+          SELECT m.hash, ro.record_id AS "recordId", ro.type, ro.data
+          FROM negotiate_session_manifest m
+          INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
+          WHERE m.session_id = ${sessionId} AND (${publicRows})
+            AND ro.type = ANY(${sql.param(filteredTypes)}::text[])
+            ${pubCursor ? sql`AND m.hash > ${pubCursor}` : sql``}
+          ORDER BY m.hash
+          LIMIT 5000
+        `)) as unknown as { hash: string; recordId: string; type: string; data: unknown }[]
+
+          if (batch.length === 0) break
+          pubCursor = batch[batch.length - 1]!.hash
+
+          const updates: { hash: string; publicHash: string }[] = []
+          for (const rec of batch) {
+            const privateFields = privateFieldsByType.get(rec.type)!
+            const publicData = filterRecordData(rec.data, privateFields)
+            updates.push({
+              hash: rec.hash,
+              publicHash: hashRecord({ id: rec.recordId, type: rec.type, data: publicData }).hash,
+            })
+          }
+
+          await db.execute(sql`
+          UPDATE negotiate_session_manifest m SET public_hash = o.public_hash
+          FROM unnest(
+            ${sql.param(updates.map((u) => u.hash))}::text[],
+            ${sql.param(updates.map((u) => u.publicHash))}::text[]
+          ) AS o(hash, public_hash)
+          WHERE m.session_id = ${sessionId} AND m.hash = o.hash
+        `)
+        }
+      }
+
+      // Record count, per-type counts and byte total, aggregated in Postgres over
+      // the final hashes. These used to be tallied in the app during the walk,
+      // which only worked because the walk visited every record — it no longer
+      // does.
+      const typeRows = (await db.execute(sql`
+      SELECT ro.type, count(*)::int AS n, sum(ro.size)::bigint AS bytes
+      FROM negotiate_session_manifest m
+      INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
+      WHERE m.session_id = ${sessionId}
+      GROUP BY ro.type
+    `)) as unknown as { type: string; n: number; bytes: string }[]
+
+      const typeCounts = new Map<string, number>()
+      let recordCount = 0
+      let totalBytes = 0
+      for (const row of typeRows) {
+        typeCounts.set(row.type, row.n)
+        recordCount += row.n
+        totalBytes += Number(row.bytes)
+      }
+
+      // Add file sizes
+      if (session.fileHashes.length > 0) {
+        const [fileSizeSum] = await db
+          .select({ total: sql<number>`coalesce(sum(${schema.files.size}), 0)` })
+          .from(schema.files)
+          .where(inArray(schema.files.hash, session.fileHashes))
+        totalBytes += Number(fileSizeSum?.total ?? 0)
+      }
+
+      // Determine if records changed vs previous version. Set comparison done in
+      // Postgres: loading the previous version's hashes was a second full-size
+      // array on top of everything else.
+      let recordsChanged = true
+      if (latest) {
+        const [cmp] = (await db.execute(sql`
         SELECT
-          (SELECT count(DISTINCT final_hash) FROM negotiate_session_manifest
+          (SELECT count(DISTINCT coalesce(final_hash, hash)) FROM negotiate_session_manifest
              WHERE session_id = ${sessionId}) AS new_count,
           (SELECT count(*) FROM version_records WHERE version_id = ${latest.id}) AS old_count,
           EXISTS (
@@ -909,168 +991,173 @@ app.post(
             WHERE m.session_id = ${sessionId}
               AND NOT EXISTS (
                 SELECT 1 FROM version_records vr
-                WHERE vr.version_id = ${latest.id} AND vr.record_hash = m.final_hash
+                WHERE vr.version_id = ${latest.id}
+                  AND vr.record_hash = coalesce(m.final_hash, m.hash)
               )
           ) AS has_new
       `)) as unknown as { new_count: string; old_count: string; has_new: boolean }[]
-      recordsChanged = Number(cmp!.new_count) !== Number(cmp!.old_count) || cmp!.has_new
-    }
-
-    const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
-    const metadataValue = session.metadata
-      ? { ...prevMetadata, ...(session.metadata as Record<string, unknown>) }
-      : prevMetadata
-    const metadataChanged =
-      JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==
-      JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
-
-    const publicSchemaSet: { slug: string; schemaHash: string }[] = []
-    for (const entry of schemaEntriesForPublicHash) {
-      if (privateTypes.has(entry.slug)) continue
-      const filtered = filterTypeSchema(entry.schema)
-      publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
-    }
-
-    // Both version hashes are folded incrementally over hashes streamed out of
-    // Postgres in sorted order, rather than sorting N hashes in memory and
-    // stringifying them into one ~200 MB document. VersionHashStream is
-    // byte-compatible with computeVersionHash — see its test.
-    //
-    // COLLATE "C" is required, not cosmetic: the digest must see the hashes in
-    // the same order Array.prototype.sort() would produce, which is byte order,
-    // not the database's locale collation.
-    const versionHashStream = new VersionHashStream(
-      newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash })),
-      session.fileHashes,
-      metadataValue,
-    )
-    const publicHashStream = new VersionHashStream(
-      publicSchemaSet,
-      session.fileHashes,
-      metadataValue,
-    )
-
-    const HASH_PAGE = 50_000
-    for (const [stream, column] of [
-      [versionHashStream, sql`final_hash`],
-      [publicHashStream, sql`public_hash`],
-    ] as const) {
-      // Two records that differ only in private fields share a public hash, so
-      // the value alone is not a unique cursor — the tiebreak is the manifest's
-      // own primary key, or duplicates straddling a page boundary get dropped
-      // and the digest silently changes.
-      let at: { value: string; tiebreak: string } | null = null
-      for (;;) {
-        const rows = (await db.execute(sql`
-          SELECT ${column} AS h, hash AS tiebreak FROM negotiate_session_manifest
-          WHERE session_id = ${sessionId} AND ${column} IS NOT NULL
-            ${
-              at
-                ? sql`AND (${column} COLLATE "C", hash COLLATE "C")
-                        > (${at.value} COLLATE "C", ${at.tiebreak} COLLATE "C")`
-                : sql``
-            }
-          ORDER BY ${column} COLLATE "C", hash COLLATE "C"
-          LIMIT ${HASH_PAGE}
-        `)) as unknown as { h: string; tiebreak: string }[]
-        if (rows.length === 0) break
-        for (const row of rows) stream.push(row.h)
-        if (rows.length < HASH_PAGE) break
-        const last = rows[rows.length - 1]!
-        at = { value: last.h, tiebreak: last.tiebreak }
-      }
-    }
-    const versionHash = versionHashStream.digest()
-    const publicHash = publicHashStream.digest().replace('private:', 'public:')
-
-    const sv = deriveSemver(latest?.semver ?? null, schemaChanged, recordsChanged, metadataChanged)
-
-    // Check for duplicate
-    const [existingHash] = await db
-      .select({ semver: schema.versions.semver })
-      .from(schema.versions)
-      .where(
-        and(
-          eq(schema.versions.collectionId, session.collectionId),
-          eq(schema.versions.hash, versionHash),
-          eq(schema.versions.status, 'ready'),
-        ),
-      )
-      .limit(1)
-    if (existingHash) {
-      await expireSession(sessionId)
-      return c.json(
-        {
-          error: 'No changes detected',
-          message: `Version ${existingHash.semver} already has identical content.`,
-          existingVersion: existingHash.semver,
-        },
-        409,
-      )
-    }
-
-    // Insert version row + small join tables in a transaction (status = 'creating')
-    // Then batch-insert version_records outside the transaction to avoid long locks.
-    // Finally mark the version as 'ready'.
-    let versionId: number
-
-    await db.transaction(async (tx) => {
-      const [version] = await tx
-        .insert(schema.versions)
-        .values({
-          collectionId: session.collectionId,
-          semver: sv.semver,
-          major: sv.major,
-          minor: sv.minor,
-          patch: sv.patch,
-          hash: versionHash,
-          publicHash,
-          baseSemver: session.baseSemver,
-          message: session.message,
-          metadata: metadataValue,
-          pushedBy: c.get('userId') ?? null,
-          appId: session.appId,
-          actorId: session.actorId,
-          recordCount,
-          fileCount: session.fileHashes.length,
-          typeCounts: Object.fromEntries(typeCounts),
-          totalBytes,
-          status: 'creating',
-        })
-        .returning()
-
-      versionId = version!.id
-
-      if (session.fileHashes.length > 0) {
-        await tx
-          .insert(schema.versionFiles)
-          .values(session.fileHashes.map((hash) => ({ versionId: versionId, fileHash: hash })))
+        recordsChanged = Number(cmp!.new_count) !== Number(cmp!.old_count) || cmp!.has_new
       }
 
-      await tx.insert(schema.versionSchemas).values(
-        newSchemaSet.map((entry) => ({
-          versionId: versionId,
-          slug: entry.slug,
-          schemaId: entry.schemaId,
-        })),
-      )
-    })
+      const prevMetadata = (latest?.metadata as Record<string, unknown>) ?? null
+      const metadataValue = session.metadata
+        ? { ...prevMetadata, ...(session.metadata as Record<string, unknown>) }
+        : prevMetadata
+      const metadataChanged =
+        JSON.stringify(metadataValue ? canonicalize(metadataValue) : null) !==
+        JSON.stringify(prevMetadata ? canonicalize(prevMetadata) : null)
 
-    // Populate version_records outside the main transaction, server-side, in
-    // keyset batches over the session manifest. Nothing about the record set
-    // passes through the app: record_id and type come from record_objects, the
-    // hashes and public addresses from the manifest rows the validation pass
-    // already wrote. public_record_hash is stored only where it differs from
-    // the record hash, which is the column's existing contract.
-    try {
-      const VR_BATCH = 5000
-      let vrCursor: string | null = null
-      for (;;) {
-        // Resolve the page's upper bound first. Doing it in one statement with
-        // RETURNING doesn't work: ON CONFLICT DO NOTHING makes the number of
-        // returned rows a count of insertions, not of manifest rows read, so it
-        // can't drive the cursor.
-        const [bound] = (await db.execute(sql`
+      const publicSchemaSet: { slug: string; schemaHash: string }[] = []
+      for (const entry of schemaEntriesForPublicHash) {
+        if (privateTypes.has(entry.slug)) continue
+        const filtered = filterTypeSchema(entry.schema)
+        publicSchemaSet.push({ slug: entry.slug, schemaHash: hashSchema(filtered) })
+      }
+
+      // Both version hashes are folded incrementally over hashes streamed out of
+      // Postgres in sorted order, rather than sorting N hashes in memory and
+      // stringifying them into one ~200 MB document. VersionHashStream is
+      // byte-compatible with computeVersionHash — see its test.
+      //
+      // COLLATE "C" is required, not cosmetic: the digest must see the hashes in
+      // the same order Array.prototype.sort() would produce, which is byte order,
+      // not the database's locale collation.
+      const versionHashStream = new VersionHashStream(
+        newSchemaSet.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash })),
+        session.fileHashes,
+        metadataValue,
+      )
+      const publicHashStream = new VersionHashStream(
+        publicSchemaSet,
+        session.fileHashes,
+        metadataValue,
+      )
+
+      // A server-side cursor: one sorted scan per digest, delivered in chunks, with
+      // no keyset arithmetic to get wrong. The earlier keyset version had to
+      // tiebreak on the primary key because two records differing only in private
+      // fields share a public hash, and duplicates straddling a page boundary
+      // would silently change the digest. A cursor sidesteps that entirely.
+      const client = db.$client
+      const CURSOR_CHUNK = 10_000
+
+      await client`
+      SELECT coalesce(final_hash, hash) AS h
+      FROM negotiate_session_manifest
+      WHERE session_id = ${sessionId}
+      ORDER BY coalesce(final_hash, hash) COLLATE "C"
+    `.cursor(CURSOR_CHUNK, (rows) => {
+        for (const row of rows) versionHashStream.push(row['h'] as string)
+      })
+
+      await client`
+      SELECT coalesce(m.public_hash, m.final_hash, m.hash) AS h
+      FROM negotiate_session_manifest m
+      INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
+      WHERE m.session_id = ${sessionId}
+        AND NOT m.private AND NOT ro.private
+        AND ro.type <> ALL(${privateTypeList}::text[])
+      ORDER BY coalesce(m.public_hash, m.final_hash, m.hash) COLLATE "C"
+    `.cursor(CURSOR_CHUNK, (rows) => {
+        for (const row of rows) publicHashStream.push(row['h'] as string)
+      })
+
+      const versionHash = versionHashStream.digest()
+      const publicHash = publicHashStream.digest().replace('private:', 'public:')
+
+      const sv = deriveSemver(
+        latest?.semver ?? null,
+        schemaChanged,
+        recordsChanged,
+        metadataChanged,
+      )
+
+      // Check for duplicate
+      const [existingHash] = await db
+        .select({ semver: schema.versions.semver })
+        .from(schema.versions)
+        .where(
+          and(
+            eq(schema.versions.collectionId, session.collectionId),
+            eq(schema.versions.hash, versionHash),
+            eq(schema.versions.status, 'ready'),
+          ),
+        )
+        .limit(1)
+      if (existingHash) {
+        await abandonSession()
+        return reply(
+          {
+            error: 'No changes detected',
+            message: `Version ${existingHash.semver} already has identical content.`,
+            existingVersion: existingHash.semver,
+          },
+          409,
+        )
+      }
+
+      // Insert version row + small join tables in a transaction (status = 'creating')
+      // Then batch-insert version_records outside the transaction to avoid long locks.
+      // Finally mark the version as 'ready'.
+      let versionId: number
+
+      await db.transaction(async (tx) => {
+        const [version] = await tx
+          .insert(schema.versions)
+          .values({
+            collectionId: session.collectionId,
+            semver: sv.semver,
+            major: sv.major,
+            minor: sv.minor,
+            patch: sv.patch,
+            hash: versionHash,
+            publicHash,
+            baseSemver: session.baseSemver,
+            message: session.message,
+            metadata: metadataValue,
+            pushedBy: userId ?? null,
+            appId: session.appId,
+            actorId: session.actorId,
+            recordCount,
+            fileCount: session.fileHashes.length,
+            typeCounts: Object.fromEntries(typeCounts),
+            totalBytes,
+            status: 'creating',
+          })
+          .returning()
+
+        versionId = version!.id
+
+        if (session.fileHashes.length > 0) {
+          await tx
+            .insert(schema.versionFiles)
+            .values(session.fileHashes.map((hash) => ({ versionId: versionId, fileHash: hash })))
+        }
+
+        await tx.insert(schema.versionSchemas).values(
+          newSchemaSet.map((entry) => ({
+            versionId: versionId,
+            slug: entry.slug,
+            schemaId: entry.schemaId,
+          })),
+        )
+      })
+
+      // Populate version_records outside the main transaction, server-side, in
+      // keyset batches over the session manifest. Nothing about the record set
+      // passes through the app: record_id and type come from record_objects, the
+      // hashes and public addresses from the manifest rows the validation pass
+      // already wrote. public_record_hash is stored only where it differs from
+      // the record hash, which is the column's existing contract.
+      try {
+        const VR_BATCH = 5000
+        let vrCursor: string | null = null
+        for (;;) {
+          // Resolve the page's upper bound first. Doing it in one statement with
+          // RETURNING doesn't work: ON CONFLICT DO NOTHING makes the number of
+          // returned rows a count of insertions, not of manifest rows read, so it
+          // can't drive the cursor.
+          const [bound] = (await db.execute(sql`
           SELECT max(hash) AS hi, count(*)::int AS n FROM (
             SELECT hash FROM negotiate_session_manifest
             WHERE session_id = ${sessionId}
@@ -1080,76 +1167,143 @@ app.post(
           ) page
         `)) as unknown as { hi: string | null; n: number }[]
 
-        if (!bound || bound.n === 0 || bound.hi === null) break
-        const hi = bound.hi
+          if (!bound || bound.n === 0 || bound.hi === null) break
+          const hi = bound.hi
 
-        await db.execute(sql`
+          await db.execute(sql`
           INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
-          SELECT ${versionId!}, ro.hash, nullif(m.public_hash, m.final_hash),
+          SELECT ${versionId!}, ro.hash,
+                 nullif(coalesce(m.public_hash, m.final_hash, m.hash),
+                        coalesce(m.final_hash, m.hash)),
                  ro.record_id, ro.type
           FROM negotiate_session_manifest m
-          INNER JOIN record_objects ro ON ro.hash = m.final_hash
+          INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
           WHERE m.session_id = ${sessionId}
             ${vrCursor ? sql`AND m.hash > ${vrCursor}` : sql``}
             AND m.hash <= ${hi}
           ON CONFLICT DO NOTHING
         `)
 
-        vrCursor = hi
-        if (bound.n < VR_BATCH) break
+          vrCursor = hi
+          if (bound.n < VR_BATCH) break
+        }
+      } catch (err) {
+        await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))
+        throw err
       }
-    } catch (err) {
-      await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))
-      throw err
-    }
 
-    // Mark version as ready and update collection timestamp
-    await db.transaction(async (tx) => {
-      await tx
-        .update(schema.versions)
-        .set({ status: 'ready' })
-        .where(eq(schema.versions.id, versionId!))
+      // Mark version as ready and update collection timestamp
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.versions)
+          .set({ status: 'ready' })
+          .where(eq(schema.versions.id, versionId!))
 
-      await tx
-        .update(schema.collections)
-        .set({ updatedAt: new Date() })
-        .where(eq(schema.collections.id, session.collectionId))
-    })
+        await tx
+          .update(schema.collections)
+          .set({ updatedAt: new Date() })
+          .where(eq(schema.collections.id, session.collectionId))
+      })
 
-    await db
-      .update(schema.negotiateSessions)
-      .set({ status: 'committed' })
-      .where(eq(schema.negotiateSessions.id, sessionId))
+      // In async mode the caller owns the terminal status, so that `status` and
+      // `result` land in the same write. Flipping to 'committed' here as well
+      // would briefly publish a committed session with a null result, and a
+      // client polling on that boundary would read success with nothing in it.
+      if (!wantsAsync) {
+        await db
+          .update(schema.negotiateSessions)
+          .set({ status: 'committed' })
+          .where(eq(schema.negotiateSessions.id, sessionId))
+      }
 
-    // Fire webhooks for the new version — best-effort, never blocks/denies the 201.
-    try {
-      const deliveryIds = await enqueueWebhookDeliveries(
+      // Fire webhooks for the new version — best-effort, never blocks/denies the 201.
+      try {
+        const deliveryIds = await enqueueWebhookDeliveries(
+          {
+            id: versionId!,
+            semver: sv.semver,
+            hash: versionHash,
+            major: sv.major,
+            minor: sv.minor,
+            patch: sv.patch,
+            recordCount,
+            fileCount: session.fileHashes.length,
+          },
+          bumpTypeFromChanges(schemaChanged, recordsChanged),
+          session.collectionId,
+        )
+        dispatchDeliveries(deliveryIds)
+      } catch (err) {
+        console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
+      }
+
+      return reply(
         {
-          id: versionId!,
           semver: sv.semver,
           hash: versionHash,
-          major: sv.major,
-          minor: sv.minor,
-          patch: sv.patch,
           recordCount,
           fileCount: session.fileHashes.length,
         },
-        bumpTypeFromChanges(schemaChanged, recordsChanged),
-        session.collectionId,
+        201,
       )
-      dispatchDeliveries(deliveryIds)
-    } catch (err) {
-      console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
     }
+
+    // Synchronous by default: the CLI, mirror-sync and every existing client
+    // expect the version in the response, and for ordinary collections the whole
+    // thing takes well under a second.
+    if (!wantsAsync) {
+      const { status, body } = await finalize()
+      return c.json(body as object, status)
+    }
+
+    await db
+      .update(schema.negotiateSessions)
+      .set({ status: 'committing', finalizeStartedAt: new Date() })
+      .where(eq(schema.negotiateSessions.id, sessionId))
+
+    // Deliberately not awaited: the response goes out now and the outcome is
+    // recorded on the session for the client to poll. A crash mid-finalize
+    // leaves the session in 'committing' and its version in 'creating', which
+    // the cleanup job sweeps.
+    void (async () => {
+      const startedAt = Date.now()
+      try {
+        const { status, body } = await finalize()
+        const ok = status >= 200 && status < 300
+        await db
+          .update(schema.negotiateSessions)
+          .set(
+            ok
+              ? { status: 'committed', result: body as never }
+              : { status: 'failed', error: body as never },
+          )
+          .where(eq(schema.negotiateSessions.id, sessionId))
+        console.log(
+          `[negotiate] async finalize ${sessionId} ${ok ? 'committed' : `failed (${status})`} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+        )
+      } catch (err) {
+        console.error(`[negotiate] async finalize ${sessionId} threw:`, err)
+        await db
+          .update(schema.negotiateSessions)
+          .set({
+            status: 'failed',
+            error: { statusCode: 500, error: err instanceof Error ? err.message : String(err) },
+          })
+          .where(eq(schema.negotiateSessions.id, sessionId))
+          .catch(() => {})
+      }
+    })()
 
     return c.json(
       {
-        semver: sv.semver,
-        hash: versionHash,
-        recordCount,
-        fileCount: session.fileHashes.length,
+        session_id: sessionId,
+        status: 'committing',
+        message:
+          'Commit accepted. Poll GET .../versions/negotiate/' +
+          sessionId +
+          ' until status is "committed" or "failed".',
       },
-      201,
+      202,
     )
   },
 )
