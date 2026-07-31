@@ -394,6 +394,12 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
   appId: text('app_id'),
   actorId: text('actor_id'),
   stripUnknownFields: boolean('strip_unknown_fields').notNull().default(false),
+  // Set when the manifest is uploaded in chunks instead of inline: how many
+  // distinct record hashes the client says it will send. Commit refuses to build
+  // a version until exactly that many have arrived, so a client that dies
+  // partway through the upload cannot silently produce a truncated version.
+  // NULL for the inline path, where the manifest arrives atomically.
+  manifestExpected: integer('manifest_expected'),
   // 'committing' is the async-finalize state: the request has returned 202 and
   // a background task is building the version. It ends at 'committed' or
   // 'failed', both of which are reported through the session-status endpoint.

@@ -45,6 +45,30 @@ const commitRes = `{
   "fileCount": 1
 }`
 
+const chunkedStartReq = `{
+  "base_version": null,
+  "schemas": { "Preprint": { "type": "object", "properties": {...} } },
+  "manifest_expected": 3110000,
+  "message": "arXiv metadata"
+}`
+
+const chunkedStartRes = `{
+  "session_id": "uuid",
+  "manifest_expected": 3110000,
+  "manifest_received": 0,
+  "needed_files": [],
+  "total_files": 0,
+  "already_have_files": 0,
+  "next": "POST .../versions/negotiate/uuid/manifest"
+}`
+
+const manifestChunkRes = `{
+  "received": 50000,
+  "needed_records": ["def456...", "789abc..."],
+  "manifest_received": 150000,
+  "manifest_expected": 3110000
+}`
+
 const asyncCommitRes = `{
   "session_id": "uuid",
   "status": "committing",
@@ -215,9 +239,19 @@ export default function DocsApiVersions() {
                 <code>manifest</code>
               </td>
               <td>
-                <strong>Required.</strong> Array of <code>{'{"id", "type", "hash"}'}</code> objects.
-                Each <code>hash</code> is the SHA-256 of the canonical JSON{' '}
-                <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Array of <code>{'{"id", "type", "hash"}'}</code> objects. Each <code>hash</code> is
+                the SHA-256 of the canonical JSON <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Required unless you upload the manifest in chunks — see below. Capped at 500,000
+                entries.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>manifest_expected</code>
+              </td>
+              <td>
+                Number of distinct record hashes you will upload in chunks. Mutually exclusive with{' '}
+                <code>manifest</code>. See "uploading the manifest in chunks" below.
               </td>
             </tr>
             <tr>
@@ -258,6 +292,47 @@ export default function DocsApiVersions() {
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{negotiateRes}</code>
         </pre>
+
+        <h4>Large collections: uploading the manifest in chunks</h4>
+        <p>
+          The manifest above is a single JSON body, which is fine up to{' '}
+          <strong>500,000 entries</strong> (beyond that the endpoint returns <code>413</code>). At a
+          few million records it would be hundreds of megabytes, parsed whole. Instead, omit{' '}
+          <code>manifest</code> and declare how many records you will send:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{chunkedStartReq}</code>
+        </pre>
+        <p>
+          The server opens the session without asking for any records yet — nothing in this response
+          is proportional to the collection:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{chunkedStartRes}</code>
+        </pre>
+        <p>
+          Then <code>POST .../versions/negotiate/:sessionId/manifest</code> with up to{' '}
+          <strong>50,000</strong> JSONL entries per request (
+          <code>Content-Type: application/x-ndjson</code>), each line a{' '}
+          <code>{'{"id", "type", "hash"}'}</code> object. Each response tells you which records from{' '}
+          <em>that chunk</em> the server still needs, so you can start sending bodies before the
+          whole manifest is uploaded:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{manifestChunkRes}</code>
+        </pre>
+        <p>
+          Chunks are idempotent: entries are keyed by hash, so re-sending a chunk after a timeout is
+          safe and <code>manifest_received</code> will not move. Commit refuses to build a version
+          until <code>manifest_received</code> equals <code>manifest_expected</code>, so a client
+          that dies partway through the upload cannot silently produce a version that dropped
+          records.
+        </p>
+        <p className="text-ink-muted">
+          The session's 10-minute expiry is an <em>idle</em> timeout — every manifest chunk and
+          record batch pushes it back — so a push that legitimately runs for an hour will not expire
+          underneath you.
+        </p>
 
         <h3>Step 2: POST .../negotiate/:sessionId/records</h3>
         <p className="scope">Auth: write scope</p>
@@ -395,7 +470,10 @@ export default function DocsApiVersions() {
               <td>
                 <code>404</code>
               </td>
-              <td>Session expired or not found. Sessions expire after 10 minutes.</td>
+              <td>
+                Session expired or not found. Sessions expire after 10 minutes of inactivity — every
+                manifest chunk and record batch pushes the expiry back.
+              </td>
             </tr>
             <tr>
               <td>

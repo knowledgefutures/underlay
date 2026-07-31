@@ -33,20 +33,41 @@ import {
 } from '../lib/webhooks.server.js'
 import { requireAuth, type AuthEnv } from './auth.server.js'
 
+// Idle timeout, not a total-duration budget: every manifest chunk and record
+// batch pushes it back. A multi-million-record push legitimately runs for tens
+// of minutes, and it would be perverse to expire a session that is actively
+// receiving data.
 const SESSION_TTL_MS = 10 * 60 * 1000
 const MAX_BATCH_RECORDS = 10_000
+
+// Entries per manifest chunk. At ~120 bytes each this is ~6 MB per request,
+// which is the point: the whole reason chunked upload exists is that the body
+// stops scaling with the collection.
+const MAX_MANIFEST_CHUNK = 50_000
+
+// Inline manifests are parsed whole — the JSON body, then zod's validated copy.
+// 500k entries is ~58 MB of body and was measured at ~730 MB of heap; past that
+// a push should use the chunked flow rather than gambling on the heap.
+const MAX_INLINE_MANIFEST = 500_000
+
+const ManifestEntry = z.object({
+  id: z.string(),
+  type: z.string(),
+  hash: z.string().regex(/^[0-9a-f]{64}$/, 'must be a lowercase hex sha256'),
+  private: z.boolean().optional(),
+})
 
 const NegotiateBody = z.object({
   base_version: z.string().nullable().optional(),
   schemas: z.record(z.string(), z.record(z.string(), z.unknown())),
-  manifest: z.array(
-    z.object({
-      id: z.string(),
-      type: z.string(),
-      hash: z.string().regex(/^[0-9a-f]{64}$/, 'must be a lowercase hex sha256'),
-      private: z.boolean().optional(),
-    }),
-  ),
+  // Omit (or send empty) together with `manifest_expected` to upload the
+  // manifest in chunks instead.
+  manifest: z.array(ManifestEntry).optional(),
+  // Declares how many distinct record hashes will be uploaded via
+  // POST .../manifest. Commit refuses to build a version until exactly that many
+  // have arrived, so a client that dies halfway through can never silently
+  // produce a truncated version.
+  manifest_expected: z.number().int().nonnegative().optional(),
   files: z.array(z.string().regex(/^[0-9a-f]{64}$/)).optional(),
   message: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
@@ -54,6 +75,62 @@ const NegotiateBody = z.object({
   actor_id: z.string().optional(),
   strip_unknown_fields: z.boolean().optional(),
 })
+
+/** Push the session's idle timeout back; called whenever it receives data. */
+async function touchSession(sessionId: string) {
+  await db
+    .update(schema.negotiateSessions)
+    .set({ expiresAt: new Date(Date.now() + SESSION_TTL_MS) })
+    .where(eq(schema.negotiateSessions.id, sessionId))
+}
+
+/**
+ * Insert manifest entries and report which of them the server doesn't already
+ * hold. Idempotent by (session_id, hash), so a client that retries a chunk after
+ * a timeout gets the same answer rather than a conflict.
+ */
+async function ingestManifestEntries(
+  sessionId: string,
+  entries: z.infer<typeof ManifestEntry>[],
+): Promise<string[]> {
+  const seen = new Set<string>()
+  const deduped = entries.filter((r) => {
+    if (seen.has(r.hash)) return false
+    seen.add(r.hash)
+    return true
+  })
+
+  const HASH_CHECK_BATCH = 5000
+  const existingRecordSet = new Set<string>()
+  for (let i = 0; i < deduped.length; i += HASH_CHECK_BATCH) {
+    const chunk = deduped.slice(i, i + HASH_CHECK_BATCH).map((r) => r.hash)
+    const existing = await db
+      .select({ hash: schema.recordObjects.hash })
+      .from(schema.recordObjects)
+      .where(inArray(schema.recordObjects.hash, chunk))
+    for (const r of existing) existingRecordSet.add(r.hash)
+  }
+
+  const MANIFEST_BATCH = 1000
+  for (let i = 0; i < deduped.length; i += MANIFEST_BATCH) {
+    const batch = deduped.slice(i, i + MANIFEST_BATCH)
+    await db
+      .insert(schema.negotiateSessionManifest)
+      .values(
+        batch.map((r) => ({
+          sessionId,
+          recordId: r.id,
+          type: r.type,
+          hash: r.hash,
+          private: r.private ?? false,
+          needed: !existingRecordSet.has(r.hash),
+        })),
+      )
+      .onConflictDoNothing()
+  }
+
+  return deduped.filter((r) => !existingRecordSet.has(r.hash)).map((r) => r.hash)
+}
 
 /** Mirrors `c.json(body, status)` so the finalize body reads unchanged. */
 const reply = (body: unknown, status: ContentfulStatusCode = 200) => ({ status, body })
@@ -114,29 +191,35 @@ app.post(
       }
     }
 
-    // Deduplicate manifest entries by hash (PK is sessionId+hash)
-    const seenHashes = new Set<string>()
-    const dedupedManifest = body.manifest.filter((r) => {
-      if (seenHashes.has(r.hash)) return false
-      seenHashes.add(r.hash)
-      return true
-    })
+    const inlineManifest = body.manifest ?? []
+    const chunked = body.manifest_expected !== undefined
 
-    // Check which record hashes already exist in record_objects (batched for large manifests)
-    const manifestHashes = dedupedManifest.map((r) => r.hash)
-    const existingRecordSet = new Set<string>()
-    const HASH_CHECK_BATCH = 5000
-    for (let i = 0; i < manifestHashes.length; i += HASH_CHECK_BATCH) {
-      const chunk = manifestHashes.slice(i, i + HASH_CHECK_BATCH)
-      const existing = await db
-        .select({ hash: schema.recordObjects.hash })
-        .from(schema.recordObjects)
-        .where(inArray(schema.recordObjects.hash, chunk))
-      for (const r of existing) existingRecordSet.add(r.hash)
+    if (chunked && inlineManifest.length > 0) {
+      return c.json(
+        {
+          error:
+            'Send either an inline `manifest` or `manifest_expected` with chunked upload, not both.',
+          statusCode: 400,
+        },
+        400,
+      )
     }
-    const neededRecords = manifestHashes.filter((h) => !existingRecordSet.has(h))
+
+    if (inlineManifest.length > MAX_INLINE_MANIFEST) {
+      return c.json(
+        {
+          error:
+            `Inline manifests are limited to ${MAX_INLINE_MANIFEST} entries. Set ` +
+            '`manifest_expected` to the number of records and upload the manifest in chunks ' +
+            'via POST .../versions/negotiate/:sessionId/manifest instead.',
+          statusCode: 413,
+        },
+        413,
+      )
+    }
 
     // Check which file hashes already exist (batched)
+    const HASH_CHECK_BATCH = 5000
     const fileHashes = body.files ?? []
     const existingFileSet = new Set<string>()
     for (let i = 0; i < fileHashes.length; i += HASH_CHECK_BATCH) {
@@ -163,35 +246,150 @@ app.post(
         appId: body.app_id ?? null,
         actorId: body.actor_id ?? null,
         stripUnknownFields: body.strip_unknown_fields ?? false,
+        manifestExpected: body.manifest_expected ?? null,
         expiresAt: new Date(Date.now() + SESSION_TTL_MS),
       })
       .returning({ id: schema.negotiateSessions.id })
 
-    // Insert manifest entries into edge table
-    const neededSet = new Set(neededRecords)
-    const MANIFEST_BATCH = 1000
-    for (let i = 0; i < dedupedManifest.length; i += MANIFEST_BATCH) {
-      const batch = dedupedManifest.slice(i, i + MANIFEST_BATCH)
-      await db.insert(schema.negotiateSessionManifest).values(
-        batch.map((r) => ({
-          sessionId: session!.id,
-          recordId: r.id,
-          type: r.type,
-          hash: r.hash,
-          private: r.private ?? false,
-          needed: neededSet.has(r.hash),
-        })),
-      )
+    if (chunked) {
+      return c.json({
+        session_id: session!.id,
+        // No needed_records yet: they are reported per chunk, as the manifest
+        // arrives. Nothing here is proportional to the collection.
+        manifest_expected: body.manifest_expected,
+        manifest_received: 0,
+        needed_files: neededFiles,
+        total_files: fileHashes.length,
+        already_have_files: fileHashes.length - neededFiles.length,
+        next: `POST .../versions/negotiate/${session!.id}/manifest`,
+      })
     }
+
+    const neededRecords = await ingestManifestEntries(session!.id, inlineManifest)
+    const [counts] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(schema.negotiateSessionManifest)
+      .where(eq(schema.negotiateSessionManifest.sessionId, session!.id))
+    const totalRecords = counts?.total ?? 0
 
     return c.json({
       session_id: session!.id,
       needed_records: neededRecords,
       needed_files: neededFiles,
-      total_records: manifestHashes.length,
+      total_records: totalRecords,
       total_files: fileHashes.length,
-      already_have_records: manifestHashes.length - neededRecords.length,
+      already_have_records: totalRecords - neededRecords.length,
       already_have_files: fileHashes.length - neededFiles.length,
+    })
+  },
+)
+
+// POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/manifest
+//
+// Upload one chunk of the manifest as JSONL. This exists because the inline
+// manifest is a single JSON body: ~58 MB at 500k records and ~360 MB at 3.11M,
+// parsed whole and then copied again by validation. Chunked, the request body
+// stops scaling with the collection entirely.
+app.post(
+  '/:owner/:slug/versions/negotiate/:sessionId/manifest',
+  requireAuth('write'),
+  openApi({
+    tags: ['Negotiate'],
+    summary: 'Upload a chunk of the manifest for a negotiate session',
+    description:
+      'For collections too large to send the manifest as one JSON body. Open the session with ' +
+      '`manifest_expected` instead of `manifest`, then POST the entries here as JSONL ' +
+      '(`Content-Type: application/x-ndjson`), one `{id, type, hash, private?}` object per line, ' +
+      `up to ${MAX_MANIFEST_CHUNK} per request. Each response reports which records from that ` +
+      'chunk the server still needs, so record bodies can be sent before the manifest is ' +
+      'complete. Chunks are idempotent: entries are keyed by hash, so re-sending one after a ' +
+      'timeout is safe. Commit refuses to build a version until `manifest_received` equals ' +
+      '`manifest_expected`.',
+    request: {
+      param: z.object({ owner: z.string(), slug: z.string(), sessionId: z.string() }),
+    },
+    responses: { 200: z.any() },
+  }),
+  async (c) => {
+    const { sessionId } = c.req.valid('param')
+
+    const [sessionRow] = await db
+      .select()
+      .from(schema.negotiateSessions)
+      .where(eq(schema.negotiateSessions.id, sessionId))
+      .limit(1)
+
+    if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
+      if (sessionRow?.status === 'open') await expireSession(sessionId)
+      return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
+    }
+    if (sessionRow.userId !== c.get('userId')) {
+      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+    if (sessionRow.manifestExpected === null) {
+      return c.json(
+        {
+          error:
+            'This session was opened with an inline manifest. Pass `manifest_expected` at ' +
+            'negotiate time to upload the manifest in chunks.',
+          statusCode: 400,
+        },
+        400,
+      )
+    }
+
+    const lines = (await c.req.text())
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+
+    if (lines.length > MAX_MANIFEST_CHUNK) {
+      return c.json(
+        {
+          error: `Chunk too large. Maximum ${MAX_MANIFEST_CHUNK} manifest entries per request.`,
+          statusCode: 400,
+        },
+        400,
+      )
+    }
+
+    const entries: z.infer<typeof ManifestEntry>[] = []
+    for (const line of lines) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(line)
+      } catch {
+        return c.json({ error: `Invalid JSONL line: ${line.slice(0, 100)}`, statusCode: 400 }, 400)
+      }
+      const result = ManifestEntry.safeParse(parsed)
+      if (!result.success) {
+        return c.json(
+          {
+            error: `Invalid manifest entry: ${line.slice(0, 100)}`,
+            details: result.error.issues.map((i) => `${i.path.join('.')} ${i.message}`),
+            statusCode: 400,
+          },
+          400,
+        )
+      }
+      entries.push(result.data)
+    }
+
+    const needed = await ingestManifestEntries(sessionId, entries)
+    await touchSession(sessionId)
+
+    // Counted from the table rather than accumulated, so a retried chunk — which
+    // conflicts away to nothing — doesn't inflate the total.
+    const [counts] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(schema.negotiateSessionManifest)
+      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
+
+    return c.json({
+      received: entries.length,
+      needed_records: needed,
+      manifest_received: counts?.total ?? 0,
+      manifest_expected: sessionRow.manifestExpected,
     })
   },
 )
@@ -203,6 +401,10 @@ app.get(
   openApi({
     tags: ['Negotiate'],
     summary: 'Get a negotiate session',
+    description:
+      'Session status and progress. `status` is one of `open`, `committing`, `committed`, ' +
+      '`failed` or `expired`. After an async commit, `result` holds the created version once ' +
+      'status is `committed`, and `error` the rejection body once it is `failed`.',
     request: {
       param: z.object({ owner: z.string(), slug: z.string(), sessionId: z.string() }),
     },
@@ -467,6 +669,8 @@ app.post(
         )
     }
 
+    await touchSession(sessionId)
+
     const [remainingRow] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.negotiateSessionManifest)
@@ -492,10 +696,19 @@ app.post(
   openApi({
     tags: ['Negotiate'],
     summary: 'Commit a negotiate session',
+    description:
+      'Validates every record against the schemas, computes the version hashes and creates the ' +
+      'new immutable version. Synchronous by default, returning 201 with the version. Pass ' +
+      '`?async=true` (or `{"async": true}`) on a large collection, where this work can run for ' +
+      'minutes: the server returns 202 immediately and finalizes in the background. Poll ' +
+      'GET .../negotiate/:sessionId until `status` is `committed` (with `result`) or `failed` ' +
+      '(with `error`); `result` holds exactly what the 201 would have returned. The version is ' +
+      'not visible to readers until the finalize completes.',
     request: {
       param: z.object({ owner: z.string(), slug: z.string(), sessionId: z.string() }),
+      query: z.object({ async: z.enum(['true', '1']).optional() }),
     },
-    responses: { 201: z.any() },
+    responses: { 201: z.any(), 202: z.any() },
   }),
   async (c) => {
     const { sessionId } = c.req.valid('param')
@@ -571,6 +784,33 @@ app.post(
     }
 
     const finalize = async (): Promise<{ status: ContentfulStatusCode; body: unknown }> => {
+      // A chunked manifest has no natural end-of-stream, so the client's
+      // declared total is what tells a complete upload from one whose client
+      // died halfway. Without this a truncated manifest would commit happily as
+      // a version that silently dropped records.
+      if (sessionRow.manifestExpected !== null) {
+        const [received] = await db
+          .select({ total: sql<number>`count(*)::int` })
+          .from(schema.negotiateSessionManifest)
+          .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
+        const total = received?.total ?? 0
+        if (total !== sessionRow.manifestExpected) {
+          return reply(
+            {
+              error: 'Manifest incomplete',
+              message:
+                `Expected ${sessionRow.manifestExpected} manifest entries but received ${total}. ` +
+                'Upload the remaining chunks, or restart the session if the difference is ' +
+                'because the manifest contained duplicate record hashes.',
+              manifest_expected: sessionRow.manifestExpected,
+              manifest_received: total,
+              statusCode: 400,
+            },
+            400,
+          )
+        }
+      }
+
       // Check if any needed records remain
       const [neededCount] = await db
         .select({ count: sql<number>`count(*)::int` })

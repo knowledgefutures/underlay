@@ -84,6 +84,9 @@ POST /api/records/batch                                  → fetch records by ha
 
 ### Diff
 GET /api/collections/:owner/:slug/versions/:semver/diff?from=:semver → diff between two versions (added, updated, removed records)
+  Returns full record bodies, keyset-paginated: limit defaults to 500, maxes at 5000, and
+  ?cursor=<pagination.nextCursor> walks the rest. When you only need hashes, prefer
+  .../manifest?since= — its entries are ~120 bytes instead of whole records.
 
 ### Export
 GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
@@ -109,7 +112,7 @@ Response includes { semver, hash, recordCount, fileCount }.
 If 404, no versions exist yet — your first push should use base_version: null.
 
 ### Step 2: Fetch the manifest (optional, for diffing)
-GET /api/collections/:owner/:slug/versions/:semver/manifest
+GET /api/collections/:owner/:slug/versions/:semver/manifest?limit=10000
 
 Response:
 {
@@ -117,12 +120,37 @@ Response:
   "hash": "abc123...",
   "schemas": {"Article": "schema-hash...", ...},
   "records": [{"id": "rec-1", "type": "Article", "hash": "record-hash..."}, ...],
-  "files": ["deadbeef...", ...]
+  "files": ["deadbeef...", ...],
+  "pagination": {"limit": 10000, "hasMore": true, "nextCursor": "eyJhZGRlZCI6..."}
 }
+
+The manifest is paginated: limit defaults to 10000 and maxes at 100000. Pass
+?cursor=<pagination.nextCursor> to continue; repeat until hasMore is false. The cursor is
+opaque — pass back exactly what you were given, don't construct or parse it.
+
+This is by far the cheapest way to learn what a version contains: manifest entries are ~120
+bytes each, so a million records is one request-order-of-magnitude smaller than fetching the
+records themselves. Prefer it over walking /records when you only need hashes.
 
 For delta manifests, add ?since=<semver> to get only the changes between two versions:
 GET /api/collections/:owner/:slug/versions/:semver/manifest?since=:semver
-Response includes "delta": { "added": [...], "updated": [...], "removed": [...] }
+Response:
+{
+  ...,
+  "delta": {
+    "added":   [{"id": "rec-9", "type": "Article", "hash": "..."}],
+    "updated": [{"id": "rec-1", "type": "Article", "hash": "...", "previousHash": "..."}],
+    "removed": [{"id": "rec-4", "type": "Article", "hash": "..."}]
+  },
+  "pagination": {"limit": 10000, "hasMore": false, "nextCursor": null},
+  "truncated": false
+}
+
+Deltas are keyset-paginated the same way, so a delta of any size can be walked to completion
+with ?cursor=. The three lists drain independently, so a page late in the walk may contain
+only "updated" entries. "truncated" is legacy: it now just mirrors pagination.hasMore, and
+older clients treated it as "give up and rebuild from the full manifest". If you understand
+the cursor, page instead of rebuilding.
 
 Compare this against your local data to determine what changed.
 
@@ -139,6 +167,8 @@ Check existence first with HEAD if you want to skip uploads.
 ### Step 4: Push the version (negotiate protocol)
 
 All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation.
+For very large collections two of those steps can be broken up (the manifest uploads in chunks,
+the commit runs in the background) — see 4a-chunked and 4c-async below; the shape is the same.
 The client sends a manifest of record hashes; the server says which it needs; the client sends
 only those records; then commits.
 
@@ -187,7 +217,8 @@ hashing, or the server will reject the records.
 Field reference:
 - base_version: the semver string of the version you diffed against (e.g. "v1.2.0"). null for first push. Used for optimistic locking.
 - schemas: per-type JSON Schema map. Required on every push.
-- manifest: array of {id, type, hash} for every record in the new version.
+- manifest: array of {id, type, hash} for every record in the new version. Capped at 500,000 entries — above that, upload it in chunks instead (see 4a-chunked below). Omit when using manifest_expected.
+- manifest_expected: number of distinct record hashes you will upload in chunks. Mutually exclusive with manifest; sending both returns 400.
 - files: array of file hashes (SHA-256 hex strings) referenced by records.
 - metadata: optional JSON object for version metadata (description, readme, license, etc.). Merged with previous version's metadata.
 - message: human-readable commit message (optional).
@@ -205,6 +236,56 @@ Response:
   "already_have_records": 1,
   "already_have_files": 1
 }
+
+#### Step 4a-chunked: Large collections — upload the manifest in chunks
+
+The manifest above is one JSON body. That is fine up to 500,000 entries; past that it would be
+hundreds of megabytes parsed in one go, so upload it in chunks instead. Omit "manifest" and
+declare the count:
+
+POST /api/collections/:owner/:slug/versions/negotiate
+{
+  "base_version": null,
+  "schemas": {...},
+  "manifest_expected": 3110000,
+  "message": "arXiv metadata"
+}
+
+Response — nothing here is proportional to the collection:
+{
+  "session_id": "uuid",
+  "manifest_expected": 3110000,
+  "manifest_received": 0,
+  "needed_files": [],
+  "total_files": 0,
+  "already_have_files": 0,
+  "next": "POST .../versions/negotiate/uuid/manifest"
+}
+
+Then send the manifest as JSONL, up to 50,000 entries per request:
+
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/manifest
+Content-Type: application/x-ndjson
+Authorization: Bearer ul_<key>
+
+{"id":"article-42","type":"Article","hash":"abc123..."}
+{"id":"article-10","type":"Article","hash":"def456..."}
+
+Response:
+{
+  "received": 50000,
+  "needed_records": ["def456..."],
+  "manifest_received": 150000,
+  "manifest_expected": 3110000
+}
+
+Each response tells you which records from THAT chunk the server needs, so you can start
+sending record bodies (step 4b) before the whole manifest is uploaded.
+
+Chunks are idempotent: entries are keyed by hash, so re-sending a chunk after a timeout is
+safe and manifest_received will not move. Commit refuses to build a version until
+manifest_received equals manifest_expected, so a client that dies partway through cannot
+silently produce a version that dropped records.
 
 #### Step 4b: Send needed records
 POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
@@ -232,6 +313,40 @@ version hashes, and creates the new immutable version.
 Response (201):
 { "semver": "v1.3.0", "hash": "def456...", "recordCount": 2, "fileCount": 1 }
 
+#### Step 4c-async: Large collections — commit in the background
+
+Commit work is proportional to collection size, so on a very large collection it can run for
+minutes — longer than a proxy or client will hold a request open. Add ?async=true (or send
+{"async": true}) and the server accepts the commit and builds the version in the background:
+
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit?async=true
+
+Response (202):
+{
+  "session_id": "uuid",
+  "status": "committing",
+  "message": "Commit accepted. Poll GET .../versions/negotiate/uuid until status is \"committed\" or \"failed\"."
+}
+
+Then poll GET .../versions/negotiate/:sessionId until status is "committed" or "failed":
+
+{
+  "session_id": "uuid",
+  "status": "committed",
+  "finalize_started_at": "2026-07-31T12:00:00.000Z",
+  "result": {"semver": "v1.3.0", "hash": "private:def456...", "recordCount": 3110000, "fileCount": 0},
+  "error": null
+}
+
+On success "result" holds exactly what the synchronous 201 would have returned. On failure
+"status" is "failed" and "error" holds the rejection body the synchronous path would have
+returned (same statusCode and shape), so the two paths are interchangeable apart from timing.
+
+The version is invisible to readers until the finalize completes — there is no window in which
+a half-built version can be read. The finalize is server-side work and does not depend on your
+connection staying open: a client that disconnects while polling can reconnect and read the
+result. A finalize whose server process dies is swept and marked "failed".
+
 ### Step 5: Handle errors
 
 Conflict (409 — someone pushed while you were diffing):
@@ -247,14 +362,33 @@ Missing files (422 — records reference files not yet uploaded):
 → Upload the listed files, then retry commit.
 
 Extra fields (422 — records contain fields not in the schema):
-{ "error": "Records contain fields not defined in schema", "extraFields": [...], "statusCode": 422 }
+{ "error": "Records contain fields not defined in schema", "extraFields": [...], "totalRecords": 12, "statusCode": 422 }
 → Either fix the records, or re-negotiate with "strip_unknown_fields": true.
+   extraFields lists at most the first 100; totalRecords is how many were affected.
+   Schema validation failures (422) are reported the same way, with "totalErrors".
 
-Sessions expire after 10 minutes. If the session expires, re-negotiate.
+Manifest incomplete (400 — chunked upload, commit called before every chunk arrived):
+{ "error": "Manifest incomplete", "manifest_expected": 3110000, "manifest_received": 3050000, "statusCode": 400 }
+→ Upload the remaining chunks, then retry commit.
+
+Manifest too large (413 — inline manifest over 500,000 entries):
+{ "error": "Inline manifests are limited to 500000 entries...", "statusCode": 413 }
+→ Re-negotiate with manifest_expected and upload the manifest in chunks.
+
+Sessions expire after 10 minutes of INACTIVITY. Every manifest chunk and record batch pushes
+the expiry back, so a push that legitimately runs for an hour will not expire underneath you.
+If a session does expire, re-negotiate.
 
 ### Session management
 GET  /api/collections/:owner/:slug/versions/negotiate/:sessionId  → check session status
 DELETE /api/collections/:owner/:slug/versions/negotiate/:sessionId → cancel session (204)
+
+Session status is one of:
+- open       — accepting manifest chunks and records
+- committing — async commit accepted, finalize running in the background
+- committed  — done; "result" holds the version
+- failed     — finalize rejected or died; "error" holds why
+- expired    — timed out or cancelled
 
 ### First push (no existing versions)
 Set base_version to null. Include all records in the manifest. Include schemas for all types.
@@ -280,7 +414,7 @@ Response:
 }
 
 Parameters:
-- limit: max records per page (default 100, max 1000)
+- limit: max records per page (default 100, max 2000)
 - after: keyset cursor (record ID) — return records with IDs lexicographically after
   this value. This is the canonical, scalable method: it is an index seek and stays
   fast at any depth. `cursor` is accepted as an alias for `after`.
@@ -289,16 +423,22 @@ Parameters:
 - type: filter by record type
 
 Notes:
-- `pagination.total` is the whole-version record count. When `type` is set it is NOT
-  the filtered count — use `hasMore` to detect the end of a filtered result set.
+- `pagination.total` respects the `type` filter and excludes private types. On collections
+  that mark individual records private it is an upper bound for anonymous callers, since
+  those records are hidden but still counted — use `hasMore` for an exact end-of-set signal.
 - A query that exceeds the server's statement timeout returns 503 with a Retry-After
   header. If you hit this on `offset`, switch to `after`.
 
 To paginate through all records (works at any collection size):
-1. First request: GET .../records?limit=1000
+1. First request: GET .../records?limit=2000
 2. If pagination.hasMore is true, use pagination.nextCursor for the next request:
-   GET .../records?limit=1000&after=<nextCursor>
+   GET .../records?limit=2000&after=<nextCursor>
 3. Repeat until hasMore is false.
+
+Ask for the largest page you can handle. Walking a whole collection is bounded by request
+count, not bytes — 60 requests/minute unauthenticated, 5,000 authenticated — so a
+3-million-record collection is 6,200 requests at 500/page and 1,550 at 2,000/page.
+Authenticate for any full-collection walk.
 
 Do NOT paginate large collections with ?offset=; it is capped at 10000 and will 400
 beyond that. Use ?after=<nextCursor> keyset pagination instead.

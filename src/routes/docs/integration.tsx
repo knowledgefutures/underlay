@@ -176,6 +176,15 @@ export default function DocsIntegration() {
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
+      <p>
+        Above roughly half a million records, two of those steps stop fitting in one request: send
+        the manifest in chunks rather than as a single body, and commit asynchronously rather than
+        holding the connection open. See{' '}
+        <Link to="/docs/api/versions" className="text-link underline">
+          the versions API
+        </Link>{' '}
+        for both. The push is otherwise identical, and produces the same version hash.
+      </p>
 
       <h2>Record Hashing</h2>
       <p>
@@ -316,6 +325,14 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
+              <code>POST .../negotiate/:id/manifest</code>
+            </td>
+            <td>
+              Upload the manifest in JSONL chunks, for collections too large to send it in one body
+            </td>
+          </tr>
+          <tr>
+            <td>
               <code>POST .../negotiate/:id/records</code>
             </td>
             <td>Send needed records (JSONL, repeatable)</td>
@@ -324,7 +341,16 @@ export default function DocsIntegration() {
             <td>
               <code>POST .../negotiate/:id/commit</code>
             </td>
-            <td>Finalize and create the version</td>
+            <td>
+              Finalize and create the version. Add <code>?async=true</code> to get a{' '}
+              <code>202</code> and poll instead of holding the request open
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>GET .../negotiate/:id</code>
+            </td>
+            <td>Session status, and the result or error of an async commit</td>
           </tr>
           <tr>
             <td>
