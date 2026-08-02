@@ -38,6 +38,23 @@ import { startWebhookBackgroundJobs } from '~/lib/webhooks.server'
 
 const isProd = process.env.NODE_ENV === 'production'
 let vite: ViteDevServer | undefined
+/**
+ * Substitute a placeholder in the HTML template with untrusted content.
+ *
+ * `String.prototype.replace` with a *string* pattern treats `$` sequences in the
+ * REPLACEMENT specially: `$&` is the match, `` $` `` everything before it, `$'`
+ * everything after, `$$` a literal `$`. Passing rendered HTML directly means any
+ * page containing one of those corrupts the document — a collection README with
+ * `$O(n\log n)$` in it contains `` $` `` and duplicated the entire template
+ * prefix into the middle of the body, producing two nested documents.
+ *
+ * A replacement *function* is not scanned for those patterns, so the content is
+ * inserted verbatim.
+ */
+function fill(template: string, placeholder: string, content: string): string {
+  return template.replace(placeholder, () => content)
+}
+
 let devHttpServer: import('node:http').Server | undefined
 
 const escapeHtml = (s: string) =>
@@ -409,18 +426,19 @@ if (isProd) {
 
     if (redirect) return c.redirect(redirect, statusCode ?? 302)
 
-    let page = template
-      .replace('<!--ssr-outlet-->', html)
-      .replace(
-        '<!--ssr-data-->',
-        `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
-      )
+    let page = fill(template, '<!--ssr-outlet-->', html)
+    page = fill(
+      page,
+      '<!--ssr-data-->',
+      `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
+    )
 
     if (title) {
-      page = page.replace('<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
+      page = fill(page, '<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
     }
     if (description) {
-      page = page.replace(
+      page = fill(
+        page,
         '</head>',
         `<meta name="description" content="${escapeHtml(description)}" />\n</head>`,
       )
@@ -458,18 +476,19 @@ if (isProd) {
 
     if (redirect) return c.redirect(redirect, statusCode ?? 302)
 
-    let page = template
-      .replace('<!--ssr-outlet-->', html)
-      .replace(
-        '<!--ssr-data-->',
-        `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
-      )
+    let page = fill(template, '<!--ssr-outlet-->', html)
+    page = fill(
+      page,
+      '<!--ssr-data-->',
+      `<script>window.__staticRouterHydrationData=${hydrationData}</script>`,
+    )
 
     if (title) {
-      page = page.replace('<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
+      page = fill(page, '<title>Underlay</title>', `<title>${escapeHtml(title)}</title>`)
     }
     if (description) {
-      page = page.replace(
+      page = fill(
+        page,
         '</head>',
         `<meta name="description" content="${escapeHtml(description)}" />\n</head>`,
       )

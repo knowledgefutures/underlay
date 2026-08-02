@@ -132,6 +132,37 @@ async function ingestManifestEntries(
   return deduped.filter((r) => !existingRecordSet.has(r.hash)).map((r) => r.hash)
 }
 
+/**
+ * Flatten an error and its `cause` chain into one string.
+ *
+ * Drizzle puts the SQL in `message` and the underlying Postgres error — the part
+ * that says *why* — in `cause`. Recording only `message` yields "Failed query:
+ * SELECT …" with no reason, which is unactionable for whoever is reading a
+ * failed session hours later.
+ */
+function describeError(err: unknown): string {
+  const parts: string[] = []
+  let current: unknown = err
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (current instanceof Error) {
+      parts.push(current.message)
+      // Postgres errors carry the useful specifics outside `message`.
+      const pg = current as { code?: string; detail?: string; hint?: string }
+      const extra = [
+        pg.code && `code ${pg.code}`,
+        pg.detail && `detail: ${pg.detail}`,
+        pg.hint && `hint: ${pg.hint}`,
+      ].filter(Boolean)
+      if (extra.length > 0) parts.push(extra.join(', '))
+      current = current.cause
+    } else {
+      parts.push(String(current))
+      break
+    }
+  }
+  return parts.join(' | ')
+}
+
 /** Mirrors `c.json(body, status)` so the finalize body reads unchanged. */
 const reply = (body: unknown, status: ContentfulStatusCode = 200) => ({ status, body })
 
@@ -1190,22 +1221,41 @@ app.post(
       // the final hashes. These used to be tallied in the app during the walk,
       // which only worked because the walk visited every record — it no longer
       // does.
-      const typeRows = (await db.execute(sql`
-      SELECT ro.type, count(*)::int AS n, sum(ro.size)::bigint AS bytes
-      FROM negotiate_session_manifest m
-      INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
-      WHERE m.session_id = ${sessionId}
-      GROUP BY ro.type
-    `)) as unknown as { type: string; n: number; bytes: string }[]
+      // Parallel query workers allocate dynamic shared memory in /dev/shm, which
+      // Docker caps at 64 MB by default. A parallel aggregate over a few hundred
+      // thousand rows exhausts it and the whole finalize dies with "could not
+      // resize shared memory segment" — observed on a 300k push to dev. The
+      // compose files now size /dev/shm properly, but a background job should not
+      // depend on a container flag being set correctly, so parallelism is off for
+      // these two.
+      //
+      // The per-type counts need no join: a record's hash covers {id, type, data},
+      // so a manifest row's declared type necessarily matches the stored record's.
+      // Stripping rewrites `data`, never `type`.
+      const [typeRows, byteRow] = await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL max_parallel_workers_per_gather = 0`)
+        const types = (await tx.execute(sql`
+          SELECT type, count(*)::int AS n
+          FROM negotiate_session_manifest
+          WHERE session_id = ${sessionId}
+          GROUP BY type
+        `)) as unknown as { type: string; n: number }[]
+        const bytes = (await tx.execute(sql`
+          SELECT coalesce(sum(ro.size), 0)::bigint AS bytes
+          FROM negotiate_session_manifest m
+          INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
+          WHERE m.session_id = ${sessionId}
+        `)) as unknown as { bytes: string }[]
+        return [types, bytes[0]] as const
+      })
 
       const typeCounts = new Map<string, number>()
       let recordCount = 0
-      let totalBytes = 0
       for (const row of typeRows) {
         typeCounts.set(row.type, row.n)
         recordCount += row.n
-        totalBytes += Number(row.bytes)
       }
+      let totalBytes = Number(byteRow?.bytes ?? 0)
 
       // Add file sizes
       if (session.fileHashes.length > 0) {
@@ -1522,12 +1572,12 @@ app.post(
           `[negotiate] async finalize ${sessionId} ${ok ? 'committed' : `failed (${status})`} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
         )
       } catch (err) {
-        console.error(`[negotiate] async finalize ${sessionId} threw:`, err)
+        console.error(`[negotiate] async finalize ${sessionId} threw: ${describeError(err)}`, err)
         await db
           .update(schema.negotiateSessions)
           .set({
             status: 'failed',
-            error: { statusCode: 500, error: err instanceof Error ? err.message : String(err) },
+            error: { statusCode: 500, error: describeError(err) },
           })
           .where(eq(schema.negotiateSessions.id, sessionId))
           .catch(() => {})
