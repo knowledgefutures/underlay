@@ -14,6 +14,11 @@ import { getLatestReadyVersion, getOrgRole, hasOrgAccess } from '../lib/version-
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
+// Export builds the whole archive in memory (see the guard in the export route),
+// so it is offered only below this. Matches the SQL explorer's limit — both are
+// whole-collection-in-memory features and should draw the line in the same place.
+const MAX_EXPORT_RECORDS = 250_000
+
 const app = new Hono<AuthEnv>()
   // Browse collections — public by default, or the caller's own with ?mine=true
   .get(
@@ -814,6 +819,28 @@ const app = new Hono<AuthEnv>()
 
       if (!version) {
         return c.json({ error: 'No versions found', statusCode: 404 }, 404)
+      }
+
+      // The archive is assembled in memory: every record of a type is collected
+      // into a string[] and joined before it becomes a tar entry. That is fine
+      // for the collections this was built for and fatal on a multi-million
+      // record one — the join alone would exceed V8's maximum string length,
+      // and the array would exhaust the heap first, from an endpoint any
+      // visitor can reach. Refuse above the threshold rather than fall over.
+      if (version.recordCount > MAX_EXPORT_RECORDS) {
+        return c.json(
+          {
+            error:
+              `This collection has ${version.recordCount.toLocaleString()} records; export is ` +
+              `available below ${MAX_EXPORT_RECORDS.toLocaleString()}. Read it through the ` +
+              `records API instead (GET .../versions/:n/records?after=…), which pages at any ` +
+              `depth, or the manifest endpoint if you only need hashes.`,
+            recordCount: version.recordCount,
+            maxRecords: MAX_EXPORT_RECORDS,
+            statusCode: 413,
+          },
+          413,
+        )
       }
 
       const versionFiles = await db

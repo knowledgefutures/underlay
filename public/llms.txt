@@ -92,6 +92,16 @@ GET /api/collections/:owner/:slug/versions/:semver/diff?from=:semver → diff be
 GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
 GET /api/collections/:owner/:slug/export?version=v2.0.0  → export a specific version
 
+Export assembles the whole archive in memory, so it is only offered on collections below
+250,000 records. Above that it returns 413 with the record count and the limit. To read a
+large collection, page the records endpoint with ?after= (see Pagination below), or fetch
+the manifest if you only need id/type/hash — both work at any size.
+
+The same 250,000-record limit applies to the SQL explorer (/api/query/...), which builds an
+in-memory SQLite copy of a version. It is a UI feature rather than a documented API; on a
+large collection use the records endpoint, or Hot, which hydrates a collection into a
+queryable database built for the purpose.
+
 ### Fork
 POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth)
   Body: { "targetOrg": "my-org", "slug": "optional-new-slug" }

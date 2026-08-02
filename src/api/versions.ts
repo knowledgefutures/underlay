@@ -7,7 +7,6 @@ import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import {
   canonicalize,
-  computeVersionHash,
   deriveSemver,
   filterRecordData,
   filterSchemasForPublic,
@@ -22,6 +21,7 @@ import {
   resolveAccessibleCollection,
   resolveCollection,
   type SchemaEntry,
+  VersionHashStream,
 } from '../lib/version-helpers.server.js'
 import { dispatchDeliveries, enqueueWebhookDeliveries } from '../lib/webhooks.server.js'
 import { type AuthEnv, requireAuth } from './auth.server.js'
@@ -1075,23 +1075,6 @@ const app = new Hono<AuthEnv>()
       const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
       // Hash-only load: public hashes were computed and stored at commit time,
       // so a metadata-only version never needs the record bodies
-      const recordRows = await db
-        .select({
-          hash: schema.versionRecords.recordHash,
-          publicRecordHash: schema.versionRecords.publicRecordHash,
-          recordId: schema.versionRecords.recordId,
-          type: schema.versionRecords.type,
-          private: schema.recordObjects.private,
-        })
-        .from(schema.versionRecords)
-        // Only `private` still lives on record_objects; record_id and type are
-        // denormalized onto version_records.
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(eq(schema.versionRecords.versionId, latest.id))
-      const recordHashes = recordRows.map((r) => r.hash)
       const fileHashes = (
         await db
           .select({ hash: schema.versionFiles.fileHash })
@@ -1099,21 +1082,45 @@ const app = new Hono<AuthEnv>()
           .where(eq(schema.versionFiles.versionId, latest.id))
       ).map((f) => f.hash)
 
-      const versionHash = computeVersionHash(schemaSet, recordHashes, fileHashes, newMetadata)
-
       const privateTypes = getPrivateTypes(schemaEntries)
       const publicSchemaSet = schemaEntries
         .filter((e) => !privateTypes.has(e.slug))
         .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
-      const publicRecordHashes = recordRows
-        .filter((r) => !r.private && !privateTypes.has(r.type))
-        .map((r) => r.publicRecordHash ?? r.hash)
-      const publicHash = computeVersionHash(
-        publicSchemaSet,
-        publicRecordHashes,
-        fileHashes,
-        newMetadata,
-      ).replace('private:', 'public:')
+
+      // Both digests are folded over hashes streamed from Postgres in sorted
+      // order, exactly as the commit path does. Loading every row to build two
+      // in-memory arrays made a metadata edit cost as much as a full push — on a
+      // multi-million-record collection, several hundred MB of JS objects to
+      // change a description.
+      //
+      // COLLATE "C" is required: the digest must see byte order, which is what
+      // Array.prototype.sort() produces, not the database's locale collation.
+      const client = db.$client
+      const CURSOR_CHUNK = 10_000
+
+      const versionHashStream = new VersionHashStream(schemaSet, fileHashes, newMetadata)
+      await client`
+        SELECT record_hash AS h FROM version_records
+        WHERE version_id = ${latest.id}
+        ORDER BY record_hash COLLATE "C"
+      `.cursor(CURSOR_CHUNK, (rows) => {
+        for (const row of rows) versionHashStream.push(row['h'] as string)
+      })
+      const versionHash = versionHashStream.digest()
+
+      const publicHashStream = new VersionHashStream(publicSchemaSet, fileHashes, newMetadata)
+      await client`
+        SELECT coalesce(vr.public_record_hash, vr.record_hash) AS h
+        FROM version_records vr
+        INNER JOIN record_objects ro ON ro.hash = vr.record_hash
+        WHERE vr.version_id = ${latest.id}
+          AND NOT ro.private
+          AND vr.type <> ALL(${[...privateTypes]}::text[])
+        ORDER BY coalesce(vr.public_record_hash, vr.record_hash) COLLATE "C"
+      `.cursor(CURSOR_CHUNK, (rows) => {
+        for (const row of rows) publicHashStream.push(row['h'] as string)
+      })
+      const publicHash = publicHashStream.digest().replace('private:', 'public:')
 
       const sv = deriveSemver(latest.semver, false, false, true)
 
@@ -1154,18 +1161,14 @@ const app = new Hono<AuthEnv>()
           )
         }
 
-        if (recordRows.length > 0) {
-          // Same schema set as the previous version, so public hashes carry over
-          await tx.insert(schema.versionRecords).values(
-            recordRows.map((r) => ({
-              versionId: version!.id,
-              recordHash: r.hash,
-              publicRecordHash: r.publicRecordHash,
-              recordId: r.recordId,
-              type: r.type,
-            })),
-          )
-        }
+        // Copy the record set server-side. The schema set is unchanged, so every
+        // column — including the public content-addresses — carries over as-is.
+        await tx.execute(sql`
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
+          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type
+          FROM version_records
+          WHERE version_id = ${latest.id}
+        `)
 
         if (fileHashes.length > 0) {
           await tx
