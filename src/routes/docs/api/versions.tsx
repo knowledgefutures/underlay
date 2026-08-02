@@ -45,6 +45,51 @@ const commitRes = `{
   "fileCount": 1
 }`
 
+const chunkedStartReq = `{
+  "base_version": null,
+  "schemas": { "Preprint": { "type": "object", "properties": {...} } },
+  "manifest_expected": 3110000,
+  "message": "arXiv metadata"
+}`
+
+const chunkedStartRes = `{
+  "session_id": "uuid",
+  "manifest_expected": 3110000,
+  "manifest_received": 0,
+  "needed_files": [],
+  "total_files": 0,
+  "already_have_files": 0,
+  "next": "POST .../versions/negotiate/uuid/manifest"
+}`
+
+const manifestChunkRes = `{
+  "received": 50000,
+  "needed_records": ["def456...", "789abc..."],
+  "manifest_received": 150000,
+  "manifest_expected": 3110000
+}`
+
+const asyncCommitRes = `{
+  "session_id": "uuid",
+  "status": "committing",
+  "message": "Commit accepted. Poll GET .../versions/negotiate/uuid until status is \\"committed\\" or \\"failed\\"."
+}`
+
+const sessionPollRes = `{
+  "session_id": "uuid",
+  "status": "committed",
+  "total_records": 3110000,
+  "needed_records": 0,
+  "finalize_started_at": "2026-07-31T12:00:00.000Z",
+  "result": {
+    "semver": "v1.1.0",
+    "hash": "private:a1b2c3d4...",
+    "recordCount": 3110000,
+    "fileCount": 0
+  },
+  "error": null
+}`
+
 const listRes = `[
   {
     "semver": "v1.1.0",
@@ -86,7 +131,32 @@ const manifestRes = `{
     {"id": "pub-001", "type": "Publication", "hash": "sha256:def456..."},
     {"id": "pub-002", "type": "Publication", "hash": "sha256:789abc..."}
   ],
-  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."]
+  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."],
+  "pagination": {
+    "limit": 10000,
+    "hasMore": true,
+    "nextCursor": "eyJhZGRlZCI6WyJwdWItMDAyIiwiZGVmNDU2Il0..."
+  }
+}`
+
+const manifestDeltaRes = `{
+  "semver": "v1.1.0",
+  "hash": "a1b2c3d4...",
+  "since": "v1.0.0",
+  "schemas": {"Publication": "sha256:abc123..."},
+  "delta": {
+    "added":   [{"id": "pub-003", "type": "Publication", "hash": "sha256:..."}],
+    "updated": [{"id": "pub-001", "type": "Publication", "hash": "sha256:...",
+                 "previousHash": "sha256:..."}],
+    "removed": [{"id": "pub-old", "type": "Publication", "hash": "sha256:..."}]
+  },
+  "files": ["sha256:a1b2c3..."],
+  "pagination": {
+    "limit": 10000,
+    "hasMore": false,
+    "nextCursor": null
+  },
+  "truncated": false
 }`
 
 const diffRes = `{
@@ -98,7 +168,18 @@ const diffRes = `{
   "updated": [
     {"id": "pub-001", "type": "Publication", "data": {...}}
   ],
-  "removed": ["pub-old"]
+  "removed": ["pub-old"],
+  "pagination": {
+    "limit": 500,
+    "hasMore": false,
+    "nextCursor": null
+  },
+  "meta": {
+    "schemaChanged": false,
+    "metadataChanged": false,
+    "filesAdded": 0,
+    "filesRemoved": 0
+  }
 }`
 
 export default function DocsApiVersions() {
@@ -158,9 +239,19 @@ export default function DocsApiVersions() {
                 <code>manifest</code>
               </td>
               <td>
-                <strong>Required.</strong> Array of <code>{'{"id", "type", "hash"}'}</code> objects.
-                Each <code>hash</code> is the SHA-256 of the canonical JSON{' '}
-                <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Array of <code>{'{"id", "type", "hash"}'}</code> objects. Each <code>hash</code> is
+                the SHA-256 of the canonical JSON <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Required unless you upload the manifest in chunks — see below. Capped at 500,000
+                entries.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>manifest_expected</code>
+              </td>
+              <td>
+                Number of distinct record hashes you will upload in chunks. Mutually exclusive with{' '}
+                <code>manifest</code>. See "uploading the manifest in chunks" below.
               </td>
             </tr>
             <tr>
@@ -202,6 +293,47 @@ export default function DocsApiVersions() {
           <code>{negotiateRes}</code>
         </pre>
 
+        <h4>Large collections: uploading the manifest in chunks</h4>
+        <p>
+          The manifest above is a single JSON body, which is fine up to{' '}
+          <strong>500,000 entries</strong> (beyond that the endpoint returns <code>413</code>). At a
+          few million records it would be hundreds of megabytes, parsed whole. Instead, omit{' '}
+          <code>manifest</code> and declare how many records you will send:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{chunkedStartReq}</code>
+        </pre>
+        <p>
+          The server opens the session without asking for any records yet — nothing in this response
+          is proportional to the collection:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{chunkedStartRes}</code>
+        </pre>
+        <p>
+          Then <code>POST .../versions/negotiate/:sessionId/manifest</code> with up to{' '}
+          <strong>50,000</strong> JSONL entries per request (
+          <code>Content-Type: application/x-ndjson</code>), each line a{' '}
+          <code>{'{"id", "type", "hash"}'}</code> object. Each response tells you which records from{' '}
+          <em>that chunk</em> the server still needs, so you can start sending bodies before the
+          whole manifest is uploaded:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{manifestChunkRes}</code>
+        </pre>
+        <p>
+          Chunks are idempotent: entries are keyed by hash, so re-sending a chunk after a timeout is
+          safe and <code>manifest_received</code> will not move. Commit refuses to build a version
+          until <code>manifest_received</code> equals <code>manifest_expected</code>, so a client
+          that dies partway through the upload cannot silently produce a version that dropped
+          records.
+        </p>
+        <p className="text-ink-muted">
+          The session's 10-minute expiry is an <em>idle</em> timeout — every manifest chunk and
+          record batch pushes it back — so a push that legitimately runs for an hour will not expire
+          underneath you.
+        </p>
+
         <h3>Step 2: POST .../negotiate/:sessionId/records</h3>
         <p className="scope">Auth: write scope</p>
         <p>
@@ -242,6 +374,33 @@ export default function DocsApiVersions() {
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{commitRes}</code>
         </pre>
+
+        <h4>Large pushes: async finalize</h4>
+        <p>
+          Commit work is proportional to the size of the collection, so on a very large one it can
+          run for minutes — longer than a proxy or client will hold a request open. Pass{' '}
+          <code>?async=true</code> (or <code>{'{"async": true}'}</code> in the body) and the server
+          answers <code>202</code> immediately and builds the version in the background:
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{asyncCommitRes}</code>
+        </pre>
+        <p>
+          Then poll <code>GET .../versions/negotiate/:sessionId</code> until <code>status</code> is{' '}
+          <code>committed</code> or <code>failed</code>. On success <code>result</code> holds
+          exactly what the synchronous <code>201</code> would have returned; on failure{' '}
+          <code>error</code> holds the rejection body it would have returned instead, so the two
+          paths are interchangeable apart from timing.
+        </p>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{sessionPollRes}</code>
+        </pre>
+        <p className="text-ink-muted">
+          The version is not visible to readers until the finalize completes — it is created in a{' '}
+          <code>creating</code> state and only published at the end, so there is no window where a
+          half-built version can be read. A finalize whose process dies is swept and marked{' '}
+          <code>failed</code>, and its partial version removed.
+        </p>
 
         <h3>Schema privacy</h3>
         <p>
@@ -311,7 +470,10 @@ export default function DocsApiVersions() {
               <td>
                 <code>404</code>
               </td>
-              <td>Session expired or not found. Sessions expire after 10 minutes.</td>
+              <td>
+                Session expired or not found. Sessions expire after 10 minutes of inactivity — every
+                manifest chunk and record batch pushes the expiry back.
+              </td>
             </tr>
             <tr>
               <td>
@@ -406,7 +568,7 @@ export default function DocsApiVersions() {
               <td>
                 <code>limit</code>
               </td>
-              <td>Max results (default 100, max 1000)</td>
+              <td>Max results (default 100, max 2000)</td>
             </tr>
             <tr>
               <td>
@@ -428,6 +590,11 @@ export default function DocsApiVersions() {
             </tr>
           </tbody>
         </table>
+        <p className="text-ink-muted">
+          Walking a whole collection is bounded by request count, not bytes: 60 requests/minute
+          anonymous, 5,000 authenticated. Ask for the largest page you can handle — a
+          3-million-record collection is 6,200 requests at 500/page and 1,550 at 2,000/page.
+        </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
@@ -440,9 +607,10 @@ export default function DocsApiVersions() {
           collections, always paginate with <code>after</code> rather than <code>offset</code>.
         </p>
         <p className="text-ink-muted">
-          Note: <code>pagination.total</code> is the whole-version record count and is not adjusted
-          when <code>type</code> is set — use <code>hasMore</code> to detect the end of a filtered
-          result set.
+          <code>pagination.total</code> respects the <code>type</code> filter and excludes private
+          types. On collections that mark individual records private it is an upper bound for
+          anonymous callers, since those records are hidden but still counted — use{' '}
+          <code>hasMore</code> if you need an exact end-of-set signal.
         </p>
       </div>
 
@@ -452,15 +620,63 @@ export default function DocsApiVersions() {
         <h2>GET /api/collections/:owner/:slug/versions/:n/manifest</h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get the manifest: a lightweight summary of what's in a version without the full record
-          data.
+          Get the manifest: every record's id, type and content hash, without the bodies. This is
+          the cheapest way to learn what a version contains — at roughly 120 bytes per entry, a
+          million records is one order of magnitude smaller than fetching them.
         </p>
+        <h3>Query parameters</h3>
+        <table>
+          <tbody>
+            <tr>
+              <td>
+                <code>limit</code>
+              </td>
+              <td>Entries per page (default 10000, max 100000)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>cursor</code>
+              </td>
+              <td>
+                Opaque keyset cursor from <code>pagination.nextCursor</code>. Do not construct or
+                parse it — pass back exactly what you were given.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>since</code>
+              </td>
+              <td>
+                Return a delta against this semver instead of the full manifest: which records were
+                added, updated and removed between the two versions.
+              </td>
+            </tr>
+          </tbody>
+        </table>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{manifestRes}</code>
         </pre>
+        <h3>
+          Response with <code>?since=</code> <span className="text-ink-muted font-normal">200</span>
+        </h3>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{manifestDeltaRes}</code>
+        </pre>
+        <p>
+          A delta of any size can be walked to completion: keep re-requesting with{' '}
+          <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false. The three
+          lists drain independently and the cursor tracks each one, so a page late in the walk may
+          contain only <code>updated</code> entries.
+        </p>
+        <p className="text-ink-muted">
+          <code>truncated</code> is retained for older clients, which treated a capped delta as
+          "give up and rebuild from the full manifest". It now simply mirrors{' '}
+          <code>pagination.hasMore</code>. Clients that understand the cursor should page instead of
+          rebuilding.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -481,6 +697,22 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 Semver to diff from (e.g. <code>v1.0.0</code>). Default: previous version.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>limit</code>
+              </td>
+              <td>Entries per list per page (default 500, max 5000)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>cursor</code>
+              </td>
+              <td>
+                Opaque keyset cursor from <code>pagination.nextCursor</code>, as on the manifest
+                endpoint. Diff returns full record bodies, so pages are much larger than manifest
+                pages — prefer <code>manifest?since=</code> when you only need the hashes.
               </td>
             </tr>
           </tbody>

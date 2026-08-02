@@ -51,6 +51,28 @@ Content-Type: application/x-ndjson
 POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
 # -> { "semver": "v1.2.0", "hash": "...", "recordCount": 2, "fileCount": 1 }`
 
+const scaleExample = `# Manifests above 500k entries upload in chunks instead of one body.
+# Declare the count; the server opens the session without asking for anything yet.
+POST /api/collections/:owner/:slug/versions/negotiate
+{ "base_version": null, "schemas": {...}, "manifest_expected": 3110000 }
+# -> { "session_id": "...", "manifest_expected": 3110000, "manifest_received": 0 }
+
+# Send the manifest as JSONL, <= 50,000 entries per request. Each response says
+# which records from THAT chunk are needed, so bodies can start flowing early.
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/manifest
+Content-Type: application/x-ndjson
+
+{"id":"pub-001","type":"Publication","hash":"abc123..."}
+# -> { "received": 50000, "needed_records": [...], "manifest_received": 150000 }
+
+# Commit in the background rather than holding a request open for minutes.
+POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit?async=true
+# -> 202 { "session_id": "...", "status": "committing" }
+
+# Poll until the version lands. The finalize does not depend on your connection.
+GET /api/collections/:owner/:slug/versions/negotiate/:sessionId
+# -> { "status": "committed", "result": { "semver": "v1.2.0", "hash": "...", ... } }`
+
 const pullExample = `# Full manifest
 GET /api/collections/:owner/:slug/versions/v2.0.0/manifest
 
@@ -421,7 +443,29 @@ export default function Protocol() {
               For large pushes, the <code>/records</code> endpoint can be called multiple times (up
               to 10,000 records per batch). The server tracks which records have been received. Once
               all needed records are submitted, commit to finalize the version. Sessions expire
-              after 10 minutes.
+              after 10 minutes of inactivity — every manifest chunk and record batch pushes the
+              expiry back, so a push that runs for an hour will not expire underneath you.
+            </p>
+            <h3>Pushes larger than one request</h3>
+            <p>
+              Two steps of the flow assume the collection fits comfortably in one request: the
+              manifest arrives as a single JSON body, and commit holds the connection open while it
+              validates and hashes everything. At a few million records neither holds — the manifest
+              would be hundreds of megabytes and the commit would run for minutes. Both have a
+              chunked form, and they change the shape of the exchange rather than its meaning: the
+              version hash a chunked, asynchronous push produces is identical to the one the simple
+              flow produces from the same content.
+            </p>
+            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+              <code>{scaleExample}</code>
+            </pre>
+            <p>
+              A chunked manifest has no natural end-of-stream, so <code>manifest_expected</code> is
+              part of the contract rather than a hint: commit compares it against what actually
+              arrived and refuses to build a version if they differ. Chunks are keyed by hash and
+              therefore idempotent — re-sending one after a timeout is safe. An asynchronous commit
+              publishes nothing until it finishes, so there is no window in which a partially built
+              version can be read.
             </p>
           </RfcSection>
 
@@ -434,6 +478,13 @@ export default function Protocol() {
             <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
               <code>{pullExample}</code>
             </pre>
+            <p>
+              Both are keyset-paginated: pass <code>pagination.nextCursor</code> back as{' '}
+              <code>?cursor=</code> until <code>hasMore</code> is false. A delta of any size can be
+              walked to completion, and the three lists drain independently, so a page late in the
+              walk may hold only <code>updated</code> entries. The cursor is opaque — pass back what
+              you were given rather than constructing one.
+            </p>
           </RfcSection>
 
           <RfcSection id="schemas" count={counts['schemas'] ?? 0} onOpen={openDrawerForSection}>

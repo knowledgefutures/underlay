@@ -28,6 +28,11 @@ const sqliteCache = new Map<
 const CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 const CACHE_MAX_ENTRIES = 10
 
+// The SQLite build is proportional to collection size and holds the whole thing
+// in memory, so it is offered only below this. Above it, the records API pages
+// at any depth and Hot provides a SQL editor over a hydrated copy.
+const MAX_QUERY_RECORDS = 250_000
+
 // In-memory rate limit for the LLM endpoint (public path, spends CF AI credits)
 const RATE_LIMIT_WINDOW_MS = 60_000
 const RATE_LIMIT_MAX = 10 // requests per key per window
@@ -96,7 +101,11 @@ async function getOrBuildSqlite(
 
   // Resolve version
   const [version] = await db
-    .select({ id: schema.versions.id, semver: schema.versions.semver })
+    .select({
+      id: schema.versions.id,
+      semver: schema.versions.semver,
+      recordCount: schema.versions.recordCount,
+    })
     .from(schema.versions)
     .where(
       and(
@@ -108,6 +117,15 @@ async function getOrBuildSqlite(
     .limit(1)
 
   if (!version) return null
+
+  // Building the SQLite artifact materializes every record body in memory. That
+  // is fine for the collections this feature was built for and fatal on a
+  // multi-million-record one: a 3.1M-record collection is several GB of jsonb
+  // that would OOM the container — from an endpoint any visitor can reach.
+  // Refuse above the threshold instead, and point at the paths that do scale.
+  if (version.recordCount > MAX_QUERY_RECORDS) {
+    return { tooLarge: true as const, recordCount: version.recordCount }
+  }
 
   const cacheKey = `${collection.id}:${version.semver}:${ownerAccess ? 'full' : 'public'}`
 
@@ -207,6 +225,28 @@ async function getOrBuildSqlite(
   return entry
 }
 
+/**
+ * Shared 413 for collections above MAX_QUERY_RECORDS. Names the size, the limit
+ * and what to use instead — a bare "too large" leaves the caller guessing
+ * whether to retry.
+ */
+function tooLargeResponse(c: Context<AuthEnv>, recordCount: number) {
+  return c.json(
+    {
+      error:
+        `This collection has ${recordCount.toLocaleString()} records; the SQL explorer is ` +
+        `available below ${MAX_QUERY_RECORDS.toLocaleString()}. It builds an in-memory SQLite ` +
+        `copy of the whole version, which does not scale past that. Use the records API ` +
+        `(GET /api/collections/:owner/:slug/versions/:n/records?after=…), which pages at any ` +
+        `depth, or Hot for a SQL editor over a hydrated copy.`,
+      recordCount,
+      maxRecords: MAX_QUERY_RECORDS,
+      statusCode: 413,
+    },
+    413,
+  )
+}
+
 // GET /query/sqlite/:owner/:slug/:version — Download SQLite file for a version
 export async function sqlite(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
@@ -216,6 +256,7 @@ export async function sqlite(c: Context<AuthEnv>) {
 
   const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
+  if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
   return new Response(new Uint8Array(result.buffer), {
     status: 200,
@@ -235,6 +276,7 @@ export async function ddl(c: Context<AuthEnv>) {
 
   const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
+  if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
   return c.json({ ddl: result.ddl })
 }
@@ -282,6 +324,7 @@ export async function generateSql(c: Context<AuthEnv>) {
         { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found`, statusCode: 404 },
         404,
       )
+    if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
     combinedDdl = result.ddlWithSamples
     // Count records from cache (approximation from the version table already captured)
   } else {
@@ -293,6 +336,7 @@ export async function generateSql(c: Context<AuthEnv>) {
           { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found` },
           404,
         )
+      if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
       const prefix = ref.slug.replace(/-/g, '_')
       // Prefix table names and add _source column to DDL
       const ddlPrefixed = result.ddlWithSamples

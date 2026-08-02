@@ -86,7 +86,14 @@ async function insertRecords(
   await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
   await db
     .insert(schema.versionRecords)
-    .values(objectRows.map((r) => ({ versionId, recordHash: r.hash })))
+    .values(
+      objectRows.map((r) => ({
+        versionId,
+        recordHash: r.hash,
+        recordId: r.recordId,
+        type: r.type,
+      })),
+    )
     .onConflictDoNothing()
 }
 

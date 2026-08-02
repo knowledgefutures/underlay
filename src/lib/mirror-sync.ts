@@ -687,6 +687,10 @@ async function pullVersion(
       actorId: uv.actorId,
       recordCount: manifest.records.length,
       fileCount: manifest.files.length,
+      typeCounts: manifest.records.reduce<Record<string, number>>((acc, r) => {
+        acc[r.type] = (acc[r.type] ?? 0) + 1
+        return acc
+      }, {}),
       totalBytes: uv.totalBytes,
       status: 'creating',
     })
@@ -702,11 +706,16 @@ async function pullVersion(
       }
     }
 
-    for (let i = 0; i < manifestHashes.length; i += BATCH_SIZE) {
-      const batch = manifestHashes.slice(i, i + BATCH_SIZE)
-      await db
-        .insert(schema.versionRecords)
-        .values(batch.map((hash) => ({ versionId, recordHash: hash })))
+    for (let i = 0; i < manifest.records.length; i += BATCH_SIZE) {
+      const batch = manifest.records.slice(i, i + BATCH_SIZE)
+      await db.insert(schema.versionRecords).values(
+        batch.map((r) => ({
+          versionId,
+          recordHash: r.hash,
+          recordId: r.id,
+          type: r.type,
+        })),
+      )
     }
 
     const fileHashList = manifest.files.filter((h) => availableFileHashes.has(h))

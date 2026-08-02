@@ -238,6 +238,12 @@ export const versions = pgTable(
     signature: text('signature'),
     recordCount: integer('record_count').notNull(),
     fileCount: integer('file_count').notNull(),
+    // { [type]: count } for this version's record set, computed once at commit.
+    // Avoids a COUNT(*) GROUP BY over version_records on every collection page
+    // view and gives `?type=` listings an accurate pagination.total. NULL on
+    // versions written before this column existed — callers fall back to a
+    // count query.
+    typeCounts: jsonb('type_counts').$type<Record<string, number>>(),
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
     status: text('status').notNull().default('ready'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -279,6 +285,14 @@ export const versionRecords = pgTable(
     // equals record_hash (i.e. the type has no private fields), which is the
     // common case — only private-field bindings pay the storage cost.
     publicRecordHash: text('public_record_hash'),
+    // Denormalized from record_objects. Records are immutable and
+    // content-addressed, so these can never drift from the row they were copied
+    // from. Carrying them here is what lets record listing, `?type=` filtering
+    // and the diff/delta set operations run as index-only scans over
+    // version_records instead of joining every candidate row through
+    // record_objects just to order or filter it.
+    recordId: text('record_id').notNull(),
+    type: text('type').notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.versionId, t.recordHash] }),
@@ -286,6 +300,11 @@ export const versionRecords = pgTable(
     index('version_records_public_record_hash_idx')
       .on(t.publicRecordHash)
       .where(sql`public_record_hash IS NOT NULL`),
+    // Drives keyset record listing and the added/removed/updated anti- and
+    // semi-joins between two versions.
+    index('version_records_version_record_idx').on(t.versionId, t.recordId),
+    // Same, for `?type=`-filtered listings.
+    index('version_records_version_type_record_idx').on(t.versionId, t.type, t.recordId),
   ],
 )
 
@@ -375,9 +394,32 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
   appId: text('app_id'),
   actorId: text('actor_id'),
   stripUnknownFields: boolean('strip_unknown_fields').notNull().default(false),
-  status: text('status', { enum: ['open', 'committed', 'expired'] })
+  // Set when the manifest is uploaded in chunks instead of inline: how many
+  // distinct record hashes the client says it will send. Commit refuses to build
+  // a version until exactly that many have arrived, so a client that dies
+  // partway through the upload cannot silently produce a truncated version.
+  // NULL for the inline path, where the manifest arrives atomically.
+  manifestExpected: integer('manifest_expected'),
+  // 'committing' is the async-finalize state: the request has returned 202 and
+  // a background task is building the version. It ends at 'committed' or
+  // 'failed', both of which are reported through the session-status endpoint.
+  status: text('status', {
+    enum: ['open', 'committing', 'committed', 'failed', 'expired'],
+  })
     .notNull()
     .default('open'),
+  // Outcome of an async finalize, so a client that polls after the fact gets the
+  // same answer the synchronous path would have returned inline.
+  result: jsonb('result').$type<{
+    semver: string
+    hash: string
+    recordCount: number
+    fileCount: number
+  }>(),
+  error: jsonb('error').$type<{ statusCode: number; error: string; [k: string]: unknown }>(),
+  // When the background finalize started, so a task killed by a restart can be
+  // told apart from one still running.
+  finalizeStartedAt: timestamp('finalize_started_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 })
@@ -393,6 +435,25 @@ export const negotiateSessionManifest = pgTable(
     hash: text('hash').notNull(),
     private: boolean('private').notNull().default(false),
     needed: boolean('needed').notNull().default(true),
+    // Set when the record arrives through the records endpoint, which validates
+    // it against this session's schemas. Commit uses this to skip re-running AJV
+    // over records that were validated minutes ago — for a first push that is
+    // every record, and revalidation was the single largest cost in the commit.
+    submitted: boolean('submitted').notNull().default(false),
+    // Commit scratch space, written back per record instead of accumulated in
+    // arrays that grow with collection size.
+    //
+    // Both hash columns mean "unchanged" when NULL, which is the overwhelmingly
+    // common case: finalHash is only set when strip_unknown_fields rewrote the
+    // record, and publicHash only when privacy filtering changed its content. A
+    // push with no private fields and no stripping — the normal case, and the
+    // arXiv case — writes neither, so the walk performs no UPDATEs at all.
+    //
+    // Whether a record appears in the public view is deliberately *not* stored:
+    // it is derivable from the private flags and the type, so materializing it
+    // would cost a full UPDATE pass over every row of every push.
+    finalHash: text('final_hash'),
+    publicHash: text('public_hash'),
   },
   (t) => [
     primaryKey({ columns: [t.sessionId, t.hash] }),

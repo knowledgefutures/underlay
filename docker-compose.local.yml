@@ -11,13 +11,22 @@ services:
       POSTGRES_USER: underlay
       POSTGRES_PASSWORD: underlay
       POSTGRES_DB: underlay
+    # Sized for bulk ingest as well as everyday dev. A multi-million-record push
+    # sorts the whole record set twice to fold the version digests, and builds
+    # indexes over it — at 8MB work_mem that spills to disk in many small merge
+    # passes. max_connections is low, so the worst case here is bounded.
     command: >
       postgres
-      -c shared_buffers=256MB
-      -c effective_cache_size=512MB
-      -c work_mem=8MB
-      -c maintenance_work_mem=64MB
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+      -c max_wal_size=4GB
+      -c checkpoint_completion_target=0.9
       -c max_connections=50
+    # Matches the production stack: Docker's 64 MB /dev/shm default is too small
+    # for Postgres parallel query workers once tables get large.
+    shm_size: 1gb
     ports:
       - '5433:5432'
     volumes:

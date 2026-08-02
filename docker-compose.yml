@@ -8,7 +8,20 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      NODE_OPTIONS: '--max-old-space-size=448'
+      # Push commits accumulate per-record structures in memory, so the heap has
+      # to scale with the largest collection pushed, not with steady-state
+      # traffic. 448 MB could not commit much past ~100k records.
+      #
+      # Measured: a 500k-record push costs ~900 MB of heap above baseline
+      # (~1.8 KB/record), so 2 GB carries a ~1M-record push with headroom.
+      # Raise APP_HEAP_MB (and APP_MEMORY_LIMIT with it) for a one-off larger
+      # ingest rather than making it the standing default — dev and prod share
+      # one 16 GB box, so the defaults here are paid four times over.
+      #
+      # Do not read this as "3.11M records will fit if we go high enough": at
+      # that size the push path needs the streaming commit, not a bigger number.
+      # See planning/local/demos/arxiv-ingest-measurements-v1.md.
+      NODE_OPTIONS: '--max-old-space-size=${APP_HEAP_MB:-2048}'
       PORT: ${PORT:-3000}
       UNDERLAY_MODE: ${UNDERLAY_MODE:-origin}
       UNDERLAY_UPSTREAM: ${UNDERLAY_UPSTREAM:-}
@@ -20,7 +33,15 @@ services:
       replicas: ${APP_REPLICAS:-2}
       resources:
         limits:
-          memory: 640m
+          # Must exceed APP_HEAP_MB — the V8 heap is only part of RSS.
+          #
+          # Sizing on the shared 16 GB box: dev + prod × 2 replicas = 4 app
+          # containers. They idle at a few hundred MB each and only one climbs
+          # at a time (a push is one request on one replica of one stack), so
+          # the realistic peak is 3× idle + 1× limit, not 4× limit. Reservations
+          # stay low deliberately — they are what Swarm schedules against, and
+          # over-reserving would strand memory the other stack needs.
+          memory: ${APP_MEMORY_LIMIT:-2560m}
           cpus: '1.0'
         reservations:
           memory: 384m
@@ -109,6 +130,13 @@ services:
       -c random_page_cost=1.1
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Postgres allocates dynamic shared memory in /dev/shm for parallel query
+    # workers. Docker's 64 MB default is enough for small scans and not enough
+    # for a parallel aggregate over a few million rows, which fails with
+    # "could not resize shared memory segment ... No space left on device" —
+    # observed on a 500k-record commit.
+    tmpfs:
+      - /dev/shm:size=1g
     ports:
       - '${DB_PORT:-5432}:5432'
     networks:

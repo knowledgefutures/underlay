@@ -65,9 +65,14 @@ async function insertRecords(
     }
   })
   await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
-  await db
-    .insert(schema.versionRecords)
-    .values(objectRows.map((r) => ({ versionId, recordHash: r.hash })))
+  await db.insert(schema.versionRecords).values(
+    objectRows.map((r) => ({
+      versionId,
+      recordHash: r.hash,
+      recordId: r.recordId,
+      type: r.type,
+    })),
+  )
 }
 
 /** Insert schemas into global table, returning schema IDs. Deduplicates by hash. */

@@ -215,20 +215,25 @@ The protocol and the platform are documented together:
 
 ### Key API endpoints
 
-All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation:
+All pushes use the negotiate protocol — a three-step flow similar to git's pack negotiation. Two of
+those steps have a chunked form for collections that don't fit in a single request: the manifest can
+upload in pieces, and the commit can run in the background. A chunked, asynchronous push produces
+the same version hash as the simple one.
 
-| Endpoint                                         | Purpose                                                     |
-| ------------------------------------------------ | ----------------------------------------------------------- |
-| `POST .../versions/negotiate`                    | Start a push session (server returns which hashes it needs) |
-| `POST .../versions/negotiate/:sessionId/records` | Send only the needed records (NDJSON)                       |
-| `POST .../versions/negotiate/:sessionId/commit`  | Validate, hash, and create the immutable version            |
-| `GET .../versions/:semver/manifest`              | Version manifest (add `?since=` for delta)                  |
-| `GET .../versions/:semver/records`               | Paginated records                                           |
-| `GET .../versions/:semver/diff?from=...`         | Diff between two versions                                   |
-| `POST /api/records/batch`                        | Fetch records by hash (JSONL stream)                        |
-| `GET /api/records/:hash/provenance`              | Find all collections containing a record                    |
-| `POST .../fork`                                  | Fork a collection (copies manifest, not data)               |
-| `GET /api/schemas`                               | Search schemas across all collections                       |
+| Endpoint                                          | Purpose                                                                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `POST .../versions/negotiate`                     | Start a push session (server returns which hashes it needs)                                                 |
+| `POST .../versions/negotiate/:sessionId/manifest` | Upload the manifest in NDJSON chunks, when it is too large to send in one body                              |
+| `POST .../versions/negotiate/:sessionId/records`  | Send only the needed records (NDJSON)                                                                       |
+| `POST .../versions/negotiate/:sessionId/commit`   | Validate, hash, and create the immutable version. `?async=true` returns 202 and finalizes in the background |
+| `GET .../versions/negotiate/:sessionId`           | Session status, and the result or error of an async commit                                                  |
+| `GET .../versions/:semver/manifest`               | Version manifest (add `?since=` for delta; both keyset-paginated)                                           |
+| `GET .../versions/:semver/records`                | Paginated records                                                                                           |
+| `GET .../versions/:semver/diff?from=...`          | Diff between two versions                                                                                   |
+| `POST /api/records/batch`                         | Fetch records by hash (JSONL stream)                                                                        |
+| `GET /api/records/:hash/provenance`               | Find all collections containing a record                                                                    |
+| `POST .../fork`                                   | Fork a collection (copies manifest, not data)                                                               |
+| `GET /api/schemas`                                | Search schemas across all collections                                                                       |
 
 ## Privacy
 

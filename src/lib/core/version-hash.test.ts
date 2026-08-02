@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { hashRecord, hashSchema } from './hash.js'
 import { filterRecordData } from './privacy.js'
 import type { SchemaEntry } from './types.js'
-import { computePublicHash, computeVersionHash, filterSchemasForPublic } from './version-hash.js'
+import {
+  computePublicHash,
+  computeVersionHash,
+  filterSchemasForPublic,
+  VersionHashStream,
+} from './version-hash.js'
 
 const entry = (slug: string, schema: Record<string, unknown>): SchemaEntry => ({
   slug,
@@ -153,5 +158,88 @@ describe('computePublicHash', () => {
       null,
     )
     expect(publicHash).toBe(privateEquivalent.replace('private:', 'public:'))
+  })
+})
+
+describe('VersionHashStream', () => {
+  // The streaming writer exists only so a multi-million-record commit doesn't
+  // have to hold the canonical document in memory. It is worth nothing unless it
+  // is byte-identical to computeVersionHash, so the whole test is: does it agree,
+  // on everything. If these fail, server and CLI version hashes have diverged.
+  const agree = (
+    schemaSet: { slug: string; schemaHash: string }[],
+    recordHashes: string[],
+    fileHashes: string[],
+    metadata: Record<string, unknown> | null,
+  ) => {
+    const stream = new VersionHashStream(schemaSet, fileHashes, metadata)
+    for (const h of [...recordHashes].sort()) stream.push(h)
+    expect(stream.digest()).toBe(computeVersionHash(schemaSet, recordHashes, fileHashes, metadata))
+  }
+
+  it('matches the golden hash', () => {
+    const stream = new VersionHashStream([{ slug: 'Author', schemaHash: 'aaa' }], [], null)
+    for (const h of ['h1', 'h2']) stream.push(h)
+    expect(stream.digest()).toBe(
+      'private:6a382212927aee2474d30565a55f30fe5c128610998190756a41d629422b6dba',
+    )
+  })
+
+  it('agrees on an empty record set', () => {
+    agree([{ slug: 'A', schemaHash: 'a' }], [], ['f1'], { title: 'x' })
+  })
+
+  it('agrees with no schemas, files or metadata', () => {
+    agree([], ['h1'], [], null)
+  })
+
+  it('agrees on realistic sha256 digests', () => {
+    const hashes = Array.from(
+      { length: 500 },
+      (_, i) => hashRecord({ id: `rec-${i}`, type: 'T', data: { i } }).hash,
+    )
+    agree(
+      [
+        { slug: 'Zeta', schemaHash: hashSchema({ type: 'object' }) },
+        { slug: 'Alpha', schemaHash: hashSchema({ type: 'string' }) },
+      ],
+      hashes,
+      ['f2', 'f1'],
+      { description: 'Ünïcödé "quoted" \\ and \n newline', nested: { b: 2, a: [1, 2] } },
+    )
+  })
+
+  it('agrees when the record set contains duplicates', () => {
+    // Two records differing only in private fields share a public hash, so the
+    // public-hash stream really can see the same value twice.
+    agree([{ slug: 'A', schemaHash: 'a' }], ['h1', 'h1', 'h2'], [], null)
+  })
+
+  it('agrees on hashes needing JSON escaping', () => {
+    agree([{ slug: 'A', schemaHash: 'a' }], ['a"b', 'a\\b', 'ab'], [], null)
+  })
+
+  it('agrees across randomized inputs', () => {
+    let seed = 12345
+    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    for (let round = 0; round < 200; round++) {
+      const hashes = Array.from({ length: Math.floor(rand() * 40) }, () =>
+        rand().toString(16).slice(2),
+      )
+      const files = Array.from({ length: Math.floor(rand() * 5) }, () => rand().toString(16))
+      const schemas = Array.from({ length: Math.floor(rand() * 4) }, (_, i) => ({
+        slug: `S${Math.floor(rand() * 100)}-${i}`,
+        schemaHash: rand().toString(16),
+      }))
+      agree(schemas, hashes, files, rand() > 0.5 ? { k: rand() } : null)
+    }
+  })
+
+  it('refuses reuse after digest()', () => {
+    const stream = new VersionHashStream([], [], null)
+    stream.push('h1')
+    stream.digest()
+    expect(() => stream.push('h2')).toThrow()
+    expect(() => stream.digest()).toThrow()
   })
 })

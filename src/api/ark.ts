@@ -173,10 +173,13 @@ export async function resolve(c: Context<AuthEnv>) {
         eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
       )
       .where(
+        // Seeks (version_id, type, record_id) directly — before these columns
+        // were denormalized this scanned every version_records row for the
+        // version just to resolve one ARK.
         and(
           eq(schema.versionRecords.versionId, versionRow.id),
-          eq(schema.recordObjects.recordId, recordId),
-          eq(schema.recordObjects.type, recordType),
+          eq(schema.versionRecords.recordId, recordId),
+          eq(schema.versionRecords.type, recordType),
         ),
       )
       .limit(1)

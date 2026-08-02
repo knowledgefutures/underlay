@@ -228,7 +228,7 @@ Content-Type: application/json</pre>
 <table class="kv">
 <tr><th>base_version</th><td>The semver of the version you&rsquo;re building on (e.g. <code>${latest ? escapeHtml(latest.semver) : 'null'}</code>). Use <code>null</code> for the first push.</td></tr>
 <tr><th>schemas</th><td><strong>Required.</strong> A map of type name &rarr; JSON Schema for every type in this version.</td></tr>
-<tr><th>manifest</th><td><strong>Required.</strong> Array of <code>{id, type, hash}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see llms.txt for the exact algorithm).</td></tr>
+<tr><th>manifest</th><td><strong>Required</strong> (unless uploading it in chunks, see below). Array of <code>{id, type, hash}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see llms.txt for the exact algorithm). Capped at 500,000 entries.</td></tr>
 <tr><th>files</th><td>Array of file hashes referenced by records. Empty array if none.</td></tr>
 <tr><th>message</th><td>Optional commit message describing this update.</td></tr>
 </table>
@@ -252,6 +252,13 @@ Authorization: Bearer ${escapeHtml(token)}</pre>
 
 <h3>Response (201)</h3>
 <pre>${escapeHtml(JSON.stringify({ semver: 'v1.1.0', hash: '<sha256>', recordCount: 1, fileCount: 0 }, null, 2))}</pre>
+
+<h3>Pushing more than ~500,000 records</h3>
+<p>Two of the steps above assume the collection fits in one request. At a few million records the manifest would be hundreds of megabytes and the commit would run for minutes, so both have a chunked form. The push is otherwise identical and produces the same version hash.</p>
+<ul>
+<li><strong>Chunked manifest.</strong> Omit <code>manifest</code> and send <code>manifest_expected: &lt;count&gt;</code> instead. Then POST the manifest as NDJSON to <code>&hellip;/negotiate/&lt;session_id&gt;/manifest</code>, up to 50,000 entries per request. Each response reports which records from that chunk are needed, so you can start sending record bodies before the manifest finishes. Commit refuses to build a version until the declared count has arrived.</li>
+<li><strong>Async commit.</strong> Add <code>?async=true</code> to the commit. The server returns <code>202</code> and finalizes in the background; poll <code>GET &hellip;/negotiate/&lt;session_id&gt;</code> until <code>status</code> is <code>committed</code> (with <code>result</code>) or <code>failed</code> (with <code>error</code>). The finalize does not depend on your connection staying open.</li>
+</ul>
 
 <hr>
 

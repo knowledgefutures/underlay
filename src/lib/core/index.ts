@@ -8,5 +8,10 @@ export {
   stripToSchema,
   type ExtraFieldWarning,
 } from './validate.js'
-export { computePublicHash, computeVersionHash, filterSchemasForPublic } from './version-hash.js'
+export {
+  computePublicHash,
+  computeVersionHash,
+  filterSchemasForPublic,
+  VersionHashStream,
+} from './version-hash.js'
 export type { SchemaEntry } from './types.js'

@@ -50,6 +50,34 @@
       "when": 1784050001911,
       "tag": "0006_moaning_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785525852093,
+      "tag": "0007_lucky_rhino",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785528674026,
+      "tag": "0008_mixed_moonstone",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785532930491,
+      "tag": "0009_boring_tiger_shark",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785533520514,
+      "tag": "0010_unique_nemesis",
+      "breakpoints": true
     }
   ]
 }
