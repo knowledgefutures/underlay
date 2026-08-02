@@ -372,6 +372,15 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
+              <code>GET .../versions/:semver/records.ndjson</code>
+            </td>
+            <td>
+              Stream every record in one request (NDJSON). The bulk read path — use this instead of
+              paging when you want the whole collection
+            </td>
+          </tr>
+          <tr>
+            <td>
               <code>GET .../versions/:semver/manifest</code>
             </td>
             <td>Get record hash manifest (supports delta via ?since=)</td>

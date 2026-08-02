@@ -123,6 +123,14 @@ const getRecordsRes = `{
   }
 }`
 
+const ndjsonRes = `HTTP/1.1 200 OK
+Content-Type: application/x-ndjson
+X-Underlay-Record-Count: 3113504
+
+{"id":"pub-001","type":"Publication","data":{"title":"..."},"hash":"sha256:..."}
+{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"sha256:..."}
+{"id":"pub-003","type":"Publication","data":{"title":"..."},"hash":"sha256:..."}`
+
 const manifestRes = `{
   "semver": "v1.1.0",
   "hash": "a1b2c3d4...",
@@ -611,6 +619,65 @@ export default function DocsApiVersions() {
           types. On collections that mark individual records private it is an upper bound for
           anonymous callers, since those records are hidden but still counted — use{' '}
           <code>hasMore</code> if you need an exact end-of-set signal.
+        </p>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
+        <h2>GET /api/collections/:owner/:slug/versions/:n/records.ndjson</h2>
+        <p className="scope">No auth for public collections</p>
+        <p>
+          Every record in the version, streamed as newline-delimited JSON in a single response. This
+          is the bulk read path. Paging <code>/records</code> costs a round trip per page purely to
+          re-establish a cursor the server just had — 1,556 requests for a 3.1-million-record
+          collection, against one here. The server reads through a database cursor and writes as it
+          goes, so memory stays constant on both ends and you can process the first line before the
+          last is sent.
+        </p>
+        <h3>Query parameters</h3>
+        <table>
+          <tbody>
+            <tr>
+              <td>
+                <code>type</code>
+              </td>
+              <td>Restrict to a single record type</td>
+            </tr>
+            <tr>
+              <td>
+                <code>after</code>
+              </td>
+              <td>
+                Resume: emit only records with ids strictly after this value. Records are ordered by
+                id ascending, so this restarts a dropped read from where it stopped rather than from
+                the beginning.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>
+          Response <span className="text-ink-muted font-normal">200</span>
+        </h3>
+        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+          <code>{ndjsonRes}</code>
+        </pre>
+        <p>
+          <code>hash</code> is the same content-address <code>/records</code> serves: the full
+          record hash for owners, the public hash for everyone else. Privacy filtering is identical
+          too — private types and private records are absent, private fields stripped.
+        </p>
+        <p>
+          <strong>Check completeness yourself.</strong> A stream that fails partway cannot report
+          it: the <code>200</code> and headers were sent before anything went wrong.{' '}
+          <code>X-Underlay-Record-Count</code> tells you how many lines to expect. If you receive
+          fewer, resume with <code>?after=</code> set to the id of the last complete line you parsed
+          — don't start over.
+        </p>
+        <p className="text-ink-muted">
+          Responses are compressed when you send <code>Accept-Encoding: gzip</code>, which most HTTP
+          clients do automatically — roughly 3× on record data, and it applies to this stream as
+          well.
         </p>
       </div>
 

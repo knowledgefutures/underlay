@@ -72,6 +72,7 @@ GET /api/collections/:owner/:slug/versions/latest       → latest version with 
 GET /api/collections/:owner/:slug/versions/:semver      → specific version by semver (e.g. /versions/v1.2.0)
 
 ### Read records and files
+GET /api/collections/:owner/:slug/versions/:semver/records.ndjson → ALL records, streamed as NDJSON in one request (?type=TypeName&after=recordId)
 GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=recordId)
 GET /api/collections/:owner/:slug/versions/:semver/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=v1.0.0 for delta)
 GET /api/collections/:owner/:slug/versions/:semver/files     → list files for a version (hash, size, content type)
@@ -92,15 +93,21 @@ GET /api/collections/:owner/:slug/versions/:semver/diff?from=:semver → diff be
 GET /api/collections/:owner/:slug/export                → download .tar.gz archive (manifest.json + records/*.ndjson + files/*)
 GET /api/collections/:owner/:slug/export?version=v2.0.0  → export a specific version
 
-Export assembles the whole archive in memory, so it is only offered on collections below
-250,000 records. Above that it returns 413 with the record count and the limit. To read a
-large collection, page the records endpoint with ?after= (see Pagination below), or fetch
-the manifest if you only need id/type/hash — both work at any size.
+Archive layout: manifest.json, records/<Type>.ndjson per record type, and files/<hash>.
+Types too large for a single archive entry are split into numbered parts —
+records/<Type>.0000.ndjson, records/<Type>.0001.ndjson, ... — at 25,000 records per part.
+A type that fits in one part keeps the unnumbered records/<Type>.ndjson name, so archives
+of ordinary collections are unchanged. Read every records/*.ndjson entry and you have the
+version, whichever form it took.
 
-The same 250,000-record limit applies to the SQL explorer (/api/query/...), which builds an
-in-memory SQLite copy of a version. It is a UI feature rather than a documented API; on a
-large collection use the records endpoint, or Hot, which hydrates a collection into a
-queryable database built for the purpose.
+Export is capped at 2,000,000 records and returns 413 above that — a guard against handing
+back a multi-gigabyte tarball from a single GET, not a memory limit. For bulk reads prefer
+records.ndjson (below): it streams, resumes, and needs no unpacking.
+
+The SQL explorer (/api/query/...) has a lower limit of 250,000 records, because unlike
+export it genuinely does hold the whole version in memory to build a SQLite copy. It is a
+UI feature rather than a documented API; on a large collection use records.ndjson, or Hot,
+which hydrates a collection into a queryable database built for the purpose.
 
 ### Fork
 POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth)
@@ -445,13 +452,67 @@ To paginate through all records (works at any collection size):
    GET .../records?limit=2000&after=<nextCursor>
 3. Repeat until hasMore is false.
 
-Ask for the largest page you can handle. Walking a whole collection is bounded by request
-count, not bytes — 60 requests/minute unauthenticated, 5,000 authenticated — so a
+BUT: if you want the whole collection, do not page it. Use the NDJSON stream below —
+paging costs one round trip per page purely to re-establish a cursor the server just had.
+Paging is for browsing a slice; streaming is for reading everything.
+
+Ask for the largest page you can handle. Walking a whole collection by paging is bounded by
+request count, not bytes — 60 requests/minute unauthenticated, 5,000 authenticated — so a
 3-million-record collection is 6,200 requests at 500/page and 1,550 at 2,000/page.
 Authenticate for any full-collection walk.
 
 Do NOT paginate large collections with ?offset=; it is capped at 10000 and will 400
 beyond that. Use ?after=<nextCursor> keyset pagination instead.
+
+---
+
+## Bulk Read (the fast way to get a whole collection)
+
+GET /api/collections/:owner/:slug/versions/:semver/records.ndjson
+
+Streams every record in the version as newline-delimited JSON in a single response. One
+request regardless of size: a 3.1M-record collection is one call here versus 1,556 paged
+ones. The server reads through a database cursor and writes as it goes, so memory is
+constant on both ends — you can start processing the first line before the last is sent.
+
+Content-Type: application/x-ndjson
+X-Underlay-Record-Count: 3113504     ← how many lines to expect
+
+One JSON object per line:
+{"id":"arxiv:0704.0001","type":"Preprint","data":{...},"hash":"abc123..."}
+
+Parameters:
+- type:  restrict to one record type
+- after: resume — return records with ids strictly after this value
+
+Guarantees you can rely on:
+- Records are ordered by id, ascending. This is what makes `after` work.
+- `hash` is the same content-address the records endpoint serves: the full record hash for
+  owners, the public hash for everyone else.
+- Privacy filtering is identical to /records — private types and private records are
+  absent, private fields are stripped.
+
+Verify completeness yourself. A stream that dies halfway cannot report an error: the 200
+status and headers were already sent. Count the lines and compare against
+X-Underlay-Record-Count (or the version's recordCount). If they differ, resume with
+?after=<id of the last complete line you parsed> rather than starting over.
+
+That resume behaviour makes this strictly better than paging for bulk reads: the same
+recovery from a dropped connection, at a fraction of the requests.
+
+### Compression
+
+All /api/ responses are compressed when you send Accept-Encoding: gzip — about 3x on
+record data. Most HTTP clients do this automatically. It applies to the NDJSON stream too.
+
+### When to use which
+
+- Whole collection, one pass       → records.ndjson
+- A page, or browsing              → records?limit=2000&after=
+- Only ids/types/hashes            → manifest (≈120 bytes/record, far smaller than bodies)
+- What changed since a version     → manifest?since= (delta)
+- Specific records you know hashes for → POST /api/records/batch (up to 10,000 per call)
+- An archive to keep               → export (.tar.gz)
 
 ---
 

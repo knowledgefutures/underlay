@@ -91,7 +91,16 @@ GET /api/collections/:owner/:slug/versions/v2.0.0/manifest?since=v1.1.0
 # Fetch only the records you need
 POST /api/records/batch
 { "hashes": ["abc123...", "def456..."] }
-# Returns JSONL stream`
+# Returns JSONL stream
+
+# Or read the whole version in one streamed response
+GET /api/collections/:owner/:slug/versions/v2.0.0/records.ndjson
+Content-Type: application/x-ndjson
+X-Underlay-Record-Count: 3113504
+
+{"id":"pub-001","type":"Publication","data":{...},"hash":"..."}
+{"id":"pub-002","type":"Publication","data":{...},"hash":"..."}
+# ... one object per line, ordered by id; ?after=<id> resumes`
 
 const schemaExample = `{
   "type": "object",
@@ -484,6 +493,48 @@ export default function Protocol() {
               walked to completion, and the three lists drain independently, so a page late in the
               walk may hold only <code>updated</code> entries. The cursor is opaque — pass back what
               you were given rather than constructing one.
+            </p>
+            <h3>Reading a whole version</h3>
+            <p>
+              Paging is the wrong shape for "give me everything": each request pays a round trip to
+              re-establish a cursor the server just had, so a three-million-record collection costs
+              over fifteen hundred of them. <code>records.ndjson</code> streams the entire version
+              in one response, read through a database cursor and written as it goes, so neither
+              side holds more than a chunk.
+            </p>
+            <p>
+              Four properties make it usable as a protocol rather than a convenience, and an
+              implementation is expected to honour all four:
+            </p>
+            <ul>
+              <li>
+                <strong>Ordered by record id, ascending.</strong> This is what gives{' '}
+                <code>?after=</code> meaning, and it is the difference between a stream you can
+                resume and one you must restart.
+              </li>
+              <li>
+                <strong>One JSON object per line</strong>, of the form{' '}
+                <code>{'{id, type, data, hash}'}</code>. <code>hash</code> is the same
+                content-address the paged endpoint serves — the full record hash for owners, the
+                public hash for everyone else.
+              </li>
+              <li>
+                <strong>Privacy filtering is identical to the paged endpoint.</strong> Private types
+                and private records are absent; private fields are stripped. A reader must not be
+                able to learn more by choosing a different transport.
+              </li>
+              <li>
+                <strong>Completeness is the reader's to verify.</strong> A stream that fails partway
+                cannot say so — its <code>200</code> and headers left before the failure did.
+                <code>X-Underlay-Record-Count</code> states how many lines to expect; count them,
+                and resume from the last complete line with <code>?after=</code>.
+              </li>
+            </ul>
+            <p>
+              That last point is a deliberate trade rather than an oversight. Any single-response
+              bulk format has it — the alternative is paging, which buys per-page error reporting at
+              the cost of a round trip per page. Making the expected count explicit lets a client
+              get the safety without the round trips.
             </p>
           </RfcSection>
 

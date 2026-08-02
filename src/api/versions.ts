@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
+import { stream } from 'hono/streaming'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
@@ -503,6 +504,112 @@ const app = new Hono<AuthEnv>()
           nextCursor,
           total: await countVersionRecords(version, type, privateTypes),
         },
+      })
+    },
+  )
+  // Stream every record in a version as NDJSON, in one request
+  .get(
+    '/:owner/:slug/versions/:n/records.ndjson',
+    openApi({
+      tags: ['Versions'],
+      summary: 'Stream all records in a version as NDJSON',
+      description:
+        'The bulk read path. Paging `/records` costs one round trip per page — 1,556 requests ' +
+        'for a 3.1M-record collection — purely to re-establish a cursor the server just had. ' +
+        'This streams the whole version in a single response, one JSON object per line, using a ' +
+        'server-side cursor: memory is constant on both ends regardless of collection size. ' +
+        'Records are ordered by id, and `?after=` resumes from the last id you saw, so a dropped ' +
+        'connection costs the remainder rather than the whole read. Compare the line count ' +
+        "against the version's `recordCount` to confirm you received all of it — a truncated " +
+        'stream cannot be signalled in the status code, which is already sent.',
+      request: { param: z.object({ owner: z.string(), slug: z.string(), n: z.string() }) },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { owner, slug, n } = c.req.valid('param')
+      const type = c.req.query('type')
+      const after = c.req.query('after')
+
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+
+      const { semver } = parseSemver(n)
+      const [version] = await db
+        .select({ id: schema.versions.id, recordCount: schema.versions.recordCount })
+        .from(schema.versions)
+        .where(
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
+        )
+        .limit(1)
+
+      if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
+
+      const ownerAccess = collection.ownerAccess
+      let privateTypes = new Set<string>()
+      let schemaEntries: SchemaEntry[] = []
+      if (!ownerAccess) {
+        schemaEntries = await loadVersionSchemas(version.id)
+        privateTypes = getPrivateTypes(schemaEntries)
+        if (type && privateTypes.has(type)) {
+          // Requesting a private type as a non-owner: an empty stream, not a 404,
+          // so callers iterating types don't have to special-case it.
+          c.header('Content-Type', 'application/x-ndjson')
+          return stream(c, async () => {})
+        }
+      }
+
+      // Private fields are resolved once per type rather than per record; at
+      // millions of rows the difference is not marginal.
+      const privateFieldsByType = new Map<string, Set<string>>()
+      for (const entry of schemaEntries) {
+        const fields = getPrivateFields(entry.schema)
+        if (fields.size > 0) privateFieldsByType.set(entry.slug, fields)
+      }
+
+      const client = db.$client
+      const privateTypeList = [...privateTypes]
+
+      c.header('Content-Type', 'application/x-ndjson')
+      // Lets a client verify completeness without a second request.
+      c.header('X-Underlay-Record-Count', String(version.recordCount))
+
+      // `stream` rather than `streamText`: the latter forces
+      // `Content-Type: text/plain`, which would misdescribe the body.
+      const encoder = new TextEncoder()
+      return stream(c, async (body) => {
+        // A server-side cursor: Postgres streams rows in batches instead of
+        // materializing the version, so this holds one chunk at a time no matter
+        // how large the collection is.
+        await client`
+          SELECT vr.record_id AS id, vr.type,
+                 ro.data,
+                 ${ownerAccess ? client`ro.hash` : client`coalesce(vr.public_record_hash, ro.hash)`} AS hash
+          FROM version_records vr
+          INNER JOIN record_objects ro ON ro.hash = vr.record_hash
+          WHERE vr.version_id = ${version.id}
+            ${type ? client`AND vr.type = ${type}` : client``}
+            ${after ? client`AND vr.record_id > ${after}` : client``}
+            ${ownerAccess ? client`` : client`AND ro.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
+          ORDER BY vr.record_id, vr.record_hash
+        `.cursor(2_000, async (rows) => {
+          let out = ''
+          for (const row of rows) {
+            const rowType = row['type'] as string
+            const privateFields = ownerAccess ? undefined : privateFieldsByType.get(rowType)
+            const data =
+              privateFields && privateFields.size > 0
+                ? filterRecordData(row['data'], privateFields)
+                : row['data']
+            out += JSON.stringify({ id: row['id'], type: rowType, data, hash: row['hash'] }) + '\n'
+          }
+          // One write per chunk rather than per record: 3.1M individual writes
+          // spends more time in the stream machinery than in the database.
+          await body.write(encoder.encode(out))
+        })
       })
     },
   )

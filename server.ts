@@ -7,6 +7,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Scalar } from '@scalar/hono-api-reference'
 import { Hono } from 'hono'
 import { createOpenApiDocument } from 'hono-zod-openapi'
+import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { marked } from 'marked'
 import type { ViteDevServer } from 'vite'
@@ -115,6 +116,14 @@ app.use(
 app.get('/agent/:token', agentHandlers.agentPage)
 
 // --- Auth + rate limiting for API routes ---
+// Responses are JSON and compress ~3x on real record data (measured on arXiv:
+// 3.08 MB -> 1.00 MB for a 2,000-record page). Nothing was compressing before —
+// not the app, and not Caddy, which has no `encode` directive — so every bulk
+// read was paying full size on the wire. Applied in the app rather than at the
+// proxy so local dev matches production, and because it covers the streaming
+// endpoints too (chunked transfer compresses fine).
+app.use('/api/*', compress())
+
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rateLimitMiddleware)
 
