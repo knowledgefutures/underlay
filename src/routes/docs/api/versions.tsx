@@ -674,6 +674,12 @@ export default function DocsApiVersions() {
           fewer, resume with <code>?after=</code> set to the id of the last complete line you parsed
           — don't start over.
         </p>
+        <p>
+          A record id is not guaranteed unique within a version — the same id can appear under more
+          than one hash. Because <code>after</code> resumes strictly past the id, a stream that
+          broke between two lines sharing an id will skip the second on resume. This matches{' '}
+          <code>/records</code> paging, and the line-count check above is what catches it.
+        </p>
         <p className="text-ink-muted">
           Responses are compressed when you send <code>Accept-Encoding: gzip</code>, which most HTTP
           clients do automatically — roughly 3× on record data, and it applies to this stream as

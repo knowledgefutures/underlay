@@ -573,44 +573,117 @@ const app = new Hono<AuthEnv>()
       const client = db.$client
       const privateTypeList = [...privateTypes]
 
-      c.header('Content-Type', 'application/x-ndjson')
-      // Lets a client verify completeness without a second request.
-      c.header('X-Underlay-Record-Count', String(version.recordCount))
+      // Hono's compress() middleware deliberately skips this response: its
+      // compressible-type list covers application/json and +json suffixes but
+      // not application/x-ndjson, and it bails on anything already marked
+      // Transfer-Encoding: chunked. Both are true here, so the route compresses
+      // itself — this is the response that benefits most, at roughly 3x.
+      const acceptsGzip = (c.req.header('Accept-Encoding') ?? '').includes('gzip')
 
-      // `stream` rather than `streamText`: the latter forces
-      // `Content-Type: text/plain`, which would misdescribe the body.
       const encoder = new TextEncoder()
-      return stream(c, async (body) => {
-        // A server-side cursor: Postgres streams rows in batches instead of
-        // materializing the version, so this holds one chunk at a time no matter
-        // how large the collection is.
-        await client`
-          SELECT vr.record_id AS id, vr.type,
-                 ro.data,
-                 ${ownerAccess ? client`ro.hash` : client`coalesce(vr.public_record_hash, ro.hash)`} AS hash
-          FROM version_records vr
-          INNER JOIN record_objects ro ON ro.hash = vr.record_hash
-          WHERE vr.version_id = ${version.id}
-            ${type ? client`AND vr.type = ${type}` : client``}
-            ${after ? client`AND vr.record_id > ${after}` : client``}
-            ${ownerAccess ? client`` : client`AND ro.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
-          ORDER BY vr.record_id, vr.record_hash
-        `.cursor(2_000, async (rows) => {
-          let out = ''
-          for (const row of rows) {
-            const rowType = row['type'] as string
-            const privateFields = ownerAccess ? undefined : privateFieldsByType.get(rowType)
-            const data =
-              privateFields && privateFields.size > 0
-                ? filterRecordData(row['data'], privateFields)
-                : row['data']
-            out += JSON.stringify({ id: row['id'], type: rowType, data, hash: row['hash'] }) + '\n'
+
+      // Read in keyset batches rather than one unbounded query.
+      //
+      // The obvious implementation — a single ORDER BY over the whole version,
+      // read through a cursor — does NOT stream. Postgres has to satisfy the
+      // sort before it can return the first row, and with no index supplying
+      // that order it sorts every row externally: on a 3.1M-record version that
+      // is ~3.5GB of temp files, ~46s before the first byte, and an ERROR 53100
+      // when temp space runs out. A client-side cursor bounds the client's
+      // memory, not the server's.
+      //
+      // Adding LIMIT changes the plan qualitatively. Bounded, Postgres walks
+      // (version_id, record_id) in index order and finishes with an incremental
+      // sort over each small group of equal record_ids — tens of kilobytes, in
+      // memory, no temp files. So this issues many bounded queries instead of
+      // one unbounded one: constant memory on both sides, first row in
+      // milliseconds, nothing spilled to disk.
+      const BATCH = 5_000
+      // record_id is not unique within a version (a record can appear under more
+      // than one hash), so the batch cursor is the (record_id, hash) pair.
+      // Advancing on record_id alone would drop or repeat rows whenever a
+      // duplicated id straddled a batch boundary.
+      let lastId: string | null = null
+      let lastHash: string | null = null
+
+      // `pull` rather than a loop in `start`: the stream produces a batch only
+      // when the consumer is ready for one, so a slow client throttles the reads
+      // instead of letting them pile up in memory.
+      const source = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            // The caller's `after` is an id: it resumes strictly past that id,
+            // the same semantics the paged endpoint uses. Continuation between
+            // batches is by the full pair, which is what keeps duplicate ids
+            // intact.
+            const keyset =
+              lastId !== null
+                ? client`AND (vr.record_id, vr.record_hash) > (${lastId}, ${lastHash})`
+                : after
+                  ? client`AND vr.record_id > ${after}`
+                  : client``
+
+            const rows = await client`
+              SELECT vr.record_id AS id, vr.type, vr.record_hash AS record_hash,
+                     ro.data,
+                     ${ownerAccess ? client`ro.hash` : client`coalesce(vr.public_record_hash, ro.hash)`} AS hash
+              FROM version_records vr
+              INNER JOIN record_objects ro ON ro.hash = vr.record_hash
+              WHERE vr.version_id = ${version.id}
+                ${type ? client`AND vr.type = ${type}` : client``}
+                ${keyset}
+                ${ownerAccess ? client`` : client`AND ro.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
+              ORDER BY vr.record_id, vr.record_hash
+              LIMIT ${BATCH}
+            `
+
+            if (rows.length === 0) {
+              controller.close()
+              return
+            }
+
+            let out = ''
+            for (const row of rows) {
+              const rowType = row['type'] as string
+              const privateFields = ownerAccess ? undefined : privateFieldsByType.get(rowType)
+              const data =
+                privateFields && privateFields.size > 0
+                  ? filterRecordData(row['data'], privateFields)
+                  : row['data']
+              out +=
+                JSON.stringify({ id: row['id'], type: rowType, data, hash: row['hash'] }) + '\n'
+            }
+            const tail = rows[rows.length - 1]!
+            lastId = tail['id'] as string
+            lastHash = tail['record_hash'] as string
+            // One enqueue per batch rather than per record: 3.1M individual
+            // writes spends more time in the stream machinery than in the
+            // database.
+            controller.enqueue(encoder.encode(out))
+            if (rows.length < BATCH) controller.close()
+          } catch (err) {
+            controller.error(err)
           }
-          // One write per chunk rather than per record: 3.1M individual writes
-          // spends more time in the stream machinery than in the database.
-          await body.write(encoder.encode(out))
-        })
+        },
       })
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-ndjson',
+        // Lets a client verify completeness without a second request.
+        'X-Underlay-Record-Count': String(version.recordCount),
+      }
+      if (acceptsGzip) headers['Content-Encoding'] = 'gzip'
+
+      // The DOM lib types CompressionStream's writable as BufferSource, which
+      // does not unify with ReadableStream<Uint8Array>; the pairing is correct at
+      // runtime.
+      const gzip = new CompressionStream('gzip') as unknown as ReadableWritablePair<
+        Uint8Array,
+        Uint8Array
+      >
+      const responseBody: ReadableStream = acceptsGzip ? source.pipeThrough(gzip) : source
+
+      return new Response(responseBody, { headers })
     },
   )
   // List files for a version

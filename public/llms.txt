@@ -500,6 +500,12 @@ X-Underlay-Record-Count (or the version's recordCount). If they differ, resume w
 That resume behaviour makes this strictly better than paging for bulk reads: the same
 recovery from a dropped connection, at a fraction of the requests.
 
+One edge: a record id is not guaranteed unique within a version — the same id can appear
+under more than one hash. `after` resumes strictly past the id, so if a stream broke
+between two lines sharing an id, resuming from it skips the second. Rare, and identical to
+how ?after= behaves on the paged endpoint, but if you need exactness compare the final line
+count against X-Underlay-Record-Count and re-read from an earlier id if it falls short.
+
 ### Compression
 
 All /api/ responses are compressed when you send Accept-Encoding: gzip — about 3x on
