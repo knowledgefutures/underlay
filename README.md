@@ -229,6 +229,7 @@ the same version hash as the simple one.
 | `GET .../versions/negotiate/:sessionId`           | Session status, and the result or error of an async commit                                                  |
 | `GET .../versions/:semver/manifest`               | Version manifest (add `?since=` for delta; both keyset-paginated)                                           |
 | `GET .../versions/:semver/records`                | Paginated records                                                                                           |
+| `GET .../versions/:semver/records.ndjson`         | Every record streamed as NDJSON in one request — the bulk read path, resumable via `?after=`                |
 | `GET .../versions/:semver/diff?from=...`          | Diff between two versions                                                                                   |
 | `POST /api/records/batch`                         | Fetch records by hash (JSONL stream)                                                                        |
 | `GET /api/records/:hash/provenance`               | Find all collections containing a record                                                                    |

@@ -14,10 +14,11 @@ import { getLatestReadyVersion, getOrgRole, hasOrgAccess } from '../lib/version-
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 
-// Export builds the whole archive in memory (see the guard in the export route),
-// so it is offered only below this. Matches the SQL explorer's limit — both are
-// whole-collection-in-memory features and should draw the line in the same place.
-const MAX_EXPORT_RECORDS = 250_000
+// Export streams in bounded parts, so this is no longer a memory limit — it is a
+// guard against handing someone a multi-GB tarball from a single GET. Bulk reads
+// belong on records.ndjson. The SQL explorer keeps the lower 250k limit because
+// that one genuinely does hold the collection in memory.
+const MAX_EXPORT_RECORDS = 2_000_000
 
 const app = new Hono<AuthEnv>()
   // Browse collections — public by default, or the caller's own with ?mine=true
@@ -821,20 +822,20 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'No versions found', statusCode: 404 }, 404)
       }
 
-      // The archive is assembled in memory: every record of a type is collected
-      // into a string[] and joined before it becomes a tar entry. That is fine
-      // for the collections this was built for and fatal on a multi-million
-      // record one — the join alone would exceed V8's maximum string length,
-      // and the array would exhaust the heap first, from an endpoint any
-      // visitor can reach. Refuse above the threshold rather than fall over.
+      // Export used to be capped because it assembled the whole archive in
+      // memory. It now emits bounded parts, so size is no longer the limit —
+      // but it is still a single long-running response that reads every record,
+      // and `records.ndjson` is the better tool for bulk reads (streaming,
+      // resumable, no tar to unpack). The cap stays well above any real
+      // collection purely as a guard against an accidental multi-GB download.
       if (version.recordCount > MAX_EXPORT_RECORDS) {
         return c.json(
           {
             error:
               `This collection has ${version.recordCount.toLocaleString()} records; export is ` +
-              `available below ${MAX_EXPORT_RECORDS.toLocaleString()}. Read it through the ` +
-              `records API instead (GET .../versions/:n/records?after=…), which pages at any ` +
-              `depth, or the manifest endpoint if you only need hashes.`,
+              `available below ${MAX_EXPORT_RECORDS.toLocaleString()}. For bulk reads use ` +
+              `GET .../versions/:n/records.ndjson, which streams the whole version in one ` +
+              `request and resumes with ?after=.`,
             recordCount: version.recordCount,
             maxRecords: MAX_EXPORT_RECORDS,
             statusCode: 413,
@@ -901,10 +902,37 @@ const app = new Hono<AuthEnv>()
         .from(schema.versionRecords)
         .where(eq(schema.versionRecords.versionId, version.id))
 
+      // tar needs each entry's byte length in its header, so an entry cannot be
+      // written from an unbounded stream. Previously every record of a type was
+      // collected into a string[] and joined — which is why export had to be
+      // capped: at 3.1M records the array exhausts the heap, and the join would
+      // exceed V8's maximum string length even if it didn't.
+      //
+      // Instead each type is emitted in bounded parts. A type that fits in one
+      // part keeps the original `records/<Type>.ndjson` name, so every archive
+      // that works today is byte-identical; only types too large for a single
+      // part split into `records/<Type>.0000.ndjson`, `.0001.ndjson`, … Memory is
+      // one part regardless of collection size.
+      const RECORDS_PER_PART = 25_000
+
       for (const { type } of types) {
-        const lines: string[] = []
         let batchCursor: string | null = null
         let batchHasMore = true
+        let partIndex = 0
+        let pending: string[] = []
+
+        const flushPart = (isFinalPart: boolean) => {
+          if (pending.length === 0) return
+          const name =
+            partIndex === 0 && isFinalPart
+              ? `records/${type}.ndjson`
+              : `records/${type}.${String(partIndex).padStart(4, '0')}.ndjson`
+          const buf = Buffer.from(pending.join('\n') + '\n')
+          pack.entry({ name, size: buf.length }, buf)
+          pending = []
+          partIndex++
+        }
+
         while (batchHasMore) {
           // Walk the (version_id, type, record_id) index; record_objects is
           // joined only to pick up the body for the rows on this page.
@@ -934,11 +962,12 @@ const app = new Hono<AuthEnv>()
           const page = batchHasMore ? batch.slice(0, 5000) : batch
           if (page.length > 0) batchCursor = page[page.length - 1]!.recordId
           for (const r of page) {
-            lines.push(JSON.stringify({ id: r.recordId, type: r.type, data: r.data }))
+            pending.push(JSON.stringify({ id: r.recordId, type: r.type, data: r.data }))
           }
+          // Emit whenever a part fills, so `pending` never grows past one part.
+          if (pending.length >= RECORDS_PER_PART) flushPart(false)
         }
-        const buf = Buffer.from(lines.join('\n') + '\n')
-        pack.entry({ name: `records/${type}.ndjson`, size: buf.length }, buf)
+        flushPart(true)
       }
 
       // Add files

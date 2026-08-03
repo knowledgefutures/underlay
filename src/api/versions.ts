@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
+import { stream } from 'hono/streaming'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
@@ -504,6 +505,185 @@ const app = new Hono<AuthEnv>()
           total: await countVersionRecords(version, type, privateTypes),
         },
       })
+    },
+  )
+  // Stream every record in a version as NDJSON, in one request
+  .get(
+    '/:owner/:slug/versions/:n/records.ndjson',
+    openApi({
+      tags: ['Versions'],
+      summary: 'Stream all records in a version as NDJSON',
+      description:
+        'The bulk read path. Paging `/records` costs one round trip per page — 1,556 requests ' +
+        'for a 3.1M-record collection — purely to re-establish a cursor the server just had. ' +
+        'This streams the whole version in a single response, one JSON object per line, using a ' +
+        'server-side cursor: memory is constant on both ends regardless of collection size. ' +
+        'Records are ordered by id, and `?after=` resumes from the last id you saw, so a dropped ' +
+        'connection costs the remainder rather than the whole read. Compare the line count ' +
+        "against the version's `recordCount` to confirm you received all of it — a truncated " +
+        'stream cannot be signalled in the status code, which is already sent.',
+      request: { param: z.object({ owner: z.string(), slug: z.string(), n: z.string() }) },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { owner, slug, n } = c.req.valid('param')
+      const type = c.req.query('type')
+      const after = c.req.query('after')
+
+      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+
+      const { semver } = parseSemver(n)
+      const [version] = await db
+        .select({ id: schema.versions.id, recordCount: schema.versions.recordCount })
+        .from(schema.versions)
+        .where(
+          and(
+            eq(schema.versions.collectionId, collection.id),
+            eq(schema.versions.semver, semver),
+            eq(schema.versions.status, 'ready'),
+          ),
+        )
+        .limit(1)
+
+      if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
+
+      const ownerAccess = collection.ownerAccess
+      let privateTypes = new Set<string>()
+      let schemaEntries: SchemaEntry[] = []
+      if (!ownerAccess) {
+        schemaEntries = await loadVersionSchemas(version.id)
+        privateTypes = getPrivateTypes(schemaEntries)
+        if (type && privateTypes.has(type)) {
+          // Requesting a private type as a non-owner: an empty stream, not a 404,
+          // so callers iterating types don't have to special-case it.
+          c.header('Content-Type', 'application/x-ndjson')
+          return stream(c, async () => {})
+        }
+      }
+
+      // Private fields are resolved once per type rather than per record; at
+      // millions of rows the difference is not marginal.
+      const privateFieldsByType = new Map<string, Set<string>>()
+      for (const entry of schemaEntries) {
+        const fields = getPrivateFields(entry.schema)
+        if (fields.size > 0) privateFieldsByType.set(entry.slug, fields)
+      }
+
+      const client = db.$client
+      const privateTypeList = [...privateTypes]
+
+      // Hono's compress() middleware deliberately skips this response: its
+      // compressible-type list covers application/json and +json suffixes but
+      // not application/x-ndjson, and it bails on anything already marked
+      // Transfer-Encoding: chunked. Both are true here, so the route compresses
+      // itself — this is the response that benefits most, at roughly 3x.
+      const acceptsGzip = (c.req.header('Accept-Encoding') ?? '').includes('gzip')
+
+      const encoder = new TextEncoder()
+
+      // Read in keyset batches rather than one unbounded query.
+      //
+      // The obvious implementation — a single ORDER BY over the whole version,
+      // read through a cursor — does NOT stream. Postgres has to satisfy the
+      // sort before it can return the first row, and with no index supplying
+      // that order it sorts every row externally: on a 3.1M-record version that
+      // is ~3.5GB of temp files, ~46s before the first byte, and an ERROR 53100
+      // when temp space runs out. A client-side cursor bounds the client's
+      // memory, not the server's.
+      //
+      // Adding LIMIT changes the plan qualitatively. Bounded, Postgres walks
+      // (version_id, record_id) in index order and finishes with an incremental
+      // sort over each small group of equal record_ids — tens of kilobytes, in
+      // memory, no temp files. So this issues many bounded queries instead of
+      // one unbounded one: constant memory on both sides, first row in
+      // milliseconds, nothing spilled to disk.
+      const BATCH = 5_000
+      // record_id is not unique within a version (a record can appear under more
+      // than one hash), so the batch cursor is the (record_id, hash) pair.
+      // Advancing on record_id alone would drop or repeat rows whenever a
+      // duplicated id straddled a batch boundary.
+      let lastId: string | null = null
+      let lastHash: string | null = null
+
+      // `pull` rather than a loop in `start`: the stream produces a batch only
+      // when the consumer is ready for one, so a slow client throttles the reads
+      // instead of letting them pile up in memory.
+      const source = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            // The caller's `after` is an id: it resumes strictly past that id,
+            // the same semantics the paged endpoint uses. Continuation between
+            // batches is by the full pair, which is what keeps duplicate ids
+            // intact.
+            const keyset =
+              lastId !== null
+                ? client`AND (vr.record_id, vr.record_hash) > (${lastId}, ${lastHash})`
+                : after
+                  ? client`AND vr.record_id > ${after}`
+                  : client``
+
+            const rows = await client`
+              SELECT vr.record_id AS id, vr.type, vr.record_hash AS record_hash,
+                     ro.data,
+                     ${ownerAccess ? client`ro.hash` : client`coalesce(vr.public_record_hash, ro.hash)`} AS hash
+              FROM version_records vr
+              INNER JOIN record_objects ro ON ro.hash = vr.record_hash
+              WHERE vr.version_id = ${version.id}
+                ${type ? client`AND vr.type = ${type}` : client``}
+                ${keyset}
+                ${ownerAccess ? client`` : client`AND ro.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
+              ORDER BY vr.record_id, vr.record_hash
+              LIMIT ${BATCH}
+            `
+
+            if (rows.length === 0) {
+              controller.close()
+              return
+            }
+
+            let out = ''
+            for (const row of rows) {
+              const rowType = row['type'] as string
+              const privateFields = ownerAccess ? undefined : privateFieldsByType.get(rowType)
+              const data =
+                privateFields && privateFields.size > 0
+                  ? filterRecordData(row['data'], privateFields)
+                  : row['data']
+              out +=
+                JSON.stringify({ id: row['id'], type: rowType, data, hash: row['hash'] }) + '\n'
+            }
+            const tail = rows[rows.length - 1]!
+            lastId = tail['id'] as string
+            lastHash = tail['record_hash'] as string
+            // One enqueue per batch rather than per record: 3.1M individual
+            // writes spends more time in the stream machinery than in the
+            // database.
+            controller.enqueue(encoder.encode(out))
+            if (rows.length < BATCH) controller.close()
+          } catch (err) {
+            controller.error(err)
+          }
+        },
+      })
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-ndjson',
+        // Lets a client verify completeness without a second request.
+        'X-Underlay-Record-Count': String(version.recordCount),
+      }
+      if (acceptsGzip) headers['Content-Encoding'] = 'gzip'
+
+      // The DOM lib types CompressionStream's writable as BufferSource, which
+      // does not unify with ReadableStream<Uint8Array>; the pairing is correct at
+      // runtime.
+      const gzip = new CompressionStream('gzip') as unknown as ReadableWritablePair<
+        Uint8Array,
+        Uint8Array
+      >
+      const responseBody: ReadableStream = acceptsGzip ? source.pipeThrough(gzip) : source
+
+      return new Response(responseBody, { headers })
     },
   )
   // List files for a version
