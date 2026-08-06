@@ -240,13 +240,15 @@ const app = new Hono<AuthEnv>()
         .limit(Math.min(parseInt(limit ?? '50', 10), 100))
         .offset(parseInt(offset ?? '0', 10))
 
+      // `actorId` is owner-only here, matching latest/:n (sanitizeVersionForPublic).
+      // Without this the list endpoint leaked it while the detail endpoints hid it.
       return c.json(
         rows.map((row) => ({
           semver: row.semver,
           hash: ownerAccess ? row.hash : (row.publicHash ?? row.hash),
           message: row.message,
           appId: row.appId,
-          actorId: row.actorId,
+          ...(ownerAccess ? { actorId: row.actorId } : {}),
           recordCount: row.recordCount,
           fileCount: row.fileCount,
           totalBytes: row.totalBytes,
@@ -628,6 +630,31 @@ const app = new Hono<AuthEnv>()
       const client = db.$client
       const privateTypeList = [...privateTypes]
 
+      // The count a caller can actually verify against. `version.recordCount` is
+      // the version's full total, so for a non-owner reading a collection with
+      // private records or types the stream is legitimately shorter — and the
+      // documented "count the lines, resume if they differ" check would never
+      // terminate. Count what THIS caller will receive instead. One indexed
+      // count is negligible next to streaming the rows.
+      let streamedRecordCount = version.recordCount
+      if (!ownerAccess || type) {
+        const countConditions = [eq(schema.versionRecords.versionId, version.id)]
+        if (type) countConditions.push(eq(schema.versionRecords.type, type))
+        if (!ownerAccess) {
+          countConditions.push(eq(schema.versionRecords.private, false))
+          if (privateTypeList.length > 0) {
+            countConditions.push(
+              sql`${schema.versionRecords.type} <> ALL(${sql.param(privateTypeList)}::text[])`,
+            )
+          }
+        }
+        const [countRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(and(...countConditions))
+        streamedRecordCount = countRow?.n ?? 0
+      }
+
       // Hono's compress() middleware deliberately skips this response: its
       // compressible-type list covers application/json and +json suffixes but
       // not application/x-ndjson, and it bails on anything already marked
@@ -724,8 +751,10 @@ const app = new Hono<AuthEnv>()
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/x-ndjson',
-        // Lets a client verify completeness without a second request.
-        'X-Underlay-Record-Count': String(version.recordCount),
+        // Lets a client verify completeness without a second request. This is the
+        // count for THIS request (privacy-filtered, and `?type=`-scoped), so
+        // comparing it against the lines received is an exact check for everyone.
+        'X-Underlay-Record-Count': String(streamedRecordCount),
       }
       if (acceptsGzip) headers['Content-Encoding'] = 'gzip'
 

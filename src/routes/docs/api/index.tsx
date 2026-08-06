@@ -24,9 +24,19 @@ export default function DocsApi() {
 
       <h2>Authentication</h2>
       <p>
-        All <code>GET</code> requests are <strong>public</strong>; no authentication required to
-        read public data. All write requests (<code>POST</code>, <code>PATCH</code>,{' '}
-        <code>PUT</code>, <code>DELETE</code>) require authentication.
+        <code>GET</code> and <code>HEAD</code> requests need no authentication to read public data.
+        Writes (<code>POST</code>, <code>PATCH</code>, <code>PUT</code>, <code>DELETE</code>)
+        require authentication, with one exception: <code>POST .../files/presign</code> is a read in
+        POST clothing — the hash list is too long for a query string — and is reachable anonymously,
+        subject to the same per-file access check as the single-file <code>GET</code>.
+      </p>
+      <p>
+        A key may also be passed as <code>?token=</code> in the query string (this is how share and
+        agent links work). That form is honored on <code>GET</code>/<code>HEAD</code> only, so a
+        link prefetch can never drive a mutation; everything else must send an{' '}
+        <code>Authorization: Bearer</code> header. Unlike a Bearer token, an invalid or expired{' '}
+        <code>?token=</code> does not <code>401</code> — it falls through to anonymous access and
+        returns whatever is public.
       </p>
 
       <p>There are two authentication methods:</p>
@@ -56,7 +66,7 @@ export default function DocsApi() {
         enumerate other collections, and is treated as anonymous outside its scope.
       </p>
       <p>
-        Keys can optionally be scoped to a single collection. Create keys in your{' '}
+        Create keys in your{' '}
         <Link to="/settings" className="text-link underline">
           organization settings
         </Link>{' '}
@@ -146,13 +156,17 @@ export default function DocsApi() {
           <code>401</code>: Authentication required or invalid credentials
         </li>
         <li>
-          <code>403</code>: Insufficient permissions (wrong scope)
+          <code>403</code>: Insufficient permissions — wrong scope, an API key used outside the
+          collections it is scoped to, a collection-scoped key on an account/org endpoint, or a fork
+          of a collection whose private content you cannot see
         </li>
         <li>
-          <code>404</code>: Resource not found
+          <code>404</code>: Resource not found — <em>or</em> not visible to you. Private collections
+          and inaccessible files return 404 rather than 403, so a response cannot confirm they exist
         </li>
         <li>
-          <code>409</code>: Version conflict (re-fetch and retry)
+          <code>409</code>: Version conflict (re-fetch and retry), or duplicate content — both the{' '}
+          <code>private:</code> and <code>public:</code> digests match an existing version
         </li>
         <li>
           <code>413</code>: Payload too large (file upload exceeds size limit)

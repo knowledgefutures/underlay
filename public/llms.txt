@@ -496,8 +496,13 @@ Guarantees you can rely on:
 
 Verify completeness yourself. A stream that dies halfway cannot report an error: the 200
 status and headers were already sent. Count the lines and compare against
-X-Underlay-Record-Count (or the version's recordCount). If they differ, resume with
+X-Underlay-Record-Count. If they differ, resume with
 ?after=<id of the last complete line you parsed> rather than starting over.
+
+X-Underlay-Record-Count is the count for THIS request — privacy-filtered for your access
+level and scoped to ?type= if you passed one — so the comparison is exact for every caller.
+Do NOT compare against the version's `recordCount`: that is the full total and includes
+private records and private types you may not be receiving.
 
 That resume behaviour makes this strictly better than paging for bulk reads: the same
 recovery from a dropped connection, at a fraction of the requests.

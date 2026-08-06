@@ -565,8 +565,9 @@ export default function Protocol() {
               <li>
                 <strong>Completeness is the reader's to verify.</strong> A stream that fails partway
                 cannot say so — its <code>200</code> and headers left before the failure did.
-                <code>X-Underlay-Record-Count</code> states how many lines to expect; count them,
-                and resume from the last complete line with <code>?after=</code>.
+                <code>X-Underlay-Record-Count</code> states how many lines to expect — the count for
+                that request, privacy-filtered for the reader, so the check is exact at every access
+                level; count them, and resume from the last complete line with <code>?after=</code>.
               </li>
             </ul>
             <p>
@@ -717,11 +718,23 @@ export default function Protocol() {
                 <code>400</code> - Bad request (missing fields, invalid JSONL, hash mismatch)
               </li>
               <li>
+                <code>401</code> - Missing or invalid credentials
+              </li>
+              <li>
+                <code>403</code> - Authenticated, but not permitted: an API key used outside the
+                collections it is scoped to, or a fork of a collection whose private content the
+                caller cannot see
+              </li>
+              <li>
                 <code>404</code> - Collection, version, or record not found
               </li>
               <li>
-                <code>409</code> - Version conflict (base_version doesn't match) or duplicate
-                content
+                <code>409</code> - Version conflict (base_version doesn't match), or duplicate
+                content — both the <code>private:</code> and <code>public:</code> digests match an
+                existing version
+              </li>
+              <li>
+                <code>413</code> - File upload exceeds the instance's size limit
               </li>
               <li>
                 <code>422</code> - Schema validation failed, missing schemas/files, or records
@@ -731,7 +744,17 @@ export default function Protocol() {
               <li>
                 <code>429</code> - Rate limited (includes <code>Retry-After</code> header)
               </li>
+              <li>
+                <code>503</code> - Query timed out under load (includes <code>Retry-After</code>);
+                page large result sets with keyset pagination
+              </li>
             </ul>
+            <p>
+              Content the caller may not see returns <strong>404, not 403</strong> — private
+              collections and inaccessible files alike — so that a response cannot confirm their
+              existence. <code>403</code> is reserved for cases where the caller&rsquo;s identity is
+              already established as insufficient for a resource they can see.
+            </p>
           </RfcSection>
         </div>
 

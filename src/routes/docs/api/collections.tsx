@@ -74,7 +74,7 @@ const metadataReq = `{
 
 const metadataRes = `{
   "semver": "v3.2.1",
-  "hash": "e5f6a7b8...",
+  "hash": "private:e5f6a7b8...",
   "metadata": {
     "description": "Updated description of the archive",
     "readme": "# My Collection\\nNew readme content.",

@@ -40,7 +40,7 @@ const recordsRes = `{
 
 const commitRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
+  "hash": "private:a1b2c3d4...",
   "recordCount": 3,
   "fileCount": 1
 }`
@@ -93,7 +93,7 @@ const sessionPollRes = `{
 const listRes = `[
   {
     "semver": "v1.1.0",
-    "hash": "a1b2c3d4...",
+    "hash": "private:a1b2c3d4...",
     "message": "Add new publications",
     "appId": "pubpub-sync",
     "actorId": "user-42",
@@ -133,13 +133,13 @@ X-Underlay-Record-Count: 3113504
 
 const manifestRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
-  "schemas": {"Publication": "sha256:abc123..."},
+  "hash": "private:a1b2c3d4...",
+  "schemas": {"Publication": "abc123..."},
   "records": [
-    {"id": "pub-001", "type": "Publication", "hash": "sha256:def456..."},
-    {"id": "pub-002", "type": "Publication", "hash": "sha256:789abc..."}
+    {"id": "pub-001", "type": "Publication", "hash": "def456..."},
+    {"id": "pub-002", "type": "Publication", "hash": "789abc..."}
   ],
-  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."],
+  "files": ["a1b2c3...", "d4e5f6..."],
   "pagination": {
     "limit": 10000,
     "hasMore": true,
@@ -149,16 +149,16 @@ const manifestRes = `{
 
 const manifestDeltaRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
+  "hash": "private:a1b2c3d4...",
   "since": "v1.0.0",
-  "schemas": {"Publication": "sha256:abc123..."},
+  "schemas": {"Publication": "abc123..."},
   "delta": {
-    "added":   [{"id": "pub-003", "type": "Publication", "hash": "sha256:..."}],
-    "updated": [{"id": "pub-001", "type": "Publication", "hash": "sha256:...",
-                 "previousHash": "sha256:..."}],
-    "removed": [{"id": "pub-old", "type": "Publication", "hash": "sha256:..."}]
+    "added":   [{"id": "pub-003", "type": "Publication", "hash": "def456..."}],
+    "updated": [{"id": "pub-001", "type": "Publication", "hash": "def456...",
+                 "previousHash": "abc123..."}],
+    "removed": [{"id": "pub-old", "type": "Publication", "hash": "def456..."}]
   },
-  "files": ["sha256:a1b2c3..."],
+  "files": ["a1b2c3..."],
   "pagination": {
     "limit": 10000,
     "hasMore": false,
@@ -197,6 +197,13 @@ export default function DocsApiVersions() {
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
         schema + records + file references. Pushing a new version uses the{' '}
         <strong>negotiate protocol</strong>, a three-step flow similar to git's pack negotiation.
+      </p>
+      <p>
+        <strong>Version hashes are prefixed by form.</strong> Members of the owning org receive{' '}
+        <code>private:&lt;sha256&gt;</code>, the digest of the full content; everyone else receives{' '}
+        <code>public:&lt;sha256&gt;</code>, the digest of the privacy-filtered projection. They are
+        different values for the same version, and the prefix is how you tell which one you got.
+        Record, schema and file hashes are bare hex with no prefix.
       </p>
 
       <hr className="border-rule my-6" />
@@ -689,9 +696,13 @@ export default function DocsApiVersions() {
         <p>
           <strong>Check completeness yourself.</strong> A stream that fails partway cannot report
           it: the <code>200</code> and headers were sent before anything went wrong.{' '}
-          <code>X-Underlay-Record-Count</code> tells you how many lines to expect. If you receive
-          fewer, resume with <code>?after=</code> set to the id of the last complete line you parsed
-          — don't start over.
+          <code>X-Underlay-Record-Count</code> tells you how many lines to expect — the count for{' '}
+          <em>this</em> request, privacy-filtered for your access level and scoped to{' '}
+          <code>?type=</code> if you passed one, so the comparison is exact. (Don&rsquo;t compare
+          against the version&rsquo;s <code>recordCount</code>: that is the full total and counts
+          private records you may not be receiving.) If you receive fewer, resume with{' '}
+          <code>?after=</code> set to the id of the last complete line you parsed — don't start
+          over.
         </p>
         <p>
           A record id is not guaranteed unique within a version — the same id can appear under more
