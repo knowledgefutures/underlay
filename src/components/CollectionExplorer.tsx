@@ -119,9 +119,18 @@ export default function CollectionExplorer() {
     setLoading(false)
   }
 
+  // Mount-only by design: seed the list once from the URL-derived initial values.
+  // Every later fetch comes from an explicit user action (handleInput, the filter
+  // and sort handlers), never from this effect. The deps the rule asks for must NOT
+  // be added: `load` is a plain function declared in the component body, so it is a
+  // new reference every render, and depending on it would re-run this effect on
+  // each one — an endless refetch loop against /api/collections.
+  //
+  // The directive has to sit on the dependency-array line: oxlint reports this rule
+  // against the deps array, not the line its column points at (oxc-project/oxc#18328).
   useEffect(() => {
     load(initQuery, initOwner, initSortKey, initTag)
-  }, [])
+  }, []) // oxlint-disable-line react-hooks/exhaustive-deps
 
   function handleInput(value: string) {
     setQuery(value)
