@@ -72,6 +72,7 @@ services:
           "AUTH_INTERNAL_API_KEY=$$INTERNAL_KEY" \
           "DATABASE_URL=postgres://kfauth:kfauth@postgres:5432/app" \
           "S3_BUCKET=underlay" \
+          "S3_PUBLIC_BUCKET=underlaypublic" \
           "S3_REGION=us-east-1" \
           "S3_ENDPOINT=http://minio:9000" \
           "S3_ACCESS_KEY=$$MINIO_ACCESS" \
@@ -153,8 +154,15 @@ services:
       - |
         set -a && . /config/.env.minio && set +a
         mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        # Two buckets by design:
+        #   underlay       — PRIVATE. Collection files; every read goes through the
+        #                    API, which access-checks and then hands out a
+        #                    short-lived presigned URL. Never make this public.
+        #   underlaypublic — world-readable assets (org avatars) served directly.
         mc mb --ignore-existing local/underlay
-        echo "Bucket ready."
+        mc mb --ignore-existing local/underlaypublic
+        mc anonymous set download local/underlaypublic
+        echo "Buckets ready."
 
   # --- Auth server (kf-auth) ---
   auth:

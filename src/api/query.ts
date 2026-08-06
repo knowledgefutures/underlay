@@ -12,7 +12,7 @@ import {
   parseSemver,
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
-import { type AuthEnv } from './auth.server.js'
+import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
 
 // In-memory LRU cache: key = `${collectionId}:${semver}`, value = { buffer, expiresAt }
 const sqliteCache = new Map<
@@ -77,6 +77,7 @@ async function getOrBuildSqlite(
   slug: string,
   versionSemver: string,
   userId: string | undefined,
+  apiKeyCollectionIds?: string[],
 ) {
   const { semver: normalizedSemver } = parseSemver(versionSemver)
 
@@ -95,8 +96,10 @@ async function getOrBuildSqlite(
   if (!collection) return null
 
   // Access: private collections are only visible to org members; non-members of
-  // public collections get a privacy-filtered build
-  const ownerAccess = await hasOrgAccess(userId, collection.organizationId)
+  // public collections get a privacy-filtered build. A collection-scoped API
+  // key (share/agent link) only counts for the collections it is scoped to.
+  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
+  const ownerAccess = keyScopeOk && (await hasOrgAccess(userId, collection.organizationId))
   if (!collection.public && !ownerAccess) return null
 
   // Resolve version
@@ -158,10 +161,11 @@ async function getOrBuildSqlite(
     }
   }
 
-  // Load records (excluding private types and private records for non-owners)
+  // Load records (excluding private types and private records for non-owners).
+  // Record-level privacy is the per-version version_records.private flag.
   const recordConditions = [eq(schema.versionRecords.versionId, version.id)]
   if (!ownerAccess) {
-    recordConditions.push(eq(schema.recordObjects.private, false))
+    recordConditions.push(eq(schema.versionRecords.private, false))
     for (const pt of privateTypes) {
       recordConditions.push(ne(schema.recordObjects.type, pt))
     }
@@ -254,7 +258,13 @@ export async function sqlite(c: Context<AuthEnv>) {
   const versionSemver = c.req.param('version')!
   const { semver } = parseSemver(versionSemver)
 
-  const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
+  const result = await getOrBuildSqlite(
+    owner,
+    slug,
+    versionSemver,
+    c.get('userId'),
+    c.get('apiKeyCollectionIds'),
+  )
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
   if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
@@ -274,7 +284,13 @@ export async function ddl(c: Context<AuthEnv>) {
   const slug = c.req.param('slug')!
   const versionSemver = c.req.param('version')!
 
-  const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
+  const result = await getOrBuildSqlite(
+    owner,
+    slug,
+    versionSemver,
+    c.get('userId'),
+    c.get('apiKeyCollectionIds'),
+  )
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
   if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
@@ -284,10 +300,16 @@ export async function ddl(c: Context<AuthEnv>) {
 // POST /query/generate-sql — LLM-powered SQL generation from natural language
 export async function generateSql(c: Context<AuthEnv>) {
   // Public endpoint that spends Cloudflare AI credits — rate-limit per user/IP
-  const ip =
-    c.req.header('cf-connecting-ip') ??
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
-    'unknown'
+  // Prefer cf-connecting-ip (unforgeable behind Cloudflare); the RIGHTMOST
+  // X-Forwarded-For hop is the proxy-observed address, unlike the client-set
+  // leftmost one.
+  const xffParts =
+    c.req
+      .header('x-forwarded-for')
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean) ?? []
+  const ip = c.req.header('cf-connecting-ip') ?? xffParts[xffParts.length - 1] ?? 'unknown'
   const rateKey = c.get('userId') ?? `ip:${ip}`
   if (!checkRateLimit(rateKey)) {
     return c.json({ error: 'Rate limit exceeded — try again in a minute', statusCode: 429 }, 429)
@@ -318,7 +340,13 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   if (collectionRefs.length === 1) {
     const ref = collectionRefs[0]
-    const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version, c.get('userId'))
+    const result = await getOrBuildSqlite(
+      ref.owner,
+      ref.slug,
+      ref.version,
+      c.get('userId'),
+      c.get('apiKeyCollectionIds'),
+    )
     if (!result)
       return c.json(
         { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found`, statusCode: 404 },
@@ -330,7 +358,13 @@ export async function generateSql(c: Context<AuthEnv>) {
   } else {
     const parts: string[] = []
     for (const ref of collectionRefs) {
-      const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version, c.get('userId'))
+      const result = await getOrBuildSqlite(
+        ref.owner,
+        ref.slug,
+        ref.version,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!result)
         return c.json(
           { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found` },
@@ -464,7 +498,8 @@ export async function searchCollections(c: Context<AuthEnv>) {
   if (!q || q.trim().length < 2) return c.json([])
 
   const term = `%${q.trim()}%`
-  const userId = c.get('userId')
+  // A collection-scoped key must not surface the creator's private collections.
+  const userId = fullPrincipalUserId(c)
 
   // Build accessible org IDs (user's own + orgs they belong to)
   let accessibleAccountIds: string[] = []

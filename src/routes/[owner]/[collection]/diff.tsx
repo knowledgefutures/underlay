@@ -3,6 +3,7 @@ import { useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
+import { useShareToken, withToken } from '~/lib/share-token'
 
 import { CollectionNav } from '.'
 
@@ -23,6 +24,7 @@ export default function CollectionDiffPage() {
 
   const isOwner =
     currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const shareToken = useShareToken()
 
   const [diff, setDiff] = useState<any>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
@@ -39,9 +41,13 @@ export default function CollectionDiffPage() {
     setDiffError(null)
 
     const fromParam = fromVer ? `?from=${fromVer}` : ''
-    fetch(`/api/collections/${owner}/${collection}/versions/${toVer}/diff${fromParam}`, {
-      credentials: 'include',
-    })
+    fetch(
+      withToken(
+        `/api/collections/${owner}/${collection}/versions/${toVer}/diff${fromParam}`,
+        shareToken,
+      ),
+      { credentials: 'include' },
+    )
       .then(async (r) => {
         if (r.ok) {
           setDiff(await r.json())
@@ -51,7 +57,7 @@ export default function CollectionDiffPage() {
         }
       })
       .finally(() => setDiffLoading(false))
-  }, [fromVer, toVer, owner, collection])
+  }, [fromVer, toVer, owner, collection, shareToken])
 
   function handleCompare(e: React.FormEvent) {
     e.preventDefault()
@@ -63,6 +69,7 @@ export default function CollectionDiffPage() {
     setToVer(t)
     const params: Record<string, string> = { to: t }
     if (f) params.from = f
+    if (shareToken) params.token = shareToken
     setSearchParams(params)
   }
 

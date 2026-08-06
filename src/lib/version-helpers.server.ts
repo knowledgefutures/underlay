@@ -63,11 +63,16 @@ export async function resolveCollection(owner: string, slug: string) {
  * Returns null when the collection doesn't exist OR is private and the caller
  * isn't an org member — indistinguishable to the caller (404 either way).
  * `ownerAccess` is true when the caller is a member of the owning org.
+ *
+ * When the request authenticated with a collection-scoped API key (share/agent
+ * links), pass `apiKeyCollectionIds` — the key's identity only counts for the
+ * collections it is scoped to; anything else is treated as anonymous.
  */
 export async function resolveAccessibleCollection(
   owner: string,
   slug: string,
   userId: string | undefined,
+  apiKeyCollectionIds?: string[],
 ) {
   const [result] = await db
     .select({
@@ -81,7 +86,8 @@ export async function resolveAccessibleCollection(
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   if (!result) return null
-  const ownerAccess = await hasOrgAccess(userId, result.organizationId)
+  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(result.id)
+  const ownerAccess = keyScopeOk && (await hasOrgAccess(userId, result.organizationId))
   if (!result.public && !ownerAccess) return null
   return { ...result, ownerAccess }
 }

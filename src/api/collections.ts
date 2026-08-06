@@ -10,9 +10,18 @@ import { z } from 'zod'
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
 import { downloadFromS3 } from '../lib/s3.js'
-import { getLatestReadyVersion, getOrgRole, hasOrgAccess } from '../lib/version-helpers.server.js'
+import {
+  filterRecordData,
+  filterTypeSchema,
+  getLatestReadyVersion,
+  getOrgRole,
+  getPrivateFields,
+  getPrivateTypes,
+  hasOrgAccess,
+  loadVersionSchemas,
+} from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
-import { requireAuth } from './auth.server.js'
+import { fullPrincipalUserId, requireAuth, requireUnscopedKey } from './auth.server.js'
 
 // Export streams in bounded parts, so this is no longer a memory limit — it is a
 // guard against handing someone a multi-GB tarball from a single GET. Bulk reads
@@ -44,7 +53,10 @@ const app = new Hono<AuthEnv>()
       // Visibility scope. Public collections by default; with ?mine=true, every
       // collection owned by an org the caller belongs to — private ones included,
       // since org membership is what grants access elsewhere (hasOrgAccess).
-      if (mine && !c.get('userId')) {
+      // A collection-scoped key (share/agent link) is not "you" for this
+      // listing, so it does not unlock the creator's private collections.
+      const listingUserId = fullPrincipalUserId(c)
+      if (mine && !listingUserId) {
         return c.json(
           { error: 'Unauthorized — mine=true requires a session', statusCode: 401 },
           401,
@@ -56,7 +68,7 @@ const app = new Hono<AuthEnv>()
             db
               .select({ id: schema.member.organizationId })
               .from(schema.member)
-              .where(eq(schema.member.userId, c.get('userId')!)),
+              .where(eq(schema.member.userId, listingUserId!)),
           )
         : eq(schema.collections.public, true)
 
@@ -231,6 +243,7 @@ const app = new Hono<AuthEnv>()
   .post(
     '/accounts/:owner/collections',
     requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Collections'],
       summary: 'Create a collection',
@@ -356,9 +369,14 @@ const app = new Hono<AuthEnv>()
           return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
         }
 
+        // A collection-scoped API key (share/agent link) only grants access to
+        // the collections it is scoped to.
+        const scopedCollections = c.get('apiKeyCollectionIds')
+        const keyScopeOk = !scopedCollections || scopedCollections.includes(result.id)
+
         const userId = c.get('userId')
         let hasAccess = false
-        if (userId) {
+        if (userId && keyScopeOk) {
           const [membership] = await db
             .select()
             .from(schema.member)
@@ -594,7 +612,8 @@ const app = new Hono<AuthEnv>()
   // Transfer collection to another org
   .post(
     '/collections/:owner/:slug/transfer',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Collections'],
       summary: 'Transfer a collection to another org',
@@ -726,9 +745,10 @@ const app = new Hono<AuthEnv>()
 
       if (!org) return c.json([])
 
-      // Check if the requester is an org member
+      // Check if the requester is an org member. A collection-scoped key does
+      // not count — it must not enumerate the org's private collections.
       let hasFullAccess = false
-      const userId = c.get('userId')
+      const userId = fullPrincipalUserId(c)
       if (userId) {
         const [membership] = await db
           .select()
@@ -793,11 +813,14 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
-      if (!collection.public) {
-        const userId = c.get('userId')
-        if (!userId || !(await hasOrgAccess(userId, collection.organizationId))) {
-          return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-        }
+      // A member of the owning org (and not scoped out by a collection-scoped
+      // key) gets the full export; everyone else gets the privacy-filtered view.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
+      const ownerAccess =
+        keyScopeOk && (await hasOrgAccess(c.get('userId'), collection.organizationId))
+      if (!collection.public && !ownerAccess) {
+        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
       // Resolve version (latest if not specified)
@@ -865,7 +888,25 @@ const app = new Hono<AuthEnv>()
         .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
         .where(eq(schema.versionSchemas.versionId, version.id))
 
-      const schemasMap = Object.fromEntries(versionSchemaEntries.map((e) => [e.slug, e.schemaBody]))
+      // Private types are dropped and private fields stripped for non-owners.
+      const privateTypes = new Set(
+        versionSchemaEntries
+          .filter((e) => (e.schemaBody as any)?.private === true)
+          .map((e) => e.slug),
+      )
+      const privateFieldsByType = new Map<string, Set<string>>()
+      for (const e of versionSchemaEntries) {
+        privateFieldsByType.set(e.slug, getPrivateFields(e.schemaBody as Record<string, unknown>))
+      }
+
+      const schemasMap = Object.fromEntries(
+        versionSchemaEntries
+          .filter((e) => ownerAccess || !privateTypes.has(e.slug))
+          .map((e) => [
+            e.slug,
+            ownerAccess ? e.schemaBody : filterTypeSchema(e.schemaBody as Record<string, unknown>),
+          ]),
+      )
 
       // Build manifest.json (packed last, so it can report any files that
       // failed to download)
@@ -879,8 +920,13 @@ const app = new Hono<AuthEnv>()
         },
         version: {
           semver: version.semver,
-          hash: version.hash,
+          // Non-owners get the public version digest, never the private one.
+          hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
           message: version.message,
+          // For non-owners these are overwritten below with what the archive
+          // actually contains; the version row's totals count private content
+          // that was filtered out, so reporting them verbatim would both
+          // contradict the tarball and disclose how much is hidden.
           recordCount: version.recordCount,
           fileCount: version.fileCount,
           totalBytes: version.totalBytes,
@@ -915,7 +961,30 @@ const app = new Hono<AuthEnv>()
       // one part regardless of collection size.
       const RECORDS_PER_PART = 25_000
 
+      // For non-owners, only files referenced by the (privacy-filtered) records
+      // that actually ship may be included — a file attached solely to a private
+      // record or private field must not leak.
+      let emittedRecordCount = 0
+      const referencedFileHashes = new Set<string>()
+      // Walks nested objects and arrays: `$file` refs are not restricted to the
+      // top level (nothing in schema validation forbids nesting), and a missed
+      // ref would silently drop a legitimately-public file from the archive.
+      const collectFileRefs = (value: unknown) => {
+        if (!value || typeof value !== 'object') return
+        const ref = (value as { $file?: unknown }).$file
+        if (typeof ref === 'string') {
+          referencedFileHashes.add(ref.replace('sha256:', ''))
+          return
+        }
+        for (const child of Object.values(value as Record<string, unknown>)) {
+          collectFileRefs(child)
+        }
+      }
+
       for (const { type } of types) {
+        // Non-owners never see private types.
+        if (!ownerAccess && privateTypes.has(type)) continue
+        const privateFields = privateFieldsByType.get(type) ?? new Set<string>()
         let batchCursor: string | null = null
         let batchHasMore = true
         let partIndex = 0
@@ -940,6 +1009,10 @@ const app = new Hono<AuthEnv>()
             eq(schema.versionRecords.versionId, version.id),
             eq(schema.versionRecords.type, type),
           ]
+          // Non-owners never see records flagged private (per-version flag).
+          if (!ownerAccess) {
+            conditions.push(eq(schema.versionRecords.private, false))
+          }
           if (batchCursor) {
             conditions.push(sql`${schema.versionRecords.recordId} > ${batchCursor}`)
           }
@@ -962,7 +1035,13 @@ const app = new Hono<AuthEnv>()
           const page = batchHasMore ? batch.slice(0, 5000) : batch
           if (page.length > 0) batchCursor = page[page.length - 1]!.recordId
           for (const r of page) {
-            pending.push(JSON.stringify({ id: r.recordId, type: r.type, data: r.data }))
+            const data =
+              !ownerAccess && privateFields.size > 0
+                ? filterRecordData(r.data, privateFields)
+                : r.data
+            if (!ownerAccess) collectFileRefs(data)
+            emittedRecordCount++
+            pending.push(JSON.stringify({ id: r.recordId, type: r.type, data }))
           }
           // Emit whenever a part fills, so `pending` never grows past one part.
           if (pending.length >= RECORDS_PER_PART) flushPart(false)
@@ -971,14 +1050,27 @@ const app = new Hono<AuthEnv>()
       }
 
       // Add files
+      let emittedFileCount = 0
+      let emittedFileBytes = 0
       for (const file of versionFiles) {
+        if (!ownerAccess && !referencedFileHashes.has(file.hash)) continue
         try {
           const fileBuffer = await downloadFromS3(file.storageKey)
           pack.entry({ name: `files/${file.hash}`, size: fileBuffer.length }, fileBuffer)
+          emittedFileCount++
+          emittedFileBytes += fileBuffer.length
         } catch (err) {
           console.error(`[export] Failed to download file ${file.hash} (${file.storageKey}):`, err)
           manifest.files_missing.push(file.hash)
         }
+      }
+
+      // Report what the archive actually contains, so a non-owner's manifest
+      // matches its payload instead of the owner's (larger) totals.
+      if (!ownerAccess) {
+        manifest.version.recordCount = emittedRecordCount
+        manifest.version.fileCount = emittedFileCount
+        manifest.version.totalBytes = emittedFileBytes
       }
 
       const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
@@ -1012,6 +1104,7 @@ const app = new Hono<AuthEnv>()
   .post(
     '/collections/:owner/:slug/fork',
     requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Collections'],
       summary: "Fork a collection into the caller's org",
@@ -1101,6 +1194,53 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)
       }
 
+      // A fork copies `version_records` rows verbatim, and those point at the
+      // FULL `record_objects` bodies. The forker owns the copy, so they get
+      // owner-level access to it — which would hand a non-member every piece of
+      // private content in a public collection: private records, private types,
+      // and private field values inside otherwise-public records.
+      //
+      // Serving a redacted fork would mean materializing the filtered record
+      // bodies (only their hashes exist today, as `public_record_hash`), which
+      // this endpoint does not do. So for a caller who cannot already see the
+      // source in full, refuse rather than leak. The three conditions below are
+      // exactly "nothing is filtered for a non-owner of the source".
+      const sourceOwnerAccess = await hasOrgAccess(c.get('userId'), source.organizationId)
+      if (!sourceOwnerAccess) {
+        const [privateRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, latestVersion.id),
+              eq(schema.versionRecords.private, true),
+            ),
+          )
+        const [strippedRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, latestVersion.id),
+              sql`${schema.versionRecords.publicRecordHash} IS NOT NULL`,
+            ),
+          )
+        const hasPrivateType = getPrivateTypes(await loadVersionSchemas(latestVersion.id)).size > 0
+
+        if ((privateRow?.n ?? 0) > 0 || (strippedRow?.n ?? 0) > 0 || hasPrivateType) {
+          return c.json(
+            {
+              error:
+                'This collection contains private content, so it cannot be forked by a ' +
+                'non-member. Forking copies the full record bodies, which would expose ' +
+                'private records, private types, or private fields.',
+              statusCode: 403,
+            },
+            403,
+          )
+        }
+      }
+
       // Create forked collection + version in a transaction
       const newCollectionId = uuidv4()
       await db.transaction(async (tx) => {
@@ -1138,8 +1278,8 @@ const app = new Hono<AuthEnv>()
         // Copy the record set server-side. A fork of a multi-million-record
         // collection has no reason to round-trip every row through the app.
         await tx.execute(sql`
-          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
-          SELECT ${newVersion!.id}, record_hash, public_record_hash, record_id, type
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
+          SELECT ${newVersion!.id}, record_hash, public_record_hash, record_id, type, private
           FROM version_records
           WHERE version_id = ${latestVersion.id}
         `)

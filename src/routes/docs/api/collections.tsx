@@ -74,7 +74,7 @@ const metadataReq = `{
 
 const metadataRes = `{
   "semver": "v3.2.1",
-  "hash": "e5f6a7b8...",
+  "hash": "private:e5f6a7b8...",
   "metadata": {
     "description": "Updated description of the archive",
     "readme": "# My Collection\\nNew readme content.",
@@ -205,7 +205,7 @@ export default function DocsApiCollections() {
 
       <div className="endpoint">
         <h2>DELETE /api/collections/:owner/:slug</h2>
-        <p className="scope">Auth: admin scope</p>
+        <p className="scope">Auth: write scope + owner/admin role in the owning org</p>
         <p>
           Delete a collection and all its versions, records, and file references. Files themselves
           are not deleted (they may be referenced by other collections).
@@ -310,6 +310,13 @@ export default function DocsApiCollections() {
           target org with the source's latest version. Records, schemas, and files are referenced
           (not copied); zero additional storage.
         </p>
+        <p>
+          Only <strong>fully-public</strong> collections can be forked by a non-member. A fork
+          copies the full record bodies by reference and gives the forker owner-level access to
+          them, so if you are not a member of the source org and the source holds any private
+          content — private records, private types, or private fields — the request is refused with{' '}
+          <code>403</code> rather than leaked. Members of the source org can always fork.
+        </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{forkReq}</code>
@@ -345,6 +352,15 @@ export default function DocsApiCollections() {
         <h3>Errors</h3>
         <table>
           <tbody>
+            <tr>
+              <td>
+                <code>403</code>
+              </td>
+              <td>
+                Not a member of the target org; or the source holds private content and you are not
+                a member of the source org; or your API key is scoped to specific collections.
+              </td>
+            </tr>
             <tr>
               <td>
                 <code>404</code>

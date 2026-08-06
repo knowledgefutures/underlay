@@ -135,9 +135,10 @@ export default function DocsConcepts() {
         </li>
       </ul>
       <p>
-        Both can own collections. API keys are scoped to an account and optionally to a specific
-        collection, with permission levels: <code>read</code>, <code>write</code>, or{' '}
-        <code>admin</code>.
+        Both can own collections. API keys are scoped to an account and optionally to specific
+        collections, with permission levels <code>read</code> or <code>write</code> (
+        <code>admin</code> is not grantable through the API). A collection-scoped key is confined to
+        those collections and is refused on account and organization endpoints.
       </p>
 
       <h2>Privacy &amp; Visibility</h2>
@@ -168,8 +169,31 @@ export default function DocsConcepts() {
 
       <h3>Record-level</h3>
       <p>
-        Mark individual records as private by including <code>"private": true</code> in the record
-        when pushing. The record is hidden from public queries but visible to the collection owner.
+        Mark an individual record private by setting <code>"private": true</code> on its{' '}
+        <strong>manifest entry</strong> in the negotiate request — not in the record body, which is
+        hashed as <code>{'{id, type, data}'}</code> and would reject the extra key:
+      </p>
+      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <code>
+          {'{"id": "pub-001", "type": "Publication", "hash": "abc123…", "private": true}'}
+        </code>
+      </pre>
+      <p>
+        The record is dropped entirely from listings, manifests, diffs, exports and the NDJSON
+        stream for non-owners; members of the owning org still see it.
+      </p>
+      <p>
+        <strong>Privacy is recorded per version and must be re-declared on every push.</strong> The
+        flag lives on that version&rsquo;s reference to the record, not on the record itself — so
+        omitting it means public, and re-pushing a record without the flag republishes it. Read the
+        current flags back from <code>GET .../versions/:semver/manifest</code>, which echoes{' '}
+        <code>private</code> on the entries that carry it.
+      </p>
+      <p>
+        Redaction is <strong>forward-only</strong>: marking a record private in v2 hides it in v2
+        only. v1 is immutable and still serves it. Because file access resolves across every ready
+        version, a file referenced publicly in v1 also stays downloadable after the referencing
+        record is redacted in v2.
       </p>
 
       <p>

@@ -3,6 +3,7 @@ import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
+import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
 import { CollectionNav, formatBytes } from '..'
 
@@ -14,6 +15,7 @@ export default function CollectionVersionPage() {
 
   const isOwner =
     currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const shareToken = useShareToken()
 
   const readmeSource = (version.metadata as Record<string, unknown> | null | undefined)?.readme as
     | string
@@ -57,7 +59,10 @@ export default function CollectionVersionPage() {
 
     const offset = (page - 1) * pageSize
     fetch(
-      `/api/collections/${owner}/${collection}/versions/${n}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`,
+      withToken(
+        `/api/collections/${owner}/${collection}/versions/${n}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`,
+        shareToken,
+      ),
       { credentials: 'include' },
     )
       .then((r) => (r.ok ? r.json() : { records: [], pagination: {} }))
@@ -65,18 +70,18 @@ export default function CollectionVersionPage() {
         setRecords(body.records ?? body)
         setTotalRecords(body.pagination?.total ?? version.recordCount ?? 0)
       })
-  }, [version, tab, currentType, page, owner, collection, n])
+  }, [version, tab, currentType, page, owner, collection, n, shareToken])
 
   // Fetch files when files tab selected
   useEffect(() => {
     if (!version || tab !== 'files') return
 
-    fetch(`/api/collections/${owner}/${collection}/versions/${n}/files`, {
+    fetch(withToken(`/api/collections/${owner}/${collection}/versions/${n}/files`, shareToken), {
       credentials: 'include',
     })
       .then((r) => (r.ok ? r.json() : []))
       .then(setFiles)
-  }, [version, tab, owner, collection, n])
+  }, [version, tab, owner, collection, n, shareToken])
 
   const currentTypeFields: string[] = currentType
     ? schemasMap[currentType]?.properties
@@ -115,6 +120,7 @@ export default function CollectionVersionPage() {
     if (extra) {
       for (const [k, v] of Object.entries(extra)) params.set(k, v)
     }
+    if (shareToken) params.set('token', shareToken)
     setSearchParams(params)
   }
 
@@ -232,7 +238,7 @@ export default function CollectionVersionPage() {
                 Types
               </h3>
               {allTypes.map((t) => (
-                <Link
+                <TokenLink
                   key={t}
                   to={`/${owner}/${collection}/v/${n}?type=${t}`}
                   className={`block rounded px-3 py-1.5 text-sm transition-colors ${
@@ -242,7 +248,7 @@ export default function CollectionVersionPage() {
                   }`}
                 >
                   {t}
-                </Link>
+                </TokenLink>
               ))}
             </nav>
 
@@ -277,16 +283,19 @@ export default function CollectionVersionPage() {
                               const val = r.data?.[f]
                               if (val && typeof val === 'object' && '$file' in val) {
                                 const hash = ((val as any).$file as string).replace('sha256:', '')
-                                const fileUrl = `https://assets.underlay.org/files/${hash.slice(0, 2)}/${hash.slice(
-                                  2,
-                                  4,
-                                )}/${hash}`
+                                // Route through the API so access is checked and
+                                // a presigned URL is minted (files are private).
+                                const fileUrl = withToken(
+                                  `/api/collections/${owner}/${collection}/files/${hash}`,
+                                  shareToken,
+                                )
                                 const label = f === 'pdf' ? 'PDF' : 'File'
                                 return (
                                   <td key={f} className="p-2">
-                                    <Link
-                                      to={fileUrl}
+                                    <a
+                                      href={fileUrl}
                                       target="_blank"
+                                      rel="noopener noreferrer"
                                       className="text-link inline-flex items-center gap-1 hover:underline"
                                     >
                                       <svg
@@ -303,7 +312,7 @@ export default function CollectionVersionPage() {
                                         />
                                       </svg>
                                       {label}
-                                    </Link>
+                                    </a>
                                   </td>
                                 )
                               }
@@ -380,15 +389,15 @@ export default function CollectionVersionPage() {
                       </span>
                       <div className="flex items-center gap-1">
                         {page > 1 && (
-                          <Link
+                          <TokenLink
                             to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page - 1}`}
                             className="border-rule hover:bg-parchment-dark rounded border px-2 py-1"
                           >
                             ← Prev
-                          </Link>
+                          </TokenLink>
                         )}
                         {pageNumbers.map((p) => (
-                          <Link
+                          <TokenLink
                             key={p}
                             to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${p}`}
                             className={
@@ -398,15 +407,15 @@ export default function CollectionVersionPage() {
                             }
                           >
                             {p}
-                          </Link>
+                          </TokenLink>
                         ))}
                         {page < totalPages && (
-                          <Link
+                          <TokenLink
                             to={`/${owner}/${collection}/v/${n}?type=${currentType}&page=${page + 1}`}
                             className="border-rule hover:bg-parchment-dark rounded border px-2 py-1"
                           >
                             Next →
-                          </Link>
+                          </TokenLink>
                         )}
                       </div>
                     </nav>
@@ -518,7 +527,7 @@ export default function CollectionVersionPage() {
                               {refs.length > 0 ? (
                                 <div className="flex flex-wrap gap-1">
                                   {refs.slice(0, 3).map((ref: any, idx: number) => (
-                                    <Link
+                                    <TokenLink
                                       key={idx}
                                       to={`/${owner}/${collection}/v/${n}?type=${ref.type}`}
                                       className="bg-parchment-dark border-rule hover:border-ink-muted inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
@@ -529,7 +538,7 @@ export default function CollectionVersionPage() {
                                           ? ref.recordId.slice(0, 20) + '…'
                                           : ref.recordId}
                                       </span>
-                                    </Link>
+                                    </TokenLink>
                                   ))}
                                   {refs.length > 3 && (
                                     <span className="text-ink-muted px-1.5 py-0.5 text-[11px]">
@@ -546,11 +555,12 @@ export default function CollectionVersionPage() {
                             </td>
                             <td className="p-2.5 text-right">
                               <a
-                                href={`https://assets.underlay.org/files/${f.hash.slice(0, 2)}/${f.hash.slice(
-                                  2,
-                                  4,
-                                )}/${f.hash}`}
+                                href={withToken(
+                                  `/api/collections/${owner}/${collection}/files/${f.hash}`,
+                                  shareToken,
+                                )}
                                 target="_blank"
+                                rel="noopener noreferrer"
                                 className="text-link hover:underline"
                               >
                                 <svg
@@ -646,12 +656,12 @@ export default function CollectionVersionPage() {
                   <tr className="border-rule border-b">
                     <td className="text-ink-muted py-3 pr-6 font-medium">Base version</td>
                     <td className="py-3">
-                      <Link
+                      <TokenLink
                         to={`/${owner}/${collection}/v/${version.baseSemver}`}
                         className="text-link hover:underline"
                       >
                         {version.baseSemver}
-                      </Link>
+                      </TokenLink>
                     </td>
                   </tr>
                 )}

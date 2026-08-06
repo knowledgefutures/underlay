@@ -4,13 +4,13 @@ import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
-import { deleteS3Objects, listS3Objects, uploadToS3 } from '../lib/s3.js'
+import { deletePublicAssets, listPublicAssets, uploadPublicAsset } from '../lib/s3.js'
 import type { AuthEnv } from './auth.server.js'
-import { requireAuth } from './auth.server.js'
+import { requireAuth, requireUnscopedKey } from './auth.server.js'
 
 const ASSETS_BASE_URL = process.env.ASSETS_BASE_URL ?? 'https://assets.underlay.org'
 
-const RESERVED_SLUGS = new Set([
+export const RESERVED_SLUGS = new Set([
   'explore',
   'docs',
   'connect',
@@ -75,6 +75,7 @@ const app = new Hono<AuthEnv>()
   .get(
     '/me',
     requireAuth(),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Get current user profile',
@@ -116,6 +117,7 @@ const app = new Hono<AuthEnv>()
   .get(
     '/available-kf-orgs',
     requireAuth(),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'List KF orgs available to link',
@@ -199,7 +201,8 @@ const app = new Hono<AuthEnv>()
   )
   .patch(
     '/me',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Update own profile',
@@ -256,7 +259,8 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     '/:slug/avatar',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Upload organization avatar',
@@ -297,7 +301,7 @@ const app = new Hono<AuthEnv>()
       const ext = file.type.split('/')[1] === 'jpeg' ? 'jpg' : file.type.split('/')[1]
       const key = `avatars/${org.id}/${Date.now()}.${ext}`
 
-      await uploadToS3(key, buffer, file.type)
+      await uploadPublicAsset(key, buffer, file.type)
 
       await db
         .update(schema.organization)
@@ -309,7 +313,8 @@ const app = new Hono<AuthEnv>()
   )
   .delete(
     '/me',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Delete own account',
@@ -334,8 +339,8 @@ const app = new Hono<AuthEnv>()
       }
 
       try {
-        const avatarKeys = await listS3Objects(`avatars/${defaultOrg.id}/`)
-        if (avatarKeys.length > 0) await deleteS3Objects(avatarKeys)
+        const avatarKeys = await listPublicAssets(`avatars/${defaultOrg.id}/`)
+        if (avatarKeys.length > 0) await deletePublicAssets(avatarKeys)
       } catch (err) {
         // Non-fatal — orphaned avatars are harmless
         console.error(`[accounts] Failed to delete avatars for org ${defaultOrg.id}:`, err)
@@ -354,7 +359,8 @@ const app = new Hono<AuthEnv>()
   )
   .patch(
     '/:slug',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Update an organization by slug',
@@ -395,6 +401,21 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      // kfOrgId links this org to a Knowledge Futures org and is trusted by the
+      // service-to-service summary endpoint, so a caller may only set one they
+      // are actually entitled to — otherwise any owner could claim another
+      // institution's identity.
+      if (kfOrgId !== undefined && kfOrgId !== null && kfOrgId !== '') {
+        const { resolveUserKfOrgs } = await import('../lib/auth-internal.server.js')
+        const allowed = await resolveUserKfOrgs(userId, db, schema)
+        if (!allowed.some((o: { id: string }) => o.id === kfOrgId)) {
+          return c.json(
+            { error: 'You are not a member of that KF organization', statusCode: 403 },
+            403,
+          )
+        }
+      }
+
       const updates: Record<string, any> = {}
       if (slug !== undefined) updates.slug = slug
       if (displayName !== undefined) updates.name = displayName
@@ -412,7 +433,8 @@ const app = new Hono<AuthEnv>()
   )
   .delete(
     '/:slug',
-    requireAuth(),
+    requireAuth('write'),
+    requireUnscopedKey(),
     openApi({
       tags: ['Accounts'],
       summary: 'Delete an organization by slug',
@@ -434,8 +456,8 @@ const app = new Hono<AuthEnv>()
       }
 
       try {
-        const avatarKeys = await listS3Objects(`avatars/${org.id}/`)
-        if (avatarKeys.length > 0) await deleteS3Objects(avatarKeys)
+        const avatarKeys = await listPublicAssets(`avatars/${org.id}/`)
+        if (avatarKeys.length > 0) await deletePublicAssets(avatarKeys)
       } catch (err) {
         // Non-fatal — orphaned avatars are harmless
         console.error(`[accounts] Failed to delete avatars for org ${org.id}:`, err)

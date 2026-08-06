@@ -1,0 +1,2 @@
+ALTER TABLE "versions" DROP CONSTRAINT "versions_collection_id_hash_unique";--> statement-breakpoint
+ALTER TABLE "versions" ADD CONSTRAINT "versions_collection_id_hash_public_hash_unique" UNIQUE("collection_id","hash","public_hash");

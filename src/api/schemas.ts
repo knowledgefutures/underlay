@@ -4,9 +4,9 @@ import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
-import { hasOrgAccess } from '../lib/version-helpers.server.js'
+import { filterTypeSchema, hashSchema, hasOrgAccess } from '../lib/version-helpers.server.js'
 import type { AuthEnv } from './auth.server.js'
-import { requireAuth } from './auth.server.js'
+import { fullPrincipalUserId, requireAuth } from './auth.server.js'
 
 async function getUsageCount(schemaId: string): Promise<number> {
   const [result] = await db
@@ -61,7 +61,7 @@ const app = new Hono<AuthEnv>()
       const pageLimit = Math.min(parseInt(limit ?? '50', 10), 100)
       const pageOffset = parseInt(offset ?? '0', 10)
 
-      const visible = visibleSchemaCondition(c.get('userId'))
+      const visible = visibleSchemaCondition(fullPrincipalUserId(c))
 
       if (schema_hash) {
         const [row] = await db
@@ -242,7 +242,7 @@ const app = new Hono<AuthEnv>()
       const [row] = await db
         .select()
         .from(schema.schemas)
-        .where(and(eq(schema.schemas.id, id), visibleSchemaCondition(c.get('userId'))))
+        .where(and(eq(schema.schemas.id, id), visibleSchemaCondition(fullPrincipalUserId(c))))
         .limit(1)
 
       if (!row) return c.json({ error: 'Schema not found', statusCode: 404 }, 404)
@@ -311,7 +311,11 @@ const app = new Hono<AuthEnv>()
 
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-      if (!collection.public && !(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
+      const ownerAccess =
+        keyScopeOk && (await hasOrgAccess(c.get('userId'), collection.organizationId))
+      if (!collection.public && !ownerAccess) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
@@ -367,22 +371,30 @@ const app = new Hono<AuthEnv>()
       return c.json({
         version: version.semver,
         semver: version.semver,
-        schemas: entries.map((e) => {
-          const labels = labelsMap.get(e.schemaId) ?? []
-          const body =
-            raw === 'true'
+        // Non-owners never see private types, and private field definitions are
+        // stripped (with the schema hash recomputed over the filtered body).
+        schemas: entries
+          .filter((e) => ownerAccess || (e.schemaBody as any)?.private !== true)
+          .map((e) => {
+            const labels = labelsMap.get(e.schemaId) ?? []
+            const filteredBody = ownerAccess
               ? e.schemaBody
-              : labels.length > 0
-                ? { ...(e.schemaBody as object), 'x-underlay-labels': labels }
-                : e.schemaBody
+              : filterTypeSchema(e.schemaBody as Record<string, unknown>)
+            const schemaHash = ownerAccess ? e.schemaHash : hashSchema(filteredBody)
+            const body =
+              raw === 'true'
+                ? filteredBody
+                : labels.length > 0
+                  ? { ...(filteredBody as object), 'x-underlay-labels': labels }
+                  : filteredBody
 
-          return {
-            slug: e.slug,
-            schemaId: e.schemaId,
-            schemaHash: e.schemaHash,
-            schema: body,
-          }
-        }),
+            return {
+              slug: e.slug,
+              schemaId: e.schemaId,
+              schemaHash,
+              schema: body,
+            }
+          }),
       })
     },
   )

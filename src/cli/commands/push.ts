@@ -60,6 +60,13 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
   }
 
   // 3. Build manifest
+  //
+  // ⚠️ Record privacy is NOT carried here. The server treats each push's manifest
+  // as the authoritative statement of which records are private, so omitting the
+  // flag publishes every record: re-pushing a collection that has private records
+  // would silently expose them in the new version. `add` also drops `private`
+  // before this point, so there is nothing to send yet. Both must be fixed before
+  // this CLI is published — see packages/cli/README.md.
   const manifest = version.records
     .map((hash) => {
       const obj = readObject(root, hash)

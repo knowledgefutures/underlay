@@ -60,7 +60,6 @@ async function insertRecords(
       recordId: r.recordId,
       type: r.type,
       data: r.data as any,
-      private: false,
       size: Buffer.byteLength(canonical, 'utf8'),
     }
   })

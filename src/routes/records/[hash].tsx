@@ -161,12 +161,14 @@ export default function RecordDetailPage() {
 function FieldValue({ name, value }: { name: string; value: unknown }) {
   if (value && typeof value === 'object' && '$file' in (value as any)) {
     const fileHash = ((value as any).$file as string).replace('sha256:', '')
-    const fileUrl = `https://assets.underlay.org/files/${fileHash.slice(0, 2)}/${fileHash.slice(2, 4)}/${fileHash}`
+    // Routes through the API so access is checked and a presigned URL is minted.
+    const fileUrl = `/api/collections/files/${fileHash}`
     const label = name === 'pdf' ? 'PDF' : 'File'
     return (
-      <Link
-        to={fileUrl}
+      <a
+        href={fileUrl}
         target="_blank"
+        rel="noopener noreferrer"
         className="text-link inline-flex items-center gap-1 hover:underline"
       >
         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -178,7 +180,7 @@ function FieldValue({ name, value }: { name: string; value: unknown }) {
           />
         </svg>
         {label}
-      </Link>
+      </a>
     )
   }
 

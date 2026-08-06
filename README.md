@@ -233,20 +233,30 @@ the same version hash as the simple one.
 | `GET .../versions/:semver/diff?from=...`          | Diff between two versions                                                                                   |
 | `POST /api/records/batch`                         | Fetch records by hash (JSONL stream)                                                                        |
 | `GET /api/records/:hash/provenance`               | Find all collections containing a record                                                                    |
-| `POST .../fork`                                   | Fork a collection (copies manifest, not data)                                                               |
+| `POST .../fork`                                   | Fork a collection (copies manifest, not data; 403 for a non-member if the source holds private content)     |
 | `GET /api/schemas`                                | Search schemas across all collections                                                                       |
 
 ## Privacy
 
-Privacy is part of the protocol, not just a hosted-instance feature. It operates at three levels:
+Privacy is part of the protocol, not just a hosted-instance feature. Four layers compose — a reader sees content only if it passes all four:
 
+- **Private collections**: `collections.public = false` — the whole collection 404s for non-members, and nothing below is evaluated. ARK identifiers into a private collection refuse to resolve.
 - **Private types**: `"private": true` on a schema root hides all records of that type from public readers.
 - **Private fields**: `"private": true` on a schema property strips that field from public responses.
-- **Private records**: `"private": true` on a record when pushing hides that specific record.
+- **Private records**: `"private": true` on a **manifest entry** when pushing (not on the record body — a `private` key there is ignored) hides that specific record.
 
-The `private` flag is not part of the record hash — a record's content identity doesn't change when you change who can see it. Each version has two hashes: a **private hash** (all content, used by owners for integrity) and a **public hash** (excludes private types, fields, and records, verifiable by anyone).
+Record-level privacy is stored **per version**, on that version's reference to the record (`version_records.private`), never on the globally deduplicated record object — so two collections holding byte-identical content can disagree about privacy. Two consequences follow: **privacy is re-declared on every push (omitting the flag means public, not "unchanged")**, and **redaction is forward-only** — older versions are immutable and keep serving the record, and a file stays downloadable while any older version references it publicly.
 
-Privacy filtering is implemented in `src/lib/core/privacy.ts` (pure functions) and enforced at the API layer in `src/api/versions.ts`.
+The `private` flag is not part of the record hash — a record's content identity doesn't change when you change who can see it. Each version has two hashes: a **private hash** (all content, used by owners for integrity) and a **public hash** (excludes private types, fields, and records, verifiable by anyone). A version is identified by **both**: a push is a duplicate only when both match, which is what makes a privacy-only re-push a legitimate new version rather than a "no changes" conflict.
+
+Privacy filtering is implemented in `src/lib/core/privacy.ts` (pure functions) and enforced at the API layer in every module that returns record bodies, hashes, schemas, file lists, diffs, or counts: `versions.ts`, `collections.ts` (export, browse, fork), `records.ts`, `query.ts`, `files.ts`, `schemas.ts`, and `ark.ts`.
+
+### Access control
+
+- **API keys** carry `metadata.scope`. Because that metadata is client-supplied, self-service creation is clamped at `write` — requesting `admin` yields `write`, and admin keys are minted server-side only.
+- **Collection-scoped keys** (share links, agent links) carry `metadata.collectionIds` and are confined to those collections; account- and org-level endpoints refuse them outright.
+- **`?token=` capability URLs** authenticate `GET`/`HEAD` only, so a link prefetch can never drive a mutation. Share-link clients calling a POST send the token as a `Bearer` header.
+- **Files** are never served directly from storage: every read is access-checked and answered with a short-lived presigned URL.
 
 ## Schema System
 
@@ -304,9 +314,9 @@ Schemas can be labeled post-hoc with human-readable names or URIs (e.g. `schema.
 - **Hetzner** - Single box (8 vCPU, 16GB RAM) running Docker Swarm
 - **Caddy** - Host-level reverse proxy, TLS via `tls internal` (Cloudflare Full mode)
 - **Cloudflare** - DNS + CDN + DDoS protection
-- **R2** - Object storage (zero egress fees), single bucket with prefixes:
-  - `files/` - Content-addressed immutable uploads
-  - `_backups/` - Compressed Postgres dumps
+- **R2** - Object storage (zero egress fees), two buckets:
+  - `S3_BUCKET` (**private** — public access disabled, no custom domain): `files/` content-addressed immutable uploads, `_backups/` compressed Postgres dumps. Every read is a short-lived presigned URL minted after an access check; there is no stable public file URL.
+  - `S3_PUBLIC_BUCKET` (world-readable, fronted by `ASSETS_BASE_URL`): avatars and other inherently-public static assets.
 
 ### Stacks
 
@@ -371,14 +381,16 @@ Supporting files live in `selfhost/` (Caddyfile, Postgres init script). See [/do
 
 ### S3 storage
 
-| Variable          | Description                                                                                         |
-| ----------------- | --------------------------------------------------------------------------------------------------- |
-| `S3_BUCKET`       | S3 bucket name                                                                                      |
-| `S3_REGION`       | S3 region (`auto` for R2)                                                                           |
-| `S3_ENDPOINT`     | S3 endpoint URL                                                                                     |
-| `S3_ACCESS_KEY`   | S3 access key                                                                                       |
-| `S3_SECRET_KEY`   | S3 secret key                                                                                       |
-| `ASSETS_BASE_URL` | Public base URL for uploaded assets like avatars (optional, default: `https://assets.underlay.org`) |
+| Variable                 | Description                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `S3_BUCKET`              | Private bucket for collection files and backups. Public access must be OFF                          |
+| `S3_PUBLIC_BUCKET`       | World-readable bucket for avatars and similar assets (default: `underlaypublic`)                    |
+| `S3_PRESIGN_TTL_SECONDS` | Lifetime of presigned file-download URLs, in seconds (default: `300`)                               |
+| `S3_REGION`              | S3 region (`auto` for R2)                                                                           |
+| `S3_ENDPOINT`            | S3 endpoint URL                                                                                     |
+| `S3_ACCESS_KEY`          | S3 access key                                                                                       |
+| `S3_SECRET_KEY`          | S3 secret key                                                                                       |
+| `ASSETS_BASE_URL`        | Public base URL for uploaded assets like avatars (optional, default: `https://assets.underlay.org`) |
 
 ### Auth (KF Auth OIDC)
 

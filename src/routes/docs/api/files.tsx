@@ -7,7 +7,8 @@ const headExample = `curl -I https://underlay.org/api/collections/kf/archive/fil
 # Content-Length: 1048576
 # Content-Type: application/pdf`
 
-const getExample = `curl -o paper.pdf \\
+const getExample = `# -L follows the 302 redirect to the short-lived presigned URL
+curl -L -o paper.pdf \\
   https://underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...`
 
 const putExample = `# Compute hash
@@ -107,40 +108,37 @@ export default function DocsApiFiles() {
 
       <div className="endpoint">
         <h2>GET /api/collections/:owner/:slug/files/:hash</h2>
-        <p className="scope">No auth required</p>
+        <p className="scope">Access follows the collection&rsquo;s visibility</p>
         <p>
-          Download a file. Returns the raw binary data with appropriate content type. Response is
-          cacheable (immutable content).
+          Download a file. After an access check in the context of this collection, the endpoint{' '}
+          <strong>302-redirects to a short-lived, presigned storage URL</strong> — follow the
+          redirect (e.g. <code>curl -L</code>) to fetch the bytes. Public-collection files are
+          readable anonymously; private content requires access (a session, or a share/agent token
+          sent as a <code>Bearer</code> header). Inaccessible files return <code>404</code>.
         </p>
-        <h3>Headers</h3>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>Content-Type</code>
-              </td>
-              <td>MIME type of the file</td>
-            </tr>
-            <tr>
-              <td>
-                <code>Cache-Control</code>
-              </td>
-              <td>
-                <code>public, max-age=31536000, immutable</code>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>ETag</code>
-              </td>
-              <td>The file hash</td>
-            </tr>
-          </tbody>
-        </table>
+        <p>
+          This API path is the durable, content-addressed locator — the same request against a
+          mirror returns the same bytes for the same hash. The redirect target is{' '}
+          <strong>ephemeral and must not be persisted or shared</strong>; always re-fetch through
+          the API path. To resolve many files in one request, see the bulk-presign endpoint below.
+        </p>
         <h3>Example</h3>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{getExample}</code>
         </pre>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
+        <h2>POST /api/collections/:owner/:slug/files/presign</h2>
+        <p className="scope">Access follows the collection&rsquo;s visibility</p>
+        <p>
+          Presign a batch of files in one request. Body:{' '}
+          <code>{'{ "hashes": ["sha256:…", …] }'}</code>. Returns an object mapping each hash to a
+          short-lived presigned URL, or <code>null</code> when the file is not accessible. Same
+          access model as the single download; avoids one round-trip per file.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />

@@ -29,6 +29,28 @@ import { type AuthEnv, requireAuth } from './auth.server.js'
 
 const MAX_METADATA_BYTES = 64 * 1024
 
+/**
+ * Strip owner-only data from a version row before returning it to a non-owner:
+ * private-type entries in `typeCounts` (which would disclose the existence and
+ * exact size of private types) and the internal provenance fields.
+ */
+function sanitizeVersionForPublic(
+  version: Record<string, any>,
+  privateTypes: Set<string>,
+): Record<string, any> {
+  const out: Record<string, any> = { ...version }
+  const tc = version.typeCounts as Record<string, number> | null | undefined
+  if (tc) {
+    out.typeCounts = Object.fromEntries(
+      Object.entries(tc).filter(([type]) => !privateTypes.has(type)),
+    )
+  }
+  delete out.pushedBy
+  delete out.actorId
+  delete out.signature
+  return out
+}
+
 // Offset pagination is O(offset): Postgres must produce and discard every
 // skipped row. Past a few thousand rows on a large version it exceeds the
 // statement timeout. Reject deep offsets with a clear 400 and steer clients to
@@ -184,7 +206,12 @@ const app = new Hono<AuthEnv>()
       const limit = c.req.query('limit')
       const offset = c.req.query('offset')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const ownerAccess = collection.ownerAccess
@@ -213,13 +240,15 @@ const app = new Hono<AuthEnv>()
         .limit(Math.min(parseInt(limit ?? '50', 10), 100))
         .offset(parseInt(offset ?? '0', 10))
 
+      // `actorId` is owner-only here, matching latest/:n (sanitizeVersionForPublic).
+      // Without this the list endpoint leaked it while the detail endpoints hid it.
       return c.json(
         rows.map((row) => ({
           semver: row.semver,
           hash: ownerAccess ? row.hash : (row.publicHash ?? row.hash),
           message: row.message,
           appId: row.appId,
-          actorId: row.actorId,
+          ...(ownerAccess ? { actorId: row.actorId } : {}),
           recordCount: row.recordCount,
           fileCount: row.fileCount,
           totalBytes: row.totalBytes,
@@ -242,7 +271,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const version = await getLatestReadyVersion(collection.id)
@@ -257,8 +291,12 @@ const app = new Hono<AuthEnv>()
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
         : filterSchemasForPublic(schemaEntries)
 
+      const versionView = ownerAccess
+        ? version
+        : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries))
+
       return c.json({
-        ...version,
+        ...versionView,
         hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
         schemas: schemasMap,
         ark: arkInfo
@@ -278,7 +316,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -304,8 +347,12 @@ const app = new Hono<AuthEnv>()
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
         : filterSchemasForPublic(schemaEntries)
 
+      const versionView = ownerAccess
+        ? version
+        : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries))
+
       return c.json({
-        ...version,
+        ...versionView,
         hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
         schemas: schemasMap,
         ark: arkInfo
@@ -332,7 +379,12 @@ const app = new Hono<AuthEnv>()
       // client that sends ?cursor= isn't silently reset to offset 0.
       const after = c.req.query('after') ?? c.req.query('cursor')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -379,8 +431,8 @@ const app = new Hono<AuthEnv>()
             conditions.push(sql`${schema.versionRecords.type} != ${pt}`)
           }
         }
-        // Exclude record-level private records
-        conditions.push(eq(schema.recordObjects.private, false))
+        // Exclude record-level private records (per-version flag).
+        conditions.push(eq(schema.versionRecords.private, false))
       }
 
       const pageLimit = Math.min(parseInt(limit ?? '100', 10), MAX_RECORDS_LIMIT)
@@ -530,7 +582,12 @@ const app = new Hono<AuthEnv>()
       const type = c.req.query('type')
       const after = c.req.query('after')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -572,6 +629,31 @@ const app = new Hono<AuthEnv>()
 
       const client = db.$client
       const privateTypeList = [...privateTypes]
+
+      // The count a caller can actually verify against. `version.recordCount` is
+      // the version's full total, so for a non-owner reading a collection with
+      // private records or types the stream is legitimately shorter — and the
+      // documented "count the lines, resume if they differ" check would never
+      // terminate. Count what THIS caller will receive instead. One indexed
+      // count is negligible next to streaming the rows.
+      let streamedRecordCount = version.recordCount
+      if (!ownerAccess || type) {
+        const countConditions = [eq(schema.versionRecords.versionId, version.id)]
+        if (type) countConditions.push(eq(schema.versionRecords.type, type))
+        if (!ownerAccess) {
+          countConditions.push(eq(schema.versionRecords.private, false))
+          if (privateTypeList.length > 0) {
+            countConditions.push(
+              sql`${schema.versionRecords.type} <> ALL(${sql.param(privateTypeList)}::text[])`,
+            )
+          }
+        }
+        const [countRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(and(...countConditions))
+        streamedRecordCount = countRow?.n ?? 0
+      }
 
       // Hono's compress() middleware deliberately skips this response: its
       // compressible-type list covers application/json and +json suffixes but
@@ -632,7 +714,7 @@ const app = new Hono<AuthEnv>()
               WHERE vr.version_id = ${version.id}
                 ${type ? client`AND vr.type = ${type}` : client``}
                 ${keyset}
-                ${ownerAccess ? client`` : client`AND ro.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
+                ${ownerAccess ? client`` : client`AND vr.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
               ORDER BY vr.record_id, vr.record_hash
               LIMIT ${BATCH}
             `
@@ -669,8 +751,10 @@ const app = new Hono<AuthEnv>()
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/x-ndjson',
-        // Lets a client verify completeness without a second request.
-        'X-Underlay-Record-Count': String(version.recordCount),
+        // Lets a client verify completeness without a second request. This is the
+        // count for THIS request (privacy-filtered, and `?type=`-scoped), so
+        // comparing it against the lines received is an exact check for everyone.
+        'X-Underlay-Record-Count': String(streamedRecordCount),
       }
       if (acceptsGzip) headers['Content-Encoding'] = 'gzip'
 
@@ -697,7 +781,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -715,6 +804,18 @@ const app = new Hono<AuthEnv>()
 
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
+      const ownerAccess = collection.ownerAccess
+
+      // For non-owners, private types/fields must not appear in the references,
+      // and files reachable only through private content must not be listed.
+      let privateTypes = new Set<string>()
+      const privateFieldsByType = new Map<string, Set<string>>()
+      if (!ownerAccess) {
+        const schemaEntries = await loadVersionSchemas(version.id)
+        privateTypes = getPrivateTypes(schemaEntries)
+        for (const e of schemaEntries) privateFieldsByType.set(e.slug, getPrivateFields(e.schema))
+      }
+
       const fileRows = await db
         .select({
           hash: schema.versionFiles.fileHash,
@@ -726,7 +827,13 @@ const app = new Hono<AuthEnv>()
         .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
         .where(eq(schema.versionFiles.versionId, version.id))
 
-      // Only load records that contain $file references (DB-level filter)
+      // Only load records that contain $file references (DB-level filter).
+      // Non-owners never see records flagged private.
+      const refConditions = [
+        eq(schema.versionRecords.versionId, version.id),
+        sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
+      ]
+      if (!ownerAccess) refConditions.push(eq(schema.versionRecords.private, false))
       const fileRefRecords = await db
         .select({
           recordId: schema.recordObjects.recordId,
@@ -738,17 +845,17 @@ const app = new Hono<AuthEnv>()
           schema.recordObjects,
           eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
         )
-        .where(
-          and(
-            eq(schema.versionRecords.versionId, version.id),
-            sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
-          ),
-        )
+        .where(and(...refConditions))
 
       const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>()
       for (const rec of fileRefRecords) {
+        if (!ownerAccess && privateTypes.has(rec.type)) continue
+        const privateFields = ownerAccess
+          ? undefined
+          : (privateFieldsByType.get(rec.type) ?? new Set<string>())
         const data = rec.data as Record<string, unknown>
         for (const [field, val] of Object.entries(data)) {
+          if (privateFields?.has(field)) continue
           if (val && typeof val === 'object' && '$file' in (val as any)) {
             const hash = ((val as any).$file as string).replace('sha256:', '')
             if (!fileRefs.has(hash)) fileRefs.set(hash, [])
@@ -757,8 +864,11 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      // Non-owners only see files still reachable through a non-private reference.
+      const visibleFileRows = ownerAccess ? fileRows : fileRows.filter((f) => fileRefs.has(f.hash))
+
       return c.json(
-        fileRows.map((f) => ({
+        visibleFileRows.map((f) => ({
           ...f,
           references: fileRefs.get(f.hash) ?? [],
         })),
@@ -777,7 +887,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const sinceParam = c.req.query('since')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -810,19 +925,19 @@ const app = new Hono<AuthEnv>()
       // content-address (hash of the filtered record), so readers can verify
       // what they actually receive.
       //
-      // Type and record id come off version_records, so only the record-level
-      // `private` flag still needs record_objects — the owner path joins
-      // nothing at all.
+      // Record-level privacy is the per-version `version_records.private` flag and
+      // type/id/public-hash are all on version_records too, so these queries never
+      // join record_objects at all.
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaEntries)
-      const privacyJoin = ownerAccess
-        ? sql``
-        : sql`INNER JOIN record_objects ro ON ro.hash = vr.record_hash`
+      // `NOT IN (${array})` must NOT be used here: drizzle renders an embedded
+      // array as a row constructor — `NOT IN (($1,$2))` — which Postgres rejects
+      // with `operator does not exist: text <> record`. Use `<> ALL(array)`.
+      const typeExclusion = (types: Set<string>) =>
+        types.size > 0 ? sql`AND vr.type <> ALL(${sql.param([...types])}::text[])` : sql``
       const privacyWhere = ownerAccess
         ? sql``
-        : privateTypes.size > 0
-          ? sql`AND ro.private = false AND vr.type NOT IN (${[...privateTypes]})`
-          : sql`AND ro.private = false`
+        : sql`AND vr.private = false ${typeExclusion(privateTypes)}`
       const servedHash = ownerAccess
         ? sql`vr.record_hash`
         : sql`coalesce(vr.public_record_hash, vr.record_hash)`
@@ -864,37 +979,71 @@ const app = new Hono<AuthEnv>()
         type DeltaRow = { id: string; type: string; hash: string; recordHash: string }
         type UpdatedRow = DeltaRow & { previousHash: string | null }
 
+        // The `removed` list iterates the `since` version and `previousHash`
+        // reads the since record, so both must judge privacy against the SINCE
+        // version's own private-type set (which can differ from the target's).
+        const sincePrivateTypes = ownerAccess
+          ? new Set<string>()
+          : getPrivateTypes(await loadVersionSchemas(sinceId))
+
+        // Non-owners get the previous version's PUBLIC served hash, and only when
+        // that prior record was itself public — otherwise `previousHash` is NULL.
+        // Never serve `s.record_hash` for a private prior record; that would leak
+        // the private content's digest.
+        const sinceTypeGuard =
+          sincePrivateTypes.size > 0
+            ? sql`AND s.type <> ALL(${sql.param([...sincePrivateTypes])}::text[])`
+            : sql``
         const previousServedHash = ownerAccess
           ? sql`(SELECT s.record_hash FROM version_records s
                  WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
-          : sql`(SELECT coalesce(s.public_record_hash, s.record_hash) FROM version_records s
+          : sql`(SELECT CASE WHEN s.private = false ${sinceTypeGuard}
+                            THEN coalesce(s.public_record_hash, s.record_hash) END
+                 FROM version_records s
                  WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
 
-        /** One delta list. `presence` selects the anti- or semi-join. */
+        // Visibility of a row for the CALLER, evaluated against the version that
+        // row belongs to (private-type sets differ between versions). Applied to
+        // BOTH the iterated rows and the presence subquery, so that a record
+        // whose privacy flipped with unchanged content still shows up: becoming
+        // private reads as `removed`, becoming public reads as `added`. Without
+        // it such a record is in neither list and delta-following mirrors keep
+        // serving content the full manifest no longer includes.
+        const visible = (alias: string, types: Set<string>) =>
+          ownerAccess
+            ? sql``
+            : types.size > 0
+              ? sql`AND ${sql.raw(alias)}.private = false AND ${sql.raw(alias)}.type <> ALL(${sql.param([...types])}::text[])`
+              : sql`AND ${sql.raw(alias)}.private = false`
+
         const deltaQuery = (
-          versionId: number,
+          selfId: number,
+          selfTypes: Set<string>,
           otherId: number,
+          otherTypes: Set<string>,
           presence: 'absent' | 'changed',
           cursor: ListCursor,
           extraColumn = sql``,
         ) => sql`
           SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
                  vr.record_hash AS "recordHash"${extraColumn}
-          FROM version_records vr ${privacyJoin}
-          WHERE vr.version_id = ${versionId}
+          FROM version_records vr
+          WHERE vr.version_id = ${selfId}
             ${
               presence === 'absent'
                 ? sql`AND NOT EXISTS (
                     SELECT 1 FROM version_records s
                     WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
+                      ${visible('s', otherTypes)}
                   )`
                 : sql`AND EXISTS (
                     SELECT 1 FROM version_records s
                     WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
                       AND s.record_hash <> vr.record_hash
+                      ${visible('s', otherTypes)}
                   )`
             }
-            ${privacyWhere} ${afterCursor('vr', cursor)}
+            ${visible('vr', selfTypes)} ${afterCursor('vr', cursor)}
           ORDER BY vr.record_id, vr.record_hash
           LIMIT ${limit + 1}
         `
@@ -908,13 +1057,28 @@ const app = new Hono<AuthEnv>()
                 ? Promise.resolve([] as T[])
                 : (tx.execute(query) as unknown as Promise<T[]>)
             return Promise.all([
-              run<DeltaRow>(at.added, deltaQuery(targetId, sinceId, 'absent', at.added)),
-              run<DeltaRow>(at.removed, deltaQuery(sinceId, targetId, 'absent', at.removed)),
+              run<DeltaRow>(
+                at.added,
+                deltaQuery(targetId, privateTypes, sinceId, sincePrivateTypes, 'absent', at.added),
+              ),
+              run<DeltaRow>(
+                at.removed,
+                deltaQuery(
+                  sinceId,
+                  sincePrivateTypes,
+                  targetId,
+                  privateTypes,
+                  'absent',
+                  at.removed,
+                ),
+              ),
               run<UpdatedRow>(
                 at.updated,
                 deltaQuery(
                   targetId,
+                  privateTypes,
                   sinceId,
+                  sincePrivateTypes,
                   'changed',
                   at.updated,
                   sql`, ${previousServedHash} AS "previousHash"`,
@@ -957,25 +1121,39 @@ const app = new Hono<AuthEnv>()
       // hash, which for public readers is a coalesce() expression and therefore
       // an unindexed sort of the whole version.
       const at = decodeDeltaCursor(cursor)
+      // `private` is echoed back so a manifest round-trip is lossless. Privacy is
+      // authored per push and omitting it on a re-push means PUBLIC, so a client
+      // that reads a manifest, edits it and pushes it back would silently
+      // de-privatize every record if it could not read the flag. Only `true` is
+      // emitted (a non-owner's rows are all public, so they see none).
       const recordRows = (await withStatementTimeout(DELTA_STATEMENT_TIMEOUT_MS, async (tx) =>
         tx.execute(sql`
             SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
-                   vr.record_hash AS "recordHash"
-            FROM version_records vr ${privacyJoin}
+                   vr.record_hash AS "recordHash", vr.private
+            FROM version_records vr
             WHERE vr.version_id = ${version.id}
               ${privacyWhere} ${afterCursor('vr', at.added)}
             ORDER BY vr.record_id, vr.record_hash
             LIMIT ${limit + 1}
           `),
-      )) as unknown as { id: string; type: string; hash: string; recordHash: string }[]
+      )) as unknown as {
+        id: string
+        type: string
+        hash: string
+        recordHash: string
+        private: boolean
+      }[]
 
       const { page, next, hasMore } = paginate(recordRows, limit)
+      const records = page.map(({ private: isPrivate, ...rest }) =>
+        isPrivate ? { ...rest, private: true } : rest,
+      )
 
       return c.json({
         semver: version.semver,
         hash: manifestHash,
         schemas: schemasOut,
-        records: page,
+        records,
         files: fileHashes.map((f) => f.hash),
         pagination: {
           limit,
@@ -1000,7 +1178,12 @@ const app = new Hono<AuthEnv>()
       const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), MAX_DIFF_LIMIT)
       const diffCursor = decodeDeltaCursor(c.req.query('cursor'))
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver: targetSemver } = parseSemver(n)
@@ -1043,45 +1226,61 @@ const app = new Hono<AuthEnv>()
       const fromId = fromVersion?.id
 
       // Privacy filtering for non-owners: hide private types and private records.
-      // record_objects is joined for the body (and the record-level `private`
-      // flag); the set operations themselves run on version_records alone.
+      // record_objects is joined only for the record body (ro.data); record-level
+      // privacy is the per-version `version_records.private` flag.
       const targetSchemas = await loadVersionSchemas(targetVersion.id)
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(targetSchemas)
-      const privacyWhere = ownerAccess
-        ? sql``
-        : privateTypes.size > 0
-          ? sql`AND ro.private = false AND vr.type NOT IN (${[...privateTypes]})`
-          : sql`AND ro.private = false`
+      const fromPrivateTypes =
+        ownerAccess || !fromId
+          ? new Set<string>()
+          : getPrivateTypes(await loadVersionSchemas(fromId))
+
+      // Caller-visibility of a row, judged against its OWN version's private-type
+      // set. Applied to the iterated rows and to the presence subquery alike, so a
+      // record whose privacy flipped with unchanged content is reported (redacted
+      // ⇒ `removed`, un-redacted ⇒ `added`) instead of vanishing from the diff.
+      // `<> ALL(array)`, never `NOT IN (${array})` — drizzle renders an embedded
+      // array as a row constructor, which Postgres rejects.
+      const visible = (alias: string, types: Set<string>) =>
+        ownerAccess
+          ? sql``
+          : types.size > 0
+            ? sql`AND ${sql.raw(alias)}.private = false AND ${sql.raw(alias)}.type <> ALL(${sql.param([...types])}::text[])`
+            : sql`AND ${sql.raw(alias)}.private = false`
 
       type DiffRow = { id: string; type: string; data: unknown; recordHash: string }
 
-      /** One side of the diff: rows of `versionId` absent from / changed in `otherId`. */
+      /** One side of the diff: rows of `selfId` absent from / changed in `otherId`. */
       const diffQuery = (
-        versionId: number,
+        selfId: number,
+        selfTypes: Set<string>,
         otherId: number | undefined,
+        otherTypes: Set<string>,
         mode: 'absent' | 'changed' | 'all',
         cursor: ListCursor,
       ) => sql`
         SELECT vr.record_id AS id, vr.type, ro.data, vr.record_hash AS "recordHash"
         FROM version_records vr
         INNER JOIN record_objects ro ON ro.hash = vr.record_hash
-        WHERE vr.version_id = ${versionId}
+        WHERE vr.version_id = ${selfId}
           ${
             mode === 'absent'
               ? sql`AND NOT EXISTS (
                   SELECT 1 FROM version_records s
                   WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
+                    ${visible('s', otherTypes)}
                 )`
               : mode === 'changed'
                 ? sql`AND EXISTS (
                   SELECT 1 FROM version_records s
                   WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
                     AND s.record_hash <> vr.record_hash
+                    ${visible('s', otherTypes)}
                 )`
                 : sql``
           }
-          ${privacyWhere} ${afterCursor('vr', cursor)}
+          ${visible('vr', selfTypes)} ${afterCursor('vr', cursor)}
         ORDER BY vr.record_id, vr.record_hash
         LIMIT ${diffLimit + 1}
       `
@@ -1098,15 +1297,40 @@ const app = new Hono<AuthEnv>()
           return Promise.all([
             run(
               diffCursor.added,
-              diffQuery(targetId, fromId, fromId ? 'absent' : 'all', diffCursor.added),
+              diffQuery(
+                targetId,
+                privateTypes,
+                fromId,
+                fromPrivateTypes,
+                fromId ? 'absent' : 'all',
+                diffCursor.added,
+              ),
             ),
             run(
               diffCursor.removed,
-              fromId ? diffQuery(fromId, targetId, 'absent', diffCursor.removed) : null,
+              fromId
+                ? diffQuery(
+                    fromId,
+                    fromPrivateTypes,
+                    targetId,
+                    privateTypes,
+                    'absent',
+                    diffCursor.removed,
+                  )
+                : null,
             ),
             run(
               diffCursor.updated,
-              fromId ? diffQuery(targetId, fromId, 'changed', diffCursor.updated) : null,
+              fromId
+                ? diffQuery(
+                    targetId,
+                    privateTypes,
+                    fromId,
+                    fromPrivateTypes,
+                    'changed',
+                    diffCursor.updated,
+                  )
+                : null,
             ),
           ])
         },
@@ -1292,9 +1516,8 @@ const app = new Hono<AuthEnv>()
       await client`
         SELECT coalesce(vr.public_record_hash, vr.record_hash) AS h
         FROM version_records vr
-        INNER JOIN record_objects ro ON ro.hash = vr.record_hash
         WHERE vr.version_id = ${latest.id}
-          AND NOT ro.private
+          AND NOT vr.private
           AND vr.type <> ALL(${[...privateTypes]}::text[])
         ORDER BY coalesce(vr.public_record_hash, vr.record_hash) COLLATE "C"
       `.cursor(CURSOR_CHUNK, (rows) => {
@@ -1342,10 +1565,13 @@ const app = new Hono<AuthEnv>()
         }
 
         // Copy the record set server-side. The schema set is unchanged, so every
-        // column — including the public content-addresses — carries over as-is.
+        // column — including the public content-addresses and the per-version
+        // `private` flag — carries over as-is. `private` MUST be copied: it
+        // defaults to false, so omitting it would silently de-privatize every
+        // private record in the new (and now latest) version.
         await tx.execute(sql`
-          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
-          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
+          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type, private
           FROM version_records
           WHERE version_id = ${latest.id}
         `)

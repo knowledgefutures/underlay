@@ -6,6 +6,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
 function CollectionNav({
   owner,
@@ -25,6 +26,7 @@ function CollectionNav({
   const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors'
   const activeClass = `${linkClass} border-ink text-ink`
   const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text-ink hover:border-rule`
+  const shareToken = useShareToken()
 
   return (
     <>
@@ -34,36 +36,44 @@ function CollectionNav({
             {owner}
           </Link>
           <span className="text-ink-muted">/</span>
-          <Link to={`/${owner}/${collection}`} className="font-semibold hover:underline">
+          <TokenLink to={`/${owner}/${collection}`} className="font-semibold hover:underline">
             {collection}
-          </Link>
+          </TokenLink>
           {isPublic !== undefined && (
             <span className="border-rule text-ink-muted ml-2 border px-1.5 py-0.5 text-xs">
               {isPublic ? 'public' : 'private'}
             </span>
           )}
+          {shareToken && !isOwner && (
+            <span
+              className="border-rule text-ink-muted bg-parchment-dark border px-1.5 py-0.5 text-xs"
+              title="You are viewing this collection through a read-only shared link"
+            >
+              shared link
+            </span>
+          )}
         </nav>
       </div>
       <div className="border-rule mb-6 flex items-center gap-0 border-b">
-        <Link
+        <TokenLink
           to={`/${owner}/${collection}`}
           className={active === 'overview' ? activeClass : inactiveClass}
         >
           Overview
-        </Link>
-        <Link
+        </TokenLink>
+        <TokenLink
           to={`/${owner}/${collection}/versions`}
           className={active === 'versions' && !versionLabel ? activeClass : inactiveClass}
         >
           Versions
-        </Link>
+        </TokenLink>
         {versionLabel && <span className={activeClass}>{versionLabel}</span>}
-        <Link
+        <TokenLink
           to={`/${owner}/${collection}/schemas`}
           className={active === 'schemas' ? activeClass : inactiveClass}
         >
           Schemas
-        </Link>
+        </TokenLink>
         {isOwner && (
           <Link
             to={`/${owner}/${collection}/settings`}
@@ -195,12 +205,12 @@ export default function CollectionPage() {
             {data.latestVersion && (
               <div className="border-rule bg-parchment-dark mb-6 flex items-center justify-between rounded border px-4 py-2.5">
                 <div className="flex items-center gap-3 text-sm">
-                  <Link
+                  <TokenLink
                     to={`/${owner}/${collection}/v/${data.latestVersion.semver}`}
                     className="text-link font-medium hover:underline"
                   >
                     {data.latestVersion.semver}
-                  </Link>
+                  </TokenLink>
                   <span className="text-ink-muted">·</span>
                   <span className="text-ink-muted">
                     {data.latestVersion.recordCount.toLocaleString()} records
@@ -223,7 +233,7 @@ export default function CollectionPage() {
                       timeZone: 'UTC',
                     })}
                   </span>
-                  <Link
+                  <TokenLink
                     to={`/${owner}/${collection}/versions`}
                     className="text-ink-muted hover:text-ink flex items-center gap-1 text-xs transition-colors"
                     title="Version history"
@@ -237,7 +247,7 @@ export default function CollectionPage() {
                       />
                     </svg>
                     <span>{totalVersions}</span>
-                  </Link>
+                  </TokenLink>
                 </div>
               </div>
             )}
@@ -246,7 +256,7 @@ export default function CollectionPage() {
             {allTypes.length > 0 && (
               <div className="border-rule mb-6 overflow-hidden rounded border">
                 {allTypes.map((t: any, i: number) => (
-                  <Link
+                  <TokenLink
                     key={t.type}
                     to={`/${owner}/${collection}/v/${data.latestVersion.semver}?type=${t.type}`}
                     className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
@@ -272,7 +282,7 @@ export default function CollectionPage() {
                     <span className="text-ink-muted text-xs">
                       {t.count.toLocaleString()} records
                     </span>
-                  </Link>
+                  </TokenLink>
                 ))}
               </div>
             )}
@@ -444,18 +454,26 @@ export default function CollectionPage() {
                   </code>
                 </div>
                 {data.latestVersion && (
-                  <Link
+                  <TokenLink
                     to={`/api/collections/${owner}/${collection}/export`}
                     className="text-link inline-block hover:underline"
+                    reloadDocument
                   >
                     Download .tar.gz
-                  </Link>
+                  </TokenLink>
                 )}
               </div>
             </div>
 
-            {/* Agent Share */}
-            {isOwner && <AgentShareSection collection={collection!} collectionId={data.id} />}
+            {/* Share */}
+            {isOwner && (
+              <SharePanel
+                owner={owner!}
+                collection={collection!}
+                collectionId={data.id}
+                isPublic={!!data.public}
+              />
+            )}
 
             {/* ARK */}
             {collectionArkPath && (
@@ -478,20 +496,52 @@ export default function CollectionPage() {
   )
 }
 
-function AgentShareSection({
+const VIEW_LINK_EXPIRES_SECONDS = 30 * 24 * 3600
+
+function SharePanel({
+  owner,
   collection,
   collectionId,
+  isPublic,
 }: {
+  owner: string
   collection: string
   collectionId: string
+  isPublic: boolean
 }) {
-  const [showModal, setShowModal] = useState(false)
+  const [modal, setModal] = useState<'view' | 'agent' | null>(null)
+  const [viewUrl, setViewUrl] = useState<string | null>(null)
   const [agentUrl, setAgentUrl] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<'view' | 'agent' | null>(null)
   const [copied, setCopied] = useState<'link' | 'blurb' | null>(null)
 
-  const generate = useCallback(async () => {
-    setLoading(true)
+  const generateView = useCallback(async () => {
+    setLoading('view')
+    setCopied(null)
+    try {
+      const { data: keyData } = await authClient.apiKey.create({
+        name: `share-${collection}`,
+        metadata: {
+          scope: 'read',
+          collectionIds: [collectionId],
+          linkShare: true,
+        },
+        expiresIn: VIEW_LINK_EXPIRES_SECONDS,
+        prefix: 'ul',
+      } as any)
+      if (keyData) {
+        setViewUrl(
+          withToken(`${window.location.origin}/${owner}/${collection}`, (keyData as any).key),
+        )
+        setModal('view')
+      }
+    } finally {
+      setLoading(null)
+    }
+  }, [owner, collection, collectionId])
+
+  const generateAgent = useCallback(async () => {
+    setLoading('agent')
     setCopied(null)
     try {
       const { data: keyData } = await authClient.apiKey.create({
@@ -505,60 +555,136 @@ function AgentShareSection({
         prefix: 'ul',
       } as any)
       if (keyData) {
-        const url = `${window.location.origin}/agent/${(keyData as any).key}`
-        setAgentUrl(url)
-        setShowModal(true)
+        setAgentUrl(`${window.location.origin}/agent/${(keyData as any).key}`)
+        setModal('agent')
       }
     } finally {
-      setLoading(false)
+      setLoading(null)
     }
   }, [collection, collectionId])
 
-  const copyLink = useCallback(() => {
-    if (!agentUrl) return
-    navigator.clipboard.writeText(agentUrl)
-    setCopied('link')
+  const copy = useCallback((text: string, which: 'link' | 'blurb') => {
+    navigator.clipboard.writeText(text)
+    setCopied(which)
     setTimeout(() => setCopied(null), 2000)
-  }, [agentUrl])
+  }, [])
 
-  const copyBlurb = useCallback(() => {
-    if (!agentUrl) return
-    const blurb = `Will you create an update that captures this conversation. Here is a link with reference how to do that: ${agentUrl}`
-    navigator.clipboard.writeText(blurb)
-    setCopied('blurb')
-    setTimeout(() => setCopied(null), 2000)
-  }, [agentUrl])
+  const agentBlurb = agentUrl
+    ? `Will you create an update that captures this conversation. Here is a link with reference how to do that: ${agentUrl}`
+    : ''
 
   return (
     <>
       <div className="mb-6">
-        <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-          Update via Agent
-        </h3>
-        <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
-          Generate a temporary link that lets an AI agent push updates to this collection.
-        </p>
-        <button
-          onClick={generate}
-          disabled={loading}
-          className="text-link text-xs font-medium hover:underline"
-        >
-          {loading ? 'Generating...' : 'Generate agent link →'}
-        </button>
+        <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">Share</h3>
+
+        <div className="mb-3">
+          <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
+            {isPublic
+              ? 'This collection is public — anyone with its URL can view it.'
+              : 'Create a read-only link that lets anyone view this collection without signing in or becoming a member.'}
+          </p>
+          {isPublic ? (
+            <button
+              onClick={() => copy(`${window.location.origin}/${owner}/${collection}`, 'link')}
+              className="text-link text-xs font-medium hover:underline"
+            >
+              {copied === 'link' && modal === null ? 'Copied!' : 'Copy collection URL'}
+            </button>
+          ) : (
+            <button
+              onClick={generateView}
+              disabled={loading !== null}
+              className="text-link text-xs font-medium hover:underline"
+            >
+              {loading === 'view' ? 'Generating...' : 'Create view link →'}
+            </button>
+          )}
+        </div>
+
+        <div>
+          <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
+            Or generate a temporary link that lets an AI agent push updates to this collection.
+          </p>
+          <button
+            onClick={generateAgent}
+            disabled={loading !== null}
+            className="text-link text-xs font-medium hover:underline"
+          >
+            {loading === 'agent' ? 'Generating...' : 'Generate agent link →'}
+          </button>
+        </div>
       </div>
 
-      {showModal && agentUrl && (
+      {modal === 'view' && viewUrl && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowModal(false)
+            if (e.target === e.currentTarget) setModal(null)
+          }}
+        >
+          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">View-only Link</h2>
+              <button
+                onClick={() => setModal(null)}
+                className="text-ink-muted hover:text-ink text-lg leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-ink-muted mb-4 text-xs leading-relaxed">
+              Anyone with this link can browse this collection — overview, versions, records,
+              schemas, and exports — without signing in. They cannot make changes. The link stays
+              attached as they click between pages.
+            </p>
+
+            <div className="mb-4">
+              <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
+                Link
+              </label>
+              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+                {viewUrl}
+              </div>
+              <button
+                onClick={() => copy(viewUrl, 'link')}
+                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
+              >
+                {copied === 'link' ? 'Copied!' : 'Copy link'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-ink-muted text-[10px]">
+                Expires in 30 days. Revoke it anytime from Settings &rarr; API Keys.
+              </p>
+              <button
+                onClick={() => {
+                  setModal(null)
+                  generateView()
+                }}
+                className="text-ink-muted text-xs underline hover:no-underline"
+              >
+                Regenerate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === 'agent' && agentUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setModal(null)
           }}
         >
           <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Agent Update Link</h2>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={() => setModal(null)}
                 className="text-ink-muted hover:text-ink text-lg leading-none"
               >
                 &times;
@@ -580,7 +706,7 @@ function AgentShareSection({
                 {agentUrl}
               </div>
               <button
-                onClick={copyLink}
+                onClick={() => copy(agentUrl, 'link')}
                 className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
               >
                 {copied === 'link' ? 'Copied!' : 'Copy link'}
@@ -592,11 +718,10 @@ function AgentShareSection({
                 Prompt
               </label>
               <div className="bg-parchment-dark border-rule overflow-hidden rounded border px-3 py-2 text-xs leading-relaxed break-all">
-                Will you create an update that captures this conversation. Here is a link with
-                reference how to do that: {agentUrl}
+                {agentBlurb}
               </div>
               <button
-                onClick={copyBlurb}
+                onClick={() => copy(agentBlurb, 'blurb')}
                 className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
               >
                 {copied === 'blurb' ? 'Copied!' : 'Copy prompt'}
@@ -607,8 +732,8 @@ function AgentShareSection({
               <p className="text-ink-muted text-[10px]">Expires in 1 hour.</p>
               <button
                 onClick={() => {
-                  setShowModal(false)
-                  generate()
+                  setModal(null)
+                  generateAgent()
                 }}
                 className="text-ink-muted text-xs underline hover:no-underline"
               >

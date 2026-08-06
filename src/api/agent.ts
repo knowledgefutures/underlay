@@ -3,7 +3,11 @@ import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
 import { auth } from '../lib/auth.js'
-import { getLatestReadyVersion, loadVersionSchemas } from '../lib/version-helpers.server.js'
+import {
+  getLatestReadyVersion,
+  hasOrgAccess,
+  loadVersionSchemas,
+} from '../lib/version-helpers.server.js'
 
 const DEFAULT_SCHEMA_SLUG = 'update'
 const DEFAULT_SCHEMA = {
@@ -62,6 +66,7 @@ export async function agentPage(c: Context) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
+      organizationId: schema.collections.organizationId,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
     })
@@ -72,6 +77,21 @@ export async function agentPage(c: Context) {
 
   if (!coll) {
     return c.html('<h1>Collection not found</h1>', 404)
+  }
+
+  // The key's `collectionIds` metadata is set by whoever created the key, so a
+  // valid key does NOT by itself prove a relationship to this collection. This
+  // page discloses the schema and sample records, so require the key's owner to
+  // actually be a member of the owning org — otherwise anyone could mint a key
+  // pointed at a collection UUID they don't own and read it here.
+  if (!(await hasOrgAccess(keyInfo.userId, coll.organizationId))) {
+    return c.html(
+      `<!DOCTYPE html><html><head><title>Invalid token</title></head><body>
+<h1>Invalid or expired token</h1>
+<p>This agent link is no longer valid. Ask the collection owner for a new link.</p>
+</body></html>`,
+      404,
+    )
   }
 
   const latest = await getLatestReadyVersion(coll.id)
@@ -128,7 +148,10 @@ export async function agentPage(c: Context) {
       base_version: latest?.semver ?? null,
       message: 'Added update from conversation',
       schemas: Object.fromEntries(displaySchemas.map((s) => [s.slug, s.schema])),
-      manifest: [{ id: 'record-1', type: exampleType, hash: '<sha256-of-canonical-json>' }],
+      manifest: [
+        { id: 'record-1', type: exampleType, hash: '<sha256-of-canonical-json>' },
+        { id: 'record-2', type: exampleType, hash: '<sha256>', private: true },
+      ],
       files: [],
     },
     null,
@@ -179,6 +202,8 @@ ${description ? `<tr><th>Description</th><td>${escapeHtml(description)}</td></tr
 ${latest ? `<tr><th>Records</th><td>${latest.recordCount.toLocaleString()}</td></tr>` : ''}
 ${latest ? `<tr><th>Files</th><td>${latest.fileCount.toLocaleString()}</td></tr>` : ''}
 <tr><th>API key</th><td><code>${escapeHtml(token)}</code></td></tr>
+<tr><th>Key expires</th><td>1 hour after this link was generated. Start promptly; if requests begin returning 401, ask the collection owner for a new link.</td></tr>
+<tr><th>Key scope</th><td>Write access to <strong>this collection only</strong>. Requests against any other collection return 403, and account or organization endpoints are refused outright.</td></tr>
 <tr><th>Collection URL</th><td><a href="${escapeHtml(origin)}/${escapeHtml(collPath)}">${escapeHtml(origin)}/${escapeHtml(collPath)}</a></td></tr>
 </table>
 
@@ -228,10 +253,19 @@ Content-Type: application/json</pre>
 <table class="kv">
 <tr><th>base_version</th><td>The semver of the version you&rsquo;re building on (e.g. <code>${latest ? escapeHtml(latest.semver) : 'null'}</code>). Use <code>null</code> for the first push.</td></tr>
 <tr><th>schemas</th><td><strong>Required.</strong> A map of type name &rarr; JSON Schema for every type in this version.</td></tr>
-<tr><th>manifest</th><td><strong>Required</strong> (unless uploading it in chunks, see below). Array of <code>{id, type, hash}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see llms.txt for the exact algorithm). Capped at 500,000 entries.</td></tr>
+<tr><th>manifest</th><td><strong>Required</strong> (unless uploading it in chunks, see below). Array of <code>{id, type, hash, private?}</code> for every record in the new version. The hash is SHA-256 of the canonical JSON (see llms.txt for the exact algorithm). Capped at 500,000 entries. <code>private: true</code> hides that record from everyone who is not a member of the owning organization.</td></tr>
 <tr><th>files</th><td>Array of file hashes referenced by records. Empty array if none.</td></tr>
 <tr><th>message</th><td>Optional commit message describing this update.</td></tr>
 </table>
+
+<div class="note">
+<strong>Record privacy is declared here, per push, and is not inherited.</strong>
+<code>private</code> belongs on the <em>manifest entry</em> above &mdash; not on the record body &mdash; and it is stored per version.
+<strong>Omitting it means public.</strong> It does <em>not</em> mean &ldquo;leave it as it was&rdquo;: if you are re-pushing a collection that already
+has private records, you must include <code>"private": true</code> on each of them again, or this push will publish them.
+Conversely, dropping the flag from a record is how you un-hide it.
+Redaction is forward-only &mdash; hiding a record in a new version does not change older versions, which remain immutable and still serve it.
+</div>
 
 <h3>Response</h3>
 <pre>${escapeHtml(JSON.stringify({ session_id: '<uuid>', needed_records: ['<hash>'], needed_files: [], total_records: 1, already_have_records: 0 }, null, 2))}</pre>
@@ -244,9 +278,15 @@ Content-Type: application/x-ndjson</pre>
 
 <h3>Record format</h3>
 <pre>${escapeHtml(recordExample)}</pre>
+<p>Exactly three keys: <code>id</code>, <code>type</code>, <code>data</code>. A <code>private</code> key here is <strong>silently ignored</strong> &mdash;
+record privacy is declared on the manifest entry in Step 1, not on the record body. The hash you sent in the manifest must be the
+SHA-256 of the canonical JSON of these three keys.</p>
 
 <h3>Step 3: Commit</h3>
-<p>Finalize the version. The server validates all records against schemas, computes the version hash, and creates the new immutable version.</p>
+<p>Finalize the version. The server validates all records against schemas, computes both version digests &mdash; <code>hash</code> over the full
+content and <code>public_hash</code> over the public projection &mdash; and creates the new immutable version. A push is rejected as a duplicate
+(409) only if <strong>both</strong> digests match an existing version, so re-pushing identical content with different <code>private</code> flags is a
+real new version rather than a no-op.</p>
 <pre>POST ${escapeHtml(origin)}/api/collections/${escapeHtml(collPath)}/versions/negotiate/&lt;session_id&gt;/commit
 Authorization: Bearer ${escapeHtml(token)}</pre>
 

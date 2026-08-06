@@ -40,7 +40,7 @@ const recordsRes = `{
 
 const commitRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
+  "hash": "private:a1b2c3d4...",
   "recordCount": 3,
   "fileCount": 1
 }`
@@ -93,7 +93,7 @@ const sessionPollRes = `{
 const listRes = `[
   {
     "semver": "v1.1.0",
-    "hash": "a1b2c3d4...",
+    "hash": "private:a1b2c3d4...",
     "message": "Add new publications",
     "appId": "pubpub-sync",
     "actorId": "user-42",
@@ -133,13 +133,13 @@ X-Underlay-Record-Count: 3113504
 
 const manifestRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
-  "schemas": {"Publication": "sha256:abc123..."},
+  "hash": "private:a1b2c3d4...",
+  "schemas": {"Publication": "abc123..."},
   "records": [
-    {"id": "pub-001", "type": "Publication", "hash": "sha256:def456..."},
-    {"id": "pub-002", "type": "Publication", "hash": "sha256:789abc..."}
+    {"id": "pub-001", "type": "Publication", "hash": "def456..."},
+    {"id": "pub-002", "type": "Publication", "hash": "789abc..."}
   ],
-  "files": ["sha256:a1b2c3...", "sha256:d4e5f6..."],
+  "files": ["a1b2c3...", "d4e5f6..."],
   "pagination": {
     "limit": 10000,
     "hasMore": true,
@@ -149,16 +149,16 @@ const manifestRes = `{
 
 const manifestDeltaRes = `{
   "semver": "v1.1.0",
-  "hash": "a1b2c3d4...",
+  "hash": "private:a1b2c3d4...",
   "since": "v1.0.0",
-  "schemas": {"Publication": "sha256:abc123..."},
+  "schemas": {"Publication": "abc123..."},
   "delta": {
-    "added":   [{"id": "pub-003", "type": "Publication", "hash": "sha256:..."}],
-    "updated": [{"id": "pub-001", "type": "Publication", "hash": "sha256:...",
-                 "previousHash": "sha256:..."}],
-    "removed": [{"id": "pub-old", "type": "Publication", "hash": "sha256:..."}]
+    "added":   [{"id": "pub-003", "type": "Publication", "hash": "def456..."}],
+    "updated": [{"id": "pub-001", "type": "Publication", "hash": "def456...",
+                 "previousHash": "abc123..."}],
+    "removed": [{"id": "pub-old", "type": "Publication", "hash": "def456..."}]
   },
-  "files": ["sha256:a1b2c3..."],
+  "files": ["a1b2c3..."],
   "pagination": {
     "limit": 10000,
     "hasMore": false,
@@ -197,6 +197,13 @@ export default function DocsApiVersions() {
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
         schema + records + file references. Pushing a new version uses the{' '}
         <strong>negotiate protocol</strong>, a three-step flow similar to git's pack negotiation.
+      </p>
+      <p>
+        <strong>Version hashes are prefixed by form.</strong> Members of the owning org receive{' '}
+        <code>private:&lt;sha256&gt;</code>, the digest of the full content; everyone else receives{' '}
+        <code>public:&lt;sha256&gt;</code>, the digest of the privacy-filtered projection. They are
+        different values for the same version, and the prefix is how you tell which one you got.
+        Record, schema and file hashes are bare hex with no prefix.
       </p>
 
       <hr className="border-rule my-6" />
@@ -247,8 +254,11 @@ export default function DocsApiVersions() {
                 <code>manifest</code>
               </td>
               <td>
-                Array of <code>{'{"id", "type", "hash"}'}</code> objects. Each <code>hash</code> is
-                the SHA-256 of the canonical JSON <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Array of <code>{'{"id", "type", "hash", "private"?}'}</code> objects. Each{' '}
+                <code>hash</code> is the SHA-256 of the canonical JSON{' '}
+                <code>{'{"id":...,"type":...,"data":...}'}</code>. <code>private: true</code> hides
+                that record from non-owners in <strong>this version only</strong> and must be
+                re-sent on every push — omitting it means public (default <code>false</code>).
                 Required unless you upload the manifest in chunks — see below. Capped at 500,000
                 entries.
               </td>
@@ -322,9 +332,9 @@ export default function DocsApiVersions() {
           Then <code>POST .../versions/negotiate/:sessionId/manifest</code> with up to{' '}
           <strong>50,000</strong> JSONL entries per request (
           <code>Content-Type: application/x-ndjson</code>), each line a{' '}
-          <code>{'{"id", "type", "hash"}'}</code> object. Each response tells you which records from{' '}
-          <em>that chunk</em> the server still needs, so you can start sending bodies before the
-          whole manifest is uploaded:
+          <code>{'{"id", "type", "hash", "private"?}'}</code> object. Each response tells you which
+          records from <em>that chunk</em> the server still needs, so you can start sending bodies
+          before the whole manifest is uploaded:
         </p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{manifestChunkRes}</code>
@@ -410,9 +420,10 @@ export default function DocsApiVersions() {
           <code>failed</code>, and its partial version removed.
         </p>
 
-        <h3>Schema privacy</h3>
+        <h3>Privacy</h3>
         <p>
-          You can add <code>"private": true</code> at two levels in the schema:
+          You can add <code>"private": true</code> at two levels in the schema, and at a third on
+          the manifest entry:
         </p>
         <ul>
           <li>
@@ -423,7 +434,22 @@ export default function DocsApiVersions() {
             <strong>Field-level:</strong> Add <code>"private": true</code> to a field definition to
             strip that field from records returned to public readers.
           </li>
+          <li>
+            <strong>Record-level:</strong> Add <code>"private": true</code> to a{' '}
+            <strong>manifest entry</strong> (not the record body) to hide that one record. Unlike
+            type and field privacy — which live in the schema — this is declared per record per push
+            and stored on the version&rsquo;s reference to the record, so{' '}
+            <strong>it must be re-declared on every push; omitting it means public</strong>. The
+            manifest endpoint echoes <code>private</code> back so a round-trip is lossless.
+          </li>
         </ul>
+        <p>
+          Redaction is <strong>per-version and forward-only</strong>: marking a record private in v2
+          hides it in v2 only — v1 is immutable and still serves it at{' '}
+          <code>/versions/v1.0.0/records</code>. File access resolves across every ready version, so
+          a file referenced publicly in v1 stays downloadable after the referencing record is
+          redacted in v2.
+        </p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{`"schemas": {
   "Article": {
@@ -670,9 +696,13 @@ export default function DocsApiVersions() {
         <p>
           <strong>Check completeness yourself.</strong> A stream that fails partway cannot report
           it: the <code>200</code> and headers were sent before anything went wrong.{' '}
-          <code>X-Underlay-Record-Count</code> tells you how many lines to expect. If you receive
-          fewer, resume with <code>?after=</code> set to the id of the last complete line you parsed
-          — don't start over.
+          <code>X-Underlay-Record-Count</code> tells you how many lines to expect — the count for{' '}
+          <em>this</em> request, privacy-filtered for your access level and scoped to{' '}
+          <code>?type=</code> if you passed one, so the comparison is exact. (Don&rsquo;t compare
+          against the version&rsquo;s <code>recordCount</code>: that is the full total and counts
+          private records you may not be receiving.) If you receive fewer, resume with{' '}
+          <code>?after=</code> set to the id of the last complete line you parsed — don't start
+          over.
         </p>
         <p>
           A record id is not guaranteed unique within a version — the same id can appear under more
