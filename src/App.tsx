@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs, RouteObject } from 'react-router'
 
+import { RouteErrorBoundary } from '~/components/NotFound'
 import Root from '~/components/Root'
 import { fetchBase } from '~/lib/fetch-base'
 import { buildDataRoutes } from '~/route-gen'
@@ -32,6 +33,7 @@ export const routes: RouteObject[] = [
   {
     id: 'root',
     Component: Root,
+    ErrorBoundary: RouteErrorBoundary,
     loader: rootLoader,
     children: [...buildDataRoutes(components, dataModules), { path: '*', lazy: NotFound }],
   },

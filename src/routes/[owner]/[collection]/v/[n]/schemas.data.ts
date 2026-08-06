@@ -5,20 +5,15 @@ import { apiUrlBuilder } from '~/lib/share-token'
 
 export const handle = {
   title: (params: Record<string, string>) =>
-    `Schemas — ${params.owner}/${params.collection} · Underlay`,
+    `Schemas ${params.n} — ${params.owner}/${params.collection} · Underlay`,
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const url = new URL(request.url)
-
-  // Legacy: version-pinned schemas used to live here as ?version=.
-  const versionParam = url.searchParams.get('version')
-  if (versionParam) {
-    const token = url.searchParams.get('token')
-    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
-    throw redirect(
-      `/${params.owner}/${params.collection}/v/${versionParam.replace(/^v/, '')}/schemas${tokenQuery}`,
-    )
+  // Canonicalize the legacy double-v form (/v/v1.0.0 → /v/1.0.0).
+  if (/^v\d/.test(params.n ?? '')) {
+    const url = new URL(request.url)
+    const bare = (params.n ?? '').replace(/^v/, '')
+    throw redirect(`/${params.owner}/${params.collection}/v/${bare}/schemas${url.search}`)
   }
 
   const api = apiUrlBuilder(request, fetchBase(request.url))
@@ -27,7 +22,9 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 
   const [data, schemas] = await Promise.all([
     fetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
-    fetch(api(`${prefix}/schemas`), { headers }).then((r) => (r.ok ? r.json() : null)),
+    fetch(api(`${prefix}/schemas?version=${encodeURIComponent(params.n ?? '')}`), {
+      headers,
+    }).then((r) => (r.ok ? r.json() : null)),
   ])
 
   if (!data) throw new Response('Not Found', { status: 404 })

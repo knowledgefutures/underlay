@@ -150,7 +150,7 @@ export default function SettingsLayout({
             {groups.map((group, i) => (
               <div key={i} className="mb-5">
                 {group.heading && (
-                  <p className="text-ink-muted mb-1.5 px-2.5 font-mono text-[10px] tracking-widest uppercase">
+                  <p className="text-ink-muted mb-1.5 px-2.5 text-[11px] font-semibold tracking-wide uppercase">
                     {group.heading}
                   </p>
                 )}

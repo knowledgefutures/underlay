@@ -1,23 +1,7 @@
-import type { LoaderFunctionArgs } from 'react-router'
+import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { fetchBase } from '~/lib/fetch-base'
-import { apiUrlBuilder } from '~/lib/share-token'
-
-export const handle = {
-  title: (params: Record<string, string>) =>
-    `Diff — ${params.owner}/${params.collection} · Underlay`,
-}
-
+/** Legacy route: diff moved to /versions/compare. */
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = { Cookie: request.headers.get('Cookie') ?? '' }
-  const prefix = `/api/collections/${params.owner}/${params.collection}`
-
-  const [data, versions] = await Promise.all([
-    fetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
-    fetch(api(`${prefix}/versions?limit=100`), { headers }).then((r) => (r.ok ? r.json() : [])),
-  ])
-
-  if (!data) throw new Response('Not Found', { status: 404 })
-  return { data, versions }
+  const url = new URL(request.url)
+  throw redirect(`/${params.owner}/${params.collection}/versions/compare${url.search}`)
 }

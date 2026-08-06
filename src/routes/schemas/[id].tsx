@@ -134,7 +134,7 @@ export default function SchemaDetailPage() {
               {usage.map((u, i) => (
                 <Link
                   key={`${u.collection}-${u.slug}`}
-                  to={`/${u.collection}/v/${u.semver}?type=${u.slug}`}
+                  to={`/${u.collection}/v/${u.semver.replace(/^v/, '')}/records?type=${u.slug}`}
                   className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                     i < usage.length - 1 ? 'border-rule border-b' : ''
                   }`}

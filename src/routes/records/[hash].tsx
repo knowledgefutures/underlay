@@ -122,7 +122,7 @@ export default function RecordDetailPage() {
               {record.references.map((ref, i) => (
                 <Link
                   key={`${ref.owner}/${ref.collection}-${ref.semver}`}
-                  to={`/${ref.owner}/${ref.collection}/v/${ref.semver}?type=${record.type}`}
+                  to={`/${ref.owner}/${ref.collection}/v/${ref.semver.replace(/^v/, '')}/records?type=${record.type}`}
                   className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
                     i < record.references.length - 1 ? 'border-rule border-b' : ''
                   }`}

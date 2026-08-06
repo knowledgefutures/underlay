@@ -1,3 +1,11 @@
+/**
+ * Stored semvers carry a leading 'v' ("v1.0.0"). Page URLs use the bare form
+ * (/v/1.0.0); the API normalizes both via parseSemver, so either resolves.
+ */
+export function bareSemver(semver: string): string {
+  return semver.replace(/^v/, '')
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return '0 B'
   const k = 1024

@@ -1,13 +1,12 @@
-import DOMPurify from 'isomorphic-dompurify'
-import { marked } from 'marked'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import CollectionOverviewBody from '~/components/collection-overview'
 import { Badge } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
-import { formatBytes } from '~/lib/format'
+import { bareSemver } from '~/lib/format'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
 
@@ -131,30 +130,26 @@ function CollectionNav({
   const shareToken = useShareToken()
   const [searchParams] = useSearchParams()
 
+  // Version is a path prefix; views are path segments; latest is the default
+  // when the prefix is absent. /acme/pubs/records vs /acme/pubs/v/1.0.0/records.
   const base = `/${owner}/${collection}`
-  const overviewTo = isLatest || !version ? base : `${base}/v/${version}?tab=metadata`
-  const schemasTo =
-    isLatest || !version
-      ? `${base}/schemas`
-      : `${base}/schemas?version=${encodeURIComponent(version)}`
+  const prefix = isLatest || !version ? base : `${base}/v/${bareSemver(version)}`
 
   // Switching versions keeps you on the view you're looking at.
   function versionTo(semver: string, targetIsLatest: boolean): string {
+    const target = targetIsLatest ? base : `${base}/v/${bareSemver(semver)}`
     switch (active) {
-      case 'overview':
-        return targetIsLatest ? base : `${base}/v/${semver}?tab=metadata`
-      case 'schemas':
-        return targetIsLatest
-          ? `${base}/schemas`
-          : `${base}/schemas?version=${encodeURIComponent(semver)}`
-      case 'files':
-        return `${base}/v/${semver}?tab=files`
       case 'records': {
         const type = searchParams.get('type')
-        return `${base}/v/${semver}${type ? `?type=${encodeURIComponent(type)}` : ''}`
+        return `${target}/records${type ? `?type=${encodeURIComponent(type)}` : ''}`
       }
+      case 'schemas':
+        return `${target}/schemas`
+      case 'files':
+        return `${target}/files`
       default:
-        return `${base}/v/${semver}`
+        // overview, or a collection-level page like /versions
+        return target
     }
   }
 
@@ -203,23 +198,26 @@ function CollectionNav({
         </div>
       </div>
       <div className="border-rule mb-6 flex items-center gap-0 border-b">
-        <TokenLink to={overviewTo} className={active === 'overview' ? activeClass : inactiveClass}>
+        <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
           Overview
         </TokenLink>
         {version && (
           <TokenLink
-            to={`${base}/v/${version}`}
+            to={`${prefix}/records`}
             className={active === 'records' ? activeClass : inactiveClass}
           >
             Records
           </TokenLink>
         )}
-        <TokenLink to={schemasTo} className={active === 'schemas' ? activeClass : inactiveClass}>
+        <TokenLink
+          to={`${prefix}/schemas`}
+          className={active === 'schemas' ? activeClass : inactiveClass}
+        >
           Schemas
         </TokenLink>
         {version && (
           <TokenLink
-            to={`${base}/v/${version}?tab=files`}
+            to={`${prefix}/files`}
             className={active === 'files' ? activeClass : inactiveClass}
           >
             Files
@@ -247,17 +245,6 @@ export default function CollectionPage() {
   const data = useLoaderData() as any
 
   const isOwner = useIsOwner(owner)
-
-  const readmeHtml = useMemo(() => {
-    const meta = data?.latestVersion?.metadata as Record<string, unknown> | null | undefined
-    const source = (meta?.readme as string) || data?.latestVersion?.message || null
-    return source ? DOMPurify.sanitize(marked.parse(source) as string) : null
-  }, [data])
-
-  const totalVersions = data.versionCount ?? 0
-  const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
-  const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type))
-  const collectionArkPath: string | null = data.ark ? new URL(data.ark).pathname : null
 
   return (
     <BaseLayout>
@@ -338,300 +325,23 @@ export default function CollectionPage() {
           </div>
         )}
 
-        {/* Two-column layout */}
-        <div className="grid grid-cols-[1fr_260px] gap-8">
-          {/* Main column */}
-          <div className="min-w-0">
-            {/* Latest version bar */}
-            {data.latestVersion && (
-              <div className="border-rule bg-parchment-dark mb-6 flex items-center justify-between rounded border px-4 py-2.5">
-                <div className="flex items-center gap-3 text-sm">
-                  <TokenLink
-                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}`}
-                    className="text-link font-medium hover:underline"
-                  >
-                    {data.latestVersion.semver}
-                  </TokenLink>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {data.latestVersion.recordCount.toLocaleString()} records
-                  </span>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {data.latestVersion.fileCount.toLocaleString()} files
-                  </span>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {formatBytes(data.latestVersion.totalBytes)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-ink-muted text-xs">
-                    {new Date(data.latestVersion.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                      timeZone: 'UTC',
-                    })}
-                  </span>
-                  <TokenLink
-                    to={`/${owner}/${collection}/versions`}
-                    className="text-ink-muted hover:text-ink flex items-center gap-1 text-xs transition-colors"
-                    title="Version history"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <span>{totalVersions}</span>
-                  </TokenLink>
-                </div>
-              </div>
-            )}
-
-            {/* Type TOC */}
-            {allTypes.length > 0 && (
-              <div className="border-rule mb-6 overflow-hidden rounded border">
-                {allTypes.map((t: any, i: number) => (
-                  <TokenLink
-                    key={t.type}
-                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}?type=${t.type}`}
-                    className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
-                      i < allTypes.length - 1 ? 'border-rule border-b' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <svg
-                        className="text-ink-muted h-4 w-4 shrink-0"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                        />
-                      </svg>
-                      <span className="font-medium">{t.type}</span>
-                    </div>
-                    <span className="text-ink-muted text-xs">
-                      {t.count.toLocaleString()} records
-                    </span>
-                  </TokenLink>
-                ))}
-              </div>
-            )}
-
-            {/* README */}
-            {readmeHtml ? (
-              <div className="border-rule mb-6 overflow-hidden rounded border">
-                <div className="bg-parchment-dark border-rule text-ink-muted border-b px-4 py-2.5 text-xs font-medium">
-                  README
-                </div>
-                <div
-                  className="prose prose-sm max-w-none px-6 py-5"
-                  dangerouslySetInnerHTML={{ __html: readmeHtml }}
-                />
-              </div>
-            ) : (
-              <div className="border-rule text-ink-muted mb-6 rounded border px-4 py-8 text-center text-sm">
-                No README yet.
-              </div>
-            )}
-          </div>
-
-          {/* Sidebar */}
-          <aside className="text-sm">
-            {/* About */}
-            <div className="mb-6">
-              <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                About
-              </h3>
-              <p className="text-ink text-sm leading-relaxed">
-                {data.description || 'No description.'}
-              </p>
-              <div className="text-ink-muted mt-2 text-xs">
-                by{' '}
-                <Link to={`/${data.ownerSlug}`} className="text-link hover:underline">
-                  {data.ownerName}
-                </Link>
-              </div>
-              {(() => {
-                const meta = data.latestVersion?.metadata as
-                  | Record<string, unknown>
-                  | null
-                  | undefined
-                const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
-                return tags.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {tags.map((tag: string) => (
-                      <Link
-                        key={tag}
-                        to={`/explore?tag=${encodeURIComponent(tag)}`}
-                        className="bg-parchment-dark text-ink-muted hover:text-ink rounded px-2 py-0.5 text-xs transition-colors"
-                      >
-                        {tag}
-                      </Link>
-                    ))}
-                  </div>
-                ) : null
-              })()}
-            </div>
-
-            {/* Stats */}
-            {data.latestVersion && (
-              <div className="mb-6">
-                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                  Stats
-                </h3>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">{totalVersions}</strong> versions
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {data.latestVersion.recordCount.toLocaleString()}
-                      </strong>{' '}
-                      records
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {data.latestVersion.fileCount.toLocaleString()}
-                      </strong>{' '}
-                      files
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {formatBytes(data.latestVersion.totalBytes)}
-                      </strong>{' '}
-                      total
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Subscribe / Export */}
-            <div className="mb-6">
-              <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                Subscribe
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div>
-                  <p className="mb-0.5 font-medium">AT Protocol</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[11px] break-all">
-                    {`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}
-                  </code>
-                </div>
-                <div>
-                  <p className="mb-0.5 font-medium">API</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[11px] break-all">
-                    {`GET /api/collections/${owner}/${collection}/versions`}
-                  </code>
-                </div>
-                {data.latestVersion && (
-                  <TokenLink
-                    to={`/api/collections/${owner}/${collection}/export`}
-                    className="text-link inline-block hover:underline"
-                    reloadDocument
-                  >
-                    Download .tar.gz
-                  </TokenLink>
-                )}
-              </div>
-            </div>
-
-            {/* Share */}
-            {isOwner && (
+        <CollectionOverviewBody
+          owner={owner!}
+          collection={collection!}
+          data={data}
+          version={data.latestVersion}
+          isLatest
+          share={
+            isOwner ? (
               <SharePanel
                 owner={owner!}
                 collection={collection!}
                 collectionId={data.id}
                 isPublic={!!data.public}
               />
-            )}
-
-            {/* ARK */}
-            {collectionArkPath && (
-              <div className="mb-6">
-                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                  ARK Identifier
-                </h3>
-                <Link
-                  to={collectionArkPath}
-                  className="text-link bg-parchment-dark block rounded px-2 py-1 font-mono text-[11px] break-all hover:underline"
-                >
-                  {collectionArkPath.slice(1)}
-                </Link>
-              </div>
-            )}
-          </aside>
-        </div>
+            ) : undefined
+          }
+        />
       </div>
     </BaseLayout>
   )
@@ -888,5 +598,5 @@ function SharePanel({
   )
 }
 
-export { CollectionNav }
+export { CollectionNav, SharePanel }
 export { formatBytes } from '~/lib/format'

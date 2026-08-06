@@ -4,9 +4,9 @@ import BaseLayout from '~/components/BaseLayout'
 import SchemaList from '~/components/SchemaList'
 import { useIsOwner } from '~/lib/use-is-owner'
 
-import { CollectionNav } from '.'
+import { CollectionNav } from '../..'
 
-export default function CollectionSchemasPage() {
+export default function VersionSchemasPage() {
   const { owner, collection } = useParams()
   const { data, schemas: schemasData } = useLoaderData() as { data: any; schemas: any }
   const isOwner = useIsOwner(owner)
@@ -20,8 +20,8 @@ export default function CollectionSchemasPage() {
           isPublic={data.public}
           isOwner={!!isOwner}
           active="schemas"
-          version={schemasData?.semver ?? data.latestVersion?.semver}
-          isLatest
+          version={schemasData?.semver}
+          isLatest={data.latestVersion?.semver === schemasData?.semver}
         />
         <SchemaList
           owner={owner!}

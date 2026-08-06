@@ -1,6 +1,7 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { bareSemver } from '~/lib/format'
 import { TokenLink } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
 
@@ -35,7 +36,7 @@ export default function CollectionVersionsPage() {
           </h2>
           {versions.length > 1 && (
             <TokenLink
-              to={`/${owner}/${collection}/diff`}
+              to={`/${owner}/${collection}/versions/compare`}
               className="text-link text-xs hover:underline"
             >
               Compare versions →
@@ -55,7 +56,7 @@ export default function CollectionVersionsPage() {
                 }`}
               >
                 <TokenLink
-                  to={`/${owner}/${collection}/v/${v.semver}`}
+                  to={`/${owner}/${collection}/v/${bareSemver(v.semver)}`}
                   className="flex min-w-0 items-center gap-4"
                 >
                   <div className="flex items-center gap-2">
@@ -94,7 +95,7 @@ export default function CollectionVersionsPage() {
                   )}
                   {i < versions.length - 1 ? (
                     <TokenLink
-                      to={`/${owner}/${collection}/diff?from=${versions[i + 1].semver}&to=${v.semver}`}
+                      to={`/${owner}/${collection}/versions/compare?from=${versions[i + 1].semver}&to=${v.semver}`}
                       className="text-link w-8 text-right hover:underline"
                       title={`Diff ${versions[i + 1].semver} → ${v.semver}`}
                     >

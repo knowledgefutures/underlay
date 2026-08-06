@@ -327,7 +327,7 @@ export function Badge({
   return (
     <span
       title={title}
-      className={`border-rule text-ink-muted rounded-control inline-flex items-center border px-1.5 py-0.5 font-mono text-[11px]${className ? ` ${className}` : ''}`}
+      className={`border-rule text-ink-muted rounded-control inline-flex items-center border px-1.5 py-px font-mono text-[10px]${className ? ` ${className}` : ''}`}
     >
       {children}
     </span>
