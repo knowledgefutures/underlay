@@ -22,6 +22,20 @@ export type AuthEnv = {
 
 const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
 
+/**
+ * POST endpoints that are semantically READS — they use POST only because the
+ * request carries a list too large for a query string, and they perform no
+ * mutation. These must be reachable anonymously, exactly like the GET they
+ * stand in for, or public data becomes unreadable in bulk.
+ *
+ * Note this only waives the "all non-GET requests need a userId" gate; each
+ * handler still runs its own per-collection access check. The `?token=` query
+ * param remains GET/HEAD-only, so these cannot be driven by a capability URL
+ * via link prefetch — a share-link caller sends the token as a Bearer header.
+ */
+const READ_ONLY_POST_PATHS = [/^\/api\/collections\/[^/]+\/[^/]+\/files\/presign$/]
+const isReadOnlyPost = (path: string) => READ_ONLY_POST_PATHS.some((re) => re.test(path))
+
 /** Verify an API key and load its identity/scope into the request context. */
 async function applyApiKey(
   c: Context<AuthEnv>,
@@ -121,10 +135,11 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   // Public GETs are allowed without auth
   if (c.req.method === 'GET') return next()
 
-  // All writes require auth, except public paths
+  // All writes require auth, except public paths and read-only POSTs
   if (!c.get('userId')) {
     const path = new URL(c.req.url).pathname
     if (publicPaths.has(path)) return next()
+    if (c.req.method === 'POST' && isReadOnlyPost(path)) return next()
     return c.json({ error: 'Authentication required', statusCode: 401 }, 401)
   }
 

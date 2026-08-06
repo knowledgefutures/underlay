@@ -921,6 +921,10 @@ const app = new Hono<AuthEnv>()
           // Non-owners get the public version digest, never the private one.
           hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
           message: version.message,
+          // For non-owners these are overwritten below with what the archive
+          // actually contains; the version row's totals count private content
+          // that was filtered out, so reporting them verbatim would both
+          // contradict the tarball and disclose how much is hidden.
           recordCount: version.recordCount,
           fileCount: version.fileCount,
           totalBytes: version.totalBytes,
@@ -958,12 +962,20 @@ const app = new Hono<AuthEnv>()
       // For non-owners, only files referenced by the (privacy-filtered) records
       // that actually ship may be included — a file attached solely to a private
       // record or private field must not leak.
+      let emittedRecordCount = 0
       const referencedFileHashes = new Set<string>()
-      const collectFileRefs = (data: unknown) => {
-        if (!data || typeof data !== 'object') return
-        for (const value of Object.values(data as Record<string, unknown>)) {
-          const ref = (value as { $file?: unknown } | null)?.$file
-          if (typeof ref === 'string') referencedFileHashes.add(ref.replace('sha256:', ''))
+      // Walks nested objects and arrays: `$file` refs are not restricted to the
+      // top level (nothing in schema validation forbids nesting), and a missed
+      // ref would silently drop a legitimately-public file from the archive.
+      const collectFileRefs = (value: unknown) => {
+        if (!value || typeof value !== 'object') return
+        const ref = (value as { $file?: unknown }).$file
+        if (typeof ref === 'string') {
+          referencedFileHashes.add(ref.replace('sha256:', ''))
+          return
+        }
+        for (const child of Object.values(value as Record<string, unknown>)) {
+          collectFileRefs(child)
         }
       }
 
@@ -1026,6 +1038,7 @@ const app = new Hono<AuthEnv>()
                 ? filterRecordData(r.data, privateFields)
                 : r.data
             if (!ownerAccess) collectFileRefs(data)
+            emittedRecordCount++
             pending.push(JSON.stringify({ id: r.recordId, type: r.type, data }))
           }
           // Emit whenever a part fills, so `pending` never grows past one part.
@@ -1035,15 +1048,27 @@ const app = new Hono<AuthEnv>()
       }
 
       // Add files
+      let emittedFileCount = 0
+      let emittedFileBytes = 0
       for (const file of versionFiles) {
         if (!ownerAccess && !referencedFileHashes.has(file.hash)) continue
         try {
           const fileBuffer = await downloadFromS3(file.storageKey)
           pack.entry({ name: `files/${file.hash}`, size: fileBuffer.length }, fileBuffer)
+          emittedFileCount++
+          emittedFileBytes += fileBuffer.length
         } catch (err) {
           console.error(`[export] Failed to download file ${file.hash} (${file.storageKey}):`, err)
           manifest.files_missing.push(file.hash)
         }
+      }
+
+      // Report what the archive actually contains, so a non-owner's manifest
+      // matches its payload instead of the owner's (larger) totals.
+      if (!ownerAccess) {
+        manifest.version.recordCount = emittedRecordCount
+        manifest.version.fileCount = emittedFileCount
+        manifest.version.totalBytes = emittedFileBytes
       }
 
       const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))

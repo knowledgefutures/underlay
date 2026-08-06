@@ -1381,7 +1381,17 @@ app.post(
         metadataChanged,
       )
 
-      // Check for duplicate
+      // Check for duplicate.
+      //
+      // A version is identified by BOTH digests. `hash` covers records, schemas,
+      // files and metadata but NOT record-level privacy, so comparing it alone
+      // would reject a push that changes only which records are private —
+      // i.e. redaction-in-place, the workflow per-version privacy exists to
+      // support: identical content re-pushed with `private: true` would 409 as
+      // "no changes". `publicHash` is exactly the digest that privacy moves, so
+      // requiring both to match makes a privacy-only change a real new version.
+      // Versions written before public_hash existed store NULL; for those, fall
+      // back to matching on `hash` alone so their duplicate behaviour is unchanged.
       const [existingHash] = await db
         .select({ semver: schema.versions.semver })
         .from(schema.versions)
@@ -1389,6 +1399,7 @@ app.post(
           and(
             eq(schema.versions.collectionId, session.collectionId),
             eq(schema.versions.hash, versionHash),
+            sql`(${schema.versions.publicHash} IS NULL OR ${schema.versions.publicHash} = ${publicHash})`,
             eq(schema.versions.status, 'ready'),
           ),
         )

@@ -539,7 +539,6 @@ async function pullVersion(
           recordId: r.id,
           type: r.type,
           data: r.data as any,
-          private: false,
           size: Buffer.byteLength(canonical, 'utf8'),
         }
       })

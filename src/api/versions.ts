@@ -901,9 +901,11 @@ const app = new Hono<AuthEnv>()
       // join record_objects at all.
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(schemaEntries)
-      const privacyJoin = sql``
+      // `NOT IN (${array})` must NOT be used here: drizzle renders an embedded
+      // array as a row constructor — `NOT IN (($1,$2))` — which Postgres rejects
+      // with `operator does not exist: text <> record`. Use `<> ALL(array)`.
       const typeExclusion = (types: Set<string>) =>
-        types.size > 0 ? sql`AND vr.type NOT IN (${[...types]})` : sql``
+        types.size > 0 ? sql`AND vr.type <> ALL(${sql.param([...types])}::text[])` : sql``
       const privacyWhere = ownerAccess
         ? sql``
         : sql`AND vr.private = false ${typeExclusion(privateTypes)}`
@@ -954,16 +956,15 @@ const app = new Hono<AuthEnv>()
         const sincePrivateTypes = ownerAccess
           ? new Set<string>()
           : getPrivateTypes(await loadVersionSchemas(sinceId))
-        const removedPrivacyWhere = ownerAccess
-          ? sql``
-          : sql`AND vr.private = false ${typeExclusion(sincePrivateTypes)}`
 
         // Non-owners get the previous version's PUBLIC served hash, and only when
         // that prior record was itself public — otherwise `previousHash` is NULL.
         // Never serve `s.record_hash` for a private prior record; that would leak
         // the private content's digest.
         const sinceTypeGuard =
-          sincePrivateTypes.size > 0 ? sql`AND s.type NOT IN (${[...sincePrivateTypes]})` : sql``
+          sincePrivateTypes.size > 0
+            ? sql`AND s.type <> ALL(${sql.param([...sincePrivateTypes])}::text[])`
+            : sql``
         const previousServedHash = ownerAccess
           ? sql`(SELECT s.record_hash FROM version_records s
                  WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
@@ -972,31 +973,48 @@ const app = new Hono<AuthEnv>()
                  FROM version_records s
                  WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
 
+        // Visibility of a row for the CALLER, evaluated against the version that
+        // row belongs to (private-type sets differ between versions). Applied to
+        // BOTH the iterated rows and the presence subquery, so that a record
+        // whose privacy flipped with unchanged content still shows up: becoming
+        // private reads as `removed`, becoming public reads as `added`. Without
+        // it such a record is in neither list and delta-following mirrors keep
+        // serving content the full manifest no longer includes.
+        const visible = (alias: string, types: Set<string>) =>
+          ownerAccess
+            ? sql``
+            : types.size > 0
+              ? sql`AND ${sql.raw(alias)}.private = false AND ${sql.raw(alias)}.type <> ALL(${sql.param([...types])}::text[])`
+              : sql`AND ${sql.raw(alias)}.private = false`
+
         const deltaQuery = (
-          versionId: number,
+          selfId: number,
+          selfTypes: Set<string>,
           otherId: number,
+          otherTypes: Set<string>,
           presence: 'absent' | 'changed',
           cursor: ListCursor,
           extraColumn = sql``,
-          extraWhere = sql``,
         ) => sql`
           SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
                  vr.record_hash AS "recordHash"${extraColumn}
-          FROM version_records vr ${privacyJoin}
-          WHERE vr.version_id = ${versionId}
+          FROM version_records vr
+          WHERE vr.version_id = ${selfId}
             ${
               presence === 'absent'
                 ? sql`AND NOT EXISTS (
                     SELECT 1 FROM version_records s
                     WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
+                      ${visible('s', otherTypes)}
                   )`
                 : sql`AND EXISTS (
                     SELECT 1 FROM version_records s
                     WHERE s.version_id = ${otherId} AND s.record_id = vr.record_id
                       AND s.record_hash <> vr.record_hash
+                      ${visible('s', otherTypes)}
                   )`
             }
-            ${privacyWhere} ${extraWhere} ${afterCursor('vr', cursor)}
+            ${visible('vr', selfTypes)} ${afterCursor('vr', cursor)}
           ORDER BY vr.record_id, vr.record_hash
           LIMIT ${limit + 1}
         `
@@ -1010,16 +1028,28 @@ const app = new Hono<AuthEnv>()
                 ? Promise.resolve([] as T[])
                 : (tx.execute(query) as unknown as Promise<T[]>)
             return Promise.all([
-              run<DeltaRow>(at.added, deltaQuery(targetId, sinceId, 'absent', at.added)),
+              run<DeltaRow>(
+                at.added,
+                deltaQuery(targetId, privateTypes, sinceId, sincePrivateTypes, 'absent', at.added),
+              ),
               run<DeltaRow>(
                 at.removed,
-                deltaQuery(sinceId, targetId, 'absent', at.removed, sql``, removedPrivacyWhere),
+                deltaQuery(
+                  sinceId,
+                  sincePrivateTypes,
+                  targetId,
+                  privateTypes,
+                  'absent',
+                  at.removed,
+                ),
               ),
               run<UpdatedRow>(
                 at.updated,
                 deltaQuery(
                   targetId,
+                  privateTypes,
                   sinceId,
+                  sincePrivateTypes,
                   'changed',
                   at.updated,
                   sql`, ${previousServedHash} AS "previousHash"`,
@@ -1066,7 +1096,7 @@ const app = new Hono<AuthEnv>()
         tx.execute(sql`
             SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
                    vr.record_hash AS "recordHash"
-            FROM version_records vr ${privacyJoin}
+            FROM version_records vr
             WHERE vr.version_id = ${version.id}
               ${privacyWhere} ${afterCursor('vr', at.added)}
             ORDER BY vr.record_id, vr.record_hash
@@ -1158,51 +1188,56 @@ const app = new Hono<AuthEnv>()
       const targetSchemas = await loadVersionSchemas(targetVersion.id)
       const ownerAccess = collection.ownerAccess
       const privateTypes = ownerAccess ? new Set<string>() : getPrivateTypes(targetSchemas)
-      const typeExclusion = (types: Set<string>) =>
-        types.size > 0 ? sql`AND vr.type NOT IN (${[...types]})` : sql``
-      const privacyWhere = ownerAccess
-        ? sql``
-        : sql`AND vr.private = false ${typeExclusion(privateTypes)}`
-
-      type DiffRow = { id: string; type: string; data: unknown; recordHash: string }
-
-      /** One side of the diff: rows of `versionId` absent from / changed in `otherId`. */
-      // `removed` iterates the `from` version, so judge privacy against the from
-      // version's own private flag + private-type set.
       const fromPrivateTypes =
         ownerAccess || !fromId
           ? new Set<string>()
           : getPrivateTypes(await loadVersionSchemas(fromId))
-      const removedPrivacyWhere = ownerAccess
-        ? sql``
-        : sql`AND vr.private = false ${typeExclusion(fromPrivateTypes)}`
 
+      // Caller-visibility of a row, judged against its OWN version's private-type
+      // set. Applied to the iterated rows and to the presence subquery alike, so a
+      // record whose privacy flipped with unchanged content is reported (redacted
+      // ⇒ `removed`, un-redacted ⇒ `added`) instead of vanishing from the diff.
+      // `<> ALL(array)`, never `NOT IN (${array})` — drizzle renders an embedded
+      // array as a row constructor, which Postgres rejects.
+      const visible = (alias: string, types: Set<string>) =>
+        ownerAccess
+          ? sql``
+          : types.size > 0
+            ? sql`AND ${sql.raw(alias)}.private = false AND ${sql.raw(alias)}.type <> ALL(${sql.param([...types])}::text[])`
+            : sql`AND ${sql.raw(alias)}.private = false`
+
+      type DiffRow = { id: string; type: string; data: unknown; recordHash: string }
+
+      /** One side of the diff: rows of `selfId` absent from / changed in `otherId`. */
       const diffQuery = (
-        versionId: number,
+        selfId: number,
+        selfTypes: Set<string>,
         otherId: number | undefined,
+        otherTypes: Set<string>,
         mode: 'absent' | 'changed' | 'all',
         cursor: ListCursor,
-        extraWhere = sql``,
       ) => sql`
         SELECT vr.record_id AS id, vr.type, ro.data, vr.record_hash AS "recordHash"
         FROM version_records vr
         INNER JOIN record_objects ro ON ro.hash = vr.record_hash
-        WHERE vr.version_id = ${versionId}
+        WHERE vr.version_id = ${selfId}
           ${
             mode === 'absent'
               ? sql`AND NOT EXISTS (
                   SELECT 1 FROM version_records s
                   WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
+                    ${visible('s', otherTypes)}
                 )`
               : mode === 'changed'
                 ? sql`AND EXISTS (
                   SELECT 1 FROM version_records s
                   WHERE s.version_id = ${otherId!} AND s.record_id = vr.record_id
                     AND s.record_hash <> vr.record_hash
+                    ${visible('s', otherTypes)}
                 )`
                 : sql``
           }
-          ${privacyWhere} ${extraWhere} ${afterCursor('vr', cursor)}
+          ${visible('vr', selfTypes)} ${afterCursor('vr', cursor)}
         ORDER BY vr.record_id, vr.record_hash
         LIMIT ${diffLimit + 1}
       `
@@ -1219,17 +1254,40 @@ const app = new Hono<AuthEnv>()
           return Promise.all([
             run(
               diffCursor.added,
-              diffQuery(targetId, fromId, fromId ? 'absent' : 'all', diffCursor.added),
+              diffQuery(
+                targetId,
+                privateTypes,
+                fromId,
+                fromPrivateTypes,
+                fromId ? 'absent' : 'all',
+                diffCursor.added,
+              ),
             ),
             run(
               diffCursor.removed,
               fromId
-                ? diffQuery(fromId, targetId, 'absent', diffCursor.removed, removedPrivacyWhere)
+                ? diffQuery(
+                    fromId,
+                    fromPrivateTypes,
+                    targetId,
+                    privateTypes,
+                    'absent',
+                    diffCursor.removed,
+                  )
                 : null,
             ),
             run(
               diffCursor.updated,
-              fromId ? diffQuery(targetId, fromId, 'changed', diffCursor.updated) : null,
+              fromId
+                ? diffQuery(
+                    targetId,
+                    privateTypes,
+                    fromId,
+                    fromPrivateTypes,
+                    'changed',
+                    diffCursor.updated,
+                  )
+                : null,
             ),
           ])
         },
@@ -1464,10 +1522,13 @@ const app = new Hono<AuthEnv>()
         }
 
         // Copy the record set server-side. The schema set is unchanged, so every
-        // column — including the public content-addresses — carries over as-is.
+        // column — including the public content-addresses and the per-version
+        // `private` flag — carries over as-is. `private` MUST be copied: it
+        // defaults to false, so omitting it would silently de-privatize every
+        // private record in the new (and now latest) version.
         await tx.execute(sql`
-          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
-          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
+          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type, private
           FROM version_records
           WHERE version_id = ${latest.id}
         `)

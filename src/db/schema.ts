@@ -250,7 +250,12 @@ export const versions = pgTable(
   },
   (t) => [
     unique().on(t.collectionId, t.semver),
-    unique().on(t.collectionId, t.hash),
+    // A version is identified by BOTH digests. `hash` covers content, schemas,
+    // files and metadata but not record-level privacy, so keying uniqueness on it
+    // alone would make redaction-in-place impossible: re-pushing identical
+    // content with a record newly marked private produces the same `hash` and a
+    // different `public_hash`, and must be allowed to become a new version.
+    unique().on(t.collectionId, t.hash, t.publicHash),
     index('versions_ordering_idx').on(t.collectionId, t.major, t.minor, t.patch),
   ],
 )

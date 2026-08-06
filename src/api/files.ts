@@ -45,6 +45,22 @@ async function isFilePubliclyAccessible(
   // collections it is scoped to.
   const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
 
+  // The file must actually belong to THIS collection (in any of its versions).
+  // Without this, the owner/slug in the path is decorative: a member could fetch
+  // any file in the system by requesting it under a collection they belong to.
+  const [belongs] = await db
+    .select({ fileHash: schema.versionFiles.fileHash })
+    .from(schema.versionFiles)
+    .innerJoin(schema.versions, eq(schema.versionFiles.versionId, schema.versions.id))
+    .where(
+      and(
+        eq(schema.versions.collectionId, collection.id),
+        eq(schema.versionFiles.fileHash, fileHash),
+      ),
+    )
+    .limit(1)
+  if (!belongs) return false
+
   if (userId != null && keyScopeOk) {
     const [membership] = await db
       .select()
@@ -129,17 +145,19 @@ async function isFilePubliclyAccessible(
       }
     }
 
+    // `$file` refs may be nested inside objects/arrays, so search recursively
+    // within each non-private top-level field (field privacy is top-level only).
+    const containsRef = (value: unknown): boolean => {
+      if (!value || typeof value !== 'object') return false
+      const ref = (value as { $file?: unknown }).$file
+      if (typeof ref === 'string') return ref === `sha256:${fileHash}`
+      return Object.values(value as Record<string, unknown>).some(containsRef)
+    }
+
     const data = rec.data as Record<string, any>
     for (const [key, val] of Object.entries(data)) {
       if (privateFields.has(key)) continue
-      if (
-        val &&
-        typeof val === 'object' &&
-        '$file' in val &&
-        (val as { $file: string }).$file === `sha256:${fileHash}`
-      ) {
-        return true
-      }
+      if (containsRef(val)) return true
     }
   }
 
@@ -302,7 +320,12 @@ const app = new Hono<AuthEnv>()
       const userId = c.get('userId')
       const scoped = c.get('apiKeyCollectionIds')
 
-      const clean = [...new Set(hashes.map((h) => h.replace('sha256:', '')))]
+      // Keys in the response are echoed back EXACTLY as the caller sent them
+      // (`sha256:`-prefixed or not), so a client can look up what it asked for.
+      const requested = [...new Set(hashes)]
+      const cleanOf = new Map(requested.map((h) => [h, h.replace('sha256:', '')]))
+      const clean = [...new Set(cleanOf.values())]
+
       const fileRows = clean.length
         ? await db
             .select({ hash: schema.files.hash, storageKey: schema.files.storageKey })
@@ -311,16 +334,20 @@ const app = new Hono<AuthEnv>()
         : []
       const storageByHash = new Map(fileRows.map((f) => [f.hash, f.storageKey]))
 
-      const result: Record<string, string | null> = {}
+      // Resolve access once per distinct hash, even if requested in both forms.
+      const urlByClean = new Map<string, string | null>()
       for (const h of clean) {
         const storageKey = storageByHash.get(h)
         if (!storageKey) {
-          result[h] = null
+          urlByClean.set(h, null)
           continue
         }
         const ok = await isFilePubliclyAccessible(owner, slug, h, userId, scoped)
-        result[h] = ok ? await getPresignedFileUrl(storageKey) : null
+        urlByClean.set(h, ok ? await getPresignedFileUrl(storageKey) : null)
       }
+
+      const result: Record<string, string | null> = {}
+      for (const h of requested) result[h] = urlByClean.get(cleanOf.get(h)!) ?? null
       return c.json(result)
     },
   )
