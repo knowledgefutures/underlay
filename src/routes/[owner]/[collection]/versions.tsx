@@ -1,18 +1,16 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useAppContext } from '~/lib/app-context'
 import { TokenLink } from '~/lib/share-token'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 import { CollectionNav, formatBytes } from '.'
 
 export default function CollectionVersionsPage() {
   const { owner, collection } = useParams()
-  const { currentUser } = useAppContext()
   const { data, versions } = useLoaderData() as { data: any; versions: any[] }
 
-  const isOwner =
-    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const isOwner = useIsOwner(owner)
 
   return (
     <BaseLayout>
@@ -23,11 +21,27 @@ export default function CollectionVersionsPage() {
           isPublic={data.public}
           isOwner={!!isOwner}
           active="versions"
+          version={versions[0]?.semver}
+          isLatest
         />
 
-        <h2 className="text-ink-muted mb-4 text-sm font-semibold">
-          {versions.length} version{versions.length !== 1 ? 's' : ''}
-        </h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-ink-muted text-sm font-semibold">
+            {(data.versionCount ?? versions.length).toLocaleString()} version
+            {(data.versionCount ?? versions.length) !== 1 ? 's' : ''}
+            {data.versionCount > versions.length && (
+              <span className="ml-1 font-normal">(showing latest {versions.length})</span>
+            )}
+          </h2>
+          {versions.length > 1 && (
+            <TokenLink
+              to={`/${owner}/${collection}/diff`}
+              className="text-link text-xs hover:underline"
+            >
+              Compare versions →
+            </TokenLink>
+          )}
+        </div>
 
         {versions.length === 0 ? (
           <p className="text-ink-muted py-8 text-center text-sm">No versions yet.</p>

@@ -109,8 +109,8 @@ export default function OwnerPage() {
               </h2>
               {isMember && (
                 <Link
-                  to="/new"
-                  className="bg-ink text-parchment visited:text-parchment rounded px-3 py-1.5 text-sm font-medium transition-opacity hover:opacity-90"
+                  to={`/new?owner=${owner}`}
+                  className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light rounded-control px-3 py-1.5 text-sm font-medium transition-colors"
                 >
                   New collection
                 </Link>
@@ -118,8 +118,8 @@ export default function OwnerPage() {
             </div>
 
             {collections.length === 0 ? (
-              <div className="text-ink-muted border-rule rounded border px-4 py-8 text-center text-sm">
-                No public collections yet.
+              <div className="text-ink-muted border-rule rounded-surface border px-4 py-8 text-center text-sm">
+                {isMember || isOwner ? 'No collections yet.' : 'No public collections yet.'}
               </div>
             ) : (
               <div className="border-rule overflow-hidden rounded border">

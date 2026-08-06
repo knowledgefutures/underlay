@@ -2,19 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useAppContext } from '~/lib/app-context'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 import { CollectionNav, formatBytes } from '..'
 
 export default function CollectionVersionPage() {
   const { owner, collection, n } = useParams()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const { currentUser } = useAppContext()
+  const [searchParams] = useSearchParams()
   const { version, collectionData } = useLoaderData() as { version: any; collectionData: any }
 
-  const isOwner =
-    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const isOwner = useIsOwner(owner)
   const shareToken = useShareToken()
 
   const readmeSource = (version.metadata as Record<string, unknown> | null | undefined)?.readme as
@@ -38,9 +36,11 @@ export default function CollectionVersionPage() {
   // Records state
   const [records, setRecords] = useState<any[]>([])
   const [totalRecords, setTotalRecords] = useState(0)
+  const [recordsLoading, setRecordsLoading] = useState(false)
 
   // Files state
   const [files, setFiles] = useState<any[]>([])
+  const [filesLoading, setFilesLoading] = useState(false)
 
   const schemasMap = useMemo(
     () => (version.schemas ?? {}) as Record<string, any>,
@@ -58,6 +58,7 @@ export default function CollectionVersionPage() {
     if (!currentType) return
 
     const offset = (page - 1) * pageSize
+    setRecordsLoading(true)
     fetch(
       withToken(
         `/api/collections/${owner}/${collection}/versions/${n}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`,
@@ -70,26 +71,31 @@ export default function CollectionVersionPage() {
         setRecords(body.records ?? body)
         setTotalRecords(body.pagination?.total ?? version.recordCount ?? 0)
       })
+      .finally(() => setRecordsLoading(false))
   }, [version, tab, currentType, page, owner, collection, n, shareToken])
 
   // Fetch files when files tab selected
   useEffect(() => {
     if (!version || tab !== 'files') return
 
+    setFilesLoading(true)
     fetch(withToken(`/api/collections/${owner}/${collection}/versions/${n}/files`, shareToken), {
       credentials: 'include',
     })
       .then((r) => (r.ok ? r.json() : []))
       .then(setFiles)
+      .finally(() => setFilesLoading(false))
   }, [version, tab, owner, collection, n, shareToken])
 
   const currentTypeFields: string[] = currentType
     ? schemasMap[currentType]?.properties
       ? Object.keys(schemasMap[currentType].properties)
-      : records.length > 0
-        ? Object.keys(records[0].data ?? {})
-        : []
+      : // No schema properties: derive columns from the whole page of records,
+        // sorted, so column order doesn't change with whichever record is first.
+        [...new Set(records.flatMap((r: any) => Object.keys(r.data ?? {})))].sort()
     : []
+
+  const hasArkColumn = records.some((r: any) => r.ark)
 
   const versionArkPath: string | null = version.ark ? new URL(version.ark).pathname : null
 
@@ -114,16 +120,6 @@ export default function CollectionVersionPage() {
     }
   }
 
-  function setTab(t: string, extra?: Record<string, string>) {
-    const params = new URLSearchParams()
-    if (t !== 'records') params.set('tab', t)
-    if (extra) {
-      for (const [k, v] of Object.entries(extra)) params.set(k, v)
-    }
-    if (shareToken) params.set('token', shareToken)
-    setSearchParams(params)
-  }
-
   return (
     <BaseLayout>
       <div className="mx-auto max-w-5xl px-4 py-8">
@@ -132,12 +128,17 @@ export default function CollectionVersionPage() {
           collection={collection!}
           isPublic={collectionData?.public}
           isOwner={!!isOwner}
-          active="versions"
-          versionLabel={version.semver}
+          active={tab === 'files' ? 'files' : tab === 'metadata' ? 'overview' : 'records'}
+          version={version.semver}
+          isLatest={collectionData?.latestVersion?.semver === version.semver}
         />
 
-        {version.message && <p className="text-ink-muted mb-4 text-sm">{version.message}</p>}
-        {!version.message && <div className="mb-4" />}
+        {/* The overview sidebar shows the message; other tabs get it as context. */}
+        {version.message && tab !== 'metadata' ? (
+          <p className="text-ink-muted mb-4 text-sm">{version.message}</p>
+        ) : (
+          <div className="mb-4" />
+        )}
 
         {/* Info bar */}
         <div className="text-ink-muted border-rule bg-parchment-dark mb-6 flex items-center justify-between rounded border px-4 py-2.5 text-xs">
@@ -179,56 +180,6 @@ export default function CollectionVersionPage() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="border-rule mb-6 flex items-center gap-0 border-b">
-          <button
-            onClick={() => setTab('records', currentType ? { type: currentType } : undefined)}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-              tab === 'records'
-                ? 'border-ink text-ink'
-                : 'text-ink-muted hover:text-ink hover:border-rule border-transparent'
-            }`}
-          >
-            Records{' '}
-            <span className="text-ink-muted font-normal">
-              ({version.recordCount.toLocaleString()})
-            </span>
-          </button>
-          <button
-            onClick={() => setTab('schema')}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-              tab === 'schema'
-                ? 'border-ink text-ink'
-                : 'text-ink-muted hover:text-ink hover:border-rule border-transparent'
-            }`}
-          >
-            Schema
-          </button>
-          <button
-            onClick={() => setTab('files')}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-              tab === 'files'
-                ? 'border-ink text-ink'
-                : 'text-ink-muted hover:text-ink hover:border-rule border-transparent'
-            }`}
-          >
-            Files{' '}
-            <span className="text-ink-muted font-normal">
-              ({version.fileCount.toLocaleString()})
-            </span>
-          </button>
-          <button
-            onClick={() => setTab('metadata')}
-            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-              tab === 'metadata'
-                ? 'border-ink text-ink'
-                : 'text-ink-muted hover:text-ink hover:border-rule border-transparent'
-            }`}
-          >
-            Metadata
-          </button>
-        </div>
-
         {/* Records tab */}
         {tab === 'records' && (
           <div className="grid grid-cols-[180px_1fr] gap-6">
@@ -256,27 +207,34 @@ export default function CollectionVersionPage() {
             <div className="min-w-0">
               {currentType && records.length > 0 ? (
                 <div>
-                  <div className="border-rule overflow-x-auto rounded border">
+                  <div className="border-rule rounded-surface max-h-[75vh] overflow-auto border">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="bg-parchment-dark">
-                          <th className="border-rule border-b p-2 text-left font-medium">id</th>
+                        <tr>
+                          <th className="border-rule bg-parchment-dark sticky top-0 z-10 border-b p-2 text-left font-medium">
+                            id
+                          </th>
                           {currentTypeFields.map((f: string) => (
-                            <th key={f} className="border-rule border-b p-2 text-left font-medium">
+                            <th
+                              key={f}
+                              className="border-rule bg-parchment-dark sticky top-0 z-10 border-b p-2 text-left font-medium"
+                            >
                               {f}
                             </th>
                           ))}
-                          {records[0]?.ark && (
-                            <th className="border-rule border-b p-2 text-left font-medium">ARK</th>
+                          {hasArkColumn && (
+                            <th className="border-rule bg-parchment-dark sticky top-0 z-10 border-b p-2 text-left font-medium">
+                              ARK
+                            </th>
                           )}
-                          <th className="border-rule w-8 border-b" />
+                          <th className="border-rule bg-parchment-dark sticky top-0 right-0 z-20 w-8 border-b border-l" />
                         </tr>
                       </thead>
                       <tbody>
                         {records.map((r: any) => (
                           <tr
                             key={r.id}
-                            className="border-rule group hover:bg-parchment-dark/50 border-t"
+                            className="border-rule group hover:bg-parchment-dark border-t transition-colors"
                           >
                             <td className="text-ink-muted p-2 font-mono">{r.id}</td>
                             {currentTypeFields.map((f: string) => {
@@ -318,7 +276,7 @@ export default function CollectionVersionPage() {
                               }
                               if (typeof val === 'string' && val.match(/^https?:\/\//)) {
                                 return (
-                                  <td key={f} className="max-w-56 truncate p-2">
+                                  <td key={f} className="max-w-56 truncate p-2" title={val}>
                                     <Link
                                       to={val}
                                       target="_blank"
@@ -337,26 +295,32 @@ export default function CollectionVersionPage() {
                                     ? JSON.stringify(val)
                                     : String(val)
                               return (
-                                <td key={f} className="max-w-56 truncate p-2">
+                                <td
+                                  key={f}
+                                  className="max-w-56 truncate p-2"
+                                  title={display || undefined}
+                                >
                                   {display}
                                 </td>
                               )
                             })}
-                            {r.ark && (
+                            {hasArkColumn && (
                               <td className="p-2">
-                                <Link
-                                  to={new URL(r.ark).pathname}
-                                  className="text-link font-mono text-[11px] hover:underline"
-                                >
-                                  ark
-                                </Link>
+                                {r.ark && (
+                                  <Link
+                                    to={new URL(r.ark).pathname}
+                                    className="text-link font-mono text-[11px] hover:underline"
+                                  >
+                                    ark
+                                  </Link>
+                                )}
                               </td>
                             )}
-                            <td className="w-8 p-2">
+                            <td className="border-rule bg-parchment group-hover:bg-parchment-dark sticky right-0 w-8 border-l p-2 transition-colors">
                               {r.hash && (
-                                <Link
+                                <TokenLink
                                   to={`/records/${r.hash}`}
-                                  className="text-ink-muted hover:text-ink invisible inline-flex items-center group-hover:visible"
+                                  className="text-ink-muted hover:text-ink inline-flex items-center"
                                   title="View record provenance"
                                 >
                                   <svg
@@ -372,7 +336,7 @@ export default function CollectionVersionPage() {
                                       d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
                                     />
                                   </svg>
-                                </Link>
+                                </TokenLink>
                               )}
                             </td>
                           </tr>
@@ -423,7 +387,11 @@ export default function CollectionVersionPage() {
                 </div>
               ) : (
                 <p className="text-ink-muted py-8 text-center text-sm">
-                  Select a type to view records.
+                  {!currentType
+                    ? 'Select a type to view records.'
+                    : recordsLoading
+                      ? 'Loading records…'
+                      : 'No records of this type in this version.'}
                 </p>
               )}
             </div>
@@ -432,7 +400,7 @@ export default function CollectionVersionPage() {
 
         {/* Schema tab */}
         {tab === 'schema' && (
-          <div className="border-rule overflow-hidden rounded border">
+          <div className="border-rule rounded-surface overflow-hidden border">
             <pre className="bg-ink text-parchment overflow-x-auto p-4 font-mono text-xs">
               <code>{JSON.stringify(version.schemas, null, 2)}</code>
             </pre>
@@ -443,14 +411,16 @@ export default function CollectionVersionPage() {
         {tab === 'files' && (
           <div>
             {files.length === 0 ? (
-              <p className="text-ink-muted py-8 text-center text-sm">No files in this version.</p>
+              <p className="text-ink-muted py-8 text-center text-sm">
+                {filesLoading ? 'Loading files…' : 'No files in this version.'}
+              </p>
             ) : (
               <div>
                 <p className="text-ink-muted mb-3 text-xs">
                   {files.length} file{files.length !== 1 ? 's' : ''} ·{' '}
                   {formatBytes(files.reduce((sum: number, f: any) => sum + (f.size ?? 0), 0))} total
                 </p>
-                <div className="border-rule overflow-hidden rounded border">
+                <div className="border-rule rounded-surface overflow-x-auto border">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-parchment-dark border-rule border-b">
@@ -591,150 +561,162 @@ export default function CollectionVersionPage() {
 
         {/* Metadata tab */}
         {tab === 'metadata' && (
-          <div className="max-w-2xl">
-            {/* Collection-level metadata */}
-            <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-              Collection
-            </h3>
-            <table className="mb-8 w-full text-sm">
-              <tbody>
-                {collectionData?.name && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted w-40 py-3 pr-6 font-medium">Name</td>
-                    <td className="py-3">{collectionData.name}</td>
-                  </tr>
-                )}
-                {collectionData?.description && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Description</td>
-                    <td className="py-3">{collectionData.description}</td>
-                  </tr>
-                )}
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Owner</td>
-                  <td className="py-3">
-                    <Link to={`/${owner}`} className="text-link hover:underline">
-                      {collectionData?.ownerName ?? owner}
-                    </Link>{' '}
-                    <span className="text-ink-muted text-xs">({owner})</span>
-                  </td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Visibility</td>
-                  <td className="py-3">{collectionData?.public ? 'Public' : 'Private'}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            {/* Version-level metadata */}
-            <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-              Version
-            </h3>
-            <table className="mb-8 w-full text-sm">
-              <tbody>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted w-40 py-3 pr-6 font-medium">Version</td>
-                  <td className="py-3">{version.semver}</td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Hash</td>
-                  <td className="py-3 font-mono text-xs break-all">sha256:{version.hash}</td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Created</td>
-                  <td className="py-3">
-                    {new Date(version.createdAt).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </td>
-                </tr>
-                {version.baseSemver && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Base version</td>
-                    <td className="py-3">
-                      <TokenLink
-                        to={`/${owner}/${collection}/v/${version.baseSemver}`}
-                        className="text-link hover:underline"
-                      >
-                        {version.baseSemver}
-                      </TokenLink>
-                    </td>
-                  </tr>
-                )}
-                {version.message && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Message</td>
-                    <td className="py-3">{version.message}</td>
-                  </tr>
-                )}
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Records</td>
-                  <td className="py-3">{version.recordCount.toLocaleString()}</td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Files</td>
-                  <td className="py-3">{version.fileCount.toLocaleString()}</td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Total size</td>
-                  <td className="py-3">{formatBytes(version.totalBytes)}</td>
-                </tr>
-                <tr className="border-rule border-b">
-                  <td className="text-ink-muted py-3 pr-6 font-medium">Types</td>
-                  <td className="py-3">{allTypes.join(', ') || '—'}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            {/* Provenance */}
-            <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-              Provenance
-            </h3>
-            <table className="mb-8 w-full text-sm">
-              <tbody>
-                {version.appId && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted w-40 py-3 pr-6 font-medium">App ID</td>
-                    <td className="py-3 font-mono text-xs">{version.appId}</td>
-                  </tr>
-                )}
-                {version.actorId && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Actor ID</td>
-                    <td className="py-3 font-mono text-xs">{version.actorId}</td>
-                  </tr>
-                )}
-                {version.pushedBy && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Pushed by</td>
-                    <td className="py-3 font-mono text-xs">{version.pushedBy}</td>
-                  </tr>
-                )}
-                {version.signature && (
-                  <tr className="border-rule border-b">
-                    <td className="text-ink-muted py-3 pr-6 font-medium">Signature</td>
-                    <td className="py-3 font-mono text-xs break-all">{version.signature}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            {/* README */}
-            {readmeHtml && (
-              <div>
-                <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-                  README
-                </h3>
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_260px]">
+            {/* README — the main content, like the collection overview */}
+            <div className="min-w-0">
+              {readmeHtml ? (
                 <div
-                  className="border-rule prose prose-sm max-w-none rounded border p-5"
+                  className="prose prose-sm max-w-none"
                   dangerouslySetInnerHTML={{ __html: readmeHtml }}
                 />
+              ) : (
+                <p className="text-ink-muted py-8 text-sm">No README in this version.</p>
+              )}
+            </div>
+
+            {/* Version facts sidebar */}
+            <aside className="space-y-6">
+              <div>
+                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
+                  Version
+                </h3>
+                <dl className="space-y-2 text-sm">
+                  <div>
+                    <dt className="text-ink-muted text-xs">Version</dt>
+                    <dd className="font-mono">{version.semver}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-ink-muted text-xs">Created</dt>
+                    <dd>
+                      {new Date(version.createdAt).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </dd>
+                  </div>
+                  {version.message && (
+                    <div>
+                      <dt className="text-ink-muted text-xs">Message</dt>
+                      <dd>{version.message}</dd>
+                    </div>
+                  )}
+                  {version.baseSemver && (
+                    <div>
+                      <dt className="text-ink-muted text-xs">Base version</dt>
+                      <dd>
+                        <TokenLink
+                          to={`/${owner}/${collection}/v/${version.baseSemver}?tab=metadata`}
+                          className="text-link font-mono hover:underline"
+                        >
+                          {version.baseSemver}
+                        </TokenLink>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
               </div>
-            )}
+
+              <div className="border-rule border-t pt-4">
+                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
+                  Contents
+                </h3>
+                <dl className="space-y-1 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-muted">Records</dt>
+                    <dd>{version.recordCount.toLocaleString()}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-muted">Files</dt>
+                    <dd>{version.fileCount.toLocaleString()}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-muted">Total size</dt>
+                    <dd>{formatBytes(version.totalBytes)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-muted">Types</dt>
+                    <dd className="text-right">{allTypes.length}</dd>
+                  </div>
+                </dl>
+                {allTypes.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {allTypes.map((t) => (
+                      <TokenLink
+                        key={t}
+                        to={`/${owner}/${collection}/v/${n}?type=${t}`}
+                        className="border-rule text-ink-muted hover:text-ink rounded-control border px-1.5 py-0.5 font-mono text-[11px] transition-colors"
+                      >
+                        {t}
+                      </TokenLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-rule border-t pt-4">
+                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
+                  Integrity
+                </h3>
+                <dl className="space-y-2 text-sm">
+                  <div>
+                    <dt className="text-ink-muted text-xs">Hash</dt>
+                    <dd className="font-mono text-xs break-all" title={`sha256:${version.hash}`}>
+                      sha256:{version.hash}
+                    </dd>
+                  </div>
+                  {versionArkPath && (
+                    <div>
+                      <dt className="text-ink-muted text-xs">ARK</dt>
+                      <dd>
+                        <Link
+                          to={versionArkPath}
+                          className="text-link font-mono text-xs break-all hover:underline"
+                        >
+                          {versionArkPath.slice(1)}
+                        </Link>
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+
+              {(version.appId || version.actorId || version.pushedBy || version.signature) && (
+                <div className="border-rule border-t pt-4">
+                  <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
+                    Provenance
+                  </h3>
+                  <dl className="space-y-2 text-sm">
+                    {version.appId && (
+                      <div>
+                        <dt className="text-ink-muted text-xs">App ID</dt>
+                        <dd className="font-mono text-xs">{version.appId}</dd>
+                      </div>
+                    )}
+                    {version.actorId && (
+                      <div>
+                        <dt className="text-ink-muted text-xs">Actor ID</dt>
+                        <dd className="font-mono text-xs break-all">{version.actorId}</dd>
+                      </div>
+                    )}
+                    {version.pushedBy && (
+                      <div>
+                        <dt className="text-ink-muted text-xs">Pushed by</dt>
+                        <dd className="font-mono text-xs">{version.pushedBy}</dd>
+                      </div>
+                    )}
+                    {version.signature && (
+                      <div>
+                        <dt className="text-ink-muted text-xs">Signature</dt>
+                        <dd className="font-mono text-xs break-all">{version.signature}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              )}
+            </aside>
           </div>
         )}
       </div>

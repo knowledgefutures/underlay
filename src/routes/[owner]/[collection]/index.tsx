@@ -1,113 +1,252 @@
 import DOMPurify from 'isomorphic-dompurify'
 import { marked } from 'marked'
-import { useCallback, useMemo, useState } from 'react'
-import { Link, useLoaderData, useParams } from 'react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Badge } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { formatBytes } from '~/lib/format'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
+import { useIsOwner } from '~/lib/use-is-owner'
 
+/**
+ * Dropdown for switching between versions of a collection while staying on
+ * the same kind of page. Fetches the version list lazily on first open.
+ */
+function VersionPicker({
+  owner,
+  collection,
+  current,
+  isLatest = false,
+  to,
+}: {
+  owner: string
+  collection: string
+  current: string
+  isLatest?: boolean
+  /** Build the target URL for a version, preserving the current view. */
+  to: (semver: string, targetIsLatest: boolean) => string
+}) {
+  const [open, setOpen] = useState(false)
+  const [versions, setVersions] = useState<any[] | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const shareToken = useShareToken()
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  useEffect(() => {
+    if (!open || versions !== null) return
+    fetch(withToken(`/api/collections/${owner}/${collection}/versions?limit=20`, shareToken), {
+      credentials: 'include',
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((body) => setVersions(Array.isArray(body) ? body : (body?.versions ?? [])))
+  }, [open, versions, owner, collection, shareToken])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2 py-0.5 font-mono text-xs transition-colors"
+        title="Switch version"
+      >
+        {current}
+        {isLatest && <span className="text-ink-muted font-sans"> · latest</span>}{' '}
+        <span className="text-ink-muted">▾</span>
+      </button>
+      {open && (
+        <div className="bg-parchment border-rule rounded-control absolute top-full right-0 z-50 mt-1.5 max-h-72 min-w-[11rem] overflow-y-auto border shadow-sm">
+          {versions === null ? (
+            <p className="text-ink-muted px-3 py-2 text-xs">Loading…</p>
+          ) : (
+            <>
+              {versions.map((v: any, i: number) => (
+                <TokenLink
+                  key={v.semver}
+                  to={to(v.semver, i === 0)}
+                  onClick={() => setOpen(false)}
+                  className={`hover:bg-parchment-dark block px-3 py-1.5 font-mono text-xs transition-colors ${
+                    v.semver === current ? 'text-ink font-semibold' : 'text-ink-light'
+                  }`}
+                >
+                  {v.semver}
+                  {i === 0 && <span className="text-ink-muted ml-1.5 font-sans">latest</span>}
+                  {v.semver === current && <span className="text-ink-muted ml-1.5">✓</span>}
+                </TokenLink>
+              ))}
+              <TokenLink
+                to={`/${owner}/${collection}/versions`}
+                onClick={() => setOpen(false)}
+                className="text-link border-rule hover:bg-parchment-dark block border-t px-3 py-1.5 text-xs transition-colors"
+              >
+                All versions →
+              </TokenLink>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Collection header, two rows:
+ * - Top row is collection-wide: breadcrumb, visibility, Settings.
+ * - Tab row is content: Overview / Records / Schemas / Files / Versions, with
+ *   the version picker on its right edge scoping the version-aware tabs
+ *   (Overview, Records, Schemas, Files). Versions is the full history.
+ */
 function CollectionNav({
   owner,
   collection,
   isPublic,
   isOwner = false,
   active,
-  versionLabel,
+  version,
+  isLatest = true,
 }: {
   owner: string
   collection: string
   isPublic?: boolean
   isOwner?: boolean
-  active: 'overview' | 'versions' | 'schemas' | 'settings'
-  versionLabel?: string
+  active: 'overview' | 'records' | 'schemas' | 'files' | 'versions'
+  /** The version currently in context (defaults to latest). Absent on empty collections. */
+  version?: string
+  /** Whether the version in context is the latest ready version. */
+  isLatest?: boolean
 }) {
   const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors'
   const activeClass = `${linkClass} border-ink text-ink`
   const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text-ink hover:border-rule`
   const shareToken = useShareToken()
+  const [searchParams] = useSearchParams()
+
+  const base = `/${owner}/${collection}`
+  const overviewTo = isLatest || !version ? base : `${base}/v/${version}?tab=metadata`
+  const schemasTo =
+    isLatest || !version
+      ? `${base}/schemas`
+      : `${base}/schemas?version=${encodeURIComponent(version)}`
+
+  // Switching versions keeps you on the view you're looking at.
+  function versionTo(semver: string, targetIsLatest: boolean): string {
+    switch (active) {
+      case 'overview':
+        return targetIsLatest ? base : `${base}/v/${semver}?tab=metadata`
+      case 'schemas':
+        return targetIsLatest
+          ? `${base}/schemas`
+          : `${base}/schemas?version=${encodeURIComponent(semver)}`
+      case 'files':
+        return `${base}/v/${semver}?tab=files`
+      case 'records': {
+        const type = searchParams.get('type')
+        return `${base}/v/${semver}${type ? `?type=${encodeURIComponent(type)}` : ''}`
+      }
+      default:
+        return `${base}/v/${semver}`
+    }
+  }
 
   return (
     <>
-      <div className="mb-2 flex items-center justify-between">
-        <nav className="flex items-center gap-1.5 text-lg">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <nav className="flex min-w-0 items-center gap-1.5 text-lg">
           <Link to={`/${owner}`} className="text-link hover:underline">
             {owner}
           </Link>
           <span className="text-ink-muted">/</span>
-          <TokenLink to={`/${owner}/${collection}`} className="font-semibold hover:underline">
+          <TokenLink to={base} className="min-w-0 truncate font-semibold hover:underline">
             {collection}
           </TokenLink>
           {isPublic !== undefined && (
-            <span className="border-rule text-ink-muted ml-2 border px-1.5 py-0.5 text-xs">
-              {isPublic ? 'public' : 'private'}
-            </span>
+            <Badge className="ml-2">{isPublic ? 'public' : 'private'}</Badge>
           )}
           {shareToken && !isOwner && (
-            <span
-              className="border-rule text-ink-muted bg-parchment-dark border px-1.5 py-0.5 text-xs"
+            <Badge
+              className="bg-parchment-dark"
               title="You are viewing this collection through a read-only shared link"
             >
               shared link
-            </span>
+            </Badge>
           )}
         </nav>
+        <div className="flex shrink-0 items-center gap-4 text-sm">
+          <TokenLink
+            to={`${base}/versions`}
+            className={
+              active === 'versions'
+                ? 'text-ink font-medium'
+                : 'text-ink-muted hover:text-ink transition-colors'
+            }
+          >
+            Versions
+          </TokenLink>
+          {isOwner && (
+            <Link
+              to={`${base}/settings`}
+              className="text-ink-muted hover:text-ink transition-colors"
+            >
+              Settings
+            </Link>
+          )}
+        </div>
       </div>
       <div className="border-rule mb-6 flex items-center gap-0 border-b">
-        <TokenLink
-          to={`/${owner}/${collection}`}
-          className={active === 'overview' ? activeClass : inactiveClass}
-        >
+        <TokenLink to={overviewTo} className={active === 'overview' ? activeClass : inactiveClass}>
           Overview
         </TokenLink>
-        <TokenLink
-          to={`/${owner}/${collection}/versions`}
-          className={active === 'versions' && !versionLabel ? activeClass : inactiveClass}
-        >
-          Versions
-        </TokenLink>
-        {versionLabel && <span className={activeClass}>{versionLabel}</span>}
-        <TokenLink
-          to={`/${owner}/${collection}/schemas`}
-          className={active === 'schemas' ? activeClass : inactiveClass}
-        >
+        {version && (
+          <TokenLink
+            to={`${base}/v/${version}`}
+            className={active === 'records' ? activeClass : inactiveClass}
+          >
+            Records
+          </TokenLink>
+        )}
+        <TokenLink to={schemasTo} className={active === 'schemas' ? activeClass : inactiveClass}>
           Schemas
         </TokenLink>
-        {isOwner && (
-          <Link
-            to={`/${owner}/${collection}/settings`}
-            className={`${active === 'settings' ? activeClass : inactiveClass} ml-auto`}
+        {version && (
+          <TokenLink
+            to={`${base}/v/${version}?tab=files`}
+            className={active === 'files' ? activeClass : inactiveClass}
           >
-            Settings
-          </Link>
+            Files
+          </TokenLink>
+        )}
+        {version && (
+          <div className="mb-1.5 ml-auto">
+            <VersionPicker
+              owner={owner}
+              collection={collection}
+              current={version}
+              isLatest={isLatest}
+              to={versionTo}
+            />
+          </div>
         )}
       </div>
     </>
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes < 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
 export default function CollectionPage() {
   const { owner, collection } = useParams()
-  const { currentUser, mirrorConfig } = useAppContext()
+  const { mirrorConfig } = useAppContext()
   const data = useLoaderData() as any
 
-  const isOwner = useMemo(
-    () =>
-      !!currentUser &&
-      (currentUser.kfRole === 'admin' ||
-        currentUser.slug === owner ||
-        currentUser.orgs?.some((o: any) => o.slug === owner)),
-    [currentUser, owner],
-  )
+  const isOwner = useIsOwner(owner)
 
   const readmeHtml = useMemo(() => {
     const meta = data?.latestVersion?.metadata as Record<string, unknown> | null | undefined
@@ -129,6 +268,8 @@ export default function CollectionPage() {
           isPublic={data.public}
           isOwner={isOwner}
           active="overview"
+          version={data.latestVersion?.semver}
+          isLatest
         />
 
         {mirrorConfig?.enabled && (
@@ -747,4 +888,5 @@ function SharePanel({
   )
 }
 
-export { CollectionNav, formatBytes }
+export { CollectionNav }
+export { formatBytes } from '~/lib/format'

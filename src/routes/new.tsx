@@ -1,18 +1,25 @@
 import { type FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Alert, Button, Field, Input, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 export default function NewCollection() {
   const { currentUser } = useAppContext()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const ownerOptions = (currentUser?.orgs ?? []).map((o: any) => ({
     slug: o.slug,
     label: `${o.name ?? o.displayName ?? o.slug}${o.isDefault ? ' (personal)' : ''}`,
   }))
-  const defaultOwner = currentUser?.orgs?.find((o: any) => o.isDefault) ?? currentUser?.orgs?.[0]
+  // Prefer the org the user navigated from (?owner=), then their personal org.
+  const requestedOwner = searchParams.get('owner')
+  const defaultOwner =
+    (requestedOwner && currentUser?.orgs?.find((o: any) => o.slug === requestedOwner)) ||
+    currentUser?.orgs?.find((o: any) => o.isDefault) ||
+    currentUser?.orgs?.[0]
 
   const [owner, setOwner] = useState(defaultOwner?.slug ?? '')
   const [slug, setSlug] = useState('')
@@ -65,38 +72,36 @@ export default function NewCollection() {
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {error && (
-            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <Alert variant="error">{error}</Alert>}
 
-          {/* Owner */}
-          <div>
-            <label className="text-ink mb-1.5 block text-sm font-medium">Owner</label>
+          <Field label="Owner">
             {ownerOptions.length > 1 ? (
-              <select
-                value={owner}
-                onChange={(e) => setOwner(e.target.value)}
-                className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
-              >
+              <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
                 {ownerOptions.map((o: any) => (
                   <option key={o.slug} value={o.slug}>
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : (
-              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 text-sm">
+              <div className="bg-parchment-dark border-rule rounded-control border px-3 py-2 text-sm">
                 {ownerOptions[0]?.label ?? owner}
               </div>
             )}
-          </div>
+          </Field>
 
-          {/* Slug */}
-          <div>
-            <label className="text-ink mb-1.5 block text-sm font-medium">Collection name</label>
-            <input
+          <Field
+            label="Collection name"
+            hint={
+              <>
+                Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
+                <span className="font-mono">
+                  {owner}/{slug || '...'}
+                </span>
+              </>
+            }
+          >
+            <Input
               type="text"
               required
               pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
@@ -104,29 +109,23 @@ export default function NewCollection() {
               placeholder="my-dataset"
               value={slug}
               onChange={(e) => setSlug(slugify(e.target.value))}
-              className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
             />
-            <p className="text-ink-muted mt-1 text-xs">
-              Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
-              <span className="font-mono">
-                {owner}/{slug || '...'}
-              </span>
-            </p>
-          </div>
+          </Field>
 
-          {/* Description */}
-          <div>
-            <label className="text-ink mb-1.5 block text-sm font-medium">
-              Description <span className="text-ink-muted font-normal">(optional)</span>
-            </label>
-            <input
+          <Field
+            label={
+              <>
+                Description <span className="text-ink-muted font-normal">(optional)</span>
+              </>
+            }
+          >
+            <Input
               type="text"
               placeholder="A short description of this collection"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
             />
-          </div>
+          </Field>
 
           {/* Visibility */}
           <fieldset>
@@ -138,7 +137,7 @@ export default function NewCollection() {
                   name="visibility"
                   checked={!isPublic}
                   onChange={() => setIsPublic(false)}
-                  className="mt-0.5"
+                  className="accent-ink mt-0.5"
                 />
                 <div>
                   <div className="text-sm font-medium">Private</div>
@@ -153,7 +152,7 @@ export default function NewCollection() {
                   name="visibility"
                   checked={isPublic}
                   onChange={() => setIsPublic(true)}
-                  className="mt-0.5"
+                  className="accent-ink mt-0.5"
                 />
                 <div>
                   <div className="text-sm font-medium">Public</div>
@@ -167,13 +166,9 @@ export default function NewCollection() {
 
           <hr className="border-rule" />
 
-          <button
-            type="submit"
-            disabled={submitting || !slug || !owner}
-            className="bg-ink text-parchment w-full rounded px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
+          <Button type="submit" disabled={submitting || !slug || !owner} className="w-full">
             {submitting ? 'Creating...' : 'Create collection'}
-          </button>
+          </Button>
         </form>
       </div>
     </BaseLayout>

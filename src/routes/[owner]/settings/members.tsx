@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import BaseLayout from '~/components/BaseLayout'
+import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
+import { Alert, Badge, Button, Input } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 
@@ -43,12 +44,7 @@ export default function OwnerSettingsMembers() {
     loadInvitations(orgId)
   }, [orgId])
 
-  if (!currentUser) {
-    window.location.href = '/login'
-    return null
-  }
-
-  if (!org) {
+  if (currentUser && !org) {
     window.location.href = `/${owner}`
     return null
   }
@@ -141,163 +137,154 @@ export default function OwnerSettingsMembers() {
   const pendingInvitations = invitations.filter((i: any) => i.status === 'pending')
 
   return (
-    <BaseLayout>
-      <div className="mx-auto max-w-4xl px-4 py-10">
-        <nav className="text-ink-muted mb-6 text-xs">
-          <Link to={`/${owner}`} className="hover:text-ink">
+    <SettingsLayout
+      crumb={
+        <nav>
+          <Link to={`/${owner}`} className="text-link hover:underline">
             {owner}
-          </Link>
-          <span className="mx-1">/</span>
-          <span className="text-ink font-medium">settings</span>
+          </Link>{' '}
+          <span className="text-ink-muted">/</span> <span className="text-ink-muted">settings</span>
         </nav>
+      }
+      title="Members"
+      description="Who can push to and administer this organization's collections."
+      groups={orgSettingsRail(owner!)}
+    >
+      {success && (
+        <Alert variant="success" className="mb-4">
+          {success}
+        </Alert>
+      )}
+      {error && (
+        <Alert variant="error" className="mb-4">
+          {error}
+        </Alert>
+      )}
 
-        <h1 className="mb-6 text-xl font-semibold tracking-tight">Organization Settings</h1>
-
-        <nav className="border-rule mb-6 flex gap-4 border-b pb-2 text-sm">
-          <Link to={`/${owner}/settings`} className="text-ink-muted hover:text-ink">
-            Profile
-          </Link>
-          <Link to={`/${owner}/settings/members`} className="text-ink font-medium">
-            Members
-          </Link>
-          <Link to={`/${owner}/settings/keys`} className="text-ink-muted hover:text-ink">
-            API Keys
-          </Link>
-        </nav>
-
-        {success && (
-          <p className="mb-4 border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-            {success}
-          </p>
-        )}
-        {error && (
-          <p className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-
-        <h2 className="text-ink-muted mb-4 text-sm font-semibold tracking-wide uppercase">
-          Members ({members.length})
-        </h2>
-
-        <div className="mb-6 space-y-2">
-          {members.map((m: any) => (
-            <div key={m.id} className="border-rule flex items-center justify-between border p-3">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium">{m.user?.name ?? m.userId}</span>
-                <span className="text-ink-muted text-xs">{m.user?.email}</span>
-                {isOwner && m.userId !== currentUser.id ? (
-                  <select
-                    value={m.role}
-                    onChange={(e) => handleChangeRole(m.id, e.target.value)}
-                    className="bg-parchment border-rule cursor-pointer border px-1.5 py-0.5 text-xs"
-                  >
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
-                    <option value="owner">Owner</option>
-                  </select>
-                ) : (
-                  <span className="border-rule border px-1.5 py-0.5 text-xs">{m.role}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {isAdmin && m.userId !== currentUser.id && (
-                  <button
-                    onClick={() => handleRemoveMember(m.id)}
-                    className="text-xs text-red-700 hover:underline"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {isAdmin && (
-          <div className="border-rule space-y-4 border-t pt-6">
-            <h3 className="text-ink-muted text-xs font-semibold">Invite by email</h3>
-            <form onSubmit={handleInviteMember} className="flex items-end gap-3">
-              <div className="flex-1">
-                <label htmlFor="inviteEmail" className="mb-1 block text-xs font-medium">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  id="inviteEmail"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  required
-                  placeholder="user@example.com"
-                  className="bg-parchment border-rule focus:border-ink w-full border px-3 py-2 text-sm focus:outline-none"
-                />
-              </div>
-              <div>
-                <label htmlFor="inviteRole" className="mb-1 block text-xs font-medium">
-                  Role
-                </label>
+      <div className="mb-6 space-y-2">
+        {members.map((m: any) => (
+          <div
+            key={m.id}
+            className="border-rule rounded-surface flex items-center justify-between border p-3"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium">{m.user?.name ?? m.userId}</span>
+              <span className="text-ink-muted text-xs">{m.user?.email}</span>
+              {isOwner && m.userId !== currentUser.id ? (
                 <select
-                  id="inviteRole"
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                  className="bg-parchment border-rule focus:border-ink border px-3 py-2 text-sm focus:outline-none"
+                  value={m.role}
+                  onChange={(e) => handleChangeRole(m.id, e.target.value)}
+                  className="bg-parchment border-rule rounded-control cursor-pointer border px-1.5 py-0.5 text-xs"
                 >
                   <option value="member">Member</option>
                   <option value="admin">Admin</option>
-                  {isOwner && <option value="owner">Owner</option>}
+                  <option value="owner">Owner</option>
                 </select>
-              </div>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="bg-ink text-parchment px-4 py-2 text-sm font-medium whitespace-nowrap transition-opacity hover:opacity-90"
-              >
-                Invite
-              </button>
-            </form>
-          </div>
-        )}
-
-        {pendingInvitations.length > 0 && (
-          <div className="border-rule mt-6 border-t pt-6">
-            <h3 className="text-ink-muted mb-2 text-xs font-semibold">Pending Invitations</h3>
-            <div className="space-y-2">
-              {pendingInvitations.map((inv: any) => (
-                <div
-                  key={inv.id}
-                  className="border-rule flex items-center justify-between border border-dashed p-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm">{inv.email}</span>
-                    <span className="border-rule border px-1.5 py-0.5 text-xs">{inv.role}</span>
-                    {inv.expiresAt && (
-                      <span className="text-ink-muted text-xs">
-                        Expires {new Date(inv.expiresAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                  {isAdmin && (
-                    <button
-                      onClick={() => handleCancelInvitation(inv.id)}
-                      className="text-xs text-red-700 hover:underline"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              ))}
+              ) : (
+                <Badge>{m.role}</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {isAdmin && m.userId !== currentUser.id && (
+                <Button variant="dangerLink" size="sm" onClick={() => handleRemoveMember(m.id)}>
+                  Remove
+                </Button>
+              )}
             </div>
           </div>
-        )}
-
-        {!isOwner && (
-          <div className="border-rule mt-6 border-t pt-4">
-            <button onClick={handleLeaveOrg} className="text-sm text-red-700 hover:underline">
-              Leave this organization
-            </button>
-          </div>
-        )}
+        ))}
       </div>
-    </BaseLayout>
+
+      {isAdmin && (
+        <div className="border-rule space-y-4 border-t pt-6">
+          <h3 className="text-ink-muted text-xs font-semibold">Invite by email</h3>
+          <form onSubmit={handleInviteMember} className="flex items-end gap-3">
+            <div className="flex-1">
+              <label htmlFor="inviteEmail" className="mb-1 block text-xs font-medium">
+                Email
+              </label>
+              <Input
+                type="email"
+                id="inviteEmail"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                required
+                placeholder="user@example.com"
+              />
+            </div>
+            <div>
+              <label htmlFor="inviteRole" className="mb-1 block text-xs font-medium">
+                Role
+              </label>
+              <select
+                id="inviteRole"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                className="bg-parchment border-rule focus:border-ink rounded-control cursor-pointer border px-3 py-2 text-sm focus:outline-none"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                {isOwner && <option value="owner">Owner</option>}
+              </select>
+            </div>
+            <Button type="submit" disabled={submitting} className="whitespace-nowrap">
+              {submitting ? 'Sending…' : 'Invite'}
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {pendingInvitations.length > 0 && (
+        <div className="border-rule mt-6 border-t pt-6">
+          <h3 className="text-ink-muted mb-2 text-xs font-semibold">Pending Invitations</h3>
+          <div className="space-y-2">
+            {pendingInvitations.map((inv: any) => (
+              <div
+                key={inv.id}
+                className="border-rule rounded-surface flex items-center justify-between border border-dashed p-3"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-sm">{inv.email}</span>
+                  <Badge>{inv.role}</Badge>
+                  {inv.expiresAt && (
+                    <span className="text-ink-muted text-xs">
+                      Expires {new Date(inv.expiresAt).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+                {isAdmin && (
+                  <Button
+                    variant="dangerLink"
+                    size="sm"
+                    onClick={() => handleCancelInvitation(inv.id)}
+                  >
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isOwner && (
+        <div className="border-rule mt-6 border-t pt-4">
+          <details className="group">
+            <summary className="cursor-pointer text-sm text-red-700 hover:underline">
+              Leave this organization…
+            </summary>
+            <div className="mt-3 space-y-3">
+              <p className="text-ink-muted text-sm">
+                You will lose access to this organization's private collections and settings. An
+                admin will need to re-invite you to rejoin.
+              </p>
+              <Button variant="danger" onClick={handleLeaveOrg}>
+                Leave organization
+              </Button>
+            </div>
+          </details>
+        </div>
+      )}
+    </SettingsLayout>
   )
 }

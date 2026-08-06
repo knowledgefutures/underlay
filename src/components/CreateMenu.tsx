@@ -19,12 +19,12 @@ export default function CreateMenu() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="border-rule bg-parchment-dark hover:bg-rule/30 cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors"
+        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2.5 py-1 text-xs transition-colors"
       >
         New +
       </button>
       {open && (
-        <div className="bg-parchment border-rule absolute top-full right-0 z-50 mt-1.5 min-w-[10rem] overflow-hidden rounded border shadow-sm">
+        <div className="bg-parchment border-rule rounded-control absolute top-full right-0 z-50 mt-1.5 min-w-[10rem] overflow-hidden border shadow-sm">
           <Link
             to="/new"
             onClick={() => setOpen(false)}

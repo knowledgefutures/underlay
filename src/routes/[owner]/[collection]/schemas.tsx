@@ -2,19 +2,30 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useAppContext } from '~/lib/app-context'
+import { Alert } from '~/components/ui'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 import { CollectionNav } from '.'
 
 export default function CollectionSchemasPage() {
   const { owner, collection } = useParams()
-  const { currentUser } = useAppContext()
-  const { data, schemas: schemasData } = useLoaderData() as { data: any; schemas: any }
+  const {
+    data,
+    schemas: schemasData,
+    versions,
+  } = useLoaderData() as {
+    data: any
+    schemas: any
+    versions: any[]
+  }
 
-  const isOwner =
-    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const isOwner = useIsOwner(owner)
 
   const schemas: any[] = schemasData?.schemas ?? []
+  const versionList: any[] = Array.isArray(versions)
+    ? versions
+    : ((versions as any)?.versions ?? [])
+  const latestSemver: string | undefined = versionList[0]?.semver
 
   const [arkRecordTypes, setArkRecordTypes] = useState<Record<string, string>>({})
   const [arkSuccess, setArkSuccess] = useState('')
@@ -75,17 +86,19 @@ export default function CollectionSchemasPage() {
           isPublic={data.public}
           isOwner={!!isOwner}
           active="schemas"
+          version={schemasData?.semver ?? latestSemver}
+          isLatest={!schemasData?.semver || schemasData.semver === latestSemver}
         />
 
         {arkSuccess && (
-          <p className="mb-4 border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <Alert variant="success" className="mb-4">
             {arkSuccess}
-          </p>
+          </Alert>
         )}
         {arkError && (
-          <p className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <Alert variant="error" className="mb-4">
             {arkError}
-          </p>
+          </Alert>
         )}
 
         <div className="mb-4 flex items-center justify-between">

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Alert, buttonClasses } from '~/components/ui'
 
 export default function LoginPage() {
   const [params] = useSearchParams()
@@ -37,14 +38,11 @@ export default function LoginPage() {
       <div className="mx-auto max-w-sm px-4 py-16">
         <h1 className="mb-6 text-xl font-semibold tracking-tight">Sign in</h1>
 
-        <div className="mb-4 border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <Alert variant="error" className="mb-4">
           {messages[error] ?? 'Something went wrong. Please try again.'}
-        </div>
+        </Alert>
 
-        <a
-          href="/login"
-          className="bg-ink text-parchment hover:bg-ink-light block w-full py-2 text-center text-sm font-medium transition-colors"
-        >
+        <a href="/login" className={buttonClasses('primary', 'md', 'w-full')}>
           Try again
         </a>
       </div>

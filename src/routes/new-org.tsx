@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Alert, Button, Field, Input, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 
@@ -79,29 +80,28 @@ export default function NewOrg() {
           <p className="text-ink-muted text-sm">Loading...</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
-            {error && (
-              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {error}
-              </div>
-            )}
+            {error && <Alert variant="error">{error}</Alert>}
 
-            {/* Display Name */}
-            <div>
-              <label className="text-ink mb-1.5 block text-sm font-medium">Display name</label>
-              <input
+            <Field label="Display name">
+              <Input
                 type="text"
                 required
                 placeholder="My Organization"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
               />
-            </div>
+            </Field>
 
-            {/* Slug */}
-            <div>
-              <label className="text-ink mb-1.5 block text-sm font-medium">URL slug</label>
-              <input
+            <Field
+              label="URL slug"
+              hint={
+                <>
+                  Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
+                  <span className="font-mono">underlay.org/{slug || '...'}</span>
+                </>
+              }
+            >
+              <Input
                 type="text"
                 required
                 pattern="[a-z0-9][a-z0-9\-]*[a-z0-9]"
@@ -109,19 +109,16 @@ export default function NewOrg() {
                 placeholder="my-org"
                 value={slug}
                 onChange={(e) => setSlug(slugify(e.target.value))}
-                className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
               />
-              <p className="text-ink-muted mt-1 text-xs">
-                Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
-                <span className="font-mono">underlay.org/{slug || '...'}</span>
-              </p>
-            </div>
+            </Field>
 
             {/* KF Account — only shown when user has multiple */}
             {kfAccounts.length > 1 && (
-              <div>
-                <label className="text-ink mb-1.5 block text-sm font-medium">KF Account</label>
-                <select
+              <Field
+                label="KF Account"
+                hint="Choose which Knowledge Futures account this organization belongs to."
+              >
+                <Select
                   required
                   value={kfOrgId}
                   onChange={(e) => {
@@ -132,7 +129,6 @@ export default function NewOrg() {
                       if (!slug) setSlug(slugify(acct.name))
                     }
                   }}
-                  className="bg-parchment border-rule focus:border-ink w-full rounded border px-3 py-2 text-sm focus:outline-none"
                 >
                   <option value="">Select a KF account...</option>
                   {kfAccounts.map((a) => (
@@ -140,22 +136,19 @@ export default function NewOrg() {
                       {a.name}
                     </option>
                   ))}
-                </select>
-                <p className="text-ink-muted mt-1 text-xs">
-                  Choose which Knowledge Futures account this organization belongs to.
-                </p>
-              </div>
+                </Select>
+              </Field>
             )}
 
             <hr className="border-rule" />
 
-            <button
+            <Button
               type="submit"
               disabled={submitting || !slug || !displayName || (kfAccounts.length > 1 && !kfOrgId)}
-              className="bg-ink text-parchment w-full rounded px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="w-full"
             >
               {submitting ? 'Creating...' : 'Create organization'}
-            </button>
+            </Button>
           </form>
         )}
       </div>

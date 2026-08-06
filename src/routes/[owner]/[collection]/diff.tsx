@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useAppContext } from '~/lib/app-context'
+import { Alert, Button } from '~/components/ui'
 import { useShareToken, withToken } from '~/lib/share-token'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 import { CollectionNav } from '.'
 
@@ -19,11 +20,9 @@ function groupByType(records: any[]) {
 export default function CollectionDiffPage() {
   const { owner, collection } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { currentUser } = useAppContext()
   const { data, versions } = useLoaderData() as { data: any; versions: any[] }
 
-  const isOwner =
-    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const isOwner = useIsOwner(owner)
   const shareToken = useShareToken()
 
   const [diff, setDiff] = useState<any>(null)
@@ -31,8 +30,13 @@ export default function CollectionDiffPage() {
   const [diffLoading, setDiffLoading] = useState(false)
 
   const latestSemver = versions.length > 0 ? versions[0].semver : ''
-  const [fromVer, setFromVer] = useState<string>(searchParams.get('from') ?? '')
-  const [toVer, setToVer] = useState<string>(searchParams.get('to') || latestSemver)
+  const initialTo = searchParams.get('to') || latestSemver
+  // Default the base to the version just before `to` — an adjacent-pair diff —
+  // rather than the empty set, which reports every record as added.
+  const initialToIndex = versions.findIndex((v: any) => v.semver === initialTo)
+  const defaultFrom = initialToIndex >= 0 ? (versions[initialToIndex + 1]?.semver ?? '') : ''
+  const [fromVer, setFromVer] = useState<string>(searchParams.get('from') ?? defaultFrom)
+  const [toVer, setToVer] = useState<string>(initialTo)
 
   useEffect(() => {
     if (!toVer) return
@@ -98,16 +102,20 @@ export default function CollectionDiffPage() {
           isPublic={data.public}
           isOwner={!!isOwner}
           active="versions"
+          version={latestSemver || undefined}
+          isLatest
         />
 
         {/* Version selector */}
-        <div className="mb-6 flex items-center gap-3">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-ink-muted text-sm font-semibold tracking-wide uppercase">
+            Compare versions
+          </h2>
           <form onSubmit={handleCompare} className="flex items-center gap-2 text-sm">
-            <label className="text-ink-muted">Comparing</label>
             <select
               name="from"
               defaultValue={fromVer}
-              className="border-rule bg-parchment rounded border px-2 py-1 text-sm"
+              className="border-rule bg-parchment focus:border-ink rounded-control cursor-pointer border px-2 py-1 font-mono text-xs focus:outline-none"
             >
               <option value="">∅ (empty)</option>
               {versions.map((v: any) => (
@@ -120,7 +128,7 @@ export default function CollectionDiffPage() {
             <select
               name="to"
               defaultValue={toVer}
-              className="border-rule bg-parchment rounded border px-2 py-1 text-sm"
+              className="border-rule bg-parchment focus:border-ink rounded-control cursor-pointer border px-2 py-1 font-mono text-xs focus:outline-none"
             >
               {versions.map((v: any) => (
                 <option key={v.semver} value={v.semver}>
@@ -128,19 +136,16 @@ export default function CollectionDiffPage() {
                 </option>
               ))}
             </select>
-            <button
-              type="submit"
-              className="bg-ink text-parchment rounded px-3 py-1 text-sm font-medium transition-opacity hover:opacity-90"
-            >
+            <Button type="submit" size="sm">
               Compare
-            </button>
+            </Button>
           </form>
         </div>
 
         {diffError && (
-          <div className="mb-6 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <Alert variant="error" className="mb-6">
             {diffError}
-          </div>
+          </Alert>
         )}
 
         {diffLoading && <p className="text-ink-muted py-8 text-center text-sm">Loading diff…</p>}
