@@ -25,12 +25,22 @@ ORCID_CLIENT_ID=...
 ORCID_CLIENT_SECRET=...`
 
 const externalS3 = `# In docker-compose.withauth.yml, remove the minio and minio-init services,
-# then add these to the app service's environment block:
-S3_BUCKET: your-bucket-name
+# then add these to the app service's environment block.
+#
+# Two buckets are required:
+#   S3_BUCKET        PRIVATE. Collection files. Public access must be OFF — reads
+#                    go through the API, which access-checks and then returns a
+#                    short-lived presigned URL.
+#   S3_PUBLIC_BUCKET world-readable. Org avatars, served directly from
+#                    ASSETS_BASE_URL.
+S3_BUCKET: your-private-bucket
+S3_PUBLIC_BUCKET: your-public-bucket
 S3_REGION: us-east-1
 S3_ENDPOINT: https://your-account-id.r2.cloudflarestorage.com  # omit for AWS S3
-S3_ACCESS_KEY: your-access-key
-S3_SECRET_KEY: your-secret-key`
+S3_ACCESS_KEY: your-access-key      # must have read+write on BOTH buckets
+S3_SECRET_KEY: your-secret-key
+ASSETS_BASE_URL: https://assets.example.org   # public base URL of S3_PUBLIC_BUCKET
+S3_PRESIGN_TTL_SECONDS: 300         # optional; presigned file URL lifetime`
 
 const resetCmd = `docker compose -f docker-compose.withauth.yml down -v
 docker compose -f docker-compose.withauth.yml up -d`
@@ -67,8 +77,11 @@ export default function DocsSelfHost() {
           <strong>PostgreSQL 16</strong>: two databases, one for auth and one for the app
         </li>
         <li>
-          <strong>MinIO</strong>: S3-compatible object storage for file uploads (replaceable with
-          external S3)
+          <strong>MinIO</strong>: S3-compatible object storage (replaceable with external S3). Two
+          buckets are created: <code>underlay</code>, which is <strong>private</strong> and holds
+          collection files, and <code>underlaypublic</code>, which is world-readable and holds org
+          avatars. Collection files are never served directly from storage — the API access-checks
+          each request and returns a short-lived presigned URL.
         </li>
         <li>
           <strong>Caddy</strong>: reverse proxy with automatic TLS

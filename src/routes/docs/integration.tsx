@@ -143,8 +143,9 @@ export default function DocsIntegration() {
         <code>{'Authorization: Bearer ul_your_key_here'}</code>
       </pre>
       <p>
-        Keys are scoped: <code>read</code>, <code>write</code>, or <code>admin</code>. Use{' '}
-        <code>write</code> for pushing data.
+        Keys are scoped <code>read</code> or <code>write</code> — use <code>write</code> for pushing
+        data. <code>admin</code> is not grantable through the API; a request for it is clamped to{' '}
+        <code>write</code>.
       </p>
 
       <h2>The Push Flow</h2>

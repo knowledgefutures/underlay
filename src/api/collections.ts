@@ -16,7 +16,9 @@ import {
   getLatestReadyVersion,
   getOrgRole,
   getPrivateFields,
+  getPrivateTypes,
   hasOrgAccess,
+  loadVersionSchemas,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { fullPrincipalUserId, requireAuth, requireUnscopedKey } from './auth.server.js'
@@ -1190,6 +1192,53 @@ const app = new Hono<AuthEnv>()
 
       if (!latestVersion) {
         return c.json({ error: 'Source collection has no versions', statusCode: 422 }, 422)
+      }
+
+      // A fork copies `version_records` rows verbatim, and those point at the
+      // FULL `record_objects` bodies. The forker owns the copy, so they get
+      // owner-level access to it — which would hand a non-member every piece of
+      // private content in a public collection: private records, private types,
+      // and private field values inside otherwise-public records.
+      //
+      // Serving a redacted fork would mean materializing the filtered record
+      // bodies (only their hashes exist today, as `public_record_hash`), which
+      // this endpoint does not do. So for a caller who cannot already see the
+      // source in full, refuse rather than leak. The three conditions below are
+      // exactly "nothing is filtered for a non-owner of the source".
+      const sourceOwnerAccess = await hasOrgAccess(c.get('userId'), source.organizationId)
+      if (!sourceOwnerAccess) {
+        const [privateRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, latestVersion.id),
+              eq(schema.versionRecords.private, true),
+            ),
+          )
+        const [strippedRow] = await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(schema.versionRecords)
+          .where(
+            and(
+              eq(schema.versionRecords.versionId, latestVersion.id),
+              sql`${schema.versionRecords.publicRecordHash} IS NOT NULL`,
+            ),
+          )
+        const hasPrivateType = getPrivateTypes(await loadVersionSchemas(latestVersion.id)).size > 0
+
+        if ((privateRow?.n ?? 0) > 0 || (strippedRow?.n ?? 0) > 0 || hasPrivateType) {
+          return c.json(
+            {
+              error:
+                'This collection contains private content, so it cannot be forked by a ' +
+                'non-member. Forking copies the full record bodies, which would expose ' +
+                'private records, private types, or private fields.',
+              statusCode: 403,
+            },
+            403,
+          )
+        }
       }
 
       // Create forked collection + version in a transaction

@@ -25,7 +25,7 @@ POST /api/collections/:owner/:slug/versions/negotiate
   "schemas": { "Publication": { ... } },
   "manifest": [
     { "id": "pub-001", "type": "Publication", "hash": "abc123..." },
-    { "id": "pub-002", "type": "Publication", "hash": "def456..." }
+    { "id": "pub-002", "type": "Publication", "hash": "def456...", "private": true }
   ],
   "files": ["7a8b9c..."],
   "message": "Add new publication"
@@ -377,6 +377,34 @@ export default function Protocol() {
               identity doesn't change when you change who can see it.
             </p>
             <p>
+              That flag is declared on the <strong>manifest entry</strong> at push time, never on
+              the record body, and it belongs to the <em>reference</em> rather than the content: it
+              is stored on the version&rarr;record edge, never on the content-addressed record
+              object. Three properties follow, and an implementation must honour all three.
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                <strong>Per-version.</strong> The same bytes are legitimately public in one
+                collection and hidden in another. An implementation that stores privacy on the
+                deduplicated record object cannot represent this, and makes one collection&rsquo;s{' '}
+                <code>public:</code> hash depend on another collection&rsquo;s push history.
+              </li>
+              <li>
+                <strong>Omitted means public.</strong> There is no inheritance from the previous
+                version. Privacy is re-declared, in full, on every push — a record private in v1
+                whose v2 manifest entry omits the flag is public in v2. The manifest read endpoint
+                echoes the flag back so a round-trip is lossless.
+              </li>
+              <li>
+                <strong>Forward-only.</strong> Versions are immutable, so marking a record private
+                in v2 hides it in v2 and does not reach back into v1 — the record stays fetchable at
+                its old version, and any file it referenced stays downloadable.
+                &ldquo;Redacted&rdquo; means absent from the latest version&rsquo;s public
+                projection, not erased. Retroactive purging is a separate operation and is not part
+                of the protocol.
+              </li>
+            </ul>
+            <p>
               A record whose type declares private <em>fields</em> has a second address: its{' '}
               <strong>public record hash</strong>, the SHA-256 of the same canonical form with the
               private fields stripped. Public manifests list records by their public hash, and the
@@ -404,12 +432,22 @@ export default function Protocol() {
             </pre>
             <p>
               Two versions with the same content produce the same hash, regardless of when or where
-              they were created. The server rejects pushes that would create a duplicate hash.
+              they were created. A version is identified by <strong>both</strong> digests, though:
+              the server rejects a push as a duplicate only when the <code>private:</code> hash{' '}
+              <em>and</em> the <code>public:</code> hash both match an existing version. That
+              matters for redaction — re-pushing identical content with a record newly marked
+              private yields the same <code>private:</code> hash and a different{' '}
+              <code>public:</code> one, and is a legitimate new version rather than a &ldquo;no
+              changes&rdquo; conflict.
             </p>
             <p>
-              A separate <code>public:</code> hash covers only non-private types and fields, with
-              private fields stripped before re-hashing. This lets external verifiers confirm the
-              public content without access to private data.
+              A separate <code>public:</code> hash covers the public projection of the version:
+              private <strong>records</strong> and private <strong>types</strong> are omitted
+              entirely, and private fields are stripped from the records that remain before
+              re-hashing. This lets external verifiers confirm the public content without access to
+              private data — and because it is computed from the pushed version alone, never from
+              any global state, the same authored version yields the same <code>public:</code> hash
+              on every server.
             </p>
 
             <h3>Semver semantics</h3>
@@ -427,8 +465,9 @@ export default function Protocol() {
                 {'->'} <code>v1.3.0</code>)
               </li>
               <li>
-                <strong>Patch bump</strong>: metadata-only change such as readme or license (e.g.{' '}
-                <code>v1.2.0</code> {'->'} <code>v1.2.1</code>)
+                <strong>Patch bump</strong>: neither the schema set nor the record set changed — a
+                metadata edit such as readme or license, or a push that changes only which records
+                are <code>private</code> (e.g. <code>v1.2.0</code> {'->'} <code>v1.2.1</code>)
               </li>
             </ul>
           </RfcSection>
@@ -658,7 +697,11 @@ export default function Protocol() {
                 <strong>Forking</strong>. <code>POST .../fork</code> creates a new collection under
                 your org with the source's latest version. Because records, schemas, and files are
                 content-addressed, forking copies only the manifest; zero additional storage. The
-                fork tracks its origin via <code>forkedFrom</code>.
+                fork tracks its origin via <code>forkedFrom</code>. A fork references the{' '}
+                <em>full</em> record bodies and gives the forker owner-level access to them, so a
+                caller who is not a member of the source org is refused with <code>403</code> when
+                the source holds any private content — private records, private types, or records
+                with private fields. Members of the source org can always fork.
               </li>
             </ul>
           </RfcSection>

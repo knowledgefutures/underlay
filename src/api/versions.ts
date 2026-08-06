@@ -1092,25 +1092,39 @@ const app = new Hono<AuthEnv>()
       // hash, which for public readers is a coalesce() expression and therefore
       // an unindexed sort of the whole version.
       const at = decodeDeltaCursor(cursor)
+      // `private` is echoed back so a manifest round-trip is lossless. Privacy is
+      // authored per push and omitting it on a re-push means PUBLIC, so a client
+      // that reads a manifest, edits it and pushes it back would silently
+      // de-privatize every record if it could not read the flag. Only `true` is
+      // emitted (a non-owner's rows are all public, so they see none).
       const recordRows = (await withStatementTimeout(DELTA_STATEMENT_TIMEOUT_MS, async (tx) =>
         tx.execute(sql`
             SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
-                   vr.record_hash AS "recordHash"
+                   vr.record_hash AS "recordHash", vr.private
             FROM version_records vr
             WHERE vr.version_id = ${version.id}
               ${privacyWhere} ${afterCursor('vr', at.added)}
             ORDER BY vr.record_id, vr.record_hash
             LIMIT ${limit + 1}
           `),
-      )) as unknown as { id: string; type: string; hash: string; recordHash: string }[]
+      )) as unknown as {
+        id: string
+        type: string
+        hash: string
+        recordHash: string
+        private: boolean
+      }[]
 
       const { page, next, hasMore } = paginate(recordRows, limit)
+      const records = page.map(({ private: isPrivate, ...rest }) =>
+        isPrivate ? { ...rest, private: true } : rest,
+      )
 
       return c.json({
         semver: version.semver,
         hash: manifestHash,
         schemas: schemasOut,
-        records: page,
+        records,
         files: fileHashes.map((f) => f.hash),
         pagination: {
           limit,

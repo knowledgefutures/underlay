@@ -113,9 +113,13 @@ export const auth = betterAuth({
           // `metadata` is client-controlled, so a caller must NOT be able to
           // grant themselves 'admin' by passing metadata.scope='admin'. Admin
           // keys are minted out-of-band (server-side), never through this
-          // self-service create endpoint — cap client-requested scope at write.
+          // self-service create endpoint.
+          //
+          // 'admin' is CLAMPED DOWN to write rather than ignored: falling
+          // through to the read default would hand someone who asked for more
+          // access strictly less than 'write', silently breaking their pushes.
           const scope = ctx.body?.metadata?.scope
-          if (scope === 'write') return { collections: ['write', 'read'] }
+          if (scope === 'write' || scope === 'admin') return { collections: ['write', 'read'] }
           return { collections: ['read'] }
         },
       },

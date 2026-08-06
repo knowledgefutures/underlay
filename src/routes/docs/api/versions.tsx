@@ -247,8 +247,11 @@ export default function DocsApiVersions() {
                 <code>manifest</code>
               </td>
               <td>
-                Array of <code>{'{"id", "type", "hash"}'}</code> objects. Each <code>hash</code> is
-                the SHA-256 of the canonical JSON <code>{'{"id":...,"type":...,"data":...}'}</code>.
+                Array of <code>{'{"id", "type", "hash", "private"?}'}</code> objects. Each{' '}
+                <code>hash</code> is the SHA-256 of the canonical JSON{' '}
+                <code>{'{"id":...,"type":...,"data":...}'}</code>. <code>private: true</code> hides
+                that record from non-owners in <strong>this version only</strong> and must be
+                re-sent on every push — omitting it means public (default <code>false</code>).
                 Required unless you upload the manifest in chunks — see below. Capped at 500,000
                 entries.
               </td>
@@ -322,9 +325,9 @@ export default function DocsApiVersions() {
           Then <code>POST .../versions/negotiate/:sessionId/manifest</code> with up to{' '}
           <strong>50,000</strong> JSONL entries per request (
           <code>Content-Type: application/x-ndjson</code>), each line a{' '}
-          <code>{'{"id", "type", "hash"}'}</code> object. Each response tells you which records from{' '}
-          <em>that chunk</em> the server still needs, so you can start sending bodies before the
-          whole manifest is uploaded:
+          <code>{'{"id", "type", "hash", "private"?}'}</code> object. Each response tells you which
+          records from <em>that chunk</em> the server still needs, so you can start sending bodies
+          before the whole manifest is uploaded:
         </p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{manifestChunkRes}</code>
@@ -410,9 +413,10 @@ export default function DocsApiVersions() {
           <code>failed</code>, and its partial version removed.
         </p>
 
-        <h3>Schema privacy</h3>
+        <h3>Privacy</h3>
         <p>
-          You can add <code>"private": true</code> at two levels in the schema:
+          You can add <code>"private": true</code> at two levels in the schema, and at a third on
+          the manifest entry:
         </p>
         <ul>
           <li>
@@ -423,7 +427,22 @@ export default function DocsApiVersions() {
             <strong>Field-level:</strong> Add <code>"private": true</code> to a field definition to
             strip that field from records returned to public readers.
           </li>
+          <li>
+            <strong>Record-level:</strong> Add <code>"private": true</code> to a{' '}
+            <strong>manifest entry</strong> (not the record body) to hide that one record. Unlike
+            type and field privacy — which live in the schema — this is declared per record per push
+            and stored on the version&rsquo;s reference to the record, so{' '}
+            <strong>it must be re-declared on every push; omitting it means public</strong>. The
+            manifest endpoint echoes <code>private</code> back so a round-trip is lossless.
+          </li>
         </ul>
+        <p>
+          Redaction is <strong>per-version and forward-only</strong>: marking a record private in v2
+          hides it in v2 only — v1 is immutable and still serves it at{' '}
+          <code>/versions/v1.0.0/records</code>. File access resolves across every ready version, so
+          a file referenced publicly in v1 stays downloadable after the referencing record is
+          redacted in v2.
+        </p>
         <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
           <code>{`"schemas": {
   "Article": {

@@ -36,18 +36,25 @@ export default function DocsApi() {
       <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
         <code>{'Authorization: Bearer ul_a1b2c3d4e5...'}</code>
       </pre>
-      <p>Keys have three scopes:</p>
+      <p>Keys have two grantable scopes:</p>
       <ul>
         <li>
           <code>read</code>: list and download data
         </li>
         <li>
-          <code>write</code>: push versions, upload files
-        </li>
-        <li>
-          <code>admin</code>: delete collections, manage keys
+          <code>write</code>: push versions, upload files, manage collections you have rights to
         </li>
       </ul>
+      <p>
+        <code>admin</code> is not grantable through the API — a request for it is clamped down to{' '}
+        <code>write</code>. Destructive actions such as deleting a collection are gated on your{' '}
+        <strong>role in the owning organization</strong> (owner or admin), not on a key scope.
+      </p>
+      <p>
+        A key scoped to specific collections (this is how share and agent links work) is confined to
+        them: it is rejected with <code>403</code> on account and organization endpoints, cannot
+        enumerate other collections, and is treated as anonymous outside its scope.
+      </p>
       <p>
         Keys can optionally be scoped to a single collection. Create keys in your{' '}
         <Link to="/settings" className="text-link underline">
