@@ -59,6 +59,7 @@ export async function resolve(c: Context<AuthEnv>) {
       customUrl: schema.arkCollections.customUrl,
       collectionSlug: schema.collections.slug,
       collectionName: schema.collections.name,
+      collectionPublic: schema.collections.public,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
       ownerNaan: schema.organization.arkNaan,
@@ -71,6 +72,11 @@ export async function resolve(c: Context<AuthEnv>) {
     .limit(1)
 
   if (!collRow || !collRow.enabled) return c.json({ type: 'not_found' }, 404)
+
+  // ARK resolution is anonymous (the middleware forwards no credentials), so a
+  // private collection must not resolve — that would expose its name, owner,
+  // version metadata, and non-private record bodies to anyone with the ARK.
+  if (!collRow.collectionPublic) return c.json({ type: 'not_found' }, 404)
 
   // Verify the shoulder belongs to the collection's owner
   if (shoulderRow.organizationId !== collRow.collectionOrgId) {
@@ -166,7 +172,7 @@ export async function resolve(c: Context<AuthEnv>) {
     if (!versionRow) return c.json({ type: 'not_found' }, 404)
 
     const [recordRow] = await db
-      .select({ data: schema.recordObjects.data, private: schema.recordObjects.private })
+      .select({ data: schema.recordObjects.data, private: schema.versionRecords.private })
       .from(schema.versionRecords)
       .innerJoin(
         schema.recordObjects,
@@ -328,6 +334,10 @@ export async function getArk(c: Context<AuthEnv>) {
   if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
   // Must be owner/member
+  const scopedCollections = c.get('apiKeyCollectionIds')
+  if (scopedCollections && !scopedCollections.includes(coll.id)) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
@@ -372,6 +382,10 @@ export async function updateArk(c: Context<AuthEnv>) {
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const scopedCollections = c.get('apiKeyCollectionIds')
+  if (scopedCollections && !scopedCollections.includes(coll.id)) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
@@ -420,6 +434,10 @@ export async function getArkRecordTypes(c: Context<AuthEnv>) {
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const scopedCollections = c.get('apiKeyCollectionIds')
+  if (scopedCollections && !scopedCollections.includes(coll.id)) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
@@ -449,6 +467,10 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
     .limit(1)
   if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
+  const scopedCollections = c.get('apiKeyCollectionIds')
+  if (scopedCollections && !scopedCollections.includes(coll.id)) {
+    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
   const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 

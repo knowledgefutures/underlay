@@ -6,6 +6,7 @@ import { getRequestListener, serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Scalar } from '@scalar/hono-api-reference'
 import { Hono } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { createOpenApiDocument } from 'hono-zod-openapi'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
@@ -151,9 +152,11 @@ app.use('/api/admin/mirror/*', async (c, next) => {
   )
 })
 
-// Steward admin: requires kfRole === 'admin'
-// Steward admin: requires kfRole === 'admin'
-app.use('/api/admin/explore-*', async (c, next) => {
+// Steward admin: requires kfRole === 'admin'.
+// NOTE: a wildcard like '/api/admin/explore-*' does NOT match in Hono (wildcards
+// are segment-level), which previously left these routes ungated. Register the
+// guard on the exact paths instead.
+const requireSteward: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const userId = c.get('userId')
   if (!userId) return c.json({ error: 'Unauthorized', statusCode: 401 }, 401)
   const sessionUser = await getSessionUser(c.req.raw)
@@ -161,7 +164,9 @@ app.use('/api/admin/explore-*', async (c, next) => {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
   return next()
-})
+}
+app.use('/api/admin/explore-tags', requireSteward)
+app.use('/api/admin/explore-collections', requireSteward)
 
 // --- ARK resolution middleware ---
 app.use('/:arkpath{ark:.*}', arkMiddleware)
@@ -189,6 +194,8 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
   const url = new URL(c.req.url)
   const isCallback = url.pathname.includes('/callback/')
   if (isCallback) {
+    // Never log the raw URL (carries the OAuth `code`/`state`) or cookie/set-cookie
+    // values (carry the session token) — anyone with log access could replay them.
     console.log('[auth callback] incoming:', {
       method: c.req.method,
       path: url.pathname,
@@ -196,16 +203,14 @@ app.on(['GET', 'POST'], '/api/auth/*', async (c) => {
       hasState: url.searchParams.has('state'),
       hasError: url.searchParams.has('error'),
       error: url.searchParams.get('error'),
-      rawUrl: c.req.url,
-      cookieHeader: c.req.header('cookie')?.substring(0, 200),
     })
   }
   const res = await auth.handler(c.req.raw)
   if (isCallback) {
     console.log('[auth callback] response:', {
       status: res.status,
-      location: res.headers.get('location'),
-      setCookies: res.headers.getSetCookie?.()?.map((s: string) => s.substring(0, 80)),
+      hasLocation: !!res.headers.get('location'),
+      setCookieCount: res.headers.getSetCookie?.()?.length ?? 0,
     })
   }
   return res
@@ -232,16 +237,12 @@ app.get('/login', async (c, next) => {
       }),
     )
     const body = await authRes.json()
-    console.log('[login] auth sign-in response:', { status: authRes.status, body })
+    console.log('[login] auth sign-in response:', { status: authRes.status, hasUrl: !!body.url })
     if (body.url) {
       const redirect = new Response(null, { status: 302, headers: { Location: body.url } })
       for (const cookie of authRes.headers.getSetCookie()) {
         redirect.headers.append('set-cookie', cookie)
       }
-      console.log(
-        '[login] forwarding cookies:',
-        authRes.headers.getSetCookie().map((s: string) => s.substring(0, 80)),
-      )
       return redirect
     }
   }

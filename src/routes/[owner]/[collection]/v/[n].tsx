@@ -283,16 +283,19 @@ export default function CollectionVersionPage() {
                               const val = r.data?.[f]
                               if (val && typeof val === 'object' && '$file' in val) {
                                 const hash = ((val as any).$file as string).replace('sha256:', '')
-                                const fileUrl = `https://assets.underlay.org/files/${hash.slice(0, 2)}/${hash.slice(
-                                  2,
-                                  4,
-                                )}/${hash}`
+                                // Route through the API so access is checked and
+                                // a presigned URL is minted (files are private).
+                                const fileUrl = withToken(
+                                  `/api/collections/${owner}/${collection}/files/${hash}`,
+                                  shareToken,
+                                )
                                 const label = f === 'pdf' ? 'PDF' : 'File'
                                 return (
                                   <td key={f} className="p-2">
-                                    <Link
-                                      to={fileUrl}
+                                    <a
+                                      href={fileUrl}
                                       target="_blank"
+                                      rel="noopener noreferrer"
                                       className="text-link inline-flex items-center gap-1 hover:underline"
                                     >
                                       <svg
@@ -309,7 +312,7 @@ export default function CollectionVersionPage() {
                                         />
                                       </svg>
                                       {label}
-                                    </Link>
+                                    </a>
                                   </td>
                                 )
                               }
@@ -552,11 +555,12 @@ export default function CollectionVersionPage() {
                             </td>
                             <td className="p-2.5 text-right">
                               <a
-                                href={`https://assets.underlay.org/files/${f.hash.slice(0, 2)}/${f.hash.slice(
-                                  2,
-                                  4,
-                                )}/${f.hash}`}
+                                href={withToken(
+                                  `/api/collections/${owner}/${collection}/files/${f.hash}`,
+                                  shareToken,
+                                )}
                                 target="_blank"
+                                rel="noopener noreferrer"
                                 className="text-link hover:underline"
                               >
                                 <svg

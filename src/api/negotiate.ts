@@ -357,6 +357,13 @@ app.post(
     if (sessionRow.userId !== c.get('userId')) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
+    {
+      // A collection-scoped key must not act on a session for another collection.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+    }
     if (sessionRow.manifestExpected === null) {
       return c.json(
         {
@@ -456,6 +463,13 @@ app.get(
     if (session.userId !== c.get('userId')) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
     }
+    {
+      // A collection-scoped key must not act on a session for another collection.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(session.collectionId)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+    }
 
     const [manifestCounts] = await db
       .select({
@@ -512,6 +526,13 @@ app.post(
 
     if (sessionRow.userId !== c.get('userId')) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+    {
+      // A collection-scoped key must not act on a session for another collection.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
     }
 
     const rawBody = await c.req.text()
@@ -647,7 +668,6 @@ app.post(
       recordId: string
       type: string
       data: unknown
-      private: boolean
       size: number
     }[] = []
 
@@ -671,7 +691,6 @@ app.post(
           recordId: rec.id,
           type: rec.type,
           data,
-          private: rec.private ?? false,
           size: Buffer.byteLength(canonical, 'utf-8'),
         })
       }
@@ -992,8 +1011,12 @@ app.post(
       // `<> ALL` over an empty array is TRUE, so the type clause needs no special
       // case when nothing is private — which lets the same predicate be written
       // through drizzle and through the raw driver used for the digest cursors.
+      // Public-view membership is a pure function of THIS version's authored
+      // inputs: the push's own per-record private flag (m.private) and its
+      // private types. It deliberately does NOT consult a global record flag —
+      // that is what made public_hash depend on other collections' push history.
       const privateTypeList = [...privateTypes]
-      const publicRows = sql`NOT m.private AND NOT ro.private
+      const publicRows = sql`NOT m.private
       AND ro.type <> ALL(${sql.param(privateTypeList)}::text[])`
 
       const validationErrors: { recordId: string; type: string; errors: string[] }[] = []
@@ -1025,7 +1048,7 @@ app.post(
       let cursor: string | null = null
       for (;;) {
         const batch = (await db.execute(sql`
-        SELECT m.hash, ro.record_id AS "recordId", ro.type, ro.data, ro.private, ro.size
+        SELECT m.hash, ro.record_id AS "recordId", ro.type, ro.data, ro.size
         FROM negotiate_session_manifest m
         INNER JOIN record_objects ro ON ro.hash = m.hash
         WHERE m.session_id = ${sessionId} AND (${needsValidation})
@@ -1037,7 +1060,6 @@ app.post(
           recordId: string
           type: string
           data: unknown
-          private: boolean
           size: number
         }[]
 
@@ -1052,7 +1074,6 @@ app.post(
           recordId: string
           type: string
           data: unknown
-          private: boolean
           size: number
         }[] = []
         const rehashed: { hash: string; finalHash: string }[] = []
@@ -1104,7 +1125,6 @@ app.post(
                 recordId: rec.recordId,
                 type: rec.type,
                 data,
-                private: rec.private,
                 size: Buffer.byteLength(result.canonical, 'utf-8'),
               })
               rehashed.push({ hash: rec.hash, finalHash: result.hash })
@@ -1130,7 +1150,6 @@ app.post(
                 recordId: r.recordId,
                 type: r.type,
                 data: r.data as any,
-                private: r.private,
                 size: r.size,
               })),
             )
@@ -1345,7 +1364,7 @@ app.post(
       FROM negotiate_session_manifest m
       INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
       WHERE m.session_id = ${sessionId}
-        AND NOT m.private AND NOT ro.private
+        AND NOT m.private
         AND ro.type <> ALL(${privateTypeList}::text[])
       ORDER BY coalesce(m.public_hash, m.final_hash, m.hash) COLLATE "C"
     `.cursor(CURSOR_CHUNK, (rows) => {
@@ -1461,11 +1480,11 @@ app.post(
           const hi = bound.hi
 
           await db.execute(sql`
-          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type)
+          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
           SELECT ${versionId!}, ro.hash,
                  nullif(coalesce(m.public_hash, m.final_hash, m.hash),
                         coalesce(m.final_hash, m.hash)),
-                 ro.record_id, ro.type
+                 ro.record_id, ro.type, m.private
           FROM negotiate_session_manifest m
           INNER JOIN record_objects ro ON ro.hash = coalesce(m.final_hash, m.hash)
           WHERE m.session_id = ${sessionId}
@@ -1624,6 +1643,13 @@ app.delete(
     }
     if (session.userId !== c.get('userId')) {
       return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
+    }
+    {
+      // A collection-scoped key must not act on a session for another collection.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(session.collectionId)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
     }
 
     await expireSession(sessionId)

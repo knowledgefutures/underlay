@@ -5,14 +5,16 @@ import { v4 as uuidv4 } from 'uuid'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { RESERVED_SLUGS } from './accounts.js'
 import { type AuthEnv } from './auth.server.js'
-import { requireAuth } from './auth.server.js'
+import { requireAuth, requireUnscopedKey } from './auth.server.js'
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
 const app = new Hono<AuthEnv>().post(
   '/',
   requireAuth('write'),
+  requireUnscopedKey(),
   openApi({
     tags: ['Organizations'],
     summary: 'Create an organization',
@@ -30,6 +32,9 @@ const app = new Hono<AuthEnv>().post(
 
     if (!slug || slug.length < 2 || slug.length > 64 || !SLUG_RE.test(slug)) {
       return c.json({ error: 'Invalid slug', statusCode: 422 }, 422)
+    }
+    if (RESERVED_SLUGS.has(slug)) {
+      return c.json({ error: 'That slug is reserved', statusCode: 422 }, 422)
     }
 
     const [existing] = await db

@@ -145,3 +145,43 @@ export function requireAuth(scope?: 'read' | 'write' | 'admin'): MiddlewareHandl
     return next()
   }
 }
+
+/**
+ * The caller's user id ONLY when they are a full principal — a session or an
+ * API key that is not restricted to specific collections. A collection-scoped
+ * key (share/agent link) carries its creator's user id, so anything that grants
+ * access from mere org membership must treat such a key as anonymous outside its
+ * scope; use this in place of `c.get('userId')` for cross-collection/aggregate
+ * reads (collection listings, global schema search, record-by-hash lookups).
+ * Per-collection endpoints keep using `c.get('userId')` + `apiKeyCollectionIds`.
+ */
+export function fullPrincipalUserId(c: {
+  get: {
+    (key: 'userId'): string | undefined
+    (key: 'apiKeyCollectionIds'): string[] | undefined
+  }
+}): string | undefined {
+  return c.get('apiKeyCollectionIds') ? undefined : c.get('userId')
+}
+
+/**
+ * Reject collection-scoped API keys. Account- and organization-level resources
+ * are never within the scope of a key minted for a single collection, so a
+ * share/agent link must not be able to reach them even though it carries the
+ * creator's identity.
+ */
+export function requireUnscopedKey(): MiddlewareHandler<AuthEnv> {
+  return async (c, next) => {
+    if (c.get('apiKeyCollectionIds')) {
+      return c.json(
+        {
+          error:
+            'This API key is scoped to specific collections and cannot access account or organization resources',
+          statusCode: 403,
+        },
+        403,
+      )
+    }
+    return next()
+  }
+}

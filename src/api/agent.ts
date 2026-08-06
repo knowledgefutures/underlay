@@ -3,7 +3,11 @@ import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
 import { auth } from '../lib/auth.js'
-import { getLatestReadyVersion, loadVersionSchemas } from '../lib/version-helpers.server.js'
+import {
+  getLatestReadyVersion,
+  hasOrgAccess,
+  loadVersionSchemas,
+} from '../lib/version-helpers.server.js'
 
 const DEFAULT_SCHEMA_SLUG = 'update'
 const DEFAULT_SCHEMA = {
@@ -62,6 +66,7 @@ export async function agentPage(c: Context) {
       id: schema.collections.id,
       slug: schema.collections.slug,
       name: schema.collections.name,
+      organizationId: schema.collections.organizationId,
       ownerSlug: schema.organization.slug,
       ownerName: schema.organization.name,
     })
@@ -72,6 +77,21 @@ export async function agentPage(c: Context) {
 
   if (!coll) {
     return c.html('<h1>Collection not found</h1>', 404)
+  }
+
+  // The key's `collectionIds` metadata is set by whoever created the key, so a
+  // valid key does NOT by itself prove a relationship to this collection. This
+  // page discloses the schema and sample records, so require the key's owner to
+  // actually be a member of the owning org — otherwise anyone could mint a key
+  // pointed at a collection UUID they don't own and read it here.
+  if (!(await hasOrgAccess(keyInfo.userId, coll.organizationId))) {
+    return c.html(
+      `<!DOCTYPE html><html><head><title>Invalid token</title></head><body>
+<h1>Invalid or expired token</h1>
+<p>This agent link is no longer valid. Ask the collection owner for a new link.</p>
+</body></html>`,
+      404,
+    )
   }
 
   const latest = await getLatestReadyVersion(coll.id)

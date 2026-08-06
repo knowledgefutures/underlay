@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { filterRecordData, getPrivateFields } from '../lib/core/index.js'
-import { type AuthEnv } from './auth.server.js'
+import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
 
 const BatchRequest = z.object({
   hashes: z.array(z.string()).min(1).max(10000),
@@ -104,10 +104,7 @@ async function resolveRecordAccess(
     .from(schema.versionRecords)
     .innerJoin(
       schema.recordObjects,
-      and(
-        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        eq(schema.recordObjects.private, false),
-      ),
+      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
     )
     .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
     .innerJoin(
@@ -125,7 +122,15 @@ async function resolveRecordAccess(
       ),
     )
     .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
-    .where(inArray(schema.versionRecords.recordHash, remaining))
+    // Record-level privacy is per-version: a hash is publicly readable if it
+    // appears NOT-private in some public collection's version (under a
+    // non-private type). This is the correct global-lookup OR semantics.
+    .where(
+      and(
+        inArray(schema.versionRecords.recordHash, remaining),
+        eq(schema.versionRecords.private, false),
+      ),
+    )
     .groupBy(schema.versionRecords.recordHash, schema.schemas.schema)
 
   for (const row of publicRows) {
@@ -186,7 +191,9 @@ const app = new Hono<AuthEnv>()
 
       if (!record) return c.json({ error: 'Record not found', statusCode: 404 }, 404)
 
-      const accessEntry = (await resolveRecordAccess([recordHash], c.get('userId'))).get(recordHash)
+      const accessEntry = (await resolveRecordAccess([recordHash], fullPrincipalUserId(c))).get(
+        recordHash,
+      )
       if (!accessEntry) return c.json({ error: 'Record not found', statusCode: 404 }, 404)
 
       const references = await db
@@ -249,7 +256,8 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { hashes } = c.req.valid('json')
-      const userId = c.get('userId')
+      // A collection-scoped key is treated anonymously for global hash lookups.
+      const userId = fullPrincipalUserId(c)
 
       const CHUNK = 500
       c.header('Content-Type', 'application/x-ndjson')
@@ -272,7 +280,6 @@ const app = new Hono<AuthEnv>()
               recordId: schema.recordObjects.recordId,
               type: schema.recordObjects.type,
               data: schema.recordObjects.data,
-              private: schema.recordObjects.private,
             })
             .from(schema.recordObjects)
             .where(inArray(schema.recordObjects.hash, readable))
@@ -291,7 +298,6 @@ const app = new Hono<AuthEnv>()
                   id: direct.recordId,
                   type: direct.type,
                   data,
-                  private: direct.private,
                   hash: direct.hash,
                 }) + '\n',
               )
@@ -309,7 +315,6 @@ const app = new Hono<AuthEnv>()
                 id: row.recordId,
                 type: row.type,
                 data: filterRecordData(row.data, pub.privateFields),
-                private: row.private,
                 hash: requested,
               }) + '\n',
             )

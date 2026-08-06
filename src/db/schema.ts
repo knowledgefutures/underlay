@@ -256,7 +256,12 @@ export const versions = pgTable(
 )
 
 // --- Records (globally deduplicated, content-addressed) ---
-
+//
+// PURE CONTENT. A record object is byte-identical content shared across every
+// collection that pushes it, so it carries no privacy: privacy is contextual
+// (a per-version property — see version_records.private), never intrinsic to the
+// bytes. A `private` flag once lived here and was the source of cross-collection
+// privacy coupling; it has been removed.
 export const recordObjects = pgTable(
   'record_objects',
   {
@@ -264,7 +269,6 @@ export const recordObjects = pgTable(
     recordId: text('record_id').notNull(),
     type: text('type').notNull(),
     data: jsonb('data').notNull(),
-    private: boolean('private').default(false).notNull(),
     size: integer('size').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -285,6 +289,14 @@ export const versionRecords = pgTable(
     // equals record_hash (i.e. the type has no private fields), which is the
     // common case — only private-field bindings pay the storage cost.
     publicRecordHash: text('public_record_hash'),
+    // Record-level privacy is a per-VERSION property (this collection's version
+    // declares this record private), NOT a property of the globally-shared,
+    // content-addressed record object. Set once at commit from the push's own
+    // intent (negotiate_session_manifest.private). This is the SOLE record-level
+    // privacy signal — the content object carries none — which is what lets two
+    // collections hold byte-identical content at different privacy levels and
+    // makes public_hash a pure function of the authored version.
+    private: boolean('private').default(false).notNull(),
     // Denormalized from record_objects. Records are immutable and
     // content-addressed, so these can never drift from the row they were copied
     // from. Carrying them here is what lets record listing, `?type=` filtering

@@ -76,8 +76,9 @@ GET /api/collections/:owner/:slug/versions/:semver/records.ndjson → ALL record
 GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=recordId)
 GET /api/collections/:owner/:slug/versions/:semver/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=v1.0.0 for delta)
 GET /api/collections/:owner/:slug/versions/:semver/files     → list files for a version (hash, size, content type)
-GET /api/collections/:owner/:slug/files/:hash            → download a file by hash
-HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists (returns Content-Length, Content-Type)
+GET /api/collections/:owner/:slug/files/:hash            → download a file: access-checked, then 302-redirects to a short-lived presigned URL (follow it, e.g. curl -L). Public files are anonymous; private needs a session or a Bearer share/agent token. This API path is the durable locator — the redirect target is ephemeral, never persist it.
+HEAD /api/collections/:owner/:slug/files/:hash           → check if a file exists/is accessible (returns Content-Length, Content-Type)
+POST /api/collections/:owner/:slug/files/presign         → presign many files at once: body {"hashes":[...]} → {hash: presignedUrl | null}. One round trip for a page full of files.
 
 ### Records (global, content-addressed)
 GET /api/records/:hash/provenance                        → find all collections/versions containing this record hash
