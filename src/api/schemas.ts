@@ -311,7 +311,12 @@ const app = new Hono<AuthEnv>()
 
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
-      if (!collection.public && !(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
+      if (
+        !collection.public &&
+        (!keyScopeOk || !(await hasOrgAccess(c.get('userId'), collection.organizationId)))
+      ) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 

@@ -356,9 +356,14 @@ const app = new Hono<AuthEnv>()
           return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
         }
 
+        // A collection-scoped API key (share/agent link) only grants access to
+        // the collections it is scoped to.
+        const scopedCollections = c.get('apiKeyCollectionIds')
+        const keyScopeOk = !scopedCollections || scopedCollections.includes(result.id)
+
         const userId = c.get('userId')
         let hasAccess = false
-        if (userId) {
+        if (userId && keyScopeOk) {
           const [membership] = await db
             .select()
             .from(schema.member)
@@ -795,7 +800,9 @@ const app = new Hono<AuthEnv>()
 
       if (!collection.public) {
         const userId = c.get('userId')
-        if (!userId || !(await hasOrgAccess(userId, collection.organizationId))) {
+        const scopedCollections = c.get('apiKeyCollectionIds')
+        const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
+        if (!userId || !keyScopeOk || !(await hasOrgAccess(userId, collection.organizationId))) {
           return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
         }
       }

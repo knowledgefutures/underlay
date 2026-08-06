@@ -2,6 +2,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
+import { TokenLink } from '~/lib/share-token'
 
 import { CollectionNav, formatBytes } from '.'
 
@@ -39,7 +40,7 @@ export default function CollectionVersionsPage() {
                   i < versions.length - 1 ? 'border-rule border-b' : ''
                 }`}
               >
-                <Link
+                <TokenLink
                   to={`/${owner}/${collection}/v/${v.semver}`}
                   className="flex min-w-0 items-center gap-4"
                 >
@@ -51,7 +52,7 @@ export default function CollectionVersionsPage() {
                   {v.message && (
                     <span className="text-ink-muted truncate text-xs">{v.message}</span>
                   )}
-                </Link>
+                </TokenLink>
                 <div className="text-ink-muted ml-4 flex shrink-0 items-center gap-5 text-xs">
                   <span>{v.recordCount.toLocaleString()} records</span>
                   <span>{v.fileCount.toLocaleString()} files</span>
@@ -78,13 +79,13 @@ export default function CollectionVersionsPage() {
                     </Link>
                   )}
                   {i < versions.length - 1 ? (
-                    <Link
+                    <TokenLink
                       to={`/${owner}/${collection}/diff?from=${versions[i + 1].semver}&to=${v.semver}`}
                       className="text-link w-8 text-right hover:underline"
                       title={`Diff ${versions[i + 1].semver} → ${v.semver}`}
                     >
                       diff
-                    </Link>
+                    </TokenLink>
                   ) : (
                     <span className="w-8"></span>
                   )}

@@ -184,7 +184,12 @@ const app = new Hono<AuthEnv>()
       const limit = c.req.query('limit')
       const offset = c.req.query('offset')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const ownerAccess = collection.ownerAccess
@@ -242,7 +247,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const version = await getLatestReadyVersion(collection.id)
@@ -278,7 +288,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -332,7 +347,12 @@ const app = new Hono<AuthEnv>()
       // client that sends ?cursor= isn't silently reset to offset 0.
       const after = c.req.query('after') ?? c.req.query('cursor')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -530,7 +550,12 @@ const app = new Hono<AuthEnv>()
       const type = c.req.query('type')
       const after = c.req.query('after')
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -697,7 +722,12 @@ const app = new Hono<AuthEnv>()
     }),
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -777,7 +807,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const sinceParam = c.req.query('since')
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver } = parseSemver(n)
@@ -1000,7 +1035,12 @@ const app = new Hono<AuthEnv>()
       const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), MAX_DIFF_LIMIT)
       const diffCursor = decodeDeltaCursor(c.req.query('cursor'))
 
-      const collection = await resolveAccessibleCollection(owner, slug, c.get('userId'))
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
 
       const { semver: targetSemver } = parseSemver(n)

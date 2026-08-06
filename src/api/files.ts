@@ -17,6 +17,7 @@ async function isFilePubliclyAccessible(
   slug: string,
   fileHash: string,
   userId: string | undefined,
+  apiKeyCollectionIds?: string[],
 ): Promise<boolean> {
   const [collection] = await db
     .select({
@@ -30,7 +31,11 @@ async function isFilePubliclyAccessible(
 
   if (!collection) return false
 
-  if (userId != null) {
+  // A collection-scoped API key (share/agent link) only counts for the
+  // collections it is scoped to.
+  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
+
+  if (userId != null && keyScopeOk) {
     const [membership] = await db
       .select()
       .from(schema.member)
@@ -152,7 +157,13 @@ const app = new Hono<AuthEnv>()
       return c.body(null, 404)
     }
 
-    const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('userId'))
+    const accessible = await isFilePubliclyAccessible(
+      owner,
+      slug,
+      cleanHash,
+      c.get('userId'),
+      c.get('apiKeyCollectionIds'),
+    )
     if (!accessible) {
       return c.body(null, 404)
     }
@@ -183,7 +194,13 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'File not found', statusCode: 404 }, 404)
       }
 
-      const accessible = await isFilePubliclyAccessible(owner, slug, cleanHash, c.get('userId'))
+      const accessible = await isFilePubliclyAccessible(
+        owner,
+        slug,
+        cleanHash,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!accessible) {
         return c.json({ error: 'File not found', statusCode: 404 }, 404)
       }

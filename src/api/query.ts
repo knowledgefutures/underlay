@@ -77,6 +77,7 @@ async function getOrBuildSqlite(
   slug: string,
   versionSemver: string,
   userId: string | undefined,
+  apiKeyCollectionIds?: string[],
 ) {
   const { semver: normalizedSemver } = parseSemver(versionSemver)
 
@@ -95,8 +96,10 @@ async function getOrBuildSqlite(
   if (!collection) return null
 
   // Access: private collections are only visible to org members; non-members of
-  // public collections get a privacy-filtered build
-  const ownerAccess = await hasOrgAccess(userId, collection.organizationId)
+  // public collections get a privacy-filtered build. A collection-scoped API
+  // key (share/agent link) only counts for the collections it is scoped to.
+  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
+  const ownerAccess = keyScopeOk && (await hasOrgAccess(userId, collection.organizationId))
   if (!collection.public && !ownerAccess) return null
 
   // Resolve version
@@ -254,7 +257,13 @@ export async function sqlite(c: Context<AuthEnv>) {
   const versionSemver = c.req.param('version')!
   const { semver } = parseSemver(versionSemver)
 
-  const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
+  const result = await getOrBuildSqlite(
+    owner,
+    slug,
+    versionSemver,
+    c.get('userId'),
+    c.get('apiKeyCollectionIds'),
+  )
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
   if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
@@ -274,7 +283,13 @@ export async function ddl(c: Context<AuthEnv>) {
   const slug = c.req.param('slug')!
   const versionSemver = c.req.param('version')!
 
-  const result = await getOrBuildSqlite(owner, slug, versionSemver, c.get('userId'))
+  const result = await getOrBuildSqlite(
+    owner,
+    slug,
+    versionSemver,
+    c.get('userId'),
+    c.get('apiKeyCollectionIds'),
+  )
   if (!result) return c.json({ error: 'Collection or version not found', statusCode: 404 }, 404)
   if ('tooLarge' in result) return tooLargeResponse(c, result.recordCount)
 
@@ -318,7 +333,13 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   if (collectionRefs.length === 1) {
     const ref = collectionRefs[0]
-    const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version, c.get('userId'))
+    const result = await getOrBuildSqlite(
+      ref.owner,
+      ref.slug,
+      ref.version,
+      c.get('userId'),
+      c.get('apiKeyCollectionIds'),
+    )
     if (!result)
       return c.json(
         { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found`, statusCode: 404 },
@@ -330,7 +351,13 @@ export async function generateSql(c: Context<AuthEnv>) {
   } else {
     const parts: string[] = []
     for (const ref of collectionRefs) {
-      const result = await getOrBuildSqlite(ref.owner, ref.slug, ref.version, c.get('userId'))
+      const result = await getOrBuildSqlite(
+        ref.owner,
+        ref.slug,
+        ref.version,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!result)
         return c.json(
           { error: `Collection ${ref.owner}/${ref.slug} v${ref.version} not found` },
