@@ -197,34 +197,39 @@ function CollectionNav({
           )}
         </div>
       </div>
-      <div className="border-rule mb-6 flex items-center gap-0 overflow-x-auto border-b">
-        <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
-          Overview
-        </TokenLink>
-        {version && (
-          <TokenLink
-            to={`${prefix}/records`}
-            className={active === 'records' ? activeClass : inactiveClass}
-          >
-            Records
+      <div className="border-rule mb-6 flex items-center gap-3 border-b">
+        {/* Only the tabs scroll. The picker sits outside the scroll container:
+            an overflow value other than visible clips absolutely-positioned
+            descendants, which would cut off its dropdown. */}
+        <div className="flex min-w-0 items-center gap-0 overflow-x-auto">
+          <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
+            Overview
           </TokenLink>
-        )}
-        <TokenLink
-          to={`${prefix}/schemas`}
-          className={active === 'schemas' ? activeClass : inactiveClass}
-        >
-          Schemas
-        </TokenLink>
-        {version && (
+          {version && (
+            <TokenLink
+              to={`${prefix}/records`}
+              className={active === 'records' ? activeClass : inactiveClass}
+            >
+              Records
+            </TokenLink>
+          )}
           <TokenLink
-            to={`${prefix}/files`}
-            className={active === 'files' ? activeClass : inactiveClass}
+            to={`${prefix}/schemas`}
+            className={active === 'schemas' ? activeClass : inactiveClass}
           >
-            Files
+            Schemas
           </TokenLink>
-        )}
+          {version && (
+            <TokenLink
+              to={`${prefix}/files`}
+              className={active === 'files' ? activeClass : inactiveClass}
+            >
+              Files
+            </TokenLink>
+          )}
+        </div>
         {version && (
-          <div className="mb-1.5 ml-auto">
+          <div className="mb-1.5 ml-auto shrink-0">
             <VersionPicker
               owner={owner}
               collection={collection}

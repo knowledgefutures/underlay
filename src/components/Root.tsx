@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from 'react'
-import { Outlet, useMatches } from 'react-router'
+import { Outlet, ScrollRestoration, useMatches } from 'react-router'
 
 import { AppErrorBoundary } from '~/components/NotFound'
 
@@ -31,6 +31,11 @@ export default function Root() {
   return (
     <AppErrorBoundary>
       <DocumentTitle />
+      {/* Without this, RouterProvider leaves the scroll position alone, so
+          following a link while scrolled down lands you mid-page. Keyed per
+          history entry (the default): new navigations go to the top, back and
+          forward restore where you were. */}
+      <ScrollRestoration />
       <Suspense>
         <Outlet />
       </Suspense>
