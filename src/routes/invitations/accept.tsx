@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Alert, Button, buttonClasses } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 export default function InvitationsAccept() {
@@ -45,7 +46,7 @@ export default function InvitationsAccept() {
         <h1 className="mb-6 text-xl font-semibold tracking-tight">Organization Invitation</h1>
 
         {success ? (
-          <div className="border-rule bg-parchment-dark border px-4 py-3 text-sm">
+          <div className="border-rule bg-parchment-dark rounded-surface border px-4 py-3 text-sm">
             <p className="mb-1 font-medium">You've joined the organization!</p>
             <p className="text-ink-muted mb-3 text-xs">
               You now have access to the organization's collections.
@@ -61,7 +62,7 @@ export default function InvitationsAccept() {
             )}
           </div>
         ) : error ? (
-          <div className="border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <Alert variant="error">
             <p>{error}</p>
             {!currentUser && token && (
               <p className="mt-2 text-xs">
@@ -82,7 +83,7 @@ export default function InvitationsAccept() {
                 first.
               </p>
             )}
-          </div>
+          </Alert>
         ) : (
           <>
             {!currentUser ? (
@@ -93,13 +94,13 @@ export default function InvitationsAccept() {
                 <div className="flex gap-3">
                   <a
                     href={`/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                    className="bg-ink text-parchment hover:bg-ink-light flex-1 py-2 text-center text-sm font-medium transition-colors"
+                    className={buttonClasses('primary', 'md', 'flex-1')}
                   >
                     Log in
                   </a>
                   <Link
                     to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                    className="border-ink hover:bg-parchment-dark flex-1 border py-2 text-center text-sm font-medium transition-colors"
+                    className={buttonClasses('secondary', 'md', 'flex-1')}
                   >
                     Sign up
                   </Link>
@@ -110,13 +111,9 @@ export default function InvitationsAccept() {
                 <p className="text-ink-muted text-sm">
                   Click below to accept the invitation and join the organization.
                 </p>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="bg-ink text-parchment hover:bg-ink-light w-full py-2 text-sm font-medium transition-colors"
-                >
+                <Button type="submit" disabled={submitting} className="w-full">
                   {submitting ? 'Accepting…' : 'Accept invitation'}
-                </button>
+                </Button>
               </form>
             )}
           </>

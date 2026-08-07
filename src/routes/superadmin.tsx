@@ -68,7 +68,7 @@ export default function Superadmin() {
             <Link
               key={tool.href}
               to={tool.href}
-              className="border-rule hover:border-ink-muted/50 block rounded border px-4 py-3 transition-all hover:shadow-sm"
+              className="border-rule hover:border-ink-muted/50 rounded-surface block border px-4 py-3 transition-all hover:shadow-sm"
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold">{tool.name}</span>

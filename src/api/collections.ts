@@ -774,7 +774,7 @@ const app = new Hono<AuthEnv>()
         })
         .from(schema.collections)
         .where(and(...conditions))
-        .orderBy(schema.collections.updatedAt)
+        .orderBy(desc(schema.collections.updatedAt))
 
       return c.json(results)
     },

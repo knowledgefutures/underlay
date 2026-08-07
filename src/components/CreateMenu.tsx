@@ -1,30 +1,31 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router'
+
+import { useDismissable } from '~/lib/use-dismissable'
 
 export default function CreateMenu() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
+  useDismissable(
+    open,
+    useCallback(() => setOpen(false), []),
+    ref,
+  )
 
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="border-rule bg-parchment-dark hover:bg-rule/30 cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2.5 py-1 text-xs transition-colors"
       >
         New +
       </button>
       {open && (
-        <div className="bg-parchment border-rule absolute top-full right-0 z-50 mt-1.5 min-w-[10rem] overflow-hidden rounded border shadow-sm">
+        <div className="bg-parchment border-rule rounded-control absolute top-full right-0 z-50 mt-1.5 min-w-[10rem] overflow-hidden border shadow-sm">
           <Link
             to="/new"
             onClick={() => setOpen(false)}

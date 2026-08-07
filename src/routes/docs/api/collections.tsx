@@ -143,7 +143,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{browseRes}</code>
         </pre>
       </div>
@@ -158,13 +158,13 @@ export default function DocsApiCollections() {
           org.
         </p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{createReq}</code>
         </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{createRes}</code>
         </pre>
       </div>
@@ -178,7 +178,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{getRes}</code>
         </pre>
       </div>
@@ -190,13 +190,13 @@ export default function DocsApiCollections() {
         <p className="scope">Auth: write scope</p>
         <p>Update collection metadata. Pass only the fields to change.</p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{updateReq}</code>
         </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{okRes}</code>
         </pre>
       </div>
@@ -213,7 +213,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{okRes}</code>
         </pre>
       </div>
@@ -227,7 +227,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{listRes}</code>
         </pre>
       </div>
@@ -244,7 +244,7 @@ export default function DocsApiCollections() {
           fields without pushing new records.
         </p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{metadataReq}</code>
         </pre>
         <h3>Fields</h3>
@@ -284,7 +284,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{metadataRes}</code>
         </pre>
         <h3>Errors</h3>
@@ -318,7 +318,7 @@ export default function DocsApiCollections() {
           <code>403</code> rather than leaked. Members of the source org can always fork.
         </p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{forkReq}</code>
         </pre>
         <h3>Fields</h3>
@@ -346,7 +346,7 @@ export default function DocsApiCollections() {
         <h3>
           Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{forkRes}</code>
         </pre>
         <h3>Errors</h3>

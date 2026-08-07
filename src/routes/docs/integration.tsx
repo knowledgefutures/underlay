@@ -139,7 +139,7 @@ export default function DocsIntegration() {
         Create an API key at <Link to="/settings/keys">/settings/keys</Link> or via the API. Pass it
         as:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{'Authorization: Bearer ul_your_key_here'}</code>
       </pre>
       <p>
@@ -174,7 +174,7 @@ export default function DocsIntegration() {
           On <code>409 Conflict</code>, re-fetch latest and retry from step 3
         </li>
       </ol>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
       <p>
@@ -194,7 +194,7 @@ export default function DocsIntegration() {
         sorted recursively. This ensures any implementation produces the same hash for the same
         content.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashExample}</code>
       </pre>
       <p>
@@ -239,7 +239,7 @@ export default function DocsIntegration() {
         The negotiate request for a first push. Include <code>schemas</code> (a per-type JSON Schema
         map), <code>metadata</code>, and a <code>manifest</code> of record hashes:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{pushExample}</code>
       </pre>
       <p>
@@ -252,7 +252,7 @@ export default function DocsIntegration() {
 
       <h2>Mapping a SQL Database</h2>
       <p>Most apps store data in SQL. Here's how to map it to Underlay records:</p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{sqlIntrospect}</code>
       </pre>
       <p>General rules:</p>

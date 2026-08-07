@@ -1,6 +1,9 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
+import { requireAuth } from '~/lib/auth-middleware'
 import { fetchBase } from '~/lib/fetch-base'
+
+export const middleware = [requireAuth]
 
 export const handle = {
   title: (params: Record<string, string>) => `Settings — ${params.owner} · Underlay`,

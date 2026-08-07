@@ -148,7 +148,7 @@ export default function DocsQuickstart() {
         Underlay instance.
       </p>
 
-      <div className="border-rule bg-parchment-dark/30 mb-6 rounded border p-4">
+      <div className="border-rule bg-parchment-dark/30 rounded-surface mb-6 border p-4">
         <p className="mt-0 mb-2 text-sm font-semibold">Fastest path: use an AI agent</p>
         <p className="text-ink-muted mb-0 text-sm">
           Point your coding agent at{' '}
@@ -173,7 +173,7 @@ export default function DocsQuickstart() {
         </Link>{' '}
         and create a write-scoped key.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{loginNote}</code>
       </pre>
       <p>
@@ -181,7 +181,7 @@ export default function DocsQuickstart() {
       </p>
 
       <h2>2. Create a collection</h2>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{createCollectionCode}</code>
       </pre>
 
@@ -198,7 +198,7 @@ export default function DocsQuickstart() {
       <p>
         Hash each record and send the manifest. The server tells you which records it already has.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{negotiateCode}</code>
       </pre>
 
@@ -208,17 +208,17 @@ export default function DocsQuickstart() {
         batches of up to 10,000 records per request. Skip this step if <code>needed_records</code>{' '}
         is empty.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{sendRecordsCode}</code>
       </pre>
 
       <h3>3c. Commit</h3>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{commitCode}</code>
       </pre>
 
       <h2>4. Read it back</h2>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{readCode}</code>
       </pre>
 
@@ -227,12 +227,12 @@ export default function DocsQuickstart() {
         On subsequent pushes, set <code>base_version</code> to the current latest. The server
         deduplicates, so only new or changed records need to be sent.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{updateCode}</code>
       </pre>
 
       <h2>6. Diff versions</h2>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{diffCode}</code>
       </pre>
 
@@ -243,13 +243,13 @@ export default function DocsQuickstart() {
         This ensures any client produces the same hash for the same data regardless of key insertion
         order.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashingNote}</code>
       </pre>
 
       <h2>Working with files</h2>
       <p>To attach files (PDFs, images, etc.) to records, upload them first by hash:</p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{filesCode}</code>
       </pre>
 

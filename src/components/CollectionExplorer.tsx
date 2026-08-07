@@ -174,7 +174,7 @@ export default function CollectionExplorer() {
                 <li>
                   <button
                     onClick={() => handleTagClick(null)}
-                    className={`w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                    className={`rounded-control w-full px-2.5 py-1.5 text-left text-sm transition-colors ${
                       !selectedTag
                         ? 'bg-parchment-dark text-ink font-medium'
                         : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
@@ -187,7 +187,7 @@ export default function CollectionExplorer() {
                   <li key={tag}>
                     <button
                       onClick={() => handleTagClick(tag)}
-                      className={`w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors ${
+                      className={`rounded-control w-full px-2.5 py-1.5 text-left text-sm transition-colors ${
                         selectedTag === tag
                           ? 'bg-parchment-dark text-ink font-medium'
                           : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
@@ -221,7 +221,7 @@ export default function CollectionExplorer() {
             <input
               type="search"
               placeholder="Search collections..."
-              className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink w-full rounded-sm border py-2 pr-3 pl-10 text-sm focus:outline-none"
+              className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink rounded-control w-full border py-2 pr-3 pl-10 text-sm focus:outline-none"
               value={query}
               onChange={(e) => handleInput(e.target.value)}
             />
@@ -229,7 +229,7 @@ export default function CollectionExplorer() {
           <select
             value={sort}
             onChange={(e) => handleSortChange(e.target.value)}
-            className="bg-parchment border-rule text-ink-muted rounded-sm border px-3 py-2 text-sm focus:outline-none"
+            className="bg-parchment border-rule text-ink-muted focus:border-ink rounded-control cursor-pointer border px-3 py-2 text-sm focus:outline-none"
           >
             <option value="featured">Featured</option>
             <option value="records">Most records</option>
@@ -249,7 +249,7 @@ export default function CollectionExplorer() {
                 <Link
                   key={`feat-${c.ownerSlug}/${c.slug}`}
                   to={`/${c.ownerSlug}/${c.slug}`}
-                  className="border-rule hover:border-ink-muted/50 group rounded-sm border p-4 transition-all hover:shadow-sm"
+                  className="border-rule hover:border-ink-muted/50 rounded-surface group border p-4 transition-all hover:shadow-sm"
                 >
                   <div className="flex items-baseline gap-1.5">
                     <span className="text-ink-muted text-xs">{c.ownerSlug}/</span>
@@ -263,7 +263,7 @@ export default function CollectionExplorer() {
                   <div className="text-ink-muted mt-3 flex items-center gap-3 text-xs tabular-nums">
                     {c.recordCount != null && <span>{formatCount(c.recordCount)} records</span>}
                     {c.tags && c.tags.length > 0 && (
-                      <span className="bg-parchment-dark rounded px-1.5 py-0.5 text-[10px] leading-none">
+                      <span className="bg-parchment-dark rounded-control px-1.5 py-0.5 text-[10px] leading-none">
                         {c.tags[0]}
                       </span>
                     )}
@@ -279,7 +279,7 @@ export default function CollectionExplorer() {
           <div className="mb-4 flex flex-wrap gap-1.5 md:hidden">
             <button
               onClick={() => handleOwnerClick(null)}
-              className={`rounded-full px-3 py-1 text-xs transition-colors ${
+              className={`rounded-control px-3 py-1 text-xs transition-colors ${
                 !selectedOwner
                   ? 'bg-ink text-parchment'
                   : 'bg-parchment-dark text-ink-muted hover:text-ink'
@@ -291,7 +291,7 @@ export default function CollectionExplorer() {
               <button
                 key={o.slug}
                 onClick={() => handleOwnerClick(o.slug)}
-                className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                className={`rounded-control px-3 py-1 text-xs transition-colors ${
                   selectedOwner === o.slug
                     ? 'bg-ink text-parchment'
                     : 'bg-parchment-dark text-ink-muted hover:text-ink'
@@ -326,7 +326,7 @@ export default function CollectionExplorer() {
                 <Link
                   key={`${c.ownerSlug}/${c.slug}`}
                   to={`/${c.ownerSlug}/${c.slug}`}
-                  className="border-rule hover:border-ink-muted/50 group flex items-start gap-4 rounded-sm border px-3 py-2.5 transition-all hover:shadow-sm"
+                  className="border-rule hover:border-ink-muted/50 rounded-surface group flex items-start gap-4 border px-3 py-2.5 transition-all hover:shadow-sm"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-1.5">
@@ -337,7 +337,7 @@ export default function CollectionExplorer() {
                           {c.tags.slice(0, 2).map((tag) => (
                             <span
                               key={tag}
-                              className="bg-parchment-dark text-ink-muted rounded px-1.5 py-0.5 text-[10px] leading-none"
+                              className="bg-parchment-dark text-ink-muted rounded-control px-1.5 py-0.5 text-[10px] leading-none"
                             >
                               {tag}
                             </span>

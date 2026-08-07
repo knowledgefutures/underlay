@@ -1,124 +1,250 @@
-import DOMPurify from 'isomorphic-dompurify'
-import { marked } from 'marked'
-import { useCallback, useMemo, useState } from 'react'
-import { Link, useLoaderData, useParams } from 'react-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import CollectionOverviewBody from '~/components/collection-overview'
+import { Badge, Button } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { bareSemver } from '~/lib/format'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
+import { useDismissable } from '~/lib/use-dismissable'
+import { useIsOwner } from '~/lib/use-is-owner'
 
+/**
+ * Dropdown for switching between versions of a collection while staying on
+ * the same kind of page. Fetches the version list lazily on first open.
+ */
+function VersionPicker({
+  owner,
+  collection,
+  current,
+  isLatest = false,
+  to,
+}: {
+  owner: string
+  collection: string
+  current: string
+  isLatest?: boolean
+  /** Build the target URL for a version, preserving the current view. */
+  to: (semver: string, targetIsLatest: boolean) => string
+}) {
+  const [open, setOpen] = useState(false)
+  const [versions, setVersions] = useState<any[] | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const shareToken = useShareToken()
+
+  useDismissable(
+    open,
+    useCallback(() => setOpen(false), []),
+    ref,
+  )
+
+  useEffect(() => {
+    if (!open || versions !== null) return
+    fetch(withToken(`/api/collections/${owner}/${collection}/versions?limit=20`, shareToken), {
+      credentials: 'include',
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((body) => setVersions(Array.isArray(body) ? body : (body?.versions ?? [])))
+  }, [open, versions, owner, collection, shareToken])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2 py-0.5 font-mono text-xs transition-colors"
+        title="Switch version"
+      >
+        {current}
+        {isLatest && <span className="text-ink-muted font-sans"> · latest</span>}{' '}
+        <span className="text-ink-muted">▾</span>
+      </button>
+      {open && (
+        <div className="bg-parchment border-rule rounded-control absolute top-full right-0 z-50 mt-1.5 max-h-72 min-w-[11rem] overflow-y-auto border shadow-sm">
+          {versions === null ? (
+            <p className="text-ink-muted px-3 py-2 text-xs">Loading…</p>
+          ) : (
+            <>
+              {versions.map((v: any, i: number) => (
+                <TokenLink
+                  key={v.semver}
+                  to={to(v.semver, i === 0)}
+                  onClick={() => setOpen(false)}
+                  className={`hover:bg-parchment-dark block px-3 py-1.5 font-mono text-xs transition-colors ${
+                    v.semver === current ? 'text-ink font-semibold' : 'text-ink-light'
+                  }`}
+                >
+                  {v.semver}
+                  {i === 0 && <span className="text-ink-muted ml-1.5 font-sans">latest</span>}
+                  {v.semver === current && <span className="text-ink-muted ml-1.5">✓</span>}
+                </TokenLink>
+              ))}
+              <TokenLink
+                to={`/${owner}/${collection}/versions`}
+                onClick={() => setOpen(false)}
+                className="text-link border-rule hover:bg-parchment-dark block border-t px-3 py-1.5 text-xs transition-colors"
+              >
+                All versions →
+              </TokenLink>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Collection header, two rows:
+ * - Top row is collection-wide: breadcrumb, visibility, Settings.
+ * - Tab row is content: Overview / Records / Schemas / Files / Versions, with
+ *   the version picker on its right edge scoping the version-aware tabs
+ *   (Overview, Records, Schemas, Files). Versions is the full history.
+ */
 function CollectionNav({
   owner,
   collection,
   isPublic,
   isOwner = false,
   active,
-  versionLabel,
+  version,
+  isLatest = true,
 }: {
   owner: string
   collection: string
   isPublic?: boolean
   isOwner?: boolean
-  active: 'overview' | 'versions' | 'schemas' | 'settings'
-  versionLabel?: string
+  active: 'overview' | 'records' | 'schemas' | 'files' | 'versions'
+  /** The version currently in context (defaults to latest). Absent on empty collections. */
+  version?: string
+  /** Whether the version in context is the latest ready version. */
+  isLatest?: boolean
 }) {
   const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors'
   const activeClass = `${linkClass} border-ink text-ink`
   const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text-ink hover:border-rule`
   const shareToken = useShareToken()
+  const [searchParams] = useSearchParams()
+
+  // Version is a path prefix; views are path segments; latest is the default
+  // when the prefix is absent. /acme/pubs/records vs /acme/pubs/v/1.0.0/records.
+  const base = `/${owner}/${collection}`
+  const prefix = isLatest || !version ? base : `${base}/v/${bareSemver(version)}`
+
+  // Switching versions keeps you on the view you're looking at.
+  function versionTo(semver: string, targetIsLatest: boolean): string {
+    const target = targetIsLatest ? base : `${base}/v/${bareSemver(semver)}`
+    switch (active) {
+      case 'records': {
+        const type = searchParams.get('type')
+        return `${target}/records${type ? `?type=${encodeURIComponent(type)}` : ''}`
+      }
+      case 'schemas':
+        return `${target}/schemas`
+      case 'files':
+        return `${target}/files`
+      default:
+        // overview, or a collection-level page like /versions
+        return target
+    }
+  }
 
   return (
     <>
-      <div className="mb-2 flex items-center justify-between">
-        <nav className="flex items-center gap-1.5 text-lg">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <nav className="flex min-w-0 items-center gap-1.5 text-lg">
           <Link to={`/${owner}`} className="text-link hover:underline">
             {owner}
           </Link>
           <span className="text-ink-muted">/</span>
-          <TokenLink to={`/${owner}/${collection}`} className="font-semibold hover:underline">
+          <TokenLink to={base} className="min-w-0 truncate font-semibold hover:underline">
             {collection}
           </TokenLink>
           {isPublic !== undefined && (
-            <span className="border-rule text-ink-muted ml-2 border px-1.5 py-0.5 text-xs">
-              {isPublic ? 'public' : 'private'}
-            </span>
+            <Badge className="ml-2">{isPublic ? 'public' : 'private'}</Badge>
           )}
           {shareToken && !isOwner && (
-            <span
-              className="border-rule text-ink-muted bg-parchment-dark border px-1.5 py-0.5 text-xs"
+            <Badge
+              className="bg-parchment-dark"
               title="You are viewing this collection through a read-only shared link"
             >
               shared link
-            </span>
+            </Badge>
           )}
         </nav>
+        <div className="flex shrink-0 items-center gap-4 text-sm">
+          <TokenLink
+            to={`${base}/versions`}
+            className={
+              active === 'versions'
+                ? 'text-ink font-medium'
+                : 'text-ink-muted hover:text-ink transition-colors'
+            }
+          >
+            Versions
+          </TokenLink>
+          {isOwner && (
+            <Link
+              to={`${base}/settings`}
+              className="text-ink-muted hover:text-ink transition-colors"
+            >
+              Settings
+            </Link>
+          )}
+        </div>
       </div>
-      <div className="border-rule mb-6 flex items-center gap-0 border-b">
-        <TokenLink
-          to={`/${owner}/${collection}`}
-          className={active === 'overview' ? activeClass : inactiveClass}
-        >
+      <div className="border-rule mb-6 flex items-center gap-0 overflow-x-auto border-b">
+        <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
           Overview
         </TokenLink>
+        {version && (
+          <TokenLink
+            to={`${prefix}/records`}
+            className={active === 'records' ? activeClass : inactiveClass}
+          >
+            Records
+          </TokenLink>
+        )}
         <TokenLink
-          to={`/${owner}/${collection}/versions`}
-          className={active === 'versions' && !versionLabel ? activeClass : inactiveClass}
-        >
-          Versions
-        </TokenLink>
-        {versionLabel && <span className={activeClass}>{versionLabel}</span>}
-        <TokenLink
-          to={`/${owner}/${collection}/schemas`}
+          to={`${prefix}/schemas`}
           className={active === 'schemas' ? activeClass : inactiveClass}
         >
           Schemas
         </TokenLink>
-        {isOwner && (
-          <Link
-            to={`/${owner}/${collection}/settings`}
-            className={`${active === 'settings' ? activeClass : inactiveClass} ml-auto`}
+        {version && (
+          <TokenLink
+            to={`${prefix}/files`}
+            className={active === 'files' ? activeClass : inactiveClass}
           >
-            Settings
-          </Link>
+            Files
+          </TokenLink>
+        )}
+        {version && (
+          <div className="mb-1.5 ml-auto">
+            <VersionPicker
+              owner={owner}
+              collection={collection}
+              current={version}
+              isLatest={isLatest}
+              to={versionTo}
+            />
+          </div>
         )}
       </div>
     </>
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes < 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
-}
-
 export default function CollectionPage() {
   const { owner, collection } = useParams()
-  const { currentUser, mirrorConfig } = useAppContext()
+  const { mirrorConfig } = useAppContext()
   const data = useLoaderData() as any
 
-  const isOwner = useMemo(
-    () =>
-      !!currentUser &&
-      (currentUser.kfRole === 'admin' ||
-        currentUser.slug === owner ||
-        currentUser.orgs?.some((o: any) => o.slug === owner)),
-    [currentUser, owner],
-  )
-
-  const readmeHtml = useMemo(() => {
-    const meta = data?.latestVersion?.metadata as Record<string, unknown> | null | undefined
-    const source = (meta?.readme as string) || data?.latestVersion?.message || null
-    return source ? DOMPurify.sanitize(marked.parse(source) as string) : null
-  }, [data])
-
-  const totalVersions = data.versionCount ?? 0
-  const typeCounts: { type: string; count: number }[] = data.latestVersion?.typeCounts ?? []
-  const allTypes = typeCounts.sort((a: any, b: any) => a.type.localeCompare(b.type))
-  const collectionArkPath: string | null = data.ark ? new URL(data.ark).pathname : null
+  const isOwner = useIsOwner(owner)
 
   return (
     <BaseLayout>
@@ -129,10 +255,12 @@ export default function CollectionPage() {
           isPublic={data.public}
           isOwner={isOwner}
           active="overview"
+          version={data.latestVersion?.semver}
+          isLatest
         />
 
         {mirrorConfig?.enabled && (
-          <div className="text-ink-muted bg-parchment-dark border-rule mb-4 flex items-center gap-2 rounded border px-3 py-2 text-xs">
+          <div className="text-ink-muted bg-parchment-dark border-rule rounded-surface mb-4 flex items-center gap-2 border px-3 py-2 text-xs">
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -155,12 +283,12 @@ export default function CollectionPage() {
 
         {/* Empty state for new collections */}
         {!data.latestVersion && isOwner && (
-          <div className="border-rule mb-6 rounded border px-6 py-10 text-center">
+          <div className="border-rule rounded-surface mb-6 border px-6 py-10 text-center">
             <h2 className="mb-2 text-base font-semibold">Get started with {collection}</h2>
             <p className="text-ink-muted mx-auto mb-6 max-w-md text-sm leading-relaxed">
               This collection is empty. Push your first version using the CLI or API.
             </p>
-            <div className="bg-ink text-parchment mx-auto max-w-md overflow-hidden rounded text-left font-mono text-[13px] leading-relaxed">
+            <div className="bg-ink text-parchment rounded-surface mx-auto max-w-md overflow-hidden text-left font-mono text-[13px] leading-relaxed">
               <div className="p-4">
                 <div className="text-ink-muted mb-1 text-[11px] select-none">
                   # initialize and push
@@ -189,7 +317,7 @@ export default function CollectionPage() {
               <span className="text-rule">&middot;</span>
               <span className="text-ink-muted">
                 API:{' '}
-                <code className="bg-parchment-dark rounded px-1.5 py-0.5 text-[11px]">
+                <code className="bg-parchment-dark rounded-control px-1.5 py-0.5 text-[11px]">
                   POST /api/collections/{owner}/{collection}/versions/negotiate
                 </code>
               </span>
@@ -197,300 +325,23 @@ export default function CollectionPage() {
           </div>
         )}
 
-        {/* Two-column layout */}
-        <div className="grid grid-cols-[1fr_260px] gap-8">
-          {/* Main column */}
-          <div className="min-w-0">
-            {/* Latest version bar */}
-            {data.latestVersion && (
-              <div className="border-rule bg-parchment-dark mb-6 flex items-center justify-between rounded border px-4 py-2.5">
-                <div className="flex items-center gap-3 text-sm">
-                  <TokenLink
-                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}`}
-                    className="text-link font-medium hover:underline"
-                  >
-                    {data.latestVersion.semver}
-                  </TokenLink>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {data.latestVersion.recordCount.toLocaleString()} records
-                  </span>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {data.latestVersion.fileCount.toLocaleString()} files
-                  </span>
-                  <span className="text-ink-muted">·</span>
-                  <span className="text-ink-muted">
-                    {formatBytes(data.latestVersion.totalBytes)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-ink-muted text-xs">
-                    {new Date(data.latestVersion.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                      timeZone: 'UTC',
-                    })}
-                  </span>
-                  <TokenLink
-                    to={`/${owner}/${collection}/versions`}
-                    className="text-ink-muted hover:text-ink flex items-center gap-1 text-xs transition-colors"
-                    title="Version history"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <span>{totalVersions}</span>
-                  </TokenLink>
-                </div>
-              </div>
-            )}
-
-            {/* Type TOC */}
-            {allTypes.length > 0 && (
-              <div className="border-rule mb-6 overflow-hidden rounded border">
-                {allTypes.map((t: any, i: number) => (
-                  <TokenLink
-                    key={t.type}
-                    to={`/${owner}/${collection}/v/${data.latestVersion.semver}?type=${t.type}`}
-                    className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
-                      i < allTypes.length - 1 ? 'border-rule border-b' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <svg
-                        className="text-ink-muted h-4 w-4 shrink-0"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                        />
-                      </svg>
-                      <span className="font-medium">{t.type}</span>
-                    </div>
-                    <span className="text-ink-muted text-xs">
-                      {t.count.toLocaleString()} records
-                    </span>
-                  </TokenLink>
-                ))}
-              </div>
-            )}
-
-            {/* README */}
-            {readmeHtml ? (
-              <div className="border-rule mb-6 overflow-hidden rounded border">
-                <div className="bg-parchment-dark border-rule text-ink-muted border-b px-4 py-2.5 text-xs font-medium">
-                  README
-                </div>
-                <div
-                  className="prose prose-sm max-w-none px-6 py-5"
-                  dangerouslySetInnerHTML={{ __html: readmeHtml }}
-                />
-              </div>
-            ) : (
-              <div className="border-rule text-ink-muted mb-6 rounded border px-4 py-8 text-center text-sm">
-                No README yet.
-              </div>
-            )}
-          </div>
-
-          {/* Sidebar */}
-          <aside className="text-sm">
-            {/* About */}
-            <div className="mb-6">
-              <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                About
-              </h3>
-              <p className="text-ink text-sm leading-relaxed">
-                {data.description || 'No description.'}
-              </p>
-              <div className="text-ink-muted mt-2 text-xs">
-                by{' '}
-                <Link to={`/${data.ownerSlug}`} className="text-link hover:underline">
-                  {data.ownerName}
-                </Link>
-              </div>
-              {(() => {
-                const meta = data.latestVersion?.metadata as
-                  | Record<string, unknown>
-                  | null
-                  | undefined
-                const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
-                return tags.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {tags.map((tag: string) => (
-                      <Link
-                        key={tag}
-                        to={`/explore?tag=${encodeURIComponent(tag)}`}
-                        className="bg-parchment-dark text-ink-muted hover:text-ink rounded px-2 py-0.5 text-xs transition-colors"
-                      >
-                        {tag}
-                      </Link>
-                    ))}
-                  </div>
-                ) : null
-              })()}
-            </div>
-
-            {/* Stats */}
-            {data.latestVersion && (
-              <div className="mb-6">
-                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                  Stats
-                </h3>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">{totalVersions}</strong> versions
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {data.latestVersion.recordCount.toLocaleString()}
-                      </strong>{' '}
-                      records
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {data.latestVersion.fileCount.toLocaleString()}
-                      </strong>{' '}
-                      files
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <svg
-                      className="text-ink-muted h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
-                      />
-                    </svg>
-                    <span>
-                      <strong className="text-ink">
-                        {formatBytes(data.latestVersion.totalBytes)}
-                      </strong>{' '}
-                      total
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Subscribe / Export */}
-            <div className="mb-6">
-              <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                Subscribe
-              </h3>
-              <div className="space-y-2 text-xs">
-                <div>
-                  <p className="mb-0.5 font-medium">AT Protocol</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[11px] break-all">
-                    {`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}
-                  </code>
-                </div>
-                <div>
-                  <p className="mb-0.5 font-medium">API</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[11px] break-all">
-                    {`GET /api/collections/${owner}/${collection}/versions`}
-                  </code>
-                </div>
-                {data.latestVersion && (
-                  <TokenLink
-                    to={`/api/collections/${owner}/${collection}/export`}
-                    className="text-link inline-block hover:underline"
-                    reloadDocument
-                  >
-                    Download .tar.gz
-                  </TokenLink>
-                )}
-              </div>
-            </div>
-
-            {/* Share */}
-            {isOwner && (
+        <CollectionOverviewBody
+          owner={owner!}
+          collection={collection!}
+          data={data}
+          version={data.latestVersion}
+          isLatest
+          share={
+            isOwner ? (
               <SharePanel
                 owner={owner!}
                 collection={collection!}
                 collectionId={data.id}
                 isPublic={!!data.public}
               />
-            )}
-
-            {/* ARK */}
-            {collectionArkPath && (
-              <div className="mb-6">
-                <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-                  ARK Identifier
-                </h3>
-                <Link
-                  to={collectionArkPath}
-                  className="text-link bg-parchment-dark block rounded px-2 py-1 font-mono text-[11px] break-all hover:underline"
-                >
-                  {collectionArkPath.slice(1)}
-                </Link>
-              </div>
-            )}
-          </aside>
-        </div>
+            ) : undefined
+          }
+        />
       </div>
     </BaseLayout>
   )
@@ -514,6 +365,16 @@ function SharePanel({
   const [agentUrl, setAgentUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState<'view' | 'agent' | null>(null)
   const [copied, setCopied] = useState<'link' | 'blurb' | null>(null)
+
+  // Escape closes the share dialogs (backdrop click already does).
+  useEffect(() => {
+    if (!modal) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setModal(null)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [modal])
 
   const generateView = useCallback(async () => {
     setLoading('view')
@@ -585,20 +446,24 @@ function SharePanel({
               : 'Create a read-only link that lets anyone view this collection without signing in or becoming a member.'}
           </p>
           {isPublic ? (
-            <button
+            <Button
+              variant="link"
+              size="sm"
+              className="font-medium"
               onClick={() => copy(`${window.location.origin}/${owner}/${collection}`, 'link')}
-              className="text-link text-xs font-medium hover:underline"
             >
               {copied === 'link' && modal === null ? 'Copied!' : 'Copy collection URL'}
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
+              variant="link"
+              size="sm"
+              className="font-medium"
               onClick={generateView}
               disabled={loading !== null}
-              className="text-link text-xs font-medium hover:underline"
             >
               {loading === 'view' ? 'Generating...' : 'Create view link →'}
-            </button>
+            </Button>
           )}
         </div>
 
@@ -606,29 +471,35 @@ function SharePanel({
           <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
             Or generate a temporary link that lets an AI agent push updates to this collection.
           </p>
-          <button
+          <Button
+            variant="link"
+            size="sm"
+            className="font-medium"
             onClick={generateAgent}
             disabled={loading !== null}
-            className="text-link text-xs font-medium hover:underline"
           >
             {loading === 'agent' ? 'Generating...' : 'Generate agent link →'}
-          </button>
+          </Button>
         </div>
       </div>
 
       {modal === 'view' && viewUrl && (
         <div
+          role="dialog"
+          aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModal(null)
           }}
         >
-          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+          <div className="bg-parchment border-rule rounded-surface mx-4 w-full max-w-2xl border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">View-only Link</h2>
               <button
+                type="button"
+                aria-label="Close"
                 onClick={() => setModal(null)}
-                className="text-ink-muted hover:text-ink text-lg leading-none"
+                className="text-ink-muted hover:text-ink cursor-pointer text-lg leading-none"
               >
                 &times;
               </button>
@@ -644,15 +515,12 @@ function SharePanel({
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Link
               </label>
-              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface border px-3 py-2 font-mono text-[11px] break-all">
                 {viewUrl}
               </div>
-              <button
-                onClick={() => copy(viewUrl, 'link')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(viewUrl, 'link')}>
                 {copied === 'link' ? 'Copied!' : 'Copy link'}
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center justify-between">
@@ -675,17 +543,21 @@ function SharePanel({
 
       {modal === 'agent' && agentUrl && (
         <div
+          role="dialog"
+          aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModal(null)
           }}
         >
-          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+          <div className="bg-parchment border-rule rounded-surface mx-4 w-full max-w-2xl border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Agent Update Link</h2>
               <button
+                type="button"
+                aria-label="Close"
                 onClick={() => setModal(null)}
-                className="text-ink-muted hover:text-ink text-lg leading-none"
+                className="text-ink-muted hover:text-ink cursor-pointer text-lg leading-none"
               >
                 &times;
               </button>
@@ -702,30 +574,24 @@ function SharePanel({
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Link
               </label>
-              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface border px-3 py-2 font-mono text-[11px] break-all">
                 {agentUrl}
               </div>
-              <button
-                onClick={() => copy(agentUrl, 'link')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(agentUrl, 'link')}>
                 {copied === 'link' ? 'Copied!' : 'Copy link'}
-              </button>
+              </Button>
             </div>
 
             <div className="mb-4">
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Prompt
               </label>
-              <div className="bg-parchment-dark border-rule overflow-hidden rounded border px-3 py-2 text-xs leading-relaxed break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface overflow-hidden border px-3 py-2 text-xs leading-relaxed break-all">
                 {agentBlurb}
               </div>
-              <button
-                onClick={() => copy(agentBlurb, 'blurb')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(agentBlurb, 'blurb')}>
                 {copied === 'blurb' ? 'Copied!' : 'Copy prompt'}
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center justify-between">
@@ -747,4 +613,5 @@ function SharePanel({
   )
 }
 
-export { CollectionNav, formatBytes }
+export { CollectionNav, SharePanel }
+export { formatBytes } from '~/lib/format'

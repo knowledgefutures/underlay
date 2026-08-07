@@ -60,6 +60,34 @@ To get the higher limit, authenticate with an API key (recommended for any autom
 
 ---
 
+## Web URLs (for linking humans to a view)
+
+The API paths above are for fetching data. When you need to point a person at
+something in the browser, use these page URLs. The rule: a version is a path
+prefix, a view is a path segment, and omitting the version prefix means "latest".
+Semver appears WITHOUT the leading "v" in page URLs (/v/1.2.0), unlike API paths
+(/versions/v1.2.0). Both forms resolve, but the bare form is canonical.
+
+https://underlay.org/:owner                             → account/organization profile
+https://underlay.org/:owner/:slug                       → collection overview (latest): README, record types, stats
+https://underlay.org/:owner/:slug/records               → browse records (latest) — add ?type=TypeName to pick a type
+https://underlay.org/:owner/:slug/schemas               → schemas (latest)
+https://underlay.org/:owner/:slug/files                 → files (latest)
+https://underlay.org/:owner/:slug/versions              → version history
+https://underlay.org/:owner/:slug/versions/compare?from=v1.0.0&to=v1.1.0 → diff two versions
+https://underlay.org/:owner/:slug/v/1.2.0               → overview pinned to v1.2.0
+https://underlay.org/:owner/:slug/v/1.2.0/records       → records in v1.2.0 (?type=TypeName)
+https://underlay.org/:owner/:slug/v/1.2.0/schemas       → schemas as pinned in v1.2.0
+https://underlay.org/:owner/:slug/v/1.2.0/files         → files in v1.2.0
+https://underlay.org/records/:hash                      → a record's content-addressed permalink + provenance
+https://underlay.org/schemas/:id                        → a schema's detail page + which collections use it
+
+Prefer a version-pinned URL when citing data, since /records (no prefix) follows
+the latest version and its contents will change on the next push. ARK identifiers
+(ark:NAAN/id.v1.2.0) also resolve to these pages and are the most durable option.
+
+---
+
 ## Reading Data
 
 ### Browse collections

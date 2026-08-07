@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
 
-import BaseLayout from '~/components/BaseLayout'
+import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
+import { Alert, Button, SectionHeading } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 interface Session {
@@ -53,75 +53,57 @@ export default function SettingsSessions() {
   }
 
   return (
-    <BaseLayout>
-      <div className="mx-auto max-w-4xl px-4 py-10">
-        <h1 className="mb-6 text-xl font-semibold tracking-tight">Settings</h1>
+    <SettingsLayout
+      title="Sessions"
+      description="Devices currently logged into your account. Revoke any session you don't recognize."
+      groups={userSettingsRail}
+    >
+      {success && (
+        <Alert variant="success" className="mb-4">
+          {success}
+        </Alert>
+      )}
+      {error && (
+        <Alert variant="error" className="mb-4">
+          {error}
+        </Alert>
+      )}
 
-        <nav className="border-rule mb-6 flex gap-4 border-b pb-2 text-sm">
-          <Link to="/settings" className="text-ink-muted hover:text-ink">
-            Account
-          </Link>
-          <Link to="/settings/keys" className="text-ink-muted hover:text-ink">
-            API Keys
-          </Link>
-          <Link to="/settings/sessions" className="text-ink font-medium">
-            Sessions
-          </Link>
-        </nav>
+      <SectionHeading>Active sessions ({sessions.length})</SectionHeading>
 
-        {success && (
-          <p className="mb-4 border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-            {success}
-          </p>
-        )}
-        {error && (
-          <p className="mb-4 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-
-        <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
-          Active Sessions ({sessions.length})
-        </h2>
-        <p className="text-ink-muted mb-4 text-xs">
-          These are the devices currently logged into your account. Revoke any session you don't
-          recognize.
-        </p>
-
-        {sessions.length === 0 ? (
-          <p className="text-ink-muted text-sm">No active sessions.</p>
-        ) : (
-          <div className="space-y-2">
-            {sessions.map((s) => (
-              <div key={s.id} className="border-rule flex items-center justify-between border p-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{parseUserAgent(s.userAgent)}</span>
-                    {s.current && (
-                      <span className="border border-green-200 bg-green-100 px-1.5 py-0.5 text-xs text-green-800">
-                        Current
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-ink-muted mt-0.5 flex items-center gap-2 text-xs">
-                    {s.ipAddress && <span>{s.ipAddress}</span>}
-                    <span>Created {new Date(s.createdAt).toLocaleDateString()}</span>
-                    <span>· Expires {new Date(s.expiresAt).toLocaleDateString()}</span>
-                  </div>
+      {sessions.length === 0 ? (
+        <p className="text-ink-muted text-sm">No active sessions.</p>
+      ) : (
+        <div className="space-y-2">
+          {sessions.map((s) => (
+            <div
+              key={s.id}
+              className="border-rule rounded-surface flex items-center justify-between border p-3"
+            >
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{parseUserAgent(s.userAgent)}</span>
+                  {s.current && (
+                    <span className="rounded-control border border-green-200 bg-green-100 px-1.5 py-0.5 text-xs text-green-800">
+                      Current
+                    </span>
+                  )}
                 </div>
-                {!s.current && (
-                  <button
-                    onClick={() => handleRevoke(s.id)}
-                    className="text-xs text-red-700 hover:underline"
-                  >
-                    Revoke
-                  </button>
-                )}
+                <div className="text-ink-muted mt-0.5 flex items-center gap-2 text-xs">
+                  {s.ipAddress && <span>{s.ipAddress}</span>}
+                  <span>Created {new Date(s.createdAt).toLocaleDateString()}</span>
+                  <span>· Expires {new Date(s.expiresAt).toLocaleDateString()}</span>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </BaseLayout>
+              {!s.current && (
+                <Button variant="dangerLink" size="sm" onClick={() => handleRevoke(s.id)}>
+                  Revoke
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </SettingsLayout>
   )
 }

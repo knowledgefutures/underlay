@@ -1,6 +1,8 @@
+import { useMemo } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Badge } from '~/components/ui'
 
 interface Reference {
   owner: string
@@ -21,12 +23,43 @@ interface RecordData {
   references: Reference[]
 }
 
+function shortDate(d: string): string {
+  return new Date(d).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 export default function RecordDetailPage() {
   const params = useParams()
   const hash = params.hash!
   const record = useLoaderData() as RecordData
 
   const fields = Object.entries(record.data)
+
+  // References arrive as one row per (collection, version); group per collection.
+  const collections = useMemo(() => {
+    const map = new Map<
+      string,
+      { owner: string; collection: string; collectionName: string; versions: Reference[] }
+    >()
+    for (const ref of record.references) {
+      const key = `${ref.owner}/${ref.collection}`
+      let entry = map.get(key)
+      if (!entry) {
+        entry = {
+          owner: ref.owner,
+          collection: ref.collection,
+          collectionName: ref.collectionName,
+          versions: [],
+        }
+        map.set(key, entry)
+      }
+      entry.versions.push(ref)
+    }
+    return [...map.values()]
+  }, [record.references])
 
   return (
     <BaseLayout>
@@ -35,9 +68,7 @@ export default function RecordDetailPage() {
         <div className="mb-6">
           <div className="mb-2 flex items-center gap-3">
             <h1 className="font-mono text-lg font-semibold">{hash.slice(0, 16)}…</h1>
-            <span className="border-rule text-ink-muted border px-1.5 py-0.5 text-xs">
-              {record.type}
-            </span>
+            <Badge>{record.type}</Badge>
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
             <span>
@@ -53,8 +84,9 @@ export default function RecordDetailPage() {
               })}
             </span>
             <span>
-              {record.references.length} collection
-              {record.references.length !== 1 ? 's' : ''}
+              {collections.length} collection{collections.length !== 1 ? 's' : ''}
+              {record.references.length > collections.length &&
+                ` · ${record.references.length} versions`}
             </span>
           </div>
         </div>
@@ -66,7 +98,7 @@ export default function RecordDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               Fields
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-x-auto border">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-parchment-dark border-rule border-b">
@@ -93,7 +125,7 @@ export default function RecordDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               Canonical JSON
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-hidden border">
               <pre className="bg-ink text-parchment max-h-96 overflow-x-auto p-4 font-mono text-xs">
                 <code>
                   {JSON.stringify(
@@ -110,38 +142,56 @@ export default function RecordDetailPage() {
         {/* Provenance: which collections reference this record */}
         <div>
           <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-            Appears in {record.references.length} collection
-            {record.references.length !== 1 ? 's' : ''}
+            Appears in {collections.length} collection{collections.length !== 1 ? 's' : ''}
+            {record.references.length > collections.length && (
+              <span className="font-normal normal-case">
+                {' '}
+                · {record.references.length} versions
+              </span>
+            )}
           </h2>
-          {record.references.length === 0 ? (
+          {collections.length === 0 ? (
             <p className="text-ink-muted py-4 text-sm">
               No public collections reference this record.
             </p>
           ) : (
-            <div className="border-rule overflow-hidden rounded border">
-              {record.references.map((ref, i) => (
-                <Link
-                  key={`${ref.owner}/${ref.collection}-${ref.semver}`}
-                  to={`/${ref.owner}/${ref.collection}/v/${ref.semver}?type=${record.type}`}
-                  className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
-                    i < record.references.length - 1 ? 'border-rule border-b' : ''
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium">
-                      {ref.owner}/{ref.collection}
-                    </span>
-                    <span className="text-ink-muted text-xs">{ref.semver}</span>
+            <div className="border-rule rounded-surface overflow-hidden border">
+              {collections.map((c, i) => {
+                const times = c.versions.map((v) => new Date(v.versionCreatedAt).getTime())
+                const first = shortDate(new Date(Math.min(...times)).toISOString())
+                const last = shortDate(new Date(Math.max(...times)).toISOString())
+                return (
+                  <div
+                    key={`${c.owner}/${c.collection}`}
+                    className={`px-4 py-3 ${i < collections.length - 1 ? 'border-rule border-b' : ''}`}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <Link
+                        to={`/${c.owner}/${c.collection}`}
+                        className="min-w-0 truncate text-sm font-medium hover:underline"
+                      >
+                        {c.owner}/{c.collection}
+                      </Link>
+                      <span className="text-ink-muted shrink-0 text-xs">
+                        {c.versions.length} version{c.versions.length !== 1 ? 's' : ''} ·{' '}
+                        {first === last ? first : `${first} – ${last}`}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {c.versions.map((v) => (
+                        <Link
+                          key={v.semver}
+                          to={`/${c.owner}/${c.collection}/v/${v.semver.replace(/^v/, '')}/records?type=${record.type}`}
+                          title={shortDate(v.versionCreatedAt)}
+                          className="border-rule text-link rounded-control hover:bg-parchment-dark border px-1.5 py-0.5 font-mono text-[11px] transition-colors"
+                        >
+                          {v.semver}
+                        </Link>
+                      ))}
+                    </div>
                   </div>
-                  <span className="text-ink-muted text-xs">
-                    {new Date(ref.versionCreatedAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </span>
-                </Link>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

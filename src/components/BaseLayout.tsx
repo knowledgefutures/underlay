@@ -74,7 +74,10 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
             </a>
           </div>
           <div>
-            <a href="https://github.com/knowledgefutures/underlay" className="hover:text-ink">
+            <a
+              href="https://github.com/knowledgefutures/underlay"
+              className="hover:text-ink underline"
+            >
               GitHub
             </a>
           </div>

@@ -76,7 +76,7 @@ export default function DocsApiAccounts() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{meRes}</code>
         </pre>
       </div>
@@ -90,7 +90,7 @@ export default function DocsApiAccounts() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{accountRes}</code>
         </pre>
       </div>
@@ -105,13 +105,13 @@ export default function DocsApiAccounts() {
           plugin.
         </p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{createKeyReq}</code>
         </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{createKeyRes}</code>
         </pre>
       </div>
@@ -134,13 +134,13 @@ export default function DocsApiAccounts() {
         <p className="scope">Auth: session or API key (any scope)</p>
         <p>Revoke an API key.</p>
         <h3>Request</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{deleteKeyReq}</code>
         </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{deleteKeyRes}</code>
         </pre>
       </div>

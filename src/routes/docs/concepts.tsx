@@ -72,7 +72,7 @@ export default function DocsConcepts() {
         A <strong>record</strong> is a flat JSON object with an <code>id</code>, a <code>type</code>
         , and a <code>data</code> payload. Records are the rows of your data.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{recordExample}</code>
       </pre>
       <p>
@@ -173,7 +173,7 @@ export default function DocsConcepts() {
         <strong>manifest entry</strong> in the negotiate request — not in the record body, which is
         hashed as <code>{'{id, type, data}'}</code> and would reject the extra key:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>
           {'{"id": "pub-001", "type": "Publication", "hash": "abc123…", "private": true}'}
         </code>

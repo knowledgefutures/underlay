@@ -15,6 +15,10 @@
   --color-accent: #2d5a27;
   --color-accent-light: #3a7433;
   --color-link: #1a4a6e;
+
+  /* Corner policy: controls people touch round more than structural surfaces. */
+  --radius-control: 4px;
+  --radius-surface: 2px;
 }
 
 @layer base {
@@ -24,6 +28,22 @@
   }
   a:visited {
     color: inherit;
+  }
+  /* Universal keyboard focus. Text inputs override with focus:outline-none + focus:border-ink. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -75,14 +95,14 @@
   font-size: 0.85em;
   background: var(--color-parchment-dark);
   padding: 0.15rem 0.35rem;
-  border-radius: 3px;
+  border-radius: var(--radius-surface);
 }
 .prose pre {
   background: var(--color-ink);
   color: var(--color-parchment);
   padding: 1rem;
   overflow-x: auto;
-  border-radius: 4px;
+  border-radius: var(--radius-surface);
   margin-top: 0.75rem;
   margin-bottom: 0.75rem;
 }

@@ -270,7 +270,8 @@ export async function resolve(c: Context<AuthEnv>) {
   }
 
   if (version !== undefined && versionRow) {
-    const url = `/${ownerSlug}/${collectionSlug}/v/${versionRow.semver}`
+    // Page URLs use the bare semver form (/v/1.0.0); stored semver is "v1.0.0".
+    const url = `/${ownerSlug}/${collectionSlug}/v/${versionRow.semver.replace(/^v/, '')}`
     return c.json({
       type: 'redirect' as const,
       url,

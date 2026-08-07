@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react'
 
+import { Button } from '~/components/ui'
+
 interface Collection {
   id: string
   slug: string
@@ -152,7 +154,7 @@ export function ApiPlayground({ slug, collections }: ApiPlaygroundProps) {
                 setSelectedEndpoint(0)
                 setResponse(null)
               }}
-              className="bg-parchment border-rule focus:border-ink border px-2 py-1 text-sm focus:outline-none"
+              className="bg-parchment border-rule focus:border-ink rounded-control cursor-pointer border px-2 py-1 text-sm focus:outline-none"
             >
               {collections.map((c) => (
                 <option key={c.id} value={c.slug}>
@@ -169,7 +171,7 @@ export function ApiPlayground({ slug, collections }: ApiPlaygroundProps) {
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder="Paste key to test it (optional)"
-            className="bg-parchment border-rule focus:border-ink w-52 border px-2 py-1 font-mono text-xs focus:outline-none"
+            className="bg-parchment border-rule focus:border-ink rounded-control w-52 border px-2 py-1 font-mono text-xs focus:outline-none"
           />
         </div>
       </div>
@@ -186,7 +188,7 @@ export function ApiPlayground({ slug, collections }: ApiPlaygroundProps) {
                   setSelectedEndpoint(i)
                   setResponse(null)
                 }}
-                className={`block w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                className={`rounded-control block w-full cursor-pointer px-2 py-1.5 text-left text-xs transition-colors ${
                   selectedEndpoint === i
                     ? 'bg-parchment-dark font-medium'
                     : 'hover:bg-parchment-dark'
@@ -244,20 +246,17 @@ export function ApiPlayground({ slug, collections }: ApiPlaygroundProps) {
 
               {/* Action bar */}
               <div className="border-rule flex items-center gap-2 border-b px-3 py-2">
-                <button
-                  onClick={sendRequest}
-                  disabled={loading}
-                  className="bg-ink text-parchment px-3 py-1 text-xs font-medium hover:opacity-90 disabled:opacity-50"
-                >
+                <Button size="sm" onClick={sendRequest} disabled={loading}>
                   {loading ? 'Sending…' : 'Send'}
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={copyAsCurl}
-                  className="border-rule text-ink-muted hover:text-ink border px-2 py-1 text-xs"
                   title="Copy as cURL (with Bearer token placeholder)"
                 >
                   {copied ? 'Copied!' : 'Copy cURL'}
-                </button>
+                </Button>
                 <span className="text-ink-muted ml-auto hidden text-[10px] sm:inline">
                   {token.trim() ? 'Using API key' : 'Using your session'}
                 </span>

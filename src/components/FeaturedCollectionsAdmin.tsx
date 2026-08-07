@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { Button, Select } from '~/components/ui'
+
 interface CollectionOption {
   ownerSlug: string
   slug: string
@@ -74,7 +76,7 @@ export default function FeaturedCollectionsAdmin() {
   const available = allCollections.filter((c) => !featured.includes(`${c.ownerSlug}/${c.slug}`))
 
   if (loading) {
-    return <p className="text-ink-muted text-sm">Loading...</p>
+    return <p className="text-ink-muted text-sm">Loading…</p>
   }
 
   return (
@@ -98,7 +100,7 @@ export default function FeaturedCollectionsAdmin() {
           return (
             <div
               key={slug}
-              className="border-rule flex items-center gap-2 rounded border px-3 py-2"
+              className="border-rule rounded-surface flex items-center gap-2 border px-3 py-2"
             >
               <div className="flex-1">
                 <span className="text-sm font-medium">{slug}</span>
@@ -106,27 +108,32 @@ export default function FeaturedCollectionsAdmin() {
                   <p className="text-ink-muted line-clamp-1 text-xs">{col.description}</p>
                 )}
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => moveCollection(i, -1)}
                 disabled={i === 0 || saving}
-                className="text-ink-muted hover:text-ink text-xs disabled:opacity-30"
+                aria-label={`Move ${slug} up`}
               >
                 &uarr;
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => moveCollection(i, 1)}
                 disabled={i === featured.length - 1 || saving}
-                className="text-ink-muted hover:text-ink text-xs disabled:opacity-30"
+                aria-label={`Move ${slug} down`}
               >
                 &darr;
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="dangerLink"
+                size="sm"
                 onClick={() => removeCollection(slug)}
                 disabled={saving}
-                className="text-ink-muted text-xs hover:text-red-600"
               >
                 Remove
-              </button>
+              </Button>
             </div>
           )
         })}
@@ -135,13 +142,12 @@ export default function FeaturedCollectionsAdmin() {
       {available.length > 0 && (
         <div>
           <label className="text-ink-muted mb-1 block text-xs font-medium">Add a collection</label>
-          <select
+          <Select
             onChange={(e) => {
               if (e.target.value) addCollection(e.target.value)
               e.target.value = ''
             }}
             disabled={saving}
-            className="bg-parchment border-rule text-ink-muted w-full rounded border px-3 py-2 text-sm focus:outline-none"
             defaultValue=""
           >
             <option value="" disabled>
@@ -152,7 +158,7 @@ export default function FeaturedCollectionsAdmin() {
                 {c.ownerSlug}/{c.slug} — {c.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
 

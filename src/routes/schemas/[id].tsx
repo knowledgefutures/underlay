@@ -2,6 +2,7 @@ import { Link, useLoaderData } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
+import { Badge } from '~/components/ui'
 
 interface SchemaData {
   id: number
@@ -21,6 +22,21 @@ export default function SchemaDetailPage() {
   const labels: { label: string; createdAt: string }[] = schema.labels ?? []
   const usage: { slug: string; semver: string; collection: string }[] = schema.usage ?? []
 
+  // Usage arrives as one row per (collection, version); group per collection + type slug.
+  const usageByCollection = (() => {
+    const map = new Map<string, { collection: string; slug: string; semvers: string[] }>()
+    for (const u of usage) {
+      const key = `${u.collection}:${u.slug}`
+      let entry = map.get(key)
+      if (!entry) {
+        entry = { collection: u.collection, slug: u.slug, semvers: [] }
+        map.set(key, entry)
+      }
+      entry.semvers.push(u.semver)
+    }
+    return [...map.values()]
+  })()
+
   return (
     <BaseLayout>
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -28,11 +44,7 @@ export default function SchemaDetailPage() {
         <div className="mb-6">
           <div className="mb-2 flex items-center gap-3">
             <h1 className="font-mono text-lg font-semibold">{schema.schemaHash.slice(0, 16)}…</h1>
-            {isPrivate && (
-              <span className="border-rule text-ink-muted border px-1.5 py-0.5 text-xs">
-                private type
-              </span>
-            )}
+            {isPrivate && <Badge>private type</Badge>}
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
             <span>
@@ -47,7 +59,8 @@ export default function SchemaDetailPage() {
               {fields.length} field{fields.length !== 1 ? 's' : ''}
             </span>
             <span>
-              {usage.length} collection{usage.length !== 1 ? 's' : ''} using this schema
+              {usageByCollection.length} collection{usageByCollection.length !== 1 ? 's' : ''} using
+              this schema
             </span>
           </div>
         </div>
@@ -62,7 +75,7 @@ export default function SchemaDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               Fields
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-x-auto border">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-parchment-dark border-rule border-b">
@@ -88,15 +101,11 @@ export default function SchemaDetailPage() {
                         <td className="p-2.5">
                           <div className="flex items-center gap-2">
                             {refType && (
-                              <span className="bg-parchment-dark border-rule inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]">
+                              <span className="bg-parchment-dark border-rule rounded-control inline-flex items-center gap-1 border px-1.5 py-0.5 text-[11px]">
                                 → {refType}
                               </span>
                             )}
-                            {isFieldPrivate && (
-                              <span className="border-rule text-ink-muted rounded border px-1.5 py-0.5 text-[11px]">
-                                private
-                              </span>
-                            )}
+                            {isFieldPrivate && <Badge>private</Badge>}
                           </div>
                         </td>
                       </tr>
@@ -112,7 +121,7 @@ export default function SchemaDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               JSON Schema
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-hidden border">
               <pre className="bg-ink text-parchment max-h-96 overflow-x-auto p-4 font-mono text-xs">
                 <code>{JSON.stringify(schema.schema, null, 2)}</code>
               </pre>
@@ -123,30 +132,47 @@ export default function SchemaDetailPage() {
         {/* Usage: which collections reference this schema */}
         <div>
           <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-            Used by {usage.length} collection{usage.length !== 1 ? 's' : ''}
+            Used by {usageByCollection.length} collection
+            {usageByCollection.length !== 1 ? 's' : ''}
+            {usage.length > usageByCollection.length && (
+              <span className="font-normal normal-case"> · {usage.length} versions</span>
+            )}
           </h2>
-          {usage.length === 0 ? (
+          {usageByCollection.length === 0 ? (
             <p className="text-ink-muted py-4 text-sm">
               No public collections reference this schema yet.
             </p>
           ) : (
-            <div className="border-rule overflow-hidden rounded border">
-              {usage.map((u, i) => (
-                <Link
+            <div className="border-rule rounded-surface overflow-hidden border">
+              {usageByCollection.map((u, i) => (
+                <div
                   key={`${u.collection}-${u.slug}`}
-                  to={`/${u.collection}/v/${u.semver}?type=${u.slug}`}
-                  className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
-                    i < usage.length - 1 ? 'border-rule border-b' : ''
-                  }`}
+                  className={`px-4 py-3 ${i < usageByCollection.length - 1 ? 'border-rule border-b' : ''}`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium">{u.collection}</span>
-                    <span className="text-ink-muted text-xs">
-                      as <code className="font-mono">{u.slug}</code>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <Link
+                      to={`/${u.collection}`}
+                      className="min-w-0 truncate text-sm font-medium hover:underline"
+                    >
+                      {u.collection}
+                    </Link>
+                    <span className="text-ink-muted shrink-0 text-xs">
+                      as <code className="font-mono">{u.slug}</code> · {u.semvers.length} version
+                      {u.semvers.length !== 1 ? 's' : ''}
                     </span>
                   </div>
-                  <span className="text-ink-muted text-xs">{u.semver}</span>
-                </Link>
+                  <div className="flex flex-wrap gap-1">
+                    {u.semvers.map((semver) => (
+                      <Link
+                        key={semver}
+                        to={`/${u.collection}/v/${semver.replace(/^v/, '')}/records?type=${u.slug}`}
+                        className="border-rule text-link rounded-control hover:bg-parchment-dark border px-1.5 py-0.5 font-mono text-[11px] transition-colors"
+                      >
+                        {semver}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}

@@ -1,18 +1,18 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { useAppContext } from '~/lib/app-context'
+import { EmptyState } from '~/components/ui'
+import { bareSemver } from '~/lib/format'
 import { TokenLink } from '~/lib/share-token'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 import { CollectionNav, formatBytes } from '.'
 
 export default function CollectionVersionsPage() {
   const { owner, collection } = useParams()
-  const { currentUser } = useAppContext()
   const { data, versions } = useLoaderData() as { data: any; versions: any[] }
 
-  const isOwner =
-    currentUser?.slug === owner || currentUser?.orgs?.some((o: any) => o.slug === owner)
+  const isOwner = useIsOwner(owner)
 
   return (
     <BaseLayout>
@@ -23,16 +23,32 @@ export default function CollectionVersionsPage() {
           isPublic={data.public}
           isOwner={!!isOwner}
           active="versions"
+          version={versions[0]?.semver}
+          isLatest
         />
 
-        <h2 className="text-ink-muted mb-4 text-sm font-semibold">
-          {versions.length} version{versions.length !== 1 ? 's' : ''}
-        </h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-ink-muted text-sm font-semibold">
+            {(data.versionCount ?? versions.length).toLocaleString()} version
+            {(data.versionCount ?? versions.length) !== 1 ? 's' : ''}
+            {data.versionCount > versions.length && (
+              <span className="ml-1 font-normal">(showing latest {versions.length})</span>
+            )}
+          </h2>
+          {versions.length > 1 && (
+            <TokenLink
+              to={`/${owner}/${collection}/versions/compare`}
+              className="text-link text-xs hover:underline"
+            >
+              Compare versions →
+            </TokenLink>
+          )}
+        </div>
 
         {versions.length === 0 ? (
-          <p className="text-ink-muted py-8 text-center text-sm">No versions yet.</p>
+          <EmptyState>No versions yet.</EmptyState>
         ) : (
-          <div className="border-rule overflow-hidden rounded border">
+          <div className="border-rule rounded-surface overflow-hidden border">
             {versions.map((v: any, i: number) => (
               <div
                 key={v.semver}
@@ -41,11 +57,11 @@ export default function CollectionVersionsPage() {
                 }`}
               >
                 <TokenLink
-                  to={`/${owner}/${collection}/v/${v.semver}`}
+                  to={`/${owner}/${collection}/v/${bareSemver(v.semver)}`}
                   className="flex min-w-0 items-center gap-4"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="bg-parchment-dark border-rule rounded border px-1.5 py-0.5 font-mono text-xs">
+                    <span className="bg-parchment-dark border-rule rounded-control border px-1.5 py-0.5 font-mono text-xs">
                       {v.semver}
                     </span>
                   </div>
@@ -80,7 +96,7 @@ export default function CollectionVersionsPage() {
                   )}
                   {i < versions.length - 1 ? (
                     <TokenLink
-                      to={`/${owner}/${collection}/diff?from=${versions[i + 1].semver}&to=${v.semver}`}
+                      to={`/${owner}/${collection}/versions/compare?from=${versions[i + 1].semver}&to=${v.semver}`}
                       className="text-link w-8 text-right hover:underline"
                       title={`Diff ${versions[i + 1].semver} → ${v.semver}`}
                     >

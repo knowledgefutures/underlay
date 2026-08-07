@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { Button, Input, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 interface Comment {
@@ -165,7 +166,7 @@ export default function DiscussionDrawer({
   if (!anchor) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
       <div
         ref={drawerRef}
@@ -175,14 +176,19 @@ export default function DiscussionDrawer({
           <h3 className="text-sm font-semibold">
             Discussion: <span className="font-mono text-xs">{anchor}</span>
           </h3>
-          <button onClick={onClose} className="text-ink-muted hover:text-ink text-lg leading-none">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            className="text-lg leading-none"
+            aria-label="Close discussion"
+          >
             &times;
-          </button>
+          </Button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3">
           {initialQuote && (
-            <div className="border-rule bg-parchment-dark mb-4 rounded border-l-2 px-3 py-2 text-xs italic">
+            <div className="border-rule bg-parchment-dark rounded-surface mb-4 border-l-2 px-3 py-2 text-xs italic">
               "{initialQuote}"
             </div>
           )}
@@ -229,12 +235,14 @@ export default function DiscussionDrawer({
 
           {closedThreads.length > 0 && (
             <div className="mt-4">
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowClosed(!showClosed)}
-                className="text-ink-muted hover:text-ink mb-2 text-xs"
+                className="mb-2"
               >
                 {showClosed ? 'Hide' : 'Show'} closed ({closedThreads.length})
-              </button>
+              </Button>
               {showClosed &&
                 closedThreads.map((thread) => (
                   <ThreadView
@@ -275,23 +283,18 @@ export default function DiscussionDrawer({
         {currentUser && (
           <div className="border-rule border-t px-4 py-3">
             <form onSubmit={handleSubmit}>
-              <textarea
+              <Textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                placeholder="Leave a comment..."
+                placeholder="Leave a comment…"
                 rows={3}
                 maxLength={8192}
-                className="border-rule bg-parchment w-full resize-none rounded border px-3 py-2 text-sm focus:outline-none"
               />
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-ink-muted text-xs">Markdown supported</span>
-                <button
-                  type="submit"
-                  disabled={!body.trim() || submitting}
-                  className="bg-ink text-parchment hover:bg-ink/80 disabled:bg-ink/40 rounded px-3 py-1 text-xs font-medium transition-colors"
-                >
-                  {submitting ? 'Submitting...' : 'Comment'}
-                </button>
+                <Button type="submit" size="sm" disabled={!body.trim() || submitting}>
+                  {submitting ? 'Submitting…' : 'Comment'}
+                </Button>
               </div>
             </form>
           </div>
@@ -356,7 +359,7 @@ function ThreadView({
   const isClosed = thread.status !== 'open'
 
   return (
-    <div className={`border-rule mb-3 rounded border p-3 ${isClosed ? 'opacity-70' : ''}`}>
+    <div className={`border-rule rounded-surface mb-3 border p-3 ${isClosed ? 'opacity-70' : ''}`}>
       {thread.quote && (
         <div className="border-rule mb-2 border-l-2 pl-2 text-xs text-amber-800 italic">
           "{thread.quote}"
@@ -367,12 +370,14 @@ function ThreadView({
         <span className="text-xs font-medium">{thread.authorName}</span>
         <span className="text-ink-muted text-xs">{formatDate(thread.createdAt)}</span>
         {isPending && (
-          <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-800">
+          <span className="rounded-control bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-800">
             Awaiting review
           </span>
         )}
         {isClosed && thread.status && (
-          <span className={`rounded px-1.5 py-0.5 text-xs ${statusColor[thread.status] ?? ''}`}>
+          <span
+            className={`rounded-control px-1.5 py-0.5 text-xs ${statusColor[thread.status] ?? ''}`}
+          >
             {statusLabel[thread.status] ?? thread.status}
           </span>
         )}
@@ -381,25 +386,19 @@ function ThreadView({
       <div className="prose prose-sm mb-2 text-sm">{thread.body}</div>
 
       {thread.resolutionNote && (
-        <div className="border-rule mt-2 rounded border bg-gray-50 px-2 py-1.5 text-xs">
+        <div className="border-rule rounded-surface bg-parchment-dark/40 mt-2 border px-2 py-1.5 text-xs">
           <span className="font-medium">Resolution:</span> {thread.resolutionNote}
         </div>
       )}
 
       {isSteward && isPending && (
         <div className="mt-2 flex gap-2">
-          <button
-            onClick={() => onApprove(thread.id)}
-            className="rounded bg-green-600 px-2 py-0.5 text-xs text-white hover:bg-green-700"
-          >
+          <Button variant="success" size="sm" onClick={() => onApprove(thread.id)}>
             Approve
-          </button>
-          <button
-            onClick={() => onDecline(thread.id)}
-            className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700"
-          >
+          </Button>
+          <Button variant="danger" size="sm" onClick={() => onDecline(thread.id)}>
             Decline
-          </button>
+          </Button>
         </div>
       )}
 
@@ -409,7 +408,7 @@ function ThreadView({
             <span className="text-xs font-medium">{reply.authorName}</span>
             <span className="text-ink-muted text-xs">{formatDate(reply.createdAt)}</span>
             {!reply.approvedAt && (
-              <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-800">
+              <span className="rounded-control bg-yellow-100 px-1.5 py-0.5 text-xs text-yellow-800">
                 Awaiting review
               </span>
             )}
@@ -417,18 +416,12 @@ function ThreadView({
           <div className="text-sm">{reply.body}</div>
           {isSteward && !reply.approvedAt && (
             <div className="mt-1 flex gap-2">
-              <button
-                onClick={() => onApprove(reply.id)}
-                className="rounded bg-green-600 px-2 py-0.5 text-xs text-white hover:bg-green-700"
-              >
+              <Button variant="success" size="sm" onClick={() => onApprove(reply.id)}>
                 Approve
-              </button>
-              <button
-                onClick={() => onDecline(reply.id)}
-                className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700"
-              >
+              </Button>
+              <Button variant="danger" size="sm" onClick={() => onDecline(reply.id)}>
                 Decline
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -437,88 +430,74 @@ function ThreadView({
       {!isClosed && thread.approvedAt && (
         <div className="mt-2 flex gap-2">
           {currentUserId && replyTo !== thread.id && (
-            <button
-              onClick={() => onReplyTo(thread.id)}
-              className="text-ink-muted hover:text-ink text-xs"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onReplyTo(thread.id)}>
               Reply
-            </button>
+            </Button>
           )}
           {isSteward && resolveId !== thread.id && (
-            <button
-              onClick={() => onResolveStart(thread.id)}
-              className="text-ink-muted hover:text-ink text-xs"
-            >
+            <Button variant="ghost" size="sm" onClick={() => onResolveStart(thread.id)}>
               Resolve
-            </button>
+            </Button>
           )}
         </div>
       )}
 
       {replyTo === thread.id && (
         <form onSubmit={onReplySubmit} className="mt-2">
-          <textarea
+          <Textarea
             value={replyBody}
             onChange={(e) => onReplyBody(e.target.value)}
-            placeholder="Write a reply..."
+            placeholder="Write a reply…"
             rows={2}
             maxLength={8192}
-            className="border-rule bg-parchment w-full resize-none rounded border px-2 py-1.5 text-sm focus:outline-none"
+            className="px-2 py-1.5"
           />
           <div className="mt-1 flex gap-2">
-            <button
-              type="submit"
-              disabled={!replyBody.trim() || submitting}
-              className="bg-ink text-parchment hover:bg-ink/80 disabled:bg-ink/40 rounded px-2 py-0.5 text-xs font-medium"
-            >
+            <Button type="submit" size="sm" disabled={!replyBody.trim() || submitting}>
               Reply
-            </button>
-            <button
-              type="button"
-              onClick={() => onReplyTo(null)}
-              className="text-ink-muted text-xs"
-            >
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => onReplyTo(null)}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       )}
 
       {resolveId === thread.id && (
-        <form onSubmit={onResolveSubmit} className="border-rule mt-2 rounded border bg-gray-50 p-2">
+        <form
+          onSubmit={onResolveSubmit}
+          className="border-rule rounded-surface bg-parchment-dark/40 mt-2 border p-2"
+        >
           <div className="mb-2 flex gap-2">
             {(['answered', 'decided', 'changed'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => onResolveStatusChange(s)}
-                className={`rounded px-2 py-0.5 text-xs font-medium ${
+                className={`rounded-control cursor-pointer px-2 py-0.5 text-xs font-medium transition-colors ${
                   resolveStatus === s
                     ? 'bg-ink text-parchment'
-                    : 'bg-parchment text-ink border-rule border'
+                    : 'bg-parchment text-ink border-rule hover:bg-parchment-dark border'
                 }`}
               >
                 {s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
           </div>
-          <input
+          <Input
             type="text"
             value={resolveNote}
             onChange={(e) => onResolveNoteChange(e.target.value)}
             placeholder="Resolution note (optional)"
-            className="border-rule bg-parchment w-full rounded border px-2 py-1 text-sm focus:outline-none"
+            className="px-2 py-1"
           />
           <div className="mt-2 flex gap-2">
-            <button
-              type="submit"
-              className="bg-ink text-parchment hover:bg-ink/80 rounded px-2 py-0.5 text-xs font-medium"
-            >
+            <Button type="submit" size="sm">
               Close thread
-            </button>
-            <button type="button" onClick={onResolveCancel} className="text-ink-muted text-xs">
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onResolveCancel}>
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       )}
