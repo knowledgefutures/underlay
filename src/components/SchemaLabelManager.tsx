@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import { Button, Input } from '~/components/ui'
+
 interface Label {
   label: string
   createdAt: string
@@ -83,7 +85,7 @@ export default function SchemaLabelManager({ schemaId, initialLabels }: Props) {
           {labels.map((l) => (
             <span
               key={l.label}
-              className="bg-parchment border-rule group inline-flex items-center gap-2 rounded border px-3 py-1.5 text-sm"
+              className="bg-parchment border-rule rounded-control group inline-flex items-center gap-2 border px-3 py-1.5 text-sm"
             >
               <span className="text-ink">{l.label}</span>
               <span className="text-ink-muted text-[11px]">
@@ -92,10 +94,13 @@ export default function SchemaLabelManager({ schemaId, initialLabels }: Props) {
                   day: 'numeric',
                 })}
               </span>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => removeLabel(l.label)}
-                className="text-ink-muted ml-1 opacity-0 transition-colors group-hover:opacity-100 hover:text-red-600"
+                className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red-600"
                 title="Remove label"
+                aria-label={`Remove label ${l.label}`}
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -105,7 +110,7 @@ export default function SchemaLabelManager({ schemaId, initialLabels }: Props) {
                     d="M6 18L18 6M6 6l12 12"
                   />
                 </svg>
-              </button>
+              </Button>
             </span>
           ))}
         </div>
@@ -115,20 +120,16 @@ export default function SchemaLabelManager({ schemaId, initialLabels }: Props) {
 
       {/* Add label form */}
       <form onSubmit={addLabel} className="flex items-center gap-2">
-        <input
+        <Input
           type="text"
           placeholder="Add label (e.g. schema.org/Person)"
-          className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink w-64 border px-2.5 py-1.5 font-mono text-xs focus:outline-none"
+          className="placeholder:text-ink-muted w-64 px-2.5 py-1.5 font-mono text-xs"
           value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)}
         />
-        <button
-          type="submit"
-          disabled={adding || !newLabel.trim()}
-          className="border-rule hover:bg-parchment-dark border px-2.5 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {adding ? 'Adding...' : 'Add'}
-        </button>
+        <Button type="submit" variant="secondary" size="sm" disabled={adding || !newLabel.trim()}>
+          {adding ? 'Adding…' : 'Add'}
+        </Button>
       </form>
 
       {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Badge } from '~/components/ui'
 
 interface Reference {
   owner: string
@@ -67,9 +68,7 @@ export default function RecordDetailPage() {
         <div className="mb-6">
           <div className="mb-2 flex items-center gap-3">
             <h1 className="font-mono text-lg font-semibold">{hash.slice(0, 16)}…</h1>
-            <span className="border-rule text-ink-muted border px-1.5 py-0.5 text-xs">
-              {record.type}
-            </span>
+            <Badge>{record.type}</Badge>
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
             <span>
@@ -126,7 +125,7 @@ export default function RecordDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               Canonical JSON
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-hidden border">
               <pre className="bg-ink text-parchment max-h-96 overflow-x-auto p-4 font-mono text-xs">
                 <code>
                   {JSON.stringify(

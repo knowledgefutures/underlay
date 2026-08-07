@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import BaseLayout from '~/components/BaseLayout'
+import { Button } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 interface PendingComment {
@@ -90,7 +91,7 @@ export default function AdminDiscussion() {
         </p>
 
         {loading ? (
-          <p className="text-ink-muted text-sm">Loading...</p>
+          <p className="text-ink-muted text-sm">Loading…</p>
         ) : (
           <>
             <section className="mb-10">
@@ -100,7 +101,7 @@ export default function AdminDiscussion() {
               ) : (
                 <div className="space-y-3">
                   {pending.map((comment) => (
-                    <div key={comment.id} className="border-rule rounded border p-4">
+                    <div key={comment.id} className="border-rule rounded-surface border p-4">
                       <div className="mb-2 flex items-center gap-2 text-xs">
                         <span className="font-medium">{comment.authorName}</span>
                         <span className="text-ink-muted">
@@ -118,18 +119,20 @@ export default function AdminDiscussion() {
                       )}
                       <p className="mb-3 text-sm">{comment.body}</p>
                       <div className="flex gap-2">
-                        <button
+                        <Button
+                          variant="success"
+                          size="sm"
                           onClick={() => handleApprove(comment.id)}
-                          className="rounded bg-green-600 px-3 py-1 text-xs text-white hover:bg-green-700"
                         >
                           Approve
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
                           onClick={() => handleDecline(comment.id)}
-                          className="rounded bg-red-600 px-3 py-1 text-xs text-white hover:bg-red-700"
                         >
                           Decline
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -146,10 +149,10 @@ export default function AdminDiscussion() {
                   {threads.map((thread) => (
                     <div
                       key={thread.id}
-                      className="border-rule flex items-center gap-3 rounded border px-4 py-3"
+                      className="border-rule rounded-surface flex items-center gap-3 border px-4 py-3"
                     >
                       <span
-                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                        className={`rounded-control px-1.5 py-0.5 text-xs font-medium ${
                           !thread.approvedAt
                             ? 'bg-yellow-100 text-yellow-800'
                             : thread.status === 'open'

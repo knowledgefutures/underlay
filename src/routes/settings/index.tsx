@@ -1,7 +1,15 @@
 import { type FormEvent, useState } from 'react'
 
 import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
-import { Alert, Button, Checkbox, Input, SectionHeading, Textarea } from '~/components/ui'
+import {
+  Alert,
+  Button,
+  buttonClasses,
+  Checkbox,
+  Input,
+  SectionHeading,
+  Textarea,
+} from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 export default function Settings() {
@@ -283,7 +291,7 @@ export default function Settings() {
           href={kfAccountUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="bg-ink text-parchment hover:bg-ink-light rounded-control inline-block px-4 py-2 text-sm font-medium transition-colors"
+          className={buttonClasses('primary', 'md', 'visited:text-parchment')}
         >
           Manage account →
         </a>

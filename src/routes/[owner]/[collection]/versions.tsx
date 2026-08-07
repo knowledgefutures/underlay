@@ -1,6 +1,7 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { EmptyState } from '~/components/ui'
 import { bareSemver } from '~/lib/format'
 import { TokenLink } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
@@ -45,9 +46,9 @@ export default function CollectionVersionsPage() {
         </div>
 
         {versions.length === 0 ? (
-          <p className="text-ink-muted py-8 text-center text-sm">No versions yet.</p>
+          <EmptyState>No versions yet.</EmptyState>
         ) : (
-          <div className="border-rule overflow-hidden rounded border">
+          <div className="border-rule rounded-surface overflow-hidden border">
             {versions.map((v: any, i: number) => (
               <div
                 key={v.semver}
@@ -60,7 +61,7 @@ export default function CollectionVersionsPage() {
                   className="flex min-w-0 items-center gap-4"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="bg-parchment-dark border-rule rounded border px-1.5 py-0.5 font-mono text-xs">
+                    <span className="bg-parchment-dark border-rule rounded-control border px-1.5 py-0.5 font-mono text-xs">
                       {v.semver}
                     </span>
                   </div>

@@ -16,7 +16,7 @@ export default function DocsApi() {
       </p>
 
       <h2>Base URL</h2>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{'https://underlay.org/api'}</code>
       </pre>
 
@@ -43,7 +43,7 @@ export default function DocsApi() {
 
       <h3>API Keys (recommended for scripts &amp; apps)</h3>
       <p>Pass your key as a Bearer token:</p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{'Authorization: Bearer ul_a1b2c3d4e5...'}</code>
       </pre>
       <p>Keys have two grantable scopes:</p>
@@ -140,7 +140,7 @@ export default function DocsApi() {
       <p>
         Errors return a JSON body with <code>error</code> and <code>statusCode</code>:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{`{
   "error": "Authentication required",
   "statusCode": 401

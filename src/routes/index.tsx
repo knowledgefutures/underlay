@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link, useLoaderData } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { ButtonLink } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 function HeroBackground() {
@@ -12,6 +13,9 @@ function HeroBackground() {
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+
+    // CSS can't stop a rAF loop, so honor reduced motion here explicitly.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
     const w = container.offsetWidth
     const h = container.offsetHeight
@@ -147,12 +151,7 @@ export default function Home() {
                 independent, complete archive.
               </p>
               <div className="flex gap-3">
-                <Link
-                  to="/explore"
-                  className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block rounded px-4 py-2 text-sm font-medium transition-colors"
-                >
-                  Explore collections
-                </Link>
+                <ButtonLink to="/explore">Explore collections</ButtonLink>
               </div>
             </div>
           </section>
@@ -231,18 +230,12 @@ export default function Home() {
               open-source knowledge infrastructure.
             </p>
             <div className="flex gap-3">
-              <Link
-                to="/explore"
-                className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light inline-block rounded px-5 py-2.5 text-sm font-medium transition-colors"
-              >
+              <ButtonLink to="/explore" size="lg">
                 Explore collections
-              </Link>
-              <Link
-                to="/docs/quickstart"
-                className="border-ink hover:bg-parchment-dark visited:text-ink inline-block rounded border px-5 py-2.5 text-sm font-medium transition-colors"
-              >
+              </ButtonLink>
+              <ButtonLink to="/docs/quickstart" variant="secondary" size="lg">
                 Get started
-              </Link>
+              </ButtonLink>
             </div>
           </div>
         </div>
@@ -325,7 +318,7 @@ export default function Home() {
                 Read the quickstart →
               </Link>
             </div>
-            <div className="bg-ink text-parchment overflow-hidden rounded font-mono text-[13px] leading-relaxed">
+            <div className="bg-ink text-parchment rounded-surface overflow-hidden font-mono text-[13px] leading-relaxed">
               <div className="p-5">
                 <div className="text-ink-muted mb-1 text-[11px] select-none">
                   # point at a collection
@@ -379,7 +372,7 @@ export default function Home() {
               </p>
               <Link
                 to="/explore"
-                className="text-parchment-dark hover:text-parchment text-xs underline"
+                className="text-parchment-dark visited:text-parchment-dark hover:text-parchment text-xs underline"
               >
                 Explore →
               </Link>
@@ -391,7 +384,7 @@ export default function Home() {
               </p>
               <Link
                 to="/docs"
-                className="text-parchment-dark hover:text-parchment text-xs underline"
+                className="text-parchment-dark visited:text-parchment-dark hover:text-parchment text-xs underline"
               >
                 Docs →
               </Link>
@@ -403,7 +396,7 @@ export default function Home() {
               </p>
               <Link
                 to="/protocol"
-                className="text-parchment-dark hover:text-parchment text-xs underline"
+                className="text-parchment-dark visited:text-parchment-dark hover:text-parchment text-xs underline"
               >
                 Protocol →
               </Link>

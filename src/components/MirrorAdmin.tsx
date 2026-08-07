@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
+import { Alert, Button, Table, Td, Textarea, Th, Tr } from '~/components/ui'
+
 interface Props {
   upstream: string
   nodeName: string
@@ -67,50 +69,52 @@ function PaginatedCollections({ collections }: { collections: MirrorStatus['coll
 
   return (
     <div>
-      <table className="w-full text-sm">
+      <Table>
         <thead>
-          <tr className="border-rule text-ink-muted border-b text-left">
-            <th className="pb-2 font-medium">Collection</th>
-            <th className="pb-2 font-medium">Version</th>
-            <th className="pb-2 font-medium">Last Updated</th>
+          <tr>
+            <Th>Collection</Th>
+            <Th>Version</Th>
+            <Th>Last Updated</Th>
           </tr>
         </thead>
         <tbody>
           {visible.map((c) => (
-            <tr key={`${c.ownerSlug}/${c.slug}`} className="border-rule/50 border-b">
-              <td className="py-2">
+            <Tr key={`${c.ownerSlug}/${c.slug}`}>
+              <Td>
                 <Link to={`/${c.ownerSlug}/${c.slug}`} className="text-ink hover:underline">
                   {c.ownerSlug}/{c.slug}
                 </Link>
                 <span className="text-ink-muted ml-2">— {c.name}</span>
-              </td>
-              <td className="py-2 font-mono">{c.localVersion}</td>
-              <td className="text-ink-muted py-2">{new Date(c.updatedAt).toLocaleDateString()}</td>
-            </tr>
+              </Td>
+              <Td className="font-mono">{c.localVersion}</Td>
+              <Td className="text-ink-muted">{new Date(c.updatedAt).toLocaleDateString()}</Td>
+            </Tr>
           ))}
         </tbody>
-      </table>
+      </Table>
       {totalPages > 1 && (
         <div className="text-ink-muted mt-3 flex items-center justify-between text-xs">
           <span>{collections.length} collections</span>
           <div className="flex items-center gap-2">
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setPage((p) => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="border-rule hover:bg-parchment-dark rounded border px-2 py-1 disabled:opacity-30"
             >
               ← Prev
-            </button>
+            </Button>
             <span>
               {page + 1} / {totalPages}
             </span>
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={page >= totalPages - 1}
-              className="border-rule hover:bg-parchment-dark rounded border px-2 py-1 disabled:opacity-30"
             >
               Next →
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -255,7 +259,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
   return (
     <div className="space-y-8">
       {/* Server Identity */}
-      <section className="border-rule rounded-lg border p-5">
+      <section className="border-rule rounded-surface border p-5">
         <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
           Server Identity
         </h2>
@@ -272,30 +276,20 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
       </section>
 
       {/* Upstream Configuration */}
-      <section className="border-rule rounded-lg border p-5">
+      <section className="border-rule rounded-surface border p-5">
         <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
           Upstream Server
         </h2>
         <div className="mb-4 flex items-center gap-3">
-          <code className="bg-parchment-dark flex-1 rounded px-2 py-1 font-mono text-sm">
+          <code className="bg-parchment-dark rounded-surface flex-1 px-2 py-1 font-mono text-sm">
             {upstream}
           </code>
-          <button
-            onClick={handleTest}
-            disabled={loading === 'test'}
-            className="bg-ink text-parchment hover:bg-ink/90 rounded px-3 py-1.5 text-sm disabled:opacity-50"
-          >
-            {loading === 'test' ? 'Testing...' : 'Test Connection'}
-          </button>
+          <Button size="sm" onClick={handleTest} disabled={loading === 'test'}>
+            {loading === 'test' ? 'Testing…' : 'Test Connection'}
+          </Button>
         </div>
         {testResult && (
-          <div
-            className={`rounded p-3 text-sm ${
-              testResult.ok
-                ? 'border border-green-200 bg-green-50 text-green-800'
-                : 'border border-red-200 bg-red-50 text-red-800'
-            }`}
-          >
+          <Alert variant={testResult.ok ? 'success' : 'error'}>
             {testResult.ok ? (
               <span>
                 ✓ Valid Underlay server — {testResult.collectionCount} public collection
@@ -304,12 +298,12 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             ) : (
               <span>✗ {testResult.error}</span>
             )}
-          </div>
+          </Alert>
         )}
       </section>
 
       {/* Sync Controls + History */}
-      <section className="border-rule rounded-lg border p-5">
+      <section className="border-rule rounded-surface border p-5">
         <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">Sync</h2>
         <div className="mb-4 flex items-center justify-between">
           <div className="text-sm">
@@ -324,20 +318,13 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
           </div>
           <div className="flex items-center gap-2">
             {syncing && (
-              <button
-                onClick={handleStop}
-                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
-              >
+              <Button variant="danger" size="sm" onClick={handleStop}>
                 Stop
-              </button>
+              </Button>
             )}
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="bg-ink text-parchment hover:bg-ink/90 rounded px-3 py-1.5 text-sm disabled:opacity-50"
-            >
-              {syncing ? 'Syncing...' : 'Sync Now'}
-            </button>
+            <Button size="sm" onClick={handleSync} disabled={syncing}>
+              {syncing ? 'Syncing…' : 'Sync Now'}
+            </Button>
           </div>
         </div>
 
@@ -383,7 +370,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
         {progressEvents.length > 0 && (
           <div
             ref={logRef}
-            className="bg-parchment-dark border-rule mb-4 max-h-48 space-y-0.5 overflow-y-auto rounded border p-3 font-mono text-xs"
+            className="bg-parchment-dark border-rule rounded-surface mb-4 max-h-48 space-y-0.5 overflow-y-auto border p-3 font-mono text-xs"
           >
             {progressEvents.map((evt, i) => (
               <div
@@ -408,15 +395,15 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               History
             </h3>
-            <table className="w-full text-sm">
+            <Table>
               <thead>
-                <tr className="border-rule text-ink-muted border-b text-left">
-                  <th className="pb-2 font-medium">When</th>
-                  <th className="pb-2 font-medium">Trigger</th>
-                  <th className="pb-2 font-medium">Status</th>
-                  <th className="pb-2 font-medium">Duration</th>
-                  <th className="pb-2 font-medium">Summary</th>
-                  <th className="pb-2 font-medium"></th>
+                <tr>
+                  <Th>When</Th>
+                  <Th>Trigger</Th>
+                  <Th>Status</Th>
+                  <Th>Duration</Th>
+                  <Th>Summary</Th>
+                  <Th />
                 </tr>
               </thead>
               <tbody>
@@ -427,13 +414,13 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
                       )
                     : null
                   return (
-                    <tr key={h.id} className="border-rule/50 border-b align-top">
-                      <td className="text-ink-muted py-2 text-xs">
+                    <Tr key={h.id}>
+                      <Td className="text-ink-muted text-xs">
                         {new Date(h.startedAt).toLocaleString()}
-                      </td>
-                      <td className="py-2">
+                      </Td>
+                      <Td>
                         <span
-                          className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${
+                          className={`rounded-control inline-block px-1.5 py-0.5 text-xs font-medium ${
                             h.trigger === 'cron'
                               ? 'border border-blue-200 bg-blue-50 text-blue-700'
                               : 'border border-purple-200 bg-purple-50 text-purple-700'
@@ -441,8 +428,8 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
                         >
                           {h.trigger}
                         </span>
-                      </td>
-                      <td className="py-2">
+                      </Td>
+                      <Td>
                         <span
                           className={`text-xs font-medium ${
                             h.status === 'completed'
@@ -454,47 +441,45 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
                         >
                           {h.status}
                         </span>
-                      </td>
-                      <td className="py-2 font-mono text-xs">
+                      </Td>
+                      <Td className="font-mono text-xs">
                         {duration !== null ? `${duration}s` : '—'}
-                      </td>
-                      <td className="py-2 text-xs">
+                      </Td>
+                      <Td className="text-xs">
                         {h.collectionsSynced} synced, {h.versionsPulled} ver, {h.filesDownloaded}↓{' '}
                         {h.filesSkipped}✓
                         {h.collectionsFailed > 0 && (
                           <span className="ml-1 text-red-600">({h.collectionsFailed} failed)</span>
                         )}
-                      </td>
-                      <td className="space-x-2 py-2 text-right text-xs">
+                      </Td>
+                      <Td className="space-x-2 text-right text-xs">
                         {h.status === 'running' && (
-                          <button
-                            onClick={handleStop}
-                            className="rounded bg-red-600 px-2 py-0.5 text-xs text-white hover:bg-red-700"
-                          >
+                          <Button variant="danger" size="sm" onClick={handleStop}>
                             Stop
-                          </button>
+                          </Button>
                         )}
                         {h.logs && h.logs.length > 0 && (
-                          <button
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             onClick={() => setExpandedRun(expandedRun === h.id ? null : h.id)}
-                            className="border-rule hover:bg-parchment-dark rounded border px-2 py-0.5 text-xs"
                           >
                             {expandedRun === h.id ? 'Hide' : 'Logs'}
-                          </button>
+                          </Button>
                         )}
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   )
                 })}
               </tbody>
-            </table>
+            </Table>
             {/* Expanded logs for a history entry */}
             {expandedRun &&
               (() => {
                 const run = history.find((h) => h.id === expandedRun)
                 if (!run?.logs?.length) return null
                 return (
-                  <div className="bg-parchment-dark border-rule mt-2 max-h-48 space-y-0.5 overflow-y-auto rounded border p-3 font-mono text-xs">
+                  <div className="bg-parchment-dark border-rule rounded-surface mt-2 max-h-48 space-y-0.5 overflow-y-auto border p-3 font-mono text-xs">
                     {run.logs.map((msg, i) => (
                       <div key={i} className="text-ink-muted">
                         {msg}
@@ -508,7 +493,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
       </section>
 
       {/* Mirrored Collections */}
-      <section className="border-rule rounded-lg border p-5">
+      <section className="border-rule rounded-surface border p-5">
         <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
           Mirrored Collections
         </h2>
@@ -519,12 +504,12 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             No collections mirrored yet. Click "Sync Now" to pull from upstream.
           </p>
         ) : (
-          <p className="text-ink-muted text-sm">Loading...</p>
+          <p className="text-ink-muted text-sm">Loading…</p>
         )}
       </section>
 
       {/* Account Filters */}
-      <section className="border-rule rounded-lg border p-5">
+      <section className="border-rule rounded-surface border p-5">
         <h2 className="text-ink-muted mb-3 text-sm font-semibold tracking-wide uppercase">
           Account Filters
         </h2>
@@ -537,8 +522,9 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             <label className="text-ink-muted mb-1 block text-xs font-medium">
               Include accounts (one per line)
             </label>
-            <textarea
-              className="border-rule bg-parchment min-h-[80px] w-full resize-y rounded border px-3 py-2 font-mono text-sm"
+            <Textarea
+              resize="y"
+              className="min-h-[80px] font-mono"
               placeholder={'adapt\nkf'}
               disabled
             />
@@ -547,8 +533,9 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
             <label className="text-ink-muted mb-1 block text-xs font-medium">
               Exclude accounts (one per line)
             </label>
-            <textarea
-              className="border-rule bg-parchment min-h-[80px] w-full resize-y rounded border px-3 py-2 font-mono text-sm"
+            <Textarea
+              resize="y"
+              className="min-h-[80px] font-mono"
               placeholder={'test-user\nsandbox'}
               disabled
             />

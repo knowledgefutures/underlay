@@ -153,7 +153,7 @@ export default function CollectionDiffPage() {
         {diff && (
           <div>
             {/* Summary bar */}
-            <div className="border-rule bg-parchment-dark mb-6 flex items-center gap-4 rounded border px-4 py-2.5 text-sm">
+            <div className="border-rule bg-parchment-dark rounded-surface mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border px-4 py-2.5 text-sm">
               <span className="text-ink-muted">
                 {baseVersion ? baseVersion.semver : '∅'} → {targetVersion?.semver}
               </span>

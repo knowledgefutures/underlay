@@ -750,7 +750,7 @@ export default function QueryExplorer() {
                   setShowCollections(true)
                   setCollectionSearch('')
                 }}
-                className="border-rule hover:bg-parchment-dark text-ink-muted border px-1.5 py-0.5 font-mono text-[11px]"
+                className="border-rule hover:bg-parchment-dark text-ink-muted rounded-control cursor-pointer border px-1.5 py-0.5 font-mono text-[11px] transition-colors"
               >
                 + add collection
               </button>
@@ -847,7 +847,7 @@ export default function QueryExplorer() {
                   <div className="max-h-40 space-y-0.5 overflow-y-auto">
                     {availableVersions.length === 0 ? (
                       <div className="text-ink-muted px-2 py-1 font-mono text-xs">
-                        Loading versions...
+                        Loading versions…
                       </div>
                     ) : (
                       availableVersions.map((v) => {
@@ -924,7 +924,7 @@ export default function QueryExplorer() {
               {sqlJsError ? (
                 <span className="text-red-700">{sqlJsError}</span>
               ) : !sqlJsReady ? (
-                'Loading SQL engine...'
+                'Loading SQL engine…'
               ) : loadedCollections.length === 0 ? (
                 'Add a collection above, then type a SQL query.'
               ) : (
@@ -999,7 +999,7 @@ export default function QueryExplorer() {
                       onClick={() =>
                         downloadCsv(selectedEntry.result!, `query-${selectedEntry.id}.csv`)
                       }
-                      className="border-rule hover:bg-parchment-dark text-ink-muted hover:text-ink border px-2 py-0.5 font-mono text-[11px]"
+                      className="border-rule hover:bg-parchment-dark text-ink-muted hover:text-ink rounded-control cursor-pointer border px-2 py-0.5 font-mono text-[11px] transition-colors"
                     >
                       ↓ CSV
                     </button>
@@ -1007,7 +1007,7 @@ export default function QueryExplorer() {
                   {selectedEntry.sql && (
                     <button
                       onClick={() => shareQuery(selectedEntry.sql)}
-                      className="border-rule hover:bg-parchment-dark text-ink-muted hover:text-ink border px-2 py-0.5 font-mono text-[11px]"
+                      className="border-rule hover:bg-parchment-dark text-ink-muted hover:text-ink rounded-control cursor-pointer border px-2 py-0.5 font-mono text-[11px] transition-colors"
                     >
                       {copied ? '✓ Copied' : 'Share'}
                     </button>
@@ -1039,7 +1039,7 @@ export default function QueryExplorer() {
             <div className="min-h-0 flex-1 overflow-auto">
               {/* Error display */}
               {selectedEntry.error && (
-                <div className="border-b border-red-200 bg-red-50 px-4 py-3 font-mono text-sm text-red-800">
+                <div className="border-b border-red-200 bg-red-50 px-4 py-3 font-mono text-sm text-red-700">
                   {selectedEntry.error}
                 </div>
               )}
@@ -1061,11 +1061,13 @@ export default function QueryExplorer() {
                 <div className="px-4 py-3">
                   <table className="w-full font-mono text-xs">
                     <thead>
-                      <tr className="border-rule border-b">
+                      <tr>
                         {selectedEntry.result.columns.map((col, i) => (
+                          // border-b lives on the cell: a collapsed row border does not
+                          // travel with a sticky header when the body scrolls under it.
                           <th
                             key={i}
-                            className="text-ink-light bg-parchment sticky top-0 px-2 py-1.5 text-left font-medium"
+                            className="text-ink-muted bg-parchment-dark border-rule sticky top-0 border-b px-2 py-1.5 text-left font-medium"
                           >
                             {col}
                           </th>

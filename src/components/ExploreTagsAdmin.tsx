@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 
+import { Button, Input } from '~/components/ui'
+
 export default function ExploreTagsAdmin() {
   const [tags, setTags] = useState<string[]>([])
   const [newTag, setNewTag] = useState('')
@@ -58,7 +60,7 @@ export default function ExploreTagsAdmin() {
   }
 
   if (loading) {
-    return <p className="text-ink-muted text-sm">Loading...</p>
+    return <p className="text-ink-muted text-sm">Loading…</p>
   }
 
   return (
@@ -78,29 +80,32 @@ export default function ExploreTagsAdmin() {
           </p>
         )}
         {tags.map((tag, i) => (
-          <div key={tag} className="border-rule flex items-center gap-2 rounded border px-3 py-2">
+          <div
+            key={tag}
+            className="border-rule rounded-surface flex items-center gap-2 border px-3 py-2"
+          >
             <span className="flex-1 text-sm">{tag}</span>
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => moveTag(i, -1)}
               disabled={i === 0 || saving}
-              className="text-ink-muted hover:text-ink text-xs disabled:opacity-30"
+              aria-label={`Move ${tag} up`}
             >
               &uarr;
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => moveTag(i, 1)}
               disabled={i === tags.length - 1 || saving}
-              className="text-ink-muted hover:text-ink text-xs disabled:opacity-30"
+              aria-label={`Move ${tag} down`}
             >
               &darr;
-            </button>
-            <button
-              onClick={() => removeTag(tag)}
-              disabled={saving}
-              className="text-ink-muted text-xs hover:text-red-600"
-            >
+            </Button>
+            <Button variant="dangerLink" size="sm" onClick={() => removeTag(tag)} disabled={saving}>
               Remove
-            </button>
+            </Button>
           </div>
         ))}
       </div>
@@ -112,20 +117,16 @@ export default function ExploreTagsAdmin() {
         }}
         className="flex gap-2"
       >
-        <input
+        <Input
           type="text"
           value={newTag}
           onChange={(e) => setNewTag(e.target.value)}
-          placeholder="New tag name..."
-          className="bg-parchment border-rule placeholder:text-ink-muted flex-1 rounded border px-3 py-2 text-sm focus:outline-none"
+          placeholder="New tag name…"
+          className="placeholder:text-ink-muted flex-1"
         />
-        <button
-          type="submit"
-          disabled={!newTag.trim() || saving}
-          className="bg-ink text-parchment disabled:bg-ink/50 rounded px-4 py-2 text-sm"
-        >
+        <Button type="submit" disabled={!newTag.trim() || saving}>
           Add
-        </button>
+        </Button>
       </form>
 
       {message && <p className="text-ink-muted text-xs">{message}</p>}

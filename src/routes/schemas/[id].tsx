@@ -2,6 +2,7 @@ import { Link, useLoaderData } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
+import { Badge } from '~/components/ui'
 
 interface SchemaData {
   id: number
@@ -43,11 +44,7 @@ export default function SchemaDetailPage() {
         <div className="mb-6">
           <div className="mb-2 flex items-center gap-3">
             <h1 className="font-mono text-lg font-semibold">{schema.schemaHash.slice(0, 16)}…</h1>
-            {isPrivate && (
-              <span className="border-rule text-ink-muted border px-1.5 py-0.5 text-xs">
-                private type
-              </span>
-            )}
+            {isPrivate && <Badge>private type</Badge>}
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
             <span>
@@ -104,15 +101,11 @@ export default function SchemaDetailPage() {
                         <td className="p-2.5">
                           <div className="flex items-center gap-2">
                             {refType && (
-                              <span className="bg-parchment-dark border-rule inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]">
+                              <span className="bg-parchment-dark border-rule rounded-control inline-flex items-center gap-1 border px-1.5 py-0.5 text-[11px]">
                                 → {refType}
                               </span>
                             )}
-                            {isFieldPrivate && (
-                              <span className="border-rule text-ink-muted rounded border px-1.5 py-0.5 text-[11px]">
-                                private
-                              </span>
-                            )}
+                            {isFieldPrivate && <Badge>private</Badge>}
                           </div>
                         </td>
                       </tr>
@@ -128,7 +121,7 @@ export default function SchemaDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               JSON Schema
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-hidden border">
               <pre className="bg-ink text-parchment max-h-96 overflow-x-auto p-4 font-mono text-xs">
                 <code>{JSON.stringify(schema.schema, null, 2)}</code>
               </pre>

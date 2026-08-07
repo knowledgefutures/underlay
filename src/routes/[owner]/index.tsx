@@ -1,6 +1,7 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { ButtonLink, EmptyState } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 function timeAgo(dateStr: string): string {
@@ -108,19 +109,16 @@ export default function OwnerPage() {
                 Collections
               </h2>
               {isMember && (
-                <Link
-                  to={`/new?owner=${owner}`}
-                  className="bg-ink text-parchment visited:text-parchment hover:bg-ink-light rounded-control px-3 py-1.5 text-sm font-medium transition-colors"
-                >
+                <ButtonLink to={`/new?owner=${owner}`} size="sm">
                   New collection
-                </Link>
+                </ButtonLink>
               )}
             </div>
 
             {collections.length === 0 ? (
-              <div className="text-ink-muted border-rule rounded-surface border px-4 py-8 text-center text-sm">
+              <EmptyState>
                 {isMember || isOwner ? 'No collections yet.' : 'No public collections yet.'}
-              </div>
+              </EmptyState>
             ) : (
               <div className="border-rule rounded-surface overflow-x-auto border">
                 <table className="w-full text-sm">
@@ -189,7 +187,7 @@ export default function OwnerPage() {
                     <Link
                       key={m.slug}
                       to={`/${m.slug}`}
-                      className="hover:bg-parchment-dark flex items-center gap-2 rounded px-2 py-1 transition-colors"
+                      className="hover:bg-parchment-dark rounded-control flex items-center gap-2 px-2 py-1 transition-colors"
                     >
                       <span className="text-sm font-medium">{m.slug}</span>
                       <span className="text-ink-muted text-[10px]">{m.role}</span>
@@ -207,13 +205,13 @@ export default function OwnerPage() {
               <div className="space-y-2">
                 <div>
                   <p className="text-ink-muted mb-0.5 text-[10px] font-medium">AT Protocol</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[10px] break-all">
+                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-all">
                     at://did:web:underlay.org:{owner}
                   </code>
                 </div>
                 <div>
                   <p className="text-ink-muted mb-0.5 text-[10px] font-medium">API</p>
-                  <code className="text-ink-muted bg-parchment-dark block rounded px-2 py-1 text-[10px] break-all">
+                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-all">
                     GET /api/accounts/{owner}/collections
                   </code>
                 </div>

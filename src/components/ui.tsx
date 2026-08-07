@@ -12,8 +12,16 @@ import { TokenLink } from '~/lib/share-token'
 
 // ---------------------------------------------------------------- Button
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'link' | 'dangerLink'
-export type ButtonSize = 'sm' | 'md'
+export type ButtonVariant =
+  | 'primary'
+  | 'secondary'
+  | 'danger'
+  | 'success'
+  | 'ghost'
+  | 'link'
+  | 'dangerLink'
+/** `lg` is for hero/landing calls to action, not general page actions. */
+export type ButtonSize = 'sm' | 'md' | 'lg'
 
 const solidButtonBase =
   'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-control transition-colors disabled:pointer-events-none disabled:opacity-50'
@@ -24,6 +32,9 @@ const buttonVariants: Record<ButtonVariant, string> = {
   primary: `${solidButtonBase} bg-ink text-parchment font-medium hover:bg-ink-light`,
   secondary: `${solidButtonBase} border border-rule bg-parchment text-ink hover:bg-parchment-dark`,
   danger: `${solidButtonBase} bg-red-700 font-medium text-white hover:bg-red-800`,
+  // For affirmative actions that must read as distinct from the neutral primary
+  // (approve, accept) — not for general submit buttons.
+  success: `${solidButtonBase} bg-green-700 font-medium text-white hover:bg-green-800`,
   ghost: `${textButtonBase} text-ink-muted hover:text-ink`,
   link: `${textButtonBase} text-link hover:underline`,
   dangerLink: `${textButtonBase} text-red-700 hover:underline`,
@@ -32,10 +43,12 @@ const buttonVariants: Record<ButtonVariant, string> = {
 const solidButtonSizes: Record<ButtonSize, string> = {
   sm: 'px-3 py-1.5 text-xs',
   md: 'px-4 py-2 text-sm',
+  lg: 'px-5 py-2.5 text-sm',
 }
 const textButtonSizes: Record<ButtonSize, string> = {
   sm: 'text-xs',
   md: 'text-sm',
+  lg: 'text-base',
 }
 
 export function buttonClasses(
@@ -111,11 +124,15 @@ export function Select({ className, ...rest }: React.SelectHTMLAttributes<HTMLSe
 
 export function Textarea({
   className,
+  resize = 'none',
   ...rest
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  /** 'y' allows vertical dragging; default is a fixed height. */
+  resize?: 'none' | 'y'
+}) {
   return (
     <textarea
-      className={`${inputClasses} resize-none${className ? ` ${className}` : ''}`}
+      className={`${inputClasses} ${resize === 'y' ? 'resize-y' : 'resize-none'}${className ? ` ${className}` : ''}`}
       {...rest}
     />
   )

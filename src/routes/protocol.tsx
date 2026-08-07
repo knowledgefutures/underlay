@@ -367,7 +367,7 @@ export default function Protocol() {
             <p>
               A record's identity is the SHA-256 hash of its canonical JSON. The canonical form is:
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{hashExample}</code>
             </pre>
             <p>
@@ -413,7 +413,7 @@ export default function Protocol() {
               has no private fields the two addresses coincide.
             </p>
             <p>Wire format is JSONL: one record per line, independently hashable and streamable:</p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{recordExample}</code>
             </pre>
           </RfcSection>
@@ -427,7 +427,7 @@ export default function Protocol() {
             <p>
               A version's hash is the SHA-256 of a canonical JSON object containing sorted hashes:
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{versionHashExample}</code>
             </pre>
             <p>
@@ -479,7 +479,7 @@ export default function Protocol() {
               negotiation. The client sends a manifest of record hashes, the server says which it
               needs, the client sends those records (in one or more batches), then commits.
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{negotiateExample}</code>
             </pre>
             <p>
@@ -504,7 +504,7 @@ export default function Protocol() {
               version hash a chunked, asynchronous push produces is identical to the one the simple
               flow produces from the same content.
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{scaleExample}</code>
             </pre>
             <p>
@@ -523,7 +523,7 @@ export default function Protocol() {
               Clients can fetch a full manifest or a delta between two versions. Combined with the
               batch records endpoint, this enables efficient pull synchronization.
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{pullExample}</code>
             </pre>
             <p>
@@ -592,7 +592,7 @@ export default function Protocol() {
               </a>{' '}
               documents with a few protocol-level extensions:
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{schemaExample}</code>
             </pre>
             <ul>
@@ -634,7 +634,7 @@ export default function Protocol() {
               Files are binary blobs stored by SHA-256 hash. Upload a file, then reference it from a
               record:
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{fileExample}</code>
             </pre>
             <p>
@@ -654,7 +654,7 @@ export default function Protocol() {
               Because records are content-addressed, every record hash can be traced back to every
               version and collection that includes it. The provenance endpoint returns this lineage:
             </p>
-            <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+            <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{provenanceExample}</code>
             </pre>
             <p>
@@ -766,7 +766,7 @@ export default function Protocol() {
             </p>
             <div className="space-y-4">
               {closedThreads.map((thread) => (
-                <div key={thread.id} className="border-rule rounded border p-3">
+                <div key={thread.id} className="border-rule rounded-surface border p-3">
                   <div className="mb-1 flex items-center gap-2 text-xs">
                     <span className={`font-medium ${statusColor[thread.status] ?? ''}`}>
                       {statusLabel[thread.status] ?? thread.status}
@@ -793,7 +793,7 @@ export default function Protocol() {
                   )}
                   <p className="text-sm">{thread.body}</p>
                   {thread.resolutionNote && (
-                    <div className="border-rule mt-2 rounded border bg-gray-50 px-2 py-1.5 text-xs">
+                    <div className="border-rule rounded-surface mt-2 border bg-gray-50 px-2 py-1.5 text-xs">
                       <span className="font-medium">Resolution:</span> {thread.resolutionNote}
                     </div>
                   )}
@@ -818,7 +818,7 @@ export default function Protocol() {
       {popover && currentUser && (
         <div
           ref={popoverRef}
-          className="bg-ink text-parchment fixed z-50 rounded px-3 py-1.5 text-xs font-medium shadow-lg"
+          className="bg-ink text-parchment rounded-surface fixed z-50 px-3 py-1.5 text-xs font-medium shadow-lg"
           style={{
             left: popover.x,
             top: popover.y,

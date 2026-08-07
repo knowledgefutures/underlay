@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
+import { Badge } from '~/components/ui'
+
 interface SchemaResult {
   id: string
   schema: Record<string, unknown>
@@ -61,14 +63,14 @@ export default function SchemaBrowser() {
                 ? 'Search by label...'
                 : 'Search by type name...'
           }
-          className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink flex-1 border px-3 py-2 font-mono text-sm focus:outline-none"
+          className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink rounded-control flex-1 border px-3 py-2 font-mono text-sm focus:outline-none"
           value={query}
           onChange={(e) => handleInput(e.target.value)}
         />
-        <div className="border-rule flex overflow-hidden rounded border text-xs">
+        <div className="border-rule rounded-control flex overflow-hidden border text-xs">
           <button
             onClick={() => handleFilterChange('q')}
-            className={`px-3 py-2 transition-colors ${
+            className={`cursor-pointer px-3 py-2 transition-colors ${
               filterType === 'q' ? 'bg-ink text-parchment' : 'hover:bg-parchment-dark'
             }`}
           >
@@ -76,7 +78,7 @@ export default function SchemaBrowser() {
           </button>
           <button
             onClick={() => handleFilterChange('slug')}
-            className={`border-rule border-l px-3 py-2 transition-colors ${
+            className={`border-rule cursor-pointer border-l px-3 py-2 transition-colors ${
               filterType === 'slug' ? 'bg-ink text-parchment' : 'hover:bg-parchment-dark'
             }`}
           >
@@ -84,7 +86,7 @@ export default function SchemaBrowser() {
           </button>
           <button
             onClick={() => handleFilterChange('label')}
-            className={`border-rule border-l px-3 py-2 transition-colors ${
+            className={`border-rule cursor-pointer border-l px-3 py-2 transition-colors ${
               filterType === 'label' ? 'bg-ink text-parchment' : 'hover:bg-parchment-dark'
             }`}
           >
@@ -108,18 +110,14 @@ export default function SchemaBrowser() {
               <Link
                 key={s.id}
                 to={`/schemas/${s.id}`}
-                className="border-rule hover:bg-parchment-dark/50 block border p-4 transition-colors"
+                className="border-rule rounded-surface hover:bg-parchment-dark/50 block border p-4 transition-colors"
               >
                 <div className="mb-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <code className="text-ink-muted font-mono text-xs">
                       {s.schemaHash.slice(0, 12)}…
                     </code>
-                    {isPrivate && (
-                      <span className="border-rule text-ink-muted border px-1.5 py-0.5 text-[11px]">
-                        private
-                      </span>
-                    )}
+                    {isPrivate && <Badge>private</Badge>}
                   </div>
                   <span className="text-ink-muted text-[11px]">
                     {new Date(s.createdAt).toLocaleDateString('en-US', {
@@ -135,7 +133,7 @@ export default function SchemaBrowser() {
                   {fieldNames.slice(0, 8).map((name) => (
                     <span
                       key={name}
-                      className="bg-parchment-dark border-rule rounded border px-1.5 py-0.5 font-mono text-[11px]"
+                      className="bg-parchment-dark border-rule rounded-control border px-1.5 py-0.5 font-mono text-[11px]"
                     >
                       {name}
                     </span>
@@ -153,7 +151,7 @@ export default function SchemaBrowser() {
                     {s.labels.map((label) => (
                       <span
                         key={label}
-                        className="text-link rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px]"
+                        className="text-link rounded-control border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px]"
                       >
                         {label}
                       </span>

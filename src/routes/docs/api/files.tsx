@@ -99,7 +99,7 @@ export default function DocsApiFiles() {
           </tbody>
         </table>
         <h3>Example</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{headExample}</code>
         </pre>
       </div>
@@ -123,7 +123,7 @@ export default function DocsApiFiles() {
           the API path. To resolve many files in one request, see the bulk-presign endpoint below.
         </p>
         <h3>Example</h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{getExample}</code>
         </pre>
       </div>
@@ -155,13 +155,13 @@ export default function DocsApiFiles() {
           Send the file as the raw request body with the appropriate <code>Content-Type</code>{' '}
           header.
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{putExample}</code>
         </pre>
         <h3>
           Response <span className="text-ink-muted font-normal">201</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{putRes}</code>
         </pre>
         <h3>Errors</h3>
@@ -191,7 +191,7 @@ export default function DocsApiFiles() {
       <p>
         To link a file to a record, use the <code>$file</code> convention:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{fileRefExample}</code>
       </pre>
       <p>

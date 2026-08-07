@@ -164,7 +164,7 @@ export function RecordsView({
               to={`${basePath}?type=${t}`}
               className={`rounded-control block shrink-0 px-3 py-1.5 text-sm whitespace-nowrap transition-colors ${
                 t === currentType
-                  ? 'bg-ink text-parchment font-medium'
+                  ? 'bg-ink text-parchment visited:text-parchment font-medium'
                   : 'text-ink-muted hover:bg-parchment-dark hover:text-ink'
               }`}
             >
@@ -346,7 +346,7 @@ export function RecordsView({
                       to={`${basePath}?type=${currentType}&page=${p}`}
                       className={
                         p === page
-                          ? 'border-ink bg-ink text-parchment rounded-control border px-2 py-1 font-medium'
+                          ? 'border-ink bg-ink text-parchment visited:text-parchment rounded-control border px-2 py-1 font-medium'
                           : 'border-rule hover:bg-parchment-dark rounded-control border px-2 py-1'
                       }
                     >

@@ -108,7 +108,7 @@ export default function DocsSelfHost() {
 
       <h2>Quick start</h2>
       <p>Clone the repo and run:</p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{quickStart}</code>
       </pre>
       <p>
@@ -119,7 +119,7 @@ export default function DocsSelfHost() {
         For local testing without a domain, omit <code>DOMAIN</code>. It defaults to{' '}
         <code>http://localhost</code>:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{localStart}</code>
       </pre>
 
@@ -129,7 +129,7 @@ export default function DocsSelfHost() {
         compose file. Only <code>DOMAIN</code> is required; everything else has sensible defaults or
         is auto-generated.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{envExample}</code>
       </pre>
 
@@ -146,7 +146,7 @@ export default function DocsSelfHost() {
         The bundled MinIO service works out of the box, but you can replace it with any
         S3-compatible storage (AWS S3, Cloudflare R2, DigitalOcean Spaces, etc.):
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{externalS3}</code>
       </pre>
       <p>
@@ -176,7 +176,7 @@ export default function DocsSelfHost() {
         To completely reset and start fresh, remove all volumes and re-run. The init container will
         regenerate secrets:
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{resetCmd}</code>
       </pre>
 
@@ -185,7 +185,7 @@ export default function DocsSelfHost() {
         Pull new images and restart. The app runs database migrations automatically on startup. No
         manual migration step needed.
       </p>
-      <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>
           {`docker compose -f docker-compose.withauth.yml pull\ndocker compose -f docker-compose.withauth.yml up -d`}
         </code>

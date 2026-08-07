@@ -224,7 +224,7 @@ export default function DocsApiVersions() {
           server checks which record and file hashes it already has and returns what it still needs.
         </p>
         <h4>Request</h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{negotiateReq}</code>
         </pre>
         <h4>Fields</h4>
@@ -307,7 +307,7 @@ export default function DocsApiVersions() {
         <h4>
           Response <span className="text-ink-muted font-normal">200</span>
         </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{negotiateRes}</code>
         </pre>
 
@@ -318,14 +318,14 @@ export default function DocsApiVersions() {
           few million records it would be hundreds of megabytes, parsed whole. Instead, omit{' '}
           <code>manifest</code> and declare how many records you will send:
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{chunkedStartReq}</code>
         </pre>
         <p>
           The server opens the session without asking for any records yet — nothing in this response
           is proportional to the collection:
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{chunkedStartRes}</code>
         </pre>
         <p>
@@ -336,7 +336,7 @@ export default function DocsApiVersions() {
           records from <em>that chunk</em> the server still needs, so you can start sending bodies
           before the whole manifest is uploaded:
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{manifestChunkRes}</code>
         </pre>
         <p>
@@ -365,14 +365,14 @@ export default function DocsApiVersions() {
           <code>needed_records</code> was empty, skip this step and go directly to commit.
         </p>
         <h4>Request</h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{`{"id":"pub-002","type":"Publication","data":{"title":"New Paper"}}
 {"id":"pub-003","type":"Publication","data":{"title":"Another Paper"}}`}</code>
         </pre>
         <h4>
           Response <span className="text-ink-muted font-normal">200</span>
         </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{recordsRes}</code>
         </pre>
         <p>
@@ -389,7 +389,7 @@ export default function DocsApiVersions() {
         <h4>
           Response <span className="text-ink-muted font-normal">201</span>
         </h4>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{commitRes}</code>
         </pre>
 
@@ -400,7 +400,7 @@ export default function DocsApiVersions() {
           <code>?async=true</code> (or <code>{'{"async": true}'}</code> in the body) and the server
           answers <code>202</code> immediately and builds the version in the background:
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{asyncCommitRes}</code>
         </pre>
         <p>
@@ -410,7 +410,7 @@ export default function DocsApiVersions() {
           <code>error</code> holds the rejection body it would have returned instead, so the two
           paths are interchangeable apart from timing.
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{sessionPollRes}</code>
         </pre>
         <p className="text-ink-muted">
@@ -450,7 +450,7 @@ export default function DocsApiVersions() {
           a file referenced publicly in v1 stays downloadable after the referencing record is
           redacted in v2.
         </p>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{`"schemas": {
   "Article": {
     "type": "object",
@@ -556,7 +556,7 @@ export default function DocsApiVersions() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{listRes}</code>
         </pre>
       </div>
@@ -632,7 +632,7 @@ export default function DocsApiVersions() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{getRecordsRes}</code>
         </pre>
         <p>
@@ -685,7 +685,7 @@ export default function DocsApiVersions() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{ndjsonRes}</code>
         </pre>
         <p>
@@ -759,13 +759,13 @@ export default function DocsApiVersions() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{manifestRes}</code>
         </pre>
         <h3>
           Response with <code>?since=</code> <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{manifestDeltaRes}</code>
         </pre>
         <p>
@@ -823,7 +823,7 @@ export default function DocsApiVersions() {
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
-        <pre className="bg-ink text-parchment overflow-x-auto p-3 text-xs">
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{diffRes}</code>
         </pre>
       </div>

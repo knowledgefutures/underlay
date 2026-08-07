@@ -3,7 +3,7 @@ import { Link, useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import CollectionOverviewBody from '~/components/collection-overview'
-import { Badge } from '~/components/ui'
+import { Badge, Button } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 import { bareSemver } from '~/lib/format'
@@ -260,7 +260,7 @@ export default function CollectionPage() {
         />
 
         {mirrorConfig?.enabled && (
-          <div className="text-ink-muted bg-parchment-dark border-rule mb-4 flex items-center gap-2 rounded border px-3 py-2 text-xs">
+          <div className="text-ink-muted bg-parchment-dark border-rule rounded-surface mb-4 flex items-center gap-2 border px-3 py-2 text-xs">
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -283,12 +283,12 @@ export default function CollectionPage() {
 
         {/* Empty state for new collections */}
         {!data.latestVersion && isOwner && (
-          <div className="border-rule mb-6 rounded border px-6 py-10 text-center">
+          <div className="border-rule rounded-surface mb-6 border px-6 py-10 text-center">
             <h2 className="mb-2 text-base font-semibold">Get started with {collection}</h2>
             <p className="text-ink-muted mx-auto mb-6 max-w-md text-sm leading-relaxed">
               This collection is empty. Push your first version using the CLI or API.
             </p>
-            <div className="bg-ink text-parchment mx-auto max-w-md overflow-hidden rounded text-left font-mono text-[13px] leading-relaxed">
+            <div className="bg-ink text-parchment rounded-surface mx-auto max-w-md overflow-hidden text-left font-mono text-[13px] leading-relaxed">
               <div className="p-4">
                 <div className="text-ink-muted mb-1 text-[11px] select-none">
                   # initialize and push
@@ -317,7 +317,7 @@ export default function CollectionPage() {
               <span className="text-rule">&middot;</span>
               <span className="text-ink-muted">
                 API:{' '}
-                <code className="bg-parchment-dark rounded px-1.5 py-0.5 text-[11px]">
+                <code className="bg-parchment-dark rounded-control px-1.5 py-0.5 text-[11px]">
                   POST /api/collections/{owner}/{collection}/versions/negotiate
                 </code>
               </span>
@@ -446,20 +446,24 @@ function SharePanel({
               : 'Create a read-only link that lets anyone view this collection without signing in or becoming a member.'}
           </p>
           {isPublic ? (
-            <button
+            <Button
+              variant="link"
+              size="sm"
+              className="font-medium"
               onClick={() => copy(`${window.location.origin}/${owner}/${collection}`, 'link')}
-              className="text-link text-xs font-medium hover:underline"
             >
               {copied === 'link' && modal === null ? 'Copied!' : 'Copy collection URL'}
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
+              variant="link"
+              size="sm"
+              className="font-medium"
               onClick={generateView}
               disabled={loading !== null}
-              className="text-link text-xs font-medium hover:underline"
             >
               {loading === 'view' ? 'Generating...' : 'Create view link →'}
-            </button>
+            </Button>
           )}
         </div>
 
@@ -467,13 +471,15 @@ function SharePanel({
           <p className="text-ink-muted mb-1.5 text-xs leading-relaxed">
             Or generate a temporary link that lets an AI agent push updates to this collection.
           </p>
-          <button
+          <Button
+            variant="link"
+            size="sm"
+            className="font-medium"
             onClick={generateAgent}
             disabled={loading !== null}
-            className="text-link text-xs font-medium hover:underline"
           >
             {loading === 'agent' ? 'Generating...' : 'Generate agent link →'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -486,12 +492,14 @@ function SharePanel({
             if (e.target === e.currentTarget) setModal(null)
           }}
         >
-          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+          <div className="bg-parchment border-rule rounded-surface mx-4 w-full max-w-2xl border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">View-only Link</h2>
               <button
+                type="button"
+                aria-label="Close"
                 onClick={() => setModal(null)}
-                className="text-ink-muted hover:text-ink text-lg leading-none"
+                className="text-ink-muted hover:text-ink cursor-pointer text-lg leading-none"
               >
                 &times;
               </button>
@@ -507,15 +515,12 @@ function SharePanel({
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Link
               </label>
-              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface border px-3 py-2 font-mono text-[11px] break-all">
                 {viewUrl}
               </div>
-              <button
-                onClick={() => copy(viewUrl, 'link')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(viewUrl, 'link')}>
                 {copied === 'link' ? 'Copied!' : 'Copy link'}
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center justify-between">
@@ -545,12 +550,14 @@ function SharePanel({
             if (e.target === e.currentTarget) setModal(null)
           }}
         >
-          <div className="bg-parchment border-rule mx-4 w-full max-w-2xl rounded border p-6 shadow-lg">
+          <div className="bg-parchment border-rule rounded-surface mx-4 w-full max-w-2xl border p-6 shadow-lg">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Agent Update Link</h2>
               <button
+                type="button"
+                aria-label="Close"
                 onClick={() => setModal(null)}
-                className="text-ink-muted hover:text-ink text-lg leading-none"
+                className="text-ink-muted hover:text-ink cursor-pointer text-lg leading-none"
               >
                 &times;
               </button>
@@ -567,30 +574,24 @@ function SharePanel({
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Link
               </label>
-              <div className="bg-parchment-dark border-rule rounded border px-3 py-2 font-mono text-[11px] break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface border px-3 py-2 font-mono text-[11px] break-all">
                 {agentUrl}
               </div>
-              <button
-                onClick={() => copy(agentUrl, 'link')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(agentUrl, 'link')}>
                 {copied === 'link' ? 'Copied!' : 'Copy link'}
-              </button>
+              </Button>
             </div>
 
             <div className="mb-4">
               <label className="text-ink-muted mb-1 block text-[11px] font-medium tracking-wide uppercase">
                 Prompt
               </label>
-              <div className="bg-parchment-dark border-rule overflow-hidden rounded border px-3 py-2 text-xs leading-relaxed break-all">
+              <div className="bg-parchment-dark border-rule rounded-surface overflow-hidden border px-3 py-2 text-xs leading-relaxed break-all">
                 {agentBlurb}
               </div>
-              <button
-                onClick={() => copy(agentBlurb, 'blurb')}
-                className="bg-ink text-parchment mt-2 rounded px-3 py-1 text-xs font-medium transition-opacity hover:opacity-90"
-              >
+              <Button size="sm" className="mt-2" onClick={() => copy(agentBlurb, 'blurb')}>
                 {copied === 'blurb' ? 'Copied!' : 'Copy prompt'}
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center justify-between">
