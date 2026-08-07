@@ -59,7 +59,7 @@ export default function CollectionOverviewBody({
   const tags = Array.isArray(meta?.tags) ? (meta.tags as string[]) : []
 
   return (
-    <div className="grid grid-cols-[1fr_260px] gap-8">
+    <div className="grid grid-cols-1 gap-8 md:grid-cols-[1fr_260px]">
       {/* Main column */}
       <div className="min-w-0">
         {/* Version bar */}

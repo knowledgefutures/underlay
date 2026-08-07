@@ -99,7 +99,7 @@ export default function RecordDetailPage() {
             <h2 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
               Fields
             </h2>
-            <div className="border-rule overflow-hidden rounded border">
+            <div className="border-rule rounded-surface overflow-x-auto border">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-parchment-dark border-rule border-b">

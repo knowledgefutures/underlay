@@ -122,7 +122,7 @@ export default function OwnerPage() {
                 {isMember || isOwner ? 'No collections yet.' : 'No public collections yet.'}
               </div>
             ) : (
-              <div className="border-rule overflow-hidden rounded border">
+              <div className="border-rule rounded-surface overflow-x-auto border">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-ink/5 text-ink-muted text-left text-xs">

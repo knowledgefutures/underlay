@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router'
+
+import { useDismissable } from '~/lib/use-dismissable'
 
 interface Org {
   slug: string
@@ -25,15 +27,11 @@ export default function UserMenu({
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('click', handleClickOutside)
-    return () => document.removeEventListener('click', handleClickOutside)
-  }, [])
+  useDismissable(
+    open,
+    useCallback(() => setOpen(false), []),
+    rootRef,
+  )
 
   const initial = (displayName || slug || '?').charAt(0).toUpperCase()
 
@@ -50,6 +48,9 @@ export default function UserMenu({
         className="bg-ink text-parchment flex h-7 w-7 cursor-pointer items-center justify-center overflow-hidden rounded-full text-xs font-semibold transition-opacity hover:opacity-80"
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Account menu"
       >
         {avatarUrl ? (
           <img src={avatarUrl} alt="" className="h-full w-full object-cover" />

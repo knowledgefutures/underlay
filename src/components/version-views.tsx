@@ -29,8 +29,8 @@ export function VersionInfoBar({
       ) : (
         <div className="mb-4" />
       )}
-      <div className="text-ink-muted border-rule bg-parchment-dark rounded-surface mb-6 flex items-center justify-between border px-4 py-2.5 text-xs">
-        <div className="flex items-center gap-4">
+      <div className="text-ink-muted border-rule bg-parchment-dark rounded-surface mb-6 flex flex-wrap items-center justify-between gap-y-1 border px-4 py-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>
             <strong className="text-ink">{version.recordCount.toLocaleString()}</strong> records
           </span>
@@ -44,7 +44,7 @@ export function VersionInfoBar({
             <strong className="text-ink">{typeCount}</strong> types
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {version.appId && (
             <span>
               via <strong className="text-ink">{version.appId}</strong>
@@ -153,23 +153,25 @@ export function RecordsView({
   }
 
   return (
-    <div className="grid grid-cols-[180px_1fr] gap-6">
-      {/* Type sidebar */}
-      <nav className="space-y-0.5">
+    <div className="grid grid-cols-1 gap-6 md:grid-cols-[180px_1fr]">
+      {/* Type nav: a scrolling row on small screens, a sidebar from md up */}
+      <nav className="min-w-0">
         <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">Types</h3>
-        {allTypes.map((t) => (
-          <TokenLink
-            key={t}
-            to={`${basePath}?type=${t}`}
-            className={`rounded-control block px-3 py-1.5 text-sm transition-colors ${
-              t === currentType
-                ? 'bg-ink text-parchment font-medium'
-                : 'text-ink-muted hover:bg-parchment-dark hover:text-ink'
-            }`}
-          >
-            {t}
-          </TokenLink>
-        ))}
+        <div className="flex gap-1 overflow-x-auto pb-1 md:block md:space-y-0.5 md:overflow-x-visible md:pb-0">
+          {allTypes.map((t) => (
+            <TokenLink
+              key={t}
+              to={`${basePath}?type=${t}`}
+              className={`rounded-control block shrink-0 px-3 py-1.5 text-sm whitespace-nowrap transition-colors ${
+                t === currentType
+                  ? 'bg-ink text-parchment font-medium'
+                  : 'text-ink-muted hover:bg-parchment-dark hover:text-ink'
+              }`}
+            >
+              {t}
+            </TokenLink>
+          ))}
+        </div>
       </nav>
 
       {/* Table area */}

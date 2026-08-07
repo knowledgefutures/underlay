@@ -8,6 +8,7 @@ import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 import { bareSemver } from '~/lib/format'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
+import { useDismissable } from '~/lib/use-dismissable'
 import { useIsOwner } from '~/lib/use-is-owner'
 
 /**
@@ -33,14 +34,11 @@ function VersionPicker({
   const ref = useRef<HTMLDivElement>(null)
   const shareToken = useShareToken()
 
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
+  useDismissable(
+    open,
+    useCallback(() => setOpen(false), []),
+    ref,
+  )
 
   useEffect(() => {
     if (!open || versions !== null) return
@@ -56,6 +54,8 @@ function VersionPicker({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
         className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2 py-0.5 font-mono text-xs transition-colors"
         title="Switch version"
       >
@@ -197,7 +197,7 @@ function CollectionNav({
           )}
         </div>
       </div>
-      <div className="border-rule mb-6 flex items-center gap-0 border-b">
+      <div className="border-rule mb-6 flex items-center gap-0 overflow-x-auto border-b">
         <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
           Overview
         </TokenLink>
@@ -366,6 +366,16 @@ function SharePanel({
   const [loading, setLoading] = useState<'view' | 'agent' | null>(null)
   const [copied, setCopied] = useState<'link' | 'blurb' | null>(null)
 
+  // Escape closes the share dialogs (backdrop click already does).
+  useEffect(() => {
+    if (!modal) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setModal(null)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [modal])
+
   const generateView = useCallback(async () => {
     setLoading('view')
     setCopied(null)
@@ -469,6 +479,8 @@ function SharePanel({
 
       {modal === 'view' && viewUrl && (
         <div
+          role="dialog"
+          aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModal(null)
@@ -526,6 +538,8 @@ function SharePanel({
 
       {modal === 'agent' && agentUrl && (
         <div
+          role="dialog"
+          aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
           onClick={(e) => {
             if (e.target === e.currentTarget) setModal(null)

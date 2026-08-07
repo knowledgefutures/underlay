@@ -187,7 +187,7 @@ export default function CollectionDiffPage() {
                   <span className="h-2 w-2 rounded-full bg-blue-600"></span>
                   Metadata changes
                 </h3>
-                <div className="border-rule overflow-hidden rounded border">
+                <div className="border-rule rounded-surface overflow-x-auto border">
                   <table className="w-full text-sm">
                     <tbody>
                       {meta.schemaChanged && (
@@ -246,7 +246,7 @@ export default function CollectionDiffPage() {
                     <div className="text-ink-muted mb-1.5 text-xs font-medium">
                       {type} ({records.length})
                     </div>
-                    <div className="border-rule overflow-hidden rounded border">
+                    <div className="border-rule rounded-surface overflow-x-auto border">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-rule border-b bg-green-50">
@@ -294,7 +294,7 @@ export default function CollectionDiffPage() {
                     <div className="text-ink-muted mb-1.5 text-xs font-medium">
                       {type} ({records.length})
                     </div>
-                    <div className="border-rule overflow-hidden rounded border">
+                    <div className="border-rule rounded-surface overflow-x-auto border">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-rule border-b bg-amber-50">
@@ -337,7 +337,7 @@ export default function CollectionDiffPage() {
                   <span className="h-2 w-2 rounded-full bg-red-600"></span>
                   Removed ({totalRemoved.toLocaleString()})
                 </h3>
-                <div className="border-rule overflow-hidden rounded border">
+                <div className="border-rule rounded-surface overflow-x-auto border">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-rule border-b bg-red-50">
