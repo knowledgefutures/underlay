@@ -124,7 +124,9 @@ function CollectionNav({
   /** Whether the version in context is the latest ready version. */
   isLatest?: boolean
 }) {
-  const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors'
+  // No -mb-px here: inside a scroll container it would overflow vertically by
+  // 1px and make the row scrollable. The wrapper carries the offset instead.
+  const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 transition-colors'
   const activeClass = `${linkClass} border-ink text-ink`
   const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text-ink hover:border-rule`
   const shareToken = useShareToken()
@@ -201,7 +203,10 @@ function CollectionNav({
         {/* Only the tabs scroll. The picker sits outside the scroll container:
             an overflow value other than visible clips absolutely-positioned
             descendants, which would cut off its dropdown. */}
-        <div className="flex min-w-0 items-center gap-0 overflow-x-auto">
+        {/* -mb-px lifts the whole strip so the active tab's border covers the
+            row rule. overflow-y-hidden because overflow-x-auto alone makes the
+            y axis compute to auto, which rubber-bands on trackpads. */}
+        <div className="-mb-px flex min-w-0 items-center gap-0 overflow-x-auto overflow-y-hidden">
           <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
             Overview
           </TokenLink>
