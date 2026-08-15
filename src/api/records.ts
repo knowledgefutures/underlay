@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import { streamText } from 'hono/streaming'
@@ -36,6 +36,9 @@ async function resolvePublicHashes(hashes: string[]): Promise<Map<string, Public
       schema.recordObjects,
       eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
     )
+    // Keyed off the version that owns the row. A metadata patch copies its base's
+    // schema set verbatim, so the binding this resolves is the same one either
+    // way — the digests would not match otherwise.
     .innerJoin(
       schema.versionSchemas,
       and(
@@ -79,6 +82,10 @@ async function resolveRecordAccess(
     const memberRows = await db
       .select({ hash: schema.versionRecords.recordHash })
       .from(schema.versionRecords)
+      // Ownership-only join, deliberately: access is decided by the COLLECTION,
+      // and the version that owns a row is always in the same collection as any
+      // version sharing it. Resolving through the pointer here would widen the
+      // join for no change in answer.
       .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
       .innerJoin(schema.collections, eq(schema.versions.collectionId, schema.collections.id))
       .innerJoin(
@@ -106,6 +113,7 @@ async function resolveRecordAccess(
       schema.recordObjects,
       eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
     )
+    // Ownership-only, as above: same collection, same answer.
     .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
     .innerJoin(
       schema.collections,
@@ -205,7 +213,17 @@ const app = new Hono<AuthEnv>()
           versionCreatedAt: schema.versions.createdAt,
         })
         .from(schema.versionRecords)
-        .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
+        // A version contains this record if it owns the row OR shares the rows of
+        // the version that does. Matching only on ownership would drop every
+        // metadata-only patch version from the provenance list, even though the
+        // record is just as much a part of it.
+        .innerJoin(
+          schema.versions,
+          or(
+            eq(schema.versionRecords.versionId, schema.versions.id),
+            eq(schema.versionRecords.versionId, schema.versions.recordsFromVersionId),
+          ),
+        )
         .innerJoin(schema.collections, eq(schema.versions.collectionId, schema.collections.id))
         .innerJoin(
           schema.organization,

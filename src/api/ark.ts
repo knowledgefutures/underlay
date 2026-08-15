@@ -15,6 +15,7 @@ import {
   filterTypeSchema,
   getPrivateFields,
   parseSemver,
+  recordsVersionId,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 
@@ -96,6 +97,7 @@ export async function resolve(c: Context<AuthEnv>) {
     appId: string | null
     actorId: string | null
     createdAt: Date
+    recordsFromVersionId: number | null
   } | null = null
 
   if (version !== undefined) {
@@ -110,6 +112,7 @@ export async function resolve(c: Context<AuthEnv>) {
         appId: schema.versions.appId,
         actorId: schema.versions.actorId,
         createdAt: schema.versions.createdAt,
+        recordsFromVersionId: schema.versions.recordsFromVersionId,
       })
       .from(schema.versions)
       .where(
@@ -133,6 +136,7 @@ export async function resolve(c: Context<AuthEnv>) {
         appId: schema.versions.appId,
         actorId: schema.versions.actorId,
         createdAt: schema.versions.createdAt,
+        recordsFromVersionId: schema.versions.recordsFromVersionId,
       })
       .from(schema.versions)
       .where(
@@ -183,7 +187,7 @@ export async function resolve(c: Context<AuthEnv>) {
         // were denormalized this scanned every version_records row for the
         // version just to resolve one ARK.
         and(
-          eq(schema.versionRecords.versionId, versionRow.id),
+          eq(schema.versionRecords.versionId, recordsVersionId(versionRow)),
           eq(schema.versionRecords.recordId, recordId),
           eq(schema.versionRecords.type, recordType),
         ),

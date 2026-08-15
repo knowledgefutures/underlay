@@ -10,6 +10,7 @@ import {
   getPrivateTypes,
   hasOrgAccess,
   parseSemver,
+  recordsVersionId,
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
@@ -108,6 +109,7 @@ async function getOrBuildSqlite(
       id: schema.versions.id,
       semver: schema.versions.semver,
       recordCount: schema.versions.recordCount,
+      recordsFromVersionId: schema.versions.recordsFromVersionId,
     })
     .from(schema.versions)
     .where(
@@ -163,7 +165,7 @@ async function getOrBuildSqlite(
 
   // Load records (excluding private types and private records for non-owners).
   // Record-level privacy is the per-version version_records.private flag.
-  const recordConditions = [eq(schema.versionRecords.versionId, version.id)]
+  const recordConditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
   if (!ownerAccess) {
     recordConditions.push(eq(schema.versionRecords.private, false))
     for (const pt of privateTypes) {

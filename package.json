@@ -22,6 +22,7 @@
     "tool:cleanupSessions": "tsx tools/cleanupSessions.ts",
     "tool:pruneWebhookLogs": "tsx tools/pruneWebhookLogs.ts",
     "tool:seed-mirror": "tsx tools/seedMirror.ts",
+    "tool:verifyRecordSharing": "tsx tools/verifyRecordSharing.ts",
     "cli": "tsx src/cli/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",

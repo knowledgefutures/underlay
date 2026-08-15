@@ -231,7 +231,9 @@ export default function DocsIntegration() {
       <p>
         To update metadata without changing records or schemas (e.g. editing the readme),{' '}
         <code>PATCH /api/collections/:owner/:slug/metadata</code> with the fields to change. This
-        creates a patch version automatically.
+        creates a patch version automatically. On a collection of more than a few million records,
+        add <code>?async=true</code> and poll the returned job — building the patch version takes
+        longer than a synchronous request survives.
       </p>
 
       <h2>First Push Example</h2>

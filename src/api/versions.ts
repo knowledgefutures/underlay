@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import { stream } from 'hono/streaming'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
@@ -9,6 +10,7 @@ import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import {
   canonicalize,
   deriveSemver,
+  describeError,
   filterRecordData,
   filterSchemasForPublic,
   filterTypeSchema,
@@ -19,6 +21,7 @@ import {
   hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
+  recordsVersionId,
   resolveAccessibleCollection,
   resolveCollection,
   type SchemaEntry,
@@ -28,6 +31,22 @@ import { dispatchDeliveries, enqueueWebhookDeliveries } from '../lib/webhooks.se
 import { type AuthEnv, requireAuth } from './auth.server.js'
 
 const MAX_METADATA_BYTES = 64 * 1024
+
+/**
+ * Drop columns that are storage mechanics rather than part of the version a
+ * caller sees.
+ *
+ * `recordsFromVersionId` is a LOCAL row id: it means nothing outside this
+ * database, differs on every mirror of the same collection, and describes an
+ * internal sharing optimization. The detail endpoints spread the whole version
+ * row into their response, so without this it would become a field clients could
+ * read and start depending on.
+ */
+function stripInternalVersionColumns(version: Record<string, any>): Record<string, any> {
+  const out = { ...version }
+  delete out.recordsFromVersionId
+  return out
+}
 
 /**
  * Strip owner-only data from a version row before returning it to a non-owner:
@@ -291,9 +310,9 @@ const app = new Hono<AuthEnv>()
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
         : filterSchemasForPublic(schemaEntries)
 
-      const versionView = ownerAccess
-        ? version
-        : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries))
+      const versionView = stripInternalVersionColumns(
+        ownerAccess ? version : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries)),
+      )
 
       return c.json({
         ...versionView,
@@ -347,9 +366,9 @@ const app = new Hono<AuthEnv>()
         ? Object.fromEntries(schemaEntries.map((e) => [e.slug, e.schema]))
         : filterSchemasForPublic(schemaEntries)
 
-      const versionView = ownerAccess
-        ? version
-        : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries))
+      const versionView = stripInternalVersionColumns(
+        ownerAccess ? version : sanitizeVersionForPublic(version, getPrivateTypes(schemaEntries)),
+      )
 
       return c.json({
         ...versionView,
@@ -406,7 +425,7 @@ const app = new Hono<AuthEnv>()
       // denormalized record_id + type and is indexed on
       // (version_id, [type,] record_id). record_objects is joined only to
       // fetch bodies for the page that survives the index scan.
-      const conditions = [eq(schema.versionRecords.versionId, version.id)]
+      const conditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
       if (type) conditions.push(eq(schema.versionRecords.type, type))
 
       // Cursor-based pagination: ?after=recordId (keyset pagination)
@@ -592,7 +611,11 @@ const app = new Hono<AuthEnv>()
 
       const { semver } = parseSemver(n)
       const [version] = await db
-        .select({ id: schema.versions.id, recordCount: schema.versions.recordCount })
+        .select({
+          id: schema.versions.id,
+          recordCount: schema.versions.recordCount,
+          recordsFromVersionId: schema.versions.recordsFromVersionId,
+        })
         .from(schema.versions)
         .where(
           and(
@@ -638,7 +661,7 @@ const app = new Hono<AuthEnv>()
       // count is negligible next to streaming the rows.
       let streamedRecordCount = version.recordCount
       if (!ownerAccess || type) {
-        const countConditions = [eq(schema.versionRecords.versionId, version.id)]
+        const countConditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
         if (type) countConditions.push(eq(schema.versionRecords.type, type))
         if (!ownerAccess) {
           countConditions.push(eq(schema.versionRecords.private, false))
@@ -711,7 +734,7 @@ const app = new Hono<AuthEnv>()
                      ${ownerAccess ? client`ro.hash` : client`coalesce(vr.public_record_hash, ro.hash)`} AS hash
               FROM version_records vr
               INNER JOIN record_objects ro ON ro.hash = vr.record_hash
-              WHERE vr.version_id = ${version.id}
+              WHERE vr.version_id = ${recordsVersionId(version)}
                 ${type ? client`AND vr.type = ${type}` : client``}
                 ${keyset}
                 ${ownerAccess ? client`` : client`AND vr.private = false AND vr.type <> ALL(${privateTypeList}::text[])`}
@@ -830,7 +853,7 @@ const app = new Hono<AuthEnv>()
       // Only load records that contain $file references (DB-level filter).
       // Non-owners never see records flagged private.
       const refConditions = [
-        eq(schema.versionRecords.versionId, version.id),
+        eq(schema.versionRecords.versionId, recordsVersionId(version)),
         sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
       ]
       if (!ownerAccess) refConditions.push(eq(schema.versionRecords.private, false))
@@ -958,7 +981,10 @@ const app = new Hono<AuthEnv>()
         const { semver: sinceSemver } = parseSemver(sinceParam)
 
         const [sinceVersion] = await db
-          .select({ id: schema.versions.id })
+          .select({
+            id: schema.versions.id,
+            recordsFromVersionId: schema.versions.recordsFromVersionId,
+          })
           .from(schema.versions)
           .where(
             and(
@@ -972,8 +998,12 @@ const app = new Hono<AuthEnv>()
         if (!sinceVersion)
           return c.json({ error: `Version ${sinceSemver} not found`, statusCode: 404 }, 404)
 
-        const targetId = version.id
+        // Record-set ids for the delta queries. `sinceId` stays the real version
+        // id because it also loads `version_schemas`, which a metadata patch owns
+        // outright — only the `version_records` side resolves through the pointer.
+        const targetId = recordsVersionId(version)
         const sinceId = sinceVersion.id
+        const sinceRecordsId = recordsVersionId(sinceVersion)
         const at = decodeDeltaCursor(cursor)
 
         type DeltaRow = { id: string; type: string; hash: string; recordHash: string }
@@ -996,11 +1026,11 @@ const app = new Hono<AuthEnv>()
             : sql``
         const previousServedHash = ownerAccess
           ? sql`(SELECT s.record_hash FROM version_records s
-                 WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
+                 WHERE s.version_id = ${sinceRecordsId} AND s.record_id = vr.record_id LIMIT 1)`
           : sql`(SELECT CASE WHEN s.private = false ${sinceTypeGuard}
                             THEN coalesce(s.public_record_hash, s.record_hash) END
                  FROM version_records s
-                 WHERE s.version_id = ${sinceId} AND s.record_id = vr.record_id LIMIT 1)`
+                 WHERE s.version_id = ${sinceRecordsId} AND s.record_id = vr.record_id LIMIT 1)`
 
         // Visibility of a row for the CALLER, evaluated against the version that
         // row belongs to (private-type sets differ between versions). Applied to
@@ -1059,12 +1089,19 @@ const app = new Hono<AuthEnv>()
             return Promise.all([
               run<DeltaRow>(
                 at.added,
-                deltaQuery(targetId, privateTypes, sinceId, sincePrivateTypes, 'absent', at.added),
+                deltaQuery(
+                  targetId,
+                  privateTypes,
+                  sinceRecordsId,
+                  sincePrivateTypes,
+                  'absent',
+                  at.added,
+                ),
               ),
               run<DeltaRow>(
                 at.removed,
                 deltaQuery(
-                  sinceId,
+                  sinceRecordsId,
                   sincePrivateTypes,
                   targetId,
                   privateTypes,
@@ -1077,7 +1114,7 @@ const app = new Hono<AuthEnv>()
                 deltaQuery(
                   targetId,
                   privateTypes,
-                  sinceId,
+                  sinceRecordsId,
                   sincePrivateTypes,
                   'changed',
                   at.updated,
@@ -1131,7 +1168,7 @@ const app = new Hono<AuthEnv>()
             SELECT vr.record_id AS id, vr.type, ${servedHash} AS hash,
                    vr.record_hash AS "recordHash", vr.private
             FROM version_records vr
-            WHERE vr.version_id = ${version.id}
+            WHERE vr.version_id = ${recordsVersionId(version)}
               ${privacyWhere} ${afterCursor('vr', at.added)}
             ORDER BY vr.record_id, vr.record_hash
             LIMIT ${limit + 1}
@@ -1204,7 +1241,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Version not found', statusCode: 404 }, 404)
       }
 
-      const targetId = targetVersion.id
+      const targetId = recordsVersionId(targetVersion)
       let fromVersion: typeof targetVersion | null = null
       if (from) {
         const { semver: fromSemver } = parseSemver(from)
@@ -1224,6 +1261,9 @@ const app = new Hono<AuthEnv>()
       }
 
       const fromId = fromVersion?.id
+      // As in the delta path: `fromId` loads schemas, `fromRecordsId` reads
+      // `version_records`. They differ only when `from` is a metadata patch.
+      const fromRecordsId = fromVersion ? recordsVersionId(fromVersion) : undefined
 
       // Privacy filtering for non-owners: hide private types and private records.
       // record_objects is joined only for the record body (ro.data); record-level
@@ -1300,17 +1340,17 @@ const app = new Hono<AuthEnv>()
               diffQuery(
                 targetId,
                 privateTypes,
-                fromId,
+                fromRecordsId,
                 fromPrivateTypes,
-                fromId ? 'absent' : 'all',
+                fromRecordsId ? 'absent' : 'all',
                 diffCursor.added,
               ),
             ),
             run(
               diffCursor.removed,
-              fromId
+              fromRecordsId
                 ? diffQuery(
-                    fromId,
+                    fromRecordsId,
                     fromPrivateTypes,
                     targetId,
                     privateTypes,
@@ -1321,11 +1361,11 @@ const app = new Hono<AuthEnv>()
             ),
             run(
               diffCursor.updated,
-              fromId
+              fromRecordsId
                 ? diffQuery(
                     targetId,
                     privateTypes,
-                    fromId,
+                    fromRecordsId,
                     fromPrivateTypes,
                     'changed',
                     diffCursor.updated,
@@ -1425,6 +1465,12 @@ const app = new Hono<AuthEnv>()
     openApi({
       tags: ['Versions'],
       summary: 'Update collection metadata, creating a new patch version',
+      description:
+        'Creates a patch version carrying the merged metadata. Building it means folding both ' +
+        'version digests over the record set and copying every `version_records` row, which on a ' +
+        'multi-million-record collection takes longer than an HTTP request survives. Pass ' +
+        '`?async=true` to get a `202` with a `job_id` and poll ' +
+        '`GET /:owner/:slug/metadata/jobs/:jobId` for the outcome.',
       request: {
         param: z.object({ owner: z.string(), slug: z.string() }),
         // Metadata is a free-form JSON object (readme, description, license, ...)
@@ -1435,6 +1481,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug } = c.req.valid('param')
       const body = c.req.valid('json')
+
+      // Query param only, unlike the negotiate commit which also accepts
+      // `{async: true}` in the body. Here the body *is* the metadata, so an
+      // `async` key in it would be merged into the stored metadata and persisted.
+      const asyncQuery = c.req.query('async')
+      const wantsAsync = asyncQuery === 'true' || asyncQuery === '1'
 
       // Metadata is hashed and stored on every version row — keep it bounded
       if (JSON.stringify(body).length > MAX_METADATA_BYTES) {
@@ -1475,141 +1527,285 @@ const app = new Hono<AuthEnv>()
         return c.json({ semver: latest.semver, unchanged: true })
       }
 
-      const schemaEntries = await loadVersionSchemas(latest.id)
-      const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
-      // Hash-only load: public hashes were computed and stored at commit time,
-      // so a metadata-only version never needs the record bodies
-      const fileHashes = (
-        await db
-          .select({ hash: schema.versionFiles.fileHash })
-          .from(schema.versionFiles)
-          .where(eq(schema.versionFiles.versionId, latest.id))
-      ).map((f) => f.hash)
+      // Two writers both reading `latest` would derive the same patch semver and
+      // one would lose to the (collection_id, semver) unique constraint after
+      // doing all the work. Refuse up front instead — and refuse for the
+      // synchronous path too, since a sync PATCH races a running job just as
+      // badly.
+      const [inFlight] = await db
+        .select({ id: schema.metadataJobs.id })
+        .from(schema.metadataJobs)
+        .where(
+          and(
+            eq(schema.metadataJobs.collectionId, collection.id),
+            eq(schema.metadataJobs.status, 'running'),
+          ),
+        )
+        .limit(1)
+      if (inFlight) {
+        return c.json(
+          {
+            error: 'A metadata update is already in progress for this collection',
+            statusCode: 409,
+            job_id: inFlight.id,
+          },
+          409,
+        )
+      }
 
-      const privateTypes = getPrivateTypes(schemaEntries)
-      const publicSchemaSet = schemaEntries
-        .filter((e) => !privateTypes.has(e.slug))
-        .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
+      const buildVersion = async (): Promise<{
+        status: ContentfulStatusCode
+        body: Record<string, unknown>
+      }> => {
+        const schemaEntries = await loadVersionSchemas(latest.id)
+        const schemaSet = schemaEntries.map((e) => ({ slug: e.slug, schemaHash: e.schemaHash }))
+        // Hash-only load: public hashes were computed and stored at commit time,
+        // so a metadata-only version never needs the record bodies
+        const fileHashes = (
+          await db
+            .select({ hash: schema.versionFiles.fileHash })
+            .from(schema.versionFiles)
+            .where(eq(schema.versionFiles.versionId, latest.id))
+        ).map((f) => f.hash)
 
-      // Both digests are folded over hashes streamed from Postgres in sorted
-      // order, exactly as the commit path does. Loading every row to build two
-      // in-memory arrays made a metadata edit cost as much as a full push — on a
-      // multi-million-record collection, several hundred MB of JS objects to
-      // change a description.
-      //
-      // COLLATE "C" is required: the digest must see byte order, which is what
-      // Array.prototype.sort() produces, not the database's locale collation.
-      const client = db.$client
-      const CURSOR_CHUNK = 10_000
+        const privateTypes = getPrivateTypes(schemaEntries)
+        const publicSchemaSet = schemaEntries
+          .filter((e) => !privateTypes.has(e.slug))
+          .map((e) => ({ slug: e.slug, schemaHash: hashSchema(filterTypeSchema(e.schema)) }))
 
-      const versionHashStream = new VersionHashStream(schemaSet, fileHashes, newMetadata)
-      await client`
+        // Both digests are folded over hashes streamed from Postgres in sorted
+        // order, exactly as the commit path does. Loading every row to build two
+        // in-memory arrays made a metadata edit cost as much as a full push — on a
+        // multi-million-record collection, several hundred MB of JS objects to
+        // change a description.
+        //
+        // COLLATE "C" is required: the digest must see byte order, which is what
+        // Array.prototype.sort() produces, not the database's locale collation.
+        const client = db.$client
+        const CURSOR_CHUNK = 10_000
+
+        const versionHashStream = new VersionHashStream(schemaSet, fileHashes, newMetadata)
+        await client`
         SELECT record_hash AS h FROM version_records
-        WHERE version_id = ${latest.id}
+        WHERE version_id = ${recordsVersionId(latest)}
         ORDER BY record_hash COLLATE "C"
       `.cursor(CURSOR_CHUNK, (rows) => {
-        for (const row of rows) versionHashStream.push(row['h'] as string)
-      })
-      const versionHash = versionHashStream.digest()
+          for (const row of rows) versionHashStream.push(row['h'] as string)
+        })
+        const versionHash = versionHashStream.digest()
 
-      const publicHashStream = new VersionHashStream(publicSchemaSet, fileHashes, newMetadata)
-      await client`
+        const publicHashStream = new VersionHashStream(publicSchemaSet, fileHashes, newMetadata)
+        await client`
         SELECT coalesce(vr.public_record_hash, vr.record_hash) AS h
         FROM version_records vr
-        WHERE vr.version_id = ${latest.id}
+        WHERE vr.version_id = ${recordsVersionId(latest)}
           AND NOT vr.private
           AND vr.type <> ALL(${[...privateTypes]}::text[])
         ORDER BY coalesce(vr.public_record_hash, vr.record_hash) COLLATE "C"
       `.cursor(CURSOR_CHUNK, (rows) => {
-        for (const row of rows) publicHashStream.push(row['h'] as string)
-      })
-      const publicHash = publicHashStream.digest().replace('private:', 'public:')
+          for (const row of rows) publicHashStream.push(row['h'] as string)
+        })
+        const publicHash = publicHashStream.digest().replace('private:', 'public:')
 
-      const sv = deriveSemver(latest.semver, false, false, true)
+        const sv = deriveSemver(latest.semver, false, false, true)
 
-      let newVersionId: number | undefined
-      await db.transaction(async (tx) => {
-        const [version] = await tx
-          .insert(schema.versions)
-          .values({
-            collectionId: collection.id,
-            semver: sv.semver,
-            major: sv.major,
-            minor: sv.minor,
-            patch: sv.patch,
-            hash: versionHash,
-            publicHash,
-            baseSemver: latest.semver,
-            message: `Update metadata`,
-            metadata: newMetadata,
-            pushedBy: userId ?? null,
-            recordCount: latest.recordCount,
-            fileCount: latest.fileCount,
-            // Same record set as the base version, so the per-type counts carry
-            // over unchanged.
-            typeCounts: latest.typeCounts,
-            totalBytes: latest.totalBytes,
-          })
-          .returning({ id: schema.versions.id })
+        let newVersionId: number | undefined
+        await db.transaction(async (tx) => {
+          const [version] = await tx
+            .insert(schema.versions)
+            .values({
+              collectionId: collection.id,
+              semver: sv.semver,
+              major: sv.major,
+              minor: sv.minor,
+              patch: sv.patch,
+              hash: versionHash,
+              publicHash,
+              baseSemver: latest.semver,
+              message: `Update metadata`,
+              metadata: newMetadata,
+              pushedBy: userId ?? null,
+              recordCount: latest.recordCount,
+              fileCount: latest.fileCount,
+              // Same record set as the base version, so the per-type counts carry
+              // over unchanged.
+              typeCounts: latest.typeCounts,
+              totalBytes: latest.totalBytes,
+              // Share the base's record set rather than copying it. Points at the
+              // version that actually owns the rows: if the base is itself a
+              // metadata patch, inherit its pointer so this stays one hop.
+              recordsFromVersionId: recordsVersionId(latest),
+            })
+            .returning({ id: schema.versions.id })
 
-        newVersionId = version!.id
+          newVersionId = version!.id
 
-        if (schemaEntries.length > 0) {
-          await tx.insert(schema.versionSchemas).values(
-            schemaEntries.map((e) => ({
-              versionId: version!.id,
-              slug: e.slug,
-              schemaId: e.schemaId,
-            })),
-          )
-        }
+          if (schemaEntries.length > 0) {
+            await tx.insert(schema.versionSchemas).values(
+              schemaEntries.map((e) => ({
+                versionId: version!.id,
+                slug: e.slug,
+                schemaId: e.schemaId,
+              })),
+            )
+          }
 
-        // Copy the record set server-side. The schema set is unchanged, so every
-        // column — including the public content-addresses and the per-version
-        // `private` flag — carries over as-is. `private` MUST be copied: it
-        // defaults to false, so omitting it would silently de-privatize every
-        // private record in the new (and now latest) version.
-        await tx.execute(sql`
-          INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
-          SELECT ${version!.id}, record_hash, public_record_hash, record_id, type, private
-          FROM version_records
-          WHERE version_id = ${latest.id}
-        `)
+          // No record-set copy: `recordsFromVersionId` above points at the base's
+          // rows. The schema set is unchanged, so every column that copy used to
+          // carry — the public content-addresses and the per-version `private`
+          // flag included — is now read from the base directly, which cannot
+          // drift from it by construction.
 
-        if (fileHashes.length > 0) {
+          if (fileHashes.length > 0) {
+            await tx
+              .insert(schema.versionFiles)
+              .values(fileHashes.map((h) => ({ versionId: version!.id, fileHash: h })))
+          }
+
           await tx
-            .insert(schema.versionFiles)
-            .values(fileHashes.map((h) => ({ versionId: version!.id, fileHash: h })))
+            .update(schema.collections)
+            .set({ updatedAt: new Date() })
+            .where(eq(schema.collections.id, collection.id))
+        })
+
+        // Fire webhooks for the metadata (patch) version — best-effort.
+        try {
+          const deliveryIds = await enqueueWebhookDeliveries(
+            {
+              id: newVersionId!,
+              semver: sv.semver,
+              hash: versionHash,
+              major: sv.major,
+              minor: sv.minor,
+              patch: sv.patch,
+              recordCount: latest.recordCount,
+              fileCount: latest.fileCount,
+            },
+            'patch',
+            collection.id,
+          )
+          dispatchDeliveries(deliveryIds)
+        } catch (err) {
+          console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
         }
 
-        await tx
-          .update(schema.collections)
-          .set({ updatedAt: new Date() })
-          .where(eq(schema.collections.id, collection.id))
-      })
-
-      // Fire webhooks for the metadata (patch) version — best-effort.
-      try {
-        const deliveryIds = await enqueueWebhookDeliveries(
-          {
-            id: newVersionId!,
-            semver: sv.semver,
-            hash: versionHash,
-            major: sv.major,
-            minor: sv.minor,
-            patch: sv.patch,
-            recordCount: latest.recordCount,
-            fileCount: latest.fileCount,
-          },
-          'patch',
-          collection.id,
-        )
-        dispatchDeliveries(deliveryIds)
-      } catch (err) {
-        console.error(`[webhooks] failed to enqueue for ${sv.semver}:`, err)
+        return {
+          status: 201,
+          body: { semver: sv.semver, hash: versionHash, metadata: newMetadata },
+        }
       }
 
-      return c.json({ semver: sv.semver, hash: versionHash, metadata: newMetadata }, 201)
+      // Synchronous by default: the CLI, existing scripts and every caller
+      // written before `?async=true` expect the version in the response, and on
+      // an ordinary collection the whole thing takes well under a second.
+      if (!wantsAsync) {
+        const { status, body } = await buildVersion()
+        return c.json(body, status)
+      }
+
+      const [job] = await db
+        .insert(schema.metadataJobs)
+        .values({
+          collectionId: collection.id,
+          userId: userId ?? null,
+          baseSemver: latest.semver,
+          metadata: newMetadata,
+        })
+        .returning({ id: schema.metadataJobs.id })
+
+      // Deliberately not awaited: the response goes out now and the outcome is
+      // recorded on the job for the client to poll. A process that dies mid-build
+      // rolls the version transaction back and leaves the job 'running', which
+      // the cleanup sweep fails out.
+      void (async () => {
+        const startedAt = Date.now()
+        try {
+          const { status, body } = await buildVersion()
+          const ok = status >= 200 && status < 300
+          await db
+            .update(schema.metadataJobs)
+            .set({
+              status: ok ? 'completed' : 'failed',
+              ...(ok ? { result: body as never } : { error: body as never }),
+              finishedAt: new Date(),
+            })
+            .where(eq(schema.metadataJobs.id, job!.id))
+          console.log(
+            `[metadata] async job ${job!.id} ${ok ? `created ${body['semver']}` : `failed (${status})`} in ${Math.round((Date.now() - startedAt) / 1000)}s`,
+          )
+        } catch (err) {
+          console.error(`[metadata] async job ${job!.id} threw: ${describeError(err)}`, err)
+          await db
+            .update(schema.metadataJobs)
+            .set({
+              status: 'failed',
+              error: { statusCode: 500, error: describeError(err) },
+              finishedAt: new Date(),
+            })
+            .where(eq(schema.metadataJobs.id, job!.id))
+            .catch(() => {})
+        }
+      })()
+
+      return c.json({ job_id: job!.id, status: 'running', base_semver: latest.semver }, 202)
+    },
+  )
+  // Poll an async metadata job started with `PATCH …/metadata?async=true`
+  .get(
+    '/:owner/:slug/metadata/jobs/:jobId',
+    requireAuth('read'),
+    openApi({
+      tags: ['Versions'],
+      summary: 'Get the status of an async metadata update',
+      description:
+        '`status` is one of `running`, `completed` or `failed`. `result` holds the created ' +
+        'version once status is `completed`, and `error` the rejection body once it is `failed`.',
+      request: {
+        param: z.object({ owner: z.string(), slug: z.string(), jobId: z.string() }),
+      },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { owner, slug, jobId } = c.req.valid('param')
+
+      const collection = await resolveCollection(owner, slug)
+      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
+
+      // Authorized by collection access rather than by who started the job: a
+      // job is a property of the collection, and anyone who could write the
+      // metadata can see how the write went.
+      const userId = c.get('userId')
+      if (!(await hasOrgAccess(userId, collection.organizationId))) {
+        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+      }
+
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      if (scopedCollections && !scopedCollections.includes(collection.id)) {
+        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+
+      const [job] = await db
+        .select()
+        .from(schema.metadataJobs)
+        .where(
+          and(
+            eq(schema.metadataJobs.id, jobId),
+            eq(schema.metadataJobs.collectionId, collection.id),
+          ),
+        )
+        .limit(1)
+
+      if (!job) return c.json({ error: 'Job not found', statusCode: 404 }, 404)
+
+      return c.json({
+        job_id: job.id,
+        status: job.status,
+        base_semver: job.baseSemver,
+        started_at: job.startedAt,
+        finished_at: job.finishedAt,
+        result: job.result ?? null,
+        error: job.error ?? null,
+      })
     },
   )
 
@@ -1625,7 +1821,12 @@ const app = new Hono<AuthEnv>()
  * regardless of the filter, which was simply wrong under `?type=`.
  */
 async function countVersionRecords(
-  version: { id: number; recordCount: number; typeCounts: Record<string, number> | null },
+  version: {
+    id: number
+    recordCount: number
+    typeCounts: Record<string, number> | null
+    recordsFromVersionId: number | null
+  },
   type: string | undefined,
   privateTypes: Set<string>,
 ): Promise<number> {
@@ -1641,7 +1842,7 @@ async function countVersionRecords(
 
   if (!type && privateTypes.size === 0) return version.recordCount
 
-  const conditions = [eq(schema.versionRecords.versionId, version.id)]
+  const conditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
   if (type) conditions.push(eq(schema.versionRecords.type, type))
   for (const pt of privateTypes) conditions.push(sql`${schema.versionRecords.type} != ${pt}`)
   const [row] = await db
