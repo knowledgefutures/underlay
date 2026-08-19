@@ -82,6 +82,13 @@ const metadataRes = `{
   }
 }`
 
+const metadataAsync = `PATCH /api/collections/:owner/:slug/metadata?async=true
+→ 202 { "job_id": "3f9c…", "status": "running", "base_semver": "v3.2.0" }
+
+GET /api/collections/:owner/:slug/metadata/jobs/3f9c…
+→ 200 { "job_id": "3f9c…", "status": "completed",
+        "result": { "semver": "v3.2.1", "hash": "private:e5f6a7b8…", "metadata": { … } } }`
+
 const forkReq = `{
   "targetOrg": "my-org",
   "slug": "my-fork"
@@ -238,8 +245,8 @@ export default function DocsApiCollections() {
         <h2>PATCH /api/collections/:owner/:slug/metadata</h2>
         <p className="scope">Auth: write scope</p>
         <p>
-          Update version metadata by creating a new minor version bump. The request body is a JSON
-          object whose fields are merged with the previous version's metadata. Use this to update{' '}
+          Update version metadata by creating a new patch version. The request body is a JSON object
+          whose fields are merged with the previous version's metadata. Use this to update{' '}
           <code>description</code>, <code>readme</code>, <code>license</code>, or any other metadata
           fields without pushing new records.
         </p>
@@ -287,9 +294,34 @@ export default function DocsApiCollections() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{metadataRes}</code>
         </pre>
+        <h3>Large collections</h3>
+        <p>
+          A metadata edit creates a patch version, which means recomputing both version digests over
+          the record set and copying every record-membership row. Past a few million records that
+          takes longer than a proxy will hold the connection open. Add <code>?async=true</code> to
+          get an immediate <code>202</code> with a <code>job_id</code>, then poll for the outcome:
+        </p>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{metadataAsync}</code>
+        </pre>
+        <p>
+          The job's <code>status</code> is <code>running</code>, <code>completed</code> or{' '}
+          <code>failed</code>. On <code>completed</code>, <code>result</code> holds exactly what the
+          synchronous call would have returned; on <code>failed</code>, <code>error</code> holds the
+          rejection. Only one metadata update runs per collection at a time.
+        </p>
         <h3>Errors</h3>
         <table>
           <tbody>
+            <tr>
+              <td>
+                <code>409</code>
+              </td>
+              <td>
+                A metadata update is already in progress for this collection. The response carries
+                its <code>job_id</code>.
+              </td>
+            </tr>
             <tr>
               <td>
                 <code>422</code>

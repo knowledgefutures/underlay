@@ -1,0 +1,2 @@
+ALTER TABLE "versions" ADD COLUMN "records_from_version_id" bigint;--> statement-breakpoint
+ALTER TABLE "versions" ADD CONSTRAINT "versions_records_from_version_id_versions_id_fk" FOREIGN KEY ("records_from_version_id") REFERENCES "public"."versions"("id") ON DELETE restrict ON UPDATE no action;

@@ -19,6 +19,7 @@ import {
   getPrivateTypes,
   hasOrgAccess,
   loadVersionSchemas,
+  recordsVersionId,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { fullPrincipalUserId, requireAuth, requireUnscopedKey } from './auth.server.js'
@@ -410,7 +411,7 @@ const app = new Hono<AuthEnv>()
             count: sql<number>`count(*)::int`,
           })
           .from(schema.versionRecords)
-          .where(eq(schema.versionRecords.versionId, latestVersion.id))
+          .where(eq(schema.versionRecords.versionId, recordsVersionId(latestVersion)))
           .groupBy(schema.versionRecords.type)
         typeCounts = rows.map((r) => ({ type: r.type, count: r.count }))
       }
@@ -946,7 +947,7 @@ const app = new Hono<AuthEnv>()
       const types = await db
         .selectDistinct({ type: schema.versionRecords.type })
         .from(schema.versionRecords)
-        .where(eq(schema.versionRecords.versionId, version.id))
+        .where(eq(schema.versionRecords.versionId, recordsVersionId(version)))
 
       // tar needs each entry's byte length in its header, so an entry cannot be
       // written from an unbounded stream. Previously every record of a type was
@@ -1006,7 +1007,7 @@ const app = new Hono<AuthEnv>()
           // Walk the (version_id, type, record_id) index; record_objects is
           // joined only to pick up the body for the rows on this page.
           const conditions = [
-            eq(schema.versionRecords.versionId, version.id),
+            eq(schema.versionRecords.versionId, recordsVersionId(version)),
             eq(schema.versionRecords.type, type),
           ]
           // Non-owners never see records flagged private (per-version flag).
@@ -1212,7 +1213,7 @@ const app = new Hono<AuthEnv>()
           .from(schema.versionRecords)
           .where(
             and(
-              eq(schema.versionRecords.versionId, latestVersion.id),
+              eq(schema.versionRecords.versionId, recordsVersionId(latestVersion)),
               eq(schema.versionRecords.private, true),
             ),
           )
@@ -1221,7 +1222,7 @@ const app = new Hono<AuthEnv>()
           .from(schema.versionRecords)
           .where(
             and(
-              eq(schema.versionRecords.versionId, latestVersion.id),
+              eq(schema.versionRecords.versionId, recordsVersionId(latestVersion)),
               sql`${schema.versionRecords.publicRecordHash} IS NOT NULL`,
             ),
           )
@@ -1277,11 +1278,15 @@ const app = new Hono<AuthEnv>()
 
         // Copy the record set server-side. A fork of a multi-million-record
         // collection has no reason to round-trip every row through the app.
+        //
+        // A real copy, not a shared pointer: the fork is an independent
+        // collection, and sharing across collections would make the source's
+        // rows undeletable for as long as any fork existed.
         await tx.execute(sql`
           INSERT INTO version_records (version_id, record_hash, public_record_hash, record_id, type, private)
           SELECT ${newVersion!.id}, record_hash, public_record_hash, record_id, type, private
           FROM version_records
-          WHERE version_id = ${latestVersion.id}
+          WHERE version_id = ${recordsVersionId(latestVersion)}
         `)
 
         const sourceFiles = await tx

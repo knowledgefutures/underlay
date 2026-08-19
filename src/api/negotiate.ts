@@ -10,6 +10,7 @@ import {
   canonicalize,
   checkSchemaBounds,
   deriveSemver,
+  describeError,
   filterRecordData,
   filterTypeSchema,
   findExtraFields,
@@ -21,6 +22,7 @@ import {
   hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
+  recordsVersionId,
   resolveCollection,
   type SchemaEntry,
   stripToSchema,
@@ -130,37 +132,6 @@ async function ingestManifestEntries(
   }
 
   return deduped.filter((r) => !existingRecordSet.has(r.hash)).map((r) => r.hash)
-}
-
-/**
- * Flatten an error and its `cause` chain into one string.
- *
- * Drizzle puts the SQL in `message` and the underlying Postgres error — the part
- * that says *why* — in `cause`. Recording only `message` yields "Failed query:
- * SELECT …" with no reason, which is unactionable for whoever is reading a
- * failed session hours later.
- */
-function describeError(err: unknown): string {
-  const parts: string[] = []
-  let current: unknown = err
-  for (let depth = 0; current && depth < 5; depth++) {
-    if (current instanceof Error) {
-      parts.push(current.message)
-      // Postgres errors carry the useful specifics outside `message`.
-      const pg = current as { code?: string; detail?: string; hint?: string }
-      const extra = [
-        pg.code && `code ${pg.code}`,
-        pg.detail && `detail: ${pg.detail}`,
-        pg.hint && `hint: ${pg.hint}`,
-      ].filter(Boolean)
-      if (extra.length > 0) parts.push(extra.join(', '))
-      current = current.cause
-    } else {
-      parts.push(String(current))
-      break
-    }
-  }
-  return parts.join(' | ')
 }
 
 /** Mirrors `c.json(body, status)` so the finalize body reads unchanged. */
@@ -1041,7 +1012,7 @@ app.post(
         ? sql`NOT m.submitted`
         : sql`NOT m.submitted AND NOT EXISTS (
               SELECT 1 FROM version_records vr
-              WHERE vr.version_id = ${latest.id} AND vr.record_hash = m.hash
+              WHERE vr.version_id = ${recordsVersionId(latest)} AND vr.record_hash = m.hash
             )`
 
       const WALK_BATCH = 5000
@@ -1294,13 +1265,13 @@ app.post(
         SELECT
           (SELECT count(DISTINCT coalesce(final_hash, hash)) FROM negotiate_session_manifest
              WHERE session_id = ${sessionId}) AS new_count,
-          (SELECT count(*) FROM version_records WHERE version_id = ${latest.id}) AS old_count,
+          (SELECT count(*) FROM version_records WHERE version_id = ${recordsVersionId(latest)}) AS old_count,
           EXISTS (
             SELECT 1 FROM negotiate_session_manifest m
             WHERE m.session_id = ${sessionId}
               AND NOT EXISTS (
                 SELECT 1 FROM version_records vr
-                WHERE vr.version_id = ${latest.id}
+                WHERE vr.version_id = ${recordsVersionId(latest)}
                   AND vr.record_hash = coalesce(m.final_hash, m.hash)
               )
           ) AS has_new

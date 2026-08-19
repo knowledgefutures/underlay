@@ -245,6 +245,26 @@ export const versions = pgTable(
     // count query.
     typeCounts: jsonb('type_counts').$type<Record<string, number>>(),
     totalBytes: bigint('total_bytes', { mode: 'number' }).notNull(),
+    // Set only by a metadata-only patch version, which by construction has the
+    // same record set as the version it was cut from: it shares that version's
+    // `version_records` rows instead of copying them. A copy cost one row per
+    // record per edit — ~2 GB with indexes to fix a readme typo on a 5.5M-record
+    // collection, repeated for every edit.
+    //
+    // NULL means "this version owns its rows", which is every pushed version and
+    // everything written before this column existed. Always exactly one hop: it
+    // is set to the base's own pointer when the base is itself a metadata patch,
+    // so it always names a version that owns rows and never needs a recursive
+    // resolve. Read it through `recordsVersionId()` — a query that filters
+    // `version_records` on a patch version's own id silently matches zero rows.
+    //
+    // RESTRICT, not CASCADE: deleting a version whose rows others share would
+    // empty those versions rather than fail. Nothing deletes a shared version
+    // today, and this is what keeps that true.
+    recordsFromVersionId: bigint('records_from_version_id', { mode: 'number' }).references(
+      (): any => versions.id,
+      { onDelete: 'restrict' },
+    ),
     status: text('status').notNull().default('ready'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -475,6 +495,58 @@ export const negotiateSessionManifest = pgTable(
   (t) => [
     primaryKey({ columns: [t.sessionId, t.hash] }),
     index('nsm_session_needed_idx').on(t.sessionId, t.needed),
+  ],
+)
+
+// --- Metadata Jobs ---
+
+/**
+ * Background metadata-only version bumps.
+ *
+ * A metadata PATCH creates a patch version, which means folding both version
+ * digests over the whole record set and copying every `version_records` row.
+ * Past a few million records that is minutes of database work, and Cloudflare
+ * cuts the connection at 100s — so the endpoint was simply unreachable at that
+ * size. `?async=true` returns a job id and finishes the work in the background,
+ * the same shape the negotiate commit already uses.
+ *
+ * Unlike an async negotiate finalize, the version here is built in a single
+ * transaction with its final `ready` status, so a process that dies mid-job
+ * leaves nothing behind but this row: Postgres rolls the version back. The
+ * sweep therefore only has to fail the job, not clean up a partial version.
+ */
+export const metadataJobs = pgTable(
+  'metadata_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    // Nullable to match `versions.pushed_by`: a collection-scoped API key can
+    // act without a user, and the job outlives the request that made it.
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    status: text('status', { enum: ['running', 'completed', 'failed'] })
+      .notNull()
+      .default('running'),
+    // The version this job is bumping from, and the merged metadata it will
+    // write — enough to explain a failed job without replaying the request.
+    baseSemver: text('base_semver').notNull(),
+    metadata: jsonb('metadata').notNull(),
+    // Outcome, so a client polling after the fact gets the same answer the
+    // synchronous path would have returned inline.
+    result: jsonb('result').$type<{
+      semver: string
+      hash: string
+      metadata: Record<string, unknown>
+    }>(),
+    error: jsonb('error').$type<{ statusCode: number; error: string; [k: string]: unknown }>(),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    // Drives the "is one already running for this collection?" guard, which is
+    // what keeps two jobs from racing to claim the same semver.
+    index('metadata_jobs_collection_status_idx').on(t.collectionId, t.status),
   ],
 )
 

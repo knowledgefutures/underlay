@@ -7,6 +7,7 @@ import {
   getLatestReadyVersion,
   hasOrgAccess,
   loadVersionSchemas,
+  recordsVersionId,
 } from '../lib/version-helpers.server.js'
 
 const DEFAULT_SCHEMA_SLUG = 'update'
@@ -119,7 +120,7 @@ export async function agentPage(c: Context) {
         schema.recordObjects,
         eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
       )
-      .where(eq(schema.versionRecords.versionId, latest.id))
+      .where(eq(schema.versionRecords.versionId, recordsVersionId(latest)))
       .limit(3)
     examples = rows.map((r) => ({ id: r.recordId, type: r.type, data: r.data }))
   }

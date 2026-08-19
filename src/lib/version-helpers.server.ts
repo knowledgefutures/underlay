@@ -129,3 +129,54 @@ export async function getOrgRole(
     .limit(1)
   return membership?.role ?? null
 }
+
+/**
+ * Flatten an error and its `cause` chain into one string.
+ *
+ * Drizzle puts the SQL in `message` and the underlying Postgres error — the part
+ * that says *why* — in `cause`. Recording only `message` yields "Failed query:
+ * SELECT …" with no reason, which is unactionable for whoever is reading a
+ * failed session or job hours later.
+ */
+export function describeError(err: unknown): string {
+  const parts: string[] = []
+  let current: unknown = err
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (current instanceof Error) {
+      parts.push(current.message)
+      // Postgres errors carry the useful specifics outside `message`.
+      const pg = current as { code?: string; detail?: string; hint?: string }
+      const extra = [
+        pg.code && `code ${pg.code}`,
+        pg.detail && `detail: ${pg.detail}`,
+        pg.hint && `hint: ${pg.hint}`,
+      ].filter(Boolean)
+      if (extra.length > 0) parts.push(extra.join(', '))
+      current = current.cause
+    } else {
+      parts.push(String(current))
+      break
+    }
+  }
+  return parts.join(' | ')
+}
+
+/**
+ * The version whose `version_records` rows hold this version's record set.
+ *
+ * A metadata-only patch version shares its base's rows rather than copying them,
+ * so its own id matches nothing in `version_records`. Every query that filters or
+ * joins that table on `version_id` must go through here. Passing a raw
+ * `version.id` instead returns an empty record set — no error, just nothing.
+ *
+ * The pointer is always one hop by construction (see `versions.records_from_version_id`),
+ * so this needs no recursion.
+ *
+ * `recordsFromVersionId` is deliberately required rather than optional: a version
+ * fetched with a narrow projection that omitted the column would otherwise
+ * resolve to its own id and silently read an empty record set. Making it required
+ * turns that into a compile error at every call site.
+ */
+export function recordsVersionId(v: { id: number; recordsFromVersionId: number | null }): number {
+  return v.recordsFromVersionId ?? v.id
+}

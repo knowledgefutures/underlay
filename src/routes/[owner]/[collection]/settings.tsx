@@ -15,6 +15,50 @@ import {
 import WebhooksSettings from '~/components/WebhooksSettings'
 import { useAppContext } from '~/lib/app-context'
 
+/**
+ * Poll an async metadata job to completion.
+ *
+ * Metadata edits create a patch version, whose cost scales with the record set,
+ * so this legitimately runs for minutes on a large collection. There is no
+ * timeout: the server-side sweep is what ends a job that will never finish, and
+ * giving up here would only lose track of a write that is still going to land.
+ * `onProgress` gets a note once the wait stops looking instant.
+ */
+async function pollMetadataJob(
+  owner: string | undefined,
+  collection: string | undefined,
+  jobId: string,
+  onProgress: (message: string) => void,
+): Promise<{ semver?: string; error?: string }> {
+  const INTERVAL_MS = 1500
+  const NOTE_AFTER_MS = 4000
+  const startedAt = Date.now()
+  let noted = false
+
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS))
+
+    const res = await fetch(`/api/collections/${owner}/${collection}/metadata/jobs/${jobId}`, {
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      return { error: body.error ?? 'Lost track of the metadata update.' }
+    }
+
+    const job = await res.json()
+    if (job.status === 'completed') return { semver: job.result?.semver }
+    if (job.status === 'failed') {
+      return { error: job.error?.error ?? 'Metadata update failed.' }
+    }
+
+    if (!noted && Date.now() - startedAt > NOTE_AFTER_MS) {
+      noted = true
+      onProgress('Saving — this collection is large enough that the new version takes a while.')
+    }
+  }
+}
+
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
@@ -108,27 +152,40 @@ export default function CollectionSettingsPage() {
       else payload.license = null
       payload.tags = tags.length > 0 ? tags : null
 
-      const res = await fetch(`/api/collections/${owner}/${collection}/metadata`, {
+      // Always async. Saving metadata creates a patch version, which on a
+      // multi-million-record collection takes longer than the proxy will hold a
+      // connection open — a synchronous save there dies at a bare 524 with no way
+      // to tell whether it landed. Polling costs one extra round trip on small
+      // collections and is the only thing that works on large ones.
+      const res = await fetch(`/api/collections/${owner}/${collection}/metadata?async=true`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
       })
-      if (res.ok) {
-        const body = await res.json()
-        if (body.unchanged) {
-          setSuccess('No changes to save.')
-        } else {
-          setSuccess(`Metadata updated (${body.semver}).`)
-        }
-        const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
-          credentials: 'include',
-        })
-        if (refreshed.ok) setData(await refreshed.json())
-      } else {
+
+      if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Metadata update failed.')
+        return
       }
+
+      const accepted = await res.json()
+      if (accepted.unchanged) {
+        setSuccess('No changes to save.')
+        return
+      }
+
+      const outcome = await pollMetadataJob(owner, collection, accepted.job_id, setSuccess)
+      if (outcome.error) {
+        setError(outcome.error)
+        return
+      }
+      setSuccess(`Metadata updated (${outcome.semver}).`)
+      const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
+        credentials: 'include',
+      })
+      if (refreshed.ok) setData(await refreshed.json())
     } finally {
       setSubmitting('')
     }

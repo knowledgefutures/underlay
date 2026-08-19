@@ -91,6 +91,11 @@ async function isFilePubliclyAccessible(
       data: schema.recordObjects.data,
     })
     .from(schema.versionRecords)
+    // Ownership-only join: this asks whether the file is referenced anywhere in
+    // THIS collection, and a version sharing another's rows is in the same
+    // collection as the version that owns them. The `versionId` it selects is
+    // used to load that version's schemas for privacy, and a metadata patch has
+    // the same schema set as its base, so the filtering is unchanged too.
     .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
     .innerJoin(
       schema.recordObjects,
