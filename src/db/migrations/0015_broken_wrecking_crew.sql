@@ -1,0 +1,1 @@
+CREATE INDEX "versions_records_from_version_idx" ON "versions" USING btree ("records_from_version_id") WHERE "versions"."records_from_version_id" is not null;

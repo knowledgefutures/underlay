@@ -98,6 +98,11 @@ async function fetchKfProfile(userId: string): Promise<KfProfile | null> {
   }
 }
 
+/** The user's KF role (e.g. 'admin' for stewards), or null. */
+export async function getKfRole(userId: string): Promise<string | null> {
+  return (await fetchKfProfile(userId))?.role ?? null
+}
+
 export async function getSessionUser(request: Request): Promise<SessionUser | null> {
   let session: Awaited<ReturnType<typeof auth.api.getSession>>
   try {

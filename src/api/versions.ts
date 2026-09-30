@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
+import { parseLimit, parseOffset } from '../lib/query-params.js'
 import {
   canonicalize,
   deriveSemver,
@@ -235,8 +236,8 @@ const app = new Hono<AuthEnv>()
         .orderBy(
           sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
         )
-        .limit(Math.min(parseInt(limit ?? '50', 10), 100))
-        .offset(parseInt(offset ?? '0', 10))
+        .limit(parseLimit(limit, 50, 100))
+        .offset(parseOffset(offset))
 
       // `actorId` is owner-only here, matching latest/:n (sanitizeVersionForPublic).
       // Without this the list endpoint leaked it while the detail endpoints hid it.
@@ -433,14 +434,13 @@ const app = new Hono<AuthEnv>()
         conditions.push(eq(schema.versionRecords.private, false))
       }
 
-      const pageLimit = Math.min(parseInt(limit ?? '100', 10), MAX_RECORDS_LIMIT)
+      const pageLimit = parseLimit(limit, 100, MAX_RECORDS_LIMIT)
 
       // Resolve offset (ignored when a keyset cursor is supplied). Reject deep
       // offsets with a 400 rather than letting an O(offset) scan time out.
       let offsetValue = 0
       if (!after) {
-        offsetValue = parseInt(offset ?? '0', 10)
-        if (Number.isNaN(offsetValue) || offsetValue < 0) offsetValue = 0
+        offsetValue = parseOffset(offset)
         if (offsetValue > MAX_RECORDS_OFFSET) {
           return c.json(
             {
@@ -912,7 +912,7 @@ const app = new Hono<AuthEnv>()
 
       if (!version) return c.json({ error: 'Version not found', statusCode: 404 }, 404)
 
-      const limit = Math.min(parseInt(c.req.query('limit') ?? '10000', 10), MAX_MANIFEST_LIMIT)
+      const limit = parseLimit(c.req.query('limit'), 10000, MAX_MANIFEST_LIMIT)
       const cursor = c.req.query('cursor')
 
       const fileHashes = await db
@@ -1191,7 +1191,7 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, n } = c.req.valid('param')
       const from = c.req.query('from')
-      const diffLimit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), MAX_DIFF_LIMIT)
+      const diffLimit = parseLimit(c.req.query('limit'), 500, MAX_DIFF_LIMIT)
       const diffCursor = decodeDeltaCursor(c.req.query('cursor'))
 
       const collection = await resolveAccessibleCollection(

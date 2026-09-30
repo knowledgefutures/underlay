@@ -277,6 +277,12 @@ export const versions = pgTable(
     // different `public_hash`, and must be allowed to become a new version.
     unique().on(t.collectionId, t.hash, t.publicHash),
     index('versions_ordering_idx').on(t.collectionId, t.major, t.minor, t.patch),
+    // Serves the provenance join (`records_from_version_id = …`) and the RESTRICT
+    // foreign-key check, which otherwise scans versions on every version delete
+    // (and a collection delete cascades one per version).
+    index('versions_records_from_version_idx')
+      .on(t.recordsFromVersionId)
+      .where(sql`${t.recordsFromVersionId} is not null`),
   ],
 )
 

@@ -10,6 +10,7 @@ import type { MiddlewareHandler } from 'hono'
 import { createOpenApiDocument } from 'hono-zod-openapi'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
+import { HTTPException } from 'hono/http-exception'
 import { marked } from 'marked'
 import type { ViteDevServer } from 'vite'
 
@@ -101,6 +102,20 @@ function api<M extends string, A>(mount: M, source: string, app: A): [M, A] {
 }
 
 const app = new Hono<AuthEnv>()
+
+// Uncaught errors answer in the API's `{ error, statusCode }` shape rather than
+// Hono's plain-text 500. A malformed JSON body (c.req.json() throws SyntaxError)
+// is the client's fault, so it gets a 400.
+app.onError((err, c) => {
+  if (err instanceof HTTPException) return err.getResponse()
+  const path = new URL(c.req.url).pathname
+  console.error(`[error] ${c.req.method} ${path}:`, err)
+  if (!path.startsWith('/api/')) return c.text('Internal Server Error', 500)
+  if (err instanceof SyntaxError) {
+    return c.json({ error: 'Invalid JSON body', statusCode: 400 }, 400)
+  }
+  return c.json({ error: 'Internal server error', statusCode: 500 }, 500)
+})
 
 // --- llms.txt with explicit charset (browsers default to Latin-1 for text/plain) ---
 app.get('/llms.txt', async (c) => {

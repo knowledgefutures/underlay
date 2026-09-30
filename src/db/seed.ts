@@ -1,107 +1,8 @@
-import { createHash } from 'node:crypto'
-
 import { eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 
 import { db, schema } from './client.server.js'
-
-function canonicalize(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
-  }
-  return sorted
-}
-
-function hashSchema(schemaBody: unknown): string {
-  return createHash('sha256')
-    .update(JSON.stringify(canonicalize(schemaBody)))
-    .digest('hex')
-}
-
-function hashRecord(record: { recordId: string; type: string; data: unknown }): {
-  hash: string
-  canonical: string
-} {
-  const canonical = JSON.stringify({ id: record.recordId, type: record.type, data: record.data })
-  const hash = createHash('sha256').update(canonical).digest('hex')
-  return { hash, canonical }
-}
-
-function computeVersionHash(
-  schemaSet: { slug: string; schemaHash: string }[],
-  records: { recordId: string; type: string; data: unknown }[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const recordHashes = records.map((r) => hashRecord(r).hash)
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: [...recordHashes].sort(),
-    files: fileHashes.sort(),
-    metadata: metadata ? canonicalize(metadata) : null,
-  })
-  return 'private:' + createHash('sha256').update(canonical).digest('hex')
-}
-
-/** Insert records as content-addressed objects and link to a version */
-async function insertRecords(
-  versionId: number,
-  records: { recordId: string; type: string; data: unknown }[],
-): Promise<void> {
-  const objectRows = records.map((r) => {
-    const { hash, canonical } = hashRecord(r)
-    return {
-      hash,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data as any,
-      size: Buffer.byteLength(canonical, 'utf8'),
-    }
-  })
-  await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
-  await db.insert(schema.versionRecords).values(
-    objectRows.map((r) => ({
-      versionId,
-      recordHash: r.hash,
-      recordId: r.recordId,
-      type: r.type,
-    })),
-  )
-}
-
-/** Insert schemas into global table, returning schema IDs. Deduplicates by hash. */
-async function upsertSchemas(
-  schemasMap: Record<string, object>,
-): Promise<{ slug: string; schemaId: string; schemaHash: string }[]> {
-  const results: { slug: string; schemaId: string; schemaHash: string }[] = []
-  for (const [slug, body] of Object.entries(schemasMap)) {
-    const hash = hashSchema(body)
-    // Check if exists
-    const existing = await db
-      .select({ id: schema.schemas.id })
-      .from(schema.schemas)
-      .where(eq(schema.schemas.schemaHash, hash))
-      .limit(1)
-
-    let schemaId: string
-    if (existing.length > 0) {
-      schemaId = existing[0]!.id
-    } else {
-      const [inserted] = await db
-        .insert(schema.schemas)
-        .values({ schema: body as any, schemaHash: hash })
-        .returning({ id: schema.schemas.id })
-      schemaId = inserted!.id
-    }
-    results.push({ slug, schemaId, schemaHash: hash })
-  }
-  return results
-}
+import { insertRecords, seedVersionHash, upsertSchemas } from './seed-helpers.js'
 
 async function seed() {
   const force = process.argv.includes('--force')
@@ -375,7 +276,7 @@ async function seed() {
       'Archive of publications from PubPub communities. Includes pubs, authors, communities, and review data.',
     readme: pubpubReadme,
   }
-  const pubpubHash = computeVersionHash(pubpubSchemaEntries, pubpubRecords, [], pubpubMetadata)
+  const pubpubHash = seedVersionHash(pubpubSchemaEntries, pubpubRecords, [], pubpubMetadata)
   const pubpubTotalBytes = pubpubRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -466,7 +367,7 @@ async function seed() {
     // Removed: pubauthor-002 (dropped by filtering above)
   ]
 
-  const pubpubV2Hash = computeVersionHash(pubpubSchemaEntries, pubpubV2Records, [], pubpubMetadata)
+  const pubpubV2Hash = seedVersionHash(pubpubSchemaEntries, pubpubV2Records, [], pubpubMetadata)
   const pubpubV2TotalBytes = pubpubV2Records.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -649,12 +550,7 @@ async function seed() {
   ]
 
   const pubpubV3SchemaEntries = await upsertSchemas(pubpubV3Schema)
-  const pubpubV3Hash = computeVersionHash(
-    pubpubV3SchemaEntries,
-    pubpubV3Records,
-    [],
-    pubpubMetadata,
-  )
+  const pubpubV3Hash = seedVersionHash(pubpubV3SchemaEntries, pubpubV3Records, [], pubpubMetadata)
   const pubpubV3TotalBytes = pubpubV3Records.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -837,7 +733,7 @@ async function seed() {
       'A curated dataset of research grants with funding amounts, topics, and PI information. Sourced from public funders.',
     readme: grantsReadme,
   }
-  const grantsHash = computeVersionHash(grantsSchemaEntries, grantsRecords, [], grantsMetadata)
+  const grantsHash = seedVersionHash(grantsSchemaEntries, grantsRecords, [], grantsMetadata)
   const grantsTotalBytes = grantsRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -1059,7 +955,7 @@ async function seed() {
       'Structured records of climate monitoring stations and their annual temperature and precipitation observations.',
     readme: climateReadme,
   }
-  const climateHash = computeVersionHash(climateSchemaEntries, climateRecords, [], climateMetadata)
+  const climateHash = seedVersionHash(climateSchemaEntries, climateRecords, [], climateMetadata)
   const climateTotalBytes = climateRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,
@@ -1208,12 +1104,7 @@ async function seed() {
   }
 
   const pubnotesSchemaEntries = await upsertSchemas(pubnotesSchema)
-  const pubnotesHash = computeVersionHash(
-    pubnotesSchemaEntries,
-    pubnotesRecords,
-    [],
-    pubnotesMetadata,
-  )
+  const pubnotesHash = seedVersionHash(pubnotesSchemaEntries, pubnotesRecords, [], pubnotesMetadata)
   const pubnotesTotalBytes = pubnotesRecords.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,

@@ -14,6 +14,7 @@ import {
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
+import { createFixedWindowLimiter } from './rate-limit.server.js'
 
 // In-memory LRU cache: key = `${collectionId}:${semver}`, value = { buffer, expiresAt }
 const sqliteCache = new Map<
@@ -36,30 +37,14 @@ const CACHE_MAX_ENTRIES = 10
 // at any depth and Hot provides a SQL editor over a hydrated copy.
 const MAX_QUERY_RECORDS = 250_000
 
-// In-memory rate limit for the LLM endpoint (public path, spends CF AI credits)
-const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX = 10 // requests per key per window
-const rateBuckets = new Map<string, { count: number; resetAt: number }>()
-
-/** Returns true if the request is within the rate limit */
-function checkRateLimit(key: string): boolean {
-  const now = Date.now()
-  const bucket = rateBuckets.get(key)
-  if (!bucket || bucket.resetAt < now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return true
-  }
-  bucket.count++
-  return bucket.count <= RATE_LIMIT_MAX
-}
+// Rate limit for the LLM endpoint (public path, spends CF AI credits):
+// 10 requests per key per minute.
+const checkRateLimit = createFixedWindowLimiter(60_000, 10)
 
 function cleanExpired() {
   const now = Date.now()
   for (const [key, entry] of sqliteCache) {
     if (entry.expiresAt < now) sqliteCache.delete(key)
-  }
-  for (const [key, bucket] of rateBuckets) {
-    if (bucket.resetAt < now) rateBuckets.delete(key)
   }
 }
 

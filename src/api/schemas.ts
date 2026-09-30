@@ -4,6 +4,7 @@ import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { parseLimit, parseOffset } from '../lib/query-params.js'
 import { filterTypeSchema, hashSchema, hasOrgAccess } from '../lib/version-helpers.server.js'
 import type { AuthEnv } from './auth.server.js'
 import { fullPrincipalUserId, requireAuth } from './auth.server.js'
@@ -58,8 +59,8 @@ const app = new Hono<AuthEnv>()
       const limit = c.req.query('limit')
       const offset = c.req.query('offset')
 
-      const pageLimit = Math.min(parseInt(limit ?? '50', 10), 100)
-      const pageOffset = parseInt(offset ?? '0', 10)
+      const pageLimit = parseLimit(limit, 50, 100)
+      const pageOffset = parseOffset(offset)
 
       const visible = visibleSchemaCondition(fullPrincipalUserId(c))
 

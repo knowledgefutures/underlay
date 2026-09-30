@@ -14,114 +14,11 @@
  * The record/version/schema payloads below are copied verbatim from seed.ts so
  * the produced collections are byte-identical to a fresh seed.
  */
-import { createHash } from 'node:crypto'
-
 import { and, eq } from 'drizzle-orm'
 import { v4 as uuidv4 } from 'uuid'
 
 import { db, schema } from './client.server.js'
-
-// ---------------------------------------------------------------------------
-// Helpers (copied from seed.ts)
-// ---------------------------------------------------------------------------
-
-function canonicalize(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[key] = canonicalize((value as Record<string, unknown>)[key])
-  }
-  return sorted
-}
-
-function hashSchema(schemaBody: unknown): string {
-  return createHash('sha256')
-    .update(JSON.stringify(canonicalize(schemaBody)))
-    .digest('hex')
-}
-
-function hashRecord(record: { recordId: string; type: string; data: unknown }): {
-  hash: string
-  canonical: string
-} {
-  const canonical = JSON.stringify({ id: record.recordId, type: record.type, data: record.data })
-  const hash = createHash('sha256').update(canonical).digest('hex')
-  return { hash, canonical }
-}
-
-function computeVersionHash(
-  schemaSet: { slug: string; schemaHash: string }[],
-  records: { recordId: string; type: string; data: unknown }[],
-  fileHashes: string[],
-  metadata: Record<string, unknown> | null,
-): string {
-  const recordHashes = records.map((r) => hashRecord(r).hash)
-  const canonical = JSON.stringify({
-    schemas: Object.fromEntries(
-      schemaSet.sort((a, b) => a.slug.localeCompare(b.slug)).map((s) => [s.slug, s.schemaHash]),
-    ),
-    records: [...recordHashes].sort(),
-    files: fileHashes.sort(),
-    metadata: metadata ? canonicalize(metadata) : null,
-  })
-  return 'private:' + createHash('sha256').update(canonical).digest('hex')
-}
-
-async function insertRecords(
-  versionId: number,
-  records: { recordId: string; type: string; data: unknown }[],
-): Promise<void> {
-  const objectRows = records.map((r) => {
-    const { hash, canonical } = hashRecord(r)
-    return {
-      hash,
-      recordId: r.recordId,
-      type: r.type,
-      data: r.data as any,
-      size: Buffer.byteLength(canonical, 'utf8'),
-    }
-  })
-  await db.insert(schema.recordObjects).values(objectRows).onConflictDoNothing()
-  await db
-    .insert(schema.versionRecords)
-    .values(
-      objectRows.map((r) => ({
-        versionId,
-        recordHash: r.hash,
-        recordId: r.recordId,
-        type: r.type,
-      })),
-    )
-    .onConflictDoNothing()
-}
-
-async function upsertSchemas(
-  schemasMap: Record<string, object>,
-): Promise<{ slug: string; schemaId: string; schemaHash: string }[]> {
-  const results: { slug: string; schemaId: string; schemaHash: string }[] = []
-  for (const [slug, body] of Object.entries(schemasMap)) {
-    const hash = hashSchema(body)
-    const existing = await db
-      .select({ id: schema.schemas.id })
-      .from(schema.schemas)
-      .where(eq(schema.schemas.schemaHash, hash))
-      .limit(1)
-
-    let schemaId: string
-    if (existing.length > 0) {
-      schemaId = existing[0]!.id
-    } else {
-      const [inserted] = await db
-        .insert(schema.schemas)
-        .values({ schema: body as any, schemaHash: hash })
-        .returning({ id: schema.schemas.id })
-      schemaId = inserted!.id
-    }
-    results.push({ slug, schemaId, schemaHash: hash })
-  }
-  return results
-}
+import { insertRecords, seedVersionHash, upsertSchemas } from './seed-helpers.js'
 
 /** Create a version + its versionSchemas + records. Returns the new version id. */
 async function createVersion(opts: {
@@ -137,7 +34,7 @@ async function createVersion(opts: {
   schemaEntries: { slug: string; schemaId: string; schemaHash: string }[]
   records: { recordId: string; type: string; data: unknown }[]
 }): Promise<void> {
-  const hash = computeVersionHash(opts.schemaEntries, opts.records, [], opts.metadata)
+  const hash = seedVersionHash(opts.schemaEntries, opts.records, [], opts.metadata)
   const totalBytes = opts.records.reduce(
     (sum, r) => sum + Buffer.byteLength(JSON.stringify(r.data), 'utf-8'),
     0,

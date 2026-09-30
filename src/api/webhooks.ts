@@ -4,6 +4,7 @@ import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { parseLimit } from '../lib/query-params.js'
 import { getOrgRole, resolveCollection } from '../lib/version-helpers.server.js'
 import {
   dispatchDeliveries,
@@ -228,8 +229,7 @@ app.get(
     const auth = await authorizeWebhookAccess(c, owner, slug)
     if ('error' in auth) return auth.error
 
-    const parsedLimit = Number.parseInt(c.req.query('limit') ?? '50', 10)
-    const limit = Math.min(Number.isFinite(parsedLimit) ? parsedLimit : 50, 200)
+    const limit = parseLimit(c.req.query('limit'), 50, 200)
 
     // Confirm the webhook belongs to this collection before listing its log.
     const [hook] = await db

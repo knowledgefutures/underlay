@@ -43,7 +43,9 @@ export async function push(remoteName: string = 'origin'): Promise<void> {
   // 1. Get remote latest version
   let remoteLatestSemver: string | null = null
   try {
-    const res = await fetch(`${baseUrl}/versions/latest`)
+    // Authenticated: a private collection answers 404 to anonymous callers,
+    // which would send base_version: null and fail the push with a 409.
+    const res = await fetch(`${baseUrl}/versions/latest`, { headers })
     if (res.ok) {
       const data = (await res.json()) as { semver: string }
       remoteLatestSemver = data.semver

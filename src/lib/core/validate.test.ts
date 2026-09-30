@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { findExtraFields, stripToSchema } from './validate.js'
+import { compileSchema, findExtraFields, stripToSchema } from './validate.js'
 
 describe('findExtraFields', () => {
   const schemas = {
@@ -31,5 +31,29 @@ describe('findExtraFields', () => {
 describe('stripToSchema', () => {
   it('keeps only schema-declared keys', () => {
     expect(stripToSchema({ name: 'Ada', extra: 1 }, { name: {} })).toEqual({ name: 'Ada' })
+  })
+})
+
+describe('compileSchema', () => {
+  const schema = () => ({
+    $id: 'https://example.org/author',
+    type: 'object',
+    properties: { name: { type: 'string' } },
+    required: ['name'],
+  })
+
+  it('reuses the validator for identical schema content', () => {
+    expect(compileSchema(schema())).toBe(compileSchema(schema()))
+  })
+
+  it('validates records', () => {
+    const validate = compileSchema(schema())
+    expect(validate({ name: 'Ada' })).toBe(true)
+    expect(validate({})).toBe(false)
+  })
+
+  it('compiles a changed schema that reuses an $id', () => {
+    const changed = { ...schema(), required: [] }
+    expect(compileSchema(changed)({})).toBe(true)
   })
 })

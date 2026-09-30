@@ -42,6 +42,32 @@ setInterval(() => {
   }
 }, 60_000)
 
+/**
+ * A standalone fixed-window limiter for endpoints that need a tighter budget
+ * than the global middleware. Returns `check(key)`: true while `key` is within
+ * `max` calls per `windowMs`. Expired buckets are swept so the map stays bounded.
+ */
+export function createFixedWindowLimiter(windowMs: number, max: number) {
+  const windows = new Map<string, Bucket>()
+  setInterval(() => {
+    const now = Date.now()
+    for (const [key, bucket] of windows) {
+      if (bucket.resetAt < now) windows.delete(key)
+    }
+  }, windowMs).unref()
+
+  return function check(key: string): boolean {
+    const now = Date.now()
+    const bucket = windows.get(key)
+    if (!bucket || bucket.resetAt < now) {
+      windows.set(key, { count: 1, resetAt: now + windowMs })
+      return true
+    }
+    bucket.count++
+    return bucket.count <= max
+  }
+}
+
 export const rateLimitMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   const userId = c.get('userId')
   const key = userId ? `user:${userId}` : `ip:${clientIp(c)}`

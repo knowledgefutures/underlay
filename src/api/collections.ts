@@ -9,6 +9,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
+import { parseLimit, parseOffset } from '../lib/query-params.js'
 import { downloadFromS3 } from '../lib/s3.js'
 import {
   filterRecordData,
@@ -49,8 +50,8 @@ const app = new Hono<AuthEnv>()
       const tag = c.req.query('tag')
       const sort = c.req.query('sort')
       const mine = c.req.query('mine') === 'true'
-      const take = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 100)
-      const skip = parseInt(c.req.query('offset') ?? '0', 10)
+      const take = parseLimit(c.req.query('limit'), 50, 100)
+      const skip = parseOffset(c.req.query('offset'))
 
       // Visibility scope. Public collections by default; with ?mine=true, every
       // collection owned by an org the caller belongs to — private ones included,
@@ -118,8 +119,11 @@ const app = new Hono<AuthEnv>()
       >()
 
       if (ids.length > 0) {
-        const allVersions = await db
-          .select({
+        // Latest ready version per collection only — DISTINCT ON walks
+        // versions_ordering_idx instead of returning every version (with its
+        // metadata jsonb) of every candidate collection.
+        const latestVersions = await db
+          .selectDistinctOn([schema.versions.collectionId], {
             collectionId: schema.versions.collectionId,
             semver: schema.versions.semver,
             metadata: schema.versions.metadata,
@@ -133,14 +137,11 @@ const app = new Hono<AuthEnv>()
             and(inArray(schema.versions.collectionId, ids), eq(schema.versions.status, 'ready')),
           )
           .orderBy(
+            schema.versions.collectionId,
             sql`${schema.versions.major} desc, ${schema.versions.minor} desc, ${schema.versions.patch} desc`,
           )
 
-        for (const v of allVersions) {
-          if (!statsMap.has(v.collectionId)) {
-            statsMap.set(v.collectionId, v)
-          }
-        }
+        for (const v of latestVersions) statsMap.set(v.collectionId, v)
       }
 
       // Build enriched results with tags, then apply tag filter
@@ -180,31 +181,32 @@ const app = new Hono<AuthEnv>()
         facetConditions.push(ilike(schema.collections.name, `%${q}%`))
       }
 
-      const ownerFacets = await db
-        .select({
-          slug: schema.organization.slug,
-          name: schema.organization.name,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(schema.collections)
-        .innerJoin(
-          schema.organization,
-          eq(schema.collections.organizationId, schema.organization.id),
-        )
-        .where(and(...facetConditions))
-        .groupBy(schema.organization.slug, schema.organization.name)
-        .orderBy(sql`count(*) DESC`)
-
-      // Load instance settings for explore page
-      const settingsRows = await db
-        .select({ key: schema.instanceSettings.key, value: schema.instanceSettings.value })
-        .from(schema.instanceSettings)
-        .where(
-          inArray(schema.instanceSettings.key, [
-            'explore_featured_tags',
-            'explore_featured_collections',
-          ]),
-        )
+      const [ownerFacets, settingsRows] = await Promise.all([
+        db
+          .select({
+            slug: schema.organization.slug,
+            name: schema.organization.name,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(schema.collections)
+          .innerJoin(
+            schema.organization,
+            eq(schema.collections.organizationId, schema.organization.id),
+          )
+          .where(and(...facetConditions))
+          .groupBy(schema.organization.slug, schema.organization.name)
+          .orderBy(sql`count(*) DESC`),
+        // Instance settings for the explore page
+        db
+          .select({ key: schema.instanceSettings.key, value: schema.instanceSettings.value })
+          .from(schema.instanceSettings)
+          .where(
+            inArray(schema.instanceSettings.key, [
+              'explore_featured_tags',
+              'explore_featured_collections',
+            ]),
+          ),
+      ])
       const settingsMap = new Map(settingsRows.map((r) => [r.key, r.value]))
       const featuredTags = Array.isArray(settingsMap.get('explore_featured_tags'))
         ? (settingsMap.get('explore_featured_tags') as string[])

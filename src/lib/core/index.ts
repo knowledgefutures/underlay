@@ -4,6 +4,7 @@ export { filterRecordData, filterTypeSchema, getPrivateFields, getPrivateTypes }
 export {
   ajv,
   checkSchemaBounds,
+  compileSchema,
   findExtraFields,
   stripToSchema,
   type ExtraFieldWarning,

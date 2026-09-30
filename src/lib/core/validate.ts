@@ -1,8 +1,35 @@
 import Ajv from 'ajv'
 import addFormats from 'ajv-formats'
 
+import { hashSchema } from './hash.js'
+
 export const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)
+
+type Validator = ReturnType<typeof ajv.compile>
+
+// Ajv caches compiled schemas by object identity, and every push batch parses
+// its schemas afresh — so calling ajv.compile() per batch recompiled each type
+// on the event loop and retained every copy for the life of the process.
+// Schemas are content-addressed, so key compiled validators by schema hash.
+const MAX_CACHED_VALIDATORS = 500
+const validatorCache = new Map<string, Validator>()
+
+/** Compile a JSON Schema, reusing the validator for identical schema content. */
+export function compileSchema(schemaBody: object): Validator {
+  const key = hashSchema(schemaBody)
+  const cached = validatorCache.get(key)
+  if (cached) return cached
+  const validate = ajv.compile(schemaBody)
+  // Ajv's own identity cache would otherwise keep this copy alive too.
+  ajv.removeSchema(schemaBody)
+  if (validatorCache.size >= MAX_CACHED_VALIDATORS) {
+    const oldest = validatorCache.keys().next().value
+    if (oldest !== undefined) validatorCache.delete(oldest)
+  }
+  validatorCache.set(key, validate)
+  return validate
+}
 
 const MAX_SCHEMA_BYTES = 256 * 1024
 const MAX_PATTERN_LENGTH = 256

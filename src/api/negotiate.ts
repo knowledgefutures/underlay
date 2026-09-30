@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import {
-  ajv,
+  compileSchema,
   canonicalize,
   checkSchemaBounds,
   deriveSemver,
@@ -536,9 +536,9 @@ app.post(
 
     // Validate submitted records against session schemas
     const sessionSchemas = sessionRow.schemas as Record<string, object>
-    const validators = new Map<string, ReturnType<typeof ajv.compile>>()
+    const validators = new Map<string, ReturnType<typeof compileSchema>>()
     for (const [typeSlug, typeSchema] of Object.entries(sessionSchemas)) {
-      validators.set(typeSlug, ajv.compile(typeSchema))
+      validators.set(typeSlug, compileSchema(typeSchema))
     }
 
     const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}
@@ -921,9 +921,9 @@ app.post(
       // Process records in batches instead of loading all into memory at once.
       // Newly submitted records were validated during submitRecords(); existing
       // records are validated here against the current schemas.
-      const validators = new Map<string, ReturnType<typeof ajv.compile>>()
+      const validators = new Map<string, ReturnType<typeof compileSchema>>()
       for (const entry of newSchemaSet) {
-        validators.set(entry.slug, ajv.compile(entry.schema as object))
+        validators.set(entry.slug, compileSchema(entry.schema as object))
       }
 
       const schemasForCheck: Record<string, { properties?: Record<string, unknown> }> = {}

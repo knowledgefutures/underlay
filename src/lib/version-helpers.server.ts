@@ -6,6 +6,7 @@ export {
   ajv,
   canonicalize,
   checkSchemaBounds,
+  compileSchema,
   computePublicHash,
   computeVersionHash,
   deriveSemver,

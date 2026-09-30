@@ -3,43 +3,18 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
-import { KF_AUTH_INTERNAL_URL } from '../lib/auth.js'
+import { getKfRole } from '../lib/auth.server.js'
 import { type AuthEnv, requireAuth, requireUnscopedKey } from './auth.server.js'
+import { createFixedWindowLimiter } from './rate-limit.server.js'
 
 const COMMENT_MAX_BYTES = 8192
-const RATE_LIMIT_WINDOW_MS = 60_000
-const RATE_LIMIT_MAX = 10
-const rateBuckets = new Map<string, { count: number; resetAt: number }>()
+const checkRateLimit = createFixedWindowLimiter(60_000, 10)
 
-function checkRateLimit(key: string): boolean {
-  const now = Date.now()
-  const bucket = rateBuckets.get(key)
-  if (!bucket || bucket.resetAt < now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS })
-    return true
-  }
-  bucket.count++
-  return bucket.count <= RATE_LIMIT_MAX
-}
-
+// Same source of truth as requireSteward in server.ts: the KF profile role,
+// with the access token refreshed when it has expired.
 async function isSteward(userId: string | undefined): Promise<boolean> {
   if (!userId) return false
-  try {
-    const [acct] = await db
-      .select({ accessToken: schema.account.accessToken })
-      .from(schema.account)
-      .where(eq(schema.account.userId, userId))
-      .limit(1)
-    if (!acct?.accessToken) return false
-    const res = await fetch(`${KF_AUTH_INTERNAL_URL}/api/auth/oauth2/userinfo`, {
-      headers: { Authorization: `Bearer ${acct.accessToken}` },
-    })
-    if (!res.ok) return false
-    const profile = await res.json()
-    return profile.role === 'admin'
-  } catch {
-    return false
-  }
+  return (await getKfRole(userId)) === 'admin'
 }
 
 const createBody = z.object({
