@@ -313,5 +313,7 @@ Authorization: Bearer ${escapeHtml(token)}</pre>
 </body>
 </html>`
 
-  return c.html(html)
+  // The URL and page body carry a write-capable key: keep both out of caches
+  // and out of the Referer sent to any link followed from here.
+  return c.html(html, 200, { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' })
 }

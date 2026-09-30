@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs, RouteObject } from 'react-router'
 
 import { RouteErrorBoundary } from '~/components/NotFound'
 import Root from '~/components/Root'
-import { fetchBase } from '~/lib/fetch-base'
+import { fetchBase, ssrHeaders } from '~/lib/fetch-base'
 import { buildDataRoutes } from '~/route-gen'
 
 const components = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
@@ -14,12 +14,12 @@ const dataModules = import.meta.glob<{
 
 async function rootLoader({ request }: LoaderFunctionArgs) {
   const res = await fetch(`${fetchBase(request.url)}/api/context`, {
-    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+    headers: ssrHeaders(request),
   })
   if (!res.ok) {
     return {
       currentUser: null,
-      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '', apiKey: '' },
+      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '' },
       kfAccountUrl: '',
       kfAuthUrl: '',
     }

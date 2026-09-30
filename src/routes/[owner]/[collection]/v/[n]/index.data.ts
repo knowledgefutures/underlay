@@ -1,6 +1,6 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { fetchBase } from '~/lib/fetch-base'
+import { fetchBase, ssrHeaders } from '~/lib/fetch-base'
 import { apiUrlBuilder } from '~/lib/share-token'
 
 export const handle = {
@@ -32,7 +32,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   if (/^v\d/.test(params.n ?? '')) throw redirect(`${base}${url.search}`)
 
   const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = { Cookie: request.headers.get('Cookie') ?? '' }
+  const headers = ssrHeaders(request)
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
   const [version, collectionData] = await Promise.all([

@@ -103,6 +103,28 @@ export async function hasOrgAccess(userId: string | undefined, orgId: string): P
   return !!membership
 }
 
+/**
+ * Strip owner-only data from a version row before returning it to a non-owner:
+ * private-type entries in `typeCounts` (which would disclose the existence and
+ * exact size of private types) and the internal provenance fields.
+ */
+export function sanitizeVersionForPublic(
+  version: Record<string, any>,
+  privateTypes: Set<string>,
+): Record<string, any> {
+  const out: Record<string, any> = { ...version }
+  const tc = version.typeCounts as Record<string, number> | null | undefined
+  if (tc) {
+    out.typeCounts = Object.fromEntries(
+      Object.entries(tc).filter(([type]) => !privateTypes.has(type)),
+    )
+  }
+  delete out.pushedBy
+  delete out.actorId
+  delete out.signature
+  return out
+}
+
 /** Get the latest ready version of a collection (highest semver), or null */
 export async function getLatestReadyVersion(collectionId: string) {
   const [version] = await db

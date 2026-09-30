@@ -1,15 +1,11 @@
 import { useRouteLoaderData } from 'react-router'
 
+import type { PublicMirrorConfig } from '~/lib/mirror-config'
+
 export function useAppContext() {
   return useRouteLoaderData('root') as {
     currentUser: any // includes kfRole: string | null
-    mirrorConfig: {
-      enabled: boolean
-      upstream: string
-      nodeName: string
-      syncSchedule: string
-      apiKey: string
-    }
+    mirrorConfig: PublicMirrorConfig
     kfAccountUrl: string
     kfAuthUrl: string
   }

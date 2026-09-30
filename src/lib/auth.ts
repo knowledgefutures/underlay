@@ -1,11 +1,13 @@
 import { apiKey } from '@better-auth/api-key'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { APIError } from 'better-auth/api'
 import { genericOAuth } from 'better-auth/plugins'
 import { organization } from 'better-auth/plugins/organization'
 import { and, eq, ne } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
+import { validateSlug } from './slug.js'
 
 const KF_AUTH_URL = process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
 const KF_AUTH_INTERNAL_URL = process.env.OIDC_ISSUER_INTERNAL_URL ?? KF_AUTH_URL
@@ -15,6 +17,22 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
 }
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:4100'
+
+function assertValidSlug(slug: unknown) {
+  const err = validateSlug(slug)
+  if (err) throw new APIError('BAD_REQUEST', { message: err })
+}
+
+async function isEntitledKfOrg(userId: string, kfOrgId: string): Promise<boolean> {
+  try {
+    const { resolveUserKfOrgs } = await import('./auth-internal.server.js')
+    const allowed = await resolveUserKfOrgs(userId, db, schema)
+    return allowed.some((o: { id: string }) => o.id === kfOrgId)
+  } catch (err) {
+    console.error('[org hook] failed to validate kfOrgId:', err)
+    return false
+  }
+}
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'pg' }),
@@ -70,19 +88,12 @@ export const auth = betterAuth({
       },
       organizationHooks: {
         beforeCreateOrganization: async ({ organization: orgData, user }) => {
+          assertValidSlug(orgData.slug)
           // A client-supplied kfOrgId must be one the caller actually belongs to
           // — otherwise the org would spoof its way into another institution's KF
           // dashboard (kf-summary trusts organization.kfOrgId). Validate it; on
           // any mismatch, fall through to the server-resolved default.
-          if (orgData.kfOrgId) {
-            try {
-              const { resolveUserKfOrgs } = await import('./auth-internal.server.js')
-              const allowed = await resolveUserKfOrgs(user.id, db, schema)
-              if (allowed.some((o: { id: string }) => o.id === orgData.kfOrgId)) return
-            } catch (err) {
-              console.error('[org hook] failed to validate kfOrgId:', err)
-            }
-          }
+          if (orgData.kfOrgId && (await isEntitledKfOrg(user.id, orgData.kfOrgId))) return
           try {
             const { resolveDefaultKfOrgId } = await import('./auth-internal.server.js')
             const kfOrgId = await resolveDefaultKfOrgId(user.id, db, schema)
@@ -92,6 +103,16 @@ export const auth = betterAuth({
           }
           // No valid kfOrgId — ensure the unvalidated client value is not persisted.
           return { data: { kfOrgId: undefined } }
+        },
+        // The update endpoint accepts the same client-settable fields, so it
+        // needs the same checks: an org admin could otherwise rename to a
+        // reserved slug or point kfOrgId at another institution.
+        beforeUpdateOrganization: async ({ organization: orgData, user }) => {
+          if (orgData.slug !== undefined) assertValidSlug(orgData.slug)
+          // Clearing is allowed (as in PATCH /api/accounts/:slug); setting is not
+          // unless the caller is entitled to that KF org.
+          if (!orgData.kfOrgId || (await isEntitledKfOrg(user.id, orgData.kfOrgId))) return
+          throw new APIError('FORBIDDEN', { message: 'Not a KF organization you belong to' })
         },
       },
     }),

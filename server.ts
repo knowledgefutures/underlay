@@ -35,7 +35,7 @@ import _versions from '~/api/versions'
 import _webhooks from '~/api/webhooks'
 import { auth } from '~/lib/auth'
 import { getSessionUser } from '~/lib/auth.server'
-import { getMirrorConfig } from '~/lib/mirror-config'
+import { getMirrorConfig, getPublicMirrorConfig } from '~/lib/mirror-config'
 import { startWebhookBackgroundJobs } from '~/lib/webhooks.server'
 
 const isProd = process.env.NODE_ENV === 'production'
@@ -55,6 +55,15 @@ let vite: ViteDevServer | undefined
  */
 function fill(template: string, placeholder: string, content: string): string {
   return template.replace(placeholder, () => content)
+}
+
+/**
+ * Loader redirects are built from route params, which React Router decodes — so
+ * `/%2Fevil.com/x/diff` would yield `Location: //evil.com/...`. Every legitimate
+ * loader redirect is a local path, so anything else goes home.
+ */
+function localRedirect(location: string): string {
+  return location.startsWith('/') && !/^\/[/\\]/.test(location) ? location : '/'
 }
 
 let devHttpServer: import('node:http').Server | undefined
@@ -380,6 +389,10 @@ app.get('/api/reference', Scalar({ url: '/api/openapi.json', pageTitle: 'Underla
 // --- Blog content API (serves rendered markdown) ---
 app.get('/api/blog/:slug', (c) => {
   const slug = c.req.param('slug')
+  // Params arrive decoded, so `..%2F` would otherwise escape content/blog.
+  if (!/^[a-z0-9-]+$/i.test(slug)) {
+    return c.json({ error: 'Not found', statusCode: 404 }, 404)
+  }
   const mdPath = resolve('content/blog', `${slug}.md`)
   if (!existsSync(mdPath)) {
     return c.json({ error: 'Not found', statusCode: 404 }, 404)
@@ -395,10 +408,11 @@ app.get('/api/blog/:slug', (c) => {
 // --- App context (consumed by root loader) ---
 app.get('/api/context', async (c) => {
   const user = await getSessionUser(c.req.raw)
-  const config = getMirrorConfig()
   return c.json({
     currentUser: user,
-    mirrorConfig: config,
+    // Public view only: this response is unauthenticated and is serialized into
+    // every SSR page, so it must never carry the upstream API key.
+    mirrorConfig: getPublicMirrorConfig(),
     kfAccountUrl: process.env.OIDC_ACCOUNT_URL ?? 'http://localhost:3001',
     kfAuthUrl: process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
   })
@@ -434,7 +448,7 @@ if (isProd) {
       c.req.raw,
     )
 
-    if (redirect) return c.redirect(redirect, statusCode ?? 302)
+    if (redirect) return c.redirect(localRedirect(redirect), statusCode ?? 302)
 
     let page = fill(template, '<!--ssr-outlet-->', html)
     page = fill(
@@ -484,7 +498,7 @@ if (isProd) {
       c.req.raw,
     )
 
-    if (redirect) return c.redirect(redirect, statusCode ?? 302)
+    if (redirect) return c.redirect(localRedirect(redirect), statusCode ?? 302)
 
     let page = fill(template, '<!--ssr-outlet-->', html)
     page = fill(

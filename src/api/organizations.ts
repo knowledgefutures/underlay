@@ -5,11 +5,9 @@ import { v4 as uuidv4 } from 'uuid'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
-import { RESERVED_SLUGS } from './accounts.js'
+import { RESERVED_SLUGS, SLUG_RE } from '../lib/slug.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth, requireUnscopedKey } from './auth.server.js'
-
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
 const app = new Hono<AuthEnv>().post(
   '/',

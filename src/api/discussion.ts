@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { KF_AUTH_INTERNAL_URL } from '../lib/auth.js'
-import { type AuthEnv, requireAuth } from './auth.server.js'
+import { type AuthEnv, requireAuth, requireUnscopedKey } from './auth.server.js'
 
 const COMMENT_MAX_BYTES = 8192
 const RATE_LIMIT_WINDOW_MS = 60_000
@@ -103,7 +103,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ comments: byAnchor })
   })
 
-  .post('/pages/:page/comments', requireAuth('write'), async (c) => {
+  .post('/pages/:page/comments', requireAuth('write'), requireUnscopedKey(), async (c) => {
     const page = c.req.param('page')
     const userId = c.get('userId')!
     const rateKey = `discussion:${userId}`
@@ -157,7 +157,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ comment }, 201)
   })
 
-  .patch('/pages/:page/comments/:id', requireAuth('write'), async (c) => {
+  .patch('/pages/:page/comments/:id', requireAuth('write'), requireUnscopedKey(), async (c) => {
     const commentId = c.req.param('id')
     const userId = c.get('userId')!
 
@@ -230,7 +230,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ comment: updated })
   })
 
-  .delete('/pages/:page/comments/:id', requireAuth('write'), async (c) => {
+  .delete('/pages/:page/comments/:id', requireAuth('write'), requireUnscopedKey(), async (c) => {
     const commentId = c.req.param('id')
     const userId = c.get('userId')!
 

@@ -1,13 +1,13 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
-import { fetchBase } from '~/lib/fetch-base'
+import { fetchBase, ssrHeaders } from '~/lib/fetch-base'
 
 export const handle = { title: 'Underlay' }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const base = fetchBase(request.url)
   const res = await fetch(new URL('/api/collections?sort=featured&take=6', base), {
-    headers: { Cookie: request.headers.get('Cookie') ?? '' },
+    headers: ssrHeaders(request),
   })
   if (!res.ok) return { featured: [] }
   const data = await res.json()

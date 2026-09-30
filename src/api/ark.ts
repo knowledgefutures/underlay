@@ -14,6 +14,7 @@ import {
   filterRecordData,
   filterTypeSchema,
   getPrivateFields,
+  hasOrgAccess,
   parseSemver,
   recordsVersionId,
 } from '../lib/version-helpers.server.js'
@@ -343,7 +344,7 @@ export async function getArk(c: Context<AuthEnv>) {
   if (scopedCollections && !scopedCollections.includes(coll.id)) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
-  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
+  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const naan = coll.ownerNaan ?? DEFAULT_NAAN
@@ -378,6 +379,11 @@ export async function updateArk(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
   const { enabled, customUrl } = await c.req.json()
+  // The resolver redirects to customUrl, so only http(s) targets are allowed —
+  // anything else (javascript:, data:, protocol-relative) is an open redirect.
+  if (customUrl != null && customUrl !== '' && !isHttpUrl(customUrl)) {
+    return c.json({ error: 'customUrl must be an http(s) URL', statusCode: 422 }, 422)
+  }
 
   const [coll] = await db
     .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
@@ -391,7 +397,7 @@ export async function updateArk(c: Context<AuthEnv>) {
   if (scopedCollections && !scopedCollections.includes(coll.id)) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
-  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
+  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const [existing] = await db
@@ -443,7 +449,7 @@ export async function getArkRecordTypes(c: Context<AuthEnv>) {
   if (scopedCollections && !scopedCollections.includes(coll.id)) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
-  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
+  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   const rows = await db
@@ -476,7 +482,7 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
   if (scopedCollections && !scopedCollections.includes(coll.id)) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
-  const hasAccess = await checkCollectionAccess(coll.organizationId, c.get('userId')!)
+  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
   if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
 
   if (redirectUrlField === null) {
@@ -539,11 +545,12 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
 
 // --- Helpers ---
 
-async function checkCollectionAccess(orgId: string, userId: string): Promise<boolean> {
-  const [membership] = await db
-    .select({ role: schema.member.role })
-    .from(schema.member)
-    .where(and(eq(schema.member.organizationId, orgId), eq(schema.member.userId, userId)))
-    .limit(1)
-  return !!membership
+function isHttpUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  try {
+    const { protocol } = new URL(value)
+    return protocol === 'https:' || protocol === 'http:'
+  } catch {
+    return false
+  }
 }

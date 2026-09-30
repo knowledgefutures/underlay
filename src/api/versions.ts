@@ -23,6 +23,7 @@ import {
   parseSemver,
   recordsVersionId,
   resolveAccessibleCollection,
+  sanitizeVersionForPublic,
   resolveCollection,
   type SchemaEntry,
   VersionHashStream,
@@ -45,28 +46,6 @@ const MAX_METADATA_BYTES = 64 * 1024
 function stripInternalVersionColumns(version: Record<string, any>): Record<string, any> {
   const out = { ...version }
   delete out.recordsFromVersionId
-  return out
-}
-
-/**
- * Strip owner-only data from a version row before returning it to a non-owner:
- * private-type entries in `typeCounts` (which would disclose the existence and
- * exact size of private types) and the internal provenance fields.
- */
-function sanitizeVersionForPublic(
-  version: Record<string, any>,
-  privateTypes: Set<string>,
-): Record<string, any> {
-  const out: Record<string, any> = { ...version }
-  const tc = version.typeCounts as Record<string, number> | null | undefined
-  if (tc) {
-    out.typeCounts = Object.fromEntries(
-      Object.entries(tc).filter(([type]) => !privateTypes.has(type)),
-    )
-  }
-  delete out.pushedBy
-  delete out.actorId
-  delete out.signature
   return out
 }
 

@@ -5,9 +5,12 @@ import { createMiddleware } from 'hono/factory'
 
 import { auth } from '../lib/auth.js'
 
-function timingSafeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
+/** Constant-time string compare. Compares byte lengths: `timingSafeEqual` throws on a mismatch. */
+export function timingSafeEquals(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return crypto.timingSafeEqual(ab, bb)
 }
 
 export type AuthEnv = {

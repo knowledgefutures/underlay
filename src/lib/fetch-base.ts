@@ -7,3 +7,23 @@ export function fetchBase(requestUrl: string): string {
   }
   return new URL(requestUrl).origin
 }
+
+// Headers identifying the original client, carried over when the server calls its
+// own API. Without the forwarding headers every anonymous SSR fetch arrives from
+// loopback and the rate limiter puts all visitors in one shared bucket.
+const CLIENT_HEADERS = ['cf-connecting-ip', 'x-forwarded-for'] as const
+
+/** The original client's address headers, for a server-side fetch on its behalf. */
+export function clientHeaders(request: Request): Record<string, string> {
+  const headers: Record<string, string> = {}
+  for (const name of CLIENT_HEADERS) {
+    const value = request.headers.get(name)
+    if (value) headers[name] = value
+  }
+  return headers
+}
+
+/** Headers for an SSR-side fetch to the app's own API on behalf of `request`. */
+export function ssrHeaders(request: Request): Record<string, string> {
+  return { Cookie: request.headers.get('Cookie') ?? '', ...clientHeaders(request) }
+}

@@ -20,6 +20,7 @@ import {
   hasOrgAccess,
   loadVersionSchemas,
   recordsVersionId,
+  sanitizeVersionForPublic,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { fullPrincipalUserId, requireAuth, requireUnscopedKey } from './auth.server.js'
@@ -335,7 +336,7 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug } = c.req.valid('param')
 
-      const [result] = await db
+      const [row] = await db
         .select({
           id: schema.collections.id,
           slug: schema.collections.slug,
@@ -345,6 +346,7 @@ const app = new Hono<AuthEnv>()
           ownerName: schema.organization.name,
           createdAt: schema.collections.createdAt,
           updatedAt: schema.collections.updatedAt,
+          organizationId: schema.collections.organizationId,
         })
         .from(schema.collections)
         .innerJoin(
@@ -354,45 +356,28 @@ const app = new Hono<AuthEnv>()
         .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
         .limit(1)
 
-      if (!result) {
+      if (!row) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
+      const { organizationId, ...result } = row
 
-      if (!result.public) {
-        // Check if user is a member of the owning org
-        const [org] = await db
-          .select({ id: schema.organization.id })
-          .from(schema.organization)
-          .where(eq(schema.organization.slug, owner))
-          .limit(1)
-
-        if (!org) {
-          return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-        }
-
-        // A collection-scoped API key (share/agent link) only grants access to
-        // the collections it is scoped to.
-        const scopedCollections = c.get('apiKeyCollectionIds')
-        const keyScopeOk = !scopedCollections || scopedCollections.includes(result.id)
-
-        const userId = c.get('userId')
-        let hasAccess = false
-        if (userId && keyScopeOk) {
-          const [membership] = await db
-            .select()
-            .from(schema.member)
-            .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, userId)))
-            .limit(1)
-          hasAccess = !!membership
-        }
-
-        if (!hasAccess) {
-          return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-        }
+      // A collection-scoped API key (share/agent link) only grants access to
+      // the collections it is scoped to.
+      const scopedCollections = c.get('apiKeyCollectionIds')
+      const keyScopeOk = !scopedCollections || scopedCollections.includes(result.id)
+      const ownerAccess = keyScopeOk && (await hasOrgAccess(c.get('userId'), organizationId))
+      if (!result.public && !ownerAccess) {
+        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
       // Get latest version info
       const latestVersion = await getLatestReadyVersion(result.id)
+      // Non-members see the public view of the version, as on the versions
+      // endpoints: no private-type counts, no owner-only provenance.
+      const privateTypes =
+        latestVersion && !ownerAccess
+          ? getPrivateTypes(await loadVersionSchemas(latestVersion.id))
+          : new Set<string>()
 
       // Per-type record counts for the latest version. Stored on the version row
       // at commit — this used to be a COUNT(*) GROUP BY over every
@@ -415,6 +400,7 @@ const app = new Hono<AuthEnv>()
           .groupBy(schema.versionRecords.type)
         typeCounts = rows.map((r) => ({ type: r.type, count: r.count }))
       }
+      typeCounts = typeCounts.filter((t) => !privateTypes.has(t.type))
 
       // Fetch ARK URL if enabled
       let ark: string | null = null
@@ -457,7 +443,11 @@ const app = new Hono<AuthEnv>()
         )
       const versionCount = vcRow?.count ?? 0
 
-      const { id: _vid, ...latestVersionData } = latestVersion ?? { id: undefined }
+      const { id: _vid, ...latestVersionData } = latestVersion
+        ? ownerAccess
+          ? latestVersion
+          : sanitizeVersionForPublic(latestVersion, privateTypes)
+        : { id: undefined }
       const meta = latestVersion?.metadata as Record<string, unknown> | null | undefined
       return c.json({
         ...result,
@@ -564,6 +554,8 @@ const app = new Hono<AuthEnv>()
   .delete(
     '/collections/:owner/:slug',
     requireAuth('write'),
+    // A share/agent key scoped to this collection must not be able to delete it.
+    requireUnscopedKey(),
     openApi({
       tags: ['Collections'],
       summary: 'Delete a collection',

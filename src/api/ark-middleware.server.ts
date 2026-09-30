@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from 'hono'
 
 import { buildErc, DEFAULT_NAAN } from '../lib/ark.js'
+import { clientHeaders } from '../lib/fetch-base.js'
 
 /**
  * Hono middleware that intercepts /ark:NAAN/... URLs and resolves them.
@@ -49,7 +50,9 @@ export const arkMiddleware: MiddlewareHandler = async (c, _next) => {
   const params = new URLSearchParams({ path: fullPath })
   let resolveRes: Response
   try {
-    resolveRes = await fetch(`${apiBase}/api/ark/resolve?${params}`)
+    resolveRes = await fetch(`${apiBase}/api/ark/resolve?${params}`, {
+      headers: clientHeaders(c.req.raw),
+    })
   } catch {
     return new Response('ARK resolver unavailable', { status: 503 })
   }

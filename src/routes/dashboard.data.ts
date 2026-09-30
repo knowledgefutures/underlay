@@ -1,14 +1,14 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
 import { requireAuth } from '~/lib/auth-middleware'
-import { fetchBase } from '~/lib/fetch-base'
+import { fetchBase, ssrHeaders } from '~/lib/fetch-base'
 
 export const middleware = [requireAuth]
 export const handle = { title: 'Dashboard · Underlay' }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const base = fetchBase(request.url)
-  const headers = { Cookie: request.headers.get('Cookie') ?? '' }
+  const headers = ssrHeaders(request)
 
   // One request for everything: the caller's collections (private included),
   // enriched with stats, plus per-org counts for the facet rail.

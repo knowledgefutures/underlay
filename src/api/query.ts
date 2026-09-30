@@ -23,6 +23,8 @@ const sqliteCache = new Map<
     ddl: string
     ddlWithSamples: string
     sampleRows: Record<string, Record<string, unknown>>
+    /** Built for a member: includes private records and fields. */
+    ownerAccess: boolean
     expiresAt: number
   }
 >()
@@ -225,7 +227,14 @@ async function getOrBuildSqlite(
     })
     .join('\n\n')
 
-  const entry = { buffer, ddl, ddlWithSamples, sampleRows, expiresAt: Date.now() + CACHE_TTL_MS }
+  const entry = {
+    buffer,
+    ddl,
+    ddlWithSamples,
+    sampleRows,
+    ownerAccess,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  }
   evictIfNeeded()
   sqliteCache.set(cacheKey, entry)
   return entry
@@ -275,7 +284,9 @@ export async function sqlite(c: Context<AuthEnv>) {
     headers: {
       'Content-Type': 'application/x-sqlite3',
       'Content-Disposition': `attachment; filename="${slug}-${semver}.sqlite"`,
-      'Cache-Control': 'public, max-age=86400',
+      // A member's build includes private records and fields — never let a shared
+      // cache keep it and hand it to the next visitor.
+      'Cache-Control': result.ownerAccess ? 'private, no-store' : 'public, max-age=86400',
     },
   })
 }

@@ -13,6 +13,14 @@ export interface MirrorConfig {
   apiKey: string
 }
 
+/** The mirror config minus its credentials — safe to send to browsers. */
+export type PublicMirrorConfig = Omit<MirrorConfig, 'apiKey'>
+
+export function getPublicMirrorConfig(): PublicMirrorConfig {
+  const { apiKey: _apiKey, ...config } = getMirrorConfig()
+  return config
+}
+
 export function getMirrorConfig(): MirrorConfig {
   const mode = process.env.UNDERLAY_MODE ?? 'origin'
   return {

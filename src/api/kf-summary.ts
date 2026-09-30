@@ -1,16 +1,8 @@
-import crypto from 'node:crypto'
-
 import { and, eq, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
-
-function timingSafeEquals(a: string, b: string): boolean {
-  const ab = Buffer.from(a)
-  const bb = Buffer.from(b)
-  if (ab.length !== bb.length) return false
-  return crypto.timingSafeEqual(ab, bb)
-}
+import { timingSafeEquals } from './auth.server.js'
 
 /**
  * GET /api/kf/summary?kf_org_id=xxx
