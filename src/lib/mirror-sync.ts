@@ -259,6 +259,7 @@ interface UpstreamManifest {
   schemas: Record<string, string>
   records: { id: string; type: string; hash: string }[]
   files: string[]
+  pagination?: { limit: number; hasMore: boolean; nextCursor: string | null }
 }
 
 interface UpstreamRecordsResponse {
@@ -494,6 +495,31 @@ async function syncCollection(
   }
 }
 
+/**
+ * The manifest endpoint is keyset-paginated (10,000 records per page by
+ * default). Reading only the first page mirrored larger versions truncated, so
+ * follow `pagination.nextCursor` to the end. An upstream that predates
+ * pagination returns everything at once with no `pagination` field.
+ */
+async function fetchFullManifest(
+  upstream: string,
+  uc: UpstreamCollection,
+  semver: string,
+): Promise<UpstreamManifest> {
+  const path = `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${semver}/manifest`
+  const first = await fetchUpstream<UpstreamManifest>(upstream, path)
+  let cursor = first.pagination?.hasMore ? first.pagination.nextCursor : null
+  while (cursor) {
+    const page = await fetchUpstream<UpstreamManifest>(
+      upstream,
+      `${path}?cursor=${encodeURIComponent(cursor)}`,
+    )
+    first.records.push(...page.records)
+    cursor = page.pagination?.hasMore ? page.pagination.nextCursor : null
+  }
+  return first
+}
+
 async function pullVersion(
   upstream: string,
   uc: UpstreamCollection,
@@ -503,11 +529,8 @@ async function pullVersion(
   progress: SyncProgressEvent['progress'],
   emit: (type: SyncProgressEvent['type'], message: string) => void,
 ): Promise<void> {
-  // Get the version manifest (schemas + file list)
-  const manifest = await fetchUpstream<UpstreamManifest>(
-    upstream,
-    `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/manifest`,
-  )
+  // Get the version manifest (schemas + file list + every record entry)
+  const manifest = await fetchFullManifest(upstream, uc, uv.semver)
 
   // Determine which records we already have locally
   const manifestHashes = manifest.records.map((r) => r.hash)
