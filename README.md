@@ -123,6 +123,8 @@ src/
 │   ├── agent.ts          # Agent share page (token-authenticated HTML instructions)
 │   ├── collections.ts    # Collection CRUD + export, transfer, fork
 │   ├── discussion.ts     # Page-anchored discussion threads
+│   ├── organizations.ts  # Organization creation
+│   ├── webhooks.ts       # Collection webhooks + delivery log
 │   ├── versions.ts       # Version read APIs (manifest, records, diff) + privacy filtering
 │   ├── negotiate.ts      # Push protocol: hash negotiation, record upload, commit
 │   ├── records.ts        # Provenance + batch record fetch
@@ -138,7 +140,9 @@ src/
 │   ├── schema.ts         # Drizzle table definitions
 │   ├── client.server.ts  # Database client
 │   ├── migrate.ts        # Migration runner
-│   ├── seed.ts           # Seed data
+│   ├── seed.ts           # Seed data (destructive with --force)
+│   ├── seedKfCollections.ts # Non-destructive seed of the KF sample collections
+│   ├── seed-helpers.ts   # Record/schema insertion shared by both seeds
 │   └── migrations/       # Generated SQL migrations
 ├── lib/
 │   ├── core/             # Pure functions shared by server and CLI (each with *.test.ts)
@@ -159,6 +163,9 @@ src/
 │   ├── mirror-sync.ts    # Server-to-server mirroring
 │   ├── sqlite-gen.ts     # Version → SQLite database generation
 │   ├── s3.ts             # S3 client
+│   ├── webhooks.server.ts # Webhook delivery, retries, SSRF guard
+│   ├── slug.ts           # Organization slug rules (reserved names)
+│   ├── query-params.ts   # ?limit / ?offset parsing
 │   └── ark.ts            # ARK identifier utilities
 ├── cli/                  # CLI source (local versioning + push/pull)
 │   ├── cli.ts            # Commander entry point
@@ -198,9 +205,11 @@ tools/
 ├── backupDb.ts           # Postgres backup → S3
 ├── restore.ts            # Restore database from an S3 backup
 ├── pruneBackups.ts       # Retention pruning of old backups
-├── cleanupSessions.ts    # Prune expired negotiate sessions
+├── cleanupSessions.ts    # Prune expired negotiate sessions; fail stranded finalizes
+├── pruneWebhookLogs.ts   # Prune old webhook delivery logs
+├── verifyRecordSharing.ts # Check metadata-patch record sharing (needs a scratch DB)
 ├── seedMirror.ts         # Minimal seed for mirror instances
-└── cron.ts               # Scheduled task runner (backup, prune, mirror sync)
+└── cron.ts               # Scheduled tasks (backup, prune backups, session cleanup, webhook-log pruning, mirror sync)
 ```
 
 ## Protocol and Documentation
@@ -409,7 +418,7 @@ Supporting files live in `selfhost/` (Caddyfile, Postgres init script). See [/do
 
 | Variable                    | Description                                                               |
 | --------------------------- | ------------------------------------------------------------------------- |
-| `ARK_DEFAULT_NAAN`          | Default NAAN for ARK identifiers                                          |
+| `ARK_DEFAULT_NAAN`          | Default NAAN for ARK identifiers (placeholder `12345` if unset)           |
 | `CF_ACCOUNT_ID`             | Cloudflare account ID for LLM-powered natural-language SQL (optional)     |
 | `CF_API_TOKEN`              | Cloudflare API token for LLM-powered natural-language SQL (optional)      |
 | `UNDERLAY_MODE`             | `origin` (default) or `mirror` — read-only mirror of an upstream instance |
@@ -445,12 +454,15 @@ pnpm test:watch       # Run tests in watch mode
 pnpm db:generate      # Generate Drizzle migrations from schema changes
 pnpm db:migrate       # Run pending migrations
 pnpm db:seed          # Seed database
+pnpm db:seed-kf       # Add the KF sample collections (non-destructive)
 
 # Tools
 pnpm tool:backup       # Manual database backup to S3
 pnpm tool:restore      # List S3 backups; restore one with `-- <s3-key> --yes`
 pnpm tool:pruneBackups       # Prune old backups (supports `-- --dry-run`)
 pnpm tool:cleanupSessions  # Prune expired negotiate sessions
+pnpm tool:pruneWebhookLogs # Prune old webhook delivery logs
+pnpm tool:verifyRecordSharing # Verify metadata-patch record sharing (scratch DB)
 pnpm tool:seed-mirror      # Seed a mirror instance (admin org only)
 
 # Secrets (SOPS + age)
