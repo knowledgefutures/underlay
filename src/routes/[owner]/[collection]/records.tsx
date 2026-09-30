@@ -1,11 +1,10 @@
 import { useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CollectionNav } from '~/components/collection-nav'
 import { EmptyState } from '~/components/ui'
 import { RecordsView, VersionInfoBar } from '~/components/version-views'
 import { useIsOwner } from '~/lib/use-is-owner'
-
-import { CollectionNav } from '.'
 
 export default function CollectionRecordsPage() {
   const { owner, collection } = useParams()

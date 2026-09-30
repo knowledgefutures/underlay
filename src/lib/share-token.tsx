@@ -30,7 +30,7 @@ export function TokenLink({ to, ...props }: React.ComponentProps<typeof Link>) {
 }
 
 /** Extract the share token from a loader's request URL, or null. */
-export function shareTokenFromRequest(requestUrl: string): string | null {
+function shareTokenFromRequest(requestUrl: string): string | null {
   return new URL(requestUrl).searchParams.get('token')
 }
 

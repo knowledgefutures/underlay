@@ -1,10 +1,10 @@
 import { useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CollectionNav } from '~/components/collection-nav'
 import CollectionOverviewBody from '~/components/collection-overview'
+import { SharePanel } from '~/components/share-panel'
 import { useIsOwner } from '~/lib/use-is-owner'
-
-import { CollectionNav, SharePanel } from '../..'
 
 export default function VersionOverviewPage() {
   const { owner, collection } = useParams()

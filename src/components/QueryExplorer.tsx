@@ -80,6 +80,31 @@ function downloadCsv(result: QueryResult, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+/**
+ * Share links carry `base64(JSON)` in the URL hash. `btoa` alone throws on any
+ * character above U+00FF (e.g. `'é'` is fine, `'€'` or CJK is not), so encode
+ * the JSON as UTF-8 bytes first. ASCII payloads encode identically either way.
+ */
+function encodeShareHash(payload: unknown): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload))
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
+}
+
+/** Inverse of encodeShareHash; still opens links made with plain `btoa` (Latin-1). */
+function decodeShareHash(hash: string): any {
+  const binary = atob(hash)
+  let json: string
+  try {
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0))
+    json = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    json = binary
+  }
+  return JSON.parse(json)
+}
+
 export default function QueryExplorer() {
   const [sqlJs, setSqlJs] = useState<SqlJs | null>(null)
   const [db, setDb] = useState<SqlJsDatabase | null>(null)
@@ -99,14 +124,10 @@ export default function QueryExplorer() {
   const [isRunning, setIsRunning] = useState(false)
 
   // History + results
-  const [history, setHistory] = useState<HistoryEntry[]>(() => {
-    try {
-      const stored = localStorage.getItem('query-explorer-history')
-      return stored ? JSON.parse(stored) : []
-    } catch {
-      return []
-    }
-  })
+  // Starts empty and is restored from localStorage after mount: reading it in
+  // the initializer rendered different markup on the server and the client.
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const historyRestored = useRef(false)
   const [selectedEntry, setSelectedEntry] = useState<HistoryEntry | null>(null)
 
   // Collection selector
@@ -141,14 +162,27 @@ export default function QueryExplorer() {
     }
   }, [history])
 
-  // Persist history to localStorage
+  // Persist history to localStorage — not before it has been restored, or the
+  // initial empty state would overwrite what is stored.
   useEffect(() => {
+    if (!historyRestored.current) return
     try {
       localStorage.setItem('query-explorer-history', JSON.stringify(history))
     } catch {
       /* quota exceeded — ignore */
     }
   }, [history])
+
+  // Restore history (declared after the persist effect so its first run skips).
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('query-explorer-history')
+      if (stored) setHistory(JSON.parse(stored))
+    } catch {
+      /* unavailable or corrupt — start empty */
+    }
+    historyRestored.current = true
+  }, [])
 
   const clearHistory = useCallback(() => {
     setHistory([])
@@ -472,73 +506,79 @@ export default function QueryExplorer() {
       }
 
       if (!sqlJs) return
+      // Build the replacement before closing the current db: if a fetch fails,
+      // the current one stays open and usable instead of pointing at a closed db.
       const newDb = new sqlJs.Database()
-      if (db) db.close()
+      try {
+        for (const lc of remaining) {
+          const res = await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.semver}`)
+          const buf = await res.arrayBuffer()
+          const tempDb = new sqlJs.Database(new Uint8Array(buf))
 
-      for (const lc of remaining) {
-        const res = await fetch(`/api/query/sqlite/${lc.ownerSlug}/${lc.slug}/${lc.semver}`)
-        const buf = await res.arrayBuffer()
-        const tempDb = new sqlJs.Database(new Uint8Array(buf))
-
-        if (remaining.length === 1) {
-          const tables = tempDb.exec("SELECT name, sql FROM sqlite_master WHERE type='table'")
-          if (tables.length > 0) {
-            for (const row of tables[0].values) {
-              const createSql = row[1] as string
-              try {
-                newDb.exec(createSql)
-              } catch {
-                continue
+          if (remaining.length === 1) {
+            const tables = tempDb.exec("SELECT name, sql FROM sqlite_master WHERE type='table'")
+            if (tables.length > 0) {
+              for (const row of tables[0].values) {
+                const createSql = row[1] as string
+                try {
+                  newDb.exec(createSql)
+                } catch {
+                  continue
+                }
+                const tableName = row[0] as string
+                const data = tempDb.exec(`SELECT * FROM "${tableName}"`)
+                if (data.length > 0 && data[0].values.length > 0) {
+                  const cols = data[0].columns
+                  const placeholders = cols.map(() => '?').join(', ')
+                  const stmt = newDb.prepare(
+                    `INSERT INTO "${tableName}" (${cols
+                      .map((c: string) => `"${c}"`)
+                      .join(', ')}) VALUES (${placeholders})`,
+                  )
+                  for (const r of data[0].values) stmt.run(r)
+                  stmt.free()
+                }
               }
-              const tableName = row[0] as string
-              const data = tempDb.exec(`SELECT * FROM "${tableName}"`)
-              if (data.length > 0 && data[0].values.length > 0) {
-                const cols = data[0].columns
-                const placeholders = cols.map(() => '?').join(', ')
-                const stmt = newDb.prepare(
-                  `INSERT INTO "${tableName}" (${cols
-                    .map((c: string) => `"${c}"`)
-                    .join(', ')}) VALUES (${placeholders})`,
-                )
-                for (const r of data[0].values) stmt.run(r)
-                stmt.free()
+            }
+          } else {
+            const tables = tempDb.exec("SELECT name, sql FROM sqlite_master WHERE type='table'")
+            if (tables.length > 0) {
+              for (const row of tables[0].values) {
+                const tableName = row[0] as string
+                const createSql = row[1] as string
+                const prefix = lc.slug.replace(/-/g, '_')
+                const prefixedCreate = createSql
+                  .replace(`CREATE TABLE "${tableName}"`, `CREATE TABLE "${prefix}__${tableName}"`)
+                  .replace(/\)$/, `,\n  "_source" TEXT\n)`)
+                try {
+                  newDb.exec(prefixedCreate)
+                } catch {
+                  continue
+                }
+                const data = tempDb.exec(`SELECT * FROM "${tableName}"`)
+                if (data.length > 0 && data[0].values.length > 0) {
+                  const cols = [...data[0].columns, '_source']
+                  const placeholders = cols.map(() => '?').join(', ')
+                  const sourceLabel = `${lc.ownerSlug}/${lc.slug}`
+                  const stmt = newDb.prepare(
+                    `INSERT INTO "${prefix}__${tableName}" (${cols
+                      .map((c: string) => `"${c}"`)
+                      .join(', ')}) VALUES (${placeholders})`,
+                  )
+                  for (const r of data[0].values) stmt.run([...r, sourceLabel])
+                  stmt.free()
+                }
               }
             }
           }
-        } else {
-          const tables = tempDb.exec("SELECT name, sql FROM sqlite_master WHERE type='table'")
-          if (tables.length > 0) {
-            for (const row of tables[0].values) {
-              const tableName = row[0] as string
-              const createSql = row[1] as string
-              const prefix = lc.slug.replace(/-/g, '_')
-              const prefixedCreate = createSql
-                .replace(`CREATE TABLE "${tableName}"`, `CREATE TABLE "${prefix}__${tableName}"`)
-                .replace(/\)$/, `,\n  "_source" TEXT\n)`)
-              try {
-                newDb.exec(prefixedCreate)
-              } catch {
-                continue
-              }
-              const data = tempDb.exec(`SELECT * FROM "${tableName}"`)
-              if (data.length > 0 && data[0].values.length > 0) {
-                const cols = [...data[0].columns, '_source']
-                const placeholders = cols.map(() => '?').join(', ')
-                const sourceLabel = `${lc.ownerSlug}/${lc.slug}`
-                const stmt = newDb.prepare(
-                  `INSERT INTO "${prefix}__${tableName}" (${cols
-                    .map((c: string) => `"${c}"`)
-                    .join(', ')}) VALUES (${placeholders})`,
-                )
-                for (const r of data[0].values) stmt.run([...r, sourceLabel])
-                stmt.free()
-              }
-            }
-          }
+          tempDb.close()
         }
-        tempDb.close()
+      } catch (err) {
+        newDb.close()
+        throw err
       }
 
+      if (db) db.close()
       setDb(newDb)
     },
     [sqlJs, db, loadedCollections],
@@ -675,7 +715,7 @@ export default function QueryExplorer() {
         c: loadedCollections.map((lc) => ({ o: lc.ownerSlug, s: lc.slug, v: lc.semver })),
         q: sqlText,
       }
-      const hash = btoa(JSON.stringify(payload))
+      const hash = encodeShareHash(payload)
       const url = `${window.location.origin}${window.location.pathname}#${hash}`
       navigator.clipboard.writeText(url)
       setCopied(true)
@@ -690,7 +730,7 @@ export default function QueryExplorer() {
     const hash = window.location.hash.slice(1)
     if (!hash) return
     try {
-      const payload = JSON.parse(atob(hash))
+      const payload = decodeShareHash(hash)
       if (!payload.c || !Array.isArray(payload.c)) return
       // Load each collection from the hash
       for (const ref of payload.c) {
@@ -737,6 +777,8 @@ export default function QueryExplorer() {
                 {lc.ownerSlug}/{lc.slug}
                 <span className="text-ink-muted">{lc.semver}</span>
                 <button
+                  type="button"
+                  aria-label={`Remove ${lc.ownerSlug}/${lc.slug}`}
                   onClick={() => removeCollection(lc.key)}
                   className="text-ink-muted hover:text-ink leading-none"
                 >
@@ -765,6 +807,7 @@ export default function QueryExplorer() {
                   <input
                     type="search"
                     placeholder="Search by owner or collection name..."
+                    aria-label="Search collections"
                     className="bg-parchment-dark border-rule placeholder:text-ink-muted focus:border-ink w-full border px-2 py-1 font-mono text-xs focus:outline-none"
                     value={collectionSearch}
                     onChange={(e) => setCollectionSearch(e.target.value)}

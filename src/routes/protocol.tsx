@@ -867,6 +867,9 @@ function RfcSection({
           onClick={() => onOpen(id)}
           className="text-ink-muted hover:text-ink hover:bg-parchment-dark flex h-7 min-w-[28px] items-center justify-center rounded-full text-xs transition-colors"
           title={count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'}
+          aria-label={
+            count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'
+          }
         >
           {count > 0 ? count : '+'}
         </button>

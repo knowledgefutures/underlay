@@ -1,10 +1,9 @@
 import { useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CollectionNav } from '~/components/collection-nav'
 import { FilesView, VersionInfoBar } from '~/components/version-views'
 import { useIsOwner } from '~/lib/use-is-owner'
-
-import { CollectionNav } from '../..'
 
 export default function VersionFilesPage() {
   const { owner, collection, n } = useParams()

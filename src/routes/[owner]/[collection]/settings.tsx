@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import SettingsLayout, { collectionSettingsRail } from '~/components/SettingsLayout'
@@ -29,7 +29,8 @@ async function pollMetadataJob(
   collection: string | undefined,
   jobId: string,
   onProgress: (message: string) => void,
-): Promise<{ semver?: string; error?: string }> {
+  signal: AbortSignal,
+): Promise<{ semver?: string; error?: string; aborted?: true }> {
   const INTERVAL_MS = 1500
   const NOTE_AFTER_MS = 4000
   const startedAt = Date.now()
@@ -37,10 +38,19 @@ async function pollMetadataJob(
 
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS))
+    // The page was left: stop polling (the write still lands server-side).
+    if (signal.aborted) return { aborted: true }
 
-    const res = await fetch(`/api/collections/${owner}/${collection}/metadata/jobs/${jobId}`, {
-      credentials: 'include',
-    })
+    let res: Response
+    try {
+      res = await fetch(`/api/collections/${owner}/${collection}/metadata/jobs/${jobId}`, {
+        credentials: 'include',
+        signal,
+      })
+    } catch (err) {
+      if (signal.aborted) return { aborted: true }
+      throw err
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       return { error: body.error ?? 'Lost track of the metadata update.' }
@@ -94,6 +104,14 @@ export default function CollectionSettingsPage() {
 
   // Transfer form
   const [transferTarget, setTransferTarget] = useState('')
+
+  // Aborted on unmount so a metadata-job poll doesn't outlive the page.
+  const pollAbort = useRef(new AbortController())
+  useEffect(() => {
+    const controller = new AbortController()
+    pollAbort.current = controller
+    return () => controller.abort()
+  }, [])
 
   function clearMessages() {
     setSuccess('')
@@ -176,7 +194,14 @@ export default function CollectionSettingsPage() {
         return
       }
 
-      const outcome = await pollMetadataJob(owner, collection, accepted.job_id, setSuccess)
+      const outcome = await pollMetadataJob(
+        owner,
+        collection,
+        accepted.job_id,
+        setSuccess,
+        pollAbort.current.signal,
+      )
+      if (outcome.aborted) return
       if (outcome.error) {
         setError(outcome.error)
         return
@@ -393,6 +418,7 @@ export default function CollectionSettingsPage() {
                     {tag}
                     <button
                       type="button"
+                      aria-label={`Remove tag ${tag}`}
                       onClick={() => setTags(tags.filter((t) => t !== tag))}
                       className="text-ink-muted hover:text-ink cursor-pointer text-sm leading-none"
                     >

@@ -56,6 +56,7 @@ export default function SchemaBrowser() {
       <div className="mb-6 flex gap-2">
         <input
           type="search"
+          aria-label="Search schemas"
           placeholder={
             filterType === 'q'
               ? 'Search schema content...'

@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
@@ -37,10 +37,13 @@ export default function OwnerSettings() {
   // Delete form
   const [confirmSlug, setConfirmSlug] = useState('')
 
-  if (currentUser && !org) {
-    window.location.href = `/${owner}`
-    return null
-  }
+  // Not a member: send them to the public profile. In an effect, not during
+  // render — `window` does not exist when this renders on the server.
+  const notMember = !!currentUser && !org
+  useEffect(() => {
+    if (notMember) window.location.href = `/${owner}`
+  }, [notMember, owner])
+  if (notMember) return null
 
   function clearMessages() {
     setSuccess('')

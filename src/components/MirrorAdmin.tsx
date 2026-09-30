@@ -133,13 +133,18 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
   const [expandedRun, setExpandedRun] = useState<string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const evtSourceRef = useRef<EventSource | null>(null)
+  // Set on unmount so a checkActiveSync that resolves afterwards doesn't open
+  // an EventSource nothing will ever close.
+  const unmountedRef = useRef(false)
 
   useEffect(() => {
+    unmountedRef.current = false
     fetchStatus()
     fetchHistory()
     // Check if a sync is already running (e.g. page refresh)
     checkActiveSync()
     return () => {
+      unmountedRef.current = true
       evtSourceRef.current?.close()
     }
   }, [])
@@ -214,6 +219,7 @@ export default function MirrorAdmin({ upstream, nodeName, syncSchedule }: Props)
   }
 
   function connectSSE() {
+    if (unmountedRef.current) return
     const evtSource = new EventSource('/api/admin/mirror/sync/progress')
     evtSourceRef.current = evtSource
     evtSource.onmessage = (event) => {

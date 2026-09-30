@@ -1,8 +1,7 @@
 import { useLoaderData, useParams } from 'react-router'
 
 import BlogLayout from '~/components/BlogLayout'
-
-import { posts } from './[slug].data'
+import { blogPostsBySlug as posts } from '~/lib/blog-posts'
 
 export default function BlogPost() {
   const { slug } = useParams()

@@ -105,20 +105,31 @@ export function RecordsView({
   useEffect(() => {
     if (!currentType) return
     const offset = (page - 1) * pageSize
+    // Abort on type/page change so a slower earlier response can't land last
+    // and overwrite the current one.
+    const controller = new AbortController()
     setRecordsLoading(true)
     fetch(
       withToken(
-        `/api/collections/${owner}/${collection}/versions/${semver}/records?type=${currentType}&limit=${pageSize}&offset=${offset}`,
+        `/api/collections/${owner}/${collection}/versions/${semver}/records?type=${encodeURIComponent(currentType)}&limit=${pageSize}&offset=${offset}`,
         shareToken,
       ),
-      { credentials: 'include' },
+      { credentials: 'include', signal: controller.signal },
     )
       .then((r) => (r.ok ? r.json() : { records: [], pagination: {} }))
       .then((body) => {
         setRecords(body.records ?? body)
         setTotalRecords(body.pagination?.total ?? version.recordCount ?? 0)
       })
-      .finally(() => setRecordsLoading(false))
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        console.error('Failed to load records:', err)
+        setRecords([])
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRecordsLoading(false)
+      })
+    return () => controller.abort()
   }, [version, currentType, page, owner, collection, semver, shareToken])
 
   const currentTypeFields: string[] = currentType

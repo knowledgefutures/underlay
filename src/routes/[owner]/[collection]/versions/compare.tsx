@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react'
 import { useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CollectionNav } from '~/components/collection-nav'
 import { Alert, Button } from '~/components/ui'
 import { useShareToken, withToken } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
-
-import { CollectionNav } from '..'
 
 function groupByType(records: any[]) {
   const groups: Record<string, any[]> = {}
@@ -44,23 +43,32 @@ export default function CollectionDiffPage() {
     setDiff(null)
     setDiffError(null)
 
+    // Abort when the pair changes so an earlier, slower diff can't replace it.
+    const controller = new AbortController()
     const fromParam = fromVer ? `?from=${fromVer}` : ''
     fetch(
       withToken(
         `/api/collections/${owner}/${collection}/versions/${toVer}/diff${fromParam}`,
         shareToken,
       ),
-      { credentials: 'include' },
+      { credentials: 'include', signal: controller.signal },
     )
       .then(async (r) => {
         if (r.ok) {
-          setDiff(await r.json())
+          const body = await r.json()
+          if (!controller.signal.aborted) setDiff(body)
         } else {
           const body = await r.json().catch(() => ({}))
-          setDiffError(body.error ?? 'Failed to load diff')
+          if (!controller.signal.aborted) setDiffError(body.error ?? 'Failed to load diff')
         }
       })
-      .finally(() => setDiffLoading(false))
+      .catch(() => {
+        if (!controller.signal.aborted) setDiffError('Failed to load diff')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDiffLoading(false)
+      })
+    return () => controller.abort()
   }, [fromVer, toVer, owner, collection, shareToken])
 
   function handleCompare(e: React.FormEvent) {

@@ -1,12 +1,11 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CollectionNav } from '~/components/collection-nav'
 import { EmptyState } from '~/components/ui'
-import { bareSemver } from '~/lib/format'
+import { bareSemver, formatBytes } from '~/lib/format'
 import { TokenLink } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
-
-import { CollectionNav, formatBytes } from '.'
 
 export default function CollectionVersionsPage() {
   const { owner, collection } = useParams()

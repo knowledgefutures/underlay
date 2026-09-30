@@ -163,6 +163,7 @@ export default function DocsSearch() {
       <input
         type="text"
         placeholder="Search docs..."
+        aria-label="Search docs"
         autoComplete="off"
         className="border-rule bg-parchment placeholder:text-ink-muted/50 focus:border-ink-muted w-full border px-2.5 py-1.5 text-xs focus:outline-none"
         value={query}

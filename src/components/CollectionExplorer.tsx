@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
+import { formatBytesFixed, formatCount, timeAgo } from '~/lib/format'
+
 interface Collection {
   id: string
   slug: string
@@ -28,33 +30,6 @@ interface OwnerFacet {
 interface TagFacet {
   name: string
   count: number
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-}
-
-function formatCount(n: number): string {
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
-  return `${(n / 1_000_000).toFixed(1)}M`
-}
-
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  const months = Math.floor(days / 30)
-  if (months < 12) return `${months}mo ago`
-  return `${Math.floor(months / 12)}y ago`
 }
 
 type SortKey = 'featured' | 'updated' | 'name' | 'records'
@@ -221,6 +196,7 @@ export default function CollectionExplorer() {
             <input
               type="search"
               placeholder="Search collections..."
+              aria-label="Search collections"
               className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink rounded-control w-full border py-2 pr-3 pl-10 text-sm focus:outline-none"
               value={query}
               onChange={(e) => handleInput(e.target.value)}
@@ -358,7 +334,7 @@ export default function CollectionExplorer() {
                     )}
                     {c.totalBytes != null && c.totalBytes > 0 && (
                       <span className="hidden w-14 text-right sm:inline">
-                        {formatBytes(c.totalBytes)}
+                        {formatBytesFixed(c.totalBytes)}
                       </span>
                     )}
                     {c.lastPushAt && (

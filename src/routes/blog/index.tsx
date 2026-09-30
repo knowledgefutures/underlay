@@ -1,46 +1,9 @@
 import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { blogPosts } from '~/lib/blog-posts'
 
-const posts: { title: string; subtitle: string; date: string; url: string }[] = [
-  {
-    title: 'Permanently Addressable Structured Data',
-    subtitle: 'What Underlay is, why it matters now, and how it works.',
-    date: '2026-06-08',
-    url: '/blog/2026-06-08-permanently-addressable-structured-data',
-  },
-  {
-    title: 'Content-Addressed Records',
-    subtitle:
-      'Applying the insight that already works for schemas and files to the records themselves.',
-    date: '2026-06-08',
-    url: '/blog/2026-06-08-content-addressed-records',
-  },
-  {
-    title: 'Schema Evolution',
-    subtitle: 'How Underlay handles schema changes across versions.',
-    date: '2026-04-30',
-    url: '/blog/2026-04-30-schema-evolution',
-  },
-  {
-    title: 'AT Protocol Integration',
-    subtitle: 'Connecting Underlay to the decentralized social web.',
-    date: '2026-04-28',
-    url: '/blog/2026-04-28-atproto-integration',
-  },
-  {
-    title: 'Institutional Repositories',
-    subtitle: 'Why universities need better infrastructure for structured data.',
-    date: '2024-04-27',
-    url: '/blog/2024-04-27-institutional-repositories',
-  },
-  {
-    title: 'Underlay, Revived',
-    subtitle: 'The landscape changed. The project can finally be simple.',
-    date: '2024-04-27',
-    url: '/blog/2024-04-27-underlay-revived',
-  },
-]
+const posts = blogPosts.map((p) => ({ ...p, url: `/blog/${p.slug}` }))
 
 function fmtDate(d: string) {
   const date = new Date(d)
