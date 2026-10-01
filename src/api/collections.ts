@@ -9,6 +9,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
+import { checkRestrictedChanges, restrictedChanges } from '../lib/collection-update.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import { downloadFromS3 } from '../lib/s3.js'
 import {
@@ -510,6 +511,17 @@ const app = new Hono<AuthEnv>()
       const scopedCollections = c.get('apiKeyCollectionIds')
       if (scopedCollections && !scopedCollections.includes(collection.id)) {
         return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
+      }
+
+      // Changing visibility or slug needs owner/admin and an unscoped key;
+      // name-only updates stay open to any org member.
+      const restricted = restrictedChanges(updates, collection)
+      if (restricted.length > 0) {
+        const denied = checkRestrictedChanges(restricted, {
+          role: await getOrgRole(c.get('userId'), org.id),
+          keyScoped: !!scopedCollections,
+        })
+        if (denied) return c.json({ error: denied, statusCode: 403 }, 403)
       }
 
       // Validate new slug if provided
