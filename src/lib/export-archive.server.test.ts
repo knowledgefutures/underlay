@@ -78,6 +78,7 @@ function seedRecords(): Map<string, SeedRecord[]> {
 }
 
 const RECORDS = seedRecords()
+const VERSION_CREATED_AT = new Date('2026-09-01T12:00:00.250Z')
 // Deliberately not alphabetical: entries follow the order given.
 const TYPES = ['Big', 'Article', 'Secret', 'Exact', 'Hidden']
 
@@ -96,7 +97,7 @@ function seededSource(
       recordCount: 999_999,
       fileCount: 99,
       totalBytes: 9_999_999,
-      createdAt: new Date('2026-09-01T12:00:00Z'),
+      createdAt: VERSION_CREATED_AT,
     },
     schemas: { Article: { type: 'object' } },
     files_missing: [],
@@ -139,7 +140,9 @@ function seededSource(
 // ── The export as it was built before streaming ──────────────────────────────
 // A frozen copy of the buffered implementation from src/api/collections.ts
 // (commit c2a4ede), reading the same source. The new stream must match it
-// byte for byte.
+// byte for byte. The old builder stamped entries with the time of export, the
+// new one with the version's creation time, so the comparison runs with the
+// clock at that time.
 
 async function legacyExport(source: ExportArchiveSource): Promise<Buffer> {
   const { manifest, ownerAccess, privateTypes, privateFieldsByType } = source
@@ -234,10 +237,18 @@ async function collect(stream: AsyncIterable<Uint8Array>): Promise<Buffer> {
 }
 
 async function listEntries(gz: Buffer): Promise<Map<string, Buffer>> {
-  const entries = new Map<string, Buffer>()
+  return new Map([...(await readEntries(gz))].map(([name, e]) => [name, e.body]))
+}
+
+async function readEntries(
+  gz: Buffer,
+): Promise<Map<string, { mtime: Date | undefined; body: Buffer }>> {
+  const entries = new Map<string, { mtime: Date | undefined; body: Buffer }>()
   const extract = tarExtract()
   Readable.from([gz]).pipe(createGunzip()).pipe(extract)
-  for await (const entry of extract) entries.set(entry.header.name, await collect(entry))
+  for await (const entry of extract) {
+    entries.set(entry.header.name, { mtime: entry.header.mtime, body: await collect(entry) })
+  }
   return entries
 }
 
@@ -247,7 +258,6 @@ async function exportTempDirs(): Promise<string[]> {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
 
-// tar headers carry an mtime of "now", so freeze the clock to compare bytes.
 // The seeded missing file is logged on every export; keep that out of the output.
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -268,12 +278,27 @@ describe('createExportArchive', () => {
   ])('is byte-identical to the buffered export (%s)', async (_label, ownerAccess) => {
     const legacySource = seededSource(ownerAccess)
     const streamedSource = seededSource(ownerAccess)
+    vi.setSystemTime(VERSION_CREATED_AT)
     const expected = await legacyExport(legacySource)
+    vi.setSystemTime(new Date('2026-10-01T09:30:00Z'))
     const actual = await collect(createExportArchive(streamedSource))
 
     expect(actual.length).toBe(expected.length)
     expect(actual.equals(expected)).toBe(true)
     expect(streamedSource.manifest).toEqual(legacySource.manifest)
+  })
+
+  it('exports a version to the same bytes whenever it runs', async () => {
+    const first = await collect(createExportArchive(seededSource(false)))
+    vi.setSystemTime(new Date('2027-03-15T18:45:07Z'))
+    const second = await collect(createExportArchive(seededSource(false)))
+    expect(second.equals(first)).toBe(true)
+
+    // tar keeps whole seconds.
+    const createdAtSeconds = new Date(Math.floor(VERSION_CREATED_AT.getTime() / 1000) * 1000)
+    const entries = await readEntries(first)
+    expect(entries.size).toBeGreaterThan(0)
+    for (const { mtime } of entries.values()) expect(mtime).toEqual(createdAtSeconds)
   })
 
   it('lays out records and files as documented', async () => {

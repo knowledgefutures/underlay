@@ -4,7 +4,9 @@
 //
 // Where the bytes come from (database, S3) is injected, so the archive layout
 // can be tested without either. The layout is a contract — the same version
-// must export to the same bytes — so change it deliberately.
+// must export to the same bytes — so change it deliberately. Every entry is
+// stamped with the version's creation time rather than the time of export, so
+// exporting a version twice gives identical archives.
 
 import { createReadStream } from 'node:fs'
 import { type FileHandle, mkdtemp, open, rm } from 'node:fs/promises'
@@ -127,6 +129,7 @@ async function writeArchive(
   isCancelled: () => boolean,
 ): Promise<void> {
   const { manifest, ownerAccess } = source
+  const mtime = manifest.version.createdAt
 
   // tar needs each entry's byte length in its header, before its body. A
   // record part's length isn't known until its last record is serialized, so
@@ -136,7 +139,7 @@ async function writeArchive(
     const { emittedRecordCount, referencedFileHashes } = await writeRecords(
       pack,
       source,
-      join(dir, 'part.ndjson'),
+      new PartFile(join(dir, 'part.ndjson'), mtime),
       isCancelled,
     )
 
@@ -159,7 +162,7 @@ async function writeArchive(
       // Past this point the entry header is written, so a body that fails or
       // comes up short aborts the archive (see createExportArchive).
       const size = opened.size ?? file.size
-      await writeStreamEntry(pack, { name: `files/${file.hash}`, size }, opened.body)
+      await writeStreamEntry(pack, { name: `files/${file.hash}`, size, mtime }, opened.body)
       emittedFileCount++
       emittedFileBytes += size
     }
@@ -174,7 +177,7 @@ async function writeArchive(
 
     const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
     await new Promise<void>((resolve, reject) => {
-      pack.entry({ name: 'manifest.json', size: manifestBuf.length }, manifestBuf, (err) =>
+      pack.entry({ name: 'manifest.json', size: manifestBuf.length, mtime }, manifestBuf, (err) =>
         err ? reject(err) : resolve(),
       )
     })
@@ -191,7 +194,7 @@ async function writeArchive(
 async function writeRecords(
   pack: Pack,
   source: ExportArchiveSource,
-  partPath: string,
+  part: PartFile,
   isCancelled: () => boolean,
 ): Promise<{ emittedRecordCount: number; referencedFileHashes: Set<string> }> {
   const { ownerAccess } = source
@@ -212,7 +215,6 @@ async function writeRecords(
     }
   }
 
-  const part = new PartFile(partPath)
   try {
     for (const type of source.types) {
       // Non-owners never see private types.
@@ -270,7 +272,10 @@ class PartFile {
   private bytes = 0
   private handle: FileHandle | null = null
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly mtime: Date,
+  ) {}
 
   async append(lines: string): Promise<void> {
     this.handle ??= await open(this.path, 'w')
@@ -282,7 +287,11 @@ class PartFile {
   /** Stream the spooled part into the tar as `name`, then start a fresh part. */
   async emit(pack: Pack, name: string): Promise<void> {
     await this.close()
-    await writeStreamEntry(pack, { name, size: this.bytes }, createReadStream(this.path))
+    await writeStreamEntry(
+      pack,
+      { name, size: this.bytes, mtime: this.mtime },
+      createReadStream(this.path),
+    )
     this.records = 0
     this.bytes = 0
   }
