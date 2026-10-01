@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { auth, KF_AUTH_INTERNAL_URL } from './auth.js'
+import { createTtlCache } from './ttl-cache.js'
 
 export interface SessionUser {
   id: string
@@ -69,6 +70,22 @@ interface KfProfile {
   role: string | null
 }
 
+// Name/avatar/role shown in the app shell. /api/context runs on every page view
+// and navigation, so its profile lookup (account read + outbound userinfo call)
+// is cached briefly: changes appear on the first navigation after the TTL.
+// Only successful lookups are cached. Authorization checks use getKfRole, which
+// always reads fresh.
+const KF_PROFILE_TTL_MS = 30_000
+const kfProfileCache = createTtlCache<KfProfile>(KF_PROFILE_TTL_MS)
+
+async function fetchKfProfileCached(userId: string): Promise<KfProfile | null> {
+  const hit = kfProfileCache.get(userId)
+  if (hit) return hit
+  const profile = await fetchKfProfile(userId)
+  if (profile) kfProfileCache.set(userId, profile)
+  return profile
+}
+
 async function fetchKfProfile(userId: string): Promise<KfProfile | null> {
   try {
     const [acct] = await db
@@ -98,7 +115,7 @@ async function fetchKfProfile(userId: string): Promise<KfProfile | null> {
   }
 }
 
-/** The user's KF role (e.g. 'admin' for stewards), or null. */
+/** The user's KF role (e.g. 'admin' for stewards), or null. Uncached: used for authorization. */
 export async function getKfRole(userId: string): Promise<string | null> {
   return (await fetchKfProfile(userId))?.role ?? null
 }
@@ -126,7 +143,7 @@ export async function getSessionUser(request: Request): Promise<SessionUser | nu
       .from(schema.member)
       .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
       .where(eq(schema.member.userId, u.id)),
-    fetchKfProfile(u.id),
+    fetchKfProfileCached(u.id),
   ])
 
   const defaultOrg = memberships.find((m) => m.isDefault) ?? null

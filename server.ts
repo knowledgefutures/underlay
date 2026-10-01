@@ -35,7 +35,7 @@ import _schemas from '~/api/schemas'
 import _versions from '~/api/versions'
 import _webhooks from '~/api/webhooks'
 import { auth } from '~/lib/auth'
-import { getSessionUser } from '~/lib/auth.server'
+import { getKfRole, getSessionUser } from '~/lib/auth.server'
 import { getMirrorConfig, getPublicMirrorConfig } from '~/lib/mirror-config'
 import { startWebhookBackgroundJobs } from '~/lib/webhooks.server'
 
@@ -183,8 +183,8 @@ app.use('/api/admin/mirror/*', async (c, next) => {
 const requireSteward: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const userId = c.get('userId')
   if (!userId) return c.json({ error: 'Unauthorized', statusCode: 401 }, 401)
-  const sessionUser = await getSessionUser(c.req.raw)
-  if (sessionUser?.kfRole !== 'admin') {
+  // Fresh role lookup, not the cached profile from getSessionUser.
+  if ((await getKfRole(userId)) !== 'admin') {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
   }
   return next()
