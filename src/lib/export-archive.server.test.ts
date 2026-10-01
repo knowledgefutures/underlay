@@ -359,7 +359,15 @@ describe('createExportArchive', () => {
     const fetched = source.fetches
     await tick()
     expect(source.fetches).toBe(fetched)
-    expect(await exportTempDirs()).toEqual(before)
+    // `before` may hold a dir the previous test's producer is still removing, so
+    // wait for the dirs to settle and only require that this export left none new.
+    let leftover: string[] = []
+    for (let i = 0; i < 50; i++) {
+      leftover = (await exportTempDirs()).filter((d) => !before.includes(d))
+      if (leftover.length === 0) break
+      await tick()
+    }
+    expect(leftover).toEqual([])
   })
 
   it('aborts the download when a file body fails mid-stream', async () => {
