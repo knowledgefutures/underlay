@@ -194,7 +194,10 @@ export default function DocsApiCollections() {
 
       <div className="endpoint">
         <h2>PATCH /api/collections/:owner/:slug</h2>
-        <p className="scope">Auth: write scope</p>
+        <p className="scope">
+          Auth: write scope; changing <code>slug</code> or <code>public</code> also needs
+          owner/admin role and a key not scoped to specific collections
+        </p>
         <p>Update collection metadata. Pass only the fields to change.</p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
