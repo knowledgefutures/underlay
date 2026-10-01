@@ -47,6 +47,60 @@ function visibleSchemaCondition(userId: string | undefined) {
   ))`
 }
 
+/** Schema ids (from `schemaIds`) used by a collection in an org the user belongs to. */
+async function memberSchemaIds(
+  userId: string | undefined,
+  schemaIds: string[],
+): Promise<Set<string>> {
+  if (!userId || schemaIds.length === 0) return new Set()
+  const rows = await db
+    .selectDistinct({ schemaId: schema.versionSchemas.schemaId })
+    .from(schema.versionSchemas)
+    .innerJoin(schema.versions, eq(schema.versionSchemas.versionId, schema.versions.id))
+    .innerJoin(schema.collections, eq(schema.versions.collectionId, schema.collections.id))
+    .innerJoin(schema.member, eq(schema.member.organizationId, schema.collections.organizationId))
+    .where(
+      and(inArray(schema.versionSchemas.schemaId, schemaIds), eq(schema.member.userId, userId)),
+    )
+  return new Set(rows.map((r) => r.schemaId))
+}
+
+/**
+ * Strip private field definitions from schema rows the caller isn't a member
+ * for. Members of an org that uses the schema see it whole.
+ */
+async function redactSchemaRows<T extends { id: string; schema: unknown }>(
+  rows: T[],
+  userId: string | undefined,
+): Promise<T[]> {
+  const members = await memberSchemaIds(
+    userId,
+    rows.map((r) => r.id),
+  )
+  return rows.map((r) =>
+    members.has(r.id)
+      ? r
+      : { ...r, schema: filterTypeSchema((r.schema ?? {}) as Record<string, unknown>) },
+  )
+}
+
+/**
+ * SQL text of a schema body with private field definitions (and `required`,
+ * which names them) removed — what `?q=` matches against for non-members.
+ */
+const publicSchemaText = sql`(
+  (${schema.schemas.schema} - 'required') || jsonb_build_object(
+    'properties',
+    CASE WHEN jsonb_typeof(${schema.schemas.schema} -> 'properties') = 'object' THEN COALESCE((
+      SELECT jsonb_object_agg(p.key, p.value)
+      FROM jsonb_each(${schema.schemas.schema} -> 'properties') p
+      WHERE p.value ->> 'private' IS DISTINCT FROM 'true'
+    ), '{}'::jsonb) ELSE ${schema.schemas.schema} -> 'properties' END
+  )
+)::text`
+
+const MAX_LABEL_LENGTH = 100
+
 const app = new Hono<AuthEnv>()
   .get(
     '/schemas',
@@ -84,8 +138,10 @@ const app = new Hono<AuthEnv>()
 
         const usageCount = await getUsageCount(row.id)
 
+        const [safeRow] = await redactSchemaRows([row], fullPrincipalUserId(c))
+
         return c.json({
-          ...row,
+          ...safeRow,
           labels: labels.map((l) => l.label),
           usageCount,
         })
@@ -103,10 +159,13 @@ const app = new Hono<AuthEnv>()
         if (vsRows.length === 0) return c.json([])
 
         const schemaIds = vsRows.map((r) => r.schemaId)
-        const schemaRows = await db
-          .select()
-          .from(schema.schemas)
-          .where(and(inArray(schema.schemas.id, schemaIds), visible))
+        const schemaRows = await redactSchemaRows(
+          await db
+            .select()
+            .from(schema.schemas)
+            .where(and(inArray(schema.schemas.id, schemaIds), visible)),
+          fullPrincipalUserId(c),
+        )
 
         const allLabels = await db
           .select({ schemaId: schema.schemaLabels.schemaId, label: schema.schemaLabels.label })
@@ -141,10 +200,13 @@ const app = new Hono<AuthEnv>()
         if (labelRows.length === 0) return c.json([])
 
         const schemaIds = [...new Set(labelRows.map((r) => r.schemaId))]
-        const schemaRows = await db
-          .select()
-          .from(schema.schemas)
-          .where(and(inArray(schema.schemas.id, schemaIds), visible))
+        const schemaRows = await redactSchemaRows(
+          await db
+            .select()
+            .from(schema.schemas)
+            .where(and(inArray(schema.schemas.id, schemaIds), visible)),
+          fullPrincipalUserId(c),
+        )
 
         const allLabels = await db
           .select({ schemaId: schema.schemaLabels.schemaId, label: schema.schemaLabels.label })
@@ -166,12 +228,25 @@ const app = new Hono<AuthEnv>()
       }
 
       if (q) {
-        const rows = await db
+        const pattern = '%' + q + '%'
+        const userId = fullPrincipalUserId(c)
+        // Full text only for schemas used by an org the caller belongs to.
+        const memberMatch = userId
+          ? sql`(${schema.schemas.schema}::text ILIKE ${pattern} AND EXISTS (
+              SELECT 1 FROM version_schemas vs
+              JOIN versions v ON vs.version_id = v.id
+              JOIN collections col ON v.collection_id = col.id
+              JOIN member m ON m.organization_id = col.organization_id
+              WHERE vs.schema_id = ${schema.schemas.id} AND m.user_id = ${userId}
+            ))`
+          : sql`false`
+        const found = await db
           .select()
           .from(schema.schemas)
-          .where(and(sql`${schema.schemas.schema}::text ILIKE ${'%' + q + '%'}`, visible))
+          .where(and(sql`(${publicSchemaText} ILIKE ${pattern} OR ${memberMatch})`, visible))
           .limit(pageLimit)
           .offset(pageOffset)
+        const rows = await redactSchemaRows(found, userId)
 
         const schemaIds = rows.map((r) => r.id)
         const allLabels =
@@ -199,13 +274,16 @@ const app = new Hono<AuthEnv>()
         )
       }
 
-      const rows = await db
-        .select()
-        .from(schema.schemas)
-        .where(visible)
-        .orderBy(sql`${schema.schemas.createdAt} desc`)
-        .limit(pageLimit)
-        .offset(pageOffset)
+      const rows = await redactSchemaRows(
+        await db
+          .select()
+          .from(schema.schemas)
+          .where(visible)
+          .orderBy(sql`${schema.schemas.createdAt} desc`)
+          .limit(pageLimit)
+          .offset(pageOffset),
+        fullPrincipalUserId(c),
+      )
 
       const schemaIds = rows.map((r) => r.id)
       const allLabels =
@@ -276,8 +354,10 @@ const app = new Hono<AuthEnv>()
         .orderBy(sql`${schema.versions.createdAt} desc`)
         .limit(50)
 
+      const [safeRow] = await redactSchemaRows([row], fullPrincipalUserId(c))
+
       return c.json({
-        ...row,
+        ...safeRow,
         labels: labels.map((l) => ({ label: l.label, createdAt: l.createdAt })),
         usage: usage.map((u) => ({
           slug: u.slug,
@@ -407,11 +487,19 @@ const app = new Hono<AuthEnv>()
       if (!label || typeof label !== 'string' || label.trim().length === 0) {
         return c.json({ error: 'Label is required', statusCode: 400 }, 400)
       }
+      if (label.trim().length > MAX_LABEL_LENGTH) {
+        return c.json(
+          { error: `Label must be at most ${MAX_LABEL_LENGTH} characters`, statusCode: 400 },
+          400,
+        )
+      }
 
+      // Same visibility rule as reading the schema, so the response never
+      // confirms the existence of a schema the caller can't see.
       const [existing] = await db
         .select({ id: schema.schemas.id })
         .from(schema.schemas)
-        .where(eq(schema.schemas.id, id))
+        .where(and(eq(schema.schemas.id, id), visibleSchemaCondition(fullPrincipalUserId(c))))
         .limit(1)
 
       if (!existing) {
