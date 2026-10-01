@@ -39,3 +39,19 @@ export function validateSlug(slug: unknown): string | null {
   if (RESERVED_SLUGS.has(slug)) return 'That slug is reserved'
   return null
 }
+
+/**
+ * Candidate slug for a user's default org, derived from their email's local
+ * part. Falls back to `user` when the local part is too short or reserved
+ * (e.g. `admin@…`); `attempt` > 0 appends a numeric suffix for collisions.
+ */
+export function defaultOrgSlugCandidate(email: string, attempt = 0): string {
+  const local = (email.split('@')[0] ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 30)
+    .replace(/^-+|-+$/g, '')
+  const base = local.length < 2 || RESERVED_SLUGS.has(local) ? 'user' : local
+  return attempt === 0 ? base : `${base}-${attempt}`
+}

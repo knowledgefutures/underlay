@@ -7,7 +7,7 @@ import { organization } from 'better-auth/plugins/organization'
 import { and, eq, ne } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
-import { validateSlug } from './slug.js'
+import { defaultOrgSlugCandidate, validateSlug } from './slug.js'
 
 const KF_AUTH_URL = process.env.OIDC_ISSUER_URL ?? 'http://localhost:3000'
 const KF_AUTH_INTERNAL_URL = process.env.OIDC_ISSUER_INTERNAL_URL ?? KF_AUTH_URL
@@ -194,16 +194,10 @@ export const auth = betterAuth({
     user: {
       create: {
         after: async (user) => {
-          console.log('[auth hook] user.create.after starting for:', user.email)
+          console.log('[auth hook] user.create.after starting for user:', user.id)
           try {
-            const baseSlug = (user.email.split('@')[0] ?? 'user')
-              .toLowerCase()
-              .replace(/[^a-z0-9-]/g, '-')
-              .replace(/-+/g, '-')
-              .slice(0, 30)
-
-            let slug = baseSlug
             let attempt = 0
+            let slug = defaultOrgSlugCandidate(user.email, attempt)
             while (true) {
               const [conflict] = await db
                 .select({ id: schema.organization.id })
@@ -212,7 +206,7 @@ export const auth = betterAuth({
                 .limit(1)
               if (!conflict) break
               attempt++
-              slug = `${baseSlug}-${attempt}`
+              slug = defaultOrgSlugCandidate(user.email, attempt)
             }
 
             let kfOrgId: string | null = null
