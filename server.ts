@@ -11,6 +11,7 @@ import { createOpenApiDocument } from 'hono-zod-openapi'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { HTTPException } from 'hono/http-exception'
+import { secureHeaders } from 'hono/secure-headers'
 import { marked } from 'marked'
 import type { ViteDevServer } from 'vite'
 
@@ -103,6 +104,20 @@ function api<M extends string, A>(mount: M, source: string, app: A): [M, A] {
 }
 
 const app = new Hono<AuthEnv>()
+
+// --- Security headers ---
+// HSTS, nosniff, Referrer-Policy, and frame-ancestors (via a CSP that sets
+// nothing else; a full CSP needs a pass over the inline SSR hydration data).
+// Cross-origin resource/opener policies are off: the API and static assets are
+// read cross-origin by design.
+app.use(
+  '*',
+  secureHeaders({
+    contentSecurityPolicy: { frameAncestors: ["'self'"] },
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+  }),
+)
 
 // Uncaught errors answer in the API's `{ error, statusCode }` shape rather than
 // Hono's plain-text 500. A malformed JSON body (c.req.json() throws SyntaxError)
