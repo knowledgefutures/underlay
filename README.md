@@ -229,6 +229,11 @@ those steps have a chunked form for collections that don't fit in a single reque
 upload in pieces, and the commit can run in the background. A chunked, asynchronous push produces
 the same version hash as the simple one.
 
+A session tracks its progress in two counters on `negotiate_sessions` — `manifest_received` (distinct
+hashes in the manifest) and `manifest_needed` (of those, still awaiting a record). Each manifest
+chunk and records batch moves them by the rows it actually added or flipped, so the status poll and
+the commit checks never recount the manifest, however large the push.
+
 | Endpoint                                          | Purpose                                                                                                     |
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `POST .../versions/negotiate`                     | Start a push session (server returns which hashes it needs)                                                 |
