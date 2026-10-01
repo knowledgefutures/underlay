@@ -118,7 +118,7 @@ const getRecordsRes = `{
   "pagination": {
     "limit": 100,
     "hasMore": true,
-    "nextCursor": "pub-002",
+    "nextCursor": "eyJyIjpbInB1Yi0wMDIiLCJkZWY0NTYiXX0",
     "total": 150
   }
 }`
@@ -609,8 +609,12 @@ export default function DocsApiVersions() {
                 <code>after</code>
               </td>
               <td>
-                Keyset cursor: return records with IDs after this value. Canonical method — stays
-                fast at any depth. <code>cursor</code> is accepted as an alias.
+                Opaque keyset cursor from <code>pagination.nextCursor</code>. Records are ordered by
+                record id then record hash, so records that share an id across types are never
+                skipped at a page boundary. Canonical method — stays fast at any depth.{' '}
+                <code>cursor</code> is accepted as an alias. A bare record id is still accepted and
+                returns records with IDs strictly after it, but that skips any other records sharing
+                the last id; prefer <code>nextCursor</code>.
               </td>
             </tr>
             <tr>
@@ -637,8 +641,9 @@ export default function DocsApiVersions() {
         </pre>
         <p>
           Use <code>pagination.nextCursor</code> as the <code>after</code> parameter in the next
-          request. When <code>hasMore</code> is false, you've reached the end. For large
-          collections, always paginate with <code>after</code> rather than <code>offset</code>.
+          request, unchanged — treat it as opaque. When <code>hasMore</code> is false, you've
+          reached the end. For large collections, always paginate with <code>after</code> rather
+          than <code>offset</code>.
         </p>
         <p className="text-ink-muted">
           <code>pagination.total</code> respects the <code>type</code> filter and excludes private
