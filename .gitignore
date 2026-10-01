@@ -12,6 +12,7 @@ data/
 *.db-journal
 *.db-wal
 planning/
+.claude/
 
 # OS files
 Thumbs.db
