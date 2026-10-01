@@ -443,6 +443,14 @@ export const negotiateSessions = pgTable('negotiate_sessions', {
   // partway through the upload cannot silently produce a truncated version.
   // NULL for the inline path, where the manifest arrives atomically.
   manifestExpected: integer('manifest_expected'),
+  // Running counts over this session's manifest rows, kept here so progress
+  // never needs a count(*) over a table that grows with the push. Both move only
+  // by the number of rows an INSERT or UPDATE actually affected, so a retried
+  // chunk or batch — which affects none — leaves them alone.
+  //   manifestReceived: rows in negotiate_session_manifest (distinct hashes)
+  //   manifestNeeded:   of those, rows still needed = true
+  manifestReceived: integer('manifest_received').notNull().default(0),
+  manifestNeeded: integer('manifest_needed').notNull().default(0),
   // 'committing' is the async-finalize state: the request has returned 202 and
   // a background task is building the version. It ends at 'committed' or
   // 'failed', both of which are reported through the session-status endpoint.

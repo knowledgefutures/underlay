@@ -5,6 +5,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { dedupeByHash, tallyInserted } from '../lib/negotiate-counts.js'
 import {
   compileSchema,
   canonicalize,
@@ -87,21 +88,39 @@ async function touchSession(sessionId: string) {
     .where(eq(schema.negotiateSessions.id, sessionId))
 }
 
+/** The session's running manifest counts, as stored on `negotiate_sessions`. */
+type ManifestCounters = { manifestReceived: number; manifestNeeded: number }
+
+const manifestCounterColumns = {
+  manifestReceived: schema.negotiateSessions.manifestReceived,
+  manifestNeeded: schema.negotiateSessions.manifestNeeded,
+}
+
+/** Read the session's manifest counters: one primary-key row, not a table scan. */
+async function readManifestCounters(sessionId: string): Promise<ManifestCounters> {
+  const [row] = await db
+    .select(manifestCounterColumns)
+    .from(schema.negotiateSessions)
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+  return row ?? { manifestReceived: 0, manifestNeeded: 0 }
+}
+
 /**
  * Insert manifest entries and report which of them the server doesn't already
- * hold. Idempotent by (session_id, hash), so a client that retries a chunk after
- * a timeout gets the same answer rather than a conflict.
+ * hold, along with the session's manifest counters afterwards. Idempotent by
+ * (session_id, hash), so a client that retries a chunk after a timeout gets the
+ * same answer rather than a conflict.
+ *
+ * The counters move by the rows the INSERT actually added (`ON CONFLICT DO
+ * NOTHING ... RETURNING`), in the same transaction as the inserts, so a retried
+ * chunk adds nothing and a chunk that fails halfway adds nothing either.
  */
 async function ingestManifestEntries(
   sessionId: string,
   entries: z.infer<typeof ManifestEntry>[],
-): Promise<string[]> {
-  const seen = new Set<string>()
-  const deduped = entries.filter((r) => {
-    if (seen.has(r.hash)) return false
-    seen.add(r.hash)
-    return true
-  })
+): Promise<{ needed: string[]; counters: ManifestCounters }> {
+  const deduped = dedupeByHash(entries)
 
   const HASH_CHECK_BATCH = 5000
   const existingRecordSet = new Set<string>()
@@ -115,24 +134,46 @@ async function ingestManifestEntries(
   }
 
   const MANIFEST_BATCH = 1000
-  for (let i = 0; i < deduped.length; i += MANIFEST_BATCH) {
-    const batch = deduped.slice(i, i + MANIFEST_BATCH)
-    await db
-      .insert(schema.negotiateSessionManifest)
-      .values(
-        batch.map((r) => ({
-          sessionId,
-          recordId: r.id,
-          type: r.type,
-          hash: r.hash,
-          private: r.private ?? false,
-          needed: !existingRecordSet.has(r.hash),
-        })),
-      )
-      .onConflictDoNothing()
-  }
+  const counters = await db.transaction(async (tx) => {
+    let received = 0
+    let needed = 0
+    for (let i = 0; i < deduped.length; i += MANIFEST_BATCH) {
+      const batch = deduped.slice(i, i + MANIFEST_BATCH)
+      const inserted = await tx
+        .insert(schema.negotiateSessionManifest)
+        .values(
+          batch.map((r) => ({
+            sessionId,
+            recordId: r.id,
+            type: r.type,
+            hash: r.hash,
+            private: r.private ?? false,
+            needed: !existingRecordSet.has(r.hash),
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ needed: schema.negotiateSessionManifest.needed })
+      const tally = tallyInserted(inserted)
+      received += tally.received
+      needed += tally.needed
+    }
 
-  return deduped.filter((r) => !existingRecordSet.has(r.hash)).map((r) => r.hash)
+    // One row update per chunk, last, so the session row is locked only briefly.
+    const [row] = await tx
+      .update(schema.negotiateSessions)
+      .set({
+        manifestReceived: sql`${schema.negotiateSessions.manifestReceived} + ${received}`,
+        manifestNeeded: sql`${schema.negotiateSessions.manifestNeeded} + ${needed}`,
+      })
+      .where(eq(schema.negotiateSessions.id, sessionId))
+      .returning(manifestCounterColumns)
+    return row ?? { manifestReceived: 0, manifestNeeded: 0 }
+  })
+
+  return {
+    needed: deduped.filter((r) => !existingRecordSet.has(r.hash)).map((r) => r.hash),
+    counters,
+  }
 }
 
 /** Mirrors `c.json(body, status)` so the finalize body reads unchanged. */
@@ -269,12 +310,11 @@ app.post(
       })
     }
 
-    const neededRecords = await ingestManifestEntries(session!.id, inlineManifest)
-    const [counts] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(schema.negotiateSessionManifest)
-      .where(eq(schema.negotiateSessionManifest.sessionId, session!.id))
-    const totalRecords = counts?.total ?? 0
+    const { needed: neededRecords, counters } = await ingestManifestEntries(
+      session!.id,
+      inlineManifest,
+    )
+    const totalRecords = counters.manifestReceived
 
     return c.json({
       session_id: session!.id,
@@ -387,20 +427,16 @@ app.post(
       entries.push(result.data)
     }
 
-    const needed = await ingestManifestEntries(sessionId, entries)
+    // The total comes from the session counter, which only moves by rows the
+    // insert actually added, so a retried chunk — which conflicts away to nothing
+    // — doesn't inflate it.
+    const { needed, counters } = await ingestManifestEntries(sessionId, entries)
     await touchSession(sessionId)
-
-    // Counted from the table rather than accumulated, so a retried chunk — which
-    // conflicts away to nothing — doesn't inflate the total.
-    const [counts] = await db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(schema.negotiateSessionManifest)
-      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
 
     return c.json({
       received: entries.length,
       needed_records: needed,
-      manifest_received: counts?.total ?? 0,
+      manifest_received: counters.manifestReceived,
       manifest_expected: sessionRow.manifestExpected,
     })
   },
@@ -445,19 +481,11 @@ app.get(
       }
     }
 
-    const [manifestCounts] = await db
-      .select({
-        total: sql<number>`count(*)::int`,
-        needed: sql<number>`count(*) filter (where ${schema.negotiateSessionManifest.needed})::int`,
-      })
-      .from(schema.negotiateSessionManifest)
-      .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
-
     return c.json({
       session_id: session.id,
       status: session.status,
-      total_records: manifestCounts?.total ?? 0,
-      needed_records: manifestCounts?.needed ?? 0,
+      total_records: session.manifestReceived,
+      needed_records: session.manifestNeeded,
       needed_files: session.neededFiles,
       expires_at: session.expiresAt,
       created_at: session.createdAt,
@@ -682,30 +710,38 @@ app.post(
     // Mark received hashes as no longer needed (single-row updates, not JSONB
     // rewrite). `submitted` records this record was validated here, against this
     // session's schemas, so commit can skip revalidating it.
+    //
+    // `AND needed` makes the update match only rows it actually flips, so the
+    // `needed` counter falls by exactly the rows returned — a hash another
+    // request already received, or one that was never needed, counts for nothing.
+    let remaining: number
     if (receivedHashes.size > 0) {
-      await db
-        .update(schema.negotiateSessionManifest)
-        .set({ needed: false, submitted: true })
-        .where(
-          and(
-            eq(schema.negotiateSessionManifest.sessionId, sessionId),
-            inArray(schema.negotiateSessionManifest.hash, [...receivedHashes]),
-          ),
-        )
+      remaining = await db.transaction(async (tx) => {
+        const flipped = await tx
+          .update(schema.negotiateSessionManifest)
+          .set({ needed: false, submitted: true })
+          .where(
+            and(
+              eq(schema.negotiateSessionManifest.sessionId, sessionId),
+              inArray(schema.negotiateSessionManifest.hash, [...receivedHashes]),
+              eq(schema.negotiateSessionManifest.needed, true),
+            ),
+          )
+          .returning({ hash: schema.negotiateSessionManifest.hash })
+        const [row] = await tx
+          .update(schema.negotiateSessions)
+          .set({
+            manifestNeeded: sql`${schema.negotiateSessions.manifestNeeded} - ${flipped.length}`,
+          })
+          .where(eq(schema.negotiateSessions.id, sessionId))
+          .returning({ needed: schema.negotiateSessions.manifestNeeded })
+        return row?.needed ?? 0
+      })
+    } else {
+      remaining = (await readManifestCounters(sessionId)).manifestNeeded
     }
 
     await touchSession(sessionId)
-
-    const [remainingRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(schema.negotiateSessionManifest)
-      .where(
-        and(
-          eq(schema.negotiateSessionManifest.sessionId, sessionId),
-          eq(schema.negotiateSessionManifest.needed, true),
-        ),
-      )
-    const remaining = remainingRow?.count ?? 0
 
     return c.json({
       received: receivedHashes.size,
@@ -814,12 +850,12 @@ app.post(
       // declared total is what tells a complete upload from one whose client
       // died halfway. Without this a truncated manifest would commit happily as
       // a version that silently dropped records.
+      //
+      // Both checks read the session counters fresh: `sessionRow` was loaded
+      // before the commit began, and a chunk or batch may have landed since.
+      const counters = await readManifestCounters(sessionId)
       if (sessionRow.manifestExpected !== null) {
-        const [received] = await db
-          .select({ total: sql<number>`count(*)::int` })
-          .from(schema.negotiateSessionManifest)
-          .where(eq(schema.negotiateSessionManifest.sessionId, sessionId))
-        const total = received?.total ?? 0
+        const total = counters.manifestReceived
         if (total !== sessionRow.manifestExpected) {
           return reply(
             {
@@ -838,16 +874,8 @@ app.post(
       }
 
       // Check if any needed records remain
-      const [neededCount] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(schema.negotiateSessionManifest)
-        .where(
-          and(
-            eq(schema.negotiateSessionManifest.sessionId, sessionId),
-            eq(schema.negotiateSessionManifest.needed, true),
-          ),
-        )
-      if ((neededCount?.count ?? 0) > 0) {
+      const neededCount = counters.manifestNeeded
+      if (neededCount > 0) {
         const neededRows = await db
           .select({ hash: schema.negotiateSessionManifest.hash })
           .from(schema.negotiateSessionManifest)
@@ -862,7 +890,7 @@ app.post(
           {
             error: 'Missing records',
             missing_hashes: neededRows.map((r) => r.hash),
-            message: `${neededCount!.count} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
+            message: `${neededCount} needed record(s) have not been submitted. Use POST .../negotiate/${sessionId}/records first.`,
             statusCode: 400,
           },
           400,
