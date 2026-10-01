@@ -21,6 +21,7 @@ import * as _ark from '~/api/ark'
 import { arkMiddleware } from '~/api/ark-middleware.server'
 import type { AuthEnv } from '~/api/auth.server'
 import { authMiddleware, requireAuth } from '~/api/auth.server'
+import { API_BODY_LIMIT, limitBody } from '~/api/body-limit.server'
 import _collections from '~/api/collections'
 import _discussion from '~/api/discussion'
 import _files from '~/api/files'
@@ -148,6 +149,10 @@ app.get('/agent/:token', agentHandlers.agentPage)
 // proxy so local dev matches production, and because it covers the streaming
 // endpoints too (chunked transfer compresses fine).
 app.use('/api/*', compress())
+
+// Cap request bodies before auth touches the DB. Routes that buffer large bodies
+// add tighter limits of their own (see body-limit.server.ts).
+app.use('/api/*', limitBody(API_BODY_LIMIT))
 
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rateLimitMiddleware)
