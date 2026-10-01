@@ -377,6 +377,45 @@ export const versionFiles = pgTable(
   ],
 )
 
+// Every `{"$file": "sha256:<hash>"}` reference in a version's record set, derived
+// once at commit so file access checks and the file listing never scan record
+// bodies. Keyed like `version_records`: by the version that OWNS the rows, so a
+// metadata patch reads its base's refs through `recordsVersionId()` and writes
+// none of its own. Written by `indexVersionFileRefs()` (lib/file-refs.server.ts),
+// which also documents exactly how a reference is recognised.
+export const versionFileRefs = pgTable(
+  'version_file_refs',
+  {
+    versionId: bigint('version_id', { mode: 'number' })
+      .notNull()
+      .references(() => versions.id, { onDelete: 'cascade' }),
+    // Without the `sha256:` prefix, as in `files.hash`. Not a foreign key: a
+    // record may reference a file that was never uploaded.
+    fileHash: text('file_hash').notNull(),
+    // The `$file` string carried the `sha256:` prefix the protocol requires.
+    // Access checks only honour prefixed refs; the file listing shows both.
+    prefixed: boolean('prefixed').notNull(),
+    recordId: text('record_id').notNull(),
+    type: text('type').notNull(),
+    // The record's top-level field the reference sits under.
+    field: text('field').notNull(),
+    // False when the field's value is the `{"$file": …}` object itself, true when
+    // the reference is deeper inside it (an array element, a nested object).
+    nested: boolean('nested').notNull(),
+    // Hidden from non-owners: the record is private in this version, or its type
+    // or this top-level field is private in this version's schemas. A version's
+    // schemas never change after commit (a metadata patch carries its base's), so
+    // this can't drift.
+    private: boolean('private').notNull(),
+  },
+  (t) => [
+    // The file listing: one version's refs.
+    index('version_file_refs_version_idx').on(t.versionId, t.fileHash),
+    // Access checks: is this file referenced, publicly, by some version.
+    index('version_file_refs_file_hash_idx').on(t.fileHash, t.versionId),
+  ],
+)
+
 // --- Schemas (globally deduplicated, content-addressed) ---
 
 export const schemas = pgTable('schemas', {

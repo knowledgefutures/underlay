@@ -12,6 +12,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { db, schema } from '../db/client.server.js'
 import { hashRecord } from './core/index.js'
+import { indexVersionFileRefs } from './file-refs.server.js'
 import { getMirrorConfig } from './mirror-config.js'
 import { headS3Object, uploadToS3 } from './s3.js'
 
@@ -747,6 +748,8 @@ async function pullVersion(
         .insert(schema.versionFiles)
         .values(batch.map((hash) => ({ versionId, fileHash: hash })))
     }
+
+    await indexVersionFileRefs(versionId)
 
     await db
       .update(schema.versions)

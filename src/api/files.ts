@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto'
 
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { accessibleFileHashes } from '../lib/file-refs.server.js'
 import { getPresignedFileUrl, getS3ObjectMeta, uploadToS3 } from '../lib/s3.js'
-import { hasOrgAccess } from '../lib/version-helpers.server.js'
+import {
+  authorizeCollectionWrite,
+  resolveAccessibleCollection,
+} from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 import {
@@ -24,152 +28,18 @@ function safeMimeType(mime: string): string {
   return UNSAFE_MIME_RE.test(mime.trim()) ? 'application/octet-stream' : mime
 }
 
+/**
+ * Whether the caller may read `fileHash` through `collection`, as returned by
+ * `resolveAccessibleCollection` (null when the collection doesn't exist or is
+ * private to the caller). Non-members get files only from public collections.
+ * Without that, a file in a private collection was downloadable by anyone who
+ * knew its hash.
+ */
 async function isFilePubliclyAccessible(
-  owner: string,
-  slug: string,
+  collection: { id: string; ownerAccess: boolean } | null,
   fileHash: string,
-  userId: string | undefined,
-  apiKeyCollectionIds?: string[],
 ): Promise<boolean> {
-  const [collection] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      public: schema.collections.public,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-
-  if (!collection) return false
-
-  // A collection-scoped API key (share/agent link) only counts for the
-  // collections it is scoped to.
-  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
-
-  // The file must actually belong to THIS collection (in any of its versions).
-  // Without this, the owner/slug in the path is decorative: a member could fetch
-  // any file in the system by requesting it under a collection they belong to.
-  const [belongs] = await db
-    .select({ fileHash: schema.versionFiles.fileHash })
-    .from(schema.versionFiles)
-    .innerJoin(schema.versions, eq(schema.versionFiles.versionId, schema.versions.id))
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versionFiles.fileHash, fileHash),
-      ),
-    )
-    .limit(1)
-  if (!belongs) return false
-
-  if (userId != null && keyScopeOk) {
-    const [membership] = await db
-      .select()
-      .from(schema.member)
-      .where(
-        and(
-          eq(schema.member.organizationId, collection.organizationId),
-          eq(schema.member.userId, userId),
-        ),
-      )
-      .limit(1)
-    if (membership) return true
-  }
-
-  // Non-members get files only from PUBLIC collections. Without this a file in a
-  // private collection was downloadable by anyone who knew its hash.
-  if (!collection.public) return false
-
-  // OR across every ready version: a file is accessible if it is referenced via
-  // a non-private field of a non-private record of a non-private type in ANY
-  // ready version of this (public) collection. Files are content-addressed and
-  // immutable, and the URL carries no version, so "published publicly in any
-  // accessible version ⇒ public" is the correct resolution.
-  const candidates = await db
-    .select({
-      versionId: schema.versionRecords.versionId,
-      type: schema.recordObjects.type,
-      data: schema.recordObjects.data,
-    })
-    .from(schema.versionRecords)
-    // Ownership-only join: this asks whether the file is referenced anywhere in
-    // THIS collection, and a version sharing another's rows is in the same
-    // collection as the version that owns them. The `versionId` it selects is
-    // used to load that version's schemas for privacy, and a metadata patch has
-    // the same schema set as its base, so the filtering is unchanged too.
-    .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
-    .innerJoin(
-      schema.recordObjects,
-      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-    )
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.status, 'ready'),
-        eq(schema.versionRecords.private, false),
-        sql`${schema.recordObjects.data}::text LIKE ${'%' + fileHash + '%'}`,
-      ),
-    )
-    .limit(50)
-
-  if (candidates.length === 0) return false
-
-  // Type/field privacy is per-version; load each candidate version's schema once.
-  const schemaCache = new Map<
-    number,
-    { privateTypes: Set<string>; typeSchemas: Map<string, Record<string, any>> }
-  >()
-  const loadVersionPrivacy = async (versionId: number) => {
-    const cached = schemaCache.get(versionId)
-    if (cached) return cached
-    const entries = await db
-      .select({ slug: schema.versionSchemas.slug, schemaBody: schema.schemas.schema })
-      .from(schema.versionSchemas)
-      .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
-      .where(eq(schema.versionSchemas.versionId, versionId))
-    const privateTypes = new Set<string>()
-    const typeSchemas = new Map<string, Record<string, any>>()
-    for (const e of entries) {
-      const body = e.schemaBody as Record<string, any>
-      typeSchemas.set(e.slug, body)
-      if (body?.private === true) privateTypes.add(e.slug)
-    }
-    const value = { privateTypes, typeSchemas }
-    schemaCache.set(versionId, value)
-    return value
-  }
-
-  for (const rec of candidates) {
-    const { privateTypes, typeSchemas } = await loadVersionPrivacy(rec.versionId)
-    if (privateTypes.has(rec.type)) continue
-
-    const typeProps = typeSchemas.get(rec.type)?.properties as Record<string, any> | undefined
-    const privateFields = new Set<string>()
-    if (typeProps) {
-      for (const [fieldName, fieldDef] of Object.entries(typeProps)) {
-        if ((fieldDef as any)?.private === true) privateFields.add(fieldName)
-      }
-    }
-
-    // `$file` refs may be nested inside objects/arrays, so search recursively
-    // within each non-private top-level field (field privacy is top-level only).
-    const containsRef = (value: unknown): boolean => {
-      if (!value || typeof value !== 'object') return false
-      const ref = (value as { $file?: unknown }).$file
-      if (typeof ref === 'string') return ref === `sha256:${fileHash}`
-      return Object.values(value as Record<string, unknown>).some(containsRef)
-    }
-
-    const data = rec.data as Record<string, any>
-    for (const [key, val] of Object.entries(data)) {
-      if (privateFields.has(key)) continue
-      if (containsRef(val)) return true
-    }
-  }
-
-  return false
+  return (await accessibleFileHashes(collection, [fileHash])).has(fileHash)
 }
 
 const fileParams = z.object({
@@ -196,11 +66,8 @@ const app = new Hono<AuthEnv>()
     }
 
     const accessible = await isFilePubliclyAccessible(
-      owner,
-      slug,
+      await resolveAccessibleCollection(owner, slug, c.get('userId'), c.get('apiKeyCollectionIds')),
       cleanHash,
-      c.get('userId'),
-      c.get('apiKeyCollectionIds'),
     )
     if (!accessible) {
       return c.body(null, 404)
@@ -233,11 +100,13 @@ const app = new Hono<AuthEnv>()
       }
 
       const accessible = await isFilePubliclyAccessible(
-        owner,
-        slug,
+        await resolveAccessibleCollection(
+          owner,
+          slug,
+          c.get('userId'),
+          c.get('apiKeyCollectionIds'),
+        ),
         cleanHash,
-        c.get('userId'),
-        c.get('apiKeyCollectionIds'),
       )
       if (!accessible) {
         return c.json({ error: 'File not found', statusCode: 404 }, 404)
@@ -289,11 +158,13 @@ const app = new Hono<AuthEnv>()
       for (const cand of candidates) {
         if (
           await isFilePubliclyAccessible(
-            cand.owner,
-            cand.slug,
+            await resolveAccessibleCollection(
+              cand.owner,
+              cand.slug,
+              c.get('userId'),
+              c.get('apiKeyCollectionIds'),
+            ),
             cleanHash,
-            c.get('userId'),
-            c.get('apiKeyCollectionIds'),
           )
         ) {
           accessible = true
@@ -325,8 +196,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug } = c.req.valid('param')
       const { hashes } = c.req.valid('json')
-      const userId = c.get('userId')
-      const scoped = c.get('apiKeyCollectionIds')
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
 
       // Keys in the response are echoed back EXACTLY as the caller sent them
       // (`sha256:`-prefixed or not), so a client can look up what it asked for.
@@ -342,16 +217,16 @@ const app = new Hono<AuthEnv>()
         : []
       const storageByHash = new Map(fileRows.map((f) => [f.hash, f.storageKey]))
 
-      // Resolve access once per distinct hash, even if requested in both forms.
+      // Check the whole batch at once, and each distinct hash once even if it
+      // was requested in both forms.
+      const accessible = await accessibleFileHashes(collection, [...storageByHash.keys()])
       const urlByClean = new Map<string, string | null>()
       for (const h of clean) {
         const storageKey = storageByHash.get(h)
-        if (!storageKey) {
-          urlByClean.set(h, null)
-          continue
-        }
-        const ok = await isFilePubliclyAccessible(owner, slug, h, userId, scoped)
-        urlByClean.set(h, ok ? await getPresignedFileUrl(storageKey) : null)
+        urlByClean.set(
+          h,
+          storageKey && accessible.has(h) ? await getPresignedFileUrl(storageKey) : null,
+        )
       }
 
       const result: Record<string, string | null> = {}
@@ -376,25 +251,8 @@ const app = new Hono<AuthEnv>()
       // Files are content-addressed and shared, but a write must still be tied to
       // a collection the caller can actually push to — otherwise any write-scoped
       // credential (including an agent link) could upload into global storage.
-      const [uploadCollection] = await db
-        .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
-        .from(schema.collections)
-        .innerJoin(
-          schema.organization,
-          eq(schema.collections.organizationId, schema.organization.id),
-        )
-        .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-        .limit(1)
-      if (!uploadCollection) {
-        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-      }
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(uploadCollection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-      if (!(await hasOrgAccess(c.get('userId'), uploadCollection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug, { scopeFirst: true })
+      if ('error' in auth) return auth.error
 
       const [existing] = await db
         .select()

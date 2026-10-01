@@ -5,6 +5,7 @@
 import { eq } from 'drizzle-orm'
 
 import { computeVersionHash, hashRecord, hashSchema } from '../lib/core/index.js'
+import { indexVersionFileRefs } from '../lib/file-refs.server.js'
 import { db, schema } from './client.server.js'
 
 export interface SeedRecord {
@@ -32,7 +33,10 @@ export function seedVersionHash(
   )
 }
 
-/** Insert records as content-addressed objects and link them to a version. */
+/**
+ * Insert records as content-addressed objects and link them to a version, then
+ * index its file refs. The version's schemas must already be inserted.
+ */
 export async function insertRecords(versionId: number, records: SeedRecord[]): Promise<void> {
   const objectRows = records.map((r) => {
     const { hash, canonical } = hashSeedRecord(r)
@@ -56,6 +60,7 @@ export async function insertRecords(versionId: number, records: SeedRecord[]): P
       })),
     )
     .onConflictDoNothing()
+  await indexVersionFileRefs(versionId)
 }
 
 /** Insert schemas into the global table, returning schema IDs. Deduplicates by hash. */

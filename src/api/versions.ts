@@ -7,8 +7,10 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
+import { listedFileRefs } from '../lib/file-refs.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import {
+  authorizeCollectionWrite,
   canonicalize,
   deriveSemver,
   describeError,
@@ -19,13 +21,11 @@ import {
   getPrivateFields,
   getPrivateTypes,
   hashSchema,
-  hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
   recordsVersionId,
   resolveAccessibleCollection,
   sanitizeVersionForPublic,
-  resolveCollection,
   type SchemaEntry,
   VersionHashStream,
 } from '../lib/version-helpers.server.js'
@@ -808,16 +808,6 @@ const app = new Hono<AuthEnv>()
 
       const ownerAccess = collection.ownerAccess
 
-      // For non-owners, private types/fields must not appear in the references,
-      // and files reachable only through private content must not be listed.
-      let privateTypes = new Set<string>()
-      const privateFieldsByType = new Map<string, Set<string>>()
-      if (!ownerAccess) {
-        const schemaEntries = await loadVersionSchemas(version.id)
-        privateTypes = getPrivateTypes(schemaEntries)
-        for (const e of schemaEntries) privateFieldsByType.set(e.slug, getPrivateFields(e.schema))
-      }
-
       const fileRows = await db
         .select({
           hash: schema.versionFiles.fileHash,
@@ -829,42 +819,8 @@ const app = new Hono<AuthEnv>()
         .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
         .where(eq(schema.versionFiles.versionId, version.id))
 
-      // Only load records that contain $file references (DB-level filter).
-      // Non-owners never see records flagged private.
-      const refConditions = [
-        eq(schema.versionRecords.versionId, recordsVersionId(version)),
-        sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
-      ]
-      if (!ownerAccess) refConditions.push(eq(schema.versionRecords.private, false))
-      const fileRefRecords = await db
-        .select({
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-        })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(and(...refConditions))
-
-      const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>()
-      for (const rec of fileRefRecords) {
-        if (!ownerAccess && privateTypes.has(rec.type)) continue
-        const privateFields = ownerAccess
-          ? undefined
-          : (privateFieldsByType.get(rec.type) ?? new Set<string>())
-        const data = rec.data as Record<string, unknown>
-        for (const [field, val] of Object.entries(data)) {
-          if (privateFields?.has(field)) continue
-          if (val && typeof val === 'object' && '$file' in (val as any)) {
-            const hash = ((val as any).$file as string).replace('sha256:', '')
-            if (!fileRefs.has(hash)) fileRefs.set(hash, [])
-            fileRefs.get(hash)!.push({ recordId: rec.recordId, type: rec.type, field })
-          }
-        }
-      }
+      // Non-owners never see a reference in private content.
+      const fileRefs = await listedFileRefs(recordsVersionId(version), ownerAccess)
 
       // Non-owners only see files still reachable through a non-private reference.
       const visibleFileRows = ownerAccess ? fileRows : fileRows.filter((f) => fileRefs.has(f.hash))
@@ -1478,18 +1434,10 @@ const app = new Hono<AuthEnv>()
         )
       }
 
-      const collection = await resolveCollection(owner, slug)
-      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
+      const auth = await authorizeCollectionWrite(c, owner, slug)
+      if ('error' in auth) return auth.error
+      const { collection } = auth
       const userId = c.get('userId')
-      if (!(await hasOrgAccess(userId, collection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
 
       const latest = await getLatestReadyVersion(collection.id)
 
@@ -1747,21 +1695,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, jobId } = c.req.valid('param')
 
-      const collection = await resolveCollection(owner, slug)
-      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
       // Authorized by collection access rather than by who started the job: a
       // job is a property of the collection, and anyone who could write the
       // metadata can see how the write went.
-      const userId = c.get('userId')
-      if (!(await hasOrgAccess(userId, collection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug)
+      if ('error' in auth) return auth.error
+      const { collection } = auth
 
       const [job] = await db
         .select()

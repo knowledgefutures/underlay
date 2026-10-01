@@ -55,7 +55,7 @@ Everything in Underlay is content-addressed by SHA-256:
 - **Records** are stored as objects in a global `record_objects` table, keyed by the hash of their canonical JSON (`{"id":...,"type":...,"data":...}`). The same record in ten collections is stored once.
 - **Schemas** are stored in a global `schemas` table, keyed by content hash. Two collections that define the same type share the same schema row.
 - **Files** are stored in S3, keyed by SHA-256 of their bytes.
-- **Versions** are manifests — join tables (`version_records`, `version_schemas`, `version_files`) that reference content by hash. Creating a new version that shares 99% of its records with the previous version adds only the new records to storage.
+- **Versions** are manifests — join tables (`version_records`, `version_schemas`, `version_files`) that reference content by hash. Creating a new version that shares 99% of its records with the previous version adds only the new records to storage. `version_file_refs` indexes the `$file` references in a version's records at commit, so file access checks never scan record bodies.
 
 This architecture enables hash negotiation for push and pull (only transfer what the other side doesn't have), provenance (which collections contain this exact record), and forking (copy the manifest, not the data).
 
@@ -153,7 +153,8 @@ src/
 │   │   ├── validate.ts   # AJV schema validation
 │   │   ├── types.ts      # Shared type definitions
 │   │   └── index.ts      # Re-exports
-│   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers
+│   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers (collection access checks)
+│   ├── collection-access.ts # Access decisions behind those checks (write role, key scope, negotiate sessions)
 │   ├── auth.ts           # better-auth config (KF Auth OIDC, API keys, orgs)
 │   ├── auth.server.ts    # Session helpers
 │   ├── auth-client.ts    # better-auth React client
@@ -208,6 +209,7 @@ tools/
 ├── cleanupSessions.ts    # Prune expired negotiate sessions; fail stranded finalizes
 ├── pruneWebhookLogs.ts   # Prune old webhook delivery logs
 ├── verifyRecordSharing.ts # Check metadata-patch record sharing (needs a scratch DB)
+├── verifyFileRefs.ts     # Check file access via version_file_refs matches the old scans (scratch DB)
 ├── seedMirror.ts         # Minimal seed for mirror instances
 └── cron.ts               # Scheduled tasks (backup, prune backups, session cleanup, webhook-log pruning, mirror sync)
 ```
@@ -470,6 +472,7 @@ pnpm tool:pruneBackups       # Prune old backups (supports `-- --dry-run`)
 pnpm tool:cleanupSessions  # Prune expired negotiate sessions
 pnpm tool:pruneWebhookLogs # Prune old webhook delivery logs
 pnpm tool:verifyRecordSharing # Verify metadata-patch record sharing (scratch DB)
+pnpm tool:verifyFileRefs   # Verify file access/listing via version_file_refs (scratch DB)
 pnpm tool:seed-mirror      # Seed a mirror instance (admin org only)
 
 # Secrets (SOPS + age)

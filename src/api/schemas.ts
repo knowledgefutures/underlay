@@ -5,7 +5,11 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
-import { filterTypeSchema, hashSchema, hasOrgAccess } from '../lib/version-helpers.server.js'
+import {
+  filterTypeSchema,
+  hashSchema,
+  resolveAccessibleCollection,
+} from '../lib/version-helpers.server.js'
 import type { AuthEnv } from './auth.server.js'
 import { fullPrincipalUserId, requireAuth } from './auth.server.js'
 
@@ -296,29 +300,14 @@ const app = new Hono<AuthEnv>()
       const versionParam = c.req.query('version')
       const raw = c.req.query('raw')
 
-      const [collection] = await db
-        .select({
-          id: schema.collections.id,
-          organizationId: schema.collections.organizationId,
-          public: schema.collections.public,
-        })
-        .from(schema.collections)
-        .innerJoin(
-          schema.organization,
-          eq(schema.collections.organizationId, schema.organization.id),
-        )
-        .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-        .limit(1)
-
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
       if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
-      const ownerAccess =
-        keyScopeOk && (await hasOrgAccess(c.get('userId'), collection.organizationId))
-      if (!collection.public && !ownerAccess) {
-        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-      }
+      const { ownerAccess } = collection
 
       const versionConditions = [
         eq(schema.versions.collectionId, collection.id),
