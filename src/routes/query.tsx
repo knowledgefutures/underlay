@@ -7,6 +7,14 @@ import { useAppContext } from '~/lib/app-context'
 export default function QueryPage() {
   const { currentUser } = useAppContext()
 
+  // Steward-only while the SQL assistant is unmetered; /api/query/generate-sql enforces it too.
+  if (currentUser?.kfRole !== 'admin') {
+    if (typeof window !== 'undefined') {
+      window.location.href = currentUser ? '/' : '/login'
+    }
+    return null
+  }
+
   return (
     <div className="flex h-screen flex-col overflow-hidden font-sans text-[15px] leading-relaxed">
       <header className="border-rule shrink-0 border-b">

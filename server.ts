@@ -196,6 +196,8 @@ const requireSteward: MiddlewareHandler<AuthEnv> = async (c, next) => {
 }
 app.use('/api/admin/explore-tags', requireSteward)
 app.use('/api/admin/explore-collections', requireSteward)
+// Spends LLM credits and reads collection samples: steward-only, like the Query page.
+app.use('/api/query/generate-sql', requireSteward)
 
 // --- ARK resolution middleware ---
 app.use('/:arkpath{ark:.*}', arkMiddleware)

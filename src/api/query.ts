@@ -2,7 +2,9 @@ import { and, desc, eq, ilike, inArray, ne, or } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
-import { buildSqliteBuffer, generateAllDDL, generateDDL } from '../lib/sqlite-gen.js'
+import { MAX_QUERY_COLLECTIONS } from '../lib/query-constants.js'
+import { createSingleFlight, ddlWithSamples } from '../lib/query-limits.js'
+import { buildSqliteBuffer, generateAllDDL } from '../lib/sqlite-gen.js'
 import {
   filterRecordData,
   filterTypeSchema,
@@ -17,18 +19,16 @@ import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
 import { createFixedWindowLimiter } from './rate-limit.server.js'
 
 // In-memory LRU cache: key = `${collectionId}:${semver}`, value = { buffer, expiresAt }
-const sqliteCache = new Map<
-  string,
-  {
-    buffer: Buffer
-    ddl: string
-    ddlWithSamples: string
-    sampleRows: Record<string, Record<string, unknown>>
-    /** Built for a member: includes private records and fields. */
-    ownerAccess: boolean
-    expiresAt: number
-  }
->()
+interface SqliteCacheEntry {
+  buffer: Buffer
+  ddl: string
+  ddlWithSamples: string
+  sampleRows: Record<string, Record<string, unknown>>
+  /** Built for a member: includes private records and fields. */
+  ownerAccess: boolean
+  expiresAt: number
+}
+const sqliteCache = new Map<string, SqliteCacheEntry>()
 const CACHE_TTL_MS = 30 * 60 * 1000 // 30 minutes
 const CACHE_MAX_ENTRIES = 10
 
@@ -37,7 +37,7 @@ const CACHE_MAX_ENTRIES = 10
 // at any depth and Hot provides a SQL editor over a hydrated copy.
 const MAX_QUERY_RECORDS = 250_000
 
-// Rate limit for the LLM endpoint (public path, spends CF AI credits):
+// Rate limit for the LLM endpoint (spends CF AI credits):
 // 10 requests per key per minute.
 const checkRateLimit = createFixedWindowLimiter(60_000, 10)
 
@@ -60,13 +60,24 @@ function evictIfNeeded() {
 // Run cleanup every 5 minutes
 setInterval(cleanExpired, 5 * 60 * 1000)
 
-async function getOrBuildSqlite(
+interface QueryTarget {
+  collection: { id: string; organizationId: string; public: boolean }
+  version: { id: number; semver: string; recordCount: number; recordsFromVersionId: number | null }
+  ownerAccess: boolean
+}
+interface TooLarge {
+  tooLarge: true
+  recordCount: number
+}
+
+/** Resolve collection + version and check access; no records are touched. */
+async function resolveQueryTarget(
   owner: string,
   slug: string,
   versionSemver: string,
   userId: string | undefined,
   apiKeyCollectionIds?: string[],
-) {
+): Promise<QueryTarget | TooLarge | null> {
   const { semver: normalizedSemver } = parseSemver(versionSemver)
 
   // Resolve collection
@@ -119,18 +130,12 @@ async function getOrBuildSqlite(
     return { tooLarge: true as const, recordCount: version.recordCount }
   }
 
-  const cacheKey = `${collection.id}:${version.semver}:${ownerAccess ? 'full' : 'public'}`
+  return { collection, version, ownerAccess }
+}
 
-  // Check cache (re-insert to move to end for LRU ordering)
-  const cached = sqliteCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) {
-    sqliteCache.delete(cacheKey)
-    cached.expiresAt = Date.now() + CACHE_TTL_MS
-    sqliteCache.set(cacheKey, cached)
-    return cached
-  }
-
-  // Load schemas for this version
+/** The version's type schemas, privacy-filtered for non-members. */
+async function loadSchemas(target: QueryTarget) {
+  const { version, ownerAccess } = target
   const versionSchemas = await db
     .select({ slug: schema.versionSchemas.slug, schema: schema.schemas.schema })
     .from(schema.versionSchemas)
@@ -149,80 +154,158 @@ async function getOrBuildSqlite(
       schemasMap[vs.slug] = vs.schema
     }
   }
+  return { schemaEntries, privateTypes, schemasMap }
+}
 
-  // Load records (excluding private types and private records for non-owners).
-  // Record-level privacy is the per-version version_records.private flag.
-  const recordConditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
-  if (!ownerAccess) {
-    recordConditions.push(eq(schema.versionRecords.private, false))
+/** Row filter shared by the full build and the sample queries. */
+function recordConditionsFor(target: QueryTarget, privateTypes: Set<string>) {
+  const conditions = [eq(schema.versionRecords.versionId, recordsVersionId(target.version))]
+  if (!target.ownerAccess) {
+    conditions.push(eq(schema.versionRecords.private, false))
     for (const pt of privateTypes) {
-      recordConditions.push(ne(schema.recordObjects.type, pt))
+      conditions.push(ne(schema.recordObjects.type, pt))
     }
   }
-  let records = await db
-    .select({
-      recordId: schema.recordObjects.recordId,
-      type: schema.recordObjects.type,
-      data: schema.recordObjects.data,
-    })
-    .from(schema.versionRecords)
-    .innerJoin(
-      schema.recordObjects,
-      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-    )
-    .where(and(...recordConditions))
+  return conditions
+}
 
-  // Strip private fields for non-owners
-  if (!ownerAccess) {
-    const fieldCache = new Map<string, Set<string>>()
-    records = records.map((rec) => {
-      if (!fieldCache.has(rec.type)) {
-        const entry = schemaEntries.find((e) => e.slug === rec.type)
-        fieldCache.set(rec.type, entry ? getPrivateFields(entry.schema) : new Set())
-      }
-      const privateFields = fieldCache.get(rec.type)!
-      return privateFields.size > 0
-        ? { ...rec, data: filterRecordData(rec.data, privateFields) }
-        : rec
-    })
-  }
+interface DdlInfo {
+  ddl: string
+  ddlWithSamples: string
+  ownerAccess: boolean
+}
 
-  // Build SQLite
-  const buffer = buildSqliteBuffer(schemasMap, records as any)
-  const ddl = generateAllDDL(schemasMap)
+/**
+ * DDL plus one sample row per type, without building SQLite: the DDL comes from
+ * the schemas and each sample is a LIMIT 1 query. Same privacy filtering as the
+ * full build.
+ */
+async function getDdlInfo(
+  owner: string,
+  slug: string,
+  versionSemver: string,
+  userId: string | undefined,
+  apiKeyCollectionIds?: string[],
+): Promise<DdlInfo | TooLarge | null> {
+  const target = await resolveQueryTarget(owner, slug, versionSemver, userId, apiKeyCollectionIds)
+  if (!target) return null
+  if ('tooLarge' in target) return { tooLarge: true as const, recordCount: target.recordCount }
 
-  // Generate sample data (first row per table) for LLM context
+  const { schemaEntries, privateTypes, schemasMap } = await loadSchemas(target)
+  const conditions = recordConditionsFor(target, privateTypes)
+
   const sampleRows: Record<string, Record<string, unknown>> = {}
-  for (const [typeName] of Object.entries(schemasMap)) {
-    const firstRecord = records.find((r) => r.type === typeName)
-    if (firstRecord && firstRecord.data && typeof firstRecord.data === 'object') {
-      sampleRows[typeName] = firstRecord.data as Record<string, unknown>
+  await Promise.all(
+    Object.keys(schemasMap).map(async (typeName) => {
+      const [rec] = await db
+        .select({ data: schema.recordObjects.data })
+        .from(schema.versionRecords)
+        .innerJoin(
+          schema.recordObjects,
+          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+        )
+        .where(and(...conditions, eq(schema.recordObjects.type, typeName)))
+        .limit(1)
+      if (!rec?.data || typeof rec.data !== 'object') return
+      const entry = schemaEntries.find((e) => e.slug === typeName)
+      const privateFields =
+        !target.ownerAccess && entry ? getPrivateFields(entry.schema) : new Set<string>()
+      sampleRows[typeName] = (
+        privateFields.size > 0 ? filterRecordData(rec.data, privateFields) : rec.data
+      ) as Record<string, unknown>
+    }),
+  )
+
+  return {
+    ddl: generateAllDDL(schemasMap),
+    ddlWithSamples: ddlWithSamples(schemasMap, sampleRows),
+    ownerAccess: target.ownerAccess,
+  }
+}
+
+const buildOnce = createSingleFlight<SqliteCacheEntry>()
+
+async function getOrBuildSqlite(
+  owner: string,
+  slug: string,
+  versionSemver: string,
+  userId: string | undefined,
+  apiKeyCollectionIds?: string[],
+) {
+  const target = await resolveQueryTarget(owner, slug, versionSemver, userId, apiKeyCollectionIds)
+  if (!target) return null
+  if ('tooLarge' in target) return { tooLarge: true as const, recordCount: target.recordCount }
+
+  const { collection, version, ownerAccess } = target
+  const cacheKey = `${collection.id}:${version.semver}:${ownerAccess ? 'full' : 'public'}`
+
+  // Check cache (re-insert to move to end for LRU ordering)
+  const cached = sqliteCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    sqliteCache.delete(cacheKey)
+    cached.expiresAt = Date.now() + CACHE_TTL_MS
+    sqliteCache.set(cacheKey, cached)
+    return cached
+  }
+
+  // Concurrent misses share one build rather than each holding its own copy.
+  return buildOnce(cacheKey, async () => {
+    const { schemaEntries, privateTypes, schemasMap } = await loadSchemas(target)
+
+    // Load records (excluding private types and private records for non-owners).
+    // Record-level privacy is the per-version version_records.private flag.
+    let records = await db
+      .select({
+        recordId: schema.recordObjects.recordId,
+        type: schema.recordObjects.type,
+        data: schema.recordObjects.data,
+      })
+      .from(schema.versionRecords)
+      .innerJoin(
+        schema.recordObjects,
+        eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
+      )
+      .where(and(...recordConditionsFor(target, privateTypes)))
+
+    // Strip private fields for non-owners
+    if (!ownerAccess) {
+      const fieldCache = new Map<string, Set<string>>()
+      records = records.map((rec) => {
+        if (!fieldCache.has(rec.type)) {
+          const entry = schemaEntries.find((e) => e.slug === rec.type)
+          fieldCache.set(rec.type, entry ? getPrivateFields(entry.schema) : new Set())
+        }
+        const privateFields = fieldCache.get(rec.type)!
+        return privateFields.size > 0
+          ? { ...rec, data: filterRecordData(rec.data, privateFields) }
+          : rec
+      })
     }
-  }
 
-  // Build DDL with inline sample rows (each sample right after its CREATE TABLE)
-  const ddlWithSamples = Object.entries(schemasMap)
-    .map(([name, s]) => {
-      const tableDdl = generateDDL(name, s)
-      const sample = sampleRows[name]
-      if (sample) {
-        return tableDdl + `\n-- Example row: ${JSON.stringify(sample)}`
+    // Build SQLite
+    const buffer = buildSqliteBuffer(schemasMap, records as any)
+
+    // Sample data (first row per table) for LLM context
+    const sampleRows: Record<string, Record<string, unknown>> = {}
+    for (const typeName of Object.keys(schemasMap)) {
+      const firstRecord = records.find((r) => r.type === typeName)
+      if (firstRecord && firstRecord.data && typeof firstRecord.data === 'object') {
+        sampleRows[typeName] = firstRecord.data as Record<string, unknown>
       }
-      return tableDdl
-    })
-    .join('\n\n')
+    }
 
-  const entry = {
-    buffer,
-    ddl,
-    ddlWithSamples,
-    sampleRows,
-    ownerAccess,
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  }
-  evictIfNeeded()
-  sqliteCache.set(cacheKey, entry)
-  return entry
+    const entry = {
+      buffer,
+      ddl: generateAllDDL(schemasMap),
+      ddlWithSamples: ddlWithSamples(schemasMap, sampleRows),
+      sampleRows,
+      ownerAccess,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    }
+    evictIfNeeded()
+    sqliteCache.set(cacheKey, entry)
+    return entry
+  })
 }
 
 /**
@@ -282,7 +365,7 @@ export async function ddl(c: Context<AuthEnv>) {
   const slug = c.req.param('slug')!
   const versionSemver = c.req.param('version')!
 
-  const result = await getOrBuildSqlite(
+  const result = await getDdlInfo(
     owner,
     slug,
     versionSemver,
@@ -297,7 +380,7 @@ export async function ddl(c: Context<AuthEnv>) {
 
 // POST /query/generate-sql — LLM-powered SQL generation from natural language
 export async function generateSql(c: Context<AuthEnv>) {
-  // Public endpoint that spends Cloudflare AI credits — rate-limit per user/IP
+  // Steward-only (see server.ts) and spends Cloudflare AI credits — still rate-limited per user
   // Prefer cf-connecting-ip (unforgeable behind Cloudflare); the RIGHTMOST
   // X-Forwarded-For hop is the proxy-observed address, unlike the client-set
   // leftmost one.
@@ -315,8 +398,17 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   const { collections: collectionRefs, question } = await c.req.json()
 
-  if (!collectionRefs?.length || !question) {
+  if (!Array.isArray(collectionRefs) || !collectionRefs.length || !question) {
     return c.json({ error: 'collections and question are required', statusCode: 400 }, 400)
+  }
+  if (collectionRefs.length > MAX_QUERY_COLLECTIONS) {
+    return c.json(
+      {
+        error: `At most ${MAX_QUERY_COLLECTIONS} collections can be queried at once`,
+        statusCode: 400,
+      },
+      400,
+    )
   }
 
   const cfAccountId = process.env.CF_ACCOUNT_ID
@@ -338,7 +430,7 @@ export async function generateSql(c: Context<AuthEnv>) {
 
   if (collectionRefs.length === 1) {
     const ref = collectionRefs[0]
-    const result = await getOrBuildSqlite(
+    const result = await getDdlInfo(
       ref.owner,
       ref.slug,
       ref.version,
@@ -356,7 +448,7 @@ export async function generateSql(c: Context<AuthEnv>) {
   } else {
     const parts: string[] = []
     for (const ref of collectionRefs) {
-      const result = await getOrBuildSqlite(
+      const result = await getDdlInfo(
         ref.owner,
         ref.slug,
         ref.version,

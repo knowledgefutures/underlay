@@ -6,6 +6,8 @@ import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/vi
 import { Lock } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { MAX_QUERY_COLLECTIONS } from '../lib/query-constants.js'
+
 type SqlJsDatabase = any
 type SqlJs = any
 
@@ -117,6 +119,7 @@ export default function QueryExplorer() {
     { semver: string; recordCount: number; message?: string }[]
   >([])
   const [loadedCollections, setLoadedCollections] = useState<LoadedCollection[]>([])
+  const atCollectionLimit = loadedCollections.length >= MAX_QUERY_COLLECTIONS
   const [loading, setLoading] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('')
 
@@ -406,6 +409,7 @@ export default function QueryExplorer() {
 
       const key = `${c.ownerSlug}/${c.slug}:${sv}`
       if (loadedCollections.some((lc) => lc.key === key)) return
+      if (loadedCollections.length >= MAX_QUERY_COLLECTIONS) return
 
       setLoading(true)
       setLoadingMessage(`Loading ${c.ownerSlug}/${c.slug} ${sv}...`)
@@ -819,6 +823,11 @@ export default function QueryExplorer() {
                     }}
                     autoFocus
                   />
+                  {atCollectionLimit && (
+                    <div className="text-ink-muted mt-1 px-1 font-mono text-[11px]">
+                      Up to {MAX_QUERY_COLLECTIONS} collections at once — remove one to add another.
+                    </div>
+                  )}
                   {searchLoading && (
                     <div className="text-ink-muted mt-1 px-1 font-mono text-[11px]">
                       Searching...
@@ -844,7 +853,7 @@ export default function QueryExplorer() {
                                 onClick={() => {
                                   loadCollection(c)
                                 }}
-                                disabled={loading || alreadyLoaded}
+                                disabled={loading || alreadyLoaded || atCollectionLimit}
                                 className="hover:bg-parchment-dark min-w-0 flex-1 px-2 py-1 text-left disabled:cursor-not-allowed"
                               >
                                 <div className="truncate font-medium">
@@ -860,7 +869,7 @@ export default function QueryExplorer() {
                               </button>
                               <button
                                 onClick={() => setSelectedForVersion(c)}
-                                disabled={loading || alreadyLoaded}
+                                disabled={loading || alreadyLoaded || atCollectionLimit}
                                 className="border-rule text-ink-muted hover:bg-parchment-dark hover:text-ink flex w-16 shrink-0 items-center justify-center border-l text-[11px] disabled:cursor-not-allowed"
                                 title="Choose specific version"
                               >
@@ -907,7 +916,7 @@ export default function QueryExplorer() {
                               loadCollection(selectedForVersion, v.semver)
                               setSelectedForVersion(null)
                             }}
-                            disabled={loading || alreadyLoaded}
+                            disabled={loading || alreadyLoaded || atCollectionLimit}
                             className="hover:bg-parchment-dark w-full px-2 py-1 text-left font-mono text-xs disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <span className="font-medium">{v.semver}</span>
