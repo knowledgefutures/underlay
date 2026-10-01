@@ -101,7 +101,7 @@ GET /api/collections/:owner/:slug/versions/:semver      → specific version by 
 
 ### Read records and files
 GET /api/collections/:owner/:slug/versions/:semver/records.ndjson → ALL records, streamed as NDJSON in one request (?type=TypeName&after=recordId)
-GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=recordId)
+GET /api/collections/:owner/:slug/versions/:semver/records   → records for a version (?type=TypeName&limit=100&after=<nextCursor>)
 GET /api/collections/:owner/:slug/versions/:semver/manifest  → manifest: record ids/types/hashes + file hashes + schema hashes (?since=v1.0.0 for delta)
 GET /api/collections/:owner/:slug/versions/:semver/files     → list files for a version (hash, size, content type)
 GET /api/collections/:owner/:slug/files/:hash            → download a file: access-checked, then 302-redirects to a short-lived presigned URL (follow it, e.g. curl -L). Public files are anonymous; private needs a session or a Bearer share/agent token. This API path is the durable locator — the redirect target is ephemeral, never persist it.
@@ -455,7 +455,7 @@ The first version will be v1.0.0.
 
 The records endpoint uses cursor-based pagination for efficient traversal of large collections.
 
-GET /api/collections/:owner/:slug/versions/:semver/records?limit=100&after=record-id-42
+GET /api/collections/:owner/:slug/versions/:semver/records?limit=100&after=<pagination.nextCursor>
 
 Response:
 {
@@ -463,16 +463,19 @@ Response:
   "pagination": {
     "limit": 100,
     "hasMore": true,
-    "nextCursor": "record-id-142",
+    "nextCursor": "eyJyIjpbInB1Yi0wMDIiLCJkZWY0NTYiXX0",
     "total": 2000000
   }
 }
 
 Parameters:
 - limit: max records per page (default 100, max 2000)
-- after: keyset cursor (record ID) — return records with IDs lexicographically after
-  this value. This is the canonical, scalable method: it is an index seek and stays
-  fast at any depth. `cursor` is accepted as an alias for `after`.
+- after: opaque keyset cursor — pass pagination.nextCursor back unchanged. Records are
+  ordered by (record id, record hash), so records sharing an id across types are never
+  skipped at a page boundary. This is the canonical, scalable method: it is an index seek
+  and stays fast at any depth. `cursor` is accepted as an alias for `after`. A bare record
+  ID is still accepted (records with IDs strictly after it), but it skips other records
+  that share the last ID.
 - offset: legacy offset-based pagination. Cost grows with the offset, so it is capped:
   an offset greater than 10000 returns 400. Use `after` to page deeper.
 - type: filter by record type

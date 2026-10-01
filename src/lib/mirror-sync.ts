@@ -578,7 +578,7 @@ async function pullVersion(
       let hasMore = true
       while (hasMore) {
         const recordsPath: string = cursor
-          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${cursor}`
+          ? `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000&after=${encodeURIComponent(cursor)}`
           : `/api/collections/${uc.ownerSlug}/${uc.slug}/versions/${uv.semver}/records?limit=1000`
         const page = await fetchUpstream<UpstreamRecordsResponse>(upstream, recordsPath)
         await insertRecordBatch(page.records)

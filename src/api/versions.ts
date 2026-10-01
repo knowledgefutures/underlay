@@ -9,6 +9,7 @@ import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import { listedFileRefs } from '../lib/file-refs.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
+import { decodeRecordsAfter, encodeRecordsCursor } from '../lib/records-cursor.js'
 import {
   authorizeCollectionWrite,
   canonicalize,
@@ -408,9 +409,15 @@ const app = new Hono<AuthEnv>()
       const conditions = [eq(schema.versionRecords.versionId, recordsVersionId(version))]
       if (type) conditions.push(eq(schema.versionRecords.type, type))
 
-      // Cursor-based pagination: ?after=recordId (keyset pagination)
+      // Keyset pagination on (record_id, record_hash): ?after=<pagination.nextCursor>.
+      // A bare record id is still accepted and resumes strictly past that id.
       if (after) {
-        conditions.push(sql`${schema.versionRecords.recordId} > ${after}`)
+        const pos = decodeRecordsAfter(after)
+        conditions.push(
+          pos.kind === 'pair'
+            ? sql`(${schema.versionRecords.recordId}, ${schema.versionRecords.recordHash}) > (${pos.recordId}, ${pos.recordHash})`
+            : sql`${schema.versionRecords.recordId} > ${pos.recordId}`,
+        )
       }
 
       // Determine visibility
@@ -452,7 +459,13 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      let records: Array<{ id: string; type: string; data: unknown; hash: string }>
+      let records: Array<{
+        id: string
+        type: string
+        data: unknown
+        hash: string
+        recordHash: string
+      }>
       try {
         records = await db.transaction(async (tx) => {
           // Scope a statement timeout to this query only; SET LOCAL is reset when
@@ -465,6 +478,8 @@ const app = new Hono<AuthEnv>()
               id: schema.versionRecords.recordId,
               type: schema.versionRecords.type,
               data: schema.recordObjects.data,
+              // Keyset position; `hash` below can be the public one
+              recordHash: schema.versionRecords.recordHash,
               // Non-owners see the public content-address (hash of the
               // private-field-stripped record they receive)
               hash: ownerAccess
@@ -477,7 +492,7 @@ const app = new Hono<AuthEnv>()
               eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
             )
             .where(and(...conditions))
-            .orderBy(schema.versionRecords.recordId)
+            .orderBy(schema.versionRecords.recordId, schema.versionRecords.recordHash)
             .limit(pageLimit + 1)
             .offset(after ? 0 : offsetValue)
         })
@@ -498,8 +513,10 @@ const app = new Hono<AuthEnv>()
 
       // Determine if there's a next page
       const hasMore = records.length > pageLimit
-      const page = hasMore ? records.slice(0, pageLimit) : records
-      const nextCursor = hasMore ? page[page.length - 1]!.id : null
+      const rows = hasMore ? records.slice(0, pageLimit) : records
+      const last = rows[rows.length - 1]
+      const nextCursor = hasMore && last ? encodeRecordsCursor(last.id, last.recordHash) : null
+      const page = rows.map(({ recordHash: _recordHash, ...rest }) => rest)
 
       // Strip private fields if not owner
       let resultRecords = page
