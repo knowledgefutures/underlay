@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { compileSchema, findExtraFields, stripToSchema } from './validate.js'
+import {
+  checkSchemaBounds,
+  checkTypeSlug,
+  compileSchema,
+  findExtraFields,
+  stripToSchema,
+} from './validate.js'
 
 describe('findExtraFields', () => {
   const schemas = {
@@ -55,5 +61,24 @@ describe('compileSchema', () => {
   it('compiles a changed schema that reuses an $id', () => {
     const changed = { ...schema(), required: [] }
     expect(compileSchema(changed)({})).toBe(true)
+  })
+})
+
+describe('checkTypeSlug', () => {
+  it('accepts ordinary type names', () => {
+    for (const slug of ['Author', 'my_type', 'dc:title', 'Type-2', 'a.b']) {
+      expect(checkTypeSlug(slug)).toBeNull()
+    }
+  })
+
+  it('rejects names that could escape the archive directory', () => {
+    for (const slug of ['', '..', '.hidden', '../x', 'a/b', 'a\\b', 'a\nb', 'x'.repeat(129)]) {
+      expect(checkTypeSlug(slug)).not.toBeNull()
+    }
+  })
+
+  it('is enforced across a pushed schema set', () => {
+    expect(checkSchemaBounds({ Author: {} })).toBeNull()
+    expect(checkSchemaBounds({ Author: {}, '../evil': {} })).toMatch(/Type slug/)
   })
 })

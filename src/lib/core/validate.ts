@@ -34,6 +34,22 @@ export function compileSchema(schemaBody: object): Validator {
 const MAX_SCHEMA_BYTES = 256 * 1024
 const MAX_PATTERN_LENGTH = 256
 
+const MAX_TYPE_SLUG_LENGTH = 128
+// No path separators, control characters, or leading dot: type slugs become
+// export archive entry names (`records/<type>.ndjson`).
+const TYPE_SLUG_RE = /^[^\\/\u0000-\u001f\u007f.][^\\/\u0000-\u001f\u007f]*$/
+
+/** Returns an error message, or null if the type slug is safe to use in file names. */
+export function checkTypeSlug(slug: string): string | null {
+  if (slug.length === 0 || slug.length > MAX_TYPE_SLUG_LENGTH) {
+    return `Type slug must be 1-${MAX_TYPE_SLUG_LENGTH} characters`
+  }
+  if (!TYPE_SLUG_RE.test(slug)) {
+    return `Type slug "${slug}" must not start with "." or contain slashes or control characters`
+  }
+  return null
+}
+
 /**
  * Bound caller-supplied JSON Schemas before they are compiled and run
  * server-side: caps total size and the length of regex `pattern` values
@@ -42,6 +58,8 @@ const MAX_PATTERN_LENGTH = 256
  */
 export function checkSchemaBounds(schemas: Record<string, unknown>): string | null {
   for (const [slug, body] of Object.entries(schemas)) {
+    const slugError = checkTypeSlug(slug)
+    if (slugError) return slugError
     const json = JSON.stringify(body)
     if (json.length > MAX_SCHEMA_BYTES) {
       return `Schema "${slug}" exceeds maximum size of ${MAX_SCHEMA_BYTES} bytes`
