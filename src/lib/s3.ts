@@ -95,14 +95,15 @@ export async function deletePublicAssets(keys: string[]): Promise<void> {
   return deleteObjects(publicBucket, keys)
 }
 
-export async function downloadFromS3(key: string): Promise<Buffer> {
+/**
+ * Open a private file object for streaming. `size` is the object's byte
+ * length when the store reports it. Throws if the object can't be fetched.
+ */
+export async function openS3Object(
+  key: string,
+): Promise<{ body: Readable; size?: number | undefined }> {
   const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
-  const stream = res.Body as Readable
-  const chunks: Buffer[] = []
-  for await (const chunk of stream) {
-    chunks.push(Buffer.from(chunk))
-  }
-  return Buffer.concat(chunks)
+  return { body: res.Body as Readable, size: res.ContentLength }
 }
 
 export async function headS3Object(key: string): Promise<boolean> {

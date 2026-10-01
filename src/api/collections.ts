@@ -1,19 +1,18 @@
-import { createGzip } from 'node:zlib'
+import { Readable } from 'node:stream'
 
 import { and, desc, eq, ilike, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
-import { pack as tarPack } from 'tar-stream'
 import { v4 as uuidv4 } from 'uuid'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
 import { checkRestrictedChanges, restrictedChanges } from '../lib/collection-update.js'
+import { createExportArchive, type ExportManifest } from '../lib/export-archive.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
-import { downloadFromS3 } from '../lib/s3.js'
+import { openS3Object } from '../lib/s3.js'
 import {
-  filterRecordData,
   filterTypeSchema,
   getLatestReadyVersion,
   getOrgRole,
@@ -915,10 +914,9 @@ const app = new Hono<AuthEnv>()
           ]),
       )
 
-      // Build manifest.json (packed last, so it can report any files that
-      // failed to download)
+      // Packed last, so it can report any files that failed to download.
       const versionMeta = version.metadata as Record<string, unknown> | null
-      const manifest = {
+      const manifest: ExportManifest = {
         collection: {
           owner,
           slug,
@@ -930,7 +928,7 @@ const app = new Hono<AuthEnv>()
           // Non-owners get the public version digest, never the private one.
           hash: ownerAccess ? version.hash : (version.publicHash ?? version.hash),
           message: version.message,
-          // For non-owners these are overwritten below with what the archive
+          // For non-owners these are overwritten with what the archive
           // actually contains; the version row's totals count private content
           // that was filtered out, so reporting them verbatim would both
           // contradict the tarball and disclose how much is hidden.
@@ -940,76 +938,25 @@ const app = new Hono<AuthEnv>()
           createdAt: version.createdAt,
         },
         schemas: schemasMap,
-        files_missing: [] as string[],
+        files_missing: [],
       }
-
-      // Build tar.gz stream
-      const pack = tarPack()
-      const gzip = createGzip()
 
       const filename = `${owner}-${slug}-${version.semver}.tar.gz`
 
-      // Stream records per-type into tar — avoids loading all records at once
       const types = await db
         .selectDistinct({ type: schema.versionRecords.type })
         .from(schema.versionRecords)
         .where(eq(schema.versionRecords.versionId, recordsVersionId(version)))
 
-      // tar needs each entry's byte length in its header, so an entry cannot be
-      // written from an unbounded stream. Previously every record of a type was
-      // collected into a string[] and joined — which is why export had to be
-      // capped: at 3.1M records the array exhausts the heap, and the join would
-      // exceed V8's maximum string length even if it didn't.
-      //
-      // Instead each type is emitted in bounded parts. A type that fits in one
-      // part keeps the original `records/<Type>.ndjson` name, so every archive
-      // that works today is byte-identical; only types too large for a single
-      // part split into `records/<Type>.0000.ndjson`, `.0001.ndjson`, … Memory is
-      // one part regardless of collection size.
-      const RECORDS_PER_PART = 25_000
-
-      // For non-owners, only files referenced by the (privacy-filtered) records
-      // that actually ship may be included — a file attached solely to a private
-      // record or private field must not leak.
-      let emittedRecordCount = 0
-      const referencedFileHashes = new Set<string>()
-      // Walks nested objects and arrays: `$file` refs are not restricted to the
-      // top level (nothing in schema validation forbids nesting), and a missed
-      // ref would silently drop a legitimately-public file from the archive.
-      const collectFileRefs = (value: unknown) => {
-        if (!value || typeof value !== 'object') return
-        const ref = (value as { $file?: unknown }).$file
-        if (typeof ref === 'string') {
-          referencedFileHashes.add(ref.replace('sha256:', ''))
-          return
-        }
-        for (const child of Object.values(value as Record<string, unknown>)) {
-          collectFileRefs(child)
-        }
-      }
-
-      for (const { type } of types) {
-        // Non-owners never see private types.
-        if (!ownerAccess && privateTypes.has(type)) continue
-        const privateFields = privateFieldsByType.get(type) ?? new Set<string>()
-        let batchCursor: string | null = null
-        let batchHasMore = true
-        let partIndex = 0
-        let pending: string[] = []
-
-        const flushPart = (isFinalPart: boolean) => {
-          if (pending.length === 0) return
-          const name =
-            partIndex === 0 && isFinalPart
-              ? `records/${type}.ndjson`
-              : `records/${type}.${String(partIndex).padStart(4, '0')}.ndjson`
-          const buf = Buffer.from(pending.join('\n') + '\n')
-          pack.entry({ name, size: buf.length }, buf)
-          pending = []
-          partIndex++
-        }
-
-        while (batchHasMore) {
+      // The archive is produced as the client reads it; see export-archive.server.ts.
+      const archive = createExportArchive({
+        manifest,
+        types: types.map((t) => t.type),
+        files: versionFiles,
+        ownerAccess,
+        privateTypes,
+        privateFieldsByType,
+        fetchRecords: (type, after, limit) => {
           // Walk the (version_id, type, record_id) index; record_objects is
           // joined only to pick up the body for the rows on this page.
           const conditions = [
@@ -1020,10 +967,10 @@ const app = new Hono<AuthEnv>()
           if (!ownerAccess) {
             conditions.push(eq(schema.versionRecords.private, false))
           }
-          if (batchCursor) {
-            conditions.push(sql`${schema.versionRecords.recordId} > ${batchCursor}`)
+          if (after) {
+            conditions.push(sql`${schema.versionRecords.recordId} > ${after}`)
           }
-          const batch = await db
+          return db
             .select({
               recordId: schema.versionRecords.recordId,
               type: schema.versionRecords.type,
@@ -1036,72 +983,16 @@ const app = new Hono<AuthEnv>()
             )
             .where(and(...conditions))
             .orderBy(schema.versionRecords.recordId)
-            .limit(5001)
-
-          batchHasMore = batch.length > 5000
-          const page = batchHasMore ? batch.slice(0, 5000) : batch
-          if (page.length > 0) batchCursor = page[page.length - 1]!.recordId
-          for (const r of page) {
-            const data =
-              !ownerAccess && privateFields.size > 0
-                ? filterRecordData(r.data, privateFields)
-                : r.data
-            if (!ownerAccess) collectFileRefs(data)
-            emittedRecordCount++
-            pending.push(JSON.stringify({ id: r.recordId, type: r.type, data }))
-          }
-          // Emit whenever a part fills, so `pending` never grows past one part.
-          if (pending.length >= RECORDS_PER_PART) flushPart(false)
-        }
-        flushPart(true)
-      }
-
-      // Add files
-      let emittedFileCount = 0
-      let emittedFileBytes = 0
-      for (const file of versionFiles) {
-        if (!ownerAccess && !referencedFileHashes.has(file.hash)) continue
-        try {
-          const fileBuffer = await downloadFromS3(file.storageKey)
-          pack.entry({ name: `files/${file.hash}`, size: fileBuffer.length }, fileBuffer)
-          emittedFileCount++
-          emittedFileBytes += fileBuffer.length
-        } catch (err) {
-          console.error(`[export] Failed to download file ${file.hash} (${file.storageKey}):`, err)
-          manifest.files_missing.push(file.hash)
-        }
-      }
-
-      // Report what the archive actually contains, so a non-owner's manifest
-      // matches its payload instead of the owner's (larger) totals.
-      if (!ownerAccess) {
-        manifest.version.recordCount = emittedRecordCount
-        manifest.version.fileCount = emittedFileCount
-        manifest.version.totalBytes = emittedFileBytes
-      }
-
-      const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2))
-      pack.entry({ name: 'manifest.json', size: manifestBuf.length }, manifestBuf)
-
-      pack.finalize()
-
-      // Pipe tar → gzip and collect into a ReadableStream
-      const outputStream = pack.pipe(gzip)
-      const readableStream = new ReadableStream({
-        start(controller) {
-          outputStream.on('data', (chunk: Buffer) => {
-            controller.enqueue(new Uint8Array(chunk))
-          })
-          outputStream.on('end', () => {
-            controller.close()
-          })
-          outputStream.on('error', (err) => {
-            controller.error(err)
-          })
+            .limit(limit)
         },
+        openFile: (file) => openS3Object(file.storageKey),
       })
 
-      return c.body(readableStream, 200, {
+      // Readable.toWeb pulls only as the response is written, so backpressure
+      // reaches the archive, and a client disconnect cancels it. Node's web
+      // stream type doesn't unify with the DOM one c.body expects; they are the
+      // same at runtime.
+      return c.body(Readable.toWeb(archive) as unknown as ReadableStream, 200, {
         'Content-Type': 'application/gzip',
         'Content-Disposition': `attachment; filename="${filename}"`,
       })
