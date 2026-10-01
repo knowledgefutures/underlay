@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, ne, sql } from 'drizzle-orm'
 import type { Context } from 'hono'
 
 import { db, schema } from '../db/client.server.js'
@@ -497,6 +497,20 @@ export async function updateAccountArk(c: Context<AuthEnv>) {
     .limit(1)
   if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
     return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  }
+
+  // Whether a NAAN is registered to the org can't be checked here, but it must
+  // not collide with the instance's own NAAN or another org's claim — ARK
+  // resolution keys on it.
+  if (naan !== null) {
+    const [taken] = await db
+      .select({ id: schema.organization.id })
+      .from(schema.organization)
+      .where(and(eq(schema.organization.arkNaan, naan), ne(schema.organization.id, org.id)))
+      .limit(1)
+    if (naan === DEFAULT_NAAN || taken) {
+      return c.json({ error: 'That NAAN is already in use', statusCode: 409 }, 409)
+    }
   }
 
   await db
