@@ -429,6 +429,7 @@ Supporting files live in `selfhost/` (Caddyfile, Postgres init script). See [/do
 | `MIRROR_ADMIN_EMAILS`       | Comma-separated emails allowed to use the mirror admin UI/API             |
 | `CORS_ORIGINS`              | Extra allowed CORS origins, comma-separated (APP_URL is always allowed)   |
 | `MAX_FILE_UPLOAD_BYTES`     | Max file upload size in bytes (default: 100 MB)                           |
+| `MAX_RECORDS_BATCH_BYTES`   | Max body of one negotiate records batch in bytes (default: 128 MB)        |
 
 `NODE_ENV` is set in `docker-compose.yml` `environment:` block (not in .env files).
 
