@@ -129,6 +129,14 @@ A type that fits in one part keeps the unnumbered records/<Type>.ndjson name, so
 of ordinary collections are unchanged. Read every records/*.ndjson entry and you have the
 version, whichever form it took.
 
+The archive streams: the download starts immediately and is produced as you read it, so
+pipe it to disk or straight into tar rather than buffering it. Exporting the same version
+again gives a byte-identical archive (entries carry the version's creation time), so a
+checksum of one export holds for the next. manifest.json is the last entry; its
+files_missing lists any file that couldn't be fetched. A failure partway through cuts the
+response off instead of finishing it, so an archive that gunzips and untars without error
+is complete. Versions over 2,000,000 records return 413 — use records.ndjson for those.
+
 Export is capped at 2,000,000 records and returns 413 above that — a guard against handing
 back a multi-gigabyte tarball from a single GET, not a memory limit. For bulk reads prefer
 records.ndjson (below): it streams, resumes, and needs no unpacking.
