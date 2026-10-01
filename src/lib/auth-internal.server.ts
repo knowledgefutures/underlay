@@ -122,7 +122,9 @@ export async function getAuthUserWithEmail(
 
 /**
  * Resolve a kf-auth user ID by email address using the search endpoint.
- * Returns the first matching user's ID, or null.
+ * The search also matches display names and doesn't return emails, so each
+ * candidate is fetched and its email compared (exact, case-insensitive).
+ * Returns the matching user's ID, or null.
  */
 export async function resolveKfUserByEmail(email: string): Promise<string | null> {
   if (!hasInternalApi) return null
@@ -134,7 +136,12 @@ export async function resolveKfUserByEmail(email: string): Promise<string | null
     )
     if (!res.ok) return null
     const data = (await res.json()) as { users: { id: string; name: string | null }[] }
-    return data.users?.[0]?.id ?? null
+    const wanted = email.trim().toLowerCase()
+    for (const candidate of data.users ?? []) {
+      const user = await getAuthUserWithEmail(candidate.id)
+      if (user?.email.trim().toLowerCase() === wanted) return user.id
+    }
+    return null
   } catch {
     return null
   }
