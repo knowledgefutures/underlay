@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
+import { listedFileRefs } from '../lib/file-refs.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import {
   authorizeCollectionWrite,
@@ -807,16 +808,6 @@ const app = new Hono<AuthEnv>()
 
       const ownerAccess = collection.ownerAccess
 
-      // For non-owners, private types/fields must not appear in the references,
-      // and files reachable only through private content must not be listed.
-      let privateTypes = new Set<string>()
-      const privateFieldsByType = new Map<string, Set<string>>()
-      if (!ownerAccess) {
-        const schemaEntries = await loadVersionSchemas(version.id)
-        privateTypes = getPrivateTypes(schemaEntries)
-        for (const e of schemaEntries) privateFieldsByType.set(e.slug, getPrivateFields(e.schema))
-      }
-
       const fileRows = await db
         .select({
           hash: schema.versionFiles.fileHash,
@@ -828,42 +819,8 @@ const app = new Hono<AuthEnv>()
         .innerJoin(schema.files, eq(schema.versionFiles.fileHash, schema.files.hash))
         .where(eq(schema.versionFiles.versionId, version.id))
 
-      // Only load records that contain $file references (DB-level filter).
-      // Non-owners never see records flagged private.
-      const refConditions = [
-        eq(schema.versionRecords.versionId, recordsVersionId(version)),
-        sql`${schema.recordObjects.data}::text LIKE '%"$file"%'`,
-      ]
-      if (!ownerAccess) refConditions.push(eq(schema.versionRecords.private, false))
-      const fileRefRecords = await db
-        .select({
-          recordId: schema.recordObjects.recordId,
-          type: schema.recordObjects.type,
-          data: schema.recordObjects.data,
-        })
-        .from(schema.versionRecords)
-        .innerJoin(
-          schema.recordObjects,
-          eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-        )
-        .where(and(...refConditions))
-
-      const fileRefs = new Map<string, { recordId: string; type: string; field: string }[]>()
-      for (const rec of fileRefRecords) {
-        if (!ownerAccess && privateTypes.has(rec.type)) continue
-        const privateFields = ownerAccess
-          ? undefined
-          : (privateFieldsByType.get(rec.type) ?? new Set<string>())
-        const data = rec.data as Record<string, unknown>
-        for (const [field, val] of Object.entries(data)) {
-          if (privateFields?.has(field)) continue
-          if (val && typeof val === 'object' && '$file' in (val as any)) {
-            const hash = ((val as any).$file as string).replace('sha256:', '')
-            if (!fileRefs.has(hash)) fileRefs.set(hash, [])
-            fileRefs.get(hash)!.push({ recordId: rec.recordId, type: rec.type, field })
-          }
-        }
-      }
+      // Non-owners never see a reference in private content.
+      const fileRefs = await listedFileRefs(recordsVersionId(version), ownerAccess)
 
       // Non-owners only see files still reachable through a non-private reference.
       const visibleFileRows = ownerAccess ? fileRows : fileRows.filter((f) => fileRefs.has(f.hash))

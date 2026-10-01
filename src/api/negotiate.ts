@@ -10,6 +10,7 @@ import {
   type OwnSessionOptions,
   sessionScopeDenial,
 } from '../lib/collection-access.js'
+import { indexVersionFileRefs } from '../lib/file-refs.server.js'
 import { dedupeByHash, tallyInserted } from '../lib/negotiate-counts.js'
 import {
   compileSchema,
@@ -1486,6 +1487,8 @@ app.post(
           vrCursor = hi
           if (bound.n < VR_BATCH) break
         }
+
+        await indexVersionFileRefs(versionId!)
       } catch (err) {
         await db.delete(schema.versions).where(eq(schema.versions.id, versionId!))
         throw err

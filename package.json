@@ -23,6 +23,7 @@
     "tool:pruneWebhookLogs": "tsx tools/pruneWebhookLogs.ts",
     "tool:seed-mirror": "tsx tools/seedMirror.ts",
     "tool:verifyRecordSharing": "tsx tools/verifyRecordSharing.ts",
+    "tool:verifyFileRefs": "tsx tools/verifyFileRefs.ts",
     "cli": "tsx src/cli/cli.ts",
     "test": "vitest run",
     "test:watch": "vitest",

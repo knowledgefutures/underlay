@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import { accessibleFileHashes } from '../lib/file-refs.server.js'
 import { getPresignedFileUrl, getS3ObjectMeta, uploadToS3 } from '../lib/s3.js'
 import {
   authorizeCollectionWrite,
@@ -38,114 +39,7 @@ async function isFilePubliclyAccessible(
   collection: { id: string; ownerAccess: boolean } | null,
   fileHash: string,
 ): Promise<boolean> {
-  if (!collection) return false
-
-  // The file must actually belong to THIS collection (in any of its versions).
-  // Without this, the owner/slug in the path is decorative: a member could fetch
-  // any file in the system by requesting it under a collection they belong to.
-  const [belongs] = await db
-    .select({ fileHash: schema.versionFiles.fileHash })
-    .from(schema.versionFiles)
-    .innerJoin(schema.versions, eq(schema.versionFiles.versionId, schema.versions.id))
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versionFiles.fileHash, fileHash),
-      ),
-    )
-    .limit(1)
-  if (!belongs) return false
-
-  if (collection.ownerAccess) return true
-
-  // OR across every ready version: a file is accessible if it is referenced via
-  // a non-private field of a non-private record of a non-private type in ANY
-  // ready version of this (public) collection. Files are content-addressed and
-  // immutable, and the URL carries no version, so "published publicly in any
-  // accessible version ⇒ public" is the correct resolution.
-  const candidates = await db
-    .select({
-      versionId: schema.versionRecords.versionId,
-      type: schema.recordObjects.type,
-      data: schema.recordObjects.data,
-    })
-    .from(schema.versionRecords)
-    // Ownership-only join: this asks whether the file is referenced anywhere in
-    // THIS collection, and a version sharing another's rows is in the same
-    // collection as the version that owns them. The `versionId` it selects is
-    // used to load that version's schemas for privacy, and a metadata patch has
-    // the same schema set as its base, so the filtering is unchanged too.
-    .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
-    .innerJoin(
-      schema.recordObjects,
-      eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
-    )
-    .where(
-      and(
-        eq(schema.versions.collectionId, collection.id),
-        eq(schema.versions.status, 'ready'),
-        eq(schema.versionRecords.private, false),
-        sql`${schema.recordObjects.data}::text LIKE ${'%' + fileHash + '%'}`,
-      ),
-    )
-    .limit(50)
-
-  if (candidates.length === 0) return false
-
-  // Type/field privacy is per-version; load each candidate version's schema once.
-  const schemaCache = new Map<
-    number,
-    { privateTypes: Set<string>; typeSchemas: Map<string, Record<string, any>> }
-  >()
-  const loadVersionPrivacy = async (versionId: number) => {
-    const cached = schemaCache.get(versionId)
-    if (cached) return cached
-    const entries = await db
-      .select({ slug: schema.versionSchemas.slug, schemaBody: schema.schemas.schema })
-      .from(schema.versionSchemas)
-      .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
-      .where(eq(schema.versionSchemas.versionId, versionId))
-    const privateTypes = new Set<string>()
-    const typeSchemas = new Map<string, Record<string, any>>()
-    for (const e of entries) {
-      const body = e.schemaBody as Record<string, any>
-      typeSchemas.set(e.slug, body)
-      if (body?.private === true) privateTypes.add(e.slug)
-    }
-    const value = { privateTypes, typeSchemas }
-    schemaCache.set(versionId, value)
-    return value
-  }
-
-  for (const rec of candidates) {
-    const { privateTypes, typeSchemas } = await loadVersionPrivacy(rec.versionId)
-    if (privateTypes.has(rec.type)) continue
-
-    const typeProps = typeSchemas.get(rec.type)?.properties as Record<string, any> | undefined
-    const privateFields = new Set<string>()
-    if (typeProps) {
-      for (const [fieldName, fieldDef] of Object.entries(typeProps)) {
-        if ((fieldDef as any)?.private === true) privateFields.add(fieldName)
-      }
-    }
-
-    // `$file` refs may be nested inside objects/arrays, so search recursively
-    // within each non-private top-level field (field privacy is top-level only).
-    const containsRef = (value: unknown): boolean => {
-      if (!value || typeof value !== 'object') return false
-      const ref = (value as { $file?: unknown }).$file
-      if (typeof ref === 'string') return ref === `sha256:${fileHash}`
-      return Object.values(value as Record<string, unknown>).some(containsRef)
-    }
-
-    const data = rec.data as Record<string, any>
-    for (const [key, val] of Object.entries(data)) {
-      if (privateFields.has(key)) continue
-      if (containsRef(val)) return true
-    }
-  }
-
-  return false
+  return (await accessibleFileHashes(collection, [fileHash])).has(fileHash)
 }
 
 const fileParams = z.object({
@@ -323,16 +217,16 @@ const app = new Hono<AuthEnv>()
         : []
       const storageByHash = new Map(fileRows.map((f) => [f.hash, f.storageKey]))
 
-      // Resolve access once per distinct hash, even if requested in both forms.
+      // Check the whole batch at once, and each distinct hash once even if it
+      // was requested in both forms.
+      const accessible = await accessibleFileHashes(collection, [...storageByHash.keys()])
       const urlByClean = new Map<string, string | null>()
       for (const h of clean) {
         const storageKey = storageByHash.get(h)
-        if (!storageKey) {
-          urlByClean.set(h, null)
-          continue
-        }
-        const ok = await isFilePubliclyAccessible(collection, h)
-        urlByClean.set(h, ok ? await getPresignedFileUrl(storageKey) : null)
+        urlByClean.set(
+          h,
+          storageKey && accessible.has(h) ? await getPresignedFileUrl(storageKey) : null,
+        )
       }
 
       const result: Record<string, string | null> = {}

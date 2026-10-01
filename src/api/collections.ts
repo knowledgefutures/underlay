@@ -10,6 +10,7 @@ import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, collectionToArkId, DEFAULT_NAAN, getOrMintShoulder } from '../lib/ark.js'
 import { checkRestrictedChanges, restrictedChanges } from '../lib/collection-update.js'
 import { createExportArchive, type ExportManifest } from '../lib/export-archive.server.js'
+import { copyVersionFileRefs } from '../lib/file-refs.server.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import { openS3Object } from '../lib/s3.js'
 import {
@@ -1134,6 +1135,8 @@ const app = new Hono<AuthEnv>()
           FROM version_records
           WHERE version_id = ${recordsVersionId(latestVersion)}
         `)
+        // Same record set and (below) the same schemas, so the same refs.
+        await copyVersionFileRefs(recordsVersionId(latestVersion), newVersion!.id, tx)
 
         const sourceFiles = await tx
           .select({ fileHash: schema.versionFiles.fileHash })
