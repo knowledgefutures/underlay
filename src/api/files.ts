@@ -10,8 +10,11 @@ import { getPresignedFileUrl, getS3ObjectMeta, uploadToS3 } from '../lib/s3.js'
 import { hasOrgAccess } from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
-
-const MAX_UPLOAD_BYTES = parseInt(process.env.MAX_FILE_UPLOAD_BYTES ?? '', 10) || 100 * 1024 * 1024 // 100 MB
+import {
+  BODY_LIMITS,
+  limitBody,
+  MAX_FILE_UPLOAD_BYTES as MAX_UPLOAD_BYTES,
+} from './body-limit.server.js'
 
 // Content types that render/execute inline in a browser are coerced to an
 // inert type on storage, so an uploaded object can never act as a page even if
@@ -358,6 +361,7 @@ const app = new Hono<AuthEnv>()
   )
   .put(
     '/:owner/:slug/files/:hash',
+    limitBody(BODY_LIMITS.fileUpload),
     requireAuth('write'),
     openApi({
       tags: ['Files'],

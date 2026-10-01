@@ -8,6 +8,7 @@ import { deletePublicAssets, listPublicAssets, uploadPublicAsset } from '../lib/
 import { validateSlug } from '../lib/slug.js'
 import type { AuthEnv } from './auth.server.js'
 import { requireAuth, requireUnscopedKey } from './auth.server.js'
+import { BODY_LIMITS, limitBody } from './body-limit.server.js'
 
 const ASSETS_BASE_URL = process.env.ASSETS_BASE_URL ?? 'https://assets.underlay.org'
 
@@ -224,6 +225,7 @@ const app = new Hono<AuthEnv>()
   )
   .post(
     '/:slug/avatar',
+    limitBody(BODY_LIMITS.avatar),
     requireAuth('write'),
     requireUnscopedKey(),
     openApi({

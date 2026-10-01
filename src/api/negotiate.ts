@@ -34,6 +34,7 @@ import {
   enqueueWebhookDeliveries,
 } from '../lib/webhooks.server.js'
 import { requireAuth, type AuthEnv } from './auth.server.js'
+import { BODY_LIMITS, limitBody } from './body-limit.server.js'
 
 // Idle timeout, not a total-duration budget: every manifest chunk and record
 // batch pushes it back. A multi-million-record push legitimately runs for tens
@@ -149,6 +150,7 @@ const app = new Hono<AuthEnv>()
 // POST /api/collections/:owner/:slug/versions/negotiate
 app.post(
   '/:owner/:slug/versions/negotiate',
+  limitBody(BODY_LIMITS.negotiate),
   requireAuth('write'),
   openApi({
     tags: ['Negotiate'],
@@ -294,6 +296,7 @@ app.post(
 // stops scaling with the collection entirely.
 app.post(
   '/:owner/:slug/versions/negotiate/:sessionId/manifest',
+  limitBody(BODY_LIMITS.manifestChunk),
   requireAuth('write'),
   openApi({
     tags: ['Negotiate'],
@@ -470,6 +473,7 @@ app.get(
 // POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/records
 app.post(
   '/:owner/:slug/versions/negotiate/:sessionId/records',
+  limitBody(BODY_LIMITS.recordsBatch),
   requireAuth('write'),
   openApi({
     tags: ['Negotiate'],
@@ -713,6 +717,7 @@ app.post(
 // POST /api/collections/:owner/:slug/versions/negotiate/:sessionId/commit
 app.post(
   '/:owner/:slug/versions/negotiate/:sessionId/commit',
+  limitBody(BODY_LIMITS.commit),
   requireAuth('write'),
   openApi({
     tags: ['Negotiate'],
