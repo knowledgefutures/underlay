@@ -17,9 +17,11 @@
  * the cron tool alike.
  */
 import crypto from 'node:crypto'
-import { isIP } from 'node:net'
+import dns from 'node:dns'
+import { isIP, type LookupFunction } from 'node:net'
 
 import { and, eq, inArray, lt, lte, or, sql } from 'drizzle-orm'
+import { Agent, fetch as undiciFetch } from 'undici'
 
 import { db, schema } from '../db/client.server.js'
 
@@ -48,7 +50,31 @@ export interface WebhookVersionInfo {
 
 // --- SSRF protection ---
 
-/** Private / loopback / link-local / unique-local ranges that must never be POSTed to. */
+/** Parse an IPv6 literal (already validated by isIP) into its eight 16-bit groups. */
+function parseIPv6(ip: string): number[] | null {
+  let s = ip.toLowerCase()
+  const zone = s.indexOf('%')
+  if (zone !== -1) s = s.slice(0, zone)
+  const dotted = s.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (dotted) {
+    const [a = 0, b = 0, c = 0, d = 0] = dotted.slice(1).map((n) => parseInt(n, 10))
+    s = `${s.slice(0, -dotted[0].length)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`
+  }
+  const halves = s.split('::')
+  if (halves.length > 2) return null
+  const head = halves[0] ? halves[0].split(':') : []
+  const tail = halves[1] ? halves[1].split(':') : []
+  const fill = 8 - head.length - tail.length
+  if (halves.length === 1 ? fill !== 0 : fill < 0) return null
+  const groups = [...head, ...Array<string>(fill).fill('0'), ...tail].map((g) => parseInt(g, 16))
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g)) ? groups : null
+}
+
+/**
+ * Addresses that must never be POSTed to: private, loopback, link-local,
+ * unique-local, carrier-grade NAT, benchmarking, multicast and reserved ranges,
+ * plus NAT64 (64:ff9b::/96) and IPv6 forms that embed an IPv4 address.
+ */
 export function isPrivateIp(ip: string): boolean {
   const kind = isIP(ip)
   if (kind === 4) {
@@ -60,22 +86,31 @@ export function isPrivateIp(ip: string): boolean {
     if (a === 172 && b >= 16 && b <= 31) return true
     if (a === 192 && b === 168) return true
     if (a === 100 && b >= 64 && b <= 127) return true // carrier-grade NAT
+    if (a === 198 && (b === 18 || b === 19)) return true // benchmarking 198.18.0.0/15
+    if (a >= 224) return true // multicast 224/4 and reserved 240/4 (incl. broadcast)
     return false
   }
   if (kind === 6) {
-    const norm = ip.toLowerCase()
-    if (norm === '::1' || norm === '::') return true
-
-    const firstVal = parseInt(norm.split(':')[0] || '0', 16)
-    if (!Number.isNaN(firstVal) && (firstVal & 0xffc0) === 0xfe80) return true // link-local fe80::/10
-
-    if (norm.startsWith('fc') || norm.startsWith('fd')) return true // unique-local
-    // IPv4-mapped (::ffff:a.b.c.d)
-    const mapped = norm.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-    if (mapped) return isPrivateIp(mapped[1]!)
+    const g = parseIPv6(ip)
+    if (!g) return true // unparseable: fail closed
+    const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = g
+    if (g.slice(0, 7).every((x) => x === 0) && g7 <= 1) return true // :: and ::1
+    if ((g0 & 0xffc0) === 0xfe80) return true // link-local fe80::/10
+    if ((g0 & 0xfe00) === 0xfc00) return true // unique-local fc00::/7
+    if ((g0 & 0xff00) === 0xff00) return true // multicast ff00::/8
+    if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) return true // NAT64 64:ff9b::/96
+    // IPv4-mapped (::ffff:a.b.c.d) and deprecated IPv4-compatible (::a.b.c.d)
+    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0)) {
+      return isPrivateIp(`${g6 >> 8}.${g6 & 0xff}.${g7 >> 8}.${g7 & 0xff}`)
+    }
     return false
   }
   return false
+}
+
+/** `URL.hostname` keeps the brackets around IPv6 literals; strip them for isIP. */
+function bareHost(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
 }
 
 function isBlockedHostname(hostname: string): boolean {
@@ -103,7 +138,7 @@ export function validateWebhookUrl(
   if (parsed.protocol !== 'https:' && !(allowInsecure && parsed.protocol === 'http:')) {
     return { ok: false, reason: 'Webhook URL must use https' }
   }
-  const host = parsed.hostname
+  const host = bareHost(parsed.hostname)
   if (isBlockedHostname(host)) {
     return { ok: false, reason: 'Webhook URL host is not allowed' }
   }
@@ -114,20 +149,69 @@ export function validateWebhookUrl(
   return { ok: true, url: parsed.toString() }
 }
 
+class BlockedAddressError extends Error {
+  constructor() {
+    super('Webhook host resolves to a private address')
+    this.name = 'BlockedAddressError'
+  }
+}
+
+type ResolvedAddress = { address: string; family: number }
+type Resolver = (hostname: string, options: dns.LookupOptions) => Promise<ResolvedAddress[]>
+
+const resolveAll: Resolver = (hostname, options) =>
+  dns.promises.lookup(hostname, { ...options, all: true })
+
 /**
- * Delivery-time SSRF check: resolve the hostname and reject if any resolved
- * address is private. Catches DNS names that point at internal infrastructure.
+ * A `net.connect` lookup that fails the connection if any resolved address is
+ * blocked, and otherwise hands back exactly the addresses it checked. Checking
+ * here, rather than in a separate step before `fetch`, means the socket connects
+ * to the address that was validated — a DNS answer that changes between check
+ * and connect (rebinding) can't slip through.
  */
-async function assertResolvesPublic(hostname: string): Promise<void> {
-  if (isIP(hostname)) {
-    if (isPrivateIp(hostname)) throw new Error('Webhook host resolves to a private address')
-    return
+export function createCheckedLookup(
+  resolve: Resolver = resolveAll,
+  isBlocked: (ip: string) => boolean = isPrivateIp,
+): LookupFunction {
+  return (hostname, options, callback) => {
+    resolve(hostname, options).then(
+      (addresses) => {
+        if (addresses.length === 0 || addresses.some(({ address }) => isBlocked(address))) {
+          return callback(new BlockedAddressError(), '', 0)
+        }
+        if (options.all) return callback(null, addresses)
+        callback(null, addresses[0]!.address, addresses[0]!.family)
+      },
+      (err: NodeJS.ErrnoException) => callback(err, '', 0),
+    )
   }
-  const { lookup } = await import('node:dns/promises')
-  const results = await lookup(hostname, { all: true })
-  for (const { address } of results) {
-    if (isPrivateIp(address)) throw new Error('Webhook host resolves to a private address')
-  }
+}
+
+/**
+ * An undici Agent whose connections only go to addresses that passed the SSRF
+ * check. TLS SNI and the Host header still use the original hostname.
+ */
+export function createPinnedAgent(lookup = createCheckedLookup()): Agent {
+  return new Agent({ connect: { lookup } })
+}
+
+const pinnedAgent = createPinnedAgent()
+
+type WebhookFetchResult = Awaited<ReturnType<typeof undiciFetch>>
+
+/**
+ * `fetch` for webhook targets: connections are pinned to checked addresses and
+ * redirects are errors. Literal-IP hosts never reach the Agent's lookup, so
+ * private ones are rejected here before connecting.
+ */
+export async function webhookFetch(
+  url: string,
+  init: NonNullable<Parameters<typeof undiciFetch>[1]>,
+  dispatcher: Agent = pinnedAgent,
+): Promise<WebhookFetchResult> {
+  const host = bareHost(new URL(url).hostname)
+  if (isIP(host) && isPrivateIp(host)) throw new BlockedAddressError()
+  return undiciFetch(url, { ...init, dispatcher, redirect: 'error' })
 }
 
 // --- Signing ---
@@ -272,14 +356,11 @@ export async function deliverOne(deliveryId: string): Promise<void> {
 
   const startedAt = Date.now()
   try {
-    const { hostname } = new URL(row.url)
-    await assertResolvesPublic(hostname)
-
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS)
-    let res: Response
+    let res: WebhookFetchResult
     try {
-      res = await fetch(row.url, {
+      res = await webhookFetch(row.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -290,13 +371,14 @@ export async function deliverOne(deliveryId: string): Promise<void> {
         },
         body,
         signal: controller.signal,
-        redirect: 'error',
       })
     } finally {
       clearTimeout(timer)
     }
 
     const durationMs = Date.now() - startedAt
+    // Release the pooled connection; we never read the response body.
+    void res.body?.cancel().catch(() => {})
     if (res.ok) {
       await db
         .update(schema.webhookDeliveries)
@@ -319,7 +401,10 @@ export async function deliverOne(deliveryId: string): Promise<void> {
     }
   } catch (err) {
     const durationMs = Date.now() - startedAt
-    const message = err instanceof Error ? err.message : String(err)
+    // undici wraps lookup failures as `TypeError: fetch failed`; keep the blocked-address reason.
+    const reason =
+      err instanceof Error && err.cause instanceof BlockedAddressError ? err.cause : err
+    const message = reason instanceof Error ? reason.message : String(reason)
     await markFailed(deliveryId, attempt, null, message, durationMs)
   }
 }

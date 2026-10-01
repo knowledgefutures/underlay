@@ -98,6 +98,9 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
+      undici:
+        specifier: 7.27.2
+        version: 7.27.2
       uuid:
         specifier: ^14.0.0
         version: 14.0.0
