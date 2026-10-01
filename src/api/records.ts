@@ -39,6 +39,22 @@ async function resolvePublicHashes(hashes: string[]): Promise<Map<string, Public
     // Keyed off the version that owns the row. A metadata patch copies its base's
     // schema set verbatim, so the binding this resolves is the same one either
     // way — the digests would not match otherwise.
+    // Only ready versions of public collections, as in resolveRecordAccess: a
+    // public hash must not resolve through a private collection's schema.
+    .innerJoin(
+      schema.versions,
+      and(
+        eq(schema.versionRecords.versionId, schema.versions.id),
+        eq(schema.versions.status, 'ready'),
+      ),
+    )
+    .innerJoin(
+      schema.collections,
+      and(
+        eq(schema.versions.collectionId, schema.collections.id),
+        eq(schema.collections.public, true),
+      ),
+    )
     .innerJoin(
       schema.versionSchemas,
       and(
@@ -47,7 +63,12 @@ async function resolvePublicHashes(hashes: string[]): Promise<Map<string, Public
       ),
     )
     .innerJoin(schema.schemas, eq(schema.versionSchemas.schemaId, schema.schemas.id))
-    .where(inArray(schema.versionRecords.publicRecordHash, hashes))
+    .where(
+      and(
+        inArray(schema.versionRecords.publicRecordHash, hashes),
+        eq(schema.versionRecords.private, false),
+      ),
+    )
     .groupBy(
       schema.versionRecords.publicRecordHash,
       schema.versionRecords.recordHash,
@@ -55,6 +76,7 @@ async function resolvePublicHashes(hashes: string[]): Promise<Map<string, Public
     )
   for (const row of rows) {
     if (!row.publicRecordHash || map.has(row.publicRecordHash)) continue
+    if ((row.schemaBody as { private?: boolean } | null)?.private === true) continue
     map.set(row.publicRecordHash, {
       recordHash: row.recordHash,
       privateFields: getPrivateFields(row.schemaBody as Record<string, unknown>),
@@ -114,7 +136,13 @@ async function resolveRecordAccess(
       eq(schema.versionRecords.recordHash, schema.recordObjects.hash),
     )
     // Ownership-only, as above: same collection, same answer.
-    .innerJoin(schema.versions, eq(schema.versionRecords.versionId, schema.versions.id))
+    .innerJoin(
+      schema.versions,
+      and(
+        eq(schema.versionRecords.versionId, schema.versions.id),
+        eq(schema.versions.status, 'ready'),
+      ),
+    )
     .innerJoin(
       schema.collections,
       and(
@@ -233,6 +261,7 @@ const app = new Hono<AuthEnv>()
           and(
             eq(schema.versionRecords.recordHash, recordHash),
             eq(schema.collections.public, true),
+            eq(schema.versions.status, 'ready'),
           ),
         )
         .orderBy(sql`${schema.versions.createdAt} asc`)
