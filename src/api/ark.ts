@@ -10,11 +10,12 @@ import {
   getOrMintShoulder,
   parseArkPath,
 } from '../lib/ark.js'
+import type { CollectionWriteOptions } from '../lib/collection-access.js'
 import {
+  authorizeCollectionWrite,
   filterRecordData,
   filterTypeSchema,
   getPrivateFields,
-  hasOrgAccess,
   parseSemver,
   recordsVersionId,
 } from '../lib/version-helpers.server.js'
@@ -323,31 +324,26 @@ export async function resolve(c: Context<AuthEnv>) {
 
 // --- Collection ARK settings ---
 
+// Any member of the owning org. These check the key's scope before membership
+// and answer a key scoped elsewhere with a plain "Forbidden", unlike the other
+// collection routes.
+const ARK_SETTINGS_ACCESS: CollectionWriteOptions = { scopeFirst: true, scopeMessage: 'Forbidden' }
+
 export async function getArk(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
 
-  const [coll] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      ownerNaan: schema.organization.arkNaan,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
   // Must be owner/member
-  const scopedCollections = c.get('apiKeyCollectionIds')
-  if (scopedCollections && !scopedCollections.includes(coll.id)) {
-    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-  }
-  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
-  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  const auth = await authorizeCollectionWrite(c, owner, slug, ARK_SETTINGS_ACCESS)
+  if ('error' in auth) return auth.error
+  const coll = auth.collection
 
-  const naan = coll.ownerNaan ?? DEFAULT_NAAN
+  const [org] = await db
+    .select({ arkNaan: schema.organization.arkNaan })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, coll.organizationId))
+    .limit(1)
+  const naan = org?.arkNaan ?? DEFAULT_NAAN
 
   const [arkRow] = await db
     .select({
@@ -385,20 +381,9 @@ export async function updateArk(c: Context<AuthEnv>) {
     return c.json({ error: 'customUrl must be an http(s) URL', statusCode: 422 }, 422)
   }
 
-  const [coll] = await db
-    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-  const scopedCollections = c.get('apiKeyCollectionIds')
-  if (scopedCollections && !scopedCollections.includes(coll.id)) {
-    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-  }
-  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
-  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  const auth = await authorizeCollectionWrite(c, owner, slug, ARK_SETTINGS_ACCESS)
+  if ('error' in auth) return auth.error
+  const coll = auth.collection
 
   const [existing] = await db
     .select({ collectionId: schema.arkCollections.collectionId })
@@ -437,20 +422,9 @@ export async function getArkRecordTypes(c: Context<AuthEnv>) {
   const owner = c.req.param('owner')!
   const slug = c.req.param('slug')!
 
-  const [coll] = await db
-    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-  const scopedCollections = c.get('apiKeyCollectionIds')
-  if (scopedCollections && !scopedCollections.includes(coll.id)) {
-    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-  }
-  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
-  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  const auth = await authorizeCollectionWrite(c, owner, slug, ARK_SETTINGS_ACCESS)
+  if ('error' in auth) return auth.error
+  const coll = auth.collection
 
   const rows = await db
     .select({
@@ -470,20 +444,9 @@ export async function updateArkRecordTypes(c: Context<AuthEnv>) {
 
   if (!recordType) return c.json({ error: 'recordType required', statusCode: 400 }, 400)
 
-  const [coll] = await db
-    .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-  if (!coll) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-  const scopedCollections = c.get('apiKeyCollectionIds')
-  if (scopedCollections && !scopedCollections.includes(coll.id)) {
-    return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-  }
-  const hasAccess = await hasOrgAccess(c.get('userId'), coll.organizationId)
-  if (!hasAccess) return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
+  const auth = await authorizeCollectionWrite(c, owner, slug, ARK_SETTINGS_ACCESS)
+  if ('error' in auth) return auth.error
+  const coll = auth.collection
 
   if (redirectUrlField === null) {
     await db

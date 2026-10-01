@@ -1,6 +1,13 @@
 import { and, eq, sql } from 'drizzle-orm'
+import type { Context } from 'hono'
 
+import type { AuthEnv } from '../api/auth.server.js'
 import { db, schema } from '../db/client.server.js'
+import {
+  type CollectionWriteOptions,
+  decideCollectionWrite,
+  keyScopeAllows,
+} from './collection-access.js'
 
 export {
   ajv,
@@ -51,12 +58,63 @@ export async function resolveCollection(owner: string, slug: string) {
       id: schema.collections.id,
       organizationId: schema.collections.organizationId,
       slug: schema.collections.slug,
+      public: schema.collections.public,
     })
     .from(schema.collections)
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
     .limit(1)
   return result ?? null
+}
+
+type ResolvedCollection = NonNullable<Awaited<ReturnType<typeof resolveCollection>>>
+
+/**
+ * Read access to an already-resolved collection, for routes that select more
+ * columns than `resolveAccessibleCollection` does. `visible` is false for a
+ * private collection the caller isn't a member of, which callers report as 404.
+ * A collection-scoped API key only counts for the collections it is scoped to.
+ */
+export async function collectionReadAccess(
+  collection: { id: string; organizationId: string; public: boolean },
+  userId: string | undefined,
+  apiKeyCollectionIds?: string[],
+): Promise<{ visible: boolean; ownerAccess: boolean }> {
+  const ownerAccess =
+    keyScopeAllows(apiKeyCollectionIds, collection.id) &&
+    (await hasOrgAccess(userId, collection.organizationId))
+  return { visible: collection.public || ownerAccess, ownerAccess }
+}
+
+/**
+ * Resolve owner/slug and check the caller may write to it: a member of the
+ * owning org (owner or admin with `minRole: 'admin'`), and, if the API key is
+ * collection-scoped, scoped to this collection. `role` is the caller's role in
+ * the owning org.
+ *
+ * The options keep each route's existing status codes, messages and check order
+ * (see `CollectionWriteOptions`).
+ */
+export async function authorizeCollectionWrite<E extends AuthEnv>(
+  c: Context<E>,
+  owner: string,
+  slug: string,
+  options: CollectionWriteOptions = {},
+): Promise<{ collection: ResolvedCollection; role: string } | { error: Response }> {
+  const collection = await resolveCollection(owner, slug)
+  const decision = await decideCollectionWrite(
+    collection,
+    {
+      scopedCollectionIds: c.get('apiKeyCollectionIds'),
+      getRole: () => getOrgRole(c.get('userId'), collection!.organizationId),
+    },
+    options,
+  )
+  if ('denial' in decision) {
+    const { status, error } = decision.denial
+    return { error: c.json({ error, statusCode: status }, status) }
+  }
+  return { collection: collection!, role: decision.role }
 }
 
 /**
@@ -75,21 +133,10 @@ export async function resolveAccessibleCollection(
   userId: string | undefined,
   apiKeyCollectionIds?: string[],
 ) {
-  const [result] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      slug: schema.collections.slug,
-      public: schema.collections.public,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
+  const result = await resolveCollection(owner, slug)
   if (!result) return null
-  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(result.id)
-  const ownerAccess = keyScopeOk && (await hasOrgAccess(userId, result.organizationId))
-  if (!result.public && !ownerAccess) return null
+  const { visible, ownerAccess } = await collectionReadAccess(result, userId, apiKeyCollectionIds)
+  if (!visible) return null
   return { ...result, ownerAccess }
 }
 

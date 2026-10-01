@@ -153,7 +153,8 @@ src/
 │   │   ├── validate.ts   # AJV schema validation
 │   │   ├── types.ts      # Shared type definitions
 │   │   └── index.ts      # Re-exports
-│   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers
+│   ├── version-helpers.server.ts  # Re-exports core + DB-dependent helpers (collection access checks)
+│   ├── collection-access.ts # Access decisions behind those checks (write role, key scope, negotiate sessions)
 │   ├── auth.ts           # better-auth config (KF Auth OIDC, API keys, orgs)
 │   ├── auth.server.ts    # Session helpers
 │   ├── auth-client.ts    # better-auth React client

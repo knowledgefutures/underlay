@@ -9,6 +9,7 @@ import { db, schema } from '../db/client.server.js'
 import { buildArkUrl, DEFAULT_NAAN } from '../lib/ark.js'
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import {
+  authorizeCollectionWrite,
   canonicalize,
   deriveSemver,
   describeError,
@@ -19,13 +20,11 @@ import {
   getPrivateFields,
   getPrivateTypes,
   hashSchema,
-  hasOrgAccess,
   loadVersionSchemas,
   parseSemver,
   recordsVersionId,
   resolveAccessibleCollection,
   sanitizeVersionForPublic,
-  resolveCollection,
   type SchemaEntry,
   VersionHashStream,
 } from '../lib/version-helpers.server.js'
@@ -1478,18 +1477,10 @@ const app = new Hono<AuthEnv>()
         )
       }
 
-      const collection = await resolveCollection(owner, slug)
-      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
+      const auth = await authorizeCollectionWrite(c, owner, slug)
+      if ('error' in auth) return auth.error
+      const { collection } = auth
       const userId = c.get('userId')
-      if (!(await hasOrgAccess(userId, collection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
 
       const latest = await getLatestReadyVersion(collection.id)
 
@@ -1747,21 +1738,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug, jobId } = c.req.valid('param')
 
-      const collection = await resolveCollection(owner, slug)
-      if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
       // Authorized by collection access rather than by who started the job: a
       // job is a property of the collection, and anyone who could write the
       // metadata can see how the write went.
-      const userId = c.get('userId')
-      if (!(await hasOrgAccess(userId, collection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug)
+      if ('error' in auth) return auth.error
+      const { collection } = auth
 
       const [job] = await db
         .select()

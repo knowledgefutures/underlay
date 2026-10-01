@@ -1,11 +1,12 @@
 import { and, desc, eq } from 'drizzle-orm'
-import { type Context, Hono } from 'hono'
+import { Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import type { CollectionWriteOptions } from '../lib/collection-access.js'
 import { parseLimit } from '../lib/query-params.js'
-import { getOrgRole, resolveCollection } from '../lib/version-helpers.server.js'
+import { authorizeCollectionWrite } from '../lib/version-helpers.server.js'
 import {
   dispatchDeliveries,
   generateWebhookSecret,
@@ -21,32 +22,11 @@ const bumpFilterSchema = z
   .min(1, 'Select at least one version type')
 
 /**
- * Resolve the collection and verify the caller may manage its webhooks:
- * owner/admin role in the owning org, plus API-key collection scoping.
- * Webhook secrets are sensitive, so management is gated to owner/admin
- * (mirrors the delete-collection gate), not any org member.
+ * Who may manage a collection's webhooks: owner/admin role in the owning org,
+ * plus API-key collection scoping. Webhook secrets are sensitive, so management
+ * is gated to owner/admin (mirrors the delete-collection gate), not any org member.
  */
-async function authorizeWebhookAccess<E extends AuthEnv>(
-  c: Context<E>,
-  owner: string,
-  slug: string,
-): Promise<{ collectionId: string } | { error: Response }> {
-  const collection = await resolveCollection(owner, slug)
-  if (!collection) {
-    return { error: c.json({ error: 'Not found', statusCode: 404 }, 404) }
-  }
-  const role = await getOrgRole(c.get('userId'), collection.organizationId)
-  if (role !== 'owner' && role !== 'admin') {
-    return { error: c.json({ error: 'Forbidden', statusCode: 403 }, 403) }
-  }
-  const scoped = c.get('apiKeyCollectionIds')
-  if (scoped && !scoped.includes(collection.id)) {
-    return {
-      error: c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403),
-    }
-  }
-  return { collectionId: collection.id }
-}
+const WEBHOOK_ACCESS: CollectionWriteOptions = { minRole: 'admin', notFoundMessage: 'Not found' }
 
 // List webhooks (secrets omitted)
 app.get(
@@ -60,7 +40,7 @@ app.get(
   }),
   async (c) => {
     const { owner, slug } = c.req.valid('param')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const hooks = await db
@@ -73,7 +53,7 @@ app.get(
         lastDeliveryAt: schema.collectionWebhooks.lastDeliveryAt,
       })
       .from(schema.collectionWebhooks)
-      .where(eq(schema.collectionWebhooks.collectionId, auth.collectionId))
+      .where(eq(schema.collectionWebhooks.collectionId, auth.collection.id))
       .orderBy(desc(schema.collectionWebhooks.createdAt))
 
     return c.json({ webhooks: hooks })
@@ -100,7 +80,7 @@ app.post(
   async (c) => {
     const { owner, slug } = c.req.valid('param')
     const { url, bumpFilter, enabled } = c.req.valid('json')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const check = validateWebhookUrl(url)
@@ -110,7 +90,7 @@ app.post(
     const [created] = await db
       .insert(schema.collectionWebhooks)
       .values({
-        collectionId: auth.collectionId,
+        collectionId: auth.collection.id,
         url: check.url,
         bumpFilter: bumpFilter ?? ['major', 'minor', 'patch'],
         enabled: enabled ?? true,
@@ -150,7 +130,7 @@ app.patch(
   async (c) => {
     const { owner, slug, id } = c.req.valid('param')
     const updates = c.req.valid('json')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const set: Record<string, unknown> = {}
@@ -169,7 +149,7 @@ app.patch(
       .where(
         and(
           eq(schema.collectionWebhooks.id, id),
-          eq(schema.collectionWebhooks.collectionId, auth.collectionId),
+          eq(schema.collectionWebhooks.collectionId, auth.collection.id),
         ),
       )
       .returning({
@@ -196,7 +176,7 @@ app.delete(
   }),
   async (c) => {
     const { owner, slug, id } = c.req.valid('param')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const deleted = await db
@@ -204,7 +184,7 @@ app.delete(
       .where(
         and(
           eq(schema.collectionWebhooks.id, id),
-          eq(schema.collectionWebhooks.collectionId, auth.collectionId),
+          eq(schema.collectionWebhooks.collectionId, auth.collection.id),
         ),
       )
       .returning({ id: schema.collectionWebhooks.id })
@@ -226,7 +206,7 @@ app.get(
   }),
   async (c) => {
     const { owner, slug, id } = c.req.valid('param')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const limit = parseLimit(c.req.query('limit'), 50, 200)
@@ -238,7 +218,7 @@ app.get(
       .where(
         and(
           eq(schema.collectionWebhooks.id, id),
-          eq(schema.collectionWebhooks.collectionId, auth.collectionId),
+          eq(schema.collectionWebhooks.collectionId, auth.collection.id),
         ),
       )
       .limit(1)
@@ -279,7 +259,7 @@ app.post(
   }),
   async (c) => {
     const { owner, slug, id } = c.req.valid('param')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const [hook] = await db
@@ -288,7 +268,7 @@ app.post(
       .where(
         and(
           eq(schema.collectionWebhooks.id, id),
-          eq(schema.collectionWebhooks.collectionId, auth.collectionId),
+          eq(schema.collectionWebhooks.collectionId, auth.collection.id),
         ),
       )
       .limit(1)
@@ -305,7 +285,7 @@ app.post(
       .insert(schema.webhookDeliveries)
       .values({
         webhookId: id,
-        collectionId: auth.collectionId,
+        collectionId: auth.collection.id,
         bumpType: 'patch',
         event: 'ping',
         payload,
@@ -337,7 +317,7 @@ app.post(
   }),
   async (c) => {
     const { owner, slug, id, deliveryId } = c.req.valid('param')
-    const auth = await authorizeWebhookAccess(c, owner, slug)
+    const auth = await authorizeCollectionWrite(c, owner, slug, WEBHOOK_ACCESS)
     if ('error' in auth) return auth.error
 
     const [delivery] = await db
@@ -346,14 +326,14 @@ app.post(
       .where(
         and(
           eq(schema.webhookDeliveries.id, deliveryId),
-          eq(schema.webhookDeliveries.collectionId, auth.collectionId),
+          eq(schema.webhookDeliveries.collectionId, auth.collection.id),
           eq(schema.webhookDeliveries.webhookId, id),
         ),
       )
       .limit(1)
     if (!delivery) return c.json({ error: 'Not found', statusCode: 404 }, 404)
 
-    const ok = await retryDelivery(deliveryId, auth.collectionId)
+    const ok = await retryDelivery(deliveryId, auth.collection.id)
     if (!ok) return c.json({ error: 'Not found', statusCode: 404 }, 404)
     return c.json({ ok: true })
   },

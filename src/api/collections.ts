@@ -13,9 +13,10 @@ import { createExportArchive, type ExportManifest } from '../lib/export-archive.
 import { parseLimit, parseOffset } from '../lib/query-params.js'
 import { openS3Object } from '../lib/s3.js'
 import {
+  authorizeCollectionWrite,
+  collectionReadAccess,
   filterTypeSchema,
   getLatestReadyVersion,
-  getOrgRole,
   getPrivateFields,
   getPrivateTypes,
   hasOrgAccess,
@@ -363,12 +364,12 @@ const app = new Hono<AuthEnv>()
       }
       const { organizationId, ...result } = row
 
-      // A collection-scoped API key (share/agent link) only grants access to
-      // the collections it is scoped to.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      const keyScopeOk = !scopedCollections || scopedCollections.includes(result.id)
-      const ownerAccess = keyScopeOk && (await hasOrgAccess(c.get('userId'), organizationId))
-      if (!result.public && !ownerAccess) {
+      const { visible, ownerAccess } = await collectionReadAccess(
+        { ...result, organizationId },
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
+      if (!visible) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 
@@ -481,44 +482,17 @@ const app = new Hono<AuthEnv>()
       const { owner, slug } = c.req.valid('param')
       const updates = c.req.valid('json')
 
-      const [org] = await db
-        .select()
-        .from(schema.organization)
-        .where(eq(schema.organization.slug, owner))
-        .limit(1)
-
-      if (!org) {
-        return c.json({ error: 'Not found', statusCode: 404 }, 404)
-      }
-
-      const [collection] = await db
-        .select()
-        .from(schema.collections)
-        .where(
-          and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)),
-        )
-        .limit(1)
-
-      if (!collection) {
-        return c.json({ error: 'Not found', statusCode: 404 }, 404)
-      }
-
-      if (!(await hasOrgAccess(c.get('userId'), org.id))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
-
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug, { notFoundMessage: 'Not found' })
+      if ('error' in auth) return auth.error
+      const { collection } = auth
 
       // Changing visibility or slug needs owner/admin and an unscoped key;
       // name-only updates stay open to any org member.
       const restricted = restrictedChanges(updates, collection)
       if (restricted.length > 0) {
         const denied = checkRestrictedChanges(restricted, {
-          role: await getOrgRole(c.get('userId'), org.id),
-          keyScoped: !!scopedCollections,
+          role: auth.role,
+          keyScoped: !!c.get('apiKeyCollectionIds'),
         })
         if (denied) return c.json({ error: denied, statusCode: 403 }, 403)
       }
@@ -541,7 +515,7 @@ const app = new Hono<AuthEnv>()
           .from(schema.collections)
           .where(
             and(
-              eq(schema.collections.organizationId, org.id),
+              eq(schema.collections.organizationId, collection.organizationId),
               eq(schema.collections.slug, newSlug),
             ),
           )
@@ -578,40 +552,14 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug } = c.req.valid('param')
 
-      const [org] = await db
-        .select()
-        .from(schema.organization)
-        .where(eq(schema.organization.slug, owner))
-        .limit(1)
-
-      if (!org) {
-        return c.json({ error: 'Not found', statusCode: 404 }, 404)
-      }
-
-      const [collection] = await db
-        .select()
-        .from(schema.collections)
-        .where(
-          and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)),
-        )
-        .limit(1)
-
-      if (!collection) {
-        return c.json({ error: 'Not found', statusCode: 404 }, 404)
-      }
-
       // Deleting a collection requires owner/admin role in the owning org
-      const role = await getOrgRole(c.get('userId'), org.id)
-      if (role !== 'owner' && role !== 'admin') {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug, {
+        minRole: 'admin',
+        notFoundMessage: 'Not found',
+      })
+      if ('error' in auth) return auth.error
 
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(collection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-
-      await db.delete(schema.collections).where(eq(schema.collections.id, collection.id))
+      await db.delete(schema.collections).where(eq(schema.collections.id, auth.collection.id))
       return c.json({ ok: true })
     },
   )
@@ -821,11 +769,12 @@ const app = new Hono<AuthEnv>()
 
       // A member of the owning org (and not scoped out by a collection-scoped
       // key) gets the full export; everyone else gets the privacy-filtered view.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      const keyScopeOk = !scopedCollections || scopedCollections.includes(collection.id)
-      const ownerAccess =
-        keyScopeOk && (await hasOrgAccess(c.get('userId'), collection.organizationId))
-      if (!collection.public && !ownerAccess) {
+      const { visible, ownerAccess } = await collectionReadAccess(
+        collection,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
+      if (!visible) {
         return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
       }
 

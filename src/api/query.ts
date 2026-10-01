@@ -10,9 +10,9 @@ import {
   filterTypeSchema,
   getPrivateFields,
   getPrivateTypes,
-  hasOrgAccess,
   parseSemver,
   recordsVersionId,
+  resolveAccessibleCollection,
   type SchemaEntry,
 } from '../lib/version-helpers.server.js'
 import { type AuthEnv, fullPrincipalUserId } from './auth.server.js'
@@ -80,26 +80,12 @@ async function resolveQueryTarget(
 ): Promise<QueryTarget | TooLarge | null> {
   const { semver: normalizedSemver } = parseSemver(versionSemver)
 
-  // Resolve collection
-  const [collection] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      public: schema.collections.public,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-
-  if (!collection) return null
-
   // Access: private collections are only visible to org members; non-members of
   // public collections get a privacy-filtered build. A collection-scoped API
   // key (share/agent link) only counts for the collections it is scoped to.
-  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
-  const ownerAccess = keyScopeOk && (await hasOrgAccess(userId, collection.organizationId))
-  if (!collection.public && !ownerAccess) return null
+  const collection = await resolveAccessibleCollection(owner, slug, userId, apiKeyCollectionIds)
+  if (!collection) return null
+  const { ownerAccess } = collection
 
   // Resolve version
   const [version] = await db

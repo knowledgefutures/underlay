@@ -1,13 +1,19 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { openApi } from 'hono-zod-openapi'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
+import {
+  decideOwnSession,
+  type OwnSessionOptions,
+  sessionScopeDenial,
+} from '../lib/collection-access.js'
 import { dedupeByHash, tallyInserted } from '../lib/negotiate-counts.js'
 import {
   compileSchema,
+  authorizeCollectionWrite,
   canonicalize,
   checkSchemaBounds,
   deriveSemver,
@@ -24,7 +30,6 @@ import {
   loadVersionSchemas,
   parseSemver,
   recordsVersionId,
-  resolveCollection,
   type SchemaEntry,
   stripToSchema,
   VersionHashStream,
@@ -186,6 +191,60 @@ async function expireSession(sessionId: string) {
     .where(eq(schema.negotiateSessions.id, sessionId))
 }
 
+/**
+ * Load the session named in `/:owner/:slug/versions/negotiate/:sessionId` and
+ * check the caller may act on it: it belongs to the collection in the URL, it is
+ * the caller's own, and a collection-scoped key covers it. With `requireOpen` it
+ * must also be open and inside its idle timeout. `recheckMembership` (commit)
+ * re-verifies org membership, which may have been revoked mid-session.
+ */
+async function loadOwnSession<E extends AuthEnv>(
+  c: Context<E>,
+  sessionId: string,
+  options: OwnSessionOptions & { recheckMembership?: boolean } = {},
+): Promise<{ session: typeof schema.negotiateSessions.$inferSelect } | { error: Response }> {
+  const [row] = await db
+    .select({
+      session: schema.negotiateSessions,
+      ownerSlug: schema.organization.slug,
+      collectionSlug: schema.collections.slug,
+      organizationId: schema.collections.organizationId,
+    })
+    .from(schema.negotiateSessions)
+    .innerJoin(schema.collections, eq(schema.negotiateSessions.collectionId, schema.collections.id))
+    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
+    .where(eq(schema.negotiateSessions.id, sessionId))
+    .limit(1)
+
+  const userId = c.get('userId')
+  const decision = decideOwnSession(
+    row && { ...row.session, ownerSlug: row.ownerSlug, collectionSlug: row.collectionSlug },
+    {
+      owner: c.req.param('owner') ?? '',
+      slug: c.req.param('slug') ?? '',
+      userId,
+      now: new Date(),
+    },
+    options,
+  )
+  if (decision) {
+    if (decision.expire) await expireSession(sessionId)
+    const { status, error } = decision.denial
+    return { error: c.json({ error, statusCode: status }, status) }
+  }
+
+  if (options.recheckMembership && !(await hasOrgAccess(userId, row!.organizationId))) {
+    return { error: c.json({ error: 'Not authorized', statusCode: 403 }, 403) }
+  }
+
+  const scopeDenial = sessionScopeDenial(row!.session, c.get('apiKeyCollectionIds'))
+  if (scopeDenial) {
+    return { error: c.json({ error: scopeDenial.error, statusCode: 403 }, 403) }
+  }
+
+  return { session: row!.session }
+}
+
 const app = new Hono<AuthEnv>()
 
 // POST /api/collections/:owner/:slug/versions/negotiate
@@ -211,17 +270,9 @@ app.post(
       return c.json({ error: boundsError, statusCode: 422 }, 422)
     }
 
-    const collection = await resolveCollection(owner, slug)
-    if (!collection) return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-
-    if (!(await hasOrgAccess(c.get('userId'), collection.organizationId))) {
-      return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-    }
-
-    const scopedCollections = c.get('apiKeyCollectionIds')
-    if (scopedCollections && !scopedCollections.includes(collection.id)) {
-      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-    }
+    const auth = await authorizeCollectionWrite(c, owner, slug)
+    if ('error' in auth) return auth.error
+    const { collection } = auth
 
     const latest = await getLatestReadyVersion(collection.id)
 
@@ -358,26 +409,9 @@ app.post(
   async (c) => {
     const { sessionId } = c.req.valid('param')
 
-    const [sessionRow] = await db
-      .select()
-      .from(schema.negotiateSessions)
-      .where(eq(schema.negotiateSessions.id, sessionId))
-      .limit(1)
-
-    if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
-      if (sessionRow?.status === 'open') await expireSession(sessionId)
-      return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
-    }
-    if (sessionRow.userId !== c.get('userId')) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-    {
-      // A collection-scoped key must not act on a session for another collection.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-    }
+    const loaded = await loadOwnSession(c, sessionId, { requireOpen: true })
+    if ('error' in loaded) return loaded.error
+    const sessionRow = loaded.session
     if (sessionRow.manifestExpected === null) {
       return c.json(
         {
@@ -461,25 +495,9 @@ app.get(
   async (c) => {
     const { sessionId } = c.req.valid('param')
 
-    const [session] = await db
-      .select()
-      .from(schema.negotiateSessions)
-      .where(eq(schema.negotiateSessions.id, sessionId))
-      .limit(1)
-
-    if (!session) {
-      return c.json({ error: 'Session not found', statusCode: 404 }, 404)
-    }
-    if (session.userId !== c.get('userId')) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-    {
-      // A collection-scoped key must not act on a session for another collection.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(session.collectionId)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-    }
+    const loaded = await loadOwnSession(c, sessionId)
+    if ('error' in loaded) return loaded.error
+    const { session } = loaded
 
     return c.json({
       session_id: session.id,
@@ -514,29 +532,9 @@ app.post(
   async (c) => {
     const { sessionId } = c.req.valid('param')
 
-    const [sessionRow] = await db
-      .select()
-      .from(schema.negotiateSessions)
-      .where(eq(schema.negotiateSessions.id, sessionId))
-      .limit(1)
-
-    if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
-      if (sessionRow) {
-        await expireSession(sessionId)
-      }
-      return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
-    }
-
-    if (sessionRow.userId !== c.get('userId')) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-    {
-      // A collection-scoped key must not act on a session for another collection.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-    }
+    const loaded = await loadOwnSession(c, sessionId, { requireOpen: true, expireAnyStatus: true })
+    if ('error' in loaded) return loaded.error
+    const sessionRow = loaded.session
 
     const rawBody = await c.req.text()
     const lines = rawBody
@@ -786,36 +784,13 @@ app.post(
       asyncQuery === '1' ||
       (asyncBody !== null && typeof asyncBody === 'object' && asyncBody.async === true)
 
-    const [sessionRow] = await db
-      .select()
-      .from(schema.negotiateSessions)
-      .where(eq(schema.negotiateSessions.id, sessionId))
-      .limit(1)
-
-    if (!sessionRow || sessionRow.status !== 'open' || sessionRow.expiresAt < new Date()) {
-      if (sessionRow?.status === 'open') {
-        await expireSession(sessionId)
-      }
-      return c.json({ error: 'Session expired or not found', statusCode: 404 }, 404)
-    }
-
-    if (sessionRow.userId !== userId) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-
     // Re-verify org membership at commit (it may have been revoked mid-session)
-    const [sessionCollection] = await db
-      .select({ organizationId: schema.collections.organizationId })
-      .from(schema.collections)
-      .where(eq(schema.collections.id, sessionRow.collectionId))
-      .limit(1)
-    if (!sessionCollection || !(await hasOrgAccess(userId, sessionCollection.organizationId))) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-    const scopedCollections = c.get('apiKeyCollectionIds')
-    if (scopedCollections && !scopedCollections.includes(sessionRow.collectionId)) {
-      return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-    }
+    const loaded = await loadOwnSession(c, sessionId, {
+      requireOpen: true,
+      recheckMembership: true,
+    })
+    if ('error' in loaded) return loaded.error
+    const sessionRow = loaded.session
 
     const session = {
       collectionId: sessionRow.collectionId,
@@ -1647,25 +1622,8 @@ app.delete(
   async (c) => {
     const { sessionId } = c.req.valid('param')
 
-    const [session] = await db
-      .select()
-      .from(schema.negotiateSessions)
-      .where(eq(schema.negotiateSessions.id, sessionId))
-      .limit(1)
-
-    if (!session) {
-      return c.json({ error: 'Session not found', statusCode: 404 }, 404)
-    }
-    if (session.userId !== c.get('userId')) {
-      return c.json({ error: 'Not authorized', statusCode: 403 }, 403)
-    }
-    {
-      // A collection-scoped key must not act on a session for another collection.
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(session.collectionId)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-    }
+    const loaded = await loadOwnSession(c, sessionId)
+    if ('error' in loaded) return loaded.error
 
     await expireSession(sessionId)
 

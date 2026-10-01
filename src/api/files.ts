@@ -7,7 +7,10 @@ import { z } from 'zod'
 
 import { db, schema } from '../db/client.server.js'
 import { getPresignedFileUrl, getS3ObjectMeta, uploadToS3 } from '../lib/s3.js'
-import { hasOrgAccess } from '../lib/version-helpers.server.js'
+import {
+  authorizeCollectionWrite,
+  resolveAccessibleCollection,
+} from '../lib/version-helpers.server.js'
 import { type AuthEnv } from './auth.server.js'
 import { requireAuth } from './auth.server.js'
 import {
@@ -24,29 +27,18 @@ function safeMimeType(mime: string): string {
   return UNSAFE_MIME_RE.test(mime.trim()) ? 'application/octet-stream' : mime
 }
 
+/**
+ * Whether the caller may read `fileHash` through `collection`, as returned by
+ * `resolveAccessibleCollection` (null when the collection doesn't exist or is
+ * private to the caller). Non-members get files only from public collections.
+ * Without that, a file in a private collection was downloadable by anyone who
+ * knew its hash.
+ */
 async function isFilePubliclyAccessible(
-  owner: string,
-  slug: string,
+  collection: { id: string; ownerAccess: boolean } | null,
   fileHash: string,
-  userId: string | undefined,
-  apiKeyCollectionIds?: string[],
 ): Promise<boolean> {
-  const [collection] = await db
-    .select({
-      id: schema.collections.id,
-      organizationId: schema.collections.organizationId,
-      public: schema.collections.public,
-    })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-    .limit(1)
-
   if (!collection) return false
-
-  // A collection-scoped API key (share/agent link) only counts for the
-  // collections it is scoped to.
-  const keyScopeOk = !apiKeyCollectionIds || apiKeyCollectionIds.includes(collection.id)
 
   // The file must actually belong to THIS collection (in any of its versions).
   // Without this, the owner/slug in the path is decorative: a member could fetch
@@ -64,23 +56,7 @@ async function isFilePubliclyAccessible(
     .limit(1)
   if (!belongs) return false
 
-  if (userId != null && keyScopeOk) {
-    const [membership] = await db
-      .select()
-      .from(schema.member)
-      .where(
-        and(
-          eq(schema.member.organizationId, collection.organizationId),
-          eq(schema.member.userId, userId),
-        ),
-      )
-      .limit(1)
-    if (membership) return true
-  }
-
-  // Non-members get files only from PUBLIC collections. Without this a file in a
-  // private collection was downloadable by anyone who knew its hash.
-  if (!collection.public) return false
+  if (collection.ownerAccess) return true
 
   // OR across every ready version: a file is accessible if it is referenced via
   // a non-private field of a non-private record of a non-private type in ANY
@@ -196,11 +172,8 @@ const app = new Hono<AuthEnv>()
     }
 
     const accessible = await isFilePubliclyAccessible(
-      owner,
-      slug,
+      await resolveAccessibleCollection(owner, slug, c.get('userId'), c.get('apiKeyCollectionIds')),
       cleanHash,
-      c.get('userId'),
-      c.get('apiKeyCollectionIds'),
     )
     if (!accessible) {
       return c.body(null, 404)
@@ -233,11 +206,13 @@ const app = new Hono<AuthEnv>()
       }
 
       const accessible = await isFilePubliclyAccessible(
-        owner,
-        slug,
+        await resolveAccessibleCollection(
+          owner,
+          slug,
+          c.get('userId'),
+          c.get('apiKeyCollectionIds'),
+        ),
         cleanHash,
-        c.get('userId'),
-        c.get('apiKeyCollectionIds'),
       )
       if (!accessible) {
         return c.json({ error: 'File not found', statusCode: 404 }, 404)
@@ -289,11 +264,13 @@ const app = new Hono<AuthEnv>()
       for (const cand of candidates) {
         if (
           await isFilePubliclyAccessible(
-            cand.owner,
-            cand.slug,
+            await resolveAccessibleCollection(
+              cand.owner,
+              cand.slug,
+              c.get('userId'),
+              c.get('apiKeyCollectionIds'),
+            ),
             cleanHash,
-            c.get('userId'),
-            c.get('apiKeyCollectionIds'),
           )
         ) {
           accessible = true
@@ -325,8 +302,12 @@ const app = new Hono<AuthEnv>()
     async (c) => {
       const { owner, slug } = c.req.valid('param')
       const { hashes } = c.req.valid('json')
-      const userId = c.get('userId')
-      const scoped = c.get('apiKeyCollectionIds')
+      const collection = await resolveAccessibleCollection(
+        owner,
+        slug,
+        c.get('userId'),
+        c.get('apiKeyCollectionIds'),
+      )
 
       // Keys in the response are echoed back EXACTLY as the caller sent them
       // (`sha256:`-prefixed or not), so a client can look up what it asked for.
@@ -350,7 +331,7 @@ const app = new Hono<AuthEnv>()
           urlByClean.set(h, null)
           continue
         }
-        const ok = await isFilePubliclyAccessible(owner, slug, h, userId, scoped)
+        const ok = await isFilePubliclyAccessible(collection, h)
         urlByClean.set(h, ok ? await getPresignedFileUrl(storageKey) : null)
       }
 
@@ -376,25 +357,8 @@ const app = new Hono<AuthEnv>()
       // Files are content-addressed and shared, but a write must still be tied to
       // a collection the caller can actually push to — otherwise any write-scoped
       // credential (including an agent link) could upload into global storage.
-      const [uploadCollection] = await db
-        .select({ id: schema.collections.id, organizationId: schema.collections.organizationId })
-        .from(schema.collections)
-        .innerJoin(
-          schema.organization,
-          eq(schema.collections.organizationId, schema.organization.id),
-        )
-        .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
-        .limit(1)
-      if (!uploadCollection) {
-        return c.json({ error: 'Collection not found', statusCode: 404 }, 404)
-      }
-      const scopedCollections = c.get('apiKeyCollectionIds')
-      if (scopedCollections && !scopedCollections.includes(uploadCollection.id)) {
-        return c.json({ error: 'API key is not scoped to this collection', statusCode: 403 }, 403)
-      }
-      if (!(await hasOrgAccess(c.get('userId'), uploadCollection.organizationId))) {
-        return c.json({ error: 'Forbidden', statusCode: 403 }, 403)
-      }
+      const auth = await authorizeCollectionWrite(c, owner, slug, { scopeFirst: true })
+      if ('error' in auth) return auth.error
 
       const [existing] = await db
         .select()
