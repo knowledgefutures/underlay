@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   resolve: {
@@ -8,5 +8,8 @@ export default defineConfig({
   },
   test: {
     environment: 'happy-dom',
+    // Agent worktrees are full checkouts inside the repo; without this, running
+    // tests from the main checkout also runs every worktree's copy.
+    exclude: [...configDefaults.exclude, '.claude/**'],
   },
 })
