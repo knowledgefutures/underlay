@@ -37,7 +37,7 @@ const CACHE_MAX_ENTRIES = 10
 // at any depth and Hot provides a SQL editor over a hydrated copy.
 const MAX_QUERY_RECORDS = 250_000
 
-// Rate limit for the LLM endpoint (public path, spends CF AI credits):
+// Rate limit for the LLM endpoint (spends CF AI credits):
 // 10 requests per key per minute.
 const checkRateLimit = createFixedWindowLimiter(60_000, 10)
 
@@ -380,7 +380,7 @@ export async function ddl(c: Context<AuthEnv>) {
 
 // POST /query/generate-sql — LLM-powered SQL generation from natural language
 export async function generateSql(c: Context<AuthEnv>) {
-  // Public endpoint that spends Cloudflare AI credits — rate-limit per user/IP
+  // Steward-only (see server.ts) and spends Cloudflare AI credits — still rate-limited per user
   // Prefer cf-connecting-ip (unforgeable behind Cloudflare); the RIGHTMOST
   // X-Forwarded-For hop is the proxy-observed address, unlike the client-set
   // leftmost one.

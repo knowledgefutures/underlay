@@ -23,7 +23,7 @@ export type AuthEnv = {
   }
 }
 
-const publicPaths = new Set(['/api/health', '/api/query/generate-sql'])
+const publicPaths = new Set(['/api/health'])
 
 /**
  * POST endpoints that are semantically READS — they use POST only because the
