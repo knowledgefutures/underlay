@@ -123,6 +123,9 @@ export const auth = betterAuth({
         return `ul_${generateRandomString(length, 'a-z', 'A-Z')}`
       },
       enableMetadata: true,
+      // Don't make the request wait on the lastRequest/updatedAt write: parallel
+      // workers on one key otherwise serialize on that row. lastRequest may lag.
+      deferUpdates: true,
       keyExpiration: {
         minExpiresIn: 0,
       },
