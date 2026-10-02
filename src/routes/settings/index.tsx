@@ -24,9 +24,6 @@ export default function Settings() {
   const [website, setWebsite] = useState(currentUser?.website ?? '')
   const [location, setLocation] = useState(currentUser?.location ?? '')
 
-  // Avatar
-  const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatarUrl ?? '')
-
   // Notifications
   const notifPrefs = (currentUser?.notificationPrefs as Record<string, boolean>) ?? {}
   const [collectionActivity, setCollectionActivity] = useState(
@@ -69,41 +66,6 @@ export default function Settings() {
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Update failed.')
-      }
-    } finally {
-      setSubmitting('')
-    }
-  }
-
-  async function handleUploadAvatar(e: FormEvent) {
-    e.preventDefault()
-    clearMessages()
-
-    const form = e.target as HTMLFormElement
-    const fileInput = form.elements.namedItem('avatar') as HTMLInputElement
-    const file = fileInput?.files?.[0]
-    if (!file) {
-      setError('Please select an image file.')
-      return
-    }
-
-    setSubmitting('avatar')
-    try {
-      const formData = new FormData()
-      formData.append('avatar', file)
-      const res = await fetch('/api/accounts/me/avatar', {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setSuccess('Avatar updated.')
-        setAvatarUrl(data.avatarUrl)
-        form.reset()
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Upload failed.')
       }
     } finally {
       setSubmitting('')
@@ -172,11 +134,11 @@ export default function Settings() {
         </Alert>
       )}
 
-      {/* Avatar */}
+      {/* Avatar — the picture comes from KF Auth, so it is changed there */}
       <div className="mb-8 flex items-start gap-4">
-        {avatarUrl ? (
+        {currentUser.avatarUrl ? (
           <img
-            src={avatarUrl}
+            src={currentUser.avatarUrl}
             alt="Avatar"
             className="border-rule h-16 w-16 rounded-full border object-cover"
           />
@@ -188,17 +150,18 @@ export default function Settings() {
         <div className="min-w-0">
           <p className="text-sm font-medium">{currentUser.displayName}</p>
           <p className="text-ink-muted font-mono text-xs">@{currentUser.slug}</p>
-          <form onSubmit={handleUploadAvatar} className="mt-2 flex flex-wrap items-center gap-2">
-            <input
-              type="file"
-              name="avatar"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              className="file:border-rule file:bg-parchment hover:file:bg-parchment-dark file:rounded-control text-xs file:mr-2 file:cursor-pointer file:border file:px-2.5 file:py-1 file:text-xs file:font-medium"
-            />
-            <Button type="submit" size="sm" variant="secondary" disabled={submitting === 'avatar'}>
-              {submitting === 'avatar' ? 'Uploading…' : 'Upload avatar'}
-            </Button>
-          </form>
+          <p className="text-ink-muted mt-2 text-xs">
+            Picture managed by your{' '}
+            <a
+              href={kfAccountUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-link hover:underline"
+            >
+              KF Account
+            </a>
+            .
+          </p>
         </div>
       </div>
 
