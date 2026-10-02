@@ -28,6 +28,9 @@ export default function OwnerSettings() {
   const [website, setWebsite] = useState(initialOrgData.website ?? '')
   const [location, setLocation] = useState(initialOrgData.location ?? '')
 
+  // Avatar
+  const [avatarUrl, setAvatarUrl] = useState(initialOrgData.avatarUrl ?? '')
+
   // KF org link
   const [kfOrgId, setKfOrgId] = useState(initialOrgData.kfOrgId ?? '')
 
@@ -75,6 +78,61 @@ export default function OwnerSettings() {
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Update failed.')
+      }
+    } finally {
+      setSubmitting('')
+    }
+  }
+
+  async function handleUploadAvatar(e: FormEvent) {
+    e.preventDefault()
+    clearMessages()
+
+    const form = e.target as HTMLFormElement
+    const fileInput = form.elements.namedItem('avatar') as HTMLInputElement
+    const file = fileInput?.files?.[0]
+    if (!file) {
+      setError('Please select an image file.')
+      return
+    }
+
+    setSubmitting('avatar')
+    try {
+      const formData = new FormData()
+      formData.append('avatar', file)
+      const res = await fetch(`/api/accounts/${owner}/avatar`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSuccess('Logo updated.')
+        setAvatarUrl(data.avatarUrl)
+        form.reset()
+      } else {
+        const body = await res.json().catch(() => ({}))
+        setError(body.error ?? 'Upload failed.')
+      }
+    } finally {
+      setSubmitting('')
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    clearMessages()
+    setSubmitting('avatar')
+    try {
+      const res = await fetch(`/api/accounts/${owner}/avatar`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.ok) {
+        setSuccess('Logo removed.')
+        setAvatarUrl('')
+      } else {
+        const body = await res.json().catch(() => ({}))
+        setError(body.error ?? 'Failed to remove logo.')
       }
     } finally {
       setSubmitting('')
@@ -152,26 +210,56 @@ export default function OwnerSettings() {
         </Alert>
       )}
 
+      {isOwner && (
+        <div className="mb-8 flex items-start gap-4">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt="Avatar"
+              className="border-rule h-16 w-16 rounded-full border object-cover"
+            />
+          ) : (
+            <div className="bg-parchment-dark border-rule text-ink-muted flex h-16 w-16 items-center justify-center rounded-full border text-lg font-semibold">
+              {initialOrgData.displayName?.charAt(0)?.toUpperCase() ?? '?'}
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{initialOrgData.displayName}</p>
+            <p className="text-ink-muted font-mono text-xs">@{owner}</p>
+            <form onSubmit={handleUploadAvatar} className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                name="avatar"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="file:border-rule file:bg-parchment hover:file:bg-parchment-dark file:rounded-control text-xs file:mr-2 file:cursor-pointer file:border file:px-2.5 file:py-1 file:text-xs file:font-medium"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                variant="secondary"
+                disabled={submitting === 'avatar'}
+              >
+                {submitting === 'avatar' ? 'Uploading…' : 'Upload logo'}
+              </Button>
+              {avatarUrl && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleRemoveAvatar}
+                  disabled={submitting === 'avatar'}
+                >
+                  Remove
+                </Button>
+              )}
+            </form>
+            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 5 MB.</p>
+          </div>
+        </div>
+      )}
+
       {isOwner ? (
         <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
-          <div className="mb-4 flex items-center gap-4">
-            {initialOrgData.avatarUrl ? (
-              <img
-                src={initialOrgData.avatarUrl}
-                alt="Avatar"
-                className="border-rule h-16 w-16 rounded-full border object-cover"
-              />
-            ) : (
-              <div className="bg-parchment-dark border-rule text-ink-muted flex h-16 w-16 items-center justify-center rounded-full border text-lg font-semibold">
-                {initialOrgData.displayName?.charAt(0)?.toUpperCase() ?? '?'}
-              </div>
-            )}
-            <div>
-              <p className="text-sm font-medium">{initialOrgData.displayName}</p>
-              <p className="text-ink-muted font-mono text-xs">@{owner}</p>
-            </div>
-          </div>
-
           <div>
             <label htmlFor="displayName" className="mb-1 block text-sm font-medium">
               Display name

@@ -37,6 +37,19 @@ async function requireOrgMembership(
   return membership
 }
 
+/**
+ * Delete an org's stored avatar files, except `keepKey`. Non-fatal: an
+ * orphaned avatar is harmless, so storage errors are logged, not thrown.
+ */
+async function deleteOrgAvatars(orgId: string, keepKey?: string) {
+  try {
+    const keys = (await listPublicAssets(`avatars/${orgId}/`)).filter((k) => k !== keepKey)
+    if (keys.length > 0) await deletePublicAssets(keys)
+  } catch (err) {
+    console.error(`[accounts] Failed to delete avatars for org ${orgId}:`, err)
+  }
+}
+
 const app = new Hono<AuthEnv>()
   .get(
     '/me',
@@ -275,7 +288,43 @@ const app = new Hono<AuthEnv>()
         .set({ avatarUrl: `${ASSETS_BASE_URL}/${key}` })
         .where(eq(schema.organization.id, org.id))
 
+      await deleteOrgAvatars(org.id, key)
+
       return c.json({ ok: true, avatarUrl: `${ASSETS_BASE_URL}/${key}` })
+    },
+  )
+  .delete(
+    '/:slug/avatar',
+    requireAuth('write'),
+    requireUnscopedKey(),
+    openApi({
+      tags: ['Accounts'],
+      summary: 'Remove organization avatar',
+      request: { param: z.object({ slug: z.string() }) },
+      responses: { 200: z.any() },
+    }),
+    async (c) => {
+      const { slug } = c.req.valid('param')
+      const userId = c.get('userId')!
+
+      const org = await findOrgBySlug(slug)
+      if (!org) return c.json({ error: 'Organization not found', statusCode: 404 }, 404)
+
+      if (!(await requireOrgMembership(org.id, userId, 'owner'))) {
+        return c.json(
+          { error: 'Must be an owner to update the organization avatar', statusCode: 403 },
+          403,
+        )
+      }
+
+      await db
+        .update(schema.organization)
+        .set({ avatarUrl: null })
+        .where(eq(schema.organization.id, org.id))
+
+      await deleteOrgAvatars(org.id)
+
+      return c.json({ ok: true })
     },
   )
   .delete(
@@ -305,13 +354,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: 'Username confirmation does not match', statusCode: 422 }, 422)
       }
 
-      try {
-        const avatarKeys = await listPublicAssets(`avatars/${defaultOrg.id}/`)
-        if (avatarKeys.length > 0) await deletePublicAssets(avatarKeys)
-      } catch (err) {
-        // Non-fatal — orphaned avatars are harmless
-        console.error(`[accounts] Failed to delete avatars for org ${defaultOrg.id}:`, err)
-      }
+      await deleteOrgAvatars(defaultOrg.id)
 
       await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId))
       await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, defaultOrg.id))
@@ -422,13 +465,7 @@ const app = new Hono<AuthEnv>()
         )
       }
 
-      try {
-        const avatarKeys = await listPublicAssets(`avatars/${org.id}/`)
-        if (avatarKeys.length > 0) await deletePublicAssets(avatarKeys)
-      } catch (err) {
-        // Non-fatal — orphaned avatars are harmless
-        console.error(`[accounts] Failed to delete avatars for org ${org.id}:`, err)
-      }
+      await deleteOrgAvatars(org.id)
 
       await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id))
       await db.delete(schema.invitation).where(eq(schema.invitation.organizationId, org.id))
