@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import CreateMenu from '~/components/CreateMenu'
 import UserMenu from '~/components/UserMenu'
 import { useAppContext } from '~/lib/app-context'
+import { UNDERLAY_UPDATES_URL } from '~/lib/kf-updates'
 
 export default function BaseLayout({ children }: { children: React.ReactNode }) {
   const { currentUser, mirrorConfig } = useAppContext()
@@ -29,9 +30,9 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
               Docs
             </Link>
             {!mirrorConfig?.enabled && (
-              <Link to="/blog" className="hover:text-ink transition-colors">
-                Blog
-              </Link>
+              <a href={UNDERLAY_UPDATES_URL} className="hover:text-ink transition-colors">
+                Updates
+              </a>
             )}
             {mirrorConfig?.enabled ? (
               currentUser ? (

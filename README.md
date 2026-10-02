@@ -181,7 +181,6 @@ src/
 │   ├── records/[hash].tsx # Record detail + provenance
 │   ├── schemas/          # Schema browser
 │   ├── settings/         # Account settings + API keys
-│   ├── blog/             # Blog
 │   ├── docs/             # Documentation
 │   └── [owner]/          # Dynamic owner routes
 │       ├── index.tsx

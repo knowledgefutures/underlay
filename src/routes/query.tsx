@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import QueryExplorer from '~/components/QueryExplorer'
 import UserMenu from '~/components/UserMenu'
 import { useAppContext } from '~/lib/app-context'
+import { UNDERLAY_UPDATES_URL } from '~/lib/kf-updates'
 
 export default function QueryPage() {
   const { currentUser } = useAppContext()
@@ -33,9 +34,9 @@ export default function QueryPage() {
             <Link to="/docs" className="hover:text-ink transition-colors">
               Docs
             </Link>
-            <Link to="/blog" className="hover:text-ink transition-colors">
-              Blog
-            </Link>
+            <a href={UNDERLAY_UPDATES_URL} className="hover:text-ink transition-colors">
+              Updates
+            </a>
             {currentUser ? (
               <UserMenu
                 slug={currentUser.slug}

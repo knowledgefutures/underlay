@@ -12,7 +12,6 @@ import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
 import { HTTPException } from 'hono/http-exception'
 import { secureHeaders } from 'hono/secure-headers'
-import { marked } from 'marked'
 import type { ViteDevServer } from 'vite'
 
 import _accounts from '~/api/accounts'
@@ -38,6 +37,7 @@ import _versions from '~/api/versions'
 import _webhooks from '~/api/webhooks'
 import { auth } from '~/lib/auth'
 import { getKfRole, getSessionUser } from '~/lib/auth.server'
+import { KF_SITE, UNDERLAY_UPDATES_URL } from '~/lib/kf-updates'
 import { getMirrorConfig, getPublicMirrorConfig } from '~/lib/mirror-config'
 import { startWebhookBackgroundJobs } from '~/lib/webhooks.server'
 
@@ -423,23 +423,15 @@ createOpenApiDocument(
 
 app.get('/api/reference', Scalar({ url: '/api/openapi.json', pageTitle: 'Underlay API' }))
 
-// --- Blog content API (serves rendered markdown) ---
-app.get('/api/blog/:slug', (c) => {
+// --- Old blog URLs ---
+// The posts moved to the KF site, under the same slugs. Permanent redirects,
+// since the old URLs were shared. `blog` stays a reserved slug (src/lib/slug.ts)
+// so no organization can claim the path.
+app.get('/blog', (c) => c.redirect(UNDERLAY_UPDATES_URL, 301))
+app.get('/blog/:slug', (c) => {
   const slug = c.req.param('slug')
-  // Params arrive decoded, so `..%2F` would otherwise escape content/blog.
-  if (!/^[a-z0-9-]+$/i.test(slug)) {
-    return c.json({ error: 'Not found', statusCode: 404 }, 404)
-  }
-  const mdPath = resolve('content/blog', `${slug}.md`)
-  if (!existsSync(mdPath)) {
-    return c.json({ error: 'Not found', statusCode: 404 }, 404)
-  }
-  const raw = readFileSync(mdPath, 'utf-8')
-  // Strip frontmatter
-  const fmEnd = raw.indexOf('---', 4)
-  const body = fmEnd > 0 ? raw.slice(fmEnd + 3).trim() : raw
-  const html = marked(body)
-  return c.html(typeof html === 'string' ? html : '')
+  if (!/^[a-z0-9-]+$/i.test(slug)) return c.redirect(UNDERLAY_UPDATES_URL, 301)
+  return c.redirect(`${KF_SITE}/updates/${slug.toLowerCase()}`, 301)
 })
 
 // --- App context (consumed by root loader) ---

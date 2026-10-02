@@ -30,7 +30,6 @@ COPY --from=build /app/server.ts ./server.ts
 COPY --from=build /app/src/db ./src/db
 COPY --from=build /app/src/lib ./src/lib
 COPY --from=build /app/src/api ./src/api
-COPY --from=build /app/content ./content
 COPY --from=build /app/tools ./tools
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
