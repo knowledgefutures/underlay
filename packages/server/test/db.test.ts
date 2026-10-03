@@ -69,6 +69,9 @@ describe('SQLite jobs', () => {
         internalPrefix: 'internal',
       }),
       cache: new MemoryCache(),
+      signer: async () => {
+        throw new Error('not used')
+      },
       jobs: new SqliteJobs(db),
       waitUntil: () => {},
     }

@@ -257,6 +257,13 @@ export const versions = sqliteTable(
     typeCounts: json<Record<string, number>>('type_counts').notNull(),
     publicTypeCounts: json<Record<string, number>>('public_type_counts').notNull(),
     hasPrivate: bool('has_private').notNull().default(false),
+    /**
+     * Roots of the per-set file reference count trees (not protocol): how many of
+     * the set's records reference each file, plus declared-file markers. They let
+     * the next commit keep the file sets right in O(changes).
+     */
+    publicRefsRoot: text('public_refs_root'),
+    privateRefsRoot: text('private_refs_root'),
     /** Change counts against the previous version (drive semver and webhooks). */
     changes: json<{ added: number; removed: number; updated: number }>('changes'),
     createdAt: createdAt(),

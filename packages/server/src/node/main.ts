@@ -9,11 +9,14 @@
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION
  *   BLOB_URL_SECRET   HMAC key for filesystem presigned URLs
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
+ *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
  */
 import { serve } from '@hono/node-server'
+import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
 import { FsBlobStore, serveSignedBlob } from '@underlay/repo/blob/fs'
 import { S3BlobStore } from '@underlay/repo/blob/s3'
 
+import '../handlers.js'
 import { createApp } from '../app.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
@@ -46,6 +49,13 @@ if (env.S3_ENDPOINT) {
   blobs = fsBlobs
 }
 
+let signingKey = env.SIGNING_KEY
+if (!signingKey) {
+  signingKey = await generateSigningKey()
+  console.warn('[underlay] SIGNING_KEY is not set; version logs are signed with a throwaway key')
+}
+const signer: Promise<Signer> = ed25519Signer(signingKey)
+
 let kick: () => void = () => {}
 const cache = new MemoryCache()
 const ports: Ports = {
@@ -56,6 +66,7 @@ const ports: Ports = {
     internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
   }),
   cache,
+  signer: () => signer,
   jobs: {
     async enqueue(job, opts) {
       await jobsTable.enqueue(job, opts)

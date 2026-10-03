@@ -8,7 +8,7 @@
  *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
  *   Cache      Cache API on Workers, in-memory LRU on Node
  */
-import type { BlobStore, Cache, Repo } from '@underlay/repo'
+import type { BlobStore, Cache, Repo, Signer } from '@underlay/repo'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql'
 
 import type * as schema from './db/schema.js'
@@ -54,6 +54,8 @@ export interface Ports {
   db: Db
   jobs: Jobs
   cache: Cache
+  /** Signs version log entries (the deployment's Ed25519 key, imported once per isolate). */
+  signer(): Promise<Signer>
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
 }

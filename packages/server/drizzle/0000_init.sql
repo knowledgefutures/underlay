@@ -392,6 +392,8 @@ CREATE TABLE `versions` (
 	`type_counts` text NOT NULL,
 	`public_type_counts` text NOT NULL,
 	`has_private` integer DEFAULT false NOT NULL,
+	`public_refs_root` text,
+	`private_refs_root` text,
 	`changes` text,
 	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL,
 	FOREIGN KEY (`collection_id`) REFERENCES `collections`(`id`) ON UPDATE no action ON DELETE cascade

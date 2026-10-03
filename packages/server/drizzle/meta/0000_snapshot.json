@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "80efd3e4-fb23-47e6-ae97-3e5cd9522e1c",
+  "id": "fb1d3f77-7095-4ca8-8fe8-45e5eb96f631",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -2516,6 +2516,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
+        },
+        "public_refs_root": {
+          "name": "public_refs_root",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "private_refs_root": {
+          "name": "private_refs_root",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "changes": {
           "name": "changes",

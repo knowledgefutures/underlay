@@ -9,8 +9,10 @@ import type {
   Queue,
   ScheduledController,
 } from '@cloudflare/workers-types'
+import { ed25519Signer, type Signer } from '@underlay/repo'
 import { S3BlobStore } from '@underlay/repo/blob/s3'
 
+import './handlers.js'
 import { createApp } from './app.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
@@ -27,9 +29,12 @@ export interface Env {
   R2_BUCKET: string
   R2_ACCESS_KEY_ID: string
   R2_SECRET_ACCESS_KEY: string
+  SIGNING_KEY: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
 }
+
+let signer: Promise<Signer> | null = null
 
 function makePorts(env: Env, ctx: ExecutionContext): Ports {
   const db = openD1(env.DB)
@@ -49,6 +54,7 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
     }),
     cache,
+    signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),
     jobs: new QueueJobs(env.JOBS as never),
     waitUntil: (p) => ctx.waitUntil(p),
   }
