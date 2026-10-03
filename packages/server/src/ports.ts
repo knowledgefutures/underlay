@@ -62,6 +62,11 @@ export interface Ports {
   cache: Cache
   /** Signs version log entries (the deployment's Ed25519 key, imported once per isolate). */
   signer(): Promise<Signer>
+  /**
+   * fetch for user-supplied URLs (webhooks). Workers have no private network to
+   * reach; on Node this resolves the host and refuses private addresses.
+   */
+  outboundFetch(url: string, init: RequestInit): Promise<Response>
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
 }

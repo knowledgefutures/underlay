@@ -26,6 +26,7 @@ import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import type { BlobStore, Ports } from '../ports.js'
 import { createStores } from '../stores.js'
+import { guardedFetch } from './guarded-fetch.js'
 
 const env = process.env
 const port = Number(env.PORT ?? 4200)
@@ -80,6 +81,7 @@ const ports: Ports = {
       kick()
     },
   },
+  outboundFetch: guardedFetch,
   waitUntil: (p) => {
     p.catch((err) => console.error('[waitUntil]', err))
   },

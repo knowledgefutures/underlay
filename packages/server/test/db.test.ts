@@ -69,6 +69,7 @@ describe('SQLite jobs', () => {
         internalPrefix: 'internal',
       }),
       cache: new MemoryCache(),
+      outboundFetch: fetch,
       signer: async () => {
         throw new Error('not used')
       },

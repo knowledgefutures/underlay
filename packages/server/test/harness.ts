@@ -18,6 +18,17 @@ import { createStores } from '../src/stores.js'
 
 const dirs: string[] = []
 
+/** Outbound requests made by the app (webhooks), and the responder tests set. */
+export const outboundCalls: { url: string; init: RequestInit }[] = []
+export let outboundResponder: (url: string) => Response = () => new Response('ok')
+export function respondOutbound(f: (url: string) => Response) {
+  outboundResponder = f
+}
+const outbound = async (url: string, init: RequestInit) => {
+  outboundCalls.push({ url, init })
+  return outboundResponder(url)
+}
+
 export async function cleanup(): Promise<void> {
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true })
 }
@@ -55,6 +66,7 @@ export async function harness(): Promise<Harness> {
     signer: async () => signer,
     jobs: new SqliteJobs(db),
     waitUntil: (p) => void p.catch((err) => console.error(err)),
+    outboundFetch: (url, init) => outbound(url, init),
   }
   let orgMade = false
   const ensureOrg = async () => {

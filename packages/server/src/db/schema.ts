@@ -543,9 +543,9 @@ export const collectionWebhooks = sqliteTable(
       .notNull()
       .references(() => collections.id, { onDelete: 'cascade' }),
     url: text('url').notNull(),
-    bumpFilter: text('bump_filter', { enum: ['all', 'major', 'minor', 'patch'] })
+    bumpFilter: json<('major' | 'minor' | 'patch')[]>('bump_filter')
       .notNull()
-      .default('all'),
+      .$defaultFn(() => ['major', 'minor', 'patch']),
     secret: text('secret').notNull(),
     enabled: bool('enabled').notNull().default(true),
     createdBy: text('created_by'),

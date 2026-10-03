@@ -27,6 +27,8 @@ export interface CollectionAccess {
   owner: typeof schema.organization.$inferSelect
   /** Members of the owning org read both sets. */
   isMember: boolean
+  /** The member's role in the owning org ('owner' | 'admin' | 'member'), when a member. */
+  role: string | null
   canRead: boolean
   canWrite: boolean
   /** Which sets this caller may read. */
@@ -48,14 +50,17 @@ export async function collectionAccess(
   if (!row || row.collection.deletedAt) return null
 
   let isMember = false
+  let role: string | null = null
   if (principal) {
     const keyCovers =
       principal.collectionIds === null || principal.collectionIds.includes(row.collection.id)
     if (keyCovers && principal.orgId) {
       isMember = principal.orgId === row.owner.id
+      // An org-owned key acts with the org's authority.
+      if (isMember) role = 'owner'
     } else if (keyCovers) {
       const [m] = await db
-        .select({ id: schema.member.id })
+        .select({ id: schema.member.id, role: schema.member.role })
         .from(schema.member)
         .where(
           and(
@@ -65,6 +70,7 @@ export async function collectionAccess(
         )
         .limit(1)
       isMember = !!m
+      role = m?.role ?? null
     }
   }
   const canRead = row.collection.public || isMember
@@ -72,6 +78,7 @@ export async function collectionAccess(
   return {
     ...row,
     isMember,
+    role,
     canRead,
     canWrite,
     sets: isMember ? ['public', 'private'] : ['public'],

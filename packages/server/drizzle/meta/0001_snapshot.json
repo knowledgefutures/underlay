@@ -1,6 +1,6 @@
 {
-  "id": "89c64381-abbc-4f02-8032-90d5d70523a9",
-  "prevId": "546a7fbc-8404-4b9e-a3d6-af1a1f02737a",
+  "id": "f0b0acb6-1748-4f0a-8c16-77349de423dc",
+  "prevId": "00e8c035-e6d3-45a4-8822-fdc5b49c2650",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
@@ -497,8 +497,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "'all'"
+          "autoincrement": false
         },
         "secret": {
           "name": "secret",

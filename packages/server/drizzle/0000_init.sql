@@ -74,7 +74,7 @@ CREATE TABLE `collection_webhooks` (
 	`id` text PRIMARY KEY NOT NULL,
 	`collection_id` text NOT NULL,
 	`url` text NOT NULL,
-	`bump_filter` text DEFAULT 'all' NOT NULL,
+	`bump_filter` text NOT NULL,
 	`secret` text NOT NULL,
 	`enabled` integer DEFAULT true NOT NULL,
 	`created_by` text,

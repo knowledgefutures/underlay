@@ -12,11 +12,19 @@ import { and, asc, eq, gt } from 'drizzle-orm'
 import * as schema from './db/schema.js'
 import './files/files.js'
 import { registerJob } from './jobs.js'
+import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'
+import type { BumpType } from './versions/semver.js'
+import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
-registerJob('version.published', async () => {
-  // Webhook deliveries, mirror sync and reference-log segments are added here
-  // as their phases land.
+registerJob('version.published', async (job, ports) => {
+  await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
+  // Mirror sync (phase 11) and reference-log segments (phase 7) hang off here too.
+})
+
+registerJob('maintenance.sweep', async (_job, ports) => {
+  await expireSessions(ports)
+  await purgeOldDeliveries(ports)
 })
 
 registerJob('repo.repairLog', async (job, ports) => {

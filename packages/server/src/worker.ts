@@ -62,6 +62,7 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
     signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),
     jobs: new QueueJobs(env.JOBS as never),
     waitUntil: (p) => ctx.waitUntil(p),
+    outboundFetch: (url, init) => fetch(url, init),
   }
 }
 

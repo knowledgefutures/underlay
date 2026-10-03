@@ -10,6 +10,7 @@ import { collectionRoutes } from './api/collections.js'
 import { fileRoutes } from './api/files.js'
 import { pushRoutes } from './api/push.js'
 import { versionRoutes } from './api/versions.js'
+import { webhookRoutes } from './api/webhooks.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -75,6 +76,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', fileRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())
+  app.route('/api/collections', webhookRoutes())
   app.route('/', collectionRoutes())
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
