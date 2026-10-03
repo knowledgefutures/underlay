@@ -7,6 +7,7 @@ import { type Context, type ExecutionContext, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
 import { collectionRoutes } from './api/collections.js'
+import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
 import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
@@ -90,6 +91,7 @@ export function createApp(setup: Setup) {
   // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
   app.route('/', recordRoutes())
   app.route('/api/collections', fileRoutes())
+  app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', webhookRoutes())
