@@ -202,6 +202,16 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
   const inputSlugs = new Set(input.types.map((t) => t.slug))
   let schemaChanged = false
 
+  // Schemas are repository objects too (schemas/<hash>.json).
+  await Promise.all(
+    input.types.map(async (t) => {
+      if ((await repo.putSchema(t.schema)) !== t.schemaHash) {
+        throw new Error(`Schema for ${t.slug} does not match its hash`)
+      }
+    }),
+  )
+  sink.written.push(...input.types.map((t) => `schemas/${t.schemaHash}.json`))
+
   for (const t of input.types) {
     const pubBase = basePublic.types[t.slug]
     const privBase = basePrivate.types[t.slug]

@@ -8,6 +8,7 @@ import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
 import { MemoryBlobStore } from '@underlay/repo/blob/memory'
 
 import '../src/handlers.js'
+import { createApp } from '../src/app.js'
 import { MemoryCache } from '../src/cache.js'
 import { openNodeDb } from '../src/db/node.js'
 import * as schema from '../src/db/schema.js'
@@ -23,6 +24,15 @@ export async function cleanup(): Promise<void> {
 
 export interface Harness {
   ports: Ports
+  /** The app, authenticating `x-test-user: <userId>` as a signed-in user. */
+  app: ReturnType<typeof createApp>
+  /** A user who is a member of the org that owns test collections. */
+  member(id?: string): Promise<string>
+  /** fetch against the app as a user (or anonymously). */
+  request(
+    path: string,
+    init?: RequestInit & { user?: string; json?: unknown; ndjson?: unknown[] },
+  ): Promise<Response>
   bucket: MemoryBlobStore
   signer: Signer
   /** Run queued jobs until none are ready. */
@@ -47,16 +57,57 @@ export async function harness(): Promise<Harness> {
     waitUntil: (p) => void p.catch((err) => console.error(err)),
   }
   let orgMade = false
+  const ensureOrg = async () => {
+    if (orgMade) return
+    await db.insert(schema.organization).values({ id: 'org1', name: 'Org', slug: 'org' })
+    orgMade = true
+  }
+  const app = createApp(() => ({
+    ports,
+    config: { appUrl: 'http://test', deployment: 'test' },
+    authenticate: async (req) => {
+      const user = req.headers.get('x-test-user')
+      return user ? { userId: user, scope: 'session', collectionIds: null } : null
+    },
+  }))
   return {
     ports,
+    app,
     bucket,
     signer,
     drain: () => drainSqliteJobs(ports),
-    async collection(slug = 'c') {
-      if (!orgMade) {
-        await db.insert(schema.organization).values({ id: 'org1', name: 'Org', slug: 'org' })
-        orgMade = true
+    async member(id = 'u1') {
+      await ensureOrg()
+      await db
+        .insert(schema.user)
+        .values({ id, name: id, email: `${id}@example.org` })
+        .onConflictDoNothing()
+      await db.insert(schema.member).values({ organizationId: 'org1', userId: id, role: 'owner' })
+      return id
+    },
+    async request(path, init = {}) {
+      const { user, json, ndjson, ...rest } = init
+      const headers = new Headers(rest.headers)
+      if (user) headers.set('x-test-user', user)
+      let body = rest.body
+      if (json !== undefined) {
+        body = JSON.stringify(json)
+        headers.set('content-type', 'application/json')
       }
+      if (ndjson !== undefined) {
+        body = ndjson.map((l) => JSON.stringify(l)).join('\n')
+        headers.set('content-type', 'application/x-ndjson')
+      }
+      return app.fetch(
+        new Request(`http://test${path}`, {
+          ...rest,
+          headers,
+          ...(body !== undefined ? { body } : {}),
+        }),
+      )
+    },
+    async collection(slug = 'c') {
+      await ensureOrg()
       const [c] = await db
         .insert(schema.collections)
         .values({ organizationId: 'org1', slug, name: slug, privateSalt: newSalt() })

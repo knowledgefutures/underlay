@@ -1,0 +1,324 @@
+import { getEntry, hashRecord, legacyRecordHash, recordTree } from '@underlay/core'
+import { RepoSource } from '@underlay/repo'
+import { eq } from 'drizzle-orm'
+import { afterAll, describe, expect, it } from 'vitest'
+
+import * as schema from '../src/db/schema.js'
+import { cleanup, type Harness, harness } from './harness.js'
+
+afterAll(cleanup)
+
+const Author = {
+  type: 'object',
+  properties: { name: { type: 'string' }, born: { type: 'integer' } },
+  required: ['name'],
+}
+
+const rec = (id: string, data: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  id,
+  type: 'Author',
+  data,
+  ...extra,
+})
+const hashOf = (id: string, data: unknown) => hashRecord(id, 'Author', data).hash
+
+async function setup() {
+  const h = await harness()
+  const user = await h.member()
+  const c = await h.collection('authors')
+  return { h, user, c, base: '/api/collections/org/authors' }
+}
+
+async function json(res: Response) {
+  return (await res.json()) as Record<string, any>
+}
+
+async function head(h: Harness, collectionId: string) {
+  const [c] = await h.ports.db
+    .select()
+    .from(schema.collections)
+    .where(eq(schema.collections.id, collectionId))
+  if (!c?.headVersionId) return null
+  const [v] = await h.ports.db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.id, c.headVersionId))
+  return v!
+}
+
+describe('delta push', () => {
+  it('opens, uploads, deletes and commits', async () => {
+    const { h, user, c, base } = await setup()
+    let res = await h.request(`${base}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author }, metadata: { title: 'Authors' } },
+    })
+    expect(res.status).toBe(200)
+    let sid = (await json(res)).session_id
+    res = await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [
+        rec('ada', { name: 'Ada', born: 1815 }),
+        rec('alan', { name: 'Alan' }),
+        rec('kurt', { name: 'Kurt' }, { private: true }),
+      ],
+    })
+    expect(await json(res)).toEqual({ received: 3 })
+    res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(201)
+    const v1 = await json(res)
+    expect(v1).toMatchObject({ semver: 'v1.0.0', recordCount: 3 })
+
+    // Second push: base required to match; update, delete, flip one to public.
+    res = await h.request(`${base}/push`, { method: 'POST', user, json: { base: 'v0.9.0' } })
+    expect(res.status).toBe(409)
+    res = await h.request(`${base}/push`, { method: 'POST', user, json: { base: 'v1.0.0' } })
+    sid = (await json(res)).session_id
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('ada', { name: 'Ada Lovelace', born: 1815 }), rec('kurt', { name: 'Kurt' })],
+    })
+    await h.request(`${base}/push/${sid}/deletes`, {
+      method: 'POST',
+      user,
+      ndjson: [{ type: 'Author', id: 'alan' }],
+    })
+    res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(201)
+    const v2 = await head(h, c.id)
+    expect(v2).toMatchObject({
+      semver: 'v1.1.0',
+      recordCount: 2,
+      publicRecordCount: 2,
+      hasPrivate: false,
+    })
+    const repo = await h.ports.stores.forCollection(c.id)
+    const root = await repo.root(v2!.hash)
+    // Metadata was kept from the base.
+    expect(root.metadata).toEqual({ title: 'Authors' })
+    const kurt = await getEntry(
+      new RepoSource(recordTree, repo),
+      root.public.types.Author!.root,
+      'kurt',
+    )
+    expect(kurt?.hash).toBe(hashOf('kurt', { name: 'Kurt' }))
+  })
+
+  it('reports invalid records by line, and the input rules', async () => {
+    const { h, user, base } = await setup()
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id
+    const res = await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      body: [
+        JSON.stringify(rec('ok', { name: 'Fine' })),
+        JSON.stringify(rec('bad', { born: 'x' })),
+        '{"id":"dup","type":"Author","data":{"name":"a","name":"b"}}',
+        '{"id":"big","type":"Author","data":{"name":"n","born":12345678901234567890}}',
+        JSON.stringify(rec('extra', { name: 'E', nickname: 'e' })),
+      ].join('\n'),
+    })
+    expect(res.status).toBe(422)
+    const body = await json(res)
+    expect(body.totalErrors).toBe(4)
+    expect(body.validationErrors.map((e: { line: number }) => e.line)).toEqual([2, 3, 4, 5])
+    expect(body.validationErrors[1].errors[0]).toMatch(/duplicate_key/)
+    expect(body.validationErrors[2].errors[0]).toMatch(/unsafe_integer/)
+  })
+
+  it('commits asynchronously as a job', async () => {
+    const { h, user, base } = await setup()
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('a', { name: 'A' })],
+    })
+    const res = await h.request(`${base}/push/${sid}/commit?async=true`, { method: 'POST', user })
+    expect(res.status).toBe(202)
+    expect((await json(await h.request(`${base}/push/${sid}`, { user }))).status).toBe('committing')
+    await h.drain()
+    const status = await json(await h.request(`${base}/push/${sid}`, { user }))
+    expect(status).toMatchObject({ status: 'committed', result: { semver: 'v1.0.0' } })
+  })
+
+  it('keeps writes to members, and private collections hidden', async () => {
+    const { h, base } = await setup()
+    expect((await h.request(`${base}/push`, { method: 'POST', json: {} })).status).toBe(404)
+    await h.ports.db.update(schema.collections).set({ public: true })
+    expect((await h.request(`${base}/push`, { method: 'POST', json: {} })).status).toBe(401)
+    expect(
+      (await h.request(`${base}/push`, { method: 'POST', user: 'stranger', json: {} })).status,
+    ).toBe(403)
+  })
+})
+
+describe('negotiate (v1 compatibility)', () => {
+  const manifestOf = (records: ReturnType<typeof rec>[]) =>
+    records.map((r) => ({
+      id: r.id,
+      type: r.type,
+      hash: hashOf(r.id, r.data),
+      ...(r.private ? { private: true } : {}),
+    }))
+
+  async function push(
+    h: Harness,
+    user: string,
+    base: string,
+    records: ReturnType<typeof rec>[],
+    baseVersion: string | null,
+    metadata?: object,
+  ) {
+    let res = await h.request(`${base}/versions/negotiate`, {
+      method: 'POST',
+      user,
+      json: {
+        base_version: baseVersion,
+        schemas: { Author },
+        manifest: manifestOf(records),
+        ...(metadata ? { metadata } : {}),
+      },
+    })
+    expect(res.status).toBe(200)
+    const n = await json(res)
+    const needed = new Set(n.needed_records as string[])
+    const upload = records.filter((r) => needed.has(hashOf(r.id, r.data)))
+    if (upload.length > 0) {
+      res = await h.request(`${base}/versions/negotiate/${n.session_id}/records`, {
+        method: 'POST',
+        user,
+        ndjson: upload,
+      })
+      expect(res.status).toBe(200)
+    }
+    res = await h.request(`${base}/versions/negotiate/${n.session_id}/commit`, {
+      method: 'POST',
+      user,
+    })
+    return { negotiate: n, status: res.status, body: await json(res), uploaded: upload.length }
+  }
+
+  it('pushes snapshots, uploading only what the base lacks', async () => {
+    const { h, user, c, base } = await setup()
+    const v1 = [rec('a', { name: 'A' }), rec('b', { name: 'B' }), rec('c', { name: 'C' })]
+    const p1 = await push(h, user, base, v1, null, { title: 'T' })
+    expect(p1).toMatchObject({
+      status: 201,
+      uploaded: 3,
+      body: { semver: 'v1.0.0', recordCount: 3 },
+    })
+
+    // Change b, drop c, add d, make a private: only b and d are uploaded.
+    const v2 = [
+      rec('a', { name: 'A' }, { private: true }),
+      rec('b', { name: 'B2' }),
+      rec('d', { name: 'D' }),
+    ]
+    const p2 = await push(h, user, base, v2, 'v1.0.0')
+    expect(p2).toMatchObject({
+      status: 201,
+      uploaded: 2,
+      body: { semver: 'v1.1.0', recordCount: 3 },
+    })
+    const v = await head(h, c.id)
+    expect(v).toMatchObject({ publicRecordCount: 2, hasPrivate: true })
+    // v1 merges metadata over the previous version's.
+    const repo = await h.ports.stores.forCollection(c.id)
+    expect((await repo.root(v!.hash)).metadata).toEqual({ title: 'T' })
+
+    // The same snapshot again: no changes.
+    const p3 = await push(h, user, base, v2, 'v1.1.0')
+    expect(p3).toMatchObject({ status: 409, uploaded: 0, body: { error: 'No changes detected' } })
+  })
+
+  it('refuses a commit with records still missing, or a short chunked manifest', async () => {
+    const { h, user, base } = await setup()
+    let res = await h.request(`${base}/versions/negotiate`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author }, manifest: manifestOf([rec('a', { name: 'A' })]) },
+    })
+    let sid = (await json(res)).session_id
+    res = await h.request(`${base}/versions/negotiate/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(400)
+    expect(await json(res)).toMatchObject({
+      error: 'Missing records',
+      missing_hashes: [hashOf('a', { name: 'A' })],
+    })
+
+    res = await h.request(`${base}/versions/negotiate`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author }, manifest_expected: 2 },
+    })
+    sid = (await json(res)).session_id
+    res = await h.request(`${base}/versions/negotiate/${sid}/manifest`, {
+      method: 'POST',
+      user,
+      ndjson: manifestOf([rec('a', { name: 'A' })]),
+    })
+    expect(await json(res)).toMatchObject({
+      received: 1,
+      needed_records: [hashOf('a', { name: 'A' })],
+    })
+    await h.request(`${base}/versions/negotiate/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('a', { name: 'A' })],
+    })
+    res = await h.request(`${base}/versions/negotiate/${sid}/commit`, { method: 'POST', user })
+    expect(await json(res)).toMatchObject({
+      error: 'Manifest incomplete',
+      manifest_expected: 2,
+      manifest_received: 1,
+    })
+  })
+
+  it('accepts format 1 hashes for records with integer-like keys', async () => {
+    const { h, user, c, base } = await setup()
+    const Scores = { type: 'object' }
+    const data = { 10: 'ten', 9: 'nine' }
+    const legacy = legacyRecordHash('s', 'Scores', data)
+    const v2hash = hashRecord('s', 'Scores', data).hash
+    expect(legacy).not.toBe(v2hash)
+    let res = await h.request(`${base}/versions/negotiate`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Scores }, manifest: [{ id: 's', type: 'Scores', hash: legacy }] },
+    })
+    const n = await json(res)
+    expect(n.needed_records).toEqual([legacy])
+    res = await h.request(`${base}/versions/negotiate/${n.session_id}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [{ id: 's', type: 'Scores', data }],
+    })
+    expect(res.status).toBe(200)
+    res = await h.request(`${base}/versions/negotiate/${n.session_id}/commit`, {
+      method: 'POST',
+      user,
+    })
+    expect(res.status).toBe(201)
+    const v = await head(h, c.id)
+    const repo = await h.ports.stores.forCollection(c.id)
+    const root = await repo.root(v!.hash)
+    const entry = await getEntry(
+      new RepoSource(recordTree, repo),
+      root.public.types.Scores!.root,
+      's',
+    )
+    expect(entry?.hash).toBe(v2hash)
+  })
+})

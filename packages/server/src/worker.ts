@@ -65,6 +65,8 @@ const app = createApp((c) => {
   return {
     ports: makePorts(env, c.executionCtx as unknown as ExecutionContext),
     config: { appUrl: env.APP_URL, deployment: env.DEPLOYMENT },
+    // Sign-in and API keys (better-auth + KF Auth) land next.
+    authenticate: async () => null,
   }
 })
 

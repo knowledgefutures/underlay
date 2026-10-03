@@ -1,10 +1,12 @@
 /**
  * The Hono app. Runtime-agnostic: each entry (Node, Worker) supplies a function
- * that builds the ports and config for a request, and everything below reads
- * them from the context.
+ * that builds the ports, config and authenticator for a request, and everything
+ * below reads them from the context.
  */
 import { type Context, Hono } from 'hono'
 
+import type { Principal } from './api/access.js'
+import { pushRoutes } from './api/push.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -14,27 +16,35 @@ export interface AppConfig {
   deployment: string
 }
 
+export type Authenticate = (req: Request, ports: Ports) => Promise<Principal | null>
+
 export type AppEnv = {
   Bindings: Record<string, unknown>
   Variables: {
     ports: Ports
     config: AppConfig
+    principal: Principal | null
   }
 }
 
 /**
- * Builds a request's ports and config. Runs per request: on Workers, bindings and
- * the execution context belong to the invocation.
+ * Builds a request's ports, config and authenticator. Runs per request: on
+ * Workers, bindings and the execution context belong to the invocation.
  */
-export type Setup = (c: Context<AppEnv>) => { ports: Ports; config: AppConfig }
+export type Setup = (c: Context<AppEnv>) => {
+  ports: Ports
+  config: AppConfig
+  authenticate: Authenticate
+}
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
 
   app.use('*', async (c, next) => {
-    const { ports, config } = setup(c)
+    const { ports, config, authenticate } = setup(c)
     c.set('ports', ports)
     c.set('config', config)
+    c.set('principal', await authenticate(c.req.raw, ports))
     await next()
   })
 
@@ -46,6 +56,8 @@ export function createApp(setup: Setup) {
       time: new Date().toISOString(),
     }),
   )
+
+  app.route('/api/collections', pushRoutes())
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
   app.onError((err, c) => {

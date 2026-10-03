@@ -100,7 +100,8 @@ kick = () => void runJobs()
 setInterval(kick, 5000).unref()
 
 const config = { appUrl, deployment: env.DEPLOYMENT ?? 'dev' }
-const app = createApp(() => ({ ports, config }))
+// Sign-in and API keys (better-auth + KF Auth) land next; until then every caller is anonymous.
+const app = createApp(() => ({ ports, config, authenticate: async () => null }))
 
 serve({
   port,

@@ -1,0 +1,330 @@
+/**
+ * Delta push: the path at scale. A session names a base version and uploads
+ * upserts (records) and deletes; the commit costs O(changes).
+ *
+ * Record lines go through the input rules, schema validation and canonical
+ * hashing at upload, so commit never re-reads them. Large records are stored out
+ * of line in the collection's repository right away, so runs stay small.
+ */
+import {
+  type Change,
+  compileSchema,
+  InputRuleError,
+  parseRecordLine,
+  recordCanonical,
+  type RecordEntry,
+  sha256Hex,
+  stripToSchema,
+  utf8ByteLength,
+} from '@underlay/core'
+import { OUT_OF_LINE_BYTES } from '@underlay/repo'
+import { eq } from 'drizzle-orm'
+
+import * as schema from '../db/schema.js'
+import type { Ports } from '../ports.js'
+import {
+  type BaseVersion,
+  commitVersion,
+  type CommitResult,
+  type TypeInput,
+} from '../versions/commit.js'
+import {
+  compactRuns,
+  mergeRuns,
+  MERGE_FAN_IN,
+  type RunEntry,
+  type RunIndex,
+  writeRun,
+} from './runs.js'
+import {
+  loadInputs,
+  nextRunSeq,
+  recordRun,
+  schemaHashes,
+  type SessionInputs,
+  sessionRuns,
+  type SessionRow,
+  transition,
+} from './session.js'
+
+export const MAX_BATCH_BYTES = 16 * 1024 * 1024
+export const MAX_BATCH_LINES = 10_000
+const MAX_REPORTED = 100
+
+export interface LineError {
+  line: number
+  recordId?: string
+  type?: string
+  errors: string[]
+}
+
+export type IngestResult =
+  | { ok: true; received: number }
+  | { ok: false; status: 400 | 409 | 422; error: string; details?: LineError[]; total?: number }
+
+const isPrivateSchema = (s: Record<string, unknown>) => s.private === true
+
+function lines(text: string): string[] {
+  return text.split('\n').filter((l) => l.trim().length > 0)
+}
+
+/** Parse, validate and hash one batch of record lines into run entries. */
+export async function prepareRecords(
+  ports: Ports,
+  collectionId: string,
+  inputs: SessionInputs,
+  text: string,
+  opts: { stripUnknownFields: boolean },
+): Promise<{ entries: RunEntry[] } | { errors: LineError[]; total: number }> {
+  const errors: LineError[] = []
+  let total = 0
+  const fail = (e: LineError) => {
+    total++
+    if (errors.length < MAX_REPORTED) errors.push(e)
+  }
+  const entries: RunEntry[] = []
+  const repo = await ports.stores.forCollection(collectionId)
+  const all = lines(text)
+  for (let i = 0; i < all.length; i++) {
+    let rec
+    try {
+      rec = parseRecordLine(all[i]!)
+    } catch (err) {
+      if (!(err instanceof InputRuleError)) throw err
+      fail({ line: i + 1, errors: [`${err.code}: ${err.message}`] })
+      continue
+    }
+    const typeSchema = inputs.schemas[rec.type]
+    if (!typeSchema) {
+      fail({
+        line: i + 1,
+        recordId: rec.id,
+        type: rec.type,
+        errors: [`No schema for type "${rec.type}"`],
+      })
+      continue
+    }
+    let data = rec.data
+    let canonical = rec.canonical
+    const props = typeSchema.properties as Record<string, unknown> | undefined
+    if (props && data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      const extra = Object.keys(data).filter((k) => !(k in props))
+      if (extra.length > 0) {
+        if (!opts.stripUnknownFields) {
+          fail({
+            line: i + 1,
+            recordId: rec.id,
+            type: rec.type,
+            errors: [
+              `Fields not in the schema: ${extra.join(', ')} (set strip_unknown_fields to drop them)`,
+            ],
+          })
+          continue
+        }
+        data = stripToSchema(data as Record<string, unknown>, props)
+        canonical = recordCanonical(rec.id, rec.type, data)
+      }
+    }
+    const errs = compileSchema(typeSchema)(data)
+    if (errs.length > 0) {
+      fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: errs })
+      continue
+    }
+    const hash = sha256Hex(canonical)
+    const size = utf8ByteLength(canonical)
+    const body = size > OUT_OF_LINE_BYTES ? await repo.putOutOfLine(hash, canonical) : canonical
+    const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
+    entries.push({
+      t: rec.type,
+      k: rec.id,
+      h: hash,
+      s: size,
+      b: body,
+      ...(isPrivate ? { p: true } : {}),
+    })
+  }
+  return total > 0 ? { errors, total } : { entries }
+}
+
+export async function ingestRecords(
+  ports: Ports,
+  session: SessionRow,
+  text: string,
+): Promise<IngestResult> {
+  const inputs = await loadInputs(ports, session.id)
+  if (lines(text).length > MAX_BATCH_LINES) {
+    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} records per batch` }
+  }
+  const prepared = await prepareRecords(ports, session.collectionId, inputs, text, {
+    stripUnknownFields: session.stripUnknownFields,
+  })
+  if ('errors' in prepared) {
+    return {
+      ok: false,
+      status: 422,
+      error: 'Invalid records',
+      details: prepared.errors,
+      total: prepared.total,
+    }
+  }
+  if (prepared.entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
+  const seq = await nextRunSeq(ports, session.id)
+  if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
+  const index = await writeRun(ports.stores.internal, session.id, seq, prepared.entries)
+  await recordRun(ports, session.id, 'records', index, { records: prepared.entries.length })
+  return { ok: true, received: prepared.entries.length }
+}
+
+export async function ingestDeletes(
+  ports: Ports,
+  session: SessionRow,
+  text: string,
+): Promise<IngestResult> {
+  const inputs = await loadInputs(ports, session.id)
+  const entries: RunEntry[] = []
+  const errors: LineError[] = []
+  const all = lines(text)
+  if (all.length > MAX_BATCH_LINES)
+    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} deletes per batch` }
+  all.forEach((l, i) => {
+    let v: { type?: unknown; id?: unknown }
+    try {
+      v = JSON.parse(l) as typeof v
+    } catch {
+      errors.push({ line: i + 1, errors: ['Invalid JSON'] })
+      return
+    }
+    if (typeof v.type !== 'string' || typeof v.id !== 'string') {
+      errors.push({ line: i + 1, errors: ['Each line is {"type": …, "id": …}'] })
+    } else if (!inputs.schemas[v.type]) {
+      errors.push({ line: i + 1, errors: [`No schema for type "${v.type}"`] })
+    } else {
+      entries.push({ t: v.type, k: v.id, x: true })
+    }
+  })
+  if (errors.length > 0)
+    return {
+      ok: false,
+      status: 422,
+      error: 'Invalid deletes',
+      details: errors.slice(0, MAX_REPORTED),
+      total: errors.length,
+    }
+  if (entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
+  const seq = await nextRunSeq(ports, session.id)
+  if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
+  const index = await writeRun(ports.stores.internal, session.id, seq, entries)
+  await recordRun(ports, session.id, 'deletes', index, {})
+  return { ok: true, received: entries.length }
+}
+
+export const toRecordEntry = (e: RunEntry): RecordEntry => ({
+  key: e.k,
+  hash: e.h!,
+  size: e.s!,
+  body: e.b!,
+})
+
+/** The base a session commits on, from the collection head. */
+export async function headBase(ports: Ports, collectionId: string): Promise<BaseVersion | null> {
+  const [row] = await ports.db
+    .select({ v: schema.versions })
+    .from(schema.collections)
+    .innerJoin(schema.versions, eq(schema.versions.id, schema.collections.headVersionId))
+    .where(eq(schema.collections.id, collectionId))
+    .limit(1)
+  if (!row) return null
+  const v = row.v
+  return {
+    id: v.id,
+    seq: v.seq,
+    semver: v.semver,
+    hash: v.hash,
+    publicRefsRoot: v.publicRefsRoot,
+    privateRefsRoot: v.privateRefsRoot,
+  }
+}
+
+/**
+ * Change streams for a delta session: per type, the merged runs split into the
+ * public and private sets. An upsert goes to its set and becomes a delete in the
+ * other set (when that set has a tree for the type); a delete goes to both.
+ */
+async function typeInputsForDelta(
+  ports: Ports,
+  session: SessionRow,
+  inputs: SessionInputs,
+  runs: RunIndex[],
+  base: {
+    pub: Record<string, { root: string | null }>
+    priv: Record<string, { root: string | null }>
+  },
+): Promise<TypeInput[]> {
+  const internal = ports.stores.internal
+  const hashes = schemaHashes(inputs.schemas)
+  return Object.entries(inputs.schemas).map(([slug, s]) => {
+    const privateType = isPrivateSchema(s)
+    const hasPub = !!base.pub[slug]?.root
+    const hasPriv = !!base.priv[slug]?.root
+    const stream = async function* (
+      set: 'public' | 'private',
+    ): AsyncGenerator<Change<RecordEntry>> {
+      for await (const e of mergeRuns(internal, session.id, runs, slug)) {
+        if (e.x) {
+          if (set === 'public' ? hasPub : hasPriv) yield { key: e.k, entry: null }
+          continue
+        }
+        const target = privateType || e.p ? 'private' : 'public'
+        if (target === set) yield { key: e.k, entry: toRecordEntry(e) }
+        else if (set === 'public' ? hasPub : hasPriv) yield { key: e.k, entry: null }
+      }
+    }
+    return {
+      slug,
+      schema: s,
+      schemaHash: hashes[slug]!,
+      public: runs.length === 0 || privateType ? null : stream('public'),
+      private: runs.length === 0 ? null : stream('private'),
+    }
+  })
+}
+
+/** Commit a delta session. Idempotent on the session status: only an open session commits. */
+export async function commitDeltaSession(
+  ports: Ports,
+  session: SessionRow,
+): Promise<CommitResult | { status: 'base_moved'; current: string | null }> {
+  const base = await headBase(ports, session.collectionId)
+  if ((base?.id ?? null) !== session.baseVersionId) {
+    return { status: 'base_moved', current: base?.semver ?? null }
+  }
+  const inputs = await loadInputs(ports, session.id)
+  let runs = await sessionRuns(ports, session.id)
+  if (runs.length > MERGE_FAN_IN) {
+    runs = await compactRuns(ports.stores.internal, session.id, runs, session.runs + 1)
+  }
+  const repo = await ports.stores.forCollection(session.collectionId)
+  const root = base ? await repo.root(base.hash) : null
+  const priv = root?.private ? await repo.privateSet(root.private) : null
+  const declared = 'all' in inputs.files ? null : inputs.files
+  return commitVersion(ports, {
+    collectionId: session.collectionId,
+    base,
+    types: await typeInputsForDelta(ports, session, inputs, runs, {
+      pub: root?.public.types ?? {},
+      priv: priv?.types ?? {},
+    }),
+    metadata: inputs.metadata,
+    ...(declared ? { declaredFiles: declared } : {}),
+    message: session.message,
+    pushedBy: session.userId,
+    appId: session.appId,
+    actorId: session.actorId,
+    validate: (s, data) => {
+      const errs = compileSchema(s)(data)
+      return errs.length > 0 ? errs : null
+    },
+  })
+}
+
+export { transition }
