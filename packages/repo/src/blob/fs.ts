@@ -8,7 +8,17 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 
@@ -187,6 +197,15 @@ export class FsBlobStore implements BlobStore {
     }
     await rename(tmp, path)
     await rm(this.#path(`_multipart/${uploadId}`), { recursive: true, force: true })
+  }
+
+  async copy(from: string, to: string): Promise<void> {
+    const src = this.#path(from)
+    const dest = this.#path(to)
+    await mkdir(dirname(dest), { recursive: true })
+    const tmp = `${dest}.${crypto.randomUUID()}.tmp`
+    await copyFile(src, tmp)
+    await rename(tmp, dest)
   }
 
   async abortMultipart(_key: string, uploadId: string): Promise<void> {

@@ -86,7 +86,16 @@ export async function startFakeS3(bucket = 'test'): Promise<FakeS3> {
     }
     const obj = objects.get(key)
     switch (req.method) {
-      case 'PUT':
+      case 'PUT': {
+        const copySource = req.headers['x-amz-copy-source']
+        if (typeof copySource === 'string') {
+          const srcKey = decodeURIComponent(copySource.replace(/^\/[^/]+\//, ''))
+          const src = objects.get(srcKey)
+          if (!src) return void res.writeHead(404).end('<Error><Code>NoSuchKey</Code></Error>')
+          objects.set(key, { bytes: Buffer.from(src.bytes), contentType: src.contentType })
+          res.writeHead(200).end('<CopyObjectResult><ETag>"x"</ETag></CopyObjectResult>')
+          return
+        }
         if (req.headers['if-none-match'] === '*' && obj) {
           res.writeHead(412).end('<Error><Code>PreconditionFailed</Code></Error>')
           return
@@ -94,6 +103,7 @@ export async function startFakeS3(bucket = 'test'): Promise<FakeS3> {
         objects.set(key, { bytes: body, contentType: req.headers['content-type'] })
         res.writeHead(200, { etag: '"x"' }).end()
         return
+      }
       case 'HEAD':
       case 'GET': {
         if (!obj)

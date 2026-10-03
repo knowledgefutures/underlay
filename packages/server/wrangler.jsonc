@@ -30,15 +30,15 @@
         "R2_ENDPOINT": "https://b66a0000000000000000000000000000.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-v2-staging",
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
-        "OIDC_CLIENT_ID": "kf_underlay"
+        "OIDC_CLIENT_ID": "kf_underlay",
       },
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "underlay-v2-staging",
           "database_id": "00000000-0000-0000-0000-000000000000",
-          "migrations_dir": "drizzle"
-        }
+          "migrations_dir": "drizzle",
+        },
       ],
       "queues": {
         "producers": [{ "binding": "JOBS", "queue": "underlay-v2-staging-jobs" }],
@@ -47,11 +47,11 @@
             "queue": "underlay-v2-staging-jobs",
             "max_batch_size": 10,
             "max_retries": 10,
-            "dead_letter_queue": "underlay-v2-staging-dead"
-          }
-        ]
+            "dead_letter_queue": "underlay-v2-staging-dead",
+          },
+        ],
       },
-      "triggers": { "crons": ["*/10 * * * *"] }
+      "triggers": { "crons": ["*/10 * * * *"] },
     },
     "next": {
       "name": "underlay-v2-next",
@@ -62,15 +62,15 @@
         "R2_ENDPOINT": "https://b66a0000000000000000000000000000.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-v2-next",
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
-        "OIDC_CLIENT_ID": "kf_underlay"
+        "OIDC_CLIENT_ID": "kf_underlay",
       },
       "d1_databases": [
         {
           "binding": "DB",
           "database_name": "underlay-v2-next",
           "database_id": "00000000-0000-0000-0000-000000000000",
-          "migrations_dir": "drizzle"
-        }
+          "migrations_dir": "drizzle",
+        },
       ],
       "queues": {
         "producers": [{ "binding": "JOBS", "queue": "underlay-v2-next-jobs" }],
@@ -79,11 +79,11 @@
             "queue": "underlay-v2-next-jobs",
             "max_batch_size": 10,
             "max_retries": 10,
-            "dead_letter_queue": "underlay-v2-next-dead"
-          }
-        ]
+            "dead_letter_queue": "underlay-v2-next-dead",
+          },
+        ],
       },
-      "triggers": { "crons": ["*/10 * * * *"] }
-    }
-  }
+      "triggers": { "crons": ["*/10 * * * *"] },
+    },
+  },
 }

@@ -49,6 +49,10 @@ export interface Stores {
   internal: BlobStore
   /** File bytes, by the `files.storage_key` (v1 keys are relative to the bucket root). */
   fileBytes: BlobStore
+  /** The canonical key of a verified file in the platform repository (relative to fileBytes). */
+  canonicalFileKey(hash: string): string
+  /** Where a direct upload is staged before verification (relative to fileBytes; expires by lifecycle rule). */
+  stagingKey(uploadId: string): string
 }
 
 export interface Ports {

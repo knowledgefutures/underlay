@@ -46,6 +46,12 @@ function contract(name: string, make: () => Promise<BlobStore>) {
       expect(text.length).toBe(100_000)
     })
 
+    it('copies within the bucket', async () => {
+      await store.put('copy/src', 'copied bytes')
+      await store.copy('copy/src', 'copy/dest/x')
+      expect(await (await store.get('copy/dest/x'))!.text()).toBe('copied bytes')
+    })
+
     it('lists by prefix', async () => {
       await store.put('list/1', '1')
       await store.put('list/2', '2')

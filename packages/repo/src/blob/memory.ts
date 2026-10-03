@@ -104,4 +104,10 @@ export class MemoryBlobStore implements BlobStore {
   async abortMultipart(key: string, uploadId: string) {
     this.multipart.delete(`${key}#${uploadId}`)
   }
+
+  async copy(from: string, to: string) {
+    const o = this.objects.get(from)
+    if (!o) throw new Error(`No such key ${from}`)
+    this.objects.set(to, { bytes: o.bytes.slice(), contentType: o.contentType })
+  }
 }

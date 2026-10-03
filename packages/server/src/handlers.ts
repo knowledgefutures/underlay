@@ -10,6 +10,7 @@ import { readHead } from '@underlay/repo'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'
+import './files/files.js'
 import { registerJob } from './jobs.js'
 import { appendVersionLog } from './versions/commit.js'
 

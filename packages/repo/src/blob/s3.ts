@@ -237,6 +237,22 @@ export class S3BlobStore implements BlobStore {
     }
   }
 
+  async copy(from: string, to: string): Promise<void> {
+    const source = `/${this.#base.split('/').pop()}/${encodeKey(from)}`
+    const res = await this.#aws.fetch(this.#url(to), {
+      method: 'PUT',
+      headers: { 'x-amz-copy-source': source },
+    })
+    const text = await res.text()
+    // Like CompleteMultipartUpload, CopyObject can answer 200 with an <Error> body.
+    if (!res.ok || text.includes('<Error>')) {
+      throw new S3Error(
+        res.ok ? 500 : res.status,
+        `CopyObject ${from} → ${to}: ${text.slice(0, 200)}`,
+      )
+    }
+  }
+
   async abortMultipart(key: string, uploadId: string): Promise<void> {
     const res = await this.#aws.fetch(this.#url(key, { uploadId }), { method: 'DELETE' })
     if (!res.ok && res.status !== 404) return this.#fail(res, `AbortMultipartUpload ${key}`)

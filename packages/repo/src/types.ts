@@ -47,6 +47,8 @@ export interface BlobStore {
     parts: { partNumber: number; etag: string }[],
   ): Promise<void>
   abortMultipart(key: string, uploadId: string): Promise<void>
+  /** Server-side copy within the bucket (up to 5 GB on S3). */
+  copy(from: string, to: string): Promise<void>
 }
 
 /** A shared cache for immutable, hash-keyed bytes (nodes, roots, schemas, bodies). */
@@ -111,5 +113,8 @@ export class PrefixedBlobStore implements BlobStore {
   }
   abortMultipart(key: string, uploadId: string) {
     return this.inner.abortMultipart(this.#k(key), uploadId)
+  }
+  copy(from: string, to: string) {
+    return this.inner.copy(this.#k(from), this.#k(to))
   }
 }

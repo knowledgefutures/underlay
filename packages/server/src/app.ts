@@ -7,6 +7,7 @@ import { type Context, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
 import { collectionRoutes } from './api/collections.js'
+import { fileRoutes } from './api/files.js'
 import { pushRoutes } from './api/push.js'
 import { versionRoutes } from './api/versions.js'
 import type { Ports } from './ports.js'
@@ -71,6 +72,7 @@ export function createApp(setup: Setup) {
     }),
   )
 
+  app.route('/api/collections', fileRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/', collectionRoutes())

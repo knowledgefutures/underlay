@@ -71,6 +71,8 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     },
     internal: new PrefixedBlobStore(platform.bucket, platform.internalPrefix),
     fileBytes: platform.bucket,
+    canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),
+    stagingKey: (id) => [platform.internalPrefix, 'uploads', id].filter(Boolean).join('/'),
   }
 }
 
