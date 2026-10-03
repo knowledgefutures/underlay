@@ -35,6 +35,8 @@ export interface NewVersionRow {
   publicRecordCount: number
   fileCount: number
   totalBytes: number
+  publicFileCount: number
+  publicTotalBytes: number
   typeCounts: Record<string, number>
   publicTypeCounts: Record<string, number>
   hasPrivate: boolean
@@ -106,6 +108,8 @@ export async function publishVersion(
           publicRecordCount: lit<number>(v.publicRecordCount).as('public_record_count'),
           fileCount: lit<number>(v.fileCount).as('file_count'),
           totalBytes: lit<number>(v.totalBytes).as('total_bytes'),
+          publicFileCount: lit<number>(v.publicFileCount).as('public_file_count'),
+          publicTotalBytes: lit<number>(v.publicTotalBytes).as('public_total_bytes'),
           typeCounts: lit<string>(JSON.stringify(v.typeCounts)).as('type_counts'),
           publicTypeCounts: lit<string>(JSON.stringify(v.publicTypeCounts)).as(
             'public_type_counts',

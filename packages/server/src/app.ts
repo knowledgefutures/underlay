@@ -6,7 +6,9 @@
 import { type Context, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
+import { collectionRoutes } from './api/collections.js'
 import { pushRoutes } from './api/push.js'
+import { versionRoutes } from './api/versions.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -14,6 +16,9 @@ export interface AppConfig {
   appUrl: string
   /** "staging", "next", "production" or "dev": shown in /api/health. */
   deployment: string
+  /** KF Auth URLs the UI links to (account settings, sign-out). */
+  kfAuthUrl?: string
+  kfAccountUrl?: string
 }
 
 export type Authenticate = (req: Request, ports: Ports) => Promise<Principal | null>
@@ -67,6 +72,8 @@ export function createApp(setup: Setup) {
   )
 
   app.route('/api/collections', pushRoutes())
+  app.route('/api/collections', versionRoutes())
+  app.route('/', collectionRoutes())
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
   app.onError((err, c) => {

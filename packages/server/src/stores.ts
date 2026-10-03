@@ -70,6 +70,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       return forLocation(row.locationId)
     },
     internal: new PrefixedBlobStore(platform.bucket, platform.internalPrefix),
+    fileBytes: platform.bucket,
   }
 }
 

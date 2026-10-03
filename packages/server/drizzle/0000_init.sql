@@ -389,6 +389,8 @@ CREATE TABLE `versions` (
 	`public_record_count` integer NOT NULL,
 	`file_count` integer NOT NULL,
 	`total_bytes` integer NOT NULL,
+	`public_file_count` integer DEFAULT 0 NOT NULL,
+	`public_total_bytes` integer DEFAULT 0 NOT NULL,
 	`type_counts` text NOT NULL,
 	`public_type_counts` text NOT NULL,
 	`has_private` integer DEFAULT false NOT NULL,

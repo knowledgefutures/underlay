@@ -47,6 +47,8 @@ export interface Stores {
    * mirrored: push sessions, staging uploads, the reference log.
    */
   internal: BlobStore
+  /** File bytes, by the `files.storage_key` (v1 keys are relative to the bucket root). */
+  fileBytes: BlobStore
 }
 
 export interface Ports {

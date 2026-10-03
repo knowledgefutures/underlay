@@ -254,6 +254,9 @@ export const versions = sqliteTable(
     publicRecordCount: integer('public_record_count').notNull(),
     fileCount: integer('file_count').notNull(),
     totalBytes: integer('total_bytes').notNull(),
+    /** What non-owners see: the public set's file count and record + file bytes. */
+    publicFileCount: integer('public_file_count').notNull().default(0),
+    publicTotalBytes: integer('public_total_bytes').notNull().default(0),
     typeCounts: json<Record<string, number>>('type_counts').notNull(),
     publicTypeCounts: json<Record<string, number>>('public_type_counts').notNull(),
     hasPrivate: bool('has_private').notNull().default(false),

@@ -389,6 +389,8 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     publicRecordCount: pubTotals.count,
     fileCount: newPublic.files.count + newPrivate.files.count,
     totalBytes: pubTotals.bytes + privTotals.bytes + newPublic.files.bytes + newPrivate.files.bytes,
+    publicFileCount: newPublic.files.count,
+    publicTotalBytes: pubTotals.bytes + newPublic.files.bytes,
     typeCounts,
     publicTypeCounts,
     hasPrivate: root.private !== null,

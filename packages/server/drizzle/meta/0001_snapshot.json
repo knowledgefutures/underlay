@@ -1,6 +1,6 @@
 {
-  "id": "153626ea-7e2f-4690-a012-0514c340dcdb",
-  "prevId": "fb1d3f77-7095-4ca8-8fe8-45e5eb96f631",
+  "id": "89c64381-abbc-4f02-8032-90d5d70523a9",
+  "prevId": "546a7fbc-8404-4b9e-a3d6-af1a1f02737a",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
@@ -2494,6 +2494,22 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "public_file_count": {
+          "name": "public_file_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "public_total_bytes": {
+          "name": "public_total_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
         "type_counts": {
           "name": "type_counts",
