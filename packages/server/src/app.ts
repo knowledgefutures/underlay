@@ -6,6 +6,7 @@
 import { type Context, type ExecutionContext, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
+import { arkRoutes } from './api/ark.js'
 import { collectionRoutes } from './api/collections.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
@@ -88,6 +89,7 @@ export function createApp(setup: Setup) {
     }),
   )
 
+  app.route('/', arkRoutes())
   // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
   app.route('/', recordRoutes())
   app.route('/api/collections', fileRoutes())

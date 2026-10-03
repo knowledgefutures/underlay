@@ -21,6 +21,7 @@ import { headBase } from '../push/delta.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
+import { ensureCollectionArk } from './ark.js'
 
 async function membership(c: Context<AppEnv>, orgSlug: string) {
   const p = c.var.principal

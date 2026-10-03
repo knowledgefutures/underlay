@@ -13,6 +13,8 @@ import { ed25519Signer, type Signer } from '@underlay/repo'
 import { S3BlobStore } from '@underlay/repo/blob/s3'
 
 import './handlers.js'
+import { renderPage } from '@underlay/web'
+
 import { createApp } from './app.js'
 import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { CfCache } from './cache.js'
@@ -99,6 +101,7 @@ const app = createApp((c) => {
     config: { appUrl: env.APP_URL, deployment: env.DEPLOYMENT },
     authenticate: authenticator(() => authFor(env, ports)),
     authHandler: (req) => authFor(env, ports).handler(req),
+    renderPage,
   }
 })
 

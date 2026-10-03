@@ -13,13 +13,18 @@
  *   SESSION_SECRET, OIDC_ISSUER_URL, OIDC_ISSUER_INTERNAL_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET
  *                     better-auth and KF Auth (same names as v1's .env files)
  */
+import { relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
 import { FsBlobStore, serveSignedBlob } from '@underlay/repo/blob/fs'
 import { S3BlobStore } from '@underlay/repo/blob/s3'
+import { Hono } from 'hono'
 
 import '../handlers.js'
-import { createApp } from '../app.js'
+import { createApp, type RenderPage } from '../app.js'
 import { authenticator, createAuth } from '../auth/auth.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
@@ -105,6 +110,17 @@ kick = () => void runJobs()
 setInterval(kick, 5000).unref()
 
 const config = { appUrl, deployment: env.DEPLOYMENT ?? 'dev' }
+
+// The UI (packages/web, built with `pnpm --filter @underlay/web build`). Without
+// a build, the API still runs and pages are 404.
+let renderPage: RenderPage | undefined
+const clientDir = fileURLToPath(new URL('../../../web/dist/client', import.meta.url))
+try {
+  renderPage = (await import('@underlay/web')).renderPage
+} catch {
+  console.warn('[underlay] @underlay/web is not built; serving the API only')
+}
+const staticFiles = serveStatic({ root: relative(process.cwd(), clientDir) })
 const auth = createAuth(
   db,
   {
@@ -124,13 +140,21 @@ const app = createApp(() => ({
   config,
   authenticate: authenticator(() => auth),
   authHandler: (req) => auth.handler(req),
+  ...(renderPage ? { renderPage } : {}),
 }))
+
+/** Static files from the client build, falling back to the app. */
+const staticApp = new Hono()
+staticApp.use('*', staticFiles)
+staticApp.all('*', (c) => app.fetch(c.req.raw))
+const staticOrApp = (req: Request) => staticApp.fetch(req)
 
 serve({
   port,
   fetch: (req) => {
-    if (fsBlobs && new URL(req.url).pathname.startsWith('/_blob/'))
-      return serveSignedBlob(fsBlobs, req)
+    const path = new URL(req.url).pathname
+    if (fsBlobs && path.startsWith('/_blob/')) return serveSignedBlob(fsBlobs, req)
+    if (!path.startsWith('/api/') && /\.[a-z0-9]+$/i.test(path)) return staticOrApp(req)
     return app.fetch(req)
   },
 })

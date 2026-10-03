@@ -1,0 +1,17 @@
+import type { LoaderFunctionArgs } from 'react-router'
+
+import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { apiUrlBuilder } from '~/lib/share-token'
+
+export const handle = {
+  title: (params: Record<string, string>) => `${params.owner}/${params.collection} · Underlay`,
+}
+
+export async function loader({ params, request }: LoaderFunctionArgs) {
+  const api = apiUrlBuilder(request, fetchBase(request.url))
+  const res = await apiFetch(api(`/api/collections/${params.owner}/${params.collection}`), {
+    headers: ssrHeaders(request),
+  })
+  if (!res.ok) throw new Response('Not Found', { status: 404 })
+  return res.json()
+}

@@ -13,7 +13,7 @@ export interface FakeS3 {
   close(): Promise<void>
 }
 
-export async function startFakeS3(bucket = 'test'): Promise<FakeS3> {
+export async function startFakeS3(bucket = 'test', listenPort = 0): Promise<FakeS3> {
   const objects = new Map<string, { bytes: Buffer; contentType: string | undefined }>()
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
   const requests: { method: string; url: string }[] = []
@@ -135,7 +135,7 @@ export async function startFakeS3(bucket = 'test'): Promise<FakeS3> {
     }
     res.writeHead(400).end()
   })
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  await new Promise<void>((r) => server.listen(listenPort, '127.0.0.1', r))
   const port = (server.address() as { port: number }).port
   return {
     url: `http://127.0.0.1:${port}`,

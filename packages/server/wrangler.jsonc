@@ -19,6 +19,9 @@
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat"],
   "limits": { "cpu_ms": 300000 },
+  // The UI's client build (pnpm --filter @underlay/web build). Matching files are
+  // served before the Worker runs; everything else reaches the Worker.
+  "assets": { "directory": "../web/dist/client" },
   "observability": { "enabled": true },
   "env": {
     "staging": {
