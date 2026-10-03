@@ -18,6 +18,8 @@ export interface Principal {
   scope: 'session' | 'read' | 'write' | 'admin'
   /** Collections an API key is limited to; null when unscoped. */
   collectionIds: string[] | null
+  /** Set for an API key owned by an organization: it acts as a member of that org only. */
+  orgId?: string
 }
 
 export interface CollectionAccess {
@@ -49,7 +51,9 @@ export async function collectionAccess(
   if (principal) {
     const keyCovers =
       principal.collectionIds === null || principal.collectionIds.includes(row.collection.id)
-    if (keyCovers) {
+    if (keyCovers && principal.orgId) {
+      isMember = principal.orgId === row.owner.id
+    } else if (keyCovers) {
       const [m] = await db
         .select({ id: schema.member.id })
         .from(schema.member)

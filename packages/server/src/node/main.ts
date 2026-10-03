@@ -10,6 +10,8 @@
  *   BLOB_URL_SECRET   HMAC key for filesystem presigned URLs
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
  *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
+ *   SESSION_SECRET, OIDC_ISSUER_URL, OIDC_ISSUER_INTERNAL_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET
+ *                     better-auth and KF Auth (same names as v1's .env files)
  */
 import { serve } from '@hono/node-server'
 import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
@@ -18,6 +20,7 @@ import { S3BlobStore } from '@underlay/repo/blob/s3'
 
 import '../handlers.js'
 import { createApp } from '../app.js'
+import { authenticator, createAuth } from '../auth/auth.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
@@ -100,8 +103,26 @@ kick = () => void runJobs()
 setInterval(kick, 5000).unref()
 
 const config = { appUrl, deployment: env.DEPLOYMENT ?? 'dev' }
-// Sign-in and API keys (better-auth + KF Auth) land next; until then every caller is anonymous.
-const app = createApp(() => ({ ports, config, authenticate: async () => null }))
+const auth = createAuth(
+  db,
+  {
+    appUrl,
+    secret: env.SESSION_SECRET ?? 'dev-secret-change-me',
+    oidc: {
+      issuerUrl: env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+      internalUrl: env.OIDC_ISSUER_INTERNAL_URL ?? env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+      clientId: env.OIDC_CLIENT_ID ?? 'kf_underlay',
+      clientSecret: env.OIDC_CLIENT_SECRET ?? '',
+    },
+  },
+  ports.waitUntil,
+)
+const app = createApp(() => ({
+  ports,
+  config,
+  authenticate: authenticator(() => auth),
+  authHandler: (req) => auth.handler(req),
+}))
 
 serve({
   port,

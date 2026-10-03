@@ -170,7 +170,7 @@ describe('negotiate (v1 compatibility)', () => {
       id: r.id,
       type: r.type,
       hash: hashOf(r.id, r.data),
-      ...(r.private ? { private: true } : {}),
+      ...((r as { private?: boolean }).private ? { private: true } : {}),
     }))
 
   async function push(

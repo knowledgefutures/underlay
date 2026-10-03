@@ -14,6 +14,7 @@ import { S3BlobStore } from '@underlay/repo/blob/s3'
 
 import './handlers.js'
 import { createApp } from './app.js'
+import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { QueueJobs, runJob } from './jobs.js'
@@ -30,6 +31,10 @@ export interface Env {
   R2_ACCESS_KEY_ID: string
   R2_SECRET_ACCESS_KEY: string
   SIGNING_KEY: string
+  SESSION_SECRET: string
+  OIDC_ISSUER_URL: string
+  OIDC_CLIENT_ID: string
+  OIDC_CLIENT_SECRET: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
 }
@@ -60,13 +65,39 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
   }
 }
 
+// One better-auth instance per isolate and database binding.
+const auths = new WeakMap<object, Auth>()
+function authFor(env: Env, ports: Ports): Auth {
+  let auth = auths.get(env.DB)
+  if (!auth) {
+    auth = createAuth(
+      ports.db,
+      {
+        appUrl: env.APP_URL,
+        secret: env.SESSION_SECRET,
+        oidc: {
+          issuerUrl: env.OIDC_ISSUER_URL,
+          // No private network on Workers: server-to-server calls use the public URL.
+          internalUrl: env.OIDC_ISSUER_URL,
+          clientId: env.OIDC_CLIENT_ID,
+          clientSecret: env.OIDC_CLIENT_SECRET,
+        },
+      },
+      ports.waitUntil,
+    )
+    auths.set(env.DB, auth)
+  }
+  return auth
+}
+
 const app = createApp((c) => {
   const env = c.env as unknown as Env
+  const ports = makePorts(env, c.executionCtx as unknown as ExecutionContext)
   return {
-    ports: makePorts(env, c.executionCtx as unknown as ExecutionContext),
+    ports,
     config: { appUrl: env.APP_URL, deployment: env.DEPLOYMENT },
-    // Sign-in and API keys (better-auth + KF Auth) land next.
-    authenticate: async () => null,
+    authenticate: authenticator(() => authFor(env, ports)),
+    authHandler: (req) => authFor(env, ports).handler(req),
   }
 })
 

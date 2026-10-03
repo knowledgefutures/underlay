@@ -35,10 +35,19 @@ export type Setup = (c: Context<AppEnv>) => {
   ports: Ports
   config: AppConfig
   authenticate: Authenticate
+  /** better-auth's own routes (/api/auth/*): sign-in, callbacks, sessions, keys, orgs. */
+  authHandler?: (req: Request) => Promise<Response>
 }
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
+
+  app.on(['GET', 'POST'], '/api/auth/*', (c) => {
+    const { authHandler } = setup(c)
+    return authHandler
+      ? authHandler(c.req.raw)
+      : c.json({ error: 'Auth is not configured', statusCode: 404 }, 404)
+  })
 
   app.use('*', async (c, next) => {
     const { ports, config, authenticate } = setup(c)
