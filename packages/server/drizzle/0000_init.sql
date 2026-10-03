@@ -230,6 +230,25 @@ CREATE TABLE `page_comments` (
 );
 --> statement-breakpoint
 CREATE INDEX `page_comments_page_idx` ON `page_comments` (`page`);--> statement-breakpoint
+CREATE TABLE `placements` (
+	`id` text PRIMARY KEY NOT NULL,
+	`collection_id` text,
+	`organization_id` text,
+	`location_id` text NOT NULL,
+	`role` text NOT NULL,
+	`sets` text NOT NULL,
+	`state` text DEFAULT 'active' NOT NULL,
+	`synced_seq` integer DEFAULT 0 NOT NULL,
+	`last_error` text,
+	`updated_at` integer NOT NULL,
+	FOREIGN KEY (`collection_id`) REFERENCES `collections`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`organization_id`) REFERENCES `organization`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`location_id`) REFERENCES `storage_locations`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `placements_one_primary_uq` ON `placements` (`collection_id`) WHERE "placements"."role" = 'primary' AND "placements"."collection_id" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX `placements_target_location_uq` ON `placements` (`collection_id`,`organization_id`,`location_id`);--> statement-breakpoint
+CREATE INDEX `placements_location_idx` ON `placements` (`location_id`);--> statement-breakpoint
 CREATE TABLE `push_runs` (
 	`session_id` text NOT NULL,
 	`seq` integer NOT NULL,
@@ -310,6 +329,24 @@ CREATE TABLE `session` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `session_token_unique` ON `session` (`token`);--> statement-breakpoint
 CREATE INDEX `session_user_id_idx` ON `session` (`user_id`);--> statement-breakpoint
+CREATE TABLE `storage_locations` (
+	`id` text PRIMARY KEY NOT NULL,
+	`organization_id` text,
+	`kind` text NOT NULL,
+	`name` text NOT NULL,
+	`endpoint` text,
+	`region` text,
+	`bucket` text,
+	`prefix` text DEFAULT '' NOT NULL,
+	`credentials` text,
+	`permissions` text NOT NULL,
+	`status` text DEFAULT 'unverified' NOT NULL,
+	`last_error` text,
+	`verified_at` integer,
+	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL,
+	FOREIGN KEY (`organization_id`) REFERENCES `organization`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
 CREATE TABLE `user` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,

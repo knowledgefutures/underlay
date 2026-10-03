@@ -19,7 +19,7 @@ import type {
   PresignGetOptions,
   PresignPutOptions,
   PutOptions,
-} from '../ports.js'
+} from '../types.js'
 
 export interface FsBlobConfig {
   root: string

@@ -1,5 +1,4 @@
-import { Lru } from './lib/lru.js'
-import type { Cache } from './ports.js'
+import { type Cache, Lru } from '@underlay/repo'
 
 /** Node: an in-process LRU (the isolate LRU in Objects sits in front of it). */
 export class MemoryCache implements Cache {
@@ -13,12 +12,6 @@ export class MemoryCache implements Cache {
   async put(key: string, value: Uint8Array) {
     this.#lru.set(key, value)
   }
-}
-
-/** A cache that holds nothing (tests that count blob reads). */
-export const noCache: Cache = {
-  get: async () => null,
-  put: async () => {},
 }
 
 interface CfCacheStorage {

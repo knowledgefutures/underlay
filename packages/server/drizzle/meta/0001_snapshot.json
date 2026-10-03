@@ -1,8 +1,8 @@
 {
+  "id": "f05761d0-4c78-46d5-9fbf-f21a30ad9e2c",
+  "prevId": "80efd3e4-fb23-47e6-ae97-3e5cd9522e1c",
   "version": "6",
   "dialect": "sqlite",
-  "id": "80efd3e4-fb23-47e6-ae97-3e5cd9522e1c",
-  "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
       "name": "account",
@@ -111,11 +111,11 @@
         "account_user_id_user_id_fk": {
           "name": "account_user_id_user_id_fk",
           "tableFrom": "account",
-          "tableTo": "user",
           "columnsFrom": ["user_id"],
+          "tableTo": "user",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -356,11 +356,11 @@
         "ark_collections_collection_id_collections_id_fk": {
           "name": "ark_collections_collection_id_collections_id_fk",
           "tableFrom": "ark_collections",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -397,11 +397,11 @@
         "ark_record_types_collection_id_collections_id_fk": {
           "name": "ark_record_types_collection_id_collections_id_fk",
           "tableFrom": "ark_record_types",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -457,11 +457,11 @@
         "ark_shoulders_organization_id_organization_id_fk": {
           "name": "ark_shoulders_organization_id_organization_id_fk",
           "tableFrom": "ark_shoulders",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -556,11 +556,11 @@
         "collection_webhooks_collection_id_collections_id_fk": {
           "name": "collection_webhooks_collection_id_collections_id_fk",
           "tableFrom": "collection_webhooks",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -689,11 +689,11 @@
         "collections_organization_id_organization_id_fk": {
           "name": "collections_organization_id_organization_id_fk",
           "tableFrom": "collections",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -925,11 +925,11 @@
         "forks_child_collection_id_collections_id_fk": {
           "name": "forks_child_collection_id_collections_id_fk",
           "tableFrom": "forks",
-          "tableTo": "collections",
           "columnsFrom": ["child_collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1040,20 +1040,20 @@
         "invitation_organization_id_organization_id_fk": {
           "name": "invitation_organization_id_organization_id_fk",
           "tableFrom": "invitation",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "invitation_inviter_id_user_id_fk": {
           "name": "invitation_inviter_id_user_id_fk",
           "tableFrom": "invitation",
-          "tableTo": "user",
           "columnsFrom": ["inviter_id"],
+          "tableTo": "user",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1230,20 +1230,20 @@
         "member_organization_id_organization_id_fk": {
           "name": "member_organization_id_organization_id_fk",
           "tableFrom": "member",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "member_user_id_user_id_fk": {
           "name": "member_user_id_user_id_fk",
           "tableFrom": "member",
-          "tableTo": "user",
           "columnsFrom": ["user_id"],
+          "tableTo": "user",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1555,8 +1555,8 @@
         "placements_one_primary_uq": {
           "name": "placements_one_primary_uq",
           "columns": ["collection_id"],
-          "isUnique": true,
-          "where": "\"placements\".\"role\" = 'primary' AND \"placements\".\"collection_id\" IS NOT NULL"
+          "where": "\"placements\".\"role\" = 'primary' AND \"placements\".\"collection_id\" IS NOT NULL",
+          "isUnique": true
         },
         "placements_target_location_uq": {
           "name": "placements_target_location_uq",
@@ -1573,29 +1573,29 @@
         "placements_collection_id_collections_id_fk": {
           "name": "placements_collection_id_collections_id_fk",
           "tableFrom": "placements",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "placements_organization_id_organization_id_fk": {
           "name": "placements_organization_id_organization_id_fk",
           "tableFrom": "placements",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         },
         "placements_location_id_storage_locations_id_fk": {
           "name": "placements_location_id_storage_locations_id_fk",
           "tableFrom": "placements",
-          "tableTo": "storage_locations",
           "columnsFrom": ["location_id"],
+          "tableTo": "storage_locations",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1668,11 +1668,11 @@
         "push_runs_session_id_push_sessions_id_fk": {
           "name": "push_runs_session_id_push_sessions_id_fk",
           "tableFrom": "push_runs",
-          "tableTo": "push_sessions",
           "columnsFrom": ["session_id"],
+          "tableTo": "push_sessions",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -1858,11 +1858,11 @@
         "push_sessions_collection_id_collections_id_fk": {
           "name": "push_sessions_collection_id_collections_id_fk",
           "tableFrom": "push_sessions",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -1969,11 +1969,11 @@
         "schema_usage_collection_id_collections_id_fk": {
           "name": "schema_usage_collection_id_collections_id_fk",
           "tableFrom": "schema_usage",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {
@@ -2094,11 +2094,11 @@
         "session_user_id_user_id_fk": {
           "name": "session_user_id_user_id_fk",
           "tableFrom": "session",
-          "tableTo": "user",
           "columnsFrom": ["user_id"],
+          "tableTo": "user",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2215,11 +2215,11 @@
         "storage_locations_organization_id_organization_id_fk": {
           "name": "storage_locations_organization_id_organization_id_fk",
           "tableFrom": "storage_locations",
-          "tableTo": "organization",
           "columnsFrom": ["organization_id"],
+          "tableTo": "organization",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2564,11 +2564,11 @@
         "versions_collection_id_collections_id_fk": {
           "name": "versions_collection_id_collections_id_fk",
           "tableFrom": "versions",
-          "tableTo": "collections",
           "columnsFrom": ["collection_id"],
+          "tableTo": "collections",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2711,11 +2711,11 @@
         "webhook_deliveries_webhook_id_collection_webhooks_id_fk": {
           "name": "webhook_deliveries_webhook_id_collection_webhooks_id_fk",
           "tableFrom": "webhook_deliveries",
-          "tableTo": "collection_webhooks",
           "columnsFrom": ["webhook_id"],
+          "tableTo": "collection_webhooks",
           "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "cascade"
         }
       },
       "compositePrimaryKeys": {},
@@ -2726,9 +2726,9 @@
   "views": {},
   "enums": {},
   "_meta": {
+    "columns": {},
     "schemas": {},
-    "tables": {},
-    "columns": {}
+    "tables": {}
   },
   "internal": {
     "indexes": {}

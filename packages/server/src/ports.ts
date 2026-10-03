@@ -1,67 +1,19 @@
 /**
- * The four ports the server is written against. Cloudflare and Node each supply
+ * The ports the server is written against. Cloudflare and Node each supply
  * adapters; nothing outside the adapters knows which runtime it's on.
  *
- *   BlobStore  S3 API via aws4fetch (R2, S3, MinIO), filesystem and memory for dev/tests
+ *   Stores     repositories resolved per collection from its placement (never a global
+ *              bucket), plus the platform's internal area (sessions, uploads, reference log)
  *   Db         Drizzle sqlite-core over D1 or libsql — async, batches only (no interactive transactions)
  *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
  *   Cache      Cache API on Workers, in-memory LRU on Node
  */
+import type { BlobStore, Cache, Repo } from '@underlay/repo'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql'
 
 import type * as schema from './db/schema.js'
 
-// --- Blob store ------------------------------------------------------------------
-
-export interface BlobHead {
-  size: number
-  etag: string
-  contentType: string | null
-}
-
-export interface BlobObject extends BlobHead {
-  body: ReadableStream<Uint8Array>
-  bytes(): Promise<Uint8Array>
-  text(): Promise<string>
-}
-
-export interface PutOptions {
-  contentType?: string
-  /** Only write if the key doesn't exist. Immutable keys make this an optimization. */
-  ifAbsent?: boolean
-}
-
-export interface PresignGetOptions {
-  expiresIn: number
-  /** Content-Disposition for the response. */
-  disposition?: string
-  contentType?: string
-}
-
-export interface PresignPutOptions {
-  expiresIn: number
-  contentType?: string
-}
-
-export interface BlobStore {
-  get(key: string, range?: { offset: number; length?: number }): Promise<BlobObject | null>
-  head(key: string): Promise<BlobHead | null>
-  put(key: string, body: Uint8Array | string, opts?: PutOptions): Promise<void>
-  delete(key: string): Promise<void>
-  list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }>
-  presignGet(key: string, opts: PresignGetOptions): Promise<string>
-  presignPut(key: string, opts: PresignPutOptions): Promise<string>
-  createMultipart(key: string, contentType?: string): Promise<string>
-  presignPart(key: string, uploadId: string, partNumber: number, expiresIn: number): Promise<string>
-  completeMultipart(
-    key: string,
-    uploadId: string,
-    parts: { partNumber: number; etag: string }[],
-  ): Promise<void>
-  abortMultipart(key: string, uploadId: string): Promise<void>
-}
-
-// --- Database ----------------------------------------------------------------------
+export type { BlobStore, Cache } from '@underlay/repo'
 
 /**
  * Drizzle over SQLite. Both adapters are async and support `db.batch([...])`,
@@ -69,8 +21,6 @@ export interface BlobStore {
  * interactive transactions, so code that works on Node would break on Workers.
  */
 export type Db = LibSQLDatabase<typeof schema>
-
-// --- Jobs --------------------------------------------------------------------------------
 
 /** Messages carry ids only (Queues caps messages at 128 KB); data is in SQLite and blobs. */
 export interface JobMessage {
@@ -83,18 +33,24 @@ export interface Jobs {
   enqueueBatch(jobs: JobMessage[]): Promise<void>
 }
 
-// --- Cache --------------------------------------------------------------------------------
-
-/** A shared cache for immutable, hash-keyed bytes (nodes, roots, schemas). */
-export interface Cache {
-  get(key: string): Promise<Uint8Array | null>
-  put(key: string, value: Uint8Array, opts?: { ttlSeconds?: number }): Promise<void>
+/**
+ * Where repositories live. A collection's objects are read and written through
+ * the repository of its primary placement; mirrors are written by sync jobs.
+ */
+export interface Stores {
+  /** The repository of a collection's primary placement. */
+  forCollection(collectionId: string): Promise<Repo>
+  /** The repository at a storage location. */
+  forLocation(locationId: string): Promise<Repo>
+  /**
+   * Platform-internal objects that never leave the platform and are never
+   * mirrored: push sessions, staging uploads, the reference log.
+   */
+  internal: BlobStore
 }
 
-// --- Everything the app needs -------------------------------------------------------
-
 export interface Ports {
-  blobs: BlobStore
+  stores: Stores
   db: Db
   jobs: Jobs
   cache: Cache

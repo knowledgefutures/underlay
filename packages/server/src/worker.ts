@@ -9,13 +9,14 @@ import type {
   Queue,
   ScheduledController,
 } from '@cloudflare/workers-types'
+import { S3BlobStore } from '@underlay/repo/blob/s3'
 
 import { createApp } from './app.js'
-import { S3BlobStore } from './blob/s3.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { QueueJobs, runJob } from './jobs.js'
 import type { JobMessage, Ports } from './ports.js'
+import { createStores } from './stores.js'
 
 export interface Env {
   DB: D1Database
@@ -26,19 +27,28 @@ export interface Env {
   R2_BUCKET: string
   R2_ACCESS_KEY_ID: string
   R2_SECRET_ACCESS_KEY: string
+  REPO_PREFIX?: string
+  INTERNAL_PREFIX?: string
 }
 
 function makePorts(env: Env, ctx: ExecutionContext): Ports {
+  const db = openD1(env.DB)
+  const cache = new CfCache(caches as never, env.DEPLOYMENT)
+  const bucket = new S3BlobStore({
+    endpoint: env.R2_ENDPOINT,
+    bucket: env.R2_BUCKET,
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+    region: 'auto',
+  })
   return {
-    db: openD1(env.DB),
-    blobs: new S3BlobStore({
-      endpoint: env.R2_ENDPOINT,
-      bucket: env.R2_BUCKET,
-      accessKeyId: env.R2_ACCESS_KEY_ID,
-      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-      region: 'auto',
+    db,
+    stores: createStores(db, cache, {
+      bucket,
+      repoPrefix: env.REPO_PREFIX ?? 'repo',
+      internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
     }),
-    cache: new CfCache(caches as never, env.DEPLOYMENT),
+    cache,
     jobs: new QueueJobs(env.JOBS as never),
     waitUntil: (p) => ctx.waitUntil(p),
   }

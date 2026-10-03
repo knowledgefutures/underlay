@@ -8,16 +8,18 @@
  *   BLOB_DIR          use the filesystem blob store under this directory, or
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION
  *   BLOB_URL_SECRET   HMAC key for filesystem presigned URLs
+ *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
  */
 import { serve } from '@hono/node-server'
+import { FsBlobStore, serveSignedBlob } from '@underlay/repo/blob/fs'
+import { S3BlobStore } from '@underlay/repo/blob/s3'
 
 import { createApp } from '../app.js'
-import { FsBlobStore, serveSignedBlob } from '../blob/fs.js'
-import { S3BlobStore } from '../blob/s3.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import type { BlobStore, Ports } from '../ports.js'
+import { createStores } from '../stores.js'
 
 const env = process.env
 const port = Number(env.PORT ?? 4200)
@@ -45,10 +47,15 @@ if (env.S3_ENDPOINT) {
 }
 
 let kick: () => void = () => {}
+const cache = new MemoryCache()
 const ports: Ports = {
   db,
-  blobs,
-  cache: new MemoryCache(),
+  stores: createStores(db, cache, {
+    bucket: blobs,
+    repoPrefix: env.REPO_PREFIX ?? 'repo',
+    internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+  }),
+  cache,
   jobs: {
     async enqueue(job, opts) {
       await jobsTable.enqueue(job, opts)

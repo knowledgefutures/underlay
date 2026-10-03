@@ -220,11 +220,78 @@ What each reader can check:
   From the root they learn only whether a private set exists.
 - Owners also get the private set object, salt included, and can check it against the commitment.
 
-## 11. Limits and constants
+## 11. Repository layout
+
+A repository is how a storage location holds collections. It is the same on the platform's own
+bucket, on a customer's mirror and in a restore source. Keys are relative to the location's prefix.
+The reference implementation is `packages/repo` (`@underlay/repo`).
+
+```
+nodes/<nodeHash>                          node JSON (section 8.2), gzip-compressed
+bodies/<leafHash>.ndjson.gz               a record leaf's records
+records/<recordHash>.json.gz              an out-of-line record, gzip
+schemas/<schemaHash>.json                 JCS(schema)
+roots/<hex>.json                          JCS(root); <hex> is the version hash without "ulv2:"
+private/<commitment>.json                 JCS(private set object); only in locations that hold private sets
+files/<fileHash>                          file bytes
+collections/<collectionId>/collection.json
+collections/<collectionId>/log/<seq>.json
+collections/<collectionId>/head.json
+```
+
+- **Bodies.** The body of leaf L has one line per entry of L, in entry order, each followed by
+  `\n`. The body is one or more gzip members concatenated (RFC 1952 §2.2); readers must accept any
+  number of members.
+  - A line is either the canonical record (section 4), whose hash is the entry's record hash, or
+    an out-of-line pointer `{"$ref":"<recordHash>"}`, whose record is stored in `records/`.
+  - Which records go out of line, and where members split, are the writer's choice.
+  - For a body with no pointers, the concatenation of a type's bodies in tree order is that type's
+    records as gzip NDJSON.
+- **Content-addressed objects** (everything except `collections/`) never change once written.
+  Readers that don't trust a location verify each object before use:
+  - nodes against their hash;
+  - body lines against the leaf's record hashes;
+  - roots against the version hash;
+  - schemas and private set objects against theirs.
+- **Write order.** All objects a version reaches (leaves and bodies, then interior nodes, then the
+  root and private set object), then the log entry, then `head.json`. A reader that finds
+  `head.json` can read everything below it.
+- **Self-contained.** Nothing in a location refers to another location.
+- Platform-internal data (push sessions, staging uploads, the reference log) is not part of a
+  repository and is never copied to one.
+
+### 11.1 Version log
+
+Each collection has one log entry per version:
+
+```
+entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","semver","seq","sig","versionHash"}
+```
+
+- `seq` counts from 1. `createdAt` is ISO 8601 UTC. `appId`, `actorId`, `baseSemver` and
+  `message` may be `null`. Pusher identity is not recorded (open question).
+- `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry
+  without `sig`).
+- `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key).
+- **Entry hash** = hash(JCS(entry)), signature included.
+- `prev` is the entry hash of entry `seq − 1`, or `null` for `seq` 1. Entries form a hash chain,
+  so a dropped, reordered or altered entry is detectable.
+- `head.json` = JCS(`{"entryHash","seq","versionHash"}`) of the latest entry. It is overwritten
+  after the entry is written.
+- `collection.json` holds the collection's id, owner and slug, its name and description, and
+  `keys`: the public keys (`{"id","alg":"Ed25519","publicKey": base64url raw}`) that sign its log.
+  The platform also publishes its keys at a well-known URL (to be fixed with the Cloudflare
+  deployment).
+
+A log is valid when every entry is present from 1 to `head.seq`, each `prev` chains, each signature
+verifies against a trusted key, and `head.entryHash` is the last entry's hash (`verifyLog` in
+`packages/repo/src/log.ts`).
+
+## 12. Limits and constants
 
 All protocol constants are in `packages/core/src/constants.ts`, and the vectors file repeats them.
 
-## 12. Format 1 hashes
+## 13. Format 1 hashes
 
 Format 1 canonicalized `data` and schemas by sorting keys into a new object and then calling
 `JSON.stringify`. That puts array-index keys (canonical decimal integers below 2³² − 1) first, in
@@ -270,3 +337,7 @@ These were made during implementation and recorded with their reasons in `edge-r
 6. `LEAF_MAX_ENTRIES` is 8,192 (the plan had 16,384). The chunking rule stays fixed-probability
    rather than size-aware, because size-aware boundaries depend on position and that rules out
    parallel commit units.
+7. Roots are stored as `roots/<hex>.json`, without the `ulv2:` prefix, which would put a colon in
+   the key.
+8. A large leaf body is one object of several concatenated gzip members (section 11). There are no
+   separate part objects, so mirrors and third-party readers need only one rule.

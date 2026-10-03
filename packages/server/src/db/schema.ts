@@ -331,6 +331,76 @@ export const legacyHashes = sqliteTable('legacy_hashes', {
   hash: text('hash').notNull(),
 })
 
+// --- Storage locations and placements (edge-redesign.md, "Placements") -----------------
+
+/**
+ * Where repositories can live. The platform location's bucket and credentials
+ * come from the deployment's bindings and secrets; customer locations carry
+ * their own (encrypted with the platform key, never returned to clients).
+ */
+export const storageLocations = sqliteTable('storage_locations', {
+  id: id(),
+  /** Owning org; null for platform locations. */
+  organizationId: text('organization_id').references(() => organization.id, {
+    onDelete: 'cascade',
+  }),
+  kind: text('kind', { enum: ['platform', 's3'] }).notNull(),
+  name: text('name').notNull(),
+  endpoint: text('endpoint'),
+  region: text('region'),
+  bucket: text('bucket'),
+  prefix: text('prefix').notNull().default(''),
+  /** Encrypted JSON {accessKeyId, secretAccessKey}; null for platform locations. */
+  credentials: text('credentials'),
+  permissions: text('permissions', { enum: ['write', 'read_write'] }).notNull(),
+  status: text('status', { enum: ['active', 'unverified', 'broken', 'disabled'] })
+    .notNull()
+    .default('unverified'),
+  lastError: text('last_error'),
+  verifiedAt: ts('verified_at'),
+  createdAt: createdAt(),
+})
+
+/** The id of the deployment's own location, seeded by the first migration. */
+export const PLATFORM_LOCATION_ID = 'platform'
+
+/**
+ * Which locations hold a collection: exactly one primary (today always a
+ * platform location) and any number of mirrors. A row with `organizationId` and
+ * no `collectionId` is an org-wide default inherited by the org's collections.
+ */
+export const placements = sqliteTable(
+  'placements',
+  {
+    id: id(),
+    collectionId: text('collection_id').references(() => collections.id, { onDelete: 'cascade' }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
+    locationId: text('location_id')
+      .notNull()
+      .references(() => storageLocations.id, { onDelete: 'cascade' }),
+    role: text('role', { enum: ['primary', 'mirror'] }).notNull(),
+    sets: text('sets', { enum: ['public', 'public+private'] }).notNull(),
+    state: text('state', { enum: ['active', 'backfilling', 'lagging', 'error', 'paused'] })
+      .notNull()
+      .default('active'),
+    /** The last version (seq) fully copied to this location. */
+    syncedSeq: integer('synced_seq').notNull().default(0),
+    lastError: text('last_error'),
+    updatedAt: ts('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex('placements_one_primary_uq')
+      .on(t.collectionId)
+      .where(sql`${t.role} = 'primary' AND ${t.collectionId} IS NOT NULL`),
+    uniqueIndex('placements_target_location_uq').on(t.collectionId, t.organizationId, t.locationId),
+    index('placements_location_idx').on(t.locationId),
+  ],
+)
+
 // --- Files -------------------------------------------------------------------------
 
 export const files = sqliteTable('files', {

@@ -2,15 +2,16 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { MemoryBlobStore } from '@underlay/repo/blob/memory'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { MemoryBlobStore } from '../src/blob/memory.js'
 import { MemoryCache } from '../src/cache.js'
 import { openNodeDb } from '../src/db/node.js'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs, registerJob, SqliteJobs } from '../src/jobs.js'
 import type { Ports } from '../src/ports.js'
+import { createStores } from '../src/stores.js'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -62,7 +63,11 @@ describe('SQLite jobs', () => {
     const db = await tempDb()
     const ports: Ports = {
       db,
-      blobs: new MemoryBlobStore(),
+      stores: createStores(db, new MemoryCache(), {
+        bucket: new MemoryBlobStore(),
+        repoPrefix: 'repo',
+        internalPrefix: 'internal',
+      }),
       cache: new MemoryCache(),
       jobs: new SqliteJobs(db),
       waitUntil: () => {},
@@ -94,5 +99,47 @@ describe('SQLite jobs', () => {
     expect(await drainSqliteJobs(ports)).toBe(1)
     expect(seen).toContain('flaky ok')
     expect(await db.select().from(schema.jobs)).toEqual([])
+  })
+})
+
+describe('placements', () => {
+  it('resolves a collection to its primary location, and allows only one primary', async () => {
+    const db = await tempDb()
+    const bucket = new MemoryBlobStore()
+    const stores = createStores(db, new MemoryCache(), {
+      bucket,
+      repoPrefix: 'repo',
+      internalPrefix: 'internal',
+    })
+    await db.insert(schema.organization).values({ id: 'org1', name: 'Org', slug: 'org' })
+    const [c] = await db
+      .insert(schema.collections)
+      .values({ organizationId: 'org1', slug: 'c', name: 'C', privateSalt: 'ab'.repeat(32) })
+      .returning()
+    await expect(stores.forCollection(c!.id)).rejects.toThrow(/no primary/)
+    await db.insert(schema.placements).values({
+      collectionId: c!.id,
+      locationId: schema.PLATFORM_LOCATION_ID,
+      role: 'primary',
+      sets: 'public+private',
+    })
+    const repo = await stores.forCollection(c!.id)
+    await repo.putSchema({ type: 'object' })
+    await stores.internal.put('sessions/s1/x', 'y')
+    expect([...bucket.objects.keys()].sort()).toEqual([
+      'internal/sessions/s1/x',
+      expect.stringMatching(/^repo\/schemas\/[0-9a-f]{64}\.json$/),
+    ])
+    await db
+      .insert(schema.storageLocations)
+      .values({ id: 'other', kind: 'platform', name: 'Other', permissions: 'read_write' })
+    await expect(
+      db
+        .insert(schema.placements)
+        .values({ collectionId: c!.id, locationId: 'other', role: 'primary', sets: 'public' }),
+    ).rejects.toThrow()
+    await db
+      .insert(schema.placements)
+      .values({ collectionId: c!.id, locationId: 'other', role: 'mirror', sets: 'public' })
   })
 })

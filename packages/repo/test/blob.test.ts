@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { FsBlobStore, serveSignedBlob } from '../src/blob/fs.js'
 import { MemoryBlobStore } from '../src/blob/memory.js'
 import { S3BlobStore } from '../src/blob/s3.js'
-import type { BlobStore } from '../src/ports.js'
+import type { BlobStore } from '../src/types.js'
 import { type FakeS3, startFakeS3 } from './fake-s3.js'
 
 const enc = new TextEncoder()
