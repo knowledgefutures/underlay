@@ -7,12 +7,11 @@
  * of line in the collection's repository right away, so runs stay small.
  */
 import {
-  type Change,
   compileSchema,
+  emptySet,
   InputRuleError,
   parseRecordLine,
   recordCanonical,
-  type RecordEntry,
   sha256Hex,
   stripToSchema,
   utf8ByteLength,
@@ -28,7 +27,9 @@ import {
   type CommitResult,
   type TypeInput,
 } from '../versions/commit.js'
-import { mergeRuns, type RunEntry, type RunIndex, writeRun } from './runs.js'
+import { deltaChanges, isPrivateSchema } from './changes.js'
+import { planParallel } from './parallel.js'
+import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
   loadInputs,
   nextRunSeq,
@@ -54,8 +55,6 @@ export interface LineError {
 export type IngestResult =
   | { ok: true; received: number }
   | { ok: false; status: 400 | 409 | 422; error: string; details?: LineError[]; total?: number }
-
-const isPrivateSchema = (s: Record<string, unknown>) => s.private === true
 
 function lines(text: string): string[] {
   return text.split('\n').filter((l) => l.trim().length > 0)
@@ -211,13 +210,6 @@ export async function ingestDeletes(
   return { ok: true, received: entries.length }
 }
 
-export const toRecordEntry = (e: RunEntry): RecordEntry => ({
-  key: e.k,
-  hash: e.h!,
-  size: e.s!,
-  body: e.b!,
-})
-
 /** The base a session commits on, from the collection head. */
 export async function headBase(ports: Ports, collectionId: string): Promise<BaseVersion | null> {
   const [row] = await ports.db
@@ -238,11 +230,7 @@ export async function headBase(ports: Ports, collectionId: string): Promise<Base
   }
 }
 
-/**
- * Change streams for a delta session: per type, the merged runs split into the
- * public and private sets. An upsert goes to its set and becomes a delete in the
- * other set (when that set has a tree for the type); a delete goes to both.
- */
+/** Change streams for a delta session: per type, the merged runs split into the two sets. */
 async function typeInputsForDelta(
   ports: Ports,
   session: SessionRow,
@@ -257,21 +245,9 @@ async function typeInputsForDelta(
   const hashes = schemaHashes(inputs.schemas)
   return Object.entries(inputs.schemas).map(([slug, s]) => {
     const privateType = isPrivateSchema(s)
-    const hasPub = !!base.pub[slug]?.root
-    const hasPriv = !!base.priv[slug]?.root
-    const stream = async function* (
-      set: 'public' | 'private',
-    ): AsyncGenerator<Change<RecordEntry>> {
-      for await (const e of mergeRuns(internal, session.id, runs, { type: slug })) {
-        if (e.x) {
-          if (set === 'public' ? hasPub : hasPriv) yield { key: e.k, entry: null }
-          continue
-        }
-        const target = privateType || e.p ? 'private' : 'public'
-        if (target === set) yield { key: e.k, entry: toRecordEntry(e) }
-        else if (set === 'public' ? hasPub : hasPriv) yield { key: e.k, entry: null }
-      }
-    }
+    const sets = { pub: !!base.pub[slug]?.root, priv: !!base.priv[slug]?.root }
+    const stream = (set: 'public' | 'private') =>
+      deltaChanges(internal, session.id, runs, slug, set, privateType, sets)
     return {
       slug,
       schema: s,
@@ -286,7 +262,9 @@ async function typeInputsForDelta(
 export async function commitDeltaSession(
   ports: Ports,
   session: SessionRow,
-): Promise<CommitResult | { status: 'base_moved'; current: string | null }> {
+): Promise<
+  CommitResult | { status: 'base_moved'; current: string | null } | { status: 'parallel' }
+> {
   const base = await headBase(ports, session.collectionId)
   if ((base?.id ?? null) !== session.baseVersionId) {
     return { status: 'base_moved', current: base?.semver ?? null }
@@ -296,6 +274,10 @@ export async function commitDeltaSession(
   const repo = await ports.stores.forCollection(session.collectionId)
   const root = base ? await repo.root(base.hash) : null
   const priv = root?.private ? await repo.privateSet(root.private) : null
+  const sets = { pub: root?.public ?? emptySet(), priv: priv ?? emptySet() }
+  if (await planParallel(ports, session, { inputs, runs, base, repo, ...sets })) {
+    return { status: 'parallel' }
+  }
   const declared = 'all' in inputs.files ? null : inputs.files
   return commitVersion(ports, {
     collectionId: session.collectionId,

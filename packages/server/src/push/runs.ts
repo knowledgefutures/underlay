@@ -68,6 +68,8 @@ export interface RunBlock {
    * planner reads no data.
    */
   marks?: string[]
+  /** Some upsert in the block was pushed as private. */
+  p?: true
 }
 
 export interface RunIndex {
@@ -112,6 +114,7 @@ export class RunWriter {
   readonly #blocks: RunBlock[] = []
   #lines: string[] = []
   #marks: string[] = []
+  #private = false
   #first: string | null = null
   #last: string | null = null
   #bytes = 0
@@ -140,6 +143,7 @@ export class RunWriter {
     this.#last = key
     this.#lines.push(line)
     if (!e.x && isMark(e.k)) this.#marks.push(key)
+    if (e.p) this.#private = true
     this.#bytes += line.length
     if (this.#bytes >= BLOCK_BYTES) this.#flushBlock()
   }
@@ -152,9 +156,11 @@ export class RunWriter {
       last: this.#last!,
       count: this.#lines.length,
       ...(this.#marks.length > 0 ? { marks: this.#marks } : {}),
+      ...(this.#private ? { p: true as const } : {}),
     }
     this.#lines = []
     this.#marks = []
+    this.#private = false
     this.#bytes = 0
     this.#first = null
     this.#queued++
@@ -246,18 +252,33 @@ export function inRunRange(range: RunRange, e: { t: string; k: string }): boolea
   )
 }
 
-/** The blocks of a run that can hold entries in the range. */
+/**
+ * The blocks of a run that can hold entries in the range: a contiguous span,
+ * found by binary search (blocks are sorted and disjoint).
+ */
 export function blocksInRange(index: RunIndex, range?: RunRange): RunBlock[] {
   if (!range) return index.blocks
   // Every key of the type sorts after `type\0` and before `type\u0001`.
   const lo = `${range.type}\u0000${range.after ?? ''}`
   const hi = range.through == null ? `${range.type}\u0001` : `${range.type}\u0000${range.through}`
   const hiInclusive = range.through != null
-  return index.blocks.filter(
-    (b) =>
-      compareUtf8(b.last, lo) > 0 &&
-      (hiInclusive ? compareUtf8(b.first, hi) <= 0 : compareUtf8(b.first, hi) < 0),
+  const blocks = index.blocks
+  // The first block whose last key is past `lo`, and the first block starting past `hi`.
+  const search = (pred: (b: RunBlock) => boolean) => {
+    let a = 0
+    let z = blocks.length
+    while (a < z) {
+      const m = (a + z) >> 1
+      if (pred(blocks[m]!)) z = m
+      else a = m + 1
+    }
+    return a
+  }
+  const start = search((b) => compareUtf8(b.last, lo) > 0)
+  const end = search((b) =>
+    hiInclusive ? compareUtf8(b.first, hi) > 0 : compareUtf8(b.first, hi) >= 0,
   )
+  return blocks.slice(start, Math.max(start, end))
 }
 
 /**

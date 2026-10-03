@@ -27,9 +27,13 @@ import { emptyStats, type KeyRange, type MergeResult } from './merge.js'
 import type { NodeDesc } from './node.js'
 import { type NodeSource, resolveRoot, rootDesc } from './source.js'
 
-/** One unit's output: its range and the leaves it produced, in key order. */
+/**
+ * One unit's output: its range and the leaves it produced, in key order. The
+ * leaves can be a loader, called once when assembly reaches the segment, so a
+ * large commit never holds every unit's leaves at once.
+ */
 export interface Segment extends KeyRange {
-  leaves: readonly NodeDesc[]
+  leaves: readonly NodeDesc[] | (() => Promise<readonly NodeDesc[]>)
 }
 
 /** Build the new tree from the base and the units' segments. */
@@ -59,8 +63,9 @@ export async function assembleTree<E>(
   let all = false
   const isCovered = (key: string) => all || (covered !== null && compareUtf8(key, covered) <= 0)
 
-  const emit = (seg: Segment) => {
-    for (const leaf of seg.leaves) builder.addNode(leaf)
+  const emit = async (seg: Segment) => {
+    const leaves = typeof seg.leaves === 'function' ? await seg.leaves() : seg.leaves
+    for (const leaf of leaves) builder.addNode(leaf)
     if (seg.through === null) all = true
     else covered = seg.through
     head++
@@ -106,7 +111,7 @@ export async function assembleTree<E>(
             }
           }
         }
-        emit(seg)
+        await emit(seg)
         if (all) return
       }
       // The tail of a base leaf straddling an inserted `through`.
@@ -132,7 +137,7 @@ export async function assembleTree<E>(
     stats.readNodes++
     await visit(await rootDesc(source, base), true, null)
   }
-  while (head < segments.length) emit(segments[head]!)
+  while (head < segments.length) await emit(segments[head]!)
 
   const { root, unresolved } = builder.finish()
   return { root: root && unresolved ? await resolveRoot(source, root) : root, stats }

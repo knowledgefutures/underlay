@@ -31,7 +31,8 @@ import { type Repo, RepoSource } from '@underlay/repo'
 import type { Ports } from '../ports.js'
 import { type CommitResult, commitVersion, type TypeInput } from '../versions/commit.js'
 import { declaredFiles } from '../versions/file-refs.js'
-import { headBase, toRecordEntry } from './delta.js'
+import { isPrivateSchema, toRecordEntry } from './changes.js'
+import { headBase } from './delta.js'
 import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'
 import {
   loadInputs,
@@ -42,7 +43,6 @@ import {
 } from './session.js'
 
 const HEX64 = /^[0-9a-f]{64}$/
-const isPrivateSchema = (s: Record<string, unknown>) => s.private === true
 
 export interface ManifestLine {
   id: string

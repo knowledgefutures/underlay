@@ -487,6 +487,10 @@ export const pushSessions = sqliteTable(
     result: json<Record<string, unknown>>('result'),
     error: json<{ statusCode: number; error: string; [k: string]: unknown }>('error'),
     finalizeStartedAt: ts('finalize_started_at'),
+    /** A parallel commit's plan (push/parallel.ts): set once, when its units are queued. */
+    commitPlan: text('commit_plan'),
+    /** Held by the `commit.assemble` job while it runs (one assembler at a time). */
+    assemblyLease: ts('assembly_lease'),
     createdAt: createdAt(),
     expiresAt: ts('expires_at').notNull(),
   },
@@ -520,6 +524,40 @@ export const pushRuns = sqliteTable(
     primaryKey({ columns: [t.sessionId, t.seq] }),
     index('push_runs_tier_idx').on(t.sessionId, t.tier, t.mergingInto),
   ],
+)
+
+export type CommitUnitStatus = 'pending' | 'done' | 'failed' | 'superseded'
+
+/**
+ * One key range of one (set, type) tree in a parallel commit (push/parallel.ts).
+ * A gap is a range with no changes, left to assembly. A unit whose `through`
+ * was deleted ends `failed`; assembly merges it with the following ranges into
+ * a new unit and marks the old ones `superseded`.
+ */
+export const commitUnits = sqliteTable(
+  'commit_units',
+  {
+    id: id(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => pushSessions.id, { onDelete: 'cascade' }),
+    planId: text('plan_id').notNull(),
+    set: text('set', { enum: ['public', 'private'] }).notNull(),
+    type: text('type').notNull(),
+    /** Position in the tree's key order; a merged unit takes its first member's. */
+    ord: integer('ord').notNull(),
+    /** The range `(after, through]`; null is unbounded. */
+    after: text('after'),
+    through: text('through'),
+    gap: bool('gap').notNull().default(false),
+    status: text('status').$type<CommitUnitStatus>().notNull().default('pending'),
+    /** The unit's run slices (the blocks it reads), in the internal area. */
+    slicesKey: text('slices_key'),
+    /** Leaves, change counts and file reference deltas, in the internal area. */
+    outputKey: text('output_key'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('commit_units_plan_idx').on(t.planId, t.set, t.type, t.ord)],
 )
 
 // --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------

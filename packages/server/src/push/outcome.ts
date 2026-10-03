@@ -1,0 +1,105 @@
+/**
+ * What a finished commit means for its push session: the HTTP status and body a
+ * client sees (synchronously, or by polling after an async commit), and the
+ * session's final state. Shared by finalize.ts and the parallel commit's
+ * assembly (parallel.ts).
+ */
+import type { Ports } from '../ports.js'
+import type { CommitResult } from '../versions/commit.js'
+import { MissingFilesError } from '../versions/file-refs.js'
+import { transition } from './session.js'
+
+export interface Outcome {
+  /** 202: a parallel commit is still running. */
+  status: 201 | 202 | 409 | 422 | 400
+  body: Record<string, unknown>
+}
+
+export type SessionCommitResult =
+  | CommitResult
+  | { status: 'base_moved'; current: string | null }
+  | { status: 'manifest_error'; body: Record<string, unknown> }
+  | { status: 'parallel' }
+
+export const pendingOutcome = (sessionId: string): Outcome => ({
+  status: 202,
+  body: { session_id: sessionId, status: 'committing' },
+})
+
+/** Run a commit and map its result (or a missing-files rejection) to an outcome. */
+export async function commitOutcome(
+  sessionId: string,
+  run: () => Promise<SessionCommitResult>,
+): Promise<Outcome> {
+  let r: SessionCommitResult
+  try {
+    r = await run()
+  } catch (err) {
+    if (!(err instanceof MissingFilesError)) throw err
+    return {
+      status: 422,
+      body: {
+        error: 'Missing files',
+        filesNeeded: err.hashes.slice(0, 100).map((h) => `sha256:${h}`),
+        statusCode: 422,
+      },
+    }
+  }
+  switch (r.status) {
+    case 'committed':
+      return {
+        status: 201,
+        body: {
+          semver: r.version.semver,
+          hash: r.version.hash,
+          recordCount: r.version.recordCount,
+          fileCount: r.version.fileCount,
+          changes: r.version.changes,
+        },
+      }
+    case 'no_changes':
+      return {
+        status: 409,
+        body: {
+          error: 'No changes detected',
+          message: 'The head version already has identical content.',
+          hash: r.versionHash,
+          statusCode: 409,
+        },
+      }
+    case 'conflict':
+    case 'base_moved':
+      return { status: 409, body: { error: 'Version conflict', statusCode: 409 } }
+    case 'manifest_error':
+      return { status: 400, body: r.body }
+    case 'invalid':
+      return {
+        status: 422,
+        body: {
+          error: 'Schema validation failed',
+          validationErrors: r.errors,
+          totalErrors: r.total,
+          statusCode: 422,
+        },
+      }
+    case 'parallel':
+      return pendingOutcome(sessionId)
+  }
+}
+
+/** Record a final outcome on the session (committing → committed | failed). */
+export async function settleSession(
+  ports: Ports,
+  sessionId: string,
+  outcome: Outcome,
+): Promise<void> {
+  if (outcome.status === 202) return
+  const ok = outcome.status === 201
+  await transition(
+    ports,
+    sessionId,
+    'committing',
+    ok ? 'committed' : 'failed',
+    ok ? { result: outcome.body } : { error: outcome.body as never },
+  )
+}

@@ -85,6 +85,17 @@ export interface CommitInput {
   pushedBy?: string | null
   appId?: string | null
   actorId?: string | null
+  /**
+   * Trees already merged by a parallel commit (push/parallel.ts), per type, with
+   * the file reference deltas and change counts of the units that built them.
+   * The types' change sources are then ignored. Only for commits where no type
+   * changes privacy or schema and none is removed.
+   */
+  prebuilt?: {
+    trees: Record<string, { public: TreeSummary; private: TreeSummary }>
+    refs: FileRefDelta
+    stats: { added: number; removed: number; updated: number }
+  }
   /** Validate a record's data against its type's schema; errors or null. Used when a schema changes. */
   validate?: (schema: Record<string, unknown>, data: unknown) => string[] | null
   /**
@@ -184,9 +195,9 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     dropPayload: dropRecordBody,
     spillBytes: SPILL_BYTES,
   }
-  const refs = new FileRefDelta()
-  const stats = { added: 0, removed: 0, updated: 0 }
-  let recordsChanged = false
+  const refs = input.prebuilt?.refs ?? new FileRefDelta()
+  const stats = input.prebuilt ? { ...input.prebuilt.stats } : { added: 0, removed: 0, updated: 0 }
+  let recordsChanged = stats.added + stats.removed + stats.updated > 0
 
   const newPublic: SetObject = emptySet()
   const newPrivate: SetObject = emptySet()
@@ -227,6 +238,18 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     const pubBase = basePublic.types[t.slug]
     const privBase = basePrivate.types[t.slug]
     if ((pubBase ?? privBase)?.schema !== t.schemaHash) schemaChanged = true
+    const prebuilt = input.prebuilt?.trees[t.slug]
+    if (input.prebuilt) {
+      if (!prebuilt) throw new Error(`Parallel commit has no trees for type ${t.slug}`)
+      if (isPrivateSchema(t.schema)) {
+        newPrivate.types[t.slug] = { schema: t.schemaHash, ...prebuilt.private }
+      } else {
+        newPublic.types[t.slug] = { schema: t.schemaHash, ...prebuilt.public }
+        if (prebuilt.private.root)
+          newPrivate.types[t.slug] = { schema: t.schemaHash, ...prebuilt.private }
+      }
+      continue
+    }
     const nowPrivate = isPrivateSchema(t.schema)
     const wasPrivateType = !pubBase && !!privBase
     const pubChanges = t.public ? asAsync(t.public) : null
