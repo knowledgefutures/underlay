@@ -21,7 +21,7 @@ export const VERSION_HASH_PREFIX = 'ulv2:'
 /** A leaf ends after a key whose boundary hash has at least this many trailing zero bits (mean 1,024 entries). */
 export const LEAF_BOUNDARY_BITS = 10
 /** Forced leaf split: a leaf never holds more entries than this. */
-export const LEAF_MAX_ENTRIES = 16_384
+export const LEAF_MAX_ENTRIES = 8_192
 /** Level i ≥ 1 needs LEAF_BOUNDARY_BITS + i × this many trailing zero bits (mean fanout 64). */
 export const INTERIOR_BOUNDARY_BITS_STEP = 6
 /** Forced interior split: an interior node never holds more children than this. */

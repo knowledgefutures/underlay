@@ -1,0 +1,525 @@
+{
+  "format": 2,
+  "generatedBy": "packages/core/scripts/gen-vectors.ts",
+  "constants": {
+    "FORMAT_VERSION": 2,
+    "INTERIOR_BOUNDARY_BITS_STEP": 6,
+    "INTERIOR_MAX_CHILDREN": 1024,
+    "LEAF_BOUNDARY_BITS": 10,
+    "LEAF_MAX_ENTRIES": 8192,
+    "MAX_ID_BYTES": 1024,
+    "MAX_JSON_DEPTH": 64,
+    "MAX_RECORD_BYTES": 8388608,
+    "MAX_SAFE_INTEGER_LITERAL": "9007199254740991",
+    "MAX_SCHEMA_BYTES": 262144,
+    "MAX_TYPE_BYTES": 128,
+    "VERSION_HASH_PREFIX": "ulv2:"
+  },
+  "jcs": [
+    {
+      "input": "{\"b\":1,\"a\":2}",
+      "output": "{\"a\":2,\"b\":1}"
+    },
+    {
+      "input": "{\"9\":3,\"10\":2,\"a\":1}",
+      "output": "{\"10\":2,\"9\":3,\"a\":1}"
+    },
+    {
+      "input": "{\"numbers\":[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001,-0,1e21,1e-7]}",
+      "output": "{\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27,0,1e+21,1e-7]}"
+    },
+    {
+      "input": "{\"\\u20ac\":1,\"\\r\":2,\"\\ufb33\":3,\"1\":4,\"\\ud83d\\ude00\":5,\"\\u0080\":6,\"\\u00f6\":7}",
+      "output": "{\"\\r\":2,\"1\":4,\"\":6,\"ö\":7,\"€\":1,\"😀\":5,\"דּ\":3}"
+    },
+    {
+      "input": "{\"s\":\"\\u0000\\u001f\\\"\\\\\\/\\b\\f\\n\\r\\t\\u007f\\u2028é😀\"}",
+      "output": "{\"s\":\"\\u0000\\u001f\\\"\\\\/\\b\\f\\n\\r\\t é😀\"}"
+    },
+    {
+      "input": "[[],{},[{}],null,true,false,0,\"\",[1,[2,[3]]]]",
+      "output": "[[],{},[{}],null,true,false,0,\"\",[1,[2,[3]]]]"
+    },
+    {
+      "input": "{\"e\\u0301\":1,\"\\u00e9\":2}",
+      "output": "{\"é\":1,\"é\":2}"
+    }
+  ],
+  "inputRules": [
+    {
+      "line": "{\"id\":\"r1\",\"type\":\"Author\",\"data\":{\"name\":\"Ada\",\"year\":1815}}",
+      "ok": true,
+      "canonical": "{\"id\":\"r1\",\"type\":\"Author\",\"data\":{\"name\":\"Ada\",\"year\":1815}}",
+      "hash": "adefbd10aa438f0c6ed1627817f391ac6cc0441737ee09b4ebcc30fbd8386c63"
+    },
+    {
+      "line": "{\"type\":\"Author\",\"data\":{\"year\":1815,\"name\":\"Ada\"},\"id\":\"r1\",\"private\":true}",
+      "ok": true,
+      "canonical": "{\"id\":\"r1\",\"type\":\"Author\",\"data\":{\"name\":\"Ada\",\"year\":1815}}",
+      "hash": "adefbd10aa438f0c6ed1627817f391ac6cc0441737ee09b4ebcc30fbd8386c63"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":1,\"a\":2}}",
+      "ok": false,
+      "error": "duplicate_key"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":1,\"\\u0061\":2}}",
+      "ok": false,
+      "error": "duplicate_key"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"x\":{\"a\":1},\"y\":{\"a\":1}}}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"x\":{\"a\":1},\"y\":{\"a\":1}}}",
+      "hash": "edec381ac18eef8cc201472a6a9c1900fcc423eda52191d6e95cf96aeb42e3c0"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":9007199254740991}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":9007199254740991}",
+      "hash": "5ece22156b8f1998b32f1d55690ab678ed56ef26fb77efa3ca3e7cdeceea9014"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":9007199254740992}",
+      "ok": false,
+      "error": "unsafe_integer"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":-9007199254740992}",
+      "ok": false,
+      "error": "unsafe_integer"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":[1e20,6.02e23,9007199254740993.0]}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":[100000000000000000000,6.02e+23,9007199254740992]}",
+      "hash": "3dbe19a933d5f58f671e585d69e9a2a8821e99b21b9251d500c69dcaef8d1b99"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"\\ud83d\\ude00\"}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"😀\"}",
+      "hash": "954aa6984679f11f06cd47ba3cf7f0cfbb90025622f4bd3b950e307e3d6c42e6"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"\\ud83d\"}",
+      "ok": false,
+      "error": "lone_surrogate"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"\\ude00\"}",
+      "ok": false,
+      "error": "lone_surrogate"
+    },
+    {
+      "line": "{\"id\":\"\\u00e9\",\"type\":\"t\",\"data\":1}",
+      "ok": true,
+      "canonical": "{\"id\":\"é\",\"type\":\"t\",\"data\":1}",
+      "hash": "727990d1c3826f31ce44381963232c96e401f5032a93340006aac42d5c828b3b"
+    },
+    {
+      "line": "{\"id\":\"e\\u0301\",\"type\":\"t\",\"data\":1}",
+      "ok": true,
+      "canonical": "{\"id\":\"é\",\"type\":\"t\",\"data\":1}",
+      "hash": "18e9735e8c9dacb7b9fff7fa443fc2524850405c24affa7d5cbd03c9412d5b42"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+      "hash": "8ba61dc6000260fb0836c65cfdd3510a8124d231d9552e643aea595bc182c2a3"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+      "ok": false,
+      "error": "too_deep"
+    },
+    {
+      "line": "{\"id\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"type\":\"t\",\"data\":1}",
+      "ok": true,
+      "canonical": "{\"id\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"type\":\"t\",\"data\":1}",
+      "hash": "678076cecc40fc4cdd0352e4b3ec9124c8fce4830526aa1c2f20e0b4970ba5fc"
+    },
+    {
+      "line": "{\"id\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"type\":\"t\",\"data\":1}",
+      "ok": false,
+      "error": "bad_id"
+    },
+    {
+      "line": "{\"id\":\"\",\"type\":\"t\",\"data\":1}",
+      "ok": false,
+      "error": "bad_id"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"a/b\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\"}",
+      "ok": false,
+      "error": "bad_envelope"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"9\":3,\"10\":2}}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"10\":2,\"9\":3}}",
+      "hash": "b551945866116dcfa7737f4e687c4ffac0dcd4b2da992b1fb2a74d38a72bfe05"
+    }
+  ],
+  "recordHashes": [
+    {
+      "id": "r1",
+      "type": "Author",
+      "data": {
+        "name": "Ada",
+        "year": 1815
+      },
+      "hash": "adefbd10aa438f0c6ed1627817f391ac6cc0441737ee09b4ebcc30fbd8386c63",
+      "canonical": "{\"id\":\"r1\",\"type\":\"Author\",\"data\":{\"name\":\"Ada\",\"year\":1815}}"
+    },
+    {
+      "id": "r2",
+      "type": "Pub",
+      "data": {
+        "title": "On Computable Numbers",
+        "refs": [
+          {
+            "$file": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "hash": "0f96d6e03006818b0e48479a6e4317598c9e570e28b68cbff452bfb622d8d919",
+      "canonical": "{\"id\":\"r2\",\"type\":\"Pub\",\"data\":{\"refs\":[{\"$file\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"title\":\"On Computable Numbers\"}}"
+    },
+    {
+      "id": "9",
+      "type": "T",
+      "data": {
+        "9": "y",
+        "10": "x",
+        "z": [1.5, null, true]
+      },
+      "hash": "ff47fdde5857af087fbb016abdc6b0983b78634e6eaab49b184cde1694e15c6d",
+      "canonical": "{\"id\":\"9\",\"type\":\"T\",\"data\":{\"10\":\"x\",\"9\":\"y\",\"z\":[1.5,null,true]}}"
+    },
+    {
+      "id": "😀",
+      "type": "Émoji",
+      "data": "plain string data",
+      "hash": "3bbf6c464350187596dddc952fba294126ae3a62b962b078d7ba3a723f1f6582",
+      "canonical": "{\"id\":\"😀\",\"type\":\"Émoji\",\"data\":\"plain string data\"}"
+    }
+  ],
+  "schemaHashes": [
+    {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "canonical": "{\"properties\":{\"name\":{\"type\":\"string\"}},\"type\":\"object\"}",
+      "hash": "2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2"
+    },
+    {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "1": {
+            "type": "string"
+          },
+          "10": {
+            "type": "integer"
+          }
+        },
+        "private": true
+      },
+      "canonical": "{\"private\":true,\"properties\":{\"1\":{\"type\":\"string\"},\"10\":{\"type\":\"integer\"}},\"type\":\"object\"}",
+      "hash": "2e61ca37bf92bd289753852ae33a88ec3df6e6606b761d4b0199cfd30a850ded"
+    }
+  ],
+  "boundary": [
+    {
+      "key": "",
+      "u": "e3b0c44298fc1c14",
+      "trailingZeros": 2
+    },
+    {
+      "key": "a",
+      "u": "ca978112ca1bbdca",
+      "trailingZeros": 1
+    },
+    {
+      "key": "r0",
+      "u": "dd191696e15e2ee2",
+      "trailingZeros": 1
+    },
+    {
+      "key": "k12345",
+      "u": "054b40ca4964a150",
+      "trailingZeros": 4
+    },
+    {
+      "key": "😀",
+      "u": "f0443a342c5ef547",
+      "trailingZeros": 0
+    },
+    {
+      "key": "é",
+      "u": "bf12767b0f2a56b2",
+      "trailingZeros": 1
+    },
+    {
+      "key": "b525",
+      "u": "9de5e591b68ce800",
+      "trailingZeros": 11
+    },
+    {
+      "key": "b54026",
+      "u": "e36ea7df953a0000",
+      "trailingZeros": 17
+    }
+  ],
+  "keyOrder": ["", "Z", "a", "aa", "b", "é", "", "", "é", "", "￿", "😀"],
+  "nodes": {
+    "leaf": {
+      "keys": ["a", "b", "c"],
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key",
+      "hash": "7453c994a2387a24e5074f003b2b23660f9c310c0da3142c61981976817bcafa",
+      "json": "{\"e\":[[\"a\",\"6d3f26485cae4e156436aba786fad1ba0a2f7777525ed0835ca983d3dcca34c9\",38],[\"b\",\"3676805073b7e99c07673ec1c85a9da7383d1dfe7f6723c4c0b18b4459973421\",38],[\"c\",\"e4d4edd2615ca27ec9a5d5dd9f7328e10f325aa9836d17955a236c44073828ee\",38]],\"t\":\"leaf\"}"
+    },
+    "interior": {
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys \"r0\"..\"r2999\"; the root node",
+      "hash": "07af5e7b6a4395a189fcad73dcd10f0d57381838e60dd6bd5dd4ef701cff3618",
+      "json": "{\"e\":[[\"r2936\",\"a79185f218e237eb4199fbcede4cfcf83a1ff219b6da1270b9a2936eb3757372\",2154,98598],[\"r633\",\"e52ef8ca8081b67f556066e7a8716aef26d6cec5a653cb680b54a4d739346941\",441,19446],[\"r95\",\"9b54ff0cf254dd6c04c156b344be82e4134be503cf6d6328d63509705e2617a8\",351,15368],[\"r999\",\"54c1584f0968be01c571de2fdd3133a4c1227d17e3302b1b84f5286d9e424901\",54,2368]],\"l\":1,\"t\":\"node\"}"
+    }
+  },
+  "trees": [
+    {
+      "name": "empty",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; no keys",
+      "entries": 0,
+      "root": null,
+      "count": 0,
+      "bytes": 0,
+      "height": 0,
+      "nodesPerLevel": []
+    },
+    {
+      "name": "one",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys [\"only\"]",
+      "entries": 1,
+      "root": "691bf271695bfcfa5bdf79182bbe47d51aef8bf68278b0cd3a2c1f006094fc34",
+      "count": 1,
+      "bytes": 44,
+      "height": 1,
+      "nodesPerLevel": [1]
+    },
+    {
+      "name": "small",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys \"r0\"..\"r999\"",
+      "entries": 1000,
+      "root": "ea81aa2788dfedb958068212effe511ea75d4ce094a2ce66e9b7cd70f77a93ed",
+      "count": 1000,
+      "bytes": 43780,
+      "height": 2,
+      "nodesPerLevel": [3, 1],
+      "leafSizes": [595, 351, 54]
+    },
+    {
+      "name": "medium",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys \"r0\"..\"r99999\"",
+      "entries": 100000,
+      "root": "0e8532a8b014b2c0ec4895d582f7469390e38ed011305dbef315b501a34dc701",
+      "count": 100000,
+      "bytes": 4777780,
+      "height": 3,
+      "nodesPerLevel": [122, 4, 1]
+    },
+    {
+      "name": "unicode",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys \"é<i>\", \"e\\u0301<i>\", \"😀<i>\", \"\\uffff<i>\" for i in 0..2499",
+      "entries": 10000,
+      "root": "c167944c45a676e0355920757ebdf4c6308a3554f6cb8a36d3e5833636ad5ec4",
+      "count": 10000,
+      "bytes": 491120,
+      "height": 2,
+      "nodesPerLevel": [11, 1],
+      "leafSizes": [735, 555, 707, 275, 2250, 609, 217, 1649, 622, 1619, 762]
+    },
+    {
+      "name": "forced-leaf-splits",
+      "recipe": "entries: for each key, hashRecord(key, \"T\", {\"k\": key}) → [key, hash, UTF-8 length of the canonical record]; sorted by key; keys \"f<i>\" for i in 0..19999 whose boundary hash has fewer than 10 trailing zero bits (no natural leaf boundary at all)",
+      "entries": 19981,
+      "root": "368f46bae82edcb837de3e6e2fa612703b9a2cc3ad52ff9f826e6b126464afe9",
+      "count": 19981,
+      "bytes": 936900,
+      "height": 2,
+      "nodesPerLevel": [3, 1],
+      "leafSizes": [8192, 8192, 3597]
+    }
+  ],
+  "fileTree": {
+    "recipe": "entries: key = sha256Hex(\"file<i>\"), size = i × 1000 + 1, for i in 0..2999; sorted by key",
+    "root": "8398cadc93b9896cea5bf7f08ccfdaf4e2420c29bf71d23fdaeadfb657307e39",
+    "count": 3000,
+    "bytes": 4498503000
+  },
+  "roots": [
+    {
+      "name": "public-only",
+      "root": {
+        "underlay": 2,
+        "metadata": {
+          "9": "y",
+          "10": "x",
+          "name": "Vector collection",
+          "readme": "# Hi\n",
+          "tags": ["a", "b"]
+        },
+        "public": {
+          "types": {
+            "Author": {
+              "schema": "2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2",
+              "root": "ea81aa2788dfedb958068212effe511ea75d4ce094a2ce66e9b7cd70f77a93ed",
+              "count": 1000,
+              "bytes": 43780
+            },
+            "Empty": {
+              "schema": "2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2",
+              "root": null,
+              "count": 0,
+              "bytes": 0
+            }
+          },
+          "files": {
+            "root": "8398cadc93b9896cea5bf7f08ccfdaf4e2420c29bf71d23fdaeadfb657307e39",
+            "count": 3000,
+            "bytes": 4498503000
+          }
+        },
+        "private": null
+      },
+      "canonical": "{\"metadata\":{\"10\":\"x\",\"9\":\"y\",\"name\":\"Vector collection\",\"readme\":\"# Hi\\n\",\"tags\":[\"a\",\"b\"]},\"private\":null,\"public\":{\"files\":{\"bytes\":4498503000,\"count\":3000,\"root\":\"8398cadc93b9896cea5bf7f08ccfdaf4e2420c29bf71d23fdaeadfb657307e39\"},\"types\":{\"Author\":{\"bytes\":43780,\"count\":1000,\"root\":\"ea81aa2788dfedb958068212effe511ea75d4ce094a2ce66e9b7cd70f77a93ed\",\"schema\":\"2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2\"},\"Empty\":{\"bytes\":0,\"count\":0,\"root\":null,\"schema\":\"2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2\"}}},\"underlay\":2}",
+      "versionHash": "ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1"
+    },
+    {
+      "name": "with-private",
+      "privateSet": {
+        "types": {
+          "Secret": {
+            "schema": "2e61ca37bf92bd289753852ae33a88ec3df6e6606b761d4b0199cfd30a850ded",
+            "root": "7453c994a2387a24e5074f003b2b23660f9c310c0da3142c61981976817bcafa",
+            "count": 3,
+            "bytes": 114
+          }
+        },
+        "files": {
+          "root": null,
+          "count": 0,
+          "bytes": 0
+        },
+        "salt": "9bd47d892258c4edb74ef4824f8fc23bb9e09267623afce8bc6e6e098257d84c"
+      },
+      "privateCanonical": "{\"files\":{\"bytes\":0,\"count\":0,\"root\":null},\"salt\":\"9bd47d892258c4edb74ef4824f8fc23bb9e09267623afce8bc6e6e098257d84c\",\"types\":{\"Secret\":{\"bytes\":114,\"count\":3,\"root\":\"7453c994a2387a24e5074f003b2b23660f9c310c0da3142c61981976817bcafa\",\"schema\":\"2e61ca37bf92bd289753852ae33a88ec3df6e6606b761d4b0199cfd30a850ded\"}}}",
+      "commitment": "77c3bd2fc048eae2b77d74d765f1e5699b4fc27662668dc84165d6cf597ea811",
+      "root": {
+        "underlay": 2,
+        "metadata": {
+          "9": "y",
+          "10": "x",
+          "name": "Vector collection",
+          "readme": "# Hi\n",
+          "tags": ["a", "b"]
+        },
+        "public": {
+          "types": {
+            "Author": {
+              "schema": "2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2",
+              "root": "ea81aa2788dfedb958068212effe511ea75d4ce094a2ce66e9b7cd70f77a93ed",
+              "count": 1000,
+              "bytes": 43780
+            },
+            "Empty": {
+              "schema": "2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2",
+              "root": null,
+              "count": 0,
+              "bytes": 0
+            }
+          },
+          "files": {
+            "root": "8398cadc93b9896cea5bf7f08ccfdaf4e2420c29bf71d23fdaeadfb657307e39",
+            "count": 3000,
+            "bytes": 4498503000
+          }
+        },
+        "private": "77c3bd2fc048eae2b77d74d765f1e5699b4fc27662668dc84165d6cf597ea811"
+      },
+      "canonical": "{\"metadata\":{\"10\":\"x\",\"9\":\"y\",\"name\":\"Vector collection\",\"readme\":\"# Hi\\n\",\"tags\":[\"a\",\"b\"]},\"private\":\"77c3bd2fc048eae2b77d74d765f1e5699b4fc27662668dc84165d6cf597ea811\",\"public\":{\"files\":{\"bytes\":4498503000,\"count\":3000,\"root\":\"8398cadc93b9896cea5bf7f08ccfdaf4e2420c29bf71d23fdaeadfb657307e39\"},\"types\":{\"Author\":{\"bytes\":43780,\"count\":1000,\"root\":\"ea81aa2788dfedb958068212effe511ea75d4ce094a2ce66e9b7cd70f77a93ed\",\"schema\":\"2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2\"},\"Empty\":{\"bytes\":0,\"count\":0,\"root\":null,\"schema\":\"2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2\"}}},\"underlay\":2}",
+      "versionHash": "ulv2:c9998bb6ea5063e913226f6b612841dd02b87babf0d7826dce7635d02185f53c"
+    }
+  ],
+  "fileRefs": [
+    {
+      "data": {
+        "f": {
+          "$file": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "refs": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    },
+    {
+      "data": {
+        "list": [
+          {
+            "$file": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "nested": {
+              "$file": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "extra": {
+                "$file": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+              }
+            }
+          }
+        ]
+      },
+      "refs": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ]
+    },
+    {
+      "data": {
+        "f": {
+          "$file": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "g": {
+          "$file": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "h": {
+          "$file": 1,
+          "inner": {
+            "$file": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      },
+      "refs": ["ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+    },
+    {
+      "data": [
+        {
+          "$file": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "$file": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "refs": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    }
+  ]
+}

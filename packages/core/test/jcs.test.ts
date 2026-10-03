@@ -28,9 +28,12 @@ describe('jcs', () => {
         '"1":"One","\\ud83d\\ude00":"Emoji: Grinning Face","\\u0080":"Control",' +
         '"\\u00f6":"Latin Small Letter O With Diaeresis"}',
     )
+    // Built from code points: the formatter turns \u escapes into literal
+    // characters, and U+FB33 would not survive an NFC-normalizing editor.
+    const k = (cp: number) => JSON.stringify(String.fromCodePoint(cp))
     expect(jcs(input)).toBe(
-      '{"\\r":"Carriage Return","1":"One","\u0080":"Control","ö":"Latin Small Letter O With Diaeresis",' +
-        '"€":"Euro Sign","😀":"Emoji: Grinning Face","דּ":"Hebrew Letter Dalet With Dagesh"}',
+      `{"\\r":"Carriage Return","1":"One",${k(0x80)}:"Control",${k(0xf6)}:"Latin Small Letter O With Diaeresis",` +
+        `${k(0x20ac)}:"Euro Sign",${k(0x1f600)}:"Emoji: Grinning Face",${k(0xfb33)}:"Hebrew Letter Dalet With Dagesh"}`,
     )
   })
 
