@@ -510,9 +510,16 @@ export const pushRuns = sqliteTable(
     /** Run key range, `type\u0000id`, for planning commit units. */
     firstKey: text('first_key').notNull(),
     lastKey: text('last_key').notNull(),
+    /** 0 for an upload; n for a run compacted from tier n − 1 (push/compact.ts). */
+    tier: integer('tier').notNull().default(0),
+    /** Claimed by the compaction writing run `mergingInto`; null while free. */
+    mergingInto: integer('merging_into'),
     createdAt: createdAt(),
   },
-  (t) => [primaryKey({ columns: [t.sessionId, t.seq] })],
+  (t) => [
+    primaryKey({ columns: [t.sessionId, t.seq] }),
+    index('push_runs_tier_idx').on(t.sessionId, t.tier, t.mergingInto),
+  ],
 )
 
 // --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------

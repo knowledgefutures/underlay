@@ -5,12 +5,14 @@
  *                       reference log hang off this (phases 4, 7, 11)
  *   repo.repairLog      rewrite a collection's version log entries that a
  *                       commit failed to write after publishing
+ *   push.compact        merge a full tier of a session's runs (push/compact.ts)
  */
 import { readHead } from '@underlay/repo'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'
 import './files/files.js'
+import './push/compact.js'
 import './refs/log.js'
 import { registerJob } from './jobs.js'
 import { expireSessions } from './push/finalize.js'

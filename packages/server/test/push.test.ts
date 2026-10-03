@@ -107,6 +107,46 @@ describe('delta push', () => {
     expect(kurt?.hash).toBe(hashOf('kurt', { name: 'Kurt' }))
   })
 
+  it('compacts runs during upload, later uploads still winning', async () => {
+    const { h, user, c, base } = await setup()
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id
+    // 40 uploads over 10 ids: each id is rewritten, and a few are deleted then re-added.
+    for (let i = 0; i < 40; i++) {
+      const id = `a${i % 10}`
+      const path = i % 7 === 3 ? 'deletes' : 'records'
+      const res = await h.request(`${base}/push/${sid}/${path}`, {
+        method: 'POST',
+        user,
+        ndjson: [path === 'deletes' ? { type: 'Author', id } : rec(id, { name: `n${i}` })],
+      })
+      expect(res.status).toBe(200)
+      await h.drain()
+    }
+    const runs = await h.ports.db
+      .select()
+      .from(schema.pushRuns)
+      .where(eq(schema.pushRuns.sessionId, sid))
+    expect(runs.some((r) => r.tier === 1)).toBe(true)
+    expect(runs.length).toBeLessThan(40)
+    expect(runs.every((r) => r.mergingInto === null)).toBe(true)
+    const res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(201)
+    // The last write to each id wins: a delete for i % 7 === 3, else the record.
+    const last = new Map<string, number>()
+    for (let i = 0; i < 40; i++) last.set(`a${i % 10}`, i)
+    const repo = await h.ports.stores.forCollection(c.id)
+    const root = await repo.root((await head(h, c.id))!.hash)
+    const source = new RepoSource(recordTree, repo)
+    for (const [id, i] of last) {
+      const e = await getEntry(source, root.public.types.Author!.root, id)
+      expect(e?.hash ?? null).toBe(i % 7 === 3 ? null : hashOf(id, { name: `n${i}` }))
+    }
+  })
+
   it('reports invalid records by line, and the input rules', async () => {
     const { h, user, base } = await setup()
     const sid = (

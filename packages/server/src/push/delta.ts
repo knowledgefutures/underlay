@@ -28,14 +28,7 @@ import {
   type CommitResult,
   type TypeInput,
 } from '../versions/commit.js'
-import {
-  compactRuns,
-  mergeRuns,
-  MERGE_FAN_IN,
-  type RunEntry,
-  type RunIndex,
-  writeRun,
-} from './runs.js'
+import { mergeRuns, type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
   loadInputs,
   nextRunSeq,
@@ -269,7 +262,7 @@ async function typeInputsForDelta(
     const stream = async function* (
       set: 'public' | 'private',
     ): AsyncGenerator<Change<RecordEntry>> {
-      for await (const e of mergeRuns(internal, session.id, runs, slug)) {
+      for await (const e of mergeRuns(internal, session.id, runs, { type: slug })) {
         if (e.x) {
           if (set === 'public' ? hasPub : hasPriv) yield { key: e.k, entry: null }
           continue
@@ -299,10 +292,7 @@ export async function commitDeltaSession(
     return { status: 'base_moved', current: base?.semver ?? null }
   }
   const inputs = await loadInputs(ports, session.id)
-  let runs = await sessionRuns(ports, session.id)
-  if (runs.length > MERGE_FAN_IN) {
-    runs = await compactRuns(ports.stores.internal, session.id, runs, session.runs + 1)
-  }
+  const runs = await sessionRuns(ports, session.id)
   const repo = await ports.stores.forCollection(session.collectionId)
   const root = base ? await repo.root(base.hash) : null
   const priv = root?.private ? await repo.privateSet(root.private) : null

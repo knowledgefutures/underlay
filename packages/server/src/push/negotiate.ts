@@ -32,7 +32,7 @@ import type { Ports } from '../ports.js'
 import { type CommitResult, commitVersion, type TypeInput } from '../versions/commit.js'
 import { declaredFiles } from '../versions/file-refs.js'
 import { headBase, toRecordEntry } from './delta.js'
-import { compactRuns, mergeRuns, MERGE_FAN_IN, type RunEntry, type RunIndex } from './runs.js'
+import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'
 import {
   loadInputs,
   schemaHashes,
@@ -223,9 +223,9 @@ async function planSnapshot(
 
   const stepsFor = (slug: string) =>
     zip(
-      mergeRuns(internal, session.id, manifestRuns, slug),
+      mergeRuns(internal, session.id, manifestRuns, { type: slug }),
       baseEntries(source, trees.pub[slug]?.root ?? null, trees.priv[slug]?.root ?? null),
-      mergeRuns(internal, session.id, recordRuns, slug),
+      mergeRuns(internal, session.id, recordRuns, { type: slug }),
     )
 
   const uploadFor = (st: Step) =>
@@ -299,12 +299,8 @@ export async function commitNegotiateSession(
     return { status: 'base_moved', current: base?.semver ?? null }
   }
   const inputs = await loadInputs(ports, session.id)
-  const compact = async (runs: RunIndex[]) =>
-    runs.length > MERGE_FAN_IN
-      ? compactRuns(ports.stores.internal, session.id, runs, session.runs + 1000)
-      : runs
-  const manifestRuns = await compact(await sessionRuns(ports, session.id, 'manifest'))
-  const recordRuns = await compact(await sessionRuns(ports, session.id, 'records'))
+  const manifestRuns = await sessionRuns(ports, session.id, 'manifest')
+  const recordRuns = await sessionRuns(ports, session.id, 'records')
   const trees = await baseTrees(ports, session.collectionId, base?.hash ?? null)
 
   const plan = await planSnapshot(ports, session, inputs, trees, manifestRuns, recordRuns)

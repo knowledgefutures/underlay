@@ -10,6 +10,7 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { maybeCompact } from './compact.js'
 import { readRunIndex, type RunIndex } from './runs.js'
 
 /** Idle timeout: pushed back by every upload. Runs live in storage, so this can be generous. */
@@ -90,6 +91,7 @@ export async function recordRun(
       count,
       firstKey: index.blocks[0]?.first ?? '',
       lastKey: index.blocks[index.blocks.length - 1]?.last ?? '',
+      tier: index.tier ?? 0,
     }),
     ports.db
       .update(schema.pushSessions)
@@ -100,6 +102,7 @@ export async function recordRun(
       })
       .where(eq(schema.pushSessions.id, sessionId)),
   ])
+  await maybeCompact(ports, sessionId, kind, index.tier ?? 0)
 }
 
 export async function sessionRuns(
