@@ -73,6 +73,8 @@ export function manageRoutes() {
       name,
       public: body?.public === true,
     })
+    // Every new collection gets an ARK, as in v1.
+    await ensureCollectionArk(c.var.ports.db, { id: col.id, organizationId: org.id })
     return c.json({ id: col.id, owner: org.slug, slug, name }, 201)
   })
 
