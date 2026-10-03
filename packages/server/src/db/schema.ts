@@ -267,6 +267,8 @@ export const versions = sqliteTable(
      */
     publicRefsRoot: text('public_refs_root'),
     privateRefsRoot: text('private_refs_root'),
+    /** The reference log has this version's events (written by the refs.index job). */
+    refsIndexed: bool('refs_indexed').notNull().default(false),
     /** Change counts against the previous version (drive semver and webhooks). */
     changes: json<{ added: number; removed: number; updated: number }>('changes'),
     createdAt: createdAt(),
@@ -511,6 +513,61 @@ export const pushRuns = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.sessionId, t.seq] })],
+)
+
+// --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------
+
+/**
+ * The manifest of the reference log: one row per immutable segment in the
+ * platform's internal area. A segment holds events sorted by hash; segments of
+ * one run cover disjoint hash ranges. Size-tiered compaction merges runs of a
+ * tier into one run of the next, so a query reads O(log n) runs.
+ */
+export const refSegments = sqliteTable(
+  'ref_segments',
+  {
+    id: id(),
+    runId: text('run_id').notNull(),
+    tier: integer('tier').notNull(),
+    firstHash: text('first_hash').notNull(),
+    lastHash: text('last_hash').notNull(),
+    count: integer('count').notNull(),
+    bytes: integer('bytes').notNull(),
+    /** pending: written by an unfinished compaction; live: queried; retired: replaced. */
+    state: text('state', { enum: ['pending', 'live', 'retired'] })
+      .notNull()
+      .default('live'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('ref_segments_range_idx').on(t.state, t.firstHash, t.lastHash),
+    index('ref_segments_run_idx').on(t.runId),
+    index('ref_segments_tier_idx').on(t.tier),
+  ],
+)
+
+/** A compaction merging runs of one tier, split into hash-range parts run as jobs. */
+export const refCompactions = sqliteTable('ref_compactions', {
+  id: id(),
+  tier: integer('tier').notNull(),
+  inputRuns: json<string[]>('input_runs').notNull(),
+  outputRun: text('output_run').notNull(),
+  parts: integer('parts').notNull(),
+  /** Hex prefix length of each part's hash range. */
+  prefixLength: integer('prefix_length').notNull(),
+  status: text('status', { enum: ['running', 'done'] })
+    .notNull()
+    .default('running'),
+  createdAt: createdAt(),
+})
+
+export const refCompactionParts = sqliteTable(
+  'ref_compaction_parts',
+  {
+    compactionId: text('compaction_id').notNull(),
+    part: integer('part').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.compactionId, t.part] })],
 )
 
 // --- Jobs (Node only; Cloudflare uses Queues) ----------------------------------------

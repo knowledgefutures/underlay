@@ -10,6 +10,7 @@ import { collectionRoutes } from './api/collections.js'
 import { fileRoutes } from './api/files.js'
 import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
+import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
@@ -86,6 +87,8 @@ export function createApp(setup: Setup) {
     }),
   )
 
+  // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
+  app.route('/', recordRoutes())
   app.route('/api/collections', fileRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())

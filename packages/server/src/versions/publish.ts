@@ -117,6 +117,7 @@ export async function publishVersion(
           hasPrivate: lit<number>(v.hasPrivate ? 1 : 0).as('has_private'),
           publicRefsRoot: lit<string | null>(v.publicRefsRoot).as('public_refs_root'),
           privateRefsRoot: lit<string | null>(v.privateRefsRoot).as('private_refs_root'),
+          refsIndexed: lit<number>(0).as('refs_indexed'),
           changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
           createdAt: lit<number>(now).as('created_at'),
         })

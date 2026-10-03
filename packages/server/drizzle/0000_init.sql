@@ -289,6 +289,38 @@ CREATE TABLE `push_sessions` (
 --> statement-breakpoint
 CREATE INDEX `push_sessions_collection_idx` ON `push_sessions` (`collection_id`);--> statement-breakpoint
 CREATE INDEX `push_sessions_expires_idx` ON `push_sessions` (`status`,`expires_at`);--> statement-breakpoint
+CREATE TABLE `ref_compaction_parts` (
+	`compaction_id` text NOT NULL,
+	`part` integer NOT NULL,
+	PRIMARY KEY(`compaction_id`, `part`)
+);
+--> statement-breakpoint
+CREATE TABLE `ref_compactions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`tier` integer NOT NULL,
+	`input_runs` text NOT NULL,
+	`output_run` text NOT NULL,
+	`parts` integer NOT NULL,
+	`prefix_length` integer NOT NULL,
+	`status` text DEFAULT 'running' NOT NULL,
+	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `ref_segments` (
+	`id` text PRIMARY KEY NOT NULL,
+	`run_id` text NOT NULL,
+	`tier` integer NOT NULL,
+	`first_hash` text NOT NULL,
+	`last_hash` text NOT NULL,
+	`count` integer NOT NULL,
+	`bytes` integer NOT NULL,
+	`state` text DEFAULT 'live' NOT NULL,
+	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `ref_segments_range_idx` ON `ref_segments` (`state`,`first_hash`,`last_hash`);--> statement-breakpoint
+CREATE INDEX `ref_segments_run_idx` ON `ref_segments` (`run_id`);--> statement-breakpoint
+CREATE INDEX `ref_segments_tier_idx` ON `ref_segments` (`tier`);--> statement-breakpoint
 CREATE TABLE `schema_labels` (
 	`schema_hash` text NOT NULL,
 	`label` text NOT NULL,
@@ -396,6 +428,7 @@ CREATE TABLE `versions` (
 	`has_private` integer DEFAULT false NOT NULL,
 	`public_refs_root` text,
 	`private_refs_root` text,
+	`refs_indexed` integer DEFAULT false NOT NULL,
 	`changes` text,
 	`created_at` integer DEFAULT (unixepoch('subsec') * 1000) NOT NULL,
 	FOREIGN KEY (`collection_id`) REFERENCES `collections`(`id`) ON UPDATE no action ON DELETE cascade

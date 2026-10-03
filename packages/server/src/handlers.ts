@@ -11,6 +11,7 @@ import { and, asc, eq, gt } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'
 import './files/files.js'
+import './refs/log.js'
 import { registerJob } from './jobs.js'
 import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'
@@ -19,6 +20,7 @@ import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
 registerJob('version.published', async (job, ports) => {
   await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
+  await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })
   // Mirror sync (phase 11) and reference-log segments (phase 7) hang off here too.
 })
 
