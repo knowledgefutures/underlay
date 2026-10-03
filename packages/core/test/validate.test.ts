@@ -249,6 +249,19 @@ describe('compileSchema', () => {
     ])
   })
 
+  it('never reports an invalid record as valid, whatever its property names', () => {
+    // From the JSON Schema Test Suite (draft7/dependencies.json): a newline in a
+    // property name once stopped the message from being worded, and the error
+    // was dropped with it.
+    const v = compileSchema({ dependencies: { 'foo\nbar': ['foo\rbar'] } })
+    expect(v({ 'foo\nbar': 1, foo: 2 })).toEqual([
+      '/ must have property foo\rbar when property foo\nbar is present',
+    ])
+    expect(v({ 'foo\nbar': 1, 'foo\rbar': 2 })).toEqual([])
+    const r = compileSchema({ required: ['a\nb'] })
+    expect(r({})).toEqual(["/ must have required property 'a\nb'"])
+  })
+
   it('refuses a schema nested too deeply to compile', () => {
     let deep: unknown = {}
     for (let i = 0; i < 20_000; i++) deep = { items: deep }

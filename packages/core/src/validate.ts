@@ -185,7 +185,11 @@ function build(schema: unknown): SchemaValidator {
       // '2019-09' only changes `$ref` handling here (siblings are applied); the
       // later-draft keywords it would add were removed by `toDialect`.
       const result = interpret(instance, body, '2019-09', lookup, shortCircuit)
-      return result.valid ? [] : messages(result.errors, body, lookup, instance)
+      if (result.valid) return []
+      // The verdict is the library's. A message we fail to word must never turn
+      // an invalid record into a valid one.
+      const out = messages(result.errors, body, lookup, instance)
+      return out.length > 0 ? out : ['/ must match the schema']
     } catch (err) {
       // A schema that recurses without consuming data, e.g. `{"$ref":"#"}`,
       // overflows the stack. Report it against the record, don't crash the push.
@@ -392,7 +396,7 @@ function messages(
     // A property name's own errors follow its wrapper, located at the property;
     // AJV locates them at the object.
     if (e.keyword === 'propertyNames') {
-      const name = /^Property name "(.*)" does/.exec(e.error)?.[1] ?? ''
+      const name = /^Property name "(.*)" does/s.exec(e.error)?.[1] ?? ''
       const at = `${e.instanceLocation}/${encodeURI(escapeSegment(name))}`
       while (errors[i + 1]?.instanceLocation === at) {
         const leaf = errors[++i]!
@@ -429,7 +433,7 @@ function describe(
       return `must NOT have more than ${Array.isArray(items) ? items.length : 0} items`
     }
     case 'dependencies': {
-      const [key] = quoted(/^Instance has "(.*)" but does not have ".*"\.$/)
+      const [key] = quoted(/^Instance has "(.*)" but does not have ".*"\.$/s)
       if (key === undefined) return null // the schema form: its leaves carry the errors
       const deps = (value() as Record<string, unknown> | undefined)?.[key]
       const list = Array.isArray(deps) ? deps : []
@@ -440,7 +444,7 @@ function describe(
       return `must be ${Array.isArray(t) ? t.join(',') : String(t)}`
     }
     case 'required':
-      return `must have required property '${quoted(/property "(.*)"\.$/)[0]}'`
+      return `must have required property '${quoted(/property "(.*)"\.$/s)[0]}'`
     case 'const':
       return 'must be equal to constant'
     case 'enum':
