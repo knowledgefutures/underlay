@@ -1,0 +1,32 @@
+{
+  "name": "@underlay/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Underlay v2 server: one Hono app over blob, SQLite, jobs and cache ports. Runs on Cloudflare Workers and on Node.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "dev:node": "tsx watch src/node/main.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.14",
+    "@libsql/client": "^0.18.0",
+    "@underlay/core": "workspace:*",
+    "aws4fetch": "^1.0.20",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.18"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261003.1",
+    "@types/node": "^25.0.0",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.6"
+  }
+}

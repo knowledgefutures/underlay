@@ -127,6 +127,8 @@ export async function mergeTree<E>(
         const c = await pending.peek()
         if (!c || compareUtf8(c.key, oldKey) >= 0) break
         insert((await nextChange())!)
+        // A run of inserts inside one base leaf's range can be arbitrarily long.
+        if (stats.added % 1024 === 0) await sink.drain?.()
       }
       const c = await pending.peek()
       if (c && c.key === oldKey) {
@@ -163,6 +165,7 @@ export async function mergeTree<E>(
     }
     if (desc.level === 0) {
       await rewriteLeaf(desc)
+      await sink.drain?.()
       return
     }
     stats.readNodes++
@@ -182,7 +185,11 @@ export async function mergeTree<E>(
     stats.readNodes++
     await visit(await rootDesc(source, base), true)
   }
-  for (let c = await nextChange(); c; c = await nextChange()) insert(c)
+  let appended = 0
+  for (let c = await nextChange(); c; c = await nextChange()) {
+    insert(c)
+    if (++appended % 1024 === 0) await sink.drain?.()
+  }
 
   const { root, unresolved } = builder.finish()
   return { root: root && unresolved ? await resolveRoot(source, root) : root, stats }

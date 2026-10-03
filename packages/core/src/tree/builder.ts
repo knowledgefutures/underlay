@@ -37,6 +37,11 @@ export interface TreeSink<E> {
    * instead of holding a whole leaf's bodies in memory.
    */
   spill?(entries: readonly E[]): void
+  /**
+   * Backpressure for sinks that write asynchronously: async callers (mergeTree)
+   * await it between leaves so pending writes stay bounded.
+   */
+  drain?(): Promise<void>
 }
 
 export interface BuilderOptions<E> {
