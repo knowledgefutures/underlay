@@ -3,7 +3,7 @@
  * shared by the serial commit (delta.ts) and the units of a parallel commit
  * (parallel.ts).
  */
-import type { Change, RecordEntry } from '@underlay/core'
+import { type Change, type RecordEntry } from '@underlay/protocol'
 
 import type { BlobStore } from '../ports.js'
 import type { SetName } from '../versions/file-refs.js'

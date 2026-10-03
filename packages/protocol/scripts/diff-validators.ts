@@ -4,7 +4,7 @@
  * record on underlay.org. @hyperjump/json-schema (draft-07) runs alongside as a
  * second interpreting validator.
  *
- *   npx tsx packages/core/scripts/diff-validators.ts [--data <dir>] [--offline]
+ *   npx tsx packages/protocol/scripts/diff-validators.ts [--data <dir>] [--offline]
  *
  * Three passes:
  *   1. every distinct schema of every version is compiled by all three;

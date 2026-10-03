@@ -27,8 +27,14 @@
  * Memory: a reader holds one block's lines and a bounded prefetch of compressed
  * bytes, so a k-way merge over hundreds of runs stays within a Worker.
  */
-import { boundaryBytes, compareUtf8, trailingZeros } from '@underlay/core'
-import { gunzipText, gzip, splitLines } from '@underlay/repo'
+import {
+  boundaryBytes,
+  compareUtf8,
+  gunzipText,
+  gzip,
+  splitLines,
+  trailingZeros,
+} from '@underlay/protocol'
 
 import type { BlobStore } from '../ports.js'
 

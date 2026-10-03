@@ -3,7 +3,7 @@
  * choice in edge-redesign-build.md. data.json is a sample of the production
  * records cached by diff-validators.ts (not committed; see validator-suite.ts).
  *
- *   cd packages/core/scripts/workerd-bench && npx wrangler dev --local --port 4390
+ *   cd packages/protocol/scripts/workerd-bench && npx wrangler dev --local --port 4390
  *   curl localhost:4390
  *
  * Workers only advance the clock across I/O, so each timed section ends with a

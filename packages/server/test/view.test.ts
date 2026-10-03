@@ -5,7 +5,7 @@ import {
   hashSchema,
   type RecordEntry,
   utf8ByteLength,
-} from '@underlay/core'
+} from '@underlay/protocol'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { commitVersion } from '../src/versions/commit.js'

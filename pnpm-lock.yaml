@@ -169,45 +169,11 @@ importers:
         specifier: ^0.25.0
         version: 0.25.12
 
-  packages/core:
-    dependencies:
-      '@cfworker/json-schema':
-        specifier: ^4.1.1
-        version: 4.1.1
-    devDependencies:
-      '@hyperjump/json-schema':
-        specifier: ^1.17.9
-        version: 1.17.9(@hyperjump/browser@1.5.1)
-      '@types/node':
-        specifier: ^25.0.0
-        version: 25.6.2
-      ajv:
-        specifier: ^8.20.0
-        version: 8.20.0
-      ajv-formats:
-        specifier: ^3.0.1
-        version: 3.0.1(ajv@8.20.0)
-      fast-check:
-        specifier: ^4.3.0
-        version: 4.10.2
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
-      typescript:
-        specifier: ^6.0.0
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.6
-        version: 4.1.6(@types/node@25.6.2)(happy-dom@20.9.0)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@6.4.2(@types/node@25.6.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))
-
   packages/migrate:
     dependencies:
-      '@underlay/core':
+      '@underlay/protocol':
         specifier: workspace:*
-        version: link:../core
-      '@underlay/repo':
-        specifier: workspace:*
-        version: link:../repo
+        version: link:../protocol
       '@underlay/server':
         specifier: workspace:*
         version: link:../server
@@ -234,18 +200,33 @@ importers:
         specifier: ^4.1.6
         version: 4.1.6(@types/node@25.6.2)(happy-dom@20.9.0)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@6.4.2(@types/node@25.6.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.9.0))
 
-  packages/repo:
+  packages/protocol:
     dependencies:
-      '@underlay/core':
-        specifier: workspace:*
-        version: link:../core
+      '@cfworker/json-schema':
+        specifier: ^4.1.1
+        version: 4.1.1
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
     devDependencies:
+      '@hyperjump/json-schema':
+        specifier: ^1.17.9
+        version: 1.17.9(@hyperjump/browser@1.5.1)
       '@types/node':
         specifier: ^25.0.0
         version: 25.6.2
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
+      fast-check:
+        specifier: ^4.3.0
+        version: 4.10.2
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^6.0.0
         version: 6.0.3
@@ -264,12 +245,9 @@ importers:
       '@libsql/client':
         specifier: ^0.18.0
         version: 0.18.0
-      '@underlay/core':
+      '@underlay/protocol':
         specifier: workspace:*
-        version: link:../core
-      '@underlay/repo':
-        specifier: workspace:*
-        version: link:../repo
+        version: link:../protocol
       '@underlay/web':
         specifier: workspace:*
         version: link:../web

@@ -8,7 +8,7 @@
  * the public set only. Both collections must share a primary location, since a
  * repository never references another location.
  */
-import { makeRoot, newSalt } from '@underlay/core'
+import { makeRoot, newSalt } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

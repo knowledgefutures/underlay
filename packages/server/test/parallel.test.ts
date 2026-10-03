@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto'
 
-import { boundaryBytes, trailingZeros, verifyTree, recordTree } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import {
+  boundaryBytes,
+  recordTree,
+  RepoSource,
+  trailingZeros,
+  verifyTree,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 

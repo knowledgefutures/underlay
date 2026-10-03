@@ -22,10 +22,10 @@ import {
   hashRecord,
   hashSchema,
   newSalt,
+  OUT_OF_LINE_BYTES,
   type RecordEntry,
   utf8ByteLength,
-} from '@underlay/core'
-import { OUT_OF_LINE_BYTES } from '@underlay/repo'
+} from '@underlay/protocol'
 import {
   type BaseVersion,
   commitVersion,

@@ -14,9 +14,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { newSalt } from '../../core/src/index.ts'
-import { MemoryBlobStore } from '../../repo/src/blob/memory.ts'
-import { ed25519Signer, generateSigningKey } from '../../repo/src/index.ts'
+import {
+  ed25519Signer,
+  generateSigningKey,
+  MemoryBlobStore,
+  newSalt,
+} from '../../protocol/src/index.ts'
 import '../../server/src/handlers.ts'
 import { createApp } from '../../server/src/app.ts'
 import { MemoryCache } from '../../server/src/cache.ts'

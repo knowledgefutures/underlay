@@ -1,4 +1,4 @@
-import { readHead, verifyLog } from '@underlay/repo'
+import { readHead, verifyLog } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 

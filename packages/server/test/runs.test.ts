@@ -1,5 +1,4 @@
-import { compareUtf8, sha256Hex } from '@underlay/core'
-import { MemoryBlobStore } from '@underlay/repo/blob/memory'
+import { compareUtf8, MemoryBlobStore, sha256Hex } from '@underlay/protocol'
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 

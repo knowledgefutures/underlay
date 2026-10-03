@@ -88,7 +88,7 @@ const records = [
   { id: `ada-${stamp}`, type: 'Author', data: { name: 'Ada Lovelace', born: 1815 } },
   { id: `grace-${stamp}`, type: 'Author', data: { name: 'Grace', born: 1906, 10: 'x', 9: 'y' } },
 ]
-const { hashRecord, legacyRecordHash } = await import('@underlay/core')
+const { hashRecord, legacyRecordHash } = await import('@underlay/protocol')
 r = await call('POST', '/versions/negotiate', {
   base_version: null,
   schemas: { Author: { type: 'object' } },

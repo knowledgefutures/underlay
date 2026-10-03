@@ -25,8 +25,9 @@ import {
   legacyRecordHash,
   type RecordEntry,
   recordTree,
-} from '@underlay/core'
-import { type Repo, RepoSource } from '@underlay/repo'
+  type Repo,
+  RepoSource,
+} from '@underlay/protocol'
 
 import type { Ports } from '../ports.js'
 import { type CommitResult, commitVersion, type TypeInput } from '../versions/commit.js'

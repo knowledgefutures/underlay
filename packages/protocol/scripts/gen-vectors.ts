@@ -1,8 +1,8 @@
 /**
  * Generate the protocol test vectors: test/vectors/v2.json.
  *
- *   pnpm --filter @underlay/core vectors           # write
- *   pnpm --filter @underlay/core vectors --check   # compare, exit 1 on any difference
+ *   pnpm --filter @underlay/protocol vectors           # write
+ *   pnpm --filter @underlay/protocol vectors --check   # compare, exit 1 on any difference
  *
  * Tree vectors are given as a recipe (how to generate the entries) plus the
  * expected results, so a second implementation can regenerate the inputs without
@@ -339,7 +339,7 @@ const fileRefCases = [
 
 const vectors = {
   format: 2,
-  generatedBy: 'packages/core/scripts/gen-vectors.ts',
+  generatedBy: 'packages/protocol/scripts/gen-vectors.ts',
   constants: await import('../src/constants.js').then((m) => ({ ...m })),
   jcs: jcsCases,
   inputRules: inputRuleCases,

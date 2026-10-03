@@ -38,8 +38,7 @@ import {
   type VersionRoot,
   versionDigest,
   versionHash,
-} from '@underlay/core'
-
+} from '../format.js'
 import { gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
 import { type BlobStore, type Cache, noCache } from './types.js'

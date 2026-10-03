@@ -7,8 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { PGlite } from '@electric-sql/pglite'
-import { hashRecord, hashSchema, legacyRecordHash } from '@underlay/core'
-import { verifyLog } from '@underlay/repo'
+import { hashRecord, hashSchema, legacyRecordHash, verifyLog } from '@underlay/protocol'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { cleanup, harness } from '../../server/test/harness.js'

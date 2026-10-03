@@ -20,8 +20,8 @@ import {
   iterate,
   type RecordEntry,
   recordTree,
-} from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+  RepoSource,
+} from '@underlay/protocol'
 import { desc, eq, inArray } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 

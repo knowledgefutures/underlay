@@ -8,12 +8,12 @@
  *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
  *   Cache      Cache API on Workers, in-memory LRU on Node
  */
-import type { BlobStore, Cache, Repo, Signer } from '@underlay/repo'
+import { type BlobStore, type Cache, type Repo, type Signer } from '@underlay/protocol'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql'
 
 import type * as schema from './db/schema.js'
 
-export type { BlobStore, Cache } from '@underlay/repo'
+export type { BlobStore, Cache } from '@underlay/protocol'
 
 /**
  * Drizzle over SQLite. Both adapters are async and support `db.batch([...])`,

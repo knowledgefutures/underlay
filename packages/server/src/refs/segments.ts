@@ -9,7 +9,7 @@
  * immutable, so it's cached; a lookup that passes the Bloom filter reads one
  * block by range.
  */
-import { gunzipText, gzip, splitLines } from '@underlay/repo'
+import { gunzipText, gzip, splitLines } from '@underlay/protocol'
 
 import type { BlobStore, Cache } from '../ports.js'
 

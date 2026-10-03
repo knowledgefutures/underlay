@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "generatedBy": "packages/core/scripts/gen-vectors.ts",
+  "generatedBy": "packages/protocol/scripts/gen-vectors.ts",
   "constants": {
     "FORMAT_VERSION": 2,
     "INTERIOR_BOUNDARY_BITS_STEP": 6,

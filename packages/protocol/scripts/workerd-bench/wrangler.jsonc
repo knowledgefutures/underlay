@@ -3,5 +3,5 @@
   "main": "worker.ts",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "limits": { "cpu_ms": 300000 }
+  "limits": { "cpu_ms": 300000 },
 }

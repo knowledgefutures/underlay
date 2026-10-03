@@ -13,11 +13,12 @@ import {
   rankOf,
   type RecordEntry,
   recordTree,
+  type Repo,
+  RepoSource,
   type SetObject,
   type TreeSummary,
   type VersionRoot,
-} from '@underlay/core'
-import { type Repo, RepoSource } from '@underlay/repo'
+} from '@underlay/protocol'
 import { and, desc, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

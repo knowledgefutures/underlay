@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest'
+
 import {
   compareUtf8,
   diffTrees,
@@ -10,12 +12,9 @@ import {
   TreeBuilder,
   utf8ByteLength,
   verifyTree,
-} from '@underlay/core'
-import { describe, expect, it } from 'vitest'
-
-import { MemoryBlobStore } from '../src/blob/memory.js'
-import { gzip } from '../src/gzip.js'
-import { Lru } from '../src/lru.js'
+} from '../../src/format.js'
+import { gzip } from '../../src/repo/gzip.js'
+import { Lru } from '../../src/repo/lru.js'
 import {
   bodyOfRecord,
   dropRecordBody,
@@ -26,8 +25,9 @@ import {
   Repo,
   RepoSink,
   RepoSource,
-} from '../src/repo.js'
-import { PrefixedBlobStore } from '../src/types.js'
+} from '../../src/repo/repo.js'
+import { PrefixedBlobStore } from '../../src/repo/types.js'
+import { MemoryBlobStore } from '../../src/stores/memory.js'
 
 const freshRepo = (opts: { trusted?: boolean } = {}) => {
   const blobs = new MemoryBlobStore()

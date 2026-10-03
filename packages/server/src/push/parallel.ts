@@ -25,27 +25,25 @@
  */
 import {
   assembleTree,
+  bodyOfRecord,
   boundaryBytes,
   compareUtf8,
+  dropRecordBody,
   LEAF_BOUNDARY_BITS,
   mergeTree,
   type NodeDesc,
   type RecordEntry,
+  recordPayloadBytes,
   recordTree,
+  type Repo,
+  RepoSink,
+  RepoSource,
   rootDesc,
   type Segment,
   type SetObject,
   trailingZeros,
   type TreeSummary,
-} from '@underlay/core'
-import {
-  bodyOfRecord,
-  dropRecordBody,
-  recordPayloadBytes,
-  type Repo,
-  RepoSink,
-  RepoSource,
-} from '@underlay/repo'
+} from '@underlay/protocol'
 import { and, asc, eq, inArray, isNull, lt, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

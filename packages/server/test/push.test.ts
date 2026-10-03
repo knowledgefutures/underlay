@@ -1,5 +1,4 @@
-import { getEntry, hashRecord, legacyRecordHash, recordTree } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import { getEntry, hashRecord, legacyRecordHash, recordTree, RepoSource } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 

@@ -1,4 +1,4 @@
-import { type Cache, Lru } from '@underlay/repo'
+import { type Cache, Lru } from '@underlay/protocol'
 
 /** Node: an in-process LRU (the isolate LRU in Objects sits in front of it). */
 export class MemoryCache implements Cache {

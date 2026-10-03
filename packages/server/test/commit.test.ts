@@ -6,11 +6,13 @@ import {
   hashRecord,
   hashSchema,
   iterate,
+  readHead,
   type RecordEntry,
   recordTree,
+  RepoSource,
   utf8ByteLength,
-} from '@underlay/core'
-import { readHead, RepoSource, verifyLog } from '@underlay/repo'
+  verifyLog,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 

@@ -15,8 +15,7 @@
  * segments cover the hash: O(log n) runs, each a cached index check and usually
  * no block read.
  */
-import { compareUtf8, diffTrees, fileTree, recordTree } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import { compareUtf8, diffTrees, fileTree, recordTree, RepoSource } from '@underlay/protocol'
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

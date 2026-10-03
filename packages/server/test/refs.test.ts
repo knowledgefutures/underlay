@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { hashRecord } from '@underlay/core'
-import { noCache } from '@underlay/repo'
-import { MemoryBlobStore } from '@underlay/repo/blob/memory'
+import { hashRecord, MemoryBlobStore, noCache } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 

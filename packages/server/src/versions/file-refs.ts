@@ -26,9 +26,11 @@ import {
   iterate,
   mergeTree,
   type RecordEntry,
+  type Repo,
+  RepoSink,
+  RepoSource,
   type TreeSummary,
-} from '@underlay/core'
-import { type Repo, RepoSink, RepoSource } from '@underlay/repo'
+} from '@underlay/protocol'
 import { inArray } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

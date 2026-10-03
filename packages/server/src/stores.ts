@@ -6,7 +6,7 @@
  * into a Repo from its row. Customer (s3) locations become readable once
  * credential encryption lands with bucket mirrors (phase 11).
  */
-import { type BlobStore, type Cache, PrefixedBlobStore, Repo } from '@underlay/repo'
+import { type BlobStore, type Cache, PrefixedBlobStore, Repo } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'

@@ -12,8 +12,7 @@
  * a fixed `,"hash":"…"` and newline per record). gzip costs Worker CPU per byte,
  * so very large exports should ask for format=tar.
  */
-import { fileTree, iterate } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import { fileTree, iterate, RepoSource } from '@underlay/protocol'
 import { inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 

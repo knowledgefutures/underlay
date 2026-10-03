@@ -1,8 +1,8 @@
 {
-  "name": "@underlay/core",
+  "name": "@underlay/protocol",
   "version": "0.0.0",
   "private": true,
-  "description": "Underlay protocol v2: canonical JSON, hashing, input rules, content-addressed trees, version roots.",
+  "description": "Underlay protocol v2: the format (canonical JSON, hashing, input rules, validation, content-addressed trees, version roots), the repository layout and signed version log, and the stores that hold them.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -13,7 +13,8 @@
     "vectors": "tsx scripts/gen-vectors.ts"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.1.1"
+    "@cfworker/json-schema": "^4.1.1",
+    "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@hyperjump/json-schema": "^1.17.9",

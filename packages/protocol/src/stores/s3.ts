@@ -12,7 +12,7 @@ import type {
   PresignGetOptions,
   PresignPutOptions,
   PutOptions,
-} from '../types.js'
+} from '../repo/types.js'
 
 export interface S3Config {
   endpoint: string

@@ -9,8 +9,7 @@ import type {
   Queue,
   ScheduledController,
 } from '@cloudflare/workers-types'
-import { ed25519Signer, type Signer } from '@underlay/repo'
-import { S3BlobStore } from '@underlay/repo/blob/s3'
+import { ed25519Signer, S3BlobStore, type Signer } from '@underlay/protocol'
 
 import './handlers.js'
 import { renderPage } from '@underlay/web'

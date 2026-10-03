@@ -9,7 +9,7 @@
  *   commit.unit,        a parallel commit's key-range units and its assembly
  *   commit.assemble     (push/parallel.ts)
  */
-import { readHead } from '@underlay/repo'
+import { readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'

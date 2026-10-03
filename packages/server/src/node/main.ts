@@ -18,9 +18,14 @@ import { fileURLToPath } from 'node:url'
 
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
-import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
-import { FsBlobStore, serveSignedBlob } from '@underlay/repo/blob/fs'
-import { S3BlobStore } from '@underlay/repo/blob/s3'
+import {
+  ed25519Signer,
+  FsBlobStore,
+  generateSigningKey,
+  S3BlobStore,
+  serveSignedBlob,
+  type Signer,
+} from '@underlay/protocol'
 import { Hono } from 'hono'
 
 import '../handlers.js'

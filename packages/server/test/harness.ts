@@ -3,9 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { newSalt } from '@underlay/core'
-import { ed25519Signer, generateSigningKey, type Signer } from '@underlay/repo'
-import { MemoryBlobStore } from '@underlay/repo/blob/memory'
+import {
+  ed25519Signer,
+  generateSigningKey,
+  MemoryBlobStore,
+  newSalt,
+  type Signer,
+} from '@underlay/protocol'
 
 import '../src/handlers.js'
 import { createApp } from '../src/app.js'

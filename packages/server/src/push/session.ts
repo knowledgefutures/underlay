@@ -5,7 +5,7 @@
  * sorted runs (runs.ts). SQLite holds only the session row, counters and the run
  * list.
  */
-import { hashSchema } from '@underlay/core'
+import { hashSchema } from '@underlay/protocol'
 import { and, asc, eq, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

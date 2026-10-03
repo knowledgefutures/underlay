@@ -7,7 +7,7 @@
  *      some draft-07 tests on purpose;
  *   2. throughput over the production records cached by diff-validators.ts.
  *
- *   npx tsx packages/core/scripts/validator-suite.ts --suite <JSON-Schema-Test-Suite dir> [--data <dir>]
+ *   npx tsx packages/protocol/scripts/validator-suite.ts --suite <JSON-Schema-Test-Suite dir> [--data <dir>]
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'

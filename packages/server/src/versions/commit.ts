@@ -18,8 +18,11 @@
  * (edge-redesign.md, Commit step 2); the merge code is the same.
  */
 import {
+  appendLog,
+  bodyOfRecord,
   type Change,
   compareUtf8,
+  dropRecordBody,
   emptySet,
   fileTree,
   isEmptySet,
@@ -27,23 +30,18 @@ import {
   makeRoot,
   mergeTree,
   type PrivateSetObject,
-  type RecordEntry,
-  recordTree,
-  type SetObject,
-  setRecordTotals,
-  type TreeSummary,
-} from '@underlay/core'
-import {
-  appendLog,
-  bodyOfRecord,
-  dropRecordBody,
   readHead,
+  type RecordEntry,
   recordPayloadBytes,
+  recordTree,
   type Repo,
   RepoSink,
   RepoSource,
+  type SetObject,
+  setRecordTotals,
   signEntry,
-} from '@underlay/repo'
+  type TreeSummary,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

@@ -10,13 +10,13 @@ import {
   compileSchema,
   emptySet,
   InputRuleError,
+  OUT_OF_LINE_BYTES,
   parseRecordLine,
   recordCanonical,
   sha256Hex,
   stripToSchema,
   utf8ByteLength,
-} from '@underlay/core'
-import { OUT_OF_LINE_BYTES } from '@underlay/repo'
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'

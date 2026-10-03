@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { MemoryBlobStore } from '../src/blob/memory.js'
 import {
   appendLog,
   ed25519Signer,
@@ -10,8 +9,9 @@ import {
   signEntry,
   verifyEntry,
   verifyLog,
-} from '../src/log.js'
-import { IntegrityError, keys, Repo } from '../src/repo.js'
+} from '../../src/repo/log.js'
+import { IntegrityError, keys, Repo } from '../../src/repo/repo.js'
+import { MemoryBlobStore } from '../../src/stores/memory.js'
 
 const repoOver = (blobs = new MemoryBlobStore()) => ({
   blobs,

@@ -15,8 +15,7 @@
  *
  * Pusher identity is omitted from the log (an open question in the plan).
  */
-import { jcs, sha256Hex } from '@underlay/core'
-
+import { jcs, sha256Hex } from '../format.js'
 import { IntegrityError, keys, type Repo } from './repo.js'
 
 export interface LogEntry {

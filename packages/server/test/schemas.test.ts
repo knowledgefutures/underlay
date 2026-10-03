@@ -1,4 +1,4 @@
-import { hashSchema } from '@underlay/core'
+import { hashSchema } from '@underlay/protocol'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'

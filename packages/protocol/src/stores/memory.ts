@@ -1,4 +1,4 @@
-import type { BlobHead, BlobObject, BlobStore, PutOptions } from '../types.js'
+import type { BlobHead, BlobObject, BlobStore, PutOptions } from '../repo/types.js'
 
 const enc = new TextEncoder()
 

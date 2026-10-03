@@ -2,7 +2,7 @@
 
 **Status: draft.** Every value marked _provisional_ can still change until the format is frozen.
 After the freeze, changing any of them needs a new format number. The reference implementation is
-`packages/core` (`@underlay/core`). The test vectors are in `packages/core/test/vectors/v2.json`
+`packages/protocol` (`@underlay/protocol`). The test vectors are in `packages/protocol/test/vectors/v2.json`
 (see [Test vectors](#test-vectors)).
 
 This document is normative. Another implementation has to reproduce everything here byte for
@@ -32,7 +32,7 @@ Every hashed JSON document is serialized with [RFC 8785 (JCS)](https://www.rfc-e
 Implementation note for JavaScript: objects enumerate integer-like keys (`"9"`, `"10"`) first, in
 numeric order, whatever order they were inserted in. So you can't canonicalize by sorting keys into
 a new object and calling `JSON.stringify`. Write objects out as strings instead (see
-`packages/core/src/jcs.ts`).
+`packages/protocol/src/jcs.ts`).
 
 ## 3. Input rules
 
@@ -120,7 +120,7 @@ document.
   `iso-time`, `iso-date-time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`,
   `hostname`, `ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `json-pointer-uri-fragment`,
   `relative-json-pointer`, `byte`.
-- Each is defined as in ajv-formats 3.0 "full" mode (`packages/core/src/validate.ts`). In
+- Each is defined as in ajv-formats 3.0 "full" mode (`packages/protocol/src/validate.ts`). In
   particular:
   - `date-time` and `time` require a time zone;
   - `date-time` accepts `T`, `t` or whitespace as the separator;
@@ -130,7 +130,7 @@ document.
 **What is normative.** Only the verdict. Error messages, and how many are reported, are not.
 
 The reference validator is `@cfworker/json-schema` with these rules applied
-(`packages/core/src/validate.ts`). Over all public production data it agrees with format 1's AJV
+(`packages/protocol/src/validate.ts`). Over all public production data it agrees with format 1's AJV
 configuration: 139 schemas, 330,300 records, and 85,773 mutated records
 (`scripts/diff-validators.ts`).
 
@@ -214,7 +214,7 @@ A node received from outside (tree sync, mirrors) must also satisfy all of the f
 
 A node that hashes correctly but breaks a structural rule is invalid. Accepting one would give two
 different roots for one entry set. The reference `fsck` is `verifyTree` in
-`packages/core/src/tree/verify.ts`.
+`packages/protocol/src/tree/verify.ts`.
 
 Record JSON (`{"id",…}`) and node JSON (`{"e",…}`) have disjoint member names, so one can never
 be read as the other.
@@ -269,7 +269,7 @@ What each reader can check:
 
 A repository is how a storage location holds collections. It is the same on the platform's own
 bucket, on a customer's mirror and in a restore source. Keys are relative to the location's prefix.
-The reference implementation is `packages/repo` (`@underlay/repo`).
+The reference implementation is `packages/protocol/src/repo` (`@underlay/protocol`).
 
 ```
 nodes/<nodeHash>                          node JSON (section 8.2), gzip-compressed
@@ -330,11 +330,11 @@ entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","se
 
 A log is valid when every entry is present from 1 to `head.seq`, each `prev` chains, each signature
 verifies against a trusted key, and `head.entryHash` is the last entry's hash (`verifyLog` in
-`packages/repo/src/log.ts`).
+`packages/protocol/src/repo/log.ts`).
 
 ## 12. Limits and constants
 
-All protocol constants are in `packages/core/src/constants.ts`, and the vectors file repeats them.
+All protocol constants are in `packages/protocol/src/constants.ts`, and the vectors file repeats them.
 
 ## 13. Format 1 hashes
 
@@ -350,7 +350,7 @@ numeric order.
 
 ## Test vectors
 
-`packages/core/test/vectors/v2.json` holds:
+`packages/protocol/test/vectors/v2.json` holds:
 
 - the constants;
 - JCS input and output pairs;

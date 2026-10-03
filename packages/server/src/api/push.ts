@@ -17,8 +17,14 @@
  *   GET    /:owner/:slug/versions/negotiate/:sid
  *   DELETE /:owner/:slug/versions/negotiate/:sid
  */
-import { checkSchema, getEntry, fileTree, InputRuleError, parseStrict } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import {
+  checkSchema,
+  fileTree,
+  getEntry,
+  InputRuleError,
+  parseStrict,
+  RepoSource,
+} from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'

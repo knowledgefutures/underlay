@@ -5,22 +5,14 @@
  * Node entry serves them through `serveSignedBlob`. Bytes still never pass
  * through the API routes, and the same client flow (presigned PUT, then GET by
  * redirect) works as on R2.
+ *
+ * Node modules load on first use, so importing the package never pulls in
+ * `node:fs` (browsers, Workers).
  */
-import { createHmac, timingSafeEqual } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import {
-  copyFile,
-  mkdir,
-  open,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
-import { Readable } from 'node:stream'
+import type * as NodeFs from 'node:fs'
+import type * as NodeFsp from 'node:fs/promises'
+import type * as NodePath from 'node:path'
+import type * as NodeStream from 'node:stream'
 
 import type {
   BlobHead,
@@ -29,7 +21,7 @@ import type {
   PresignGetOptions,
   PresignPutOptions,
   PutOptions,
-} from '../types.js'
+} from '../repo/types.js'
 
 export interface FsBlobConfig {
   root: string
@@ -39,21 +31,42 @@ export interface FsBlobConfig {
   secret: string
 }
 
-export class FsBlobStore implements BlobStore {
-  readonly #root: string
-  constructor(readonly cfg: FsBlobConfig) {
-    this.#root = resolve(cfg.root)
-  }
+interface NodeModules {
+  fs: typeof NodeFs
+  fsp: typeof NodeFsp
+  path: typeof NodePath
+  stream: typeof NodeStream
+}
+let nodeModules: Promise<NodeModules> | undefined
+const node = () =>
+  (nodeModules ??= Promise.all([
+    import('node:fs'),
+    import('node:fs/promises'),
+    import('node:path'),
+    import('node:stream'),
+  ]).then(([fs, fsp, path, stream]) => ({ fs, fsp, path, stream })))
 
-  #path(key: string): string {
-    const p = resolve(this.#root, key)
-    if (!p.startsWith(this.#root + sep)) throw new Error(`Bad blob key: ${key}`)
-    return p
+const enc = new TextEncoder()
+const hex = (b: ArrayBuffer) =>
+  [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('')
+const unhex = (s: string) => new Uint8Array((s.match(/../g) ?? []).map((x) => parseInt(x, 16)))
+
+export class FsBlobStore implements BlobStore {
+  #key: Promise<CryptoKey> | undefined
+  constructor(readonly cfg: FsBlobConfig) {}
+
+  /** Node modules plus the absolute path of a key (which must stay under the root). */
+  async #at(key: string) {
+    const m = await node()
+    const root = m.path.resolve(this.cfg.root)
+    const p = m.path.resolve(root, key)
+    if (!p.startsWith(root + m.path.sep)) throw new Error(`Bad blob key: ${key}`)
+    return { ...m, root, p }
   }
 
   async get(key: string, range?: { offset: number; length?: number }): Promise<BlobObject | null> {
-    const path = this.#path(key)
-    const st = await stat(path).catch(() => null)
+    const { fs, fsp, stream, p: path } = await this.#at(key)
+    const st = await fsp.stat(path).catch(() => null)
     if (!st?.isFile()) return null
     const start = range?.offset ?? 0
     const end =
@@ -66,7 +79,7 @@ export class FsBlobStore implements BlobStore {
     }
     const read = async () => {
       if (size === 0) return new Uint8Array()
-      const fh = await open(path)
+      const fh = await fsp.open(path)
       try {
         const buf = new Uint8Array(size)
         await fh.read(buf, 0, size, start)
@@ -78,7 +91,9 @@ export class FsBlobStore implements BlobStore {
     return {
       ...head,
       get body() {
-        return Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream<Uint8Array>
+        return stream.Readable.toWeb(
+          fs.createReadStream(path, { start, end }),
+        ) as ReadableStream<Uint8Array>
       },
       bytes: read,
       text: async () => new TextDecoder().decode(await read()),
@@ -86,11 +101,13 @@ export class FsBlobStore implements BlobStore {
   }
 
   async #contentType(key: string): Promise<string | null> {
-    return readFile(this.#path(key) + '.__type', 'utf8').catch(() => null)
+    const { fsp, p } = await this.#at(key)
+    return fsp.readFile(p + '.__type', 'utf8').catch(() => null)
   }
 
   async head(key: string): Promise<BlobHead | null> {
-    const st = await stat(this.#path(key)).catch(() => null)
+    const { fsp, p } = await this.#at(key)
+    const st = await fsp.stat(p).catch(() => null)
     if (!st?.isFile()) return null
     return {
       size: st.size,
@@ -100,47 +117,64 @@ export class FsBlobStore implements BlobStore {
   }
 
   async put(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<void> {
-    const path = this.#path(key)
-    if (opts.ifAbsent && (await stat(path).catch(() => null))) return
-    await mkdir(dirname(path), { recursive: true })
+    const { fsp, path: P, p: path } = await this.#at(key)
+    if (opts.ifAbsent && (await fsp.stat(path).catch(() => null))) return
+    await fsp.mkdir(P.dirname(path), { recursive: true })
     // Write then rename, so a reader never sees a partial object.
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
-    await writeFile(tmp, body)
-    await rename(tmp, path)
-    if (opts.contentType) await writeFile(path + '.__type', opts.contentType)
+    await fsp.writeFile(tmp, body)
+    await fsp.rename(tmp, path)
+    if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
   }
 
   async delete(key: string): Promise<void> {
-    await rm(this.#path(key), { force: true })
-    await rm(this.#path(key) + '.__type', { force: true })
+    const { fsp, p } = await this.#at(key)
+    await fsp.rm(p, { force: true })
+    await fsp.rm(p + '.__type', { force: true })
   }
 
   async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
+    const { fsp, path: P } = await node()
+    const root = P.resolve(this.cfg.root)
     const out: string[] = []
     const walk = async (dir: string) => {
-      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+      const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])
       for (const e of entries) {
-        const p = join(dir, e.name)
+        const p = P.join(dir, e.name)
         if (e.isDirectory()) await walk(p)
         else if (!e.name.endsWith('.__type') && !e.name.endsWith('.tmp')) {
-          const key = relative(this.#root, p).split(sep).join('/')
+          const key = P.relative(root, p).split(P.sep).join('/')
           if (key.startsWith(prefix) && (!cursor || key > cursor)) out.push(key)
         }
       }
     }
-    await walk(this.#root)
+    await walk(root)
     out.sort()
     const page = out.slice(0, 1000)
     return page.length === 1000 ? { keys: page, cursor: page[page.length - 1]! } : { keys: page }
   }
 
-  sign(method: string, key: string, exp: number, extra = ''): string {
-    return createHmac('sha256', this.cfg.secret)
-      .update(`${method}\n${key}\n${exp}\n${extra}`)
-      .digest('hex')
+  #hmacKey(): Promise<CryptoKey> {
+    return (this.#key ??= crypto.subtle.importKey(
+      'raw',
+      enc.encode(this.cfg.secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign', 'verify'],
+    ))
   }
 
-  #signedUrl(method: string, key: string, expiresIn: number, params: Record<string, string> = {}) {
+  async sign(method: string, key: string, exp: number, extra = ''): Promise<string> {
+    const msg = enc.encode(`${method}\n${key}\n${exp}\n${extra}`)
+    return hex(await crypto.subtle.sign('HMAC', await this.#hmacKey(), msg))
+  }
+
+  async #signedUrl(
+    method: string,
+    key: string,
+    expiresIn: number,
+    params: Record<string, string> = {},
+  ) {
     const exp = Math.floor(Date.now() / 1000) + expiresIn
     const extra = new URLSearchParams(params).toString()
     const u = new URL(
@@ -149,7 +183,7 @@ export class FsBlobStore implements BlobStore {
     for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v)
     u.searchParams.set('m', method)
     u.searchParams.set('exp', String(exp))
-    u.searchParams.set('sig', this.sign(method, key, exp, extra))
+    u.searchParams.set('sig', await this.sign(method, key, exp, extra))
     return u.toString()
   }
 
@@ -166,8 +200,9 @@ export class FsBlobStore implements BlobStore {
 
   async createMultipart(key: string): Promise<string> {
     const id = crypto.randomUUID()
-    await mkdir(this.#path(`_multipart/${id}`), { recursive: true })
-    await writeFile(this.#path(`_multipart/${id}/.key`), key)
+    const { fsp, p } = await this.#at(`_multipart/${id}`)
+    await fsp.mkdir(p, { recursive: true })
+    await fsp.writeFile(`${p}/.key`, key)
     return id
   }
 
@@ -185,35 +220,36 @@ export class FsBlobStore implements BlobStore {
     uploadId: string,
     parts: { partNumber: number; etag: string }[],
   ) {
-    const path = this.#path(key)
-    await mkdir(dirname(path), { recursive: true })
+    const { fsp, path: P, p: path } = await this.#at(key)
+    const dir = (await this.#at(`_multipart/${uploadId}`)).p
+    await fsp.mkdir(P.dirname(path), { recursive: true })
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
-    const fh = await open(tmp, 'w')
+    const fh = await fsp.open(tmp, 'w')
     try {
-      for (const p of parts)
-        await fh.write(await readFile(this.#path(`_multipart/${uploadId}/${p.partNumber}`)))
+      for (const p of parts) await fh.write(await fsp.readFile(`${dir}/${p.partNumber}`))
     } finally {
       await fh.close()
     }
-    await rename(tmp, path)
-    await rm(this.#path(`_multipart/${uploadId}`), { recursive: true, force: true })
+    await fsp.rename(tmp, path)
+    await fsp.rm(dir, { recursive: true, force: true })
   }
 
   async copy(from: string, to: string): Promise<void> {
-    const src = this.#path(from)
-    const dest = this.#path(to)
-    await mkdir(dirname(dest), { recursive: true })
+    const src = (await this.#at(from)).p
+    const { fsp, path: P, p: dest } = await this.#at(to)
+    await fsp.mkdir(P.dirname(dest), { recursive: true })
     const tmp = `${dest}.${crypto.randomUUID()}.tmp`
-    await copyFile(src, tmp)
-    await rename(tmp, dest)
+    await fsp.copyFile(src, tmp)
+    await fsp.rename(tmp, dest)
   }
 
   async abortMultipart(_key: string, uploadId: string): Promise<void> {
-    await rm(this.#path(`_multipart/${uploadId}`), { recursive: true, force: true })
+    const { fsp, p } = await this.#at(`_multipart/${uploadId}`)
+    await fsp.rm(p, { recursive: true, force: true })
   }
 
   /** Verify a presigned `/_blob/…` request. Returns the key, or null if the signature is bad or expired. */
-  verify(method: string, url: URL): string | null {
+  async verify(method: string, url: URL): Promise<string | null> {
     const key = decodeURIComponent(url.pathname.replace(/^\/_blob\//, ''))
     const exp = Number(url.searchParams.get('exp'))
     const sig = url.searchParams.get('sig') ?? ''
@@ -224,17 +260,17 @@ export class FsBlobStore implements BlobStore {
       const v = url.searchParams.get(p)
       if (v !== null) params[p] = v
     }
-    const want = this.sign(method, key, exp, new URLSearchParams(params).toString())
-    const a = Buffer.from(sig, 'hex')
-    const b = Buffer.from(want, 'hex')
-    return a.length === b.length && timingSafeEqual(a, b) ? key : null
+    const msg = enc.encode(`${method}\n${key}\n${exp}\n${new URLSearchParams(params).toString()}`)
+    // Constant-time comparison is subtle.verify's job.
+    const ok = await crypto.subtle.verify('HMAC', await this.#hmacKey(), unhex(sig), msg)
+    return ok ? key : null
   }
 }
 
 /** Serve a presigned `/_blob/…` GET or PUT for an FsBlobStore (Node entry only). */
 export async function serveSignedBlob(store: FsBlobStore, req: Request): Promise<Response> {
   const url = new URL(req.url)
-  const key = store.verify(req.method, url)
+  const key = await store.verify(req.method, url)
   if (!key) return new Response('Forbidden', { status: 403 })
   if (req.method === 'PUT') {
     await store.put(key, new Uint8Array(await req.arrayBuffer()))

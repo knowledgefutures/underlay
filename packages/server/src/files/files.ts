@@ -15,8 +15,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import { fileTree, getEntry } from '@underlay/core'
-import { RepoSource } from '@underlay/repo'
+import { fileTree, getEntry, RepoSource } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
