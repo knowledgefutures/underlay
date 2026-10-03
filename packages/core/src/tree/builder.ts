@@ -52,6 +52,12 @@ export interface BuilderOptions<E> {
   dropPayload?: (e: E) => void
   /** Spill the pending leaf's payload when it reaches this many bytes. */
   spillBytes?: number
+  /**
+   * Leaves-only mode, for commit units: every finished or reused leaf goes here
+   * instead of into level 1. No interior node is built, `addNode` takes leaves
+   * only, and `finish` returns a null root.
+   */
+  leafOutput?: (desc: NodeDesc) => void
 }
 
 export class TreeBuilder<E> {
@@ -110,6 +116,9 @@ export class TreeBuilder<E> {
 
   /** Reuse an existing node. Requires `emptyThrough(desc.level)`. */
   addNode(desc: NodeDesc): void {
+    if (this.#opts.leafOutput && desc.level > 0) {
+      throw new Error('TreeBuilder.addNode: only leaves can be added in leaves-only mode')
+    }
     if (!this.emptyThrough(desc.level)) {
       throw new Error('TreeBuilder.addNode: a lower level holds a partial node')
     }
@@ -130,6 +139,8 @@ export class TreeBuilder<E> {
     if (this.#finished) throw new Error('TreeBuilder.finish called twice')
     this.#finished = true
     if (this.#leaf.length > 0) this.#emitLeaf()
+    // No levels above 0 exist, so the flush loop below would never end.
+    if (this.#opts.leafOutput) return { root: null, unresolved: false }
     if (this.#nodes.length === 0) return { root: null, unresolved: false }
     for (let h = 0; ; h++) {
       const top = this.#nodes.length - 1
@@ -208,6 +219,10 @@ export class TreeBuilder<E> {
 
   /** Record a completed level-h node and push it into level h+1. */
   #push(desc: NodeDesc): void {
+    if (this.#opts.leafOutput) {
+      this.#opts.leafOutput(desc)
+      return
+    }
     const h = desc.level
     this.#nodes[h] = (this.#nodes[h] ?? 0) + 1
     this.#last[h] = desc

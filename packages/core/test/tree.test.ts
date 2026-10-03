@@ -2,21 +2,30 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import {
+  assembleTree,
+  boundaryBytes,
   buildTree,
   type Change,
   compareUtf8,
   diffTrees,
   entryAt,
   getEntry,
+  inRange,
   iterate,
+  type KeyRange,
   MapSource,
   MemorySink,
   mergeTree,
   protocolChunking,
   rankOf,
+  type NodeDesc,
+  type NodeSource,
   type RecordEntry,
   recordTree,
+  type Segment,
   sha256Hex,
+  trailingZeros,
+  type TreeSink,
   verifyTree,
 } from '../src/index.js'
 import { fixedChunking as fixed } from '../src/tree/chunking.js'
@@ -269,6 +278,219 @@ describe('merge', () => {
       },
     )
     expect(seen).toEqual(['a>-', 'b>b', '->d'])
+  })
+})
+
+describe('parallel commit', () => {
+  /** Natural leaf boundaries under `tiny`: the keys a planner may split at. */
+  const natural = (k: string) => trailingZeros(boundaryBytes(k)) >= 2
+
+  /** Run one unit: a range merge with its leaves collected. */
+  const runUnit = async (
+    source: NodeSource<RecordEntry>,
+    sink: TreeSink<RecordEntry>,
+    base: string | null,
+    range: KeyRange,
+    changes: Change<RecordEntry>[],
+  ) => {
+    const leaves: NodeDesc[] = []
+    const r = await mergeTree(
+      source,
+      sink,
+      base,
+      changes.filter((c) => inRange(range, c.key)),
+      { chunking: tiny, range, leafOutput: (d) => leaves.push(d) },
+    )
+    // Every output leaf lies inside the range (the coordinator's fallback would
+    // otherwise hide a unit that spills over its edges).
+    for (const leaf of leaves) {
+      for (const e of await source.leafEntries(leaf.hash)) expect(inRange(range, e.key)).toBe(true)
+    }
+    return { ...r, leaves, survived: range.through === null || r.lastKey === range.through }
+  }
+
+  /**
+   * A coordinator in miniature: split at `splits`, leave change-free ranges in
+   * `gaps` to assembly, run the rest as units, merge a unit whose `through` was
+   * deleted with the next range, then assemble.
+   */
+  const parallel = async (
+    source: NodeSource<RecordEntry>,
+    sink: TreeSink<RecordEntry>,
+    base: string | null,
+    changes: Change<RecordEntry>[],
+    splits: string[],
+    gap: (i: number) => boolean,
+  ) => {
+    const bounds = [null, ...splits, null]
+    let ranges = bounds.slice(1).map((through, i) => {
+      const range = { after: bounds[i]!, through }
+      return { ...range, gap: gap(i) && !changes.some((c) => inRange(range, c.key)) }
+    })
+    for (;;) {
+      const segments: Segment[] = []
+      const stats = { added: 0, removed: 0, updated: 0, unchanged: 0, missingDeletes: 0 }
+      let failed = -1
+      for (let i = 0; i < ranges.length && failed < 0; i++) {
+        const r = ranges[i]!
+        if (r.gap) continue
+        const unit = await runUnit(source, sink, base, r, changes)
+        if (!unit.survived) {
+          // Only a deleted split key may fail a unit.
+          expect(changes.some((c) => c.key === r.through && c.entry === null)).toBe(true)
+          failed = i
+        }
+        segments.push({ after: r.after, through: r.through, leaves: unit.leaves })
+        for (const k of Object.keys(stats) as (keyof typeof stats)[]) stats[k] += unit.stats[k]
+      }
+      if (failed >= 0) {
+        const [a, b] = [ranges[failed]!, ranges[failed + 1]!]
+        ranges = [
+          ...ranges.slice(0, failed),
+          { after: a.after, through: b.through, gap: false },
+          ...ranges.slice(failed + 2),
+        ]
+        continue
+      }
+      const assembled = await assembleTree(source, sink, base, segments, { chunking: tiny })
+      return { root: assembled.root, stats, assembly: assembled.stats, units: segments.length }
+    }
+  }
+
+  // fast-check keeps arrays near ten elements unless told otherwise; units and
+  // straddled leaves need trees several levels deep.
+  const bigKeySet = fc.uniqueArray(keyArb, { maxLength: 400, size: 'max' })
+  const changeArb = (pool: string[]) =>
+    fc.uniqueArray(
+      fc.record({
+        key: pool.length > 0 ? fc.oneof(fc.constantFrom(...pool), keyArb) : keyArb,
+        del: fc.boolean(),
+        v: fc.integer({ min: 0, max: 3 }),
+      }),
+      { selector: (c) => c.key, maxLength: 80, size: 'large' },
+    )
+
+  it(
+    'units plus assembly equal the serial merge (property)',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          bigKeySet.chain((keys) => fc.tuple(fc.constant(keys), changeArb(keys))),
+          fc.array(fc.boolean(), { minLength: 1, maxLength: 16 }),
+          fc.array(fc.boolean(), { minLength: 1, maxLength: 16 }),
+          async ([keys, raw], pick, gaps) => {
+            const { sink, source } = store()
+            const baseRoot =
+              buildTree(recordTree, sink, sorted(keys.map((k) => entry(k))), { chunking: tiny })
+                ?.hash ?? null
+            const changes = raw
+              .map((c) => ({ key: c.key, entry: c.del ? null : entry(c.key, c.v) }))
+              .sort((a, b) => compareUtf8(a.key, b.key))
+            // Candidates as a planner sees them: natural keys of the base and of the
+            // upserts. Some may be deleted by the changes; units must catch that.
+            const upserts = changes.filter((c) => c.entry).map((c) => c.key)
+            const candidates = [...new Set([...keys, ...upserts])].filter(natural).sort(compareUtf8)
+            const splits = candidates.filter((_, i) => pick[i % pick.length])
+            const serial = await mergeTree(source, sink, baseRoot, changes, { chunking: tiny })
+            const par = await parallel(
+              source,
+              sink,
+              baseRoot,
+              changes,
+              splits,
+              (i) => gaps[i % gaps.length]!,
+            )
+            expect(par.root?.hash ?? null).toBe(serial.root?.hash ?? null)
+            expect(par.root?.count ?? 0).toBe(serial.root?.count ?? 0)
+            expect(par.root?.bytes ?? 0).toBe(serial.root?.bytes ?? 0)
+            const { added, removed, updated, unchanged, missingDeletes } = serial.stats
+            expect(par.stats).toEqual({ added, removed, updated, unchanged, missingDeletes })
+            if (par.root) {
+              const v = await verifyTree(source, par.root.hash, { chunking: tiny })
+              expect(v.errors).toEqual([])
+            }
+          },
+        ),
+        { numRuns: 300 * RUNS },
+      )
+    },
+    20_000 * RUNS,
+  )
+
+  it('appends past the end of the base in their own unit', async () => {
+    // A split at the base's last key with records appended after it: assembly
+    // must not reuse the base's right-edge nodes whole.
+    for (let n = 20; n < 400; n += 13) {
+      const { sink, source } = store()
+      const keys = Array.from({ length: n }, (_, i) => `k${String(i).padStart(4, '0')}`)
+      const last = keys.filter(natural).at(-1)!
+      const base = sorted(keys.filter((k) => compareUtf8(k, last) <= 0).map((k) => entry(k)))
+      const root = buildTree(recordTree, sink, base, { chunking: tiny })!.hash
+      const changes = keys
+        .filter((k) => compareUtf8(k, last) > 0)
+        .map((k) => ({ key: k, entry: entry(k) }))
+      if (changes.length === 0) continue
+      const serial = await mergeTree(source, sink, root, changes, { chunking: tiny })
+      const par = await parallel(source, sink, root, changes, [last], (i) => i === 0)
+      expect(par.root?.hash).toBe(serial.root?.hash)
+    }
+  })
+
+  it('a unit reports a deleted through', async () => {
+    const { sink, source } = store()
+    const es = sorted(Array.from({ length: 300 }, (_, i) => entry(`k${i}`)))
+    const root = buildTree(recordTree, sink, es, { chunking: tiny })!.hash
+    const splits = es.map((e) => e.key).filter(natural)
+    const [after, through, next] = [splits[3]!, splits[4]!, splits[5]!]
+    const changes = [{ key: through, entry: null }]
+    const unit = await runUnit(source, sink, root, { after, through }, changes)
+    expect(unit.survived).toBe(false)
+    expect(unit.lastKey).not.toBe(through)
+    expect(unit.stats.removed).toBe(1)
+    const pair = await runUnit(source, sink, root, { after, through: next }, changes)
+    expect(pair.survived).toBe(true)
+  })
+
+  it('refuses a change outside the unit range', async () => {
+    const { sink, source } = store()
+    const range = { after: 'b', through: 'd' }
+    await expect(
+      mergeTree(source, sink, null, [{ key: 'e', entry: entry('e') }], {
+        chunking: tiny,
+        range,
+        leafOutput: () => {},
+      }),
+    ).rejects.toThrow(/outside/)
+  })
+
+  it('assembly reads O(segments) nodes in a large tree', async () => {
+    const { sink, source } = store()
+    const es = sorted(
+      Array.from({ length: 200_000 }, (_, i) => entry(`id${String(i).padStart(7, '0')}`)),
+    )
+    const root = buildTree(recordTree, sink, es, { chunking: protocolChunking })!
+    const isNatural = (k: string) => trailingZeros(boundaryBytes(k)) >= 10
+    const nat = es.map((e) => e.key).filter(isNatural)
+    // Three units, each a few leaves wide, with one update in each.
+    const segments: Segment[] = []
+    const changes: Change<RecordEntry>[] = []
+    for (const at of [10, 80, 150]) {
+      const range = { after: nat[at]!, through: nat[at + 3]! }
+      const target = es.find((e) => compareUtf8(e.key, nat[at + 1]!) > 0)!
+      const unitChanges = [{ key: target.key, entry: entry(target.key, 9) }]
+      changes.push(...unitChanges)
+      const leaves: NodeDesc[] = []
+      await mergeTree(source, sink, root.hash, unitChanges, {
+        range,
+        leafOutput: (d) => leaves.push(d),
+      })
+      segments.push({ ...range, leaves })
+    }
+    const assembled = await assembleTree(source, sink, root.hash, segments)
+    const serial = await mergeTree(source, sink, root.hash, changes)
+    expect(assembled.root?.hash).toBe(serial.root?.hash)
+    // A path per segment, plus the root.
+    expect(assembled.stats.readNodes).toBeLessThanOrEqual(3 * (root.level + 2) + 1)
   })
 })
 

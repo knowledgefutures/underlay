@@ -51,6 +51,8 @@ export {
 export { MapSource, type NodeSource, resolveRoot, rootDesc } from './tree/source.js'
 export {
   type Change,
+  inRange,
+  type KeyRange,
   mergeTree,
   type MergeOptions,
   type MergeResult,
@@ -66,3 +68,4 @@ export {
   rankOf,
 } from './tree/read.js'
 export { verifyTree, type VerifyResult } from './tree/verify.js'
+export { assembleTree, type Segment } from './tree/assemble.js'

@@ -12,6 +12,13 @@
  * most one neighbour per level to re-align with the base's boundaries. The result
  * is identical to building the new entry set from scratch, which the property
  * tests check.
+ *
+ * Range mode (`range` plus `leafOutput`) is one commit unit of a parallel commit:
+ * it merges only the base entries and changes in `(after, through]` and outputs
+ * that range's leaves, building no interior node. When both ends are natural
+ * leaf boundaries present in the new entry set (or null), those leaves are
+ * exactly the full result's leaves for the range, because a leaf always ends
+ * after a natural boundary. `assembleTree` builds the levels above.
  */
 import { compareUtf8 } from '../utf8.js'
 import { type BuilderOptions, TreeBuilder, type TreeSink } from './builder.js'
@@ -38,17 +45,56 @@ export interface MergeStats {
   readNodes: number
 }
 
+/** A key range `(after, through]`; null is unbounded on that side. */
+export interface KeyRange {
+  after: string | null
+  through: string | null
+}
+
 export interface MergeOptions<E> extends BuilderOptions<E> {
   /** Called for every effective change, in key order: (old, new). */
   onChange?: (before: E | null, after: E | null) => void
+  /**
+   * Merge only this range (a commit unit). Requires `leafOutput`, and every
+   * change must lie in the range.
+   */
+  range?: KeyRange
 }
 
 export interface MergeResult {
+  /** Null for an empty tree, and always null in range mode. */
   root: NodeDesc | null
   stats: MergeStats
+  /**
+   * Range mode only: the last key output, or null if the range came out empty.
+   * The unit's leaves are valid only if this is `range.through` (or `through`
+   * is null); otherwise `through` was deleted and the caller merges this unit
+   * with the next one.
+   */
+  lastKey?: string | null
 }
 
-class Peekable<T> {
+/** Is `key` inside `(after, through]`? */
+export function inRange(range: KeyRange, key: string): boolean {
+  return (
+    (range.after === null || compareUtf8(key, range.after) > 0) &&
+    (range.through === null || compareUtf8(key, range.through) <= 0)
+  )
+}
+
+export function emptyStats(): MergeStats {
+  return {
+    added: 0,
+    removed: 0,
+    updated: 0,
+    unchanged: 0,
+    missingDeletes: 0,
+    reusedNodes: 0,
+    readNodes: 0,
+  }
+}
+
+export class Peekable<T> {
   readonly #it: Iterator<T> | AsyncIterator<T>
   #head: IteratorResult<T> | undefined
 
@@ -79,17 +125,11 @@ export async function mergeTree<E>(
   opts: MergeOptions<E> = {},
 ): Promise<MergeResult> {
   const spec = source.spec
+  const range = opts.range
+  if (range && !opts.leafOutput) throw new Error('mergeTree: range mode needs leafOutput')
   const builder = new TreeBuilder(spec, sink, opts)
   const pending = new Peekable(changes)
-  const stats: MergeStats = {
-    added: 0,
-    removed: 0,
-    updated: 0,
-    unchanged: 0,
-    missingDeletes: 0,
-    reusedNodes: 0,
-    readNodes: 0,
-  }
+  const stats = emptyStats()
   let prevChangeKey: string | null = null
 
   const nextChange = async (): Promise<Change<E> | undefined> => {
@@ -100,6 +140,9 @@ export async function mergeTree<E>(
       }
       if (c.entry && spec.key(c.entry) !== c.key) {
         throw new Error('mergeTree: change key does not match its entry')
+      }
+      if (range && !inRange(range, c.key)) {
+        throw new Error(`mergeTree: change ${JSON.stringify(c.key)} is outside the unit's range`)
       }
       prevChangeKey = c.key
     }
@@ -122,6 +165,8 @@ export async function mergeTree<E>(
     const entries = await source.leafEntries(desc.hash)
     for (const old of entries) {
       const oldKey = spec.key(old)
+      // A leaf straddling a unit's range edge: keep only the range's entries.
+      if (range && !inRange(range, oldKey)) continue
       // Changes before this entry are inserts (or deletes of absent keys).
       for (;;) {
         const c = await pending.peek()
@@ -155,10 +200,24 @@ export async function mergeTree<E>(
   // `rightEdge`: the node is the last of its level in the base. It may have ended
   // because the tree ended rather than at a boundary, so it can only be reused
   // when nothing is appended after it, i.e. no change remains at all.
-  const visit = async (desc: NodeDesc, rightEdge: boolean): Promise<void> => {
+  // `low`: the node's exclusive lower bound (the previous sibling's last key, or
+  // null at the left edge), needed to place the node against a unit's range.
+  const visit = async (desc: NodeDesc, rightEdge: boolean, low: string | null): Promise<void> => {
+    let inside = true
+    if (range) {
+      // Entirely before or after the range: not part of this unit.
+      if (range.after !== null && compareUtf8(desc.lastKey, range.after) <= 0) return
+      if (range.through !== null && low !== null && compareUtf8(low, range.through) >= 0) return
+      // Only nodes wholly inside the range may be reused, and only leaves, since
+      // a unit builds no interior nodes.
+      inside =
+        desc.level === 0 &&
+        (range.after === null || (low !== null && compareUtf8(low, range.after) >= 0)) &&
+        (range.through === null || compareUtf8(desc.lastKey, range.through) <= 0)
+    }
     const c = await pending.peek()
     const changed = c !== undefined && (rightEdge || compareUtf8(c.key, desc.lastKey) <= 0)
-    if (!changed && builder.emptyThrough(desc.level)) {
+    if (inside && !changed && builder.emptyThrough(desc.level)) {
       stats.reusedNodes++
       builder.addNode(desc)
       return
@@ -174,16 +233,22 @@ export async function mergeTree<E>(
       throw new Error(`mergeTree: node ${desc.hash} is not at level ${desc.level}`)
     }
     const last = node.children.length - 1
-    for (let i = 0; i <= last; i++) await visit(node.children[i]!, rightEdge && i === last)
+    for (let i = 0; i <= last; i++) {
+      await visit(
+        node.children[i]!,
+        rightEdge && i === last,
+        i === 0 ? low : node.children[i - 1]!.lastKey,
+      )
+    }
   }
 
   if (base !== null) {
-    if ((await pending.peek()) === undefined) {
+    if (!range && (await pending.peek()) === undefined) {
       // Nothing to apply: the base is the result.
       return { root: await rootDesc(source, base), stats }
     }
     stats.readNodes++
-    await visit(await rootDesc(source, base), true)
+    await visit(await rootDesc(source, base), true, null)
   }
   let appended = 0
   for (let c = await nextChange(); c; c = await nextChange()) {
@@ -192,5 +257,6 @@ export async function mergeTree<E>(
   }
 
   const { root, unresolved } = builder.finish()
+  if (range) return { root: null, stats, lastKey: builder.lastKey }
   return { root: root && unresolved ? await resolveRoot(source, root) : root, stats }
 }
