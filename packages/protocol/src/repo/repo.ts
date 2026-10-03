@@ -1,7 +1,7 @@
 /**
  * A repository: one storage location's objects, in the documented layout
  * (docs/protocol-v2.md, "Repository layout"), read and written through a
- * BlobStore. The platform primary, customer mirrors and restore all use this.
+ * Store. The platform primary, customer mirrors and restore all use this.
  *
  *   nodes/<hash>                          tree node JSON, gzip (hash of the uncompressed bytes)
  *   bodies/<leafHash>.ndjson.gz           the leaf's records, one canonical record per line, in
@@ -41,7 +41,7 @@ import {
 } from '../format.js'
 import { gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
-import { type BlobStore, type Cache, noCache } from './types.js'
+import { type Store, type Cache, noCache } from './types.js'
 
 /** Records over this size are stored once under records/ (writer policy, not protocol). */
 export const OUT_OF_LINE_BYTES = 64 * 1024
@@ -98,7 +98,7 @@ export class Repo {
   readonly trusted: boolean
 
   constructor(
-    readonly blobs: BlobStore,
+    readonly blobs: Store,
     opts: RepoOptions,
   ) {
     this.cache = opts.cache ?? noCache

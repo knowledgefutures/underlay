@@ -12,7 +12,7 @@
  * `wrangler d1 execute --file --remote`). File objects aren't copied: point the
  * v2 bucket at the v1 bucket's keys or copy them first (build doc finding 16).
  */
-import { ed25519Signer, generateSigningKey, S3BlobStore } from '@underlay/protocol'
+import { ed25519Signer, generateSigningKey, s3Store } from '@underlay/protocol'
 import {
   createStores,
   drainSqliteJobs,
@@ -45,7 +45,7 @@ const ports: Ports = {
   db,
   cache,
   stores: createStores(db, cache, {
-    bucket: new S3BlobStore({
+    bucket: s3Store({
       endpoint: env.S3_ENDPOINT,
       bucket: env.S3_BUCKET ?? 'underlay',
       accessKeyId: env.S3_ACCESS_KEY ?? '',

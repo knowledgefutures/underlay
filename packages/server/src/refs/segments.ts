@@ -11,7 +11,7 @@
  */
 import { gunzipText, gzip, splitLines } from '@underlay/protocol'
 
-import type { BlobStore, Cache } from '../ports.js'
+import type { Store, Cache } from '../ports.js'
 
 /** [hash, kind, collectionId, set, seq, op, type, id]. kind: r(ecord) | f(ile). op: + | -. */
 export type RefEvent = [
@@ -91,7 +91,7 @@ export class SegmentWriter {
   #n = 0
 
   constructor(
-    readonly store: BlobStore,
+    readonly store: Store,
     readonly idFor: (n: number) => string,
   ) {}
 
@@ -173,7 +173,7 @@ export class SegmentWriter {
 
 const idxCache = new Map<string, { idx: SegmentIndex; bits: Uint8Array }>()
 
-async function loadIndex(store: BlobStore, cache: Cache, id: string) {
+async function loadIndex(store: Store, cache: Cache, id: string) {
   const hit = idxCache.get(id)
   if (hit) return hit
   const key = `refidx/${id}`
@@ -193,7 +193,7 @@ async function loadIndex(store: BlobStore, cache: Cache, id: string) {
 
 /** Events for one hash in one segment. */
 export async function lookupSegment(
-  store: BlobStore,
+  store: Store,
   cache: Cache,
   id: string,
   hash: string,
@@ -215,7 +215,7 @@ export async function lookupSegment(
 
 /** All events of a segment in order, a block at a time (for compaction). */
 export async function* readSegment(
-  store: BlobStore,
+  store: Store,
   id: string,
   range?: { from: string; to: string },
 ): AsyncGenerator<RefEvent> {
@@ -234,7 +234,7 @@ export async function* readSegment(
   }
 }
 
-export async function deleteSegment(store: BlobStore, id: string): Promise<void> {
+export async function deleteSegment(store: Store, id: string): Promise<void> {
   await store.delete(keyOf(id, 'dat'))
   await store.delete(keyOf(id, 'idx'))
 }

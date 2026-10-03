@@ -20,9 +20,10 @@ import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import {
   ed25519Signer,
-  FsBlobStore,
+  type FileStore,
+  fileStore,
   generateSigningKey,
-  S3BlobStore,
+  s3Store,
   serveSignedBlob,
   type Signer,
 } from '@underlay/protocol'
@@ -34,7 +35,7 @@ import { authenticator, createAuth } from '../auth/auth.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
-import type { BlobStore, Ports } from '../ports.js'
+import type { Ports, PresigningStore } from '../ports.js'
 import { createStores } from '../stores.js'
 import { guardedFetch } from './guarded-fetch.js'
 
@@ -44,10 +45,10 @@ const appUrl = env.APP_URL ?? `http://localhost:${port}`
 
 const db = await openNodeDb(env.DB_URL ?? 'file:./data/underlay.sqlite')
 
-let blobs: BlobStore
-let fsBlobs: FsBlobStore | null = null
+let blobs: PresigningStore
+let fsBlobs: FileStore | null = null
 if (env.S3_ENDPOINT) {
-  blobs = new S3BlobStore({
+  blobs = s3Store({
     endpoint: env.S3_ENDPOINT,
     bucket: env.S3_BUCKET ?? 'underlay',
     accessKeyId: env.S3_ACCESS_KEY ?? '',
@@ -55,12 +56,12 @@ if (env.S3_ENDPOINT) {
     region: env.S3_REGION ?? 'auto',
   })
 } else {
-  fsBlobs = new FsBlobStore({
-    root: env.BLOB_DIR ?? './data/blobs',
+  const local = fileStore(env.BLOB_DIR ?? './data/blobs', {
     publicUrl: appUrl,
     secret: env.BLOB_URL_SECRET ?? 'dev-blob-secret',
   })
-  blobs = fsBlobs
+  fsBlobs = local
+  blobs = local
 }
 
 let signingKey = env.SIGNING_KEY

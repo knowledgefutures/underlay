@@ -30,13 +30,31 @@ export interface PresignPutOptions {
   contentType?: string
 }
 
-/** An S3-like bucket. Adapters: S3 API (R2, S3, MinIO), filesystem, memory. */
-export interface BlobStore {
+/**
+ * Where a repository's objects live: an S3-like bucket. The five methods are
+ * what reading, writing, mirroring and restore need, and every store has them.
+ * Stores: `memoryStore()`, `fileStore(dir)`, `s3Store({…})`, `r2Store(binding)`.
+ *
+ * `list` cursors are opaque: pass back exactly what the previous page returned.
+ */
+export interface Store {
+  /** The object, or a byte range of it (`size` is then the range's size); null if absent. */
   get(key: string, range?: { offset: number; length?: number }): Promise<BlobObject | null>
   head(key: string): Promise<BlobHead | null>
+  /** `ifAbsent` on an existing key succeeds without writing (keys are immutable). */
   put(key: string, body: Uint8Array | string, opts?: PutOptions): Promise<void>
-  delete(key: string): Promise<void>
+  /** Keys under a prefix in byte order, a page at a time. */
   list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }>
+  /** Deleting an absent key succeeds. */
+  delete(key: string): Promise<void>
+  /** Server-side copy, where the store has one; `copyObject` falls back to get and put. */
+  copy?(from: string, to: string): Promise<void>
+  /** Presigned URLs and multipart uploads, where the store can hand out URLs. */
+  readonly presigner?: Presigner
+}
+
+/** Direct client access to a store: what the platform needs for uploads and downloads. */
+export interface Presigner {
   presignGet(key: string, opts: PresignGetOptions): Promise<string>
   presignPut(key: string, opts: PresignPutOptions): Promise<string>
   createMultipart(key: string, contentType?: string): Promise<string>
@@ -47,8 +65,27 @@ export interface BlobStore {
     parts: { partNumber: number; etag: string }[],
   ): Promise<void>
   abortMultipart(key: string, uploadId: string): Promise<void>
-  /** Server-side copy within the bucket (up to 5 GB on S3). */
-  copy(from: string, to: string): Promise<void>
+}
+
+/** A store that can presign. */
+export type PresigningStore = Store & { readonly presigner: Presigner }
+
+/** Copy an object within a store: natively when it can, else by reading and writing it. */
+export async function copyObject(store: Store, from: string, to: string): Promise<void> {
+  if (store.copy) return store.copy(from, to)
+  const obj = await store.get(from)
+  if (!obj) throw new Error(`copyObject: ${from} does not exist`)
+  await store.put(to, await obj.bytes(), obj.contentType ? { contentType: obj.contentType } : {})
+}
+
+/** Every key under a prefix, following list pages. */
+export async function* listAll(store: Store, prefix: string): AsyncGenerator<string> {
+  let cursor: string | undefined
+  do {
+    const page = await store.list(prefix, cursor)
+    yield* page.keys
+    cursor = page.cursor
+  } while (cursor !== undefined)
 }
 
 /** A shared cache for immutable, hash-keyed bytes (nodes, roots, schemas, bodies). */
@@ -64,16 +101,37 @@ export const noCache: Cache = {
 }
 
 /**
- * A BlobStore whose keys live under a prefix: one location's repository inside a
+ * A store whose keys live under a prefix: one location's repository inside a
  * bucket shared with other things. `prefix` has no trailing slash ('' for none).
+ * List cursors pass through untouched, since they're opaque to everyone but the
+ * inner store.
  */
-export class PrefixedBlobStore implements BlobStore {
+export class PrefixedStore implements Store {
   readonly #p: string
+  readonly presigner?: Presigner
+  readonly copy?: (from: string, to: string) => Promise<void>
   constructor(
-    readonly inner: BlobStore,
+    readonly inner: Store,
     prefix: string,
   ) {
-    this.#p = prefix ? `${prefix.replace(/\/+$/, '')}/` : ''
+    const p = prefix ? `${prefix.replace(/\/+$/, '')}/` : ''
+    this.#p = p
+    const k = (key: string) => p + key
+    const inn = inner.presigner
+    if (inn) {
+      this.presigner = {
+        presignGet: (key, opts) => inn.presignGet(k(key), opts),
+        presignPut: (key, opts) => inn.presignPut(k(key), opts),
+        createMultipart: (key, type) => inn.createMultipart(k(key), type),
+        presignPart: (key, id, n, exp) => inn.presignPart(k(key), id, n, exp),
+        completeMultipart: (key, id, parts) => inn.completeMultipart(k(key), id, parts),
+        abortMultipart: (key, id) => inn.abortMultipart(k(key), id),
+      }
+    }
+    if (inner.copy) {
+      const copy = inner.copy.bind(inner)
+      this.copy = (from, to) => copy(k(from), k(to))
+    }
   }
   #k = (key: string) => this.#p + key
   get(key: string, range?: { offset: number; length?: number }) {
@@ -89,32 +147,8 @@ export class PrefixedBlobStore implements BlobStore {
     return this.inner.delete(this.#k(key))
   }
   async list(prefix: string, cursor?: string) {
-    const r = await this.inner.list(
-      this.#k(prefix),
-      cursor === undefined ? undefined : this.#k(cursor),
-    )
+    const r = await this.inner.list(this.#k(prefix), cursor)
     const keys = r.keys.map((k) => k.slice(this.#p.length))
-    return r.cursor === undefined ? { keys } : { keys, cursor: r.cursor.slice(this.#p.length) }
-  }
-  presignGet(key: string, opts: PresignGetOptions) {
-    return this.inner.presignGet(this.#k(key), opts)
-  }
-  presignPut(key: string, opts: PresignPutOptions) {
-    return this.inner.presignPut(this.#k(key), opts)
-  }
-  createMultipart(key: string, contentType?: string) {
-    return this.inner.createMultipart(this.#k(key), contentType)
-  }
-  presignPart(key: string, uploadId: string, partNumber: number, expiresIn: number) {
-    return this.inner.presignPart(this.#k(key), uploadId, partNumber, expiresIn)
-  }
-  completeMultipart(key: string, uploadId: string, parts: { partNumber: number; etag: string }[]) {
-    return this.inner.completeMultipart(this.#k(key), uploadId, parts)
-  }
-  abortMultipart(key: string, uploadId: string) {
-    return this.inner.abortMultipart(this.#k(key), uploadId)
-  }
-  copy(from: string, to: string) {
-    return this.inner.copy(this.#k(from), this.#k(to))
+    return r.cursor === undefined ? { keys } : { keys, cursor: r.cursor }
   }
 }

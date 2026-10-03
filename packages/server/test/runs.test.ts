@@ -1,4 +1,4 @@
-import { compareUtf8, MemoryBlobStore, sha256Hex } from '@underlay/protocol'
+import { compareUtf8, MemoryStore, memoryStore, sha256Hex } from '@underlay/protocol'
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
@@ -22,7 +22,7 @@ async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
 }
 
 /** A store that counts reads and the bytes they return. */
-class CountingStore extends MemoryBlobStore {
+class CountingStore extends MemoryStore {
   gets = 0
   bytes = 0
   override async get(key: string, range?: { offset: number; length?: number }) {
@@ -39,7 +39,7 @@ const key = (e: { t: string; k: string }) => `${e.t}\u0000${e.k}`
 
 describe('sorted runs', () => {
   it('writes blocks into parts, reads them back in order, and filters by type', async () => {
-    const store = new MemoryBlobStore()
+    const store = memoryStore()
     const entries: RunEntry[] = []
     // Hex bodies barely compress, so this spans several 4 MB parts.
     for (let i = 0; i < 12_000; i++)
@@ -60,7 +60,7 @@ describe('sorted runs', () => {
   })
 
   it('refuses out-of-order writes', () => {
-    const w = new RunWriter(new MemoryBlobStore(), 's', 1)
+    const w = new RunWriter(memoryStore(), 's', 1)
     w.add({ t: 'A', k: 'b' })
     expect(() => w.add({ t: 'A', k: 'a' })).toThrow(/out of order/)
   })
@@ -84,7 +84,7 @@ describe('sorted runs', () => {
   })
 
   it('marks exactly the upserts whose id is a split-key candidate', async () => {
-    const store = new MemoryBlobStore()
+    const store = memoryStore()
     const entries: RunEntry[] = Array.from({ length: 60_000 }, (_, i) => ({
       t: 'T',
       k: `id${i}`,
@@ -113,7 +113,7 @@ describe('sorted runs', () => {
         fc.array(fc.integer({ min: 0, max: 1000 }), { minLength: 1, maxLength: 20 }),
         fc.tuple(fc.integer({ min: -1, max: 61 }), fc.integer({ min: -1, max: 61 })),
         async (batches, picks, [a, b]) => {
-          const store = new MemoryBlobStore()
+          const store = memoryStore()
           const want = new Map<string, number>()
           let runs: RunIndex[] = []
           for (let seq = 1; seq <= batches.length; seq++) {
@@ -147,7 +147,7 @@ describe('sorted runs', () => {
   })
 
   it('merges hundreds of runs with a heap', async () => {
-    const store = new MemoryBlobStore()
+    const store = memoryStore()
     const runs: RunIndex[] = []
     const want = new Map<string, number>()
     for (let seq = 1; seq <= 300; seq++) {

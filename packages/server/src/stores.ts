@@ -6,15 +6,27 @@
  * into a Repo from its row. Customer (s3) locations become readable once
  * credential encryption lands with bucket mirrors (phase 11).
  */
-import { type BlobStore, type Cache, PrefixedBlobStore, Repo } from '@underlay/protocol'
+import {
+  type Cache,
+  PrefixedStore,
+  type PresigningStore,
+  Repo,
+  type Store,
+} from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from './db/schema.js'
 import type { Db, Stores } from './ports.js'
 
 export interface PlatformStorage {
-  /** The deployment's own bucket. */
-  bucket: BlobStore
+  /** The deployment's own bucket: repositories and internal objects. */
+  bucket: Store
+  /**
+   * The same bucket through a store that presigns, for file bytes (direct
+   * uploads and downloads). On Workers `bucket` can be the R2 binding, which
+   * can't presign, and this the S3 API. Defaults to `bucket` when it presigns.
+   */
+  files?: PresigningStore
   /** Key prefix for repositories in it ('' for the bucket root). */
   repoPrefix: string
   /** Key prefix for platform-internal objects. */
@@ -27,6 +39,7 @@ const primaryCache = new Map<string, { locationId: string; at: number }>()
 
 export function createStores(db: Db, cache: Cache, platform: PlatformStorage): Stores {
   const repos = new Map<string, Repo>()
+  const files = platform.files ?? presigning(platform.bucket)
 
   const forLocation = async (locationId: string): Promise<Repo> => {
     const known = repos.get(locationId)
@@ -41,7 +54,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       throw new Error(`Storage location ${locationId} (${loc.kind}) is not readable yet`)
     }
     const prefix = [platform.repoPrefix, loc.prefix].filter(Boolean).join('/')
-    const repo = new Repo(new PrefixedBlobStore(platform.bucket, prefix), {
+    const repo = new Repo(new PrefixedStore(platform.bucket, prefix), {
       cache,
       scope: `loc:${locationId}`,
       trusted: true,
@@ -69,11 +82,16 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       primaryCache.set(collectionId, { locationId: row.locationId, at: Date.now() })
       return forLocation(row.locationId)
     },
-    internal: new PrefixedBlobStore(platform.bucket, platform.internalPrefix),
-    fileBytes: platform.bucket,
+    internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
+    fileBytes: files,
     canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),
     stagingKey: (id) => [platform.internalPrefix, 'uploads', id].filter(Boolean).join('/'),
   }
+}
+
+function presigning(store: Store): PresigningStore {
+  if (!store.presigner) throw new Error('The platform bucket store cannot presign; pass `files`')
+  return store as PresigningStore
 }
 
 /** Forget a cached primary (after promoting a mirror). */

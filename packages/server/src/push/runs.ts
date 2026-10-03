@@ -36,7 +36,7 @@ import {
   trailingZeros,
 } from '@underlay/protocol'
 
-import type { BlobStore } from '../ports.js'
+import type { Store } from '../ports.js'
 
 /** One entry of a run. `k` is the record id, `t` the type. */
 export interface RunEntry {
@@ -133,7 +133,7 @@ export class RunWriter {
   readonly #puts: Promise<void>[] = []
 
   constructor(
-    readonly store: BlobStore,
+    readonly store: Store,
     readonly sessionId: string,
     readonly seq: number,
     readonly tier = 0,
@@ -219,12 +219,7 @@ export class RunWriter {
 }
 
 /** Write an in-memory batch (one upload request) as a run. */
-export async function writeRun(
-  store: BlobStore,
-  sessionId: string,
-  seq: number,
-  entries: RunEntry[],
-) {
+export async function writeRun(store: Store, sessionId: string, seq: number, entries: RunEntry[]) {
   entries.sort(compareRunKeys)
   // Within one batch the last occurrence of a key wins.
   const w = new RunWriter(store, sessionId, seq)
@@ -237,7 +232,7 @@ export async function writeRun(
 }
 
 export async function readRunIndex(
-  store: BlobStore,
+  store: Store,
   sessionId: string,
   seq: number,
 ): Promise<RunIndex> {
@@ -305,7 +300,7 @@ export class RunCursor {
   head: RunEntry | undefined
 
   constructor(
-    readonly store: BlobStore,
+    readonly store: Store,
     readonly sessionId: string,
     readonly index: RunIndex,
     range?: RunRange | string,
@@ -370,7 +365,7 @@ export class RunCursor {
 
 /** Entries of one run in order, optionally limited to one type or a range. */
 export async function* readRun(
-  store: BlobStore,
+  store: Store,
   sessionId: string,
   index: RunIndex,
   range?: RunRange | string,
@@ -429,7 +424,7 @@ class CursorHeap {
  * so a compacted run keeps it.
  */
 export async function* mergeRuns(
-  store: BlobStore,
+  store: Store,
   sessionId: string,
   indexes: RunIndex[],
   range?: RunRange | string,
@@ -458,7 +453,7 @@ export async function* mergeRuns(
 
 /** Merge runs into one new run of the given tier (a compaction). */
 export async function compactRuns(
-  store: BlobStore,
+  store: Store,
   sessionId: string,
   indexes: RunIndex[],
   seq: number,

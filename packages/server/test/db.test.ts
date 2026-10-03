@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { MemoryBlobStore } from '@underlay/protocol'
+import { memoryStore } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -64,7 +64,7 @@ describe('SQLite jobs', () => {
     const ports: Ports = {
       db,
       stores: createStores(db, new MemoryCache(), {
-        bucket: new MemoryBlobStore(),
+        bucket: memoryStore(),
         repoPrefix: 'repo',
         internalPrefix: 'internal',
       }),
@@ -109,7 +109,7 @@ describe('SQLite jobs', () => {
 describe('placements', () => {
   it('resolves a collection to its primary location, and allows only one primary', async () => {
     const db = await tempDb()
-    const bucket = new MemoryBlobStore()
+    const bucket = memoryStore()
     const stores = createStores(db, new MemoryCache(), {
       bucket,
       repoPrefix: 'repo',

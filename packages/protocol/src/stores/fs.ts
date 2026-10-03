@@ -1,10 +1,11 @@
 /**
- * Filesystem blob store for development and small self-hosted Node setups.
+ * A store in a local directory: the CLI's offline `.underlay/`, development, and
+ * small self-hosted Node setups.
  *
- * Presigned URLs point at the app itself (`/_blob/<key>`), signed with HMAC; the
- * Node entry serves them through `serveSignedBlob`. Bytes still never pass
- * through the API routes, and the same client flow (presigned PUT, then GET by
- * redirect) works as on R2.
+ * Given a public URL and a secret, it also presigns: URLs point at the app
+ * itself (`/_blob/<key>`), signed with HMAC, and the Node entry serves them
+ * through `serveSignedBlob`. Bytes still never pass through the API routes, and
+ * the same client flow (presigned PUT, then GET by redirect) works as on R2.
  *
  * Node modules load on first use, so importing the package never pulls in
  * `node:fs` (browsers, Workers).
@@ -17,14 +18,15 @@ import type * as NodeStream from 'node:stream'
 import type {
   BlobHead,
   BlobObject,
-  BlobStore,
   PresignGetOptions,
+  Presigner,
+  PresigningStore,
   PresignPutOptions,
   PutOptions,
+  Store,
 } from '../repo/types.js'
 
-export interface FsBlobConfig {
-  root: string
+export interface FileStoreOptions {
   /** Public base URL of the app, for presigned URLs. */
   publicUrl: string
   /** HMAC secret for presigned URLs. */
@@ -51,14 +53,36 @@ const hex = (b: ArrayBuffer) =>
   [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('')
 const unhex = (s: string) => new Uint8Array((s.match(/../g) ?? []).map((x) => parseInt(x, 16)))
 
-export class FsBlobStore implements BlobStore {
+/** A store in a directory; with `presign`, one that presigns URLs served by the app. */
+export function fileStore(root: string): FileStore
+export function fileStore(root: string, presign: FileStoreOptions): FileStore & PresigningStore
+export function fileStore(root: string, presign?: FileStoreOptions): FileStore {
+  return new FileStore(root, presign)
+}
+
+export class FileStore implements Store {
   #key: Promise<CryptoKey> | undefined
-  constructor(readonly cfg: FsBlobConfig) {}
+  readonly presigner?: Presigner
+  constructor(
+    readonly root: string,
+    readonly signing?: FileStoreOptions,
+  ) {
+    if (signing) {
+      this.presigner = {
+        presignGet: (key, opts) => this.#presignGet(key, opts),
+        presignPut: (key, opts) => this.#presignPut(key, opts),
+        createMultipart: (key) => this.#createMultipart(key),
+        presignPart: (key, id, n, exp) => this.#presignPart(key, id, n, exp),
+        completeMultipart: (key, id, parts) => this.#completeMultipart(key, id, parts),
+        abortMultipart: (key, id) => this.#abortMultipart(key, id),
+      }
+    }
+  }
 
   /** Node modules plus the absolute path of a key (which must stay under the root). */
   async #at(key: string) {
     const m = await node()
-    const root = m.path.resolve(this.cfg.root)
+    const root = m.path.resolve(this.root)
     const p = m.path.resolve(root, key)
     if (!p.startsWith(root + m.path.sep)) throw new Error(`Bad blob key: ${key}`)
     return { ...m, root, p }
@@ -135,7 +159,7 @@ export class FsBlobStore implements BlobStore {
 
   async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
     const { fsp, path: P } = await node()
-    const root = P.resolve(this.cfg.root)
+    const root = P.resolve(this.root)
     const out: string[] = []
     const walk = async (dir: string) => {
       const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])
@@ -154,10 +178,15 @@ export class FsBlobStore implements BlobStore {
     return page.length === 1000 ? { keys: page, cursor: page[page.length - 1]! } : { keys: page }
   }
 
+  #signing(): FileStoreOptions {
+    if (!this.signing) throw new Error('This file store was opened without presigning')
+    return this.signing
+  }
+
   #hmacKey(): Promise<CryptoKey> {
     return (this.#key ??= crypto.subtle.importKey(
       'raw',
-      enc.encode(this.cfg.secret),
+      enc.encode(this.#signing().secret),
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign', 'verify'],
@@ -178,7 +207,7 @@ export class FsBlobStore implements BlobStore {
     const exp = Math.floor(Date.now() / 1000) + expiresIn
     const extra = new URLSearchParams(params).toString()
     const u = new URL(
-      `${this.cfg.publicUrl.replace(/\/$/, '')}/_blob/${key.split('/').map(encodeURIComponent).join('/')}`,
+      `${this.#signing().publicUrl.replace(/\/$/, '')}/_blob/${key.split('/').map(encodeURIComponent).join('/')}`,
     )
     for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v)
     u.searchParams.set('m', method)
@@ -187,18 +216,18 @@ export class FsBlobStore implements BlobStore {
     return u.toString()
   }
 
-  async presignGet(key: string, opts: PresignGetOptions): Promise<string> {
+  async #presignGet(key: string, opts: PresignGetOptions): Promise<string> {
     const params: Record<string, string> = {}
     if (opts.disposition) params.disposition = opts.disposition
     if (opts.contentType) params.type = opts.contentType
     return this.#signedUrl('GET', key, opts.expiresIn, params)
   }
 
-  async presignPut(key: string, opts: PresignPutOptions): Promise<string> {
+  async #presignPut(key: string, opts: PresignPutOptions): Promise<string> {
     return this.#signedUrl('PUT', key, opts.expiresIn)
   }
 
-  async createMultipart(key: string): Promise<string> {
+  async #createMultipart(key: string): Promise<string> {
     const id = crypto.randomUUID()
     const { fsp, p } = await this.#at(`_multipart/${id}`)
     await fsp.mkdir(p, { recursive: true })
@@ -206,7 +235,7 @@ export class FsBlobStore implements BlobStore {
     return id
   }
 
-  async presignPart(
+  async #presignPart(
     key: string,
     uploadId: string,
     partNumber: number,
@@ -215,7 +244,7 @@ export class FsBlobStore implements BlobStore {
     return this.#signedUrl('PUT', `_multipart/${uploadId}/${partNumber}`, expiresIn)
   }
 
-  async completeMultipart(
+  async #completeMultipart(
     key: string,
     uploadId: string,
     parts: { partNumber: number; etag: string }[],
@@ -243,7 +272,7 @@ export class FsBlobStore implements BlobStore {
     await fsp.rename(tmp, dest)
   }
 
-  async abortMultipart(_key: string, uploadId: string): Promise<void> {
+  async #abortMultipart(_key: string, uploadId: string): Promise<void> {
     const { fsp, p } = await this.#at(`_multipart/${uploadId}`)
     await fsp.rm(p, { recursive: true, force: true })
   }
@@ -267,8 +296,8 @@ export class FsBlobStore implements BlobStore {
   }
 }
 
-/** Serve a presigned `/_blob/…` GET or PUT for an FsBlobStore (Node entry only). */
-export async function serveSignedBlob(store: FsBlobStore, req: Request): Promise<Response> {
+/** Serve a presigned `/_blob/…` GET or PUT for a presigning file store (Node entry only). */
+export async function serveSignedBlob(store: FileStore, req: Request): Promise<Response> {
   const url = new URL(req.url)
   const key = await store.verify(req.method, url)
   if (!key) return new Response('Forbidden', { status: 403 })

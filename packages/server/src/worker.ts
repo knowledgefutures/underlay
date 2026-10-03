@@ -9,7 +9,7 @@ import type {
   Queue,
   ScheduledController,
 } from '@cloudflare/workers-types'
-import { ed25519Signer, S3BlobStore, type Signer } from '@underlay/protocol'
+import { ed25519Signer, type R2BucketLike, r2Store, s3Store, type Signer } from '@underlay/protocol'
 
 import './handlers.js'
 import { renderPage } from '@underlay/web'
@@ -31,6 +31,12 @@ export interface Env {
   R2_BUCKET: string
   R2_ACCESS_KEY_ID: string
   R2_SECRET_ACCESS_KEY: string
+  /**
+   * Optional R2 binding on the same bucket as R2_BUCKET. When set, repository
+   * and internal objects go through the binding; file bytes keep the S3 API,
+   * which can presign.
+   */
+  BUCKET?: R2BucketLike
   SIGNING_KEY: string
   SESSION_SECRET: string
   OIDC_ISSUER_URL: string
@@ -45,7 +51,7 @@ let signer: Promise<Signer> | null = null
 function makePorts(env: Env, ctx: ExecutionContext): Ports {
   const db = openD1(env.DB)
   const cache = new CfCache(caches as never, env.DEPLOYMENT)
-  const bucket = new S3BlobStore({
+  const s3 = s3Store({
     endpoint: env.R2_ENDPOINT,
     bucket: env.R2_BUCKET,
     accessKeyId: env.R2_ACCESS_KEY_ID,
@@ -55,7 +61,8 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
   return {
     db,
     stores: createStores(db, cache, {
-      bucket,
+      bucket: env.BUCKET ? r2Store(env.BUCKET) : s3,
+      files: s3,
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
     }),

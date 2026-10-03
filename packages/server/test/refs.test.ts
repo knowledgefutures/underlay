@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { hashRecord, MemoryBlobStore, noCache } from '@underlay/protocol'
+import { hashRecord, memoryStore, noCache } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -143,7 +143,7 @@ describe('reference log', () => {
 
 describe('segments', () => {
   it('never has false negatives, for any hash', async () => {
-    const store = new MemoryBlobStore()
+    const store = memoryStore()
     const hashes = Array.from({ length: 5000 }, (_, i) =>
       createHash('sha256').update(String(i)).digest('hex'),
     ).sort()

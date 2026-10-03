@@ -40,11 +40,22 @@ export async function startFakeS3(bucket = 'test', listenPort = 0): Promise<Fake
     const q = url.searchParams
 
     if (req.method === 'GET' && !key && q.get('list-type') === '2') {
+      // Pages of max-keys (1,000 by default), with an opaque continuation token.
       const prefix = q.get('prefix') ?? ''
-      const keys = [...objects.keys()].filter((k) => k.startsWith(prefix)).sort()
+      const max = Number(q.get('max-keys') ?? 1000)
+      const token = q.get('continuation-token')
+      const after = token ? Buffer.from(token, 'base64url').toString() : null
+      const all = [...objects.keys()]
+        .filter((k) => k.startsWith(prefix) && (after === null || k > after))
+        .sort()
+      const keys = all.slice(0, max)
+      const next =
+        all.length > max
+          ? `<IsTruncated>true</IsTruncated><NextContinuationToken>${Buffer.from(keys[keys.length - 1]!).toString('base64url')}</NextContinuationToken>`
+          : '<IsTruncated>false</IsTruncated>'
       res.writeHead(200, { 'content-type': 'application/xml' })
       res.end(
-        `<ListBucketResult>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>`,
+        `<ListBucketResult>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}${next}</ListBucketResult>`,
       )
       return
     }

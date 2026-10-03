@@ -1,5 +1,5 @@
 /**
- * BlobStore over the S3 API, signed with aws4fetch. Works against R2, S3 and
+ * A store over the S3 API, signed with aws4fetch. Works against R2, S3 and
  * MinIO, from Workers and Node alike, and can presign (which the R2 binding
  * can't). Path-style URLs: `${endpoint}/${bucket}/${key}`.
  */
@@ -8,10 +8,11 @@ import { AwsClient } from 'aws4fetch'
 import type {
   BlobHead,
   BlobObject,
-  BlobStore,
   PresignGetOptions,
+  Presigner,
   PresignPutOptions,
   PutOptions,
+  Store,
 } from '../repo/types.js'
 
 export interface S3Config {
@@ -49,7 +50,12 @@ const xmlValues = (xml: string, tag: string) =>
 const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-export class S3BlobStore implements BlobStore {
+/** A store over the S3 API (R2, S3, MinIO); presigns. */
+export function s3Store(cfg: S3Config): S3Store {
+  return new S3Store(cfg)
+}
+
+export class S3Store implements Store {
   readonly #aws: AwsClient
   readonly #base: string
 
@@ -62,6 +68,15 @@ export class S3BlobStore implements BlobStore {
       retries: 3,
     })
     this.#base = `${cfg.endpoint.replace(/\/$/, '')}/${cfg.bucket}`
+  }
+
+  readonly presigner: Presigner = {
+    presignGet: (key, opts) => this.#presignGet(key, opts),
+    presignPut: (key, opts) => this.#presignPut(key, opts),
+    createMultipart: (key, type) => this.#createMultipart(key, type),
+    presignPart: (key, id, n, exp) => this.#presignPart(key, id, n, exp),
+    completeMultipart: (key, id, parts) => this.#completeMultipart(key, id, parts),
+    abortMultipart: (key, id) => this.#abortMultipart(key, id),
   }
 
   #url(key: string, query?: Record<string, string>) {
@@ -172,14 +187,14 @@ export class S3BlobStore implements BlobStore {
     return signed.url
   }
 
-  presignGet(key: string, opts: PresignGetOptions): Promise<string> {
+  #presignGet(key: string, opts: PresignGetOptions): Promise<string> {
     const q: Record<string, string> = {}
     if (opts.disposition) q['response-content-disposition'] = opts.disposition
     if (opts.contentType) q['response-content-type'] = opts.contentType
     return this.#presign(this.#url(key, q), 'GET', opts.expiresIn)
   }
 
-  presignPut(key: string, opts: PresignPutOptions): Promise<string> {
+  #presignPut(key: string, opts: PresignPutOptions): Promise<string> {
     return this.#presign(
       this.#url(key),
       'PUT',
@@ -188,7 +203,7 @@ export class S3BlobStore implements BlobStore {
     )
   }
 
-  async createMultipart(key: string, contentType?: string): Promise<string> {
+  async #createMultipart(key: string, contentType?: string): Promise<string> {
     const res = await this.#aws.fetch(`${this.#url(key)}?uploads`, {
       method: 'POST',
       headers: contentType ? { 'content-type': contentType } : {},
@@ -199,7 +214,7 @@ export class S3BlobStore implements BlobStore {
     return id
   }
 
-  presignPart(
+  #presignPart(
     key: string,
     uploadId: string,
     partNumber: number,
@@ -212,7 +227,7 @@ export class S3BlobStore implements BlobStore {
     )
   }
 
-  async completeMultipart(
+  async #completeMultipart(
     key: string,
     uploadId: string,
     parts: { partNumber: number; etag: string }[],
@@ -253,7 +268,7 @@ export class S3BlobStore implements BlobStore {
     }
   }
 
-  async abortMultipart(key: string, uploadId: string): Promise<void> {
+  async #abortMultipart(key: string, uploadId: string): Promise<void> {
     const res = await this.#aws.fetch(this.#url(key, { uploadId }), { method: 'DELETE' })
     if (!res.ok && res.status !== 404) return this.#fail(res, `AbortMultipartUpload ${key}`)
     await res.body?.cancel()

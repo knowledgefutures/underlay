@@ -15,7 +15,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import { fileTree, getEntry, RepoSource } from '@underlay/protocol'
+import { copyObject, fileTree, getEntry, RepoSource } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -71,7 +71,7 @@ export async function presignDownload(ports: Ports, hash: string): Promise<strin
   const [f] = await ports.db.select().from(schema.files).where(eq(schema.files.hash, hash)).limit(1)
   if (!f) return null
   // Downloads are attachments: nothing renders on the bucket's domain either.
-  return ports.stores.fileBytes.presignGet(f.storageKey, {
+  return ports.stores.fileBytes.presigner.presignGet(f.storageKey, {
     expiresIn: PRESIGN_SECONDS,
     disposition: `attachment; filename="${hash}"`,
     contentType: f.mimeType,
@@ -127,14 +127,14 @@ export async function startUpload(
   let multipartUploadId: string | null = null
   const ticket: UploadTicket = { id, expiresIn: 3600 }
   if (req.size <= SINGLE_PUT_BYTES) {
-    ticket.url = await blobs.presignPut(key, { expiresIn: 3600 })
+    ticket.url = await blobs.presigner.presignPut(key, { expiresIn: 3600 })
   } else {
-    multipartUploadId = await blobs.createMultipart(key, req.mimeType)
+    multipartUploadId = await blobs.presigner.createMultipart(key, req.mimeType)
     const n = Math.ceil(req.size / PART_BYTES)
     ticket.parts = await Promise.all(
       Array.from({ length: n }, async (_, i) => ({
         partNumber: i + 1,
-        url: await blobs.presignPart(key, multipartUploadId!, i + 1, 3600),
+        url: await blobs.presigner.presignPart(key, multipartUploadId!, i + 1, 3600),
       })),
     )
   }
@@ -157,7 +157,7 @@ export async function completeUpload(
 ): Promise<void> {
   if (upload.multipartUploadId) {
     if (!parts?.length) throw new Error('Multipart uploads complete with their parts')
-    await ports.stores.fileBytes.completeMultipart(
+    await ports.stores.fileBytes.presigner.completeMultipart(
       upload.storageKey,
       upload.multipartUploadId,
       parts,
@@ -214,7 +214,7 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
   if (!existing) {
     let storageKey = ports.stores.canonicalFileKey(u.hash)
     if (size <= COPY_LIMIT_BYTES) {
-      await blobs.copy(u.storageKey, storageKey)
+      await copyObject(blobs, u.storageKey, storageKey)
     } else {
       // TODO(files): UploadPartCopy for >5 GB. Until then the staging object is kept
       // as the file; the staging lifecycle rule must not cover verified uploads.

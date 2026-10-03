@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import {
   ed25519Signer,
   generateSigningKey,
-  MemoryBlobStore,
+  memoryStore,
   newSalt,
 } from '../../protocol/src/index.ts'
 import '../../server/src/handlers.ts'
@@ -41,7 +41,7 @@ try {
   const ports: Ports = {
     db,
     stores: createStores(db, cache, {
-      bucket: new MemoryBlobStore(),
+      bucket: memoryStore(),
       repoPrefix: 'repo',
       internalPrefix: 'internal',
     }),

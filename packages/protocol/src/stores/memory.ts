@@ -1,4 +1,4 @@
-import type { BlobHead, BlobObject, BlobStore, PutOptions } from '../repo/types.js'
+import type { BlobHead, BlobObject, Presigner, PutOptions, Store } from '../repo/types.js'
 
 const enc = new TextEncoder()
 
@@ -12,8 +12,12 @@ export function blobObject(bytes: Uint8Array, head: Omit<BlobHead, 'size'>): Blo
   }
 }
 
-/** In-memory blob store for tests. Presigned URLs are `memory://` placeholders. */
-export class MemoryBlobStore implements BlobStore {
+/** An in-memory store, for tests and scratch work. Presigned URLs are `memory://` placeholders. */
+export function memoryStore(): MemoryStore {
+  return new MemoryStore()
+}
+
+export class MemoryStore implements Store {
   readonly objects = new Map<string, { bytes: Uint8Array; contentType: string | null }>()
   readonly multipart = new Map<string, Map<number, Uint8Array>>()
   puts = 0
@@ -58,51 +62,38 @@ export class MemoryBlobStore implements BlobStore {
     return page.length === 1000 ? { keys: page, cursor: page[page.length - 1]! } : { keys: page }
   }
 
-  async presignGet(key: string) {
-    return `memory://get/${key}`
-  }
-
-  async presignPut(key: string) {
-    return `memory://put/${key}`
-  }
-
-  async createMultipart(key: string) {
-    const id = crypto.randomUUID()
-    this.multipart.set(`${key}#${id}`, new Map())
-    return id
-  }
-
-  async presignPart(key: string, uploadId: string, partNumber: number) {
-    return `memory://part/${key}?uploadId=${uploadId}&partNumber=${partNumber}`
+  readonly presigner: Presigner = {
+    presignGet: async (key) => `memory://get/${key}`,
+    presignPut: async (key) => `memory://put/${key}`,
+    createMultipart: async (key) => {
+      const id = crypto.randomUUID()
+      this.multipart.set(`${key}#${id}`, new Map())
+      return id
+    },
+    presignPart: async (key, uploadId, partNumber) =>
+      `memory://part/${key}?uploadId=${uploadId}&partNumber=${partNumber}`,
+    completeMultipart: async (key, uploadId, parts) => {
+      const stored = this.multipart.get(`${key}#${uploadId}`)
+      if (!stored) throw new Error('No such upload')
+      const chunks = parts.map((p) => stored.get(p.partNumber)!)
+      const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0))
+      let off = 0
+      for (const c of chunks) {
+        out.set(c, off)
+        off += c.byteLength
+      }
+      this.objects.set(key, { bytes: out, contentType: null })
+      this.multipart.delete(`${key}#${uploadId}`)
+    },
+    abortMultipart: async (key, uploadId) => {
+      this.multipart.delete(`${key}#${uploadId}`)
+    },
   }
 
   /** Test helper standing in for a client PUT to a presigned part URL. */
   uploadPart(key: string, uploadId: string, partNumber: number, bytes: Uint8Array): string {
     this.multipart.get(`${key}#${uploadId}`)!.set(partNumber, bytes)
     return `"part-${partNumber}"`
-  }
-
-  async completeMultipart(
-    key: string,
-    uploadId: string,
-    parts: { partNumber: number; etag: string }[],
-  ) {
-    const stored = this.multipart.get(`${key}#${uploadId}`)
-    if (!stored) throw new Error('No such upload')
-    const chunks = parts.map((p) => stored.get(p.partNumber)!)
-    const total = chunks.reduce((n, c) => n + c.byteLength, 0)
-    const out = new Uint8Array(total)
-    let off = 0
-    for (const c of chunks) {
-      out.set(c, off)
-      off += c.byteLength
-    }
-    this.objects.set(key, { bytes: out, contentType: null })
-    this.multipart.delete(`${key}#${uploadId}`)
-  }
-
-  async abortMultipart(key: string, uploadId: string) {
-    this.multipart.delete(`${key}#${uploadId}`)
   }
 
   async copy(from: string, to: string) {

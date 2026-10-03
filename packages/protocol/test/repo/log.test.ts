@@ -11,9 +11,9 @@ import {
   verifyLog,
 } from '../../src/repo/log.js'
 import { IntegrityError, keys, Repo } from '../../src/repo/repo.js'
-import { MemoryBlobStore } from '../../src/stores/memory.js'
+import { memoryStore } from '../../src/stores/memory.js'
 
-const repoOver = (blobs = new MemoryBlobStore()) => ({
+const repoOver = (blobs = memoryStore()) => ({
   blobs,
   repo: new Repo(blobs, { scope: 't', trusted: true }),
 })

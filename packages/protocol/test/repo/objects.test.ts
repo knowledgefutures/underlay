@@ -26,11 +26,11 @@ import {
   RepoSink,
   RepoSource,
 } from '../../src/repo/repo.js'
-import { PrefixedBlobStore } from '../../src/repo/types.js'
-import { MemoryBlobStore } from '../../src/stores/memory.js'
+import { PrefixedStore } from '../../src/repo/types.js'
+import { memoryStore } from '../../src/stores/memory.js'
 
 const freshRepo = (opts: { trusted?: boolean } = {}) => {
-  const blobs = new MemoryBlobStore()
+  const blobs = memoryStore()
   // A private LRU per test, so reads really go to the store.
   const repo = new Repo(blobs, {
     scope: 'test',
@@ -180,8 +180,8 @@ describe('record trees in a repository', () => {
   })
 
   it('keeps each location under its prefix', async () => {
-    const shared = new MemoryBlobStore()
-    const repo = new Repo(new PrefixedBlobStore(shared, 'underlay/v2'), {
+    const shared = memoryStore()
+    const repo = new Repo(new PrefixedStore(shared, 'underlay/v2'), {
       scope: 'p',
       trusted: true,
     })

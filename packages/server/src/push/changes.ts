@@ -5,7 +5,7 @@
  */
 import { type Change, type RecordEntry } from '@underlay/protocol'
 
-import type { BlobStore } from '../ports.js'
+import type { Store } from '../ports.js'
 import type { SetName } from '../versions/file-refs.js'
 import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'
 
@@ -31,7 +31,7 @@ export interface BaseSets {
  * goes to both.
  */
 export async function* deltaChanges(
-  internal: BlobStore,
+  internal: Store,
   sessionId: string,
   runs: RunIndex[],
   slug: string,

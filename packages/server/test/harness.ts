@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import {
   ed25519Signer,
   generateSigningKey,
-  MemoryBlobStore,
+  MemoryStore,
+  memoryStore,
   newSalt,
   type Signer,
 } from '@underlay/protocol'
@@ -48,7 +49,7 @@ export interface Harness {
     path: string,
     init?: RequestInit & { user?: string; json?: unknown; ndjson?: unknown[] },
   ): Promise<Response>
-  bucket: MemoryBlobStore
+  bucket: MemoryStore
   signer: Signer
   /** Run queued jobs until none are ready. */
   drain(): Promise<number>
@@ -60,7 +61,7 @@ export async function harness(): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'ul-it-'))
   dirs.push(dir)
   const db = await openNodeDb(`file:${join(dir, 'db.sqlite')}`)
-  const bucket = new MemoryBlobStore()
+  const bucket = memoryStore()
   const cache = new MemoryCache()
   const signer = await ed25519Signer(await generateSigningKey())
   const ports: Ports = {

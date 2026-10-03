@@ -8,12 +8,12 @@
  *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
  *   Cache      Cache API on Workers, in-memory LRU on Node
  */
-import { type BlobStore, type Cache, type Repo, type Signer } from '@underlay/protocol'
+import type { Cache, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql'
 
 import type * as schema from './db/schema.js'
 
-export type { BlobStore, Cache } from '@underlay/protocol'
+export type { Cache, PresigningStore, Store } from '@underlay/protocol'
 
 /**
  * Drizzle over SQLite. Both adapters are async and support `db.batch([...])`,
@@ -46,9 +46,9 @@ export interface Stores {
    * Platform-internal objects that never leave the platform and are never
    * mirrored: push sessions, staging uploads, the reference log.
    */
-  internal: BlobStore
+  internal: Store
   /** File bytes, by the `files.storage_key` (v1 keys are relative to the bucket root). */
-  fileBytes: BlobStore
+  fileBytes: PresigningStore
   /** The canonical key of a verified file in the platform repository (relative to fileBytes). */
   canonicalFileKey(hash: string): string
   /** Where a direct upload is staged before verification (relative to fileBytes; expires by lifecycle rule). */
