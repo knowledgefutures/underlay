@@ -43,6 +43,10 @@ export interface NewVersionRow {
   publicRefsRoot: string | null
   privateRefsRoot: string | null
   changes: { added: number; removed: number; updated: number }
+  /** Migration only: the v1 version's time and format 1 hashes. */
+  createdAt?: Date
+  legacyHash?: string | null
+  legacyPublicHash?: string | null
 }
 
 export interface SchemaUsageChange {
@@ -71,6 +75,7 @@ export async function publishVersion(
 ): Promise<{ ok: boolean; headVersionId: string | null }> {
   const v = p.version
   const now = Date.now()
+  const createdAt = v.createdAt?.getTime() ?? now
   // Literal values for INSERT … SELECT. Raw SQL bypasses column mapping, so JSON
   // and booleans are given in their stored form.
   const lit = <T>(value: unknown) => sql<T>`${value}`
@@ -96,8 +101,8 @@ export async function publishVersion(
           minor: lit<number>(v.minor).as('minor'),
           patch: lit<number>(v.patch).as('patch'),
           hash: lit<string>(v.hash).as('hash'),
-          legacyHash: lit<string | null>(null).as('legacy_hash'),
-          legacyPublicHash: lit<string | null>(null).as('legacy_public_hash'),
+          legacyHash: lit<string | null>(v.legacyHash ?? null).as('legacy_hash'),
+          legacyPublicHash: lit<string | null>(v.legacyPublicHash ?? null).as('legacy_public_hash'),
           baseSemver: lit<string | null>(v.baseSemver).as('base_semver'),
           message: lit<string | null>(v.message).as('message'),
           pushedBy: lit<string | null>(v.pushedBy).as('pushed_by'),
@@ -119,7 +124,7 @@ export async function publishVersion(
           privateRefsRoot: lit<string | null>(v.privateRefsRoot).as('private_refs_root'),
           refsIndexed: lit<number>(0).as('refs_indexed'),
           changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
-          createdAt: lit<number>(now).as('created_at'),
+          createdAt: lit<number>(createdAt).as('created_at'),
         })
         .from(schema.collections)
         .where(headIsBase) as never,

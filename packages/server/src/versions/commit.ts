@@ -50,7 +50,7 @@ import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { applyFileSet, FileRefDelta, fileSizes, type SetName } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
-import { bumpType, deriveSemver } from './semver.js'
+import { bumpType, deriveSemver, parseSemver } from './semver.js'
 
 export type ChangeSource = Iterable<Change<RecordEntry>> | AsyncIterable<Change<RecordEntry>>
 
@@ -87,6 +87,17 @@ export interface CommitInput {
   actorId?: string | null
   /** Validate a record's data against its type's schema; errors or null. Used when a schema changes. */
   validate?: (schema: Record<string, unknown>, data: unknown) => string[] | null
+  /**
+   * Migration only: keep a v1 version's identity. Its semver (v1's rules may
+   * have differed over time), creation time and format 1 hashes; and skip the
+   * post-publish job (webhooks would fire for history).
+   */
+  migrated?: {
+    semver: string
+    createdAt: Date
+    legacyHash: string | null
+    legacyPublicHash: string | null
+  }
 }
 
 export type CommitResult =
@@ -336,7 +347,9 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
   const versionHash = await repo.putRoot(root)
   if (base && versionHash === base.hash) return { status: 'no_changes', versionHash }
 
-  const sv = deriveSemver(base?.semver ?? null, schemaChanged, recordsChanged)
+  const sv = input.migrated
+    ? parseSemver(input.migrated.semver)
+    : deriveSemver(base?.semver ?? null, schemaChanged, recordsChanged)
 
   const pubTotals = setRecordTotals(newPublic)
   const privTotals = setRecordTotals(newPrivate)
@@ -397,6 +410,13 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     publicRefsRoot: pubFiles.refsRoot,
     privateRefsRoot: privFiles.refsRoot,
     changes: stats,
+    ...(input.migrated
+      ? {
+          createdAt: input.migrated.createdAt,
+          legacyHash: input.migrated.legacyHash,
+          legacyPublicHash: input.migrated.legacyPublicHash,
+        }
+      : {}),
   }
   const published = await publishVersion(db, {
     version: versionRow,
@@ -421,11 +441,12 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     console.error(`[commit] version log for ${versionId} failed; queued a repair`, err)
     await ports.jobs.enqueue({ type: 'repo.repairLog', collectionId: input.collectionId })
   }
-  await ports.jobs.enqueue({
-    type: 'version.published',
-    versionId,
-    bump: bumpType(schemaChanged, recordsChanged),
-  })
+  // Migrated history gets its reference-log events but fires no webhooks.
+  await ports.jobs.enqueue(
+    input.migrated
+      ? { type: 'refs.index', versionId }
+      : { type: 'version.published', versionId, bump: bumpType(schemaChanged, recordsChanged) },
+  )
   return { status: 'committed', version: version!, written: sink.written }
 }
 
