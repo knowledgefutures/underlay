@@ -69,51 +69,103 @@ export async function publishVersion(
 ): Promise<{ ok: boolean; headVersionId: string | null }> {
   const v = p.version
   const now = Date.now()
+  // Literal values for INSERT … SELECT. Raw SQL bypasses column mapping, so JSON
+  // and booleans are given in their stored form.
+  const lit = <T>(value: unknown) => sql<T>`${value}`
   const versionExists = sql`EXISTS (SELECT 1 FROM ${schema.versions} WHERE ${schema.versions.id} = ${v.id})`
-  const headIsBase = sql`(SELECT ${schema.collections.headVersionId} FROM ${schema.collections} WHERE ${schema.collections.id} = ${v.collectionId}) IS ${p.baseVersionId}`
+  const headIsBase = and(
+    eq(schema.collections.id, v.collectionId),
+    sql`${schema.collections.headVersionId} IS ${p.baseVersionId}`,
+  )
 
+  // Only query builders can go in a D1 batch (raw db.run() can't), so the
+  // conditions are INSERT … SELECT from the row they depend on, and UPDATE … WHERE.
   const statements = [
-    db.run(sql`
-      INSERT INTO ${schema.versions} (
-        id, collection_id, seq, semver, major, minor, patch, hash, base_semver, message, pushed_by,
-        app_id, actor_id, record_count, public_record_count, file_count, total_bytes, type_counts,
-        public_type_counts, has_private, public_refs_root, private_refs_root, changes, created_at
-      )
-      SELECT ${v.id}, ${v.collectionId}, ${v.seq}, ${v.semver}, ${v.major}, ${v.minor}, ${v.patch},
-        ${v.hash}, ${v.baseSemver}, ${v.message}, ${v.pushedBy}, ${v.appId}, ${v.actorId},
-        ${v.recordCount}, ${v.publicRecordCount}, ${v.fileCount}, ${v.totalBytes},
-        ${JSON.stringify(v.typeCounts)}, ${JSON.stringify(v.publicTypeCounts)}, ${v.hasPrivate ? 1 : 0},
-        ${v.publicRefsRoot}, ${v.privateRefsRoot}, ${JSON.stringify(v.changes)}, ${now}
-      WHERE ${headIsBase}
-    `),
-    db.run(sql`
-      UPDATE ${schema.collections}
-      SET head_version_id = ${v.id}, updated_at = ${now},
-          public_files_root = ${p.collectionUpdate.publicFilesRoot},
-          summary = ${p.collectionUpdate.summary ? JSON.stringify(p.collectionUpdate.summary) : null}
-      WHERE id = ${v.collectionId} AND head_version_id IS ${p.baseVersionId} AND ${versionExists}
-    `),
-    ...p.schemaHashes.map((h) =>
-      db.run(sql`INSERT OR IGNORE INTO ${schema.schemas} (hash, created_at) VALUES (${h}, ${now})`),
+    // 1. The version row, only if the head is still the base: selected from the
+    //    collection row, filtered by that condition.
+    db.insert(schema.versions).select(
+      db
+        .select({
+          id: lit<string>(v.id).as('id'),
+          collectionId: lit<string>(v.collectionId).as('collection_id'),
+          seq: lit<number>(v.seq).as('seq'),
+          semver: lit<string>(v.semver).as('semver'),
+          major: lit<number>(v.major).as('major'),
+          minor: lit<number>(v.minor).as('minor'),
+          patch: lit<number>(v.patch).as('patch'),
+          hash: lit<string>(v.hash).as('hash'),
+          legacyHash: lit<string | null>(null).as('legacy_hash'),
+          legacyPublicHash: lit<string | null>(null).as('legacy_public_hash'),
+          baseSemver: lit<string | null>(v.baseSemver).as('base_semver'),
+          message: lit<string | null>(v.message).as('message'),
+          pushedBy: lit<string | null>(v.pushedBy).as('pushed_by'),
+          appId: lit<string | null>(v.appId).as('app_id'),
+          actorId: lit<string | null>(v.actorId).as('actor_id'),
+          signature: lit<string | null>(null).as('signature'),
+          recordCount: lit<number>(v.recordCount).as('record_count'),
+          publicRecordCount: lit<number>(v.publicRecordCount).as('public_record_count'),
+          fileCount: lit<number>(v.fileCount).as('file_count'),
+          totalBytes: lit<number>(v.totalBytes).as('total_bytes'),
+          typeCounts: lit<string>(JSON.stringify(v.typeCounts)).as('type_counts'),
+          publicTypeCounts: lit<string>(JSON.stringify(v.publicTypeCounts)).as(
+            'public_type_counts',
+          ),
+          hasPrivate: lit<number>(v.hasPrivate ? 1 : 0).as('has_private'),
+          publicRefsRoot: lit<string | null>(v.publicRefsRoot).as('public_refs_root'),
+          privateRefsRoot: lit<string | null>(v.privateRefsRoot).as('private_refs_root'),
+          changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
+          createdAt: lit<number>(now).as('created_at'),
+        })
+        .from(schema.collections)
+        .where(headIsBase) as never,
     ),
+    // 2. Move the head, only if it is still the base and the row from 1 exists.
+    db
+      .update(schema.collections)
+      .set({
+        headVersionId: v.id,
+        updatedAt: new Date(now),
+        publicFilesRoot: p.collectionUpdate.publicFilesRoot,
+        summary: p.collectionUpdate.summary,
+      })
+      .where(and(headIsBase, versionExists)),
+    ...p.schemaHashes.map((h) =>
+      db.insert(schema.schemas).values({ hash: h }).onConflictDoNothing(),
+    ),
+    // 3. Schema usage, only if the row from 1 exists.
     ...p.usage.flatMap((u) => {
       const out = []
       if (u.wasOpen) {
         out.push(
-          db.run(sql`
-            UPDATE ${schema.schemaUsage} SET to_seq = ${v.seq}
-            WHERE collection_id = ${v.collectionId} AND type_slug = ${u.typeSlug} AND "set" = ${u.set}
-              AND to_seq IS NULL AND ${versionExists}
-          `),
+          db
+            .update(schema.schemaUsage)
+            .set({ toSeq: v.seq })
+            .where(
+              and(
+                eq(schema.schemaUsage.collectionId, v.collectionId),
+                eq(schema.schemaUsage.typeSlug, u.typeSlug),
+                eq(schema.schemaUsage.set, u.set),
+                isNull(schema.schemaUsage.toSeq),
+                versionExists,
+              ),
+            ),
         )
       }
       if (u.schemaHash !== null) {
         out.push(
-          db.run(sql`
-            INSERT INTO ${schema.schemaUsage} (schema_hash, collection_id, type_slug, "set", from_seq, to_seq)
-            SELECT ${u.schemaHash}, ${v.collectionId}, ${u.typeSlug}, ${u.set}, ${v.seq}, NULL
-            WHERE ${versionExists}
-          `),
+          db.insert(schema.schemaUsage).select(
+            db
+              .select({
+                schemaHash: lit<string>(u.schemaHash).as('schema_hash'),
+                collectionId: lit<string>(v.collectionId).as('collection_id'),
+                typeSlug: lit<string>(u.typeSlug).as('type_slug'),
+                set: lit<string>(u.set).as('set'),
+                fromSeq: lit<number>(v.seq).as('from_seq'),
+                toSeq: lit<number | null>(null).as('to_seq'),
+              })
+              .from(schema.versions)
+              .where(eq(schema.versions.id, v.id)) as never,
+          ),
         )
       }
       return out

@@ -29,3 +29,7 @@ npm-debug.log*
 
 # pnpm store cache (created by in-container installs)
 .pnpm-store/
+
+# Cloudflare local state and dev secrets (v2)
+.wrangler/
+.dev.vars*
