@@ -21,6 +21,16 @@ export {
   scanJson,
 } from './input-rules.js'
 export { fileRefs } from './file-refs.js'
+export {
+  checkSchema,
+  checkSchemaBounds,
+  compileSchema,
+  type ExtraFieldWarning,
+  findExtraFields,
+  SchemaError,
+  type SchemaValidator,
+  stripToSchema,
+} from './validate.js'
 export * from './root.js'
 export * from './tree/node.js'
 export {
@@ -46,5 +56,13 @@ export {
   type MergeResult,
   type MergeStats,
 } from './tree/merge.js'
-export { type DiffEntry, diffTrees, getEntry, iterate, type IterateOptions } from './tree/read.js'
+export {
+  type DiffEntry,
+  diffTrees,
+  entryAt,
+  getEntry,
+  iterate,
+  type IterateOptions,
+  rankOf,
+} from './tree/read.js'
 export { verifyTree, type VerifyResult } from './tree/verify.js'

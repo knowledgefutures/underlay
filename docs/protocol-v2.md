@@ -83,11 +83,56 @@ usual.
 
 A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 
-- A schema with `"private": true` at its root makes the type private (section 9).
-- `"private": true` on a property (field-level privacy) is **rejected** in format 2.
-- The validation dialect, and the exact behaviour required of a validator, is **to be specified**
-  in phase 2 of the build, after the differential test against production data. Until then, the
-  reference validator is the server's.
+- A schema with `"private": true` at its root makes the type private (section 9). A root `private`
+  that isn't a boolean is rejected, so that `"private": "true"` can't publish a type by accident.
+- `"private": true` on a property, at any depth (field-level privacy), is **rejected** in format 2.
+- Limits: the schema's canonical form must be at most 256 KB, and `pattern` values and
+  `patternProperties` keys at most 256 characters each.
+
+### 5.1 Validation dialect
+
+**Which schemas are accepted.** A type schema must be a JSON object and a JSON Schema draft-07
+document.
+- A root `$schema`, if present, must be `http://json-schema.org/draft-07/schema` (with or without a
+  trailing `#`); anything else is rejected.
+- A schema is rejected unless all of these hold:
+  - it is valid against the draft-07 meta-schema;
+  - every `pattern` and `patternProperties` key compiles as an ECMAScript regular expression with
+    the `u` flag;
+  - every `$ref` resolves within the schema or to the draft-07 meta-schema.
+- `$ref`s are resolved against the base URI `https://schema.underlay.invalid/` unless a `$id` sets
+  another.
+
+**How records are validated.** Draft-07, with these rules:
+- Keywords alongside `$ref` are applied, as in draft 2019-09.
+- Keywords draft-07 doesn't define are ignored. That includes later drafts' keywords
+  (`unevaluatedProperties`, `dependentRequired`, `prefixItems`, …) and draft-04's `id`. `$defs`
+  works as a container, and `$anchor` is honoured.
+- `pattern` uses ECMAScript regular expressions with the `u` flag.
+- `multipleOf` m accepts x when the floating-point remainder r = x mod m satisfies
+  |r| < 1.1920929e-7 or |m − r| < 1.1920929e-7.
+- String lengths count Unicode code points.
+- Object members are the parsed JSON's own keys. Names such as `__proto__` or `toString` carry no
+  special meaning.
+
+**Formats.**
+- `format` constrains strings only, and only for these names: `date`, `time`, `date-time`,
+  `iso-time`, `iso-date-time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`,
+  `hostname`, `ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `json-pointer-uri-fragment`,
+  `relative-json-pointer`, `byte`.
+- Each is defined as in ajv-formats 3.0 "full" mode (`packages/core/src/validate.ts`). In
+  particular:
+  - `date-time` and `time` require a time zone;
+  - `date-time` accepts `T`, `t` or whitespace as the separator;
+  - `email` requires a dot in the domain.
+- Other format names are ignored.
+
+**What is normative.** Only the verdict. Error messages, and how many are reported, are not.
+
+The reference validator is `@cfworker/json-schema` with these rules applied
+(`packages/core/src/validate.ts`). Over all public production data it agrees with format 1's AJV
+configuration: 139 schemas, 330,300 records, and 85,773 mutated records
+(`scripts/diff-validators.ts`).
 
 ## 6. Files
 

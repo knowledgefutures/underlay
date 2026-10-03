@@ -26,6 +26,65 @@ export async function getEntry<E>(
   }
 }
 
+/**
+ * The number of entries with keys less than `key` (its rank). One node read per
+ * level, using the counts in interior entries.
+ */
+export async function rankOf<E>(
+  source: NodeSource<E>,
+  root: string | null,
+  key: string,
+): Promise<number> {
+  if (root === null) return 0
+  let rank = 0
+  let hash = root
+  for (;;) {
+    const node = await source.node(hash)
+    if (node.kind === 'leaf') {
+      for (const e of node.entries) {
+        if (compareUtf8(source.spec.key(e), key) >= 0) break
+        rank++
+      }
+      return rank
+    }
+    let next: string | null = null
+    for (const c of node.children) {
+      if (compareUtf8(key, c.lastKey) <= 0) {
+        next = c.hash
+        break
+      }
+      rank += c.count
+    }
+    if (next === null) return rank
+    hash = next
+  }
+}
+
+/** The entry at a position (0-based), or null past the end. One node read per level. */
+export async function entryAt<E>(
+  source: NodeSource<E>,
+  root: string | null,
+  index: number,
+): Promise<E | null> {
+  if (root === null || index < 0) return null
+  let hash = root
+  let i = index
+  for (;;) {
+    const node = await source.node(hash)
+    if (node.kind === 'leaf') return node.entries[i] ?? null
+    let next: string | null = null
+    for (const c of node.children) {
+      if (i < c.count) {
+        next = c.hash
+        break
+      }
+      i -= c.count
+    }
+    if (next === null) return null
+    hash = next
+  }
+}
+
 export interface IterateOptions {
   /** Start after this key (keyset pagination). Exclusive with `offset`. */
   after?: string

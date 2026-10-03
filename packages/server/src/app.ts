@@ -8,6 +8,7 @@ import { type Context, type ExecutionContext, Hono } from 'hono'
 import type { Principal } from './api/access.js'
 import { collectionRoutes } from './api/collections.js'
 import { fileRoutes } from './api/files.js'
+import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
@@ -88,6 +89,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', webhookRoutes())
+  app.route('/', manageRoutes())
   app.route('/', collectionRoutes())
 
   // Everything else is a UI page, when the deployment renders one.

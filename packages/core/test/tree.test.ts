@@ -6,12 +6,14 @@ import {
   type Change,
   compareUtf8,
   diffTrees,
+  entryAt,
   getEntry,
   iterate,
   MapSource,
   MemorySink,
   mergeTree,
   protocolChunking,
+  rankOf,
   type RecordEntry,
   recordTree,
   sha256Hex,
@@ -301,6 +303,23 @@ describe('read', () => {
         expect(diff.map((d) => `${d.key}:${d.before ? 1 : 0}${d.after ? 1 : 0}`)).toEqual(
           changes.map((c) => `${c.key}:1${c.entry ? 1 : 0}`),
         )
+      }),
+      { numRuns: 200 * RUNS },
+    )
+  })
+})
+
+describe('rank and offset seeks', () => {
+  it('rankOf and entryAt agree with the sorted entries (property)', async () => {
+    await fc.assert(
+      fc.asyncProperty(keySet(300), keyArb, fc.nat(), async (keys, probe, at) => {
+        const { sink, source } = store()
+        const es = sorted(keys.map((k) => entry(k)))
+        const root = buildTree(recordTree, sink, es, { chunking: tiny })?.hash ?? null
+        const want = es.filter((e) => compareUtf8(e.key, probe) < 0).length
+        expect(await rankOf(source, root, probe)).toBe(want)
+        const i = es.length === 0 ? 0 : at % (es.length + 1)
+        expect((await entryAt(source, root, i))?.key ?? null).toBe(es[i]?.key ?? null)
       }),
       { numRuns: 200 * RUNS },
     )
