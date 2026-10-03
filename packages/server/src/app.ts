@@ -3,7 +3,7 @@
  * that builds the ports, config and authenticator for a request, and everything
  * below reads them from the context.
  */
-import { type Context, Hono } from 'hono'
+import { type Context, type ExecutionContext, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
 import { collectionRoutes } from './api/collections.js'
@@ -44,7 +44,18 @@ export type Setup = (c: Context<AppEnv>) => {
   authenticate: Authenticate
   /** better-auth's own routes (/api/auth/*): sign-in, callbacks, sessions, keys, orgs. */
   authHandler?: (req: Request) => Promise<Response>
+  /**
+   * Server-side rendering of UI pages (packages/web). `api` calls this app
+   * in-process: a Worker can't fetch its own zone (build doc finding 9), and on
+   * Node it saves a loopback round trip.
+   */
+  renderPage?: RenderPage
 }
+
+export type RenderPage = (
+  req: Request,
+  api: (req: Request) => Promise<Response>,
+) => Promise<Response>
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
@@ -78,6 +89,21 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', webhookRoutes())
   app.route('/', collectionRoutes())
+
+  // Everything else is a UI page, when the deployment renders one.
+  app.get('*', async (c) => {
+    const { renderPage } = setup(c)
+    if (!renderPage || c.req.path.startsWith('/api/'))
+      return c.json({ error: 'Not found', statusCode: 404 }, 404)
+    // Hono throws reading executionCtx where there is none (Node).
+    let ctx: ExecutionContext | undefined
+    try {
+      ctx = c.executionCtx
+    } catch {
+      ctx = undefined
+    }
+    return renderPage(c.req.raw, async (req) => app.fetch(req, c.env, ctx))
+  })
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
   app.onError((err, c) => {
