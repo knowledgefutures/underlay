@@ -10,6 +10,6 @@ export default defineConfig({
     environment: 'happy-dom',
     // Agent worktrees are full checkouts inside the repo; without this, running
     // tests from the main checkout also runs every worktree's copy.
-    exclude: [...configDefaults.exclude, '.claude/**'],
+    exclude: [...configDefaults.exclude, '.claude/**', 'packages/**'],
   },
 })
