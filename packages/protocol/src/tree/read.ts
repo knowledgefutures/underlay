@@ -256,26 +256,42 @@ export async function* diffTrees<E>(
  * The nodes of tree `b` that tree `a` doesn't have at the same position, top
  * down (a parent before its children). The walk is `diffTrees`' and costs the
  * same: equal subtrees are skipped unread. This is what a sync sends.
+ *
+ * `after` resumes a walk that stopped after the leaf whose last key it is: only
+ * nodes whose keys all come after it are listed (the ones spanning it were
+ * listed before their children, so before the stop).
  */
 export async function* newNodes<E>(
   source: NodeSource<E>,
   a: string | null,
   b: string | null,
+  opts: { after?: string | null } = {},
 ): AsyncGenerator<NodeDesc> {
   if (b === null || a === b) return
   const spec = source.spec
-  const xs: Item<E>[] = a === null ? [] : [{ node: await rootDesc(source, a) }]
-  const ys: Item<E>[] = [{ node: await rootDesc(source, b) }]
-  const expand = async (items: Item<E>[]) => {
-    const head = items.shift() as { node: NodeDesc }
+  const after = opts.after ?? null
+  type Side = ({ node: NodeDesc; low: string | null } | { entry: E })[]
+  const xs: Side = a === null ? [] : [{ node: await rootDesc(source, a), low: null }]
+  const ys: Side = [{ node: await rootDesc(source, b), low: null }]
+  const expand = async (items: Side) => {
+    const head = items.shift() as { node: NodeDesc; low: string | null }
     const n = await source.node(head.node.hash)
-    const children: Item<E>[] =
-      n.kind === 'leaf'
-        ? n.entries.map((entry) => ({ entry }))
-        : n.children.map((node) => ({ node }))
+    let low = head.low
+    const children: Side = []
+    if (n.kind === 'leaf') for (const entry of n.entries) children.push({ entry })
+    else
+      for (const node of n.children) {
+        children.push({ node, low })
+        low = node.lastKey
+      }
     items.unshift(...children)
   }
+  // Items entirely at or before the cursor are done.
+  const done = (it: Side[number]) =>
+    after !== null && compareUtf8('node' in it ? it.node.lastKey : spec.key(it.entry), after) <= 0
   for (;;) {
+    while (xs[0] && done(xs[0])) xs.shift()
+    while (ys[0] && done(ys[0])) ys.shift()
     const x = xs[0]
     const y = ys[0]
     if (!y) return
@@ -289,7 +305,7 @@ export async function* newNodes<E>(
       continue
     }
     if ('node' in y) {
-      yield y.node
+      if (after === null || (y.low !== null && compareUtf8(y.low, after) >= 0)) yield y.node
       await expand(ys)
       continue
     }

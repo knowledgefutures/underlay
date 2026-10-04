@@ -103,53 +103,117 @@ async function setPairs(
 const baseTreeOf = (p: SetPair, slug: string) =>
   p.base?.types[slug]?.root ?? p.other?.types[slug]?.root ?? null
 
+/** One tree of a version's sync work: a set's record tree of one type, or its file tree. */
+export interface SyncTree {
+  set: 'public' | 'private'
+  kind: 'records' | 'files'
+  slug: string | null
+  base: string | null
+  target: string | null
+}
+
+/** Everything a version's sync moves, in the order it moves it. */
+export interface VersionWork {
+  root: VersionRoot
+  /** Keys of the schemas the base lacks. */
+  schemas: string[]
+  trees: SyncTree[]
+  /** The private set object's key, when the private set is sent. */
+  privateSet: string | null
+  /** The root's key: written last. */
+  rootKey: string
+}
+
+/** Plan what syncing version `target` over `opts.base` moves. */
+export async function versionWork(
+  repo: Repo,
+  target: string,
+  opts: PackOptions = {},
+): Promise<VersionWork> {
+  const sets = opts.sets ?? 'public'
+  const root = await repo.root(target)
+  const base = opts.base ? await repo.root(opts.base) : null
+  const { pairs, privateSet } = await setPairs(repo, root, base, sets)
+  const known = new Set<string>()
+  for (const s of [base?.public, ...pairs.map((p) => p.base)]) {
+    for (const t of Object.values(s?.types ?? {})) known.add(t.schema)
+  }
+  const schemas: string[] = []
+  const trees: SyncTree[] = []
+  for (const p of pairs) {
+    for (const t of Object.values(p.set.types)) {
+      if (known.has(t.schema)) continue
+      known.add(t.schema)
+      schemas.push(keys.schema(t.schema))
+    }
+  }
+  for (const p of pairs) {
+    for (const [slug, t] of Object.entries(p.set.types)) {
+      trees.push({ set: p.name, kind: 'records', slug, base: baseTreeOf(p, slug), target: t.root })
+    }
+    trees.push({
+      set: p.name,
+      kind: 'files',
+      slug: null,
+      base: p.base?.files.root ?? null,
+      target: p.set.files.root,
+    })
+  }
+  return {
+    root,
+    schemas,
+    trees,
+    privateSet: privateSet ? keys.privateSet(root.private!) : null,
+    rootKey: keys.root(target),
+  }
+}
+
+/**
+ * One tree's new objects, top down: nodes, and after each record leaf its
+ * out-of-line records and body. `resumeKey` marks the objects after which a
+ * walk can stop and resume with `after` (each leaf's last key).
+ */
+export async function* treeObjects(
+  repo: Repo,
+  tree: SyncTree,
+  after: string | null = null,
+): AsyncGenerator<PackObject & { resumeKey?: string }> {
+  const source = tree.kind === 'records' ? nodesOnly(repo, recordTree) : nodesOnly(repo, fileTree)
+  for await (const n of newNodes(source as NodeSource<unknown>, tree.base, tree.target, {
+    after,
+  })) {
+    const node = { key: keys.node(n.hash), bytes: await raw(repo, keys.node(n.hash)) }
+    if (n.level !== 0) {
+      yield node
+      continue
+    }
+    if (tree.kind === 'files') {
+      yield { ...node, resumeKey: n.lastKey }
+      continue
+    }
+    yield node
+    const body = await raw(repo, keys.body(n.hash))
+    for (const line of splitLines(await gunzipText(body))) {
+      const h = outOfLineHash(line)
+      if (h) yield { key: keys.record(h), bytes: await raw(repo, keys.record(h)) }
+    }
+    yield { key: keys.body(n.hash), bytes: body, resumeKey: n.lastKey }
+  }
+}
+
 /** The objects version `target` reaches that `opts.base` doesn't. */
 export async function* packVersion(
   repo: Repo,
   target: string,
   opts: PackOptions = {},
 ): AsyncGenerator<PackObject> {
-  const sets = opts.sets ?? 'public'
-  const root = await repo.root(target)
-  const base = opts.base ? await repo.root(opts.base) : null
-  const { pairs, privateSet } = await setPairs(repo, root, base, sets)
-
-  const known = new Set<string>()
-  for (const s of [base?.public, ...pairs.map((p) => p.base)]) {
-    for (const t of Object.values(s?.types ?? {})) known.add(t.schema)
+  const work = await versionWork(repo, target, opts)
+  for (const key of work.schemas) yield { key, bytes: await raw(repo, key) }
+  for (const tree of work.trees) {
+    for await (const { key, bytes } of treeObjects(repo, tree)) yield { key, bytes }
   }
-  for (const p of pairs) {
-    for (const t of Object.values(p.set.types)) {
-      if (known.has(t.schema)) continue
-      known.add(t.schema)
-      yield { key: keys.schema(t.schema), bytes: await raw(repo, keys.schema(t.schema)) }
-    }
-  }
-
-  const records = nodesOnly(repo, recordTree)
-  const files = nodesOnly(repo, fileTree)
-  for (const p of pairs) {
-    for (const [slug, t] of Object.entries(p.set.types)) {
-      for await (const n of newNodes(records, baseTreeOf(p, slug), t.root)) {
-        yield { key: keys.node(n.hash), bytes: await raw(repo, keys.node(n.hash)) }
-        if (n.level !== 0) continue
-        const body = await raw(repo, keys.body(n.hash))
-        for (const line of splitLines(await gunzipText(body))) {
-          const h = outOfLineHash(line)
-          if (h) yield { key: keys.record(h), bytes: await raw(repo, keys.record(h)) }
-        }
-        yield { key: keys.body(n.hash), bytes: body }
-      }
-    }
-    for await (const n of newNodes(files, p.base?.files.root ?? null, p.set.files.root)) {
-      yield { key: keys.node(n.hash), bytes: await raw(repo, keys.node(n.hash)) }
-    }
-  }
-  if (privateSet) {
-    const key = keys.privateSet(root.private!)
-    yield { key, bytes: await raw(repo, key) }
-  }
-  yield { key: keys.root(target), bytes: await raw(repo, keys.root(target)) }
+  if (work.privateSet) yield { key: work.privateSet, bytes: await raw(repo, work.privateSet) }
+  yield { key: work.rootKey, bytes: await raw(repo, work.rootKey) }
 }
 
 export interface ReceiveOptions {

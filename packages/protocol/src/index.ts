@@ -34,6 +34,10 @@ export {
   type ReceiveResult,
   receiveVersion,
   type SyncSets,
+  type SyncTree,
+  treeObjects,
+  type VersionWork,
+  versionWork,
 } from './repo/sync.js'
 export { type TarEntry, tarChunks, type TarFile, tarStream, untar } from './repo/tar.js'
 export { blobObject, MemoryStore, memoryStore } from './stores/memory.js'
