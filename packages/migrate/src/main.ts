@@ -7,6 +7,7 @@
  *                                           (src/ssh-psql.ts); the container's name must
  *                                           start with "<V1_CONTAINER>."
  *   TARGET_DB=file:./migrated.sqlite        the v2 SQLite database to fill
+ *   TARGET_DB_MIGRATE=0                     TARGET_DB is a D1 export: don't run migrations
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY   the v2 bucket (R2)
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)
  *   SIGNING_KEY                             the target deployment's log key

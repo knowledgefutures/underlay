@@ -18,9 +18,14 @@ export interface NodeDbOptions {
   maxBoundParams?: number
   /** Called for every statement sent (tests count queries per request). */
   onStatement?: () => void
+  /**
+   * Apply the migrations (default true). False for a database whose schema came
+   * from elsewhere, e.g. a `wrangler d1 export`, which has no drizzle bookkeeping.
+   */
+  migrate?: boolean
 }
 
-/** Open (and migrate) a database. `url` is `file:path/to/db.sqlite`, or `:memory:`. */
+/** Open (and normally migrate) a database. `url` is `file:path/to/db.sqlite`, or `:memory:`. */
 export async function openNodeDb(url: string, opts: NodeDbOptions = {}): Promise<Db> {
   let client = createClient({ url })
   if (url !== ':memory:') await client.execute('PRAGMA journal_mode = WAL')
@@ -29,7 +34,7 @@ export async function openNodeDb(url: string, opts: NodeDbOptions = {}): Promise
   if (opts.maxBoundParams !== undefined || opts.onStatement)
     client = guardParams(client, opts.maxBoundParams ?? Infinity, opts.onStatement)
   const db = drizzle(client, { schema })
-  await migrate(db, { migrationsFolder })
+  if (opts.migrate !== false) await migrate(db, { migrationsFolder })
   return db
 }
 

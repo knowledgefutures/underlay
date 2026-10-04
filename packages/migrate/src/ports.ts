@@ -9,7 +9,10 @@ import { createStores, MemoryCache, openNodeDb, type Ports, SqliteJobs } from '@
 export async function migrationPorts(
   env: NodeJS.ProcessEnv,
 ): Promise<{ ports: Ports; signer: Signer }> {
-  const db = await openNodeDb(env.TARGET_DB ?? 'file:./migrated.sqlite')
+  // TARGET_DB_MIGRATE=0: a copy of a deployment's D1 (wrangler d1 export), already at its schema.
+  const db = await openNodeDb(env.TARGET_DB ?? 'file:./migrated.sqlite', {
+    migrate: env.TARGET_DB_MIGRATE !== '0',
+  })
   const cache = new MemoryCache()
   const signer = await ed25519Signer(env.SIGNING_KEY ?? (await generateSigningKey()))
   const ports: Ports = {

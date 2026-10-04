@@ -37,7 +37,8 @@ holds dev's users and sessions.
 
 To repair a loaded deployment, `repair.ts` needs a SQLite copy of its database:
 `wrangler d1 export underlay-staging --env staging --remote --output d1.sql`, then
-`sqlite3 d1.sqlite < d1.sql`, and `TARGET_DB=file:d1.sqlite` with
+`sqlite3 d1.sqlite < d1.sql`, then `TARGET_DB=file:d1.sqlite TARGET_DB_MIGRATE=0` (the
+export already has the schema, without drizzle's bookkeeping) with
 `. packages/migrate/scripts/staging-env.sh`. Load the rows it adds with
 `d1-data.ts d1.sqlite <table>`.
 
