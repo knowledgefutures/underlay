@@ -243,6 +243,63 @@ describe('commitVersion', () => {
     expect(v3.version.changes).toMatchObject({ removed: 1 })
   })
 
+  it('moves file references with a type: public → private → delete', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const repo = await h.ports.stores.forCollection(c.id)
+    await h.ports.db
+      .insert(schema.files)
+      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
+    const v1 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [
+        type('Author', authorSchema, [
+          up('Author', 'a', { name: 'A', photo: { $file: `sha256:${FILE}` } }),
+          up('Author', 'b', { name: 'B' }),
+        ]),
+      ],
+      metadata: null,
+    })
+    if (v1.status !== 'committed') throw new Error(v1.status)
+    expect((await repo.root(v1.version.hash)).public.files.count).toBe(1)
+
+    // The type becomes private: a plain tree move, and its file goes with it.
+    const privAuthor = { ...authorSchema, private: true }
+    const v2 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', privAuthor, null)],
+      metadata: null,
+    })
+    if (v2.status !== 'committed') throw new Error(v2.status)
+    const root2 = await repo.root(v2.version.hash)
+    const priv2 = await repo.privateSet(root2.private!)
+    expect(priv2.types.Author!.schema).toBe(hashSchema(privAuthor))
+    expect(root2.public.files).toMatchObject({ root: null, count: 0 })
+    expect(priv2.files).toMatchObject({ count: 1, bytes: 1234 })
+
+    // Deleting the record that references it releases the file.
+    const v3 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v2.version),
+      types: [type('Author', privAuthor, null, [del('a')])],
+      metadata: null,
+    })
+    if (v3.status !== 'committed') throw new Error(v3.status)
+    const priv3 = await repo.privateSet((await repo.root(v3.version.hash)).private!)
+    expect(priv3.files).toMatchObject({ root: null, count: 0 })
+    expect(priv3.types.Author!.count).toBe(1)
+  })
+
   it('keeps file sets by reference', async () => {
     const h = await harness()
     const c = await h.collection()

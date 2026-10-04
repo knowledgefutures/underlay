@@ -245,7 +245,13 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       if (pubChanges)
         throw new Error(`Type ${t.slug} is private; its changes belong to the private set`)
       if (pubRoot && !privRoot && !privChanges) {
-        priv = pubBase!
+        // The tree moves as it is (summary() drops the old schema hash). Its file
+        // references move with it, which reads the type's bodies: O(type size).
+        priv = summary(pubBase)
+        for await (const e of treeAsUpserts(repo, pubRoot)) {
+          refs.record('public', e.entry, null)
+          refs.record('private', null, e.entry)
+        }
       } else if (pubRoot) {
         priv = await merge(
           'private',
