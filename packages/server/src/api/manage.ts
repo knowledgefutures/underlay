@@ -21,7 +21,7 @@ import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
-import { jsonError, requireCollection } from './access.js'
+import { capRole, jsonError, requireCollection } from './access.js'
 import { ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
@@ -38,13 +38,13 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
     .limit(1)
   if (!org) return { org: null, role: null }
   if (!p || p.collectionIds || p.scope === 'read') return { org, role: null }
-  if (p.orgId) return { org, role: p.orgId === org.id ? 'owner' : null }
+  if (p.orgId) return { org, role: p.orgId === org.id ? capRole(p, 'owner') : null }
   const [m] = await c.var.ports.db
     .select({ role: schema.member.role })
     .from(schema.member)
     .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, p.userId)))
     .limit(1)
-  return { org, role: m?.role ?? null }
+  return { org, role: capRole(p, m?.role ?? null) }
 }
 
 export const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'

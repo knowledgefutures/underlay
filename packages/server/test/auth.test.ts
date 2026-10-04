@@ -71,6 +71,28 @@ describe('better-auth on SQLite', () => {
       (await call('/api/collections/org/other/push', scoped.key, { schemas: { Author } })).status,
     ).toBe(404)
 
+    // A key acts with at most its scope: write keys as members, admin keys with the role.
+    const admin = await auth.api.createApiKey({
+      body: { userId: user, metadata: { scope: 'admin', collectionIds: [c.id] } },
+    })
+    const send = (method: string, path: string, key: string, body?: unknown) =>
+      app.fetch(
+        new Request(`http://test${path}`, {
+          method,
+          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+      )
+    for (const k of [write.key, scoped.key]) {
+      expect(
+        (await send('PATCH', '/api/collections/org/authors', k, { public: true })).status,
+      ).toBe(403)
+      expect((await send('DELETE', '/api/collections/org/authors', k)).status).toBe(403)
+    }
+    expect(
+      (await send('PATCH', '/api/collections/org/authors', admin.key, { public: true })).status,
+    ).toBe(200)
+
     // Keys are checked against their row; last_request is written once, not per call.
     const rows = async () =>
       (await h.ports.db.select().from(schema.apikey)).find(

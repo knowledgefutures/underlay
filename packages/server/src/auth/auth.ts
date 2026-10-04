@@ -133,9 +133,12 @@ export function createAuth(
         rateLimit: { enabled: false },
         permissions: {
           defaultPermissions: async (_referenceId, ctx) => {
-            // metadata is client-controlled: 'admin' is clamped to write, as in v1.
+            // A key never acts beyond its holder's role (api/access.ts capRole), so
+            // the client may ask for any scope: admin keys keep the holder's admin
+            // powers, write keys act as members.
             const scope = ctx.body?.metadata?.scope
-            if (scope === 'write' || scope === 'admin') return { collections: ['write', 'read'] }
+            if (scope === 'admin') return { collections: ['admin', 'write', 'read'] }
+            if (scope === 'write') return { collections: ['write', 'read'] }
             return { collections: ['read'] }
           },
         },

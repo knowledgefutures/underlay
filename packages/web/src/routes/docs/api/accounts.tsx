@@ -60,11 +60,12 @@ export default function DocsApiAccounts() {
         are no local signup or login endpoints.
       </p>
       <p>
-        API keys have two grantable scopes: <code>read</code> and <code>write</code>. The scope is
-        stored in key metadata and translated to permissions server-side; because that metadata is
-        client-supplied, a request for <code>admin</code> is clamped down to <code>write</code>{' '}
-        rather than honored. A key can optionally be scoped to specific collections, in which case
-        it is refused on account and organization endpoints.
+        API keys have three scopes: <code>read</code>, <code>write</code> and <code>admin</code>. A
+        key never does more than its holder&rsquo;s role allows. A <code>write</code> key pushes and
+        edits as a member would; only an <code>admin</code> key held by an owner or admin can change
+        visibility, delete a collection, or manage mirrors, webhooks and organization settings. A
+        key can optionally be scoped to specific collections, in which case it is refused on account
+        and organization endpoints.
       </p>
 
       <hr className="border-rule my-6" />

@@ -24,12 +24,25 @@ export interface Principal {
   sessionId?: string
 }
 
+/**
+ * The role a caller acts with: a key's scope caps its holder's role. Sessions
+ * and admin keys keep the full role; read and write keys act as members, so
+ * they can't change visibility, delete, or manage mirrors, webhooks or the org.
+ */
+export function capRole(p: Principal, role: string | null): string | null {
+  if (!role) return null
+  return p.scope === 'session' || p.scope === 'admin' ? role : 'member'
+}
+
 export interface CollectionAccess {
   collection: typeof schema.collections.$inferSelect
   owner: typeof schema.organization.$inferSelect
   /** Members of the owning org read both sets. */
   isMember: boolean
-  /** The member's role in the owning org ('owner' | 'admin' | 'member'), when a member. */
+  /**
+   * The member's role in the owning org ('owner' | 'admin' | 'member'), when a
+   * member, capped by the key's scope (capRole).
+   */
   role: string | null
   canRead: boolean
   canWrite: boolean
@@ -58,8 +71,8 @@ export async function collectionAccess(
       principal.collectionIds === null || principal.collectionIds.includes(row.collection.id)
     if (keyCovers && principal.orgId) {
       isMember = principal.orgId === row.owner.id
-      // An org-owned key acts with the org's authority.
-      if (isMember) role = 'owner'
+      // An org-owned key acts with the org's authority, as far as its scope goes.
+      if (isMember) role = capRole(principal, 'owner')
     } else if (keyCovers) {
       const [m] = await db
         .select({ id: schema.member.id, role: schema.member.role })
@@ -72,7 +85,7 @@ export async function collectionAccess(
         )
         .limit(1)
       isMember = !!m
-      role = m?.role ?? null
+      role = capRole(principal, m?.role ?? null)
     }
   }
   const canRead = row.collection.public || isMember

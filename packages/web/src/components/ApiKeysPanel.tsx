@@ -139,6 +139,7 @@ export default function ApiKeysPanel({
               >
                 <option value="read">read — list and download</option>
                 <option value="write">write — push versions</option>
+                <option value="admin">admin — also settings, mirrors and webhooks</option>
               </select>
             </div>
             <div>
