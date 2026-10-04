@@ -107,3 +107,5 @@ expect(r.status === 200, 'negotiate upload')
 r = await call('POST', `/versions/negotiate/${nsid}/commit`)
 expect(r.status === 201 && r.json.recordCount === 2, 'negotiate commit')
 console.log('\nsmoke OK')
+
+export {}
