@@ -20,6 +20,7 @@
 import {
   appendLog,
   bodyOfRecord,
+  type CollectionInfo,
   type Change,
   compareUtf8,
   dropRecordBody,
@@ -27,9 +28,11 @@ import {
   fileTree,
   isEmptySet,
   iterate,
+  jcs,
   makeRoot,
   mergeTree,
   type PrivateSetObject,
+  readCollectionInfo,
   readHead,
   type RecordEntry,
   recordPayloadBytes,
@@ -39,8 +42,10 @@ import {
   RepoSource,
   type SetObject,
   setRecordTotals,
+  type Signer,
   signEntry,
   type TreeSummary,
+  writeCollectionInfo,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
@@ -527,7 +532,10 @@ export async function appendVersionLog(
   if ((head?.seq ?? 0) !== v.seq - 1) {
     throw new Error(`Log for ${collectionId} is at ${head?.seq ?? 0}, cannot append ${v.seq}`)
   }
-  const entry = await signEntry(await ports.signer(), {
+  const signer = await ports.signer()
+  // collection.json first: a reader must find the key before an entry it signs.
+  await publishCollectionInfo(ports, repo, collectionId, signer)
+  const entry = await signEntry(signer, {
     seq: v.seq,
     semver: v.semver,
     versionHash: v.hash,
@@ -539,4 +547,35 @@ export async function appendVersionLog(
     prev: head?.entryHash ?? null,
   })
   await appendLog(repo, collectionId, entry)
+}
+
+/**
+ * Keep `collection.json` current: the collection's names and every key that has
+ * signed its log (a rotated key stays listed, so old entries still verify).
+ * Written only when it changes.
+ */
+export async function publishCollectionInfo(
+  ports: Ports,
+  repo: Repo,
+  collectionId: string,
+  signer: Signer,
+): Promise<void> {
+  const [row] = await ports.db
+    .select({ c: schema.collections, owner: schema.organization.slug })
+    .from(schema.collections)
+    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
+    .where(eq(schema.collections.id, collectionId))
+    .limit(1)
+  if (!row) throw new Error(`Collection ${collectionId} not found`)
+  const existing = await readCollectionInfo(repo, collectionId)
+  const keys = [...(existing?.keys ?? []).filter((k) => k.id !== signer.keyId), signer.publicKey]
+  const info: CollectionInfo = {
+    id: collectionId,
+    owner: row.owner,
+    slug: row.c.slug,
+    name: row.c.name,
+    keys,
+  }
+  if (existing && jcs(existing) === jcs(info)) return
+  await writeCollectionInfo(repo, info)
 }

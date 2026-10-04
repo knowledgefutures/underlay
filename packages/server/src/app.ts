@@ -14,6 +14,7 @@ import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
 import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
+import { syncRoutes } from './api/sync.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Ports } from './ports.js'
@@ -96,6 +97,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', versionRoutes())
+  app.route('/api/collections', syncRoutes())
   app.route('/api/collections', webhookRoutes())
   app.route('/', schemaRoutes())
   app.route('/', manageRoutes())

@@ -187,6 +187,30 @@ export async function appendLog(repo: Repo, collectionId: string, entry: LogEntr
 }
 
 /**
+ * Check log entries that continue a log: consecutive seqs from `after.seq + 1`
+ * (or 1), each chaining to the previous entry's hash and signed by a trusted
+ * key. Returns the new head. For mirrors and clients that already verified the
+ * log up to `after`.
+ */
+export async function verifyLogEntries(
+  entries: readonly LogEntry[],
+  trustedKeys: PublicKeyInfo[],
+  after: { seq: number; entryHash: string } | null,
+): Promise<{ seq: number; entryHash: string } | null> {
+  let seq = after?.seq ?? 0
+  let prev = after?.entryHash ?? null
+  for (const e of entries) {
+    seq++
+    if (e.seq !== seq) throw new IntegrityError(`Log entry ${seq} has seq ${e.seq}`)
+    if (e.prev !== prev) throw new IntegrityError(`Log entry ${seq} does not chain to ${seq - 1}`)
+    if (!(await verifyEntry(e, trustedKeys)))
+      throw new IntegrityError(`Log entry ${seq} has a bad signature`)
+    prev = entryHash(e)
+  }
+  return prev === null ? null : { seq, entryHash: prev }
+}
+
+/**
  * Check a collection's whole log: signatures, the hash chain, and that the head
  * matches the last entry. O(versions); for restore and audits.
  */
@@ -198,18 +222,13 @@ export async function verifyLog(
   const head = await readHead(repo, collectionId)
   if (!head) throw new IntegrityError(`Collection ${collectionId} has no head`)
   const entries: LogEntry[] = []
-  let prev: string | null = null
   for (let seq = 1; seq <= head.seq; seq++) {
     const e = await readLogEntry(repo, collectionId, seq)
     if (!e) throw new IntegrityError(`Log entry ${seq} is missing`)
-    if (e.seq !== seq) throw new IntegrityError(`Log entry ${seq} has seq ${e.seq}`)
-    if (e.prev !== prev) throw new IntegrityError(`Log entry ${seq} does not chain to ${seq - 1}`)
-    if (!(await verifyEntry(e, trustedKeys)))
-      throw new IntegrityError(`Log entry ${seq} has a bad signature`)
-    prev = entryHash(e)
     entries.push(e)
   }
-  if (prev !== head.entryHash)
+  const last = await verifyLogEntries(entries, trustedKeys, null)
+  if (last?.entryHash !== head.entryHash)
     throw new IntegrityError('head.json does not match the last log entry')
   return { head, entries }
 }
