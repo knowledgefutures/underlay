@@ -92,8 +92,9 @@ export default function ProtocolVersions() {
           references is private unless the push marks it public.
         </li>
         <li>
-          Members of the owning organization can read both sets. Everyone else reads the public set.
-          Whether the collection is listed publicly is collection metadata, not part of the version.
+          The collection&rsquo;s owners (on Underlay, the members of the organization that holds it)
+          can read both sets. Everyone else reads the public set. Whether the collection is listed
+          publicly is collection metadata, not part of the version.
         </li>
       </ul>
       <p>
@@ -117,8 +118,8 @@ export default function ProtocolVersions() {
           so public-only versions with the same content have the same hash in any collection.
         </li>
         <li>
-          A version hash commits to content only. Lineage, semver, messages and authorship are
-          server state, recorded in the signed log.
+          A version hash commits to content only. Lineage, semver and messages are server state,
+          recorded in the signed log. Who pushed a version is not recorded there.
         </li>
       </ul>
       <p>

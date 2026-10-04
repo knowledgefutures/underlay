@@ -84,13 +84,20 @@ export default function ProtocolRepositories() {
         </li>
         <li>
           Entries form a hash chain through <code>prev</code>, so a dropped, reordered or altered
-          entry is detectable.
+          entry is detectable. <code>head.json</code> must name the last entry&rsquo;s hash and
+          version.
+        </li>
+        <li>
+          A log is as public as its collection, so it names no person: <code>actorId</code> is{' '}
+          <code>null</code> in new entries, and who pushed stays with the collection&rsquo;s
+          members.
         </li>
         <li>
           <code>collection.json</code> holds the collection&rsquo;s id, owner, slug, name and
-          description, and the public keys that sign its log. A verifier uses a key only under its
-          own <code>keyId</code>, so a key list read from an untrusted bucket can&rsquo;t slip a
-          stranger&rsquo;s key in under a trusted id.
+          description, and the public keys that sign its log. It isn&rsquo;t hashed or signed; read
+          it as JSON, not by its bytes. A verifier uses a key only under its own <code>keyId</code>,
+          so a key list read from an untrusted bucket can&rsquo;t slip a stranger&rsquo;s key in
+          under a trusted id.
         </li>
       </ul>
       <p>

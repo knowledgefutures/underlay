@@ -22,13 +22,13 @@ const rules: [string, string, string][] = [
   ],
   ['Depth', 'Nesting deeper than 64 levels in data (the envelope adds one)', 'too_deep'],
   ['Record size', 'A canonical record over 8 MiB', 'record_too_large'],
-  ['Record id', 'Not a string, empty, or over 1,024 UTF-8 bytes', 'bad_id'],
+  ['Record id', 'Missing, not a string, empty, or over 1,024 UTF-8 bytes', 'bad_id'],
   [
     'Type slug',
-    'Empty, over 128 bytes, starting with ".", or containing /, \\ or control characters',
+    'Missing, empty, over 128 bytes, starting with ".", or containing /, \\ or control characters',
     'bad_type',
   ],
-  ['Envelope', 'Not an object with id, type and data, or a non-boolean private', 'bad_envelope'],
+  ['Envelope', 'Not an object, no data, or a non-boolean private', 'bad_envelope'],
   ['Syntax', 'Anything that isn’t JSON', 'syntax'],
 ]
 
@@ -106,8 +106,10 @@ export default function ProtocolRecords() {
           privacy. Put private fields in a private type, or push the record as private.
         </li>
         <li>
-          A schema&rsquo;s canonical form is at most 256 KB, and each <code>pattern</code> at most
-          256 characters.
+          A schema&rsquo;s canonical form is at most 256 KB, and each <code>pattern</code> (or{' '}
+          <code>patternProperties</code> key) at most 256 UTF-16 code units. A <code>pattern</code>{' '}
+          inside <code>const</code>, <code>enum</code>, <code>default</code> or{' '}
+          <code>examples</code> is data, not a regex.
         </li>
       </ul>
 
@@ -116,7 +118,7 @@ export default function ProtocolRecords() {
         Schemas are JSON Schema <strong>draft-07</strong>. A <code>$schema</code>, if given, must
         name draft-07. A schema is refused unless it is valid against the draft-07 meta-schema,
         every pattern compiles as an ECMAScript regular expression with the <code>u</code> flag, and
-        every <code>$ref</code> resolves within the schema.
+        every <code>$ref</code> resolves within the schema or to the draft-07 meta-schema.
       </p>
       <ul>
         <li>
@@ -148,9 +150,10 @@ export default function ProtocolRecords() {
         searched further. A <code>$file</code> of any other form is not a reference.
       </p>
       <p>
-        A file belongs to every set that has a record referencing it. Files are uploaded before the
-        commit that references them, and a collection may only reference files it holds already or
-        has uploaded itself.
+        A file belongs to every set that has a record referencing it. A file declared in a push but
+        referenced by no record is private, unless the push marks it public. Files are uploaded
+        before the commit that references them, and a collection may only reference files it holds
+        already or has uploaded itself.
       </p>
     </DocsLayout>
   )
