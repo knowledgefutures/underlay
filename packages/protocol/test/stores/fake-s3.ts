@@ -10,6 +10,8 @@ export interface FakeS3 {
   url: string
   objects: Map<string, { bytes: Buffer; contentType: string | undefined }>
   requests: { method: string; url: string }[]
+  /** The bucket's lifecycle configuration XML (null: none); `'denied'` refuses reading it. */
+  lifecycle: { xml: string | null | 'denied' }
   close(): Promise<void>
 }
 
@@ -21,6 +23,7 @@ export async function startFakeS3(
   const objects = new Map<string, { bytes: Buffer; contentType: string | undefined }>()
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
   const requests: { method: string; url: string }[] = []
+  const lifecycle: FakeS3['lifecycle'] = { xml: null }
 
   const server: Server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
@@ -43,6 +46,16 @@ export async function startFakeS3(
     const key = rest.map(decodeURIComponent).join('/')
     const q = url.searchParams
 
+    if (req.method === 'GET' && !key && q.has('lifecycle')) {
+      if (lifecycle.xml === 'denied')
+        return void res.writeHead(403).end('<Error><Code>AccessDenied</Code></Error>')
+      if (lifecycle.xml === null)
+        return void res
+          .writeHead(404)
+          .end('<Error><Code>NoSuchLifecycleConfiguration</Code></Error>')
+      res.writeHead(200, { 'content-type': 'application/xml' }).end(lifecycle.xml)
+      return
+    }
     if (req.method === 'GET' && !key && q.get('list-type') === '2') {
       // Pages of max-keys (1,000 by default), with an opaque continuation token.
       const prefix = q.get('prefix') ?? ''
@@ -170,6 +183,7 @@ export async function startFakeS3(
     url: `http://127.0.0.1:${port}`,
     objects,
     requests,
+    lifecycle,
     close: () => new Promise((r) => server.close(() => r())),
   }
 }

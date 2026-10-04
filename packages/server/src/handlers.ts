@@ -22,6 +22,7 @@ import { registerJob } from './jobs.js'
 import './push/compact.js'
 import './push/parallel.js'
 import './refs/log.js'
+import { recheckLocations } from './locations/locations.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import './locations/restore.js'
 import { expireSessions } from './push/finalize.js'
@@ -44,6 +45,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await purgeOldDeliveries(ports)
   // Weekly counter reconciliation, a few collections at a time.
   await reconcileDue(ports)
+  // Customer storage locations, re-checked daily.
+  await recheckLocations(ports)
   // Mirrors that fell behind (a failed copy, a missed job) catch up.
   const lagging = await laggingPlacements(ports)
   await ports.jobs.enqueueBatch(

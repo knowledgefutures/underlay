@@ -92,6 +92,13 @@
       "when": 1791125622343,
       "tag": "0012_usage_rollups",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791127142531,
+      "tag": "0013_location_checked_at",
+      "breakpoints": true
     }
   ]
 }

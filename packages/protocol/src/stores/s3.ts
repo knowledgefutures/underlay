@@ -63,6 +63,20 @@ export function s3Store(cfg: S3Config): S3Store {
   return new S3Store(cfg)
 }
 
+/** An enabled bucket lifecycle rule, as far as it touches stored objects. */
+export interface LifecycleRule {
+  id: string
+  /** The key prefix it applies to ('' for the whole bucket). */
+  prefix: string
+  /** It deletes current objects (Expiration). */
+  expires: boolean
+  /** It moves objects to another storage class (Transition), where reads may fail. */
+  transitions: boolean
+}
+
+const tag = (xml: string, name: string) =>
+  new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(xml)?.[1] ?? null
+
 export const s3CopyLimits = {
   /** CopyObject's limit; larger objects are copied in parts. */
   copyObjectMax: 5 * 1024 ** 3,
@@ -255,6 +269,35 @@ export class S3Store implements Store {
         }
       },
     })
+  }
+
+  /**
+   * The bucket's enabled lifecycle rules: 'none' when it has none, 'unreadable'
+   * when these credentials may not read them (GetBucketLifecycleConfiguration).
+   */
+  async lifecycleRules(): Promise<LifecycleRule[] | 'none' | 'unreadable'> {
+    const res = await this.#fetch(this.#url('', { lifecycle: '' }))
+    const text = await res.text()
+    if (res.status === 404 || text.includes('NoSuchLifecycleConfiguration')) return 'none'
+    if (res.status === 403 || res.status === 401 || res.status === 501) return 'unreadable'
+    if (!res.ok)
+      throw new S3Error(res.status, `GetBucketLifecycleConfiguration: ${text.slice(0, 200)}`)
+    const rules: LifecycleRule[] = []
+    for (const m of text.matchAll(/<Rule>([\s\S]*?)<\/Rule>/g)) {
+      const r = m[1]!
+      if (tag(r, 'Status') !== 'Enabled') continue
+      const filter = tag(r, 'Filter')
+      // A rule limited to tagged objects never touches untagged ones (Underlay tags none).
+      if (filter !== null && /<Tag>/.test(filter)) continue
+      const prefix = (filter !== null ? tag(filter, 'Prefix') : tag(r, 'Prefix')) ?? ''
+      rules.push({
+        id: tag(r, 'ID') ?? '',
+        prefix,
+        expires: tag(r, 'Expiration') !== null,
+        transitions: /<Transition>/.test(r),
+      })
+    }
+    return rules.length ? rules : 'none'
   }
 
   #presignPut(key: string, opts: PresignPutOptions): Promise<string> {

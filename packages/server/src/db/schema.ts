@@ -393,6 +393,8 @@ export const storageLocations = sqliteTable('storage_locations', {
     .default('unverified'),
   lastError: text('last_error'),
   verifiedAt: ts('verified_at'),
+  /** Last check, passed or not; the cron sweep re-checks locations daily. */
+  checkedAt: ts('checked_at'),
   createdAt: createdAt(),
 })
 

@@ -38,6 +38,8 @@ interface CheckResult {
   publicRead: boolean
   readBack: boolean
   error: string | null
+  /** Lifecycle rules that move objects, or that can't be read. */
+  warnings?: string[]
 }
 
 const STATUS_STYLES: Record<Location['status'], string> = {
@@ -60,6 +62,7 @@ function describeCheck(name: string, check: CheckResult): string {
   if (check.publicRead) {
     text += ' Objects there can be read without credentials, so it can hold public records only.'
   }
+  for (const w of check.warnings ?? []) text += ` ${w}`
   return text
 }
 

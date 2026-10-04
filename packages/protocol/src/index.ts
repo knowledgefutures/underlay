@@ -46,6 +46,13 @@ export {
 } from './repo/sync.js'
 export { type TarEntry, tarChunks, type TarFile, tarStream, untar } from './repo/tar.js'
 export { blobObject, MemoryStore, memoryStore } from './stores/memory.js'
-export { type S3Config, s3CopyLimits, S3Error, S3Store, s3Store } from './stores/s3.js'
+export {
+  type LifecycleRule,
+  type S3Config,
+  s3CopyLimits,
+  S3Error,
+  S3Store,
+  s3Store,
+} from './stores/s3.js'
 export { FileStore, fileStore, type FileStoreOptions, serveSignedBlob } from './stores/fs.js'
 export { type R2BucketLike, r2Store } from './stores/r2.js'

@@ -12,10 +12,11 @@
  *   it can, and tries an anonymous read: a location that serves objects to
  *   anyone is flagged public, and may hold public sets only.
  */
-import { PrefixedStore, type Store, s3Store } from '@underlay/protocol'
-import { eq } from 'drizzle-orm'
+import { type LifecycleRule, PrefixedStore, S3Store, type Store, s3Store } from '@underlay/protocol'
+import { and, asc, eq, isNull, lt, ne, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
+import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 
 export type LocationRow = typeof schema.storageLocations.$inferSelect
@@ -112,6 +113,40 @@ export async function locationStore(ports: Ports, loc: LocationRow): Promise<Sto
   return loc.prefix ? new PrefixedStore(store, loc.prefix) : store
 }
 
+export const locationChecks = { everyMs: 24 * 60 * 60 * 1000, perSweep: 3 }
+
+/**
+ * Re-check customer locations not checked for a day, a few at a time (the cron
+ * sweep): credentials get revoked, buckets change, lifecycle rules appear.
+ */
+export async function recheckLocations(ports: Ports): Promise<number> {
+  const due = await ports.db
+    .select({ id: schema.storageLocations.id })
+    .from(schema.storageLocations)
+    .where(
+      and(
+        eq(schema.storageLocations.kind, 's3'),
+        ne(schema.storageLocations.status, 'disabled'),
+        or(
+          isNull(schema.storageLocations.checkedAt),
+          lt(schema.storageLocations.checkedAt, new Date(Date.now() - locationChecks.everyMs)),
+        ),
+      ),
+    )
+    .orderBy(asc(schema.storageLocations.checkedAt))
+    .limit(locationChecks.perSweep)
+  await ports.jobs.enqueueBatch(due.map((l) => ({ type: 'locations.check', locationId: l.id })))
+  return due.length
+}
+
+registerJob('locations.check', async (job, ports) => {
+  const [loc] = await ports.db
+    .select()
+    .from(schema.storageLocations)
+    .where(eq(schema.storageLocations.id, String(job.locationId)))
+  if (loc && loc.kind === 's3' && loc.status !== 'disabled') await checkLocation(ports, loc)
+})
+
 /** Validate a customer endpoint URL. */
 export function checkEndpoint(endpoint: unknown): string | null {
   if (typeof endpoint !== 'string') return '"endpoint" must be a URL'
@@ -132,13 +167,55 @@ export interface CheckResult {
   publicRead: boolean
   readBack: boolean
   error: string | null
+  /** Things that don't stop mirroring but should be fixed (a lifecycle rule we can't read, say). */
+  warnings: string[]
+}
+
+/**
+ * Bucket lifecycle rules that touch a location's prefix. A rule that expires
+ * objects there would delete what mirrors wrote: the check fails. One that moves
+ * them to another storage class, or rules these credentials can't read, warn.
+ */
+async function lifecycleProblems(store: Store, prefix: string) {
+  const s3 = store instanceof PrefixedStore ? store.inner : store
+  if (!(s3 instanceof S3Store)) return { error: null, warnings: [] as string[] }
+  const rules = await s3.lifecycleRules()
+  const where = prefix ? `${prefix.replace(/\/+$/, '')}/` : ''
+  const shown = where || 'the whole bucket'
+  if (rules === 'none') return { error: null, warnings: [] }
+  if (rules === 'unreadable') {
+    return {
+      error: null,
+      warnings: [
+        `These credentials can't read the bucket's lifecycle rules; make sure none deletes objects under ${shown}.`,
+      ],
+    }
+  }
+  const touches = (r: LifecycleRule) => where.startsWith(r.prefix) || r.prefix.startsWith(where)
+  const deleting = rules.filter((r) => r.expires && touches(r))
+  const moving = rules.filter((r) => r.transitions && touches(r))
+  return {
+    error: deleting.length
+      ? `Lifecycle rule ${deleting.map((r) => `"${r.id || r.prefix || '(unnamed)'}"`).join(', ')} deletes objects under ${shown}, where mirrors write. Exclude it from the rule.`
+      : null,
+    warnings: moving.map(
+      (r) =>
+        `Lifecycle rule "${r.id || r.prefix || '(unnamed)'}" moves objects under ${shown} to another storage class, where reads (restore) may fail.`,
+    ),
+  }
 }
 
 const CHECK_KEY = '.underlay/check.json'
 
 /** Write, read back (when allowed) and probe for anonymous reads; record the outcome. */
 export async function checkLocation(ports: Ports, loc: LocationRow): Promise<CheckResult> {
-  const result: CheckResult = { ok: false, publicRead: false, readBack: false, error: null }
+  const result: CheckResult = {
+    ok: false,
+    publicRead: false,
+    readBack: false,
+    error: null,
+    warnings: [],
+  }
   try {
     const store = await locationStore(ports, loc)
     const nonce = crypto.randomUUID()
@@ -157,6 +234,9 @@ export async function checkLocation(ports: Ports, loc: LocationRow): Promise<Che
     const anon = await fetchFor(ports)(new Request(url)).catch(() => null)
     result.publicRead = anon?.ok === true
     await anon?.body?.cancel()
+    const lifecycle = await lifecycleProblems(store, loc.prefix)
+    result.warnings.push(...lifecycle.warnings)
+    if (lifecycle.error) throw new LocationError(lifecycle.error)
     result.ok = true
   } catch (err) {
     result.error = (err as Error).message.slice(0, 500)
@@ -165,7 +245,10 @@ export async function checkLocation(ports: Ports, loc: LocationRow): Promise<Che
     .update(schema.storageLocations)
     .set({
       status: result.ok ? 'active' : 'broken',
-      lastError: result.error,
+      // A working location keeps its warnings where the page shows problems.
+      lastError:
+        result.error ?? (result.warnings.length ? `Warning: ${result.warnings.join(' ')}` : null),
+      checkedAt: new Date(),
       ...(result.ok ? { verifiedAt: new Date() } : {}),
     })
     .where(eq(schema.storageLocations.id, loc.id))

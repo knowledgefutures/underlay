@@ -265,6 +265,81 @@ describe('bucket mirrors', () => {
     expect(broken.body.location.status).toBe('broken')
   })
 
+  it('fails a location whose lifecycle rules delete under its prefix, and warns on others', async () => {
+    const { h, user } = await setup()
+    const f = await fake()
+    const rule = (body: string) =>
+      `<LifecycleConfiguration><Rule><ID>r</ID><Status>Enabled</Status>${body}</Rule></LifecycleConfiguration>`
+    const check = async (xml: string | null | 'denied', prefix: string) => {
+      f.lifecycle.xml = xml
+      return (await addLocation(h, user, f, `l${Math.random()}`, { prefix })).body as unknown as {
+        check: { ok: boolean; error: string | null; warnings: string[] }
+        location: { status: string; lastError: string | null }
+      }
+    }
+    // Expires everything: mirrors' objects would be deleted.
+    const all = await check(rule('<Filter></Filter><Expiration><Days>30</Days></Expiration>'), 'ul')
+    expect(all.check.ok).toBe(false)
+    expect(all.check.error).toMatch(/deletes objects under ul\//)
+    expect(all.location.status).toBe('broken')
+    // Expires another prefix, or only tagged objects: fine.
+    const other = await check(
+      rule('<Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>1</Days></Expiration>'),
+      'ul',
+    )
+    expect(other.check).toMatchObject({ ok: true, warnings: [] })
+    const tagged = await check(
+      rule(
+        '<Filter><Tag><Key>tmp</Key><Value>1</Value></Tag></Filter><Expiration><Days>1</Days></Expiration>',
+      ),
+      'ul',
+    )
+    expect(tagged.check.ok).toBe(true)
+    // A path under the prefix counts too; a transition only warns.
+    const inner = await check(
+      rule('<Filter><Prefix>ul/files/</Prefix></Filter><Expiration><Days>1</Days></Expiration>'),
+      'ul',
+    )
+    expect(inner.check.ok).toBe(false)
+    const cold = await check(
+      rule(
+        '<Prefix></Prefix><Transition><Days>30</Days><StorageClass>GLACIER</StorageClass></Transition>',
+      ),
+      'ul',
+    )
+    expect(cold.check.ok).toBe(true)
+    expect(cold.check.warnings[0]).toMatch(/another storage class/)
+    expect(cold.location.lastError).toMatch(/^Warning: /)
+    const denied = await check('denied', '')
+    expect(denied.check.ok).toBe(true)
+    expect(denied.check.warnings[0]).toMatch(/can't read the bucket's lifecycle rules/)
+  })
+
+  it('re-checks locations daily from the sweep', async () => {
+    const { h, user } = await setup()
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'daily')
+    const id = (loc.body as { location: { id: string } }).location.id
+    const { recheckLocations } = await import('../src/locations/locations.js')
+    expect(await recheckLocations(h.ports)).toBe(0)
+    const dayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000)
+    await h.ports.db
+      .update(schema.storageLocations)
+      .set({ checkedAt: dayAgo })
+      .where(eq(schema.storageLocations.id, id))
+    // The bucket broke meanwhile: the re-check says so.
+    f.lifecycle.xml =
+      '<LifecycleConfiguration><Rule><ID>x</ID><Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule></LifecycleConfiguration>'
+    expect(await recheckLocations(h.ports)).toBe(1)
+    await h.drain()
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.storageLocations)
+      .where(eq(schema.storageLocations.id, id))
+    expect(row!.status).toBe('broken')
+    expect(row!.checkedAt!.getTime()).toBeGreaterThan(dayAgo.getTime())
+  })
+
   it('records errors, and catches up once the location works again', async () => {
     const { h, user, path } = await setup()
     const f = await fake()
