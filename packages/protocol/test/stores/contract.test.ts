@@ -226,6 +226,52 @@ describe('capabilities', () => {
   })
 })
 
+describe('cache-control on put', () => {
+  const cc = 'public, max-age=31536000, immutable'
+  it('s3 sends it with the object, and it is served back', async () => {
+    const fake: FakeS3 = await startFakeS3()
+    cleanups.push(() => fake.close())
+    const store = s3Store({
+      endpoint: fake.url,
+      bucket: 'test',
+      accessKeyId: 'k',
+      secretAccessKey: 's',
+    })
+    await store.put('a.png', 'x', { contentType: 'image/png', cacheControl: cc })
+    expect(fake.objects.get('a.png')?.cacheControl).toBe(cc)
+    const res = await fetch(`${fake.url}/test/a.png`, {
+      headers: { authorization: 'AWS4-HMAC-SHA256 test' },
+    })
+    expect(res.headers.get('cache-control')).toBe(cc)
+  })
+
+  it('r2 stores it in the http metadata', async () => {
+    const mf = new Miniflare(
+      convertV4MiniflareOptions({
+        modules: true,
+        script: 'export default { fetch: () => new Response() }',
+        compatibilityDate: '2026-09-01',
+        r2Buckets: ['B'],
+      }),
+    )
+    cleanups.push(() => mf.dispose())
+    const bucket = await mf.getR2Bucket('B')
+    await r2Store(bucket as unknown as R2BucketLike).put('a.png', 'x', {
+      contentType: 'image/png',
+      cacheControl: cc,
+    })
+    const head = await bucket.head('a.png')
+    expect(head?.httpMetadata?.cacheControl).toBe(cc)
+    expect(head?.httpMetadata?.contentType).toBe('image/png')
+  })
+
+  it('memory keeps it', async () => {
+    const store = memoryStore()
+    await store.put('a.png', 'x', { cacheControl: cc })
+    expect(store.objects.get('a.png')?.cacheControl).toBe(cc)
+  })
+})
+
 describe('file store presigned URLs', () => {
   it('serve GET and PUT with a valid signature only', async () => {
     const store = fileStore(await tempDir(), { publicUrl: 'http://localhost:4100', secret: 'k' })

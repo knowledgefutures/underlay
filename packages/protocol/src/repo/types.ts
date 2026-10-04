@@ -14,6 +14,8 @@ export interface BlobObject extends BlobHead {
 
 export interface PutOptions {
   contentType?: string
+  /** Cache-Control stored with the object and sent when it's served (s3, r2, memory; fs ignores it). */
+  cacheControl?: string
   /** Only write if the key doesn't exist. Immutable keys make this an optimization. */
   ifAbsent?: boolean
 }

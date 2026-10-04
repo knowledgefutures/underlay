@@ -39,7 +39,10 @@ export interface R2BucketLike {
   put(
     key: string,
     value: Uint8Array | string,
-    options?: { httpMetadata?: { contentType?: string }; onlyIf?: Headers },
+    options?: {
+      httpMetadata?: { contentType?: string; cacheControl?: string }
+      onlyIf?: Headers
+    },
   ): Promise<R2ObjectLike | null>
   delete(key: string): Promise<void>
   /** Multipart uploads (Workers bindings have them; a stand-in may not). */
@@ -104,8 +107,12 @@ class R2Store implements Store {
   async put(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<void> {
     // A failed `If-None-Match: *` precondition returns null: the key exists, which
     // for immutable keys is success.
+    const httpMetadata = {
+      ...(opts.contentType ? { contentType: opts.contentType } : {}),
+      ...(opts.cacheControl ? { cacheControl: opts.cacheControl } : {}),
+    }
     await this.bucket.put(key, body, {
-      ...(opts.contentType ? { httpMetadata: { contentType: opts.contentType } } : {}),
+      ...(Object.keys(httpMetadata).length ? { httpMetadata } : {}),
       ...(opts.ifAbsent ? { onlyIf: new Headers({ 'if-none-match': '*' }) } : {}),
     })
   }

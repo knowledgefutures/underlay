@@ -26,7 +26,10 @@ export function memoryStore(): MemoryStore {
 }
 
 export class MemoryStore implements Store {
-  readonly objects = new Map<string, { bytes: Uint8Array; contentType: string | null }>()
+  readonly objects = new Map<
+    string,
+    { bytes: Uint8Array; contentType: string | null; cacheControl?: string }
+  >()
   readonly multipart = new Map<string, Map<number, Uint8Array>>()
   puts = 0
   gets = 0
@@ -55,6 +58,7 @@ export class MemoryStore implements Store {
     this.objects.set(key, {
       bytes: typeof body === 'string' ? enc.encode(body) : body.slice(),
       contentType: opts.contentType ?? null,
+      ...(opts.cacheControl ? { cacheControl: opts.cacheControl } : {}),
     })
   }
 

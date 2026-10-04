@@ -8,7 +8,10 @@ import { createServer, type Server } from 'node:http'
 
 export interface FakeS3 {
   url: string
-  objects: Map<string, { bytes: Buffer; contentType: string | undefined }>
+  objects: Map<
+    string,
+    { bytes: Buffer; contentType: string | undefined; cacheControl?: string | undefined }
+  >
   requests: { method: string; url: string }[]
   /** The bucket's lifecycle configuration XML (null: none); `'denied'` refuses reading it. */
   lifecycle: { xml: string | null | 'denied' }
@@ -20,7 +23,7 @@ export async function startFakeS3(
   listenPort = 0,
   opts: { publicRead?: boolean } = {},
 ): Promise<FakeS3> {
-  const objects = new Map<string, { bytes: Buffer; contentType: string | undefined }>()
+  const objects: FakeS3['objects'] = new Map()
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
   const requests: { method: string; url: string }[] = []
   const lifecycle: FakeS3['lifecycle'] = { xml: null }
@@ -142,7 +145,11 @@ export async function startFakeS3(
           res.writeHead(412).end('<Error><Code>PreconditionFailed</Code></Error>')
           return
         }
-        objects.set(key, { bytes: body, contentType: req.headers['content-type'] })
+        objects.set(key, {
+          bytes: body,
+          contentType: req.headers['content-type'],
+          cacheControl: req.headers['cache-control'],
+        })
         res.writeHead(200, { etag: '"x"' }).end()
         return
       }
@@ -166,6 +173,7 @@ export async function startFakeS3(
           etag: '"x"',
         }
         if (obj.contentType) headers['content-type'] = obj.contentType
+        if (obj.cacheControl) headers['cache-control'] = obj.cacheControl
         res.writeHead(status, headers)
         res.end(req.method === 'GET' ? bytes : undefined)
         return

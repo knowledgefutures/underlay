@@ -190,6 +190,7 @@ export class S3Store implements Store {
   async put(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<void> {
     const headers: Record<string, string> = {}
     if (opts.contentType) headers['content-type'] = opts.contentType
+    if (opts.cacheControl) headers['cache-control'] = opts.cacheControl
     if (opts.ifAbsent) headers['if-none-match'] = '*'
     const res = await this.#fetch(this.#url(key), {
       method: 'PUT',
