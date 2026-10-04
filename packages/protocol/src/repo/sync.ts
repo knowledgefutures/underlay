@@ -225,6 +225,13 @@ export interface ReceiveOptions {
   /** The local version the pack was made against (already verified here). */
   base?: string | null
   sets?: SyncSets
+  /**
+   * Refuse a body that keeps a record of this many bytes or fewer out of line.
+   * Which records go out of line is the writer's choice; a receiver whose own
+   * bookkeeping relies on its policy (storage cleanup marks out-of-line records
+   * by size) holds incoming data to it. Default: any.
+   */
+  inlineUpTo?: number
 }
 
 export interface ReceiveResult {
@@ -278,7 +285,8 @@ export async function receiveVersion(
     total += bytes.byteLength
     try {
       rootBytes =
-        (await receiveObject(repo, key, bytes, opts.target, digest, leafTypes)) ?? rootBytes
+        (await receiveObject(repo, key, bytes, opts.target, digest, leafTypes, opts.inlineUpTo)) ??
+        rootBytes
     } catch (err) {
       if (err instanceof IntegrityError) throw err
       // Undecodable gzip or JSON is a bad object too.
@@ -317,6 +325,7 @@ async function receiveObject(
   target: string,
   digest: string,
   leafTypes: Map<string, string>,
+  inlineUpTo?: number,
 ): Promise<Uint8Array | null> {
   const put = (k: string, b: Uint8Array, contentType: string) =>
     repo.blobs.put(k, b, { contentType, ifAbsent: true })
@@ -336,7 +345,7 @@ async function receiveObject(
       return null
     })
     if (leaf?.kind !== 'leaf') throw new IntegrityError(`${key} arrived without its leaf`)
-    leafTypes.set(m[1]!, await checkBody(repo, key, bytes, leaf.entries))
+    leafTypes.set(m[1]!, await checkBody(repo, key, bytes, leaf.entries, inlineUpTo))
     await put(key, bytes, 'application/gzip')
   } else if ((m = KEY.schema.exec(key))) {
     if (hashSchema(canonical(key, bytes)) !== m[1])
@@ -367,6 +376,7 @@ async function checkBody(
   key: string,
   bytes: Uint8Array,
   entries: readonly RecordEntry[],
+  inlineUpTo?: number,
 ): Promise<string> {
   const lines = splitLines(await gunzipText(bytes))
   if (lines.length !== entries.length) throw new IntegrityError(`${key}: wrong line count`)
@@ -375,6 +385,10 @@ async function checkBody(
     const ref = outOfLineHash(lines[i]!)
     let line = lines[i]!
     if (ref) {
+      if (inlineUpTo !== undefined && entries[i]!.size <= inlineUpTo)
+        throw new IntegrityError(
+          `${key}: line ${i} keeps a ${entries[i]!.size}-byte record out of line; this repository keeps records up to ${inlineUpTo} bytes inline`,
+        )
       const rec = await repo.blobs.get(keys.record(ref))
       if (!rec) throw new IntegrityError(`${key}: out-of-line record ${ref} is missing`)
       line = await gunzipText(await rec.bytes())

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { fsck } from '@underlay/protocol'
+import { fsck, newSalt } from '@underlay/protocol'
 import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -394,6 +394,69 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     const done = (await getRun(h.ports.db, waiting.id))!
     expect(done.status).toBe('done')
     expect(keys(h, 'repo/nodes/').length).toBeLessThan(nodes)
+  })
+})
+
+describe('what the mark trusts', () => {
+  it("doesn't take a file whose bytes are a node for that node", async () => {
+    const h = await harness()
+    const user = await h.member()
+    const target = await h.collection('target')
+    await push(h, user, 'target', docs('t', 3000))
+    const repo = await h.ports.stores.forCollection(target.id)
+    const [v] = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, target.id))
+    const treeRoot = (await repo.root(v!.hash)).public.types.Doc!.root!
+    const nodeJson = await repo.nodeJson(treeRoot)
+    expect(sha(nodeJson)).toBe(treeRoot)
+
+    // A collection walked first (its id sorts first) holds that JSON as a file.
+    await h.ports.db.insert(schema.collections).values({
+      id: '00000000-0000-0000-0000-000000000000',
+      organizationId: 'org1',
+      slug: 'first',
+      name: 'first',
+      privateSalt: newSalt(),
+    })
+    await h.ports.db.insert(schema.placements).values({
+      collectionId: '00000000-0000-0000-0000-000000000000',
+      locationId: schema.PLATFORM_LOCATION_ID,
+      role: 'primary',
+      sets: 'public+private',
+    })
+    await push(h, user, 'first', docs('f', 1, nodeJson), nodeJson)
+    ageAll(h)
+    await run(h, 'mark')
+    const sweep = await run(h, 'sweep')
+    expect(sweep.status).toBe('done')
+    await healthy(h, target.id)
+  })
+
+  it('keeps objects whose write time the store can’t give', async () => {
+    const h = await harness()
+    const garbage = `repo/nodes/${sha('nobody uses this')}`
+    // Set directly: no write time.
+    h.bucket.objects.set(garbage, { bytes: new Uint8Array(4), contentType: null })
+    await run(h, 'mark')
+    const sweep = await run(h, 'sweep')
+    expect(sweep.status).toBe('done')
+    expect(h.bucket.objects.has(garbage)).toBe(true)
+    ageAll(h)
+    await run(h, 'mark')
+    await run(h, 'sweep')
+    expect(h.bucket.objects.has(garbage)).toBe(false)
+  })
+
+  it('starts no mark or sweep while paused', async () => {
+    const h = await harness()
+    await h.ports.db
+      .insert(schema.instanceSettings)
+      .values({ key: 'cleanup_paused', value: true, updatedAt: new Date() })
+    await expect(startRun(h.ports, 'mark', { trigger: 'manual' })).rejects.toThrow(/paused/)
+    // Sessions and uploads still go.
+    expect((await run(h, 'internal')).status).toBe('done')
   })
 })
 

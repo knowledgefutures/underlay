@@ -53,6 +53,22 @@ export const cleanupConfig = {
 
 /** The instance setting that switches the weekly automatic mark and sweep on. */
 export const AUTO_SETTING = 'cleanup_auto'
+/**
+ * The instance setting that pauses marks and sweeps: no run starts, and a sweep
+ * opens no deletion window. Set it while anything writes to the platform bucket
+ * outside the fence (the v1 migration tools, whose rows arrive later):
+ *   wrangler d1 execute … --command "INSERT OR REPLACE INTO instance_settings (key, value, updated_at) VALUES ('cleanup_paused', 'true', 0)"
+ */
+export const PAUSE_SETTING = 'cleanup_paused'
+
+/** Whether marks and sweeps are paused (PAUSE_SETTING). */
+export async function cleanupPaused(db: Db): Promise<boolean> {
+  const [row] = await db
+    .select({ value: schema.instanceSettings.value })
+    .from(schema.instanceSettings)
+    .where(eq(schema.instanceSettings.key, PAUSE_SETTING))
+  return row?.value === true
+}
 
 export function emptyStats(): schema.CleanupStats {
   return {

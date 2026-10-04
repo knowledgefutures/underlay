@@ -13,6 +13,11 @@
  * Only tree nodes are read. The set is exact, so a node already in it is
  * skipped with its whole subtree: shared history costs one read per distinct
  * node. A read that fails fails the mark: a sweep never runs on a partial one.
+ *
+ * Entries are kept per kind (`n:` a walked node, which covers its body, `v:` a
+ * walked version root, `p:` a private set object, `r:` an out-of-line record,
+ * `f:` a file). One flat set would let a file whose bytes happen to be a node's
+ * JSON (hash for hash) pass for that node, and the walk would skip the subtree.
  */
 import {
   countTree,
@@ -20,6 +25,7 @@ import {
   fileTree,
   gunzipText,
   gzip,
+  keys,
   OUT_OF_LINE_BYTES,
   readHead,
   readLogEntry,
@@ -34,6 +40,9 @@ import {
 
 import { runDir } from './config.js'
 
+/** n: node, v: version root, p: private set object, r: out-of-line record, f: file. */
+export type MarkKind = 'n' | 'v' | 'p' | 'r' | 'f'
+
 export class MarkSet {
   readonly hashes = new Set<string>()
   /** Added since the last save. */
@@ -41,14 +50,15 @@ export class MarkSet {
   /** Tree nodes read, for job budgets. */
   reads = 0
 
-  has(h: string): boolean {
-    return this.hashes.has(h)
+  has(kind: MarkKind, h: string): boolean {
+    return this.hashes.has(`${kind}:${h}`)
   }
 
-  add(h: string): void {
-    if (this.hashes.has(h)) return
-    this.hashes.add(h)
-    this.#fresh.push(h)
+  add(kind: MarkKind, h: string): void {
+    const token = `${kind}:${h}`
+    if (this.hashes.has(token)) return
+    this.hashes.add(token)
+    this.#fresh.push(token)
   }
 
   get size(): number {
@@ -93,23 +103,23 @@ export class Marker {
 
   /** A tree and what its leaves point to. Marks a node only once its subtree is done. */
   async tree<E>(spec: TreeSpec<E>, root: string | null, leaf?: (entries: E[]) => void) {
-    if (!root || this.marks.has(root)) return
+    if (!root || this.marks.has('n', root)) return
     const node = await this.repo.decoded(spec, root)
     this.marks.reads++
     if (node.kind === 'leaf') leaf?.(node.entries)
     else for (const c of node.children) await this.tree(spec, c.hash, leaf)
-    this.marks.add(root)
+    this.marks.add('n', root)
   }
 
   records(root: string | null) {
     return this.tree<RecordEntry>(recordTree, root, (entries) => {
-      for (const e of entries) if (e.size > OUT_OF_LINE_BYTES) this.marks.add(e.hash)
+      for (const e of entries) if (e.size > OUT_OF_LINE_BYTES) this.marks.add('r', e.hash)
     })
   }
 
   files(root: string | null) {
     return this.tree<FileEntry>(fileTree, root, (entries) => {
-      for (const e of entries) this.marks.add(e.key)
+      for (const e of entries) this.marks.add('f', e.key)
     })
   }
 
@@ -125,28 +135,39 @@ export class Marker {
   /** A version: its sets, then its root (so a marked root means a fully marked version). */
   async version(hash: string) {
     const digest = versionDigest(hash)
-    if (this.marks.has(digest)) return
+    if (this.marks.has('v', digest)) return
     const root = await this.repo.root(hash)
     await this.set(root.public)
     if (root.private) {
-      await this.set(await this.repo.privateSet(root.private))
-      this.marks.add(root.private)
+      // A version restored with its public sets only keeps the commitment but not
+      // the object: nothing of it is here to keep.
+      if (await this.repo.blobs.head(keys.privateSet(root.private))) {
+        await this.set(await this.repo.privateSet(root.private))
+      }
+      this.marks.add('p', root.private)
     }
-    this.marks.add(digest)
+    this.marks.add('v', digest)
   }
 
-  /** A deleted collection's versions, from its signed log (the rows went with it). */
-  async fromLog(collectionId: string): Promise<number> {
-    const head = await readHead(this.repo, collectionId)
-    let n = 0
-    for (let seq = 1; seq <= (head?.seq ?? 0); seq++) {
-      const entry = await readLogEntry(this.repo, collectionId, seq)
-      this.marks.reads++
-      if (!entry)
-        throw new Error(`Log entry ${seq} of deleted collection ${collectionId} is missing`)
-      await this.version(entry.versionHash)
-      n++
+  /**
+   * A deleted collection's versions, from its signed log (the rows went with it).
+   * Returns how many it marked and what it couldn't: a broken log only costs this
+   * collection its grace period, it doesn't stop every mark for a week.
+   */
+  async fromLog(collectionId: string): Promise<{ versions: number; problem: string | null }> {
+    let versions = 0
+    try {
+      const head = await readHead(this.repo, collectionId)
+      for (let seq = 1; seq <= (head?.seq ?? 0); seq++) {
+        const entry = await readLogEntry(this.repo, collectionId, seq)
+        this.marks.reads++
+        if (!entry) return { versions, problem: `log entry ${seq} is missing` }
+        await this.version(entry.versionHash)
+        versions++
+      }
+      return { versions, problem: null }
+    } catch (err) {
+      return { versions, problem: (err as Error).message }
     }
-    return n
   }
 }

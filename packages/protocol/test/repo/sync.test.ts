@@ -170,6 +170,20 @@ describe('tree sync', () => {
     await receiveVersion(r, delta, { target: v2, base: v1 })
   })
 
+  it("holds out-of-line records to the receiver's size policy when asked", async () => {
+    const { s, v1 } = await twoVersions()
+    const full = await collect(packVersion(s.repo, v1))
+    // The sender stores only records over OUT_OF_LINE_BYTES out of line: accepted.
+    await receiveVersion(openRepo(memoryStore()), full, {
+      target: v1,
+      inlineUpTo: OUT_OF_LINE_BYTES,
+    })
+    // A receiver that keeps every record of up to 1 MB inline refuses them.
+    await expect(
+      receiveVersion(openRepo(memoryStore()), full, { target: v1, inlineUpTo: 1024 * 1024 }),
+    ).rejects.toThrow(/out of line; this repository keeps records up to/)
+  })
+
   it('leaves private sets out unless asked, and moves them when asked', async () => {
     const { s, v1, v2 } = await twoVersions()
     const pub = await collect(packVersion(s.repo, v1))

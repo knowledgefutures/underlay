@@ -30,6 +30,7 @@ import {
   keys,
   type LogEntry,
   openRepo,
+  OUT_OF_LINE_BYTES,
   packVersion,
   parseSemver,
   putFromParts,
@@ -304,6 +305,8 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
     target: entry.versionHash,
     base,
     sets,
+    // Storage cleanup marks out-of-line records by this policy (cleanup/marks.ts).
+    inlineUpTo: OUT_OF_LINE_BYTES,
   })
   const root = got.root
   const prevRoot = base ? await target.root(base) : null

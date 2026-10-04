@@ -30,10 +30,10 @@ import { and, asc, eq, gt, gte, inArray, or } from 'drizzle-orm'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { cleanupConfig, count, emptyStats } from './config.js'
+import { cleanupConfig, cleanupPaused, count, emptyStats } from './config.js'
 import { closeWindow, openWindow, type Window, windowStillOpen } from './fence.js'
 import { graceCutoff, markRepo, possessionHeld } from './mark.js'
-import { Marker, type MarkSet } from './marks.js'
+import { Marker, type MarkKind, type MarkSet } from './marks.js'
 
 /** Repository objects younger than this are never deleted (a write phase may be using them). */
 export const MIN_AGE_MS = 60 * 60 * 1000
@@ -64,8 +64,9 @@ const HEX64 = /^[0-9a-f]{64}$/
 
 export interface ParsedKey {
   kind: string
-  /** The hash the mark holds for it (content-addressed kinds). */
+  /** The hash the mark holds for it, and under which kind (content-addressed kinds). */
   token?: string
+  mark?: MarkKind
   /** The row it belongs to (collections, sessions, uploads). */
   owner?: string
 }
@@ -73,10 +74,10 @@ export interface ParsedKey {
 /** What a listed key is, or null for a shape the sweep never deletes. */
 export function parseKey(prefix: string, key: string): ParsedKey | null {
   const rest = key.slice(prefix.length)
-  const hashed = (kind: string, suffix: string): ParsedKey | null => {
+  const hashed = (kind: string, mark: MarkKind, suffix: string): ParsedKey | null => {
     if (!rest.endsWith(suffix)) return null
     const h = rest.slice(0, rest.length - suffix.length)
-    return HEX64.test(h) ? { kind, token: h } : null
+    return HEX64.test(h) ? { kind, token: h, mark } : null
   }
   const owned = (kind: string, needsMore: boolean): ParsedKey | null => {
     const slash = rest.indexOf('/')
@@ -86,17 +87,18 @@ export function parseKey(prefix: string, key: string): ParsedKey | null {
   }
   switch (prefix) {
     case 'nodes/':
-      return hashed('nodes', '')
+      return hashed('nodes', 'n', '')
     case 'bodies/':
-      return hashed('bodies', '.ndjson.gz')
+      // A leaf's body goes with the leaf.
+      return hashed('bodies', 'n', '.ndjson.gz')
     case 'records/':
-      return hashed('records', '.json.gz')
+      return hashed('records', 'r', '.json.gz')
     case 'roots/':
-      return hashed('roots', '.json')
+      return hashed('roots', 'v', '.json')
     case 'private/':
-      return hashed('private', '.json')
+      return hashed('private', 'p', '.json')
     case 'files/':
-      return hashed('files', '')
+      return hashed('files', 'f', '')
     case 'collections/':
       return owned('collections', true)
     case 'sessions/': {
@@ -114,6 +116,7 @@ interface Candidate {
   key: string
   kind: string
   token?: string
+  mark?: MarkKind
   owner?: string
   size: number
 }
@@ -138,15 +141,16 @@ async function classify(
       return
     }
     const info = page.info?.[i]
-    // No write time: can't tell its age, so it stays.
-    if (!info) return
+    // No write time (none listed, or a store that couldn't say): its age is
+    // unknown, so it stays.
+    if (!info || !(info.modified > 0)) return
     const age = now - info.modified
     const minAge =
       p.kind === 'sessions' || p.kind === 'uploads' ? cleanupConfig.orphanAgeMs : MIN_AGE_MS
     if (age < minAge) return
     const c: Candidate = { store, key, kind: p.kind, size: info.size }
     if (p.token) {
-      if (!marks.has(p.token)) out.push({ ...c, token: p.token })
+      if (!marks.has(p.mark!, p.token)) out.push({ ...c, token: p.token, mark: p.mark! })
     } else owned.push({ ...c, owner: p.owner! })
   })
   if (owned.length === 0) return out
@@ -275,7 +279,7 @@ async function remark(
           possessionHeld(graceCutoff()),
         ),
       )
-    for (const r of rows) marks.add(r.hash)
+    for (const r of rows) marks.add('f', r.hash)
   }
 }
 
@@ -314,7 +318,7 @@ async function deleteCandidates(
   // Outside a window: catch up on what was published since the mark, so the
   // re-mark inside the window is short.
   await remark(ports, marks, markStartedAt, candidates)
-  const live = (c: Candidate) => !!c.token && marks.has(c.token)
+  const live = (c: Candidate) => !!c.token && marks.has(c.mark!, c.token)
   if (dryRun) {
     for (const c of candidates) if (!live(c)) count(stats, c.kind, c.size)
     return 'ok'
@@ -322,7 +326,7 @@ async function deleteCandidates(
   const { db } = ports
   for (let i = 0; i < candidates.length; i += cleanupConfig.windowObjects) {
     const group = candidates.slice(i, i + cleanupConfig.windowObjects)
-    if (await committing(ports)) return 'wait'
+    if ((await committing(ports)) || (await cleanupPaused(db))) return 'wait'
     const w: Window | null = await openWindow(db, runId, cleanupConfig.windowMs)
     if (!w) return 'wait'
     try {

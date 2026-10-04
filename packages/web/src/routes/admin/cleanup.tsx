@@ -39,6 +39,7 @@ interface Run {
 interface Cleanup {
   runs: Run[]
   auto: boolean
+  paused: boolean
   fence: { epoch: number; windowOpen: boolean }
   waiting: { sessions: number; sessionsInGrace: number; uploads: number }
   deletedCollections: {
@@ -106,6 +107,12 @@ export default function AdminCleanup() {
       title="Cleanup"
       description="Deletes what the platform bucket no longer needs: finished push sessions, abandoned uploads, and the objects of deleted collections."
     >
+      {data.paused && (
+        <Alert variant="info" className="mb-6">
+          Marks and sweeps are paused: none starts, and a sweep in progress deletes nothing until
+          this is switched off. Sessions and uploads are still cleaned.
+        </Alert>
+      )}
       {data.fence.windowOpen && (
         <Alert variant="info" className="mb-6">
           A sweep has a deletion window open: pushes and uploads wait a few seconds for it.
@@ -176,14 +183,14 @@ function Controls({ data }: { data: Cleanup }) {
     revalidator.revalidate()
   }
 
-  async function setAuto(enabled: boolean) {
-    const res = await fetch('/api/admin/cleanup/auto', {
+  async function setting(path: 'auto' | 'pause', body: Record<string, boolean>) {
+    const res = await fetch(`/api/admin/cleanup/${path}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(body),
     })
-    if (!res.ok) setMessage({ ok: false, text: 'Couldn’t change the weekly run.' })
+    if (!res.ok) setMessage({ ok: false, text: 'Couldn’t change that setting.' })
     revalidator.revalidate()
   }
 
@@ -259,11 +266,24 @@ function Controls({ data }: { data: Cleanup }) {
       </div>
 
       <label className="flex items-center gap-2 text-sm">
-        <Checkbox checked={data.auto} onChange={(e) => setAuto(e.target.checked)} />
+        <Checkbox
+          checked={data.auto}
+          onChange={(e) => setting('auto', { enabled: e.target.checked })}
+        />
         Mark and sweep automatically once a week
       </label>
       <p className="text-ink-muted mt-1 text-xs">
         Off until a dry run looks right. Sessions and uploads are cleaned regardless.
+      </p>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={data.paused}
+          onChange={(e) => setting('pause', { paused: e.target.checked })}
+        />
+        Pause marks and sweeps
+      </label>
+      <p className="text-ink-muted mt-1 text-xs">
+        While anything writes to the bucket outside the app, such as the v1 migration tools.
       </p>
       {message && (
         <Alert variant={message.ok ? 'success' : 'error'} className="mt-3 text-xs">

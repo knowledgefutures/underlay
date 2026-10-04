@@ -18,6 +18,7 @@ import type { Ports } from '../ports.js'
 import {
   addStats,
   AUTO_SETTING,
+  cleanupPaused,
   cleanupConfig,
   emptyStats,
   getRun,
@@ -70,6 +71,8 @@ export async function startRun(
     .where(and(inArray(schema.cleanupRuns.step, kinds), inArray(schema.cleanupRuns.status, ACTIVE)))
     .limit(1)
   if (busy) throw new CleanupRefused(`A ${busy.step} run is already in progress`)
+  if (step !== 'internal' && (await cleanupPaused(db)))
+    throw new CleanupRefused('Marks and sweeps are paused (cleanup_paused)')
 
   let state: Record<string, unknown> = {}
   let markRunId: string | null = null
@@ -181,7 +184,10 @@ async function runJob(
       seq: next,
       lease: null,
       status: done ? 'done' : r.outcome === 'wait' ? 'waiting' : 'running',
-      error: r.outcome === 'wait' ? 'Waiting for pushes to finish committing' : null,
+      error:
+        r.outcome === 'wait'
+          ? 'Waiting for pushes to finish committing (or for cleanup to be unpaused)'
+          : null,
       ...(done ? { finishedAt: new Date() } : {}),
     })
     if (!done) {

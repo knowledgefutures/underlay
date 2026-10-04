@@ -4,12 +4,13 @@
  *   GET  /api/admin/cleanup         runs, what's waiting, the fence, the automatic switch
  *   POST /api/admin/cleanup/runs    {step: internal|mark|sweep, dryRun?, thenSweep?} starts a run
  *   PUT  /api/admin/cleanup/auto    {enabled} the weekly automatic mark and sweep
+ *   PUT  /api/admin/cleanup/pause   {paused} no marks or sweeps start, and sweeps delete nothing
  */
 import { and, desc, eq, gt, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
-import { AUTO_SETTING, cleanupConfig } from '../cleanup/config.js'
+import { AUTO_SETTING, cleanupConfig, cleanupPaused, PAUSE_SETTING } from '../cleanup/config.js'
 import { fenceConfig, fenceState } from '../cleanup/fence.js'
 import { CleanupRefused, startRun } from '../cleanup/runs.js'
 import * as schema from '../db/schema.js'
@@ -105,6 +106,7 @@ export function cleanupRoutes() {
         finishedAt: r.finishedAt?.getTime() ?? null,
       })),
       auto: auto[0]?.value === true,
+      paused: await cleanupPaused(db),
       fence: {
         epoch: fence?.epoch ?? 0,
         windowOpen: until !== undefined && until > now - fenceConfig.slackMs,
@@ -162,18 +164,24 @@ export function cleanupRoutes() {
     }
   })
 
-  app.put('/api/admin/cleanup/auto', async (c) => {
-    const b = (await c.req.json().catch(() => null)) as { enabled?: unknown } | null
-    if (typeof b?.enabled !== 'boolean') return jsonError(c, 400, 'enabled must be true or false')
-    await c.var.ports.db
-      .insert(schema.instanceSettings)
-      .values({ key: AUTO_SETTING, value: b.enabled, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: schema.instanceSettings.key,
-        set: { value: b.enabled, updatedAt: new Date() },
-      })
-    return c.json({ ok: true, enabled: b.enabled })
-  })
+  for (const [path, key, field] of [
+    ['/api/admin/cleanup/auto', AUTO_SETTING, 'enabled'],
+    ['/api/admin/cleanup/pause', PAUSE_SETTING, 'paused'],
+  ] as const) {
+    app.put(path, async (c) => {
+      const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+      const value = b?.[field]
+      if (typeof value !== 'boolean') return jsonError(c, 400, `${field} must be true or false`)
+      await c.var.ports.db
+        .insert(schema.instanceSettings)
+        .values({ key, value, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: schema.instanceSettings.key,
+          set: { value, updatedAt: new Date() },
+        })
+      return c.json({ ok: true, [field]: value })
+    })
+  }
 
   return app
 }

@@ -16,7 +16,7 @@ import { and, asc, eq, gt, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { cleanupConfig, emptyStats } from './config.js'
+import { cleanupConfig, emptyStats, problem } from './config.js'
 import { Marker, MarkSet } from './marks.js'
 
 export interface MarkState {
@@ -127,7 +127,11 @@ export async function markStep(
 
   while (s.phase === 'tombstones' && !spent()) {
     const rows = await db
-      .select({ id: schema.collectionTombstones.collectionId })
+      .select({
+        id: schema.collectionTombstones.collectionId,
+        slug: schema.collectionTombstones.slug,
+        versions: schema.collectionTombstones.versions,
+      })
       .from(schema.collectionTombstones)
       .where(
         and(
@@ -145,8 +149,15 @@ export async function markStep(
         .from(schema.collections)
         .where(eq(schema.collections.id, t.id))
       if (!live) {
-        stats.versions += await marker.fromLog(t.id)
+        const r = await marker.fromLog(t.id)
+        stats.versions += r.versions
         stats.collections++
+        // Versions its log lacks (an append that failed) lose their grace period.
+        const why =
+          r.problem ??
+          (r.versions < t.versions ? `its log has ${r.versions} of ${t.versions} versions` : null)
+        if (why)
+          problem(stats, `Deleted collection ${t.slug} (${t.id}) is only partly kept: ${why}`)
         tooMany()
       }
       s.after = t.id
@@ -169,7 +180,7 @@ export async function markStep(
       .orderBy(asc(schema.fileUploads.id))
       .limit(500)
     if (rows.length === 0) Object.assign(s, { phase: 'done', after: null })
-    for (const r of rows) marks.add(r.hash)
+    for (const r of rows) marks.add('f', r.hash)
     if (rows.length) s.after = rows[rows.length - 1]!.id
     tooMany()
     // Rows aren't node reads, but bound the queries one job sends.
