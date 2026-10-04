@@ -40,7 +40,7 @@ const recordsRes = `{
 
 const commitRes = `{
   "semver": "v1.1.0",
-  "hash": "private:a1b2c3d4...",
+  "hash": "ulv2:a1b2c3d4...",
   "recordCount": 3,
   "fileCount": 1
 }`
@@ -83,7 +83,7 @@ const sessionPollRes = `{
   "finalize_started_at": "2026-07-31T12:00:00.000Z",
   "result": {
     "semver": "v1.1.0",
-    "hash": "private:a1b2c3d4...",
+    "hash": "ulv2:a1b2c3d4...",
     "recordCount": 3110000,
     "fileCount": 0
   },
@@ -93,7 +93,7 @@ const sessionPollRes = `{
 const listRes = `[
   {
     "semver": "v1.1.0",
-    "hash": "private:a1b2c3d4...",
+    "hash": "ulv2:a1b2c3d4...",
     "message": "Add new publications",
     "appId": "pubpub-sync",
     "actorId": "user-42",
@@ -133,7 +133,7 @@ X-Underlay-Record-Count: 3113504
 
 const manifestRes = `{
   "semver": "v1.1.0",
-  "hash": "private:a1b2c3d4...",
+  "hash": "ulv2:a1b2c3d4...",
   "schemas": {"Publication": "abc123..."},
   "records": [
     {"id": "pub-001", "type": "Publication", "hash": "def456..."},
@@ -149,7 +149,7 @@ const manifestRes = `{
 
 const manifestDeltaRes = `{
   "semver": "v1.1.0",
-  "hash": "private:a1b2c3d4...",
+  "hash": "ulv2:a1b2c3d4...",
   "since": "v1.0.0",
   "schemas": {"Publication": "abc123..."},
   "delta": {
@@ -195,15 +195,18 @@ export default function DocsApiVersions() {
     <DocsLayout title="Versions API">
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
-        schema + records + file references. Pushing a new version uses the{' '}
-        <strong>negotiate protocol</strong>, a three-step flow similar to git's pack negotiation.
+        schema + records + file references. This page documents the <strong>negotiate</strong> push,
+        a three-step flow similar to git&rsquo;s pack negotiation. Clients that track their own
+        changes can send only those with{' '}
+        <a href="/docs/protocol/push-and-pull#delta-push">delta push</a>.
       </p>
       <p>
-        <strong>Version hashes are prefixed by form.</strong> Members of the owning org receive{' '}
-        <code>private:&lt;sha256&gt;</code>, the digest of the full content; everyone else receives{' '}
-        <code>public:&lt;sha256&gt;</code>, the digest of the privacy-filtered projection. They are
-        different values for the same version, and the prefix is how you tell which one you got.
-        Record, schema and file hashes are bare hex with no prefix.
+        <strong>Version hashes</strong> are <code>ulv2:&lt;sha256&gt;</code>, the hash of the
+        version&rsquo;s root, and are the same for every reader: the private set is in the root only
+        as a salted commitment (see{' '}
+        <a href="/docs/protocol/versions#version-root">Trees and versions</a>). Versions converted
+        from format 1 also answer to their old <code>private:</code> and <code>public:</code>{' '}
+        hashes. Record, schema and file hashes are bare hex with no prefix.
       </p>
 
       <hr className="border-rule my-6" />
@@ -211,10 +214,9 @@ export default function DocsApiVersions() {
       <div className="endpoint">
         <h2>Push Protocol (Negotiate → Records → Commit)</h2>
         <p>
-          All pushes use the negotiate protocol. You send a manifest of record hashes; the server
-          tells you which ones it needs; you send only those records; then you commit. For
-          collections where most records are unchanged between versions, only a few records are
-          transferred.
+          You send a manifest of record hashes; the server tells you which ones it needs; you send
+          only those records; then you commit. For collections where most records are unchanged
+          between versions, only a few records are transferred.
         </p>
 
         <h3>Step 1: POST /api/collections/:owner/:slug/versions/negotiate</h3>
@@ -694,9 +696,8 @@ export default function DocsApiVersions() {
           <code>{ndjsonRes}</code>
         </pre>
         <p>
-          <code>hash</code> is the same content-address <code>/records</code> serves: the full
-          record hash for owners, the public hash for everyone else. Privacy filtering is identical
-          too — private types and private records are absent, private fields stripped.
+          <code>hash</code> is the same content address <code>/records</code> serves. Privacy
+          filtering is identical too: private types and private records are absent.
         </p>
         <p>
           <strong>Check completeness yourself.</strong> A stream that fails partway cannot report

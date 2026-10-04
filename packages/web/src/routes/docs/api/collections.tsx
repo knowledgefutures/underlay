@@ -74,20 +74,9 @@ const metadataReq = `{
 
 const metadataRes = `{
   "semver": "v3.2.1",
-  "hash": "private:e5f6a7b8...",
-  "metadata": {
-    "description": "Updated description of the archive",
-    "readme": "# My Collection\\nNew readme content.",
-    "license": "CC-BY-4.0"
-  }
+  "hash": "ulv2:e5f6a7b8...",
+  "status": "completed"
 }`
-
-const metadataAsync = `PATCH /api/collections/:owner/:slug/metadata?async=true
-→ 202 { "job_id": "3f9c…", "status": "running", "base_semver": "v3.2.0" }
-
-GET /api/collections/:owner/:slug/metadata/jobs/3f9c…
-→ 200 { "job_id": "3f9c…", "status": "completed",
-        "result": { "semver": "v3.2.1", "hash": "private:e5f6a7b8…", "metadata": { … } } }`
 
 const forkReq = `{
   "targetOrg": "my-org",
@@ -245,7 +234,7 @@ export default function DocsApiCollections() {
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>PATCH /api/collections/:owner/:slug/metadata</h2>
+        <h2>POST /api/collections/:owner/:slug/metadata</h2>
         <p className="scope">Auth: write scope</p>
         <p>
           Update version metadata by creating a new patch version. The request body is a JSON object
@@ -286,7 +275,9 @@ export default function DocsApiCollections() {
               </td>
               <td>
                 Any other key-value pairs. All fields are merged into the previous version's
-                metadata object.
+                metadata object; <code>null</code> removes a field. When nothing changes, the
+                response is <code>200 {'{ "semver", "unchanged": true }'}</code> and no version is
+                made.
               </td>
             </tr>
           </tbody>
@@ -297,22 +288,6 @@ export default function DocsApiCollections() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{metadataRes}</code>
         </pre>
-        <h3>Large collections</h3>
-        <p>
-          A metadata edit creates a patch version, which means recomputing both version digests over
-          the record set and copying every record-membership row. Past a few million records that
-          takes longer than a proxy will hold the connection open. Add <code>?async=true</code> to
-          get an immediate <code>202</code> with a <code>job_id</code>, then poll for the outcome:
-        </p>
-        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{metadataAsync}</code>
-        </pre>
-        <p>
-          The job's <code>status</code> is <code>running</code>, <code>completed</code> or{' '}
-          <code>failed</code>. On <code>completed</code>, <code>result</code> holds exactly what the
-          synchronous call would have returned; on <code>failed</code>, <code>error</code> holds the
-          rejection. Only one metadata update runs per collection at a time.
-        </p>
         <h3>Errors</h3>
         <table>
           <tbody>
@@ -349,8 +324,8 @@ export default function DocsApiCollections() {
           Only <strong>fully-public</strong> collections can be forked by a non-member. A fork
           copies the full record bodies by reference and gives the forker owner-level access to
           them, so if you are not a member of the source org and the source holds any private
-          content — private records, private types, or private fields — the request is refused with{' '}
-          <code>403</code> rather than leaked. Members of the source org can always fork.
+          content — private records or private types — the request is refused with <code>403</code>{' '}
+          rather than leaked. Members of the source org can always fork.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">

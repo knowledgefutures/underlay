@@ -22,12 +22,15 @@ describe('top-level paths', () => {
     expect(validateSlug('protocol')).toBe('That slug is reserved')
   })
 
-  it('send old blog URLs to the KF site', async () => {
+  it('redirect old blog and protocol URLs', async () => {
     const h = await harness()
     let res = await h.request('/blog/hello-World')
     expect(res.status).toBe(301)
     expect(res.headers.get('location')).toBe('https://www.knowledgefutures.org/updates/hello-world')
     res = await h.request('/blog')
     expect(res.headers.get('location')).toBe('https://www.knowledgefutures.org/?tag=underlay')
+    res = await h.request('/protocol')
+    expect(res.status).toBe(301)
+    expect(res.headers.get('location')).toBe('/docs/protocol')
   })
 })

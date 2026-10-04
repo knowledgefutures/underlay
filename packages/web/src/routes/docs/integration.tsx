@@ -83,19 +83,20 @@ curl -X POST .../negotiate/SESSION_ID/commit \\
 
 const hashExample = `import { createHash } from 'node:crypto'
 
-function canonicalize(value) {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted = {}
-  for (const key of Object.keys(value).sort()) {
-    sorted[key] = canonicalize(value[key])
-  }
-  return sorted
+// RFC 8785 (JCS), written out as a string: a sorted object passed to
+// JSON.stringify would put integer-like keys ("9", "10") first.
+function jcs(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(jcs).join(',') + ']'
+  const keys = Object.keys(value).sort()
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + jcs(value[k])).join(',') + '}'
 }
 
 function hashRecord(record) {
-  const obj = { id: record.id, type: record.type, data: canonicalize(record.data) }
-  return createHash('sha256').update(JSON.stringify(obj)).digest('hex')
+  const canonical =
+    '{"id":' + JSON.stringify(record.id) + ',"type":' + JSON.stringify(record.type) +
+    ',"data":' + jcs(record.data) + '}'
+  return createHash('sha256').update(canonical).digest('hex')
 }`
 
 export default function DocsIntegration() {
@@ -150,11 +151,19 @@ export default function DocsIntegration() {
 
       <h2>The Push Flow</h2>
       <p>
-        All pushes use the{' '}
-        <Link to="/protocol" className="text-link underline">
-          negotiate protocol
+        This guide uses the{' '}
+        <Link
+          to="/docs/protocol/push-and-pull#negotiate-compatibility"
+          className="text-link underline"
+        >
+          negotiate flow
         </Link>
-        , a three-step flow similar to git's pack negotiation:
+        , which any HTTP client can drive from a full snapshot of its data. A client that tracks its
+        own changes can send only those with{' '}
+        <Link to="/docs/protocol/push-and-pull#delta-push" className="text-link underline">
+          delta push
+        </Link>{' '}
+        instead. The negotiate steps:
       </p>
       <ol>
         <li>Get the current latest version (its semver string)</li>
@@ -178,9 +187,8 @@ export default function DocsIntegration() {
         <code>{diffPush}</code>
       </pre>
       <p>
-        Above roughly half a million records, two of those steps stop fitting in one request: send
-        the manifest in chunks rather than as a single body, and commit asynchronously rather than
-        holding the connection open. See{' '}
+        Above 50,000 records, send the manifest in chunks rather than as a single body; above
+        100,000, the commit runs asynchronously and you poll for the result. See{' '}
         <Link to="/docs/api/versions" className="text-link underline">
           the versions API
         </Link>{' '}
@@ -189,20 +197,19 @@ export default function DocsIntegration() {
 
       <h2>Record Hashing</h2>
       <p>
-        Before negotiating, you must hash each record client-side. The hash is the SHA-256 of the
-        canonical JSON representation of <code>{'{ id, type, data }'}</code> with all object keys
-        sorted recursively. This ensures any implementation produces the same hash for the same
-        content.
+        Before negotiating, you must hash each record client-side. The hash is the SHA-256 of a
+        fixed <code>{'{ id, type, data }'}</code> envelope with <code>data</code> in canonical JSON
+        (RFC 8785), so any implementation produces the same hash for the same content.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashExample}</code>
       </pre>
       <p>
-        See the{' '}
-        <Link to="/protocol" className="text-link underline">
-          Protocol spec
+        See{' '}
+        <Link to="/docs/protocol/records" className="text-link underline">
+          Records and schemas
         </Link>{' '}
-        for the full hashing specification with worked examples.
+        for the full rules, including the input rules every record line must pass.
       </p>
 
       <h2>Record Format</h2>
@@ -230,10 +237,9 @@ export default function DocsIntegration() {
       </p>
       <p>
         To update metadata without changing records or schemas (e.g. editing the readme),{' '}
-        <code>PATCH /api/collections/:owner/:slug/metadata</code> with the fields to change. This
-        creates a patch version automatically. On a collection of more than a few million records,
-        add <code>?async=true</code> and poll the returned job — building the patch version takes
-        longer than a synchronous request survives.
+        <code>POST /api/collections/:owner/:slug/metadata</code> with the fields to change (
+        <code>null</code> clears one). This creates a patch version over the same trees, so it is
+        quick at any collection size.
       </p>
 
       <h2>First Push Example</h2>
@@ -455,10 +461,10 @@ export default function DocsIntegration() {
           records in <code>{'{id, type, data}'}</code> format.
         </li>
         <li>
-          <strong>Hash each record:</strong> SHA-256 of the canonical JSON with keys sorted
-          recursively. See the hashing section above or the{' '}
-          <Link to="/protocol" className="text-link underline">
-            Protocol spec
+          <strong>Hash each record:</strong> SHA-256 of its canonical form. See the hashing section
+          above or{' '}
+          <Link to="/docs/protocol/records" className="text-link underline">
+            Records and schemas
           </Link>
           .
         </li>

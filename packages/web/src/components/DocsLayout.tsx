@@ -51,3 +51,12 @@ export default function DocsLayout({
     </BaseLayout>
   )
 }
+
+/** A code sample in the docs. */
+export function CodeBlock({ children }: { children: string }) {
+  return (
+    <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+      <code>{children}</code>
+    </pre>
+  )
+}

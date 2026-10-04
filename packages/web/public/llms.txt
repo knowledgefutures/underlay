@@ -141,13 +141,8 @@ Export is capped at 2,000,000 records and returns 413 above that — a guard aga
 back a multi-gigabyte tarball from a single GET, not a memory limit. For bulk reads prefer
 records.ndjson (below): it streams, resumes, and needs no unpacking.
 
-The SQL explorer (/api/query/...) has a lower limit of 250,000 records, because unlike
-export it genuinely does hold the whole version in memory to build a SQLite copy. It is a
-UI feature rather than a documented API; on a large collection use records.ndjson, or Hot,
-which hydrates a collection into a queryable database built for the purpose.
-
 ### Fork
-POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth; a collection-scoped key is refused). 403 if you are NOT a member of the source org and the source's latest version holds any private record, private type, or private field — a fork copies the full record bodies, and there is no redacted-fork path.
+POST /api/collections/:owner/:slug/fork                 → fork collection into caller's org (requires write auth; a collection-scoped key is refused). 403 if you are NOT a member of the source org and the source's latest version holds any private record or private type — a fork copies the full record bodies, and there is no redacted-fork path.
   Body: { "targetOrg": "my-org", "slug": "optional-new-slug" }
   Creates a new collection under targetOrg with the source's latest version.
   Records, schemas, and files are referenced (not copied) — zero additional storage.
@@ -250,7 +245,7 @@ Authorization: Bearer ul_<key>
       "type": "object",
       "properties": {
         "name": {"type": "string"},
-        "email": {"type": "string", "private": true}
+        "email": {"type": "string"}
       }
     }
   },
@@ -265,8 +260,8 @@ Authorization: Bearer ul_<key>
 }
 
 Each record hash is SHA-256 of the canonical JSON — see "Record Hashing" section below for
-the exact algorithm. Clients MUST canonicalize data (sort object keys recursively) before
-hashing, or the server will reject the records.
+the exact algorithm. Clients MUST canonicalize data (RFC 8785 JCS) before hashing, or the
+server will reject the records.
 
 Field reference:
 - base_version: the semver string of the version you diffed against (e.g. "v1.2.0"). null for first push. Used for optimistic locking.
@@ -389,7 +384,7 @@ Then poll GET .../versions/negotiate/:sessionId until status is "committed" or "
   "session_id": "uuid",
   "status": "committed",
   "finalize_started_at": "2026-07-31T12:00:00.000Z",
-  "result": {"semver": "v1.3.0", "hash": "private:def456...", "recordCount": 3110000, "fileCount": 0},
+  "result": {"semver": "v1.3.0", "hash": "ulv2:def456...", "recordCount": 3110000, "fileCount": 0},
   "error": null
 }
 
@@ -528,10 +523,9 @@ Parameters:
 
 Guarantees you can rely on:
 - Records are ordered by id, ascending. This is what makes `after` work.
-- `hash` is the same content-address the records endpoint serves: the full record hash for
-  owners, the public hash for everyone else.
+- `hash` is the record's content address, the same one the records endpoint serves.
 - Privacy filtering is identical to /records — private types and private records are
-  absent, private fields are stripped.
+  absent.
 
 Verify completeness yourself. A stream that dies halfway cannot report an error: the 200
 status and headers were already sent. Count the lines and compare against
@@ -595,55 +589,38 @@ Records are content-addressed. The hash is the record's identity across the syst
 deduplication, manifest membership, and version integrity. Any client that pushes data must compute
 hashes exactly as the server does, or the push will fail with "Unexpected record hash".
 
-### Algorithm
+### Algorithm (format 2)
 
-1. Build the canonical object: `{"id": <id>, "type": <type>, "data": <canonicalized_data>}`
-   - The top-level keys MUST appear in this exact order: id, type, data.
-   - The `data` value MUST be canonicalized (see below).
-   - The `private` flag is NOT part of the hash. Two records with identical id/type/data
-     but different privacy flags produce the same hash.
+1. Canonicalize `data` with RFC 8785 (JCS): no whitespace, object keys sorted by their UTF-16
+   code units, strings and numbers written as JSON.stringify writes them.
+2. Build the canonical form as a string, with a fixed envelope:
+   '{"id":' + JSON.stringify(id) + ',"type":' + JSON.stringify(type) + ',"data":' + JCS(data) + '}'
+   The `private` flag is NOT part of the record or its hash.
+3. Compute SHA-256 over the UTF-8 bytes of that string, as 64 lowercase hex characters.
 
-2. Serialize to JSON with no extra whitespace (standard JSON.stringify behavior).
+Do NOT build a sorted object and pass it to JSON.stringify: JavaScript lists integer-like
+keys ("9", "10") first whatever order they were added in, which is format 1's hash, not
+format 2's. The two agree unless some object in `data` has such a key.
 
-3. Compute SHA-256 over the UTF-8 bytes of that JSON string.
-
-4. Encode as lowercase hex (64 characters).
-
-### Canonicalization
-
-Canonicalization recursively sorts all object keys alphabetically. This ensures that
-`{"b":1,"a":2}` and `{"a":2,"b":1}` produce the same hash.
-
-Rules:
-- Objects: sort keys lexicographically (by Unicode code point), recurse into values.
-- Arrays: preserve order, recurse into elements.
-- Primitives (strings, numbers, booleans, null): unchanged.
+Every record line is also checked on its source text: duplicate keys, integer literals beyond
+2^53 - 1, lone surrogates, nesting over 64 levels, records over 8 MiB, and ids over 1,024
+UTF-8 bytes are refused. Full rules: https://underlay.org/docs/protocol/records
 
 Reference implementation (JavaScript):
 
 ```javascript
-function canonicalize(value) {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map(canonicalize);
-  const sorted = {};
-  for (const key of Object.keys(value).sort()) {
-    sorted[key] = canonicalize(value[key]);
-  }
-  return sorted;
+function jcs(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(jcs).join(',') + ']';
+  const keys = Object.keys(value).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + jcs(value[k])).join(',') + '}';
 }
 
-function hashRecord(record) {
-  const canonical = JSON.stringify({
-    id: record.id,
-    type: record.type,
-    data: canonicalize(record.data),
-  });
-  // Node.js:
-  // const hash = createHash('sha256').update(canonical).digest('hex');
-  // Browser:
-  // const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
-  // const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  return { hash, canonical };
+function canonicalRecord(record) {
+  return '{"id":' + JSON.stringify(record.id) + ',"type":' + JSON.stringify(record.type) +
+    ',"data":' + jcs(record.data) + '}';
+  // Node.js:  createHash('sha256').update(canonical).digest('hex')
+  // Browser:  crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical))
 }
 ```
 
@@ -659,12 +636,12 @@ SHA-256 hash:
   e3b7a... (64 hex characters)
 
 Note: if data keys were in a different order (e.g. `{"title":"Hello","body":"World"}`),
-canonicalization sorts them to `{"body":"World","title":"Hello"}` — producing the same hash.
+canonicalization sorts them to `{"body":"World","title":"Hello"}`, producing the same hash.
 
 ### Schema hashing
 
-Schemas are also content-addressed. The hash is SHA-256 of `JSON.stringify(canonicalize(schemaBody))`.
-The same canonicalization rules apply.
+Schemas are also content-addressed. The hash is SHA-256 of JCS(schema). Schemas are JSON Schema
+draft-07; "private": true is allowed only at a schema's root (a private type).
 
 ---
 
@@ -686,7 +663,7 @@ When schemas are returned via the collection schemas endpoint, known labels are 
 
 - Versions are identified solely by semver (e.g. "v1.0.0", "v1.2.3").
 - Semver semantics: major bump = schema change (types added/removed or schema_id changed), minor bump = records/files change, patch bump = metadata-only change.
-- Each version has a content-addressed hash computed from sorted schema hashes + sorted record hashes + sorted file hashes + metadata.
+- Each version has a content-addressed hash, "ulv2:" + SHA-256 of its root: each type's schema hash and record tree, the file tree, metadata, and a commitment to the private set. See https://underlay.org/docs/protocol/versions
 - Each version has a `metadata` field: a JSON object that can contain `readme`, `license`, and other arbitrary metadata.
 - Records are content-addressed: SHA-256 of canonical JSON (see "Record Hashing" section). Records are globally deduplicated.
 - Versions are immutable once created.
@@ -710,7 +687,7 @@ Member management (invite, remove, update roles) is also under /api/auth/organiz
 
 POST /api/accounts/:owner/collections              → create collection {"slug", "name", "public"}
 PATCH /api/collections/:owner/:slug                → update {"name", "slug", "public"}
-PATCH /api/collections/:owner/:slug/metadata       → update version metadata {"description", "readme", "license", ...} — creates a patch version (requires write scope)
+POST /api/collections/:owner/:slug/metadata        → update version metadata {"description", "readme", "license", ...}; null clears a field — creates a patch version (requires write scope)
 DELETE /api/collections/:owner/:slug               → delete collection (requires admin scope)
 GET /api/accounts/:owner/collections               → list collections for an organization
 
@@ -718,14 +695,16 @@ GET /api/accounts/:owner/collections               → list collections for an o
 
 ## Privacy & Visibility
 
-Underlay supports privacy at four levels that compose — a reader sees content only if it passes all of them:
+Underlay supports privacy at three levels that compose — a reader sees content only if it passes all of them:
   1. Collection (collections.public) — a private collection 404s entirely; nothing below is evaluated.
-  2. Type — "private": true on the type's schema. Per-version.
-  3. Field — "private": true on the property. Per-version.
-  4. Record — "private": true on the negotiate MANIFEST ENTRY. Per-version.
-Levels 2-4 are bound to the version, so the same content can be public in one collection's version
-and hidden in another's. Private data is stored alongside public data in the same version and is
-visible only to members of the owning organization.
+  2. Type — "private": true at the root of the type's schema. Per-version.
+  3. Record — "private": true on the record (delta push: on the record line; negotiate: on the
+     MANIFEST ENTRY). Per-version.
+Each version has a public set and a private set. Private content is visible only to members of
+the owning organization.
+
+Format 2 has NO field-level privacy: a schema with "private": true on a property is refused.
+Put private fields in a private type, or push the whole record as private.
 
 ### Private Types
 Mark an entire type as private in its schema. All records of that type are hidden from public readers.
@@ -744,73 +723,38 @@ Mark an entire type as private in its schema. All records of that type are hidde
 
 Public readers see only the Article type. InternalNote is completely hidden (including from the schema response).
 
-### Private Fields
-Mark individual fields as private within a type's schema. The type itself is visible, but those fields are stripped for public readers.
-
-"Author": {
-  "type": "object",
-  "properties": {
-    "name": {"type": "string"},
-    "email": {"type": "string", "private": true},
-    "phone": {"type": "string", "private": true}
-  }
-}
-
-Public readers see Author records with only "name". The owner sees all fields.
-
 ### Private Records
-Mark individual records as private on their MANIFEST ENTRY in the negotiate body. The type and
-schema stay visible; that specific record is hidden from non-owners.
+In negotiate, mark a record private on its MANIFEST ENTRY:
 
 "manifest": [
   {"id": "article-1", "type": "Article", "hash": "<sha256>"},
   {"id": "article-2", "type": "Article", "hash": "<sha256>", "private": true}
 ]
 
+In delta push, put "private": true on the record line itself.
+
 article-2 is only visible to members of the owning org. Public readers see article-1 only.
 
 Two rules you must design around:
 
-1. PRIVACY IS PER-VERSION AND MUST BE RE-DECLARED ON EVERY PUSH. The flag is stored on the
-   (version, record) edge, not on the record itself. Omitting `private` on a manifest entry
-   means PUBLIC — it does NOT inherit the previous version's value. A push that sends a full
-   manifest without the flags publishes everything it omits. (Dropping the flag is therefore
-   also how you deliberately un-hide a record.) Read the current flags back from
-   GET .../versions/:semver/manifest, which echoes `private: true` on the entries that have it.
-2. REDACTION IS FORWARD-ONLY. Marking a record private in v2 hides it in v2 only. Versions are
-   immutable, so v1 still serves that record at /versions/v1.0.0/records. There is no
-   retroactive purge. Files are looser still: file access resolves across ALL ready versions,
-   so a file referenced publicly in v1 stays downloadable after the referencing record is
-   redacted in v2.
-
-`private` belongs ONLY on the manifest entry. A `private` key on a record BODY sent in step 4b is
-parsed and silently ignored — no error, and the record ships public.
-
-The same content can be private in one collection and public in another: the flag lives on the
-version edge, not on the globally deduplicated record body.
+1. PRIVACY IS PER-VERSION. Omitting `private` on a negotiate manifest entry means PUBLIC — it does
+   NOT inherit the previous version's value, so a full manifest without the flags publishes
+   everything it omits. Read the current flags back from GET .../versions/:semver/manifest, which
+   echoes `private: true` on the entries that have it.
+2. REDACTION IS FORWARD-ONLY. Marking a record private in a new version hides it there only.
+   Versions are immutable, so the earlier version still serves it, and a file referenced
+   publicly in any version stays downloadable.
 
 ### How it works
-- Public hash: the digest of the public projection — private types omitted, private records
-  omitted, private fields stripped from the records that remain. Version metadata and the file
-  list are NOT filtered: both digests are computed over the same metadata and the same files.
-- Version identity is BOTH digests. A push is a duplicate (409 "No changes detected") only if
-  `hash` AND `public_hash` match an existing version. Privacy is deliberately not folded into
-  `hash`, so `hash` stays independently verifiable from the content; privacy moves `public_hash`
-  instead. That is why re-pushing byte-identical content with a record newly marked private is a
-  legitimate new version — it is what makes redaction-in-place possible. Converse: flagging a
-  record private whose TYPE is already private changes neither digest and is correctly rejected
-  as a duplicate, because the flag has no observable effect.
-- A privacy-only push is a PATCH bump (schema change → major, record-set change → minor,
-  everything else → patch).
-- Public record hash: a record of a type with private fields is listed in public manifests under
-  the hash of its filtered projection ({"id", "type", "data"} with private fields stripped).
-  Record endpoints resolve either address; hashing the document you receive always reproduces
-  the address you requested.
-- Private hash: the full digest over ALL schema and record hashes, plus files and metadata.
-  Served only to org members; everyone else receives public_hash in the `hash` field. Both are
-  prefixed — "private:<64hex>" and "public:<64hex>" — so the two forms are never confusable.
-- Schema filtering: the schema returned to public readers omits private types and private fields
-- Record filtering: queries by non-owners automatically exclude private records and strip private fields
+- A version root lists the public set (types, record trees, files) in full, and the private set
+  only as a salted commitment: SHA-256 of the private set object, whose 32-byte salt is chosen
+  once per collection.
+- Version hash = "ulv2:" + SHA-256 of the root. Public readers can verify it and everything in
+  the public set, and learn only whether a private set exists. Members also get the private set
+  object and can check it against the commitment.
+- A record moving between the sets is a record change: a MINOR bump.
+- Older versions converted from format 1 keep their "private:<hex>" and "public:<hex>" hashes as
+  aliases.
 
 ---
 
@@ -840,6 +784,6 @@ POST /api/auth/api-key/delete  → revoke a key {"keyId": "..."}
 ---
 
 Full documentation: https://underlay.org/docs
-Protocol specification: https://underlay.org/protocol
+Protocol specification: https://underlay.org/docs/protocol
 Integration guide: https://underlay.org/docs/integration
 Source code: https://github.com/knowledgefutures/underlay

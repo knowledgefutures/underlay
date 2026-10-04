@@ -285,7 +285,7 @@ export default function Home() {
                 The reference-grade spec.
               </p>
               <Link
-                to="/protocol"
+                to="/docs/protocol"
                 className="text-parchment-dark visited:text-parchment-dark hover:text-parchment text-xs underline"
               >
                 Protocol →

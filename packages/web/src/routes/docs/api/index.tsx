@@ -165,8 +165,8 @@ export default function DocsApi() {
           and inaccessible files return 404 rather than 403, so a response cannot confirm they exist
         </li>
         <li>
-          <code>409</code>: Version conflict (re-fetch and retry), or duplicate content — both the{' '}
-          <code>private:</code> and <code>public:</code> digests match an existing version
+          <code>409</code>: Version conflict (re-fetch and retry), or no changes: the push has the
+          same content as the latest version
         </li>
         <li>
           <code>413</code>: Payload too large (file upload exceeds size limit)

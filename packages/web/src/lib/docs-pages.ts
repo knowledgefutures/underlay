@@ -21,7 +21,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Overview',
         href: '/docs',
         blurb: 'Where to start',
-        headings: ['Getting started', 'API reference', 'Specification'],
+        headings: ['Getting started', 'API reference', 'Protocol'],
       },
       {
         title: 'Concepts',
@@ -134,13 +134,38 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
     ],
   },
   {
-    section: 'Specification',
+    section: 'Protocol',
     pages: [
       {
         title: 'Protocol',
-        href: '/protocol',
-        blurb: 'Content-addressed data model, hashing spec, negotiate push/pull',
-        headings: [],
+        label: 'Overview',
+        href: '/docs/protocol',
+        blurb: 'Format 2: what is content-addressed, and what it guarantees',
+        headings: ['Primitives', 'What it guarantees', 'In this section', 'Reference'],
+      },
+      {
+        title: 'Records and schemas',
+        href: '/docs/protocol/records',
+        blurb: 'Canonical JSON, record and schema hashes, input rules, validation',
+        headings: ['Canonical JSON', 'Records', 'Input rules', 'Schemas', 'Validation', 'Files'],
+      },
+      {
+        title: 'Trees and versions',
+        href: '/docs/protocol/versions',
+        blurb: 'Record trees, public and private sets, the version root, semver',
+        headings: ['Key order', 'Trees', 'Access sets', 'Version root', 'Semver'],
+      },
+      {
+        title: 'Repositories',
+        href: '/docs/protocol/repositories',
+        blurb: 'The bucket layout, the signed version log, packs for sync',
+        headings: ['Layout', 'Version log', 'Sync'],
+      },
+      {
+        title: 'Push and pull',
+        href: '/docs/protocol/push-and-pull',
+        blurb: 'Delta push, negotiate, pull, and format 1 compatibility',
+        headings: ['Delta push', 'Negotiate (compatibility)', 'Pull', 'Format 1 hashes', 'Errors'],
       },
     ],
   },

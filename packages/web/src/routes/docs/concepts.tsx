@@ -82,15 +82,15 @@ export default function DocsConcepts() {
       <ul>
         <li>The same record appearing in multiple collections is stored only once.</li>
         <li>
-          Pushing a new version only transfers records the server doesn't already have (via the{' '}
-          <Link to="/protocol#push" className="text-link underline">
-            negotiate protocol
+          Pushing a new version only transfers what changed (see{' '}
+          <Link to="/docs/protocol/push-and-pull" className="text-link underline">
+            push and pull
           </Link>
           ).
         </li>
         <li>
           Any record can be traced back to every collection and version that includes it (
-          <Link to="/protocol#provenance" className="text-link underline">
+          <Link to="/docs/protocol/push-and-pull#pull" className="text-link underline">
             provenance
           </Link>
           ).

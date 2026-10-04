@@ -97,6 +97,9 @@ export function createApp(setup: Setup) {
       : c.json({ error: 'Auth is not configured', statusCode: 404 }, 404)
   })
 
+  // The protocol page became a docs section.
+  app.get('/protocol', (c) => c.redirect('/docs/protocol', 301))
+
   // Old blog URLs: the posts moved to the KF site under the same slugs
   // (web's lib/kf-updates.ts links there too). `blog` is a reserved org slug.
   const KF_SITE = 'https://www.knowledgefutures.org'

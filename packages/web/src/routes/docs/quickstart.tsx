@@ -18,7 +18,7 @@ curl -X POST https://underlay.org/api/accounts/yourname/collections \\
   }'`
 
 const negotiateCode = `# Step 1: Hash your records and negotiate with the server
-# Record hash = SHA-256 of canonical JSON: {"id","type","data"} with keys sorted recursively
+# Record hash = SHA-256 of the canonical form (see Record hashing below)
 # For this example we'll use pre-computed hashes.
 
 curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate \\
@@ -115,29 +115,27 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 # Reference in a record
 # {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}`
 
-const hashingNote = `# Record hashing: SHA-256 of canonical JSON
-# 1. Build object: {id, type, data}
-# 2. Sort all keys recursively (including nested objects in data)
-# 3. JSON.stringify the sorted object
-# 4. SHA-256 hex digest
+const hashingNote = `# Record hashing: SHA-256 of the canonical form
+#   '{"id":' + JSON(id) + ',"type":' + JSON(type) + ',"data":' + JCS(data) + '}'
+# JCS is RFC 8785 canonical JSON: no whitespace, object keys sorted.
 
 # Example in Node.js:
 import { createHash } from 'node:crypto'
 
-function canonicalize(value) {
-  if (value === null || typeof value !== 'object') return value
-  if (Array.isArray(value)) return value.map(canonicalize)
-  const sorted = {}
-  for (const key of Object.keys(value).sort()) {
-    sorted[key] = canonicalize(value[key])
-  }
-  return sorted
+// Written out as a string: a sorted object passed to JSON.stringify
+// would put integer-like keys ("9", "10") first.
+function jcs(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return '[' + value.map(jcs).join(',') + ']'
+  const keys = Object.keys(value).sort()
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + jcs(value[k])).join(',') + '}'
 }
 
 function hashRecord(record) {
-  const obj = { id: record.id, type: record.type, data: canonicalize(record.data) }
-  const json = JSON.stringify(obj)
-  return createHash('sha256').update(json).digest('hex')
+  const canonical =
+    '{"id":' + JSON.stringify(record.id) + ',"type":' + JSON.stringify(record.type) +
+    ',"data":' + jcs(record.data) + '}'
+  return createHash('sha256').update(canonical).digest('hex')
 }`
 
 export default function DocsQuickstart() {
@@ -187,9 +185,12 @@ export default function DocsQuickstart() {
 
       <h2>3. Push a version</h2>
       <p>
-        Pushes use a three-step{' '}
-        <Link to="/protocol" className="text-link hover:underline">
-          negotiate protocol
+        This quickstart uses the three-step{' '}
+        <Link
+          to="/docs/protocol/push-and-pull#negotiate-compatibility"
+          className="text-link hover:underline"
+        >
+          negotiate flow
         </Link>
         : send a manifest of record hashes, upload only the records the server needs, then commit.
       </p>
@@ -238,10 +239,10 @@ export default function DocsQuickstart() {
 
       <h2>Record hashing</h2>
       <p>
-        Each record must be hashed client-side before negotiating. The hash is the SHA-256 of{' '}
-        <code>{'JSON.stringify({id, type, data})'}</code> with all object keys sorted recursively.
-        This ensures any client produces the same hash for the same data regardless of key insertion
-        order.
+        Each record must be hashed client-side before negotiating. The hash is the SHA-256 of a
+        fixed <code>{'{id, type, data}'}</code> envelope with <code>data</code> in canonical JSON
+        (RFC 8785), so any client produces the same hash for the same data regardless of key
+        insertion order.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashingNote}</code>
@@ -263,7 +264,8 @@ export default function DocsQuickstart() {
           privacy controls
         </li>
         <li>
-          <Link to="/protocol">Protocol spec</Link>: precise hashing algorithm and negotiate flow
+          <Link to="/docs/protocol">Protocol</Link>: hashing, trees, versions, and the push and pull
+          exchanges
         </li>
       </ul>
     </DocsLayout>

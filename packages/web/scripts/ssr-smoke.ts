@@ -258,7 +258,17 @@ try {
     { path: '/records/abc123', status: 404 },
     { path: `/schemas/${schemaId}`, status: 200, has: ['born', 'org/authors'] },
     { path: '/schemas', status: 200, has: ['Schemas'] },
-    { path: '/protocol', status: 200, has: ['Protocol'] },
+    { path: '/protocol', status: 301, location: '/docs/protocol' },
+    // The protocol section shares the docs nav.
+    {
+      path: '/docs/protocol',
+      status: 200,
+      has: ['The Underlay protocol', 'docs-nav', 'Trees and versions', 'Push and pull'],
+    },
+    { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
+    { path: '/docs/protocol/versions', status: 200, has: ['ulv2:', 'Access sets'] },
+    { path: '/docs/protocol/repositories', status: 200, has: ['head.json', 'Version log'] },
+    { path: '/docs/protocol/push-and-pull', status: 200, has: ['Delta push', 'Negotiate'] },
     { path: '/docs', status: 200 },
     { path: '/org/secret', status: 404 },
     { path: '/org/secret', status: 200, has: ['secret'], user: 'u1' },
