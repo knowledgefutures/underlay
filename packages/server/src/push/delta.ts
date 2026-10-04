@@ -60,14 +60,24 @@ function lines(text: string): string[] {
   return text.split('\n').filter((l) => l.trim().length > 0)
 }
 
-/** Parse, validate and hash one batch of record lines into run entries. */
+/**
+ * Parse, validate and hash one batch of record lines into run entries, a line at
+ * a time as they arrive (a string is split first). More than MAX_BATCH_LINES
+ * lines stops the batch with `tooManyLines`.
+ */
 export async function prepareRecords(
   ports: Ports,
   collectionId: string,
   inputs: SessionInputs,
-  text: string,
-  opts: { stripUnknownFields: boolean },
-): Promise<{ entries: RunEntry[] } | { errors: LineError[]; total: number }> {
+  input: string | AsyncIterable<string>,
+  opts: {
+    stripUnknownFields: boolean
+    /** Adjust each entry, given the record's data as sent (negotiate adds legacy hashes). */
+    entryOf?: (e: RunEntry, data: unknown) => RunEntry
+  },
+): Promise<
+  { entries: RunEntry[] } | { errors: LineError[]; total: number } | { tooManyLines: true }
+> {
   const errors: LineError[] = []
   let total = 0
   const fail = (e: LineError) => {
@@ -76,11 +86,14 @@ export async function prepareRecords(
   }
   const entries: RunEntry[] = []
   const repo = await ports.stores.forCollection(collectionId)
-  const all = lines(text)
-  for (let i = 0; i < all.length; i++) {
+  const source = typeof input === 'string' ? lines(input) : input
+  let i = -1
+  for await (const line of source) {
+    i++
+    if (i >= MAX_BATCH_LINES) return { tooManyLines: true }
     let rec
     try {
-      rec = parseRecordLine(all[i]!)
+      rec = parseRecordLine(line)
     } catch (err) {
       if (!(err instanceof InputRuleError)) throw err
       fail({ line: i + 1, errors: [`${err.code}: ${err.message}`] })
@@ -126,14 +139,15 @@ export async function prepareRecords(
     const size = utf8ByteLength(canonical)
     const body = size > OUT_OF_LINE_BYTES ? await repo.putOutOfLine(hash, canonical) : canonical
     const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
-    entries.push({
+    const entry: RunEntry = {
       t: rec.type,
       k: rec.id,
       h: hash,
       s: size,
       b: body,
       ...(isPrivate ? { p: true } : {}),
-    })
+    }
+    entries.push(opts.entryOf ? opts.entryOf(entry, rec.data) : entry)
   }
   return total > 0 ? { errors, total } : { entries }
 }
@@ -141,15 +155,15 @@ export async function prepareRecords(
 export async function ingestRecords(
   ports: Ports,
   session: SessionRow,
-  text: string,
+  input: string | AsyncIterable<string>,
 ): Promise<IngestResult> {
   const inputs = await loadInputs(ports, session.id)
-  if (lines(text).length > MAX_BATCH_LINES) {
-    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} records per batch` }
-  }
-  const prepared = await prepareRecords(ports, session.collectionId, inputs, text, {
+  const prepared = await prepareRecords(ports, session.collectionId, inputs, input, {
     stripUnknownFields: session.stripUnknownFields,
   })
+  if ('tooManyLines' in prepared) {
+    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} records per batch` }
+  }
   if ('errors' in prepared) {
     return {
       ok: false,

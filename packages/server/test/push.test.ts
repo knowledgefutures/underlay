@@ -48,6 +48,67 @@ async function head(h: Harness, collectionId: string) {
 }
 
 describe('delta push', () => {
+  it('parses a records batch as it streams in, across any chunk boundaries', async () => {
+    const { h, user, base, c } = await setup()
+    const open = await h.request(`${base}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author } },
+    })
+    const sid = ((await open.json()) as { session_id: string }).session_id
+    const body = new TextEncoder().encode(
+      [rec('a', { name: 'Zoë' }), rec('b', { name: '日本語' }), rec('c', { name: 'C' })]
+        .map((r) => JSON.stringify(r))
+        .join('\n'), // no trailing newline
+    )
+    // Three-byte chunks: lines and multi-byte characters split everywhere.
+    const chunked = (bytes: Uint8Array, size: number) =>
+      new ReadableStream<Uint8Array>({
+        start(ctl) {
+          for (let i = 0; i < bytes.length; i += size) ctl.enqueue(bytes.slice(i, i + size))
+          ctl.close()
+        },
+      })
+    const send = (stream: ReadableStream<Uint8Array>) =>
+      h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        body: stream,
+        headers: { 'content-type': 'application/x-ndjson' },
+        duplex: 'half',
+      } as RequestInit)
+    const res = await send(chunked(body, 3))
+    expect(await res.json()).toEqual({ received: 3 })
+    await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    const repo = await h.ports.stores.forCollection(c.id)
+    const v = await head(h, c.id)
+    const root = await repo.root(v!.hash)
+    const got = await getEntry(
+      new RepoSource(recordTree, repo),
+      root.public.types.Author!.root,
+      'b',
+    )
+    expect(got?.hash).toBe(hashOf('b', { name: '日本語' }))
+
+    // Past the cap, with no content-length to refuse it early: 413 mid-stream.
+    const open2 = await h.request(`${base}/push`, { method: 'POST', user, json: {} })
+    const sid2 = ((await open2.json()) as { session_id: string }).session_id
+    const big = new ReadableStream<Uint8Array>({
+      pull(ctl) {
+        ctl.enqueue(
+          new TextEncoder().encode(JSON.stringify(rec('x', { name: 'x'.repeat(1 << 20) })) + '\n'),
+        )
+      },
+    })
+    const tooBig = await h.request(`${base}/push/${sid2}/records`, {
+      method: 'POST',
+      user,
+      body: big,
+      duplex: 'half',
+    } as RequestInit)
+    expect(tooBig.status).toBe(413)
+  })
+
   it('caps the sessions one user has in progress', async () => {
     const { h, user, base } = await setup()
     const before = limits.openSessions

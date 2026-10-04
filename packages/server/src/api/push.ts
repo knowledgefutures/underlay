@@ -27,6 +27,7 @@ import {
   ingestDeletes,
   ingestRecords,
   MAX_BATCH_BYTES,
+  MAX_BATCH_LINES,
   prepareRecords,
   versionBase,
 } from '../push/delta.js'
@@ -51,7 +52,7 @@ import {
 } from '../push/session.js'
 import { parseSemver } from '../versions/semver.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
-import { BodyTooLarge, readJson, readText } from './body.js'
+import { BodyTooLarge, readJson, readLines, readText } from './body.js'
 
 const MAX_OPEN_BYTES = 8 * 1024 * 1024
 const MAX_MANIFEST_CHUNK = 50_000
@@ -285,9 +286,15 @@ export function pushRoutes() {
     if (access instanceof Response) return access
     const session = await ownSession(c, access, 'delta')
     if (session instanceof Response) return session
-    const text = await readNdjson(c)
-    if (text instanceof Response) return text
-    const r = await ingestRecords(c.var.ports, session, text)
+    // Parsed line by line as the body arrives (v2-scale-review.md S6).
+    let r
+    try {
+      r = await ingestRecords(c.var.ports, session, readLines(c, MAX_BATCH_BYTES))
+    } catch (err) {
+      if (err instanceof BodyTooLarge)
+        return jsonError(c, 413, `Batches are limited to ${MAX_BATCH_BYTES} bytes`)
+      throw err
+    }
     return r.ok
       ? c.json({ received: r.received })
       : jsonError(c, r.status, r.error, { validationErrors: r.details, totalErrors: r.total })
@@ -519,13 +526,29 @@ export function pushRoutes() {
     const session = await ownSession(c, access, 'negotiate')
     if (session instanceof Response) return session
     if (session.status !== 'open') return jsonError(c, 409, `Session is ${session.status}`)
-    const text = await readNdjson(c)
-    if (text instanceof Response) return text
     const ports = c.var.ports
     const inputs = await loadInputs(ports, session.id)
-    const prepared = await prepareRecords(ports, session.collectionId, inputs, text, {
-      stripUnknownFields: session.stripUnknownFields,
-    })
+    let prepared
+    try {
+      prepared = await prepareRecords(
+        ports,
+        session.collectionId,
+        inputs,
+        readLines(c, MAX_BATCH_BYTES),
+        {
+          stripUnknownFields: session.stripUnknownFields,
+          // Keep the format 1 hash next to the v2 one, so a v1 manifest entry matches either.
+          entryOf: withLegacyHash,
+        },
+      )
+    } catch (err) {
+      if (err instanceof BodyTooLarge)
+        return jsonError(c, 413, `Batches are limited to ${MAX_BATCH_BYTES} bytes`)
+      throw err
+    }
+    if ('tooManyLines' in prepared) {
+      return jsonError(c, 400, `At most ${MAX_BATCH_LINES} records per batch`)
+    }
     if ('errors' in prepared) {
       return jsonError(c, 422, 'Schema validation failed', {
         validationErrors: prepared.errors,
@@ -533,17 +556,7 @@ export function pushRoutes() {
       })
     }
     if (prepared.entries.length === 0) return jsonError(c, 400, 'Empty batch')
-    // Keep the format 1 hash next to the v2 one, so a v1 manifest entry matches either.
-    const datas = new Map(
-      text
-        .split('\n')
-        .filter((l) => l.trim())
-        .map((l) => {
-          const r = JSON.parse(l) as { id: string; type: string; data: unknown }
-          return [`${r.type}\u0000${r.id}`, r.data] as const
-        }),
-    )
-    const entries = prepared.entries.map((e) => withLegacyHash(e, datas.get(`${e.t}\u0000${e.k}`)))
+    const entries = prepared.entries
     const seq = await nextRunSeq(ports, session.id)
     if (seq === null) return jsonError(c, 409, 'Session is not open')
     const index = await writeRun(ports.stores.internal, session.id, seq, entries)

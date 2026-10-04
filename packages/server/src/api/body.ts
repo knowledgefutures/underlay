@@ -33,6 +33,41 @@ export async function readText(c: Context<AppEnv>, max: number): Promise<string>
   return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
+/**
+ * A request body's non-blank lines, decoded as they arrive, under the same cap
+ * as readText: no copy of the whole body is ever held (v2-scale-review.md S6).
+ * Throws BodyTooLarge from the iteration once more than `max` bytes arrive.
+ */
+export async function* readLines(c: Context<AppEnv>, max: number): AsyncGenerator<string> {
+  const declared = Number(c.req.header('content-length') ?? NaN)
+  if (declared > max) throw new BodyTooLarge()
+  const body = c.req.raw.body
+  if (!body) return
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let rest = ''
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > max) {
+      await reader.cancel()
+      throw new BodyTooLarge()
+    }
+    const text = rest + decoder.decode(value, { stream: true })
+    let start = 0
+    for (let nl = text.indexOf('\n'); nl >= 0; nl = text.indexOf('\n', start)) {
+      const line = text.slice(start, nl)
+      start = nl + 1
+      if (line.trim()) yield line
+    }
+    rest = text.slice(start)
+  }
+  rest += decoder.decode()
+  if (rest.trim()) yield rest
+}
+
 export type JsonBody = Record<string, unknown>
 
 /** Parse a JSON object body under the input rules; an empty body is `{}`. */
