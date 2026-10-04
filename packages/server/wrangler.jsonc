@@ -44,6 +44,9 @@
         "OIDC_ACCOUNT_URL": "https://dev-account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
       },
+      // Repository and internal objects through the binding (no request signing, no
+      // subrequest per object); file bytes keep the S3 API, which can presign.
+      "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "underlay-staging" }],
       "d1_databases": [
         {
           "binding": "DB",
@@ -103,6 +106,9 @@
         "OIDC_ACCOUNT_URL": "https://account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
       },
+      // Repository and internal objects through the binding (no request signing, no
+      // subrequest per object); file bytes keep the S3 API, which can presign.
+      "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "underlay-prod" }],
       "d1_databases": [
         {
           "binding": "DB",
