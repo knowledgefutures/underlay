@@ -115,8 +115,11 @@ export default function ProtocolPushPull() {
       <p>
         A client that keeps a copy verifies the signed log, then fetches a pack against the version
         it last synced and checks it as described in{' '}
-        <Link to="/docs/protocol/repositories#sync">Sync</Link>. Readers that want records rather
-        than trees use the read endpoints.
+        <Link to="/docs/protocol/repositories#sync">Sync</Link>. The log, pack and file reads are
+        the ones every node serves (
+        <Link to="/docs/protocol/repositories#serving-over-http">Serving over HTTP</Link>); the
+        others are this server&rsquo;s. Readers that want records rather than trees use the read
+        endpoints.
       </p>
       <CodeBlock>{pull}</CodeBlock>
       <p>

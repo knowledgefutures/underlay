@@ -20,6 +20,17 @@ entry hash = sha256(JCS(entry))
 prev       = the entry hash of seq − 1, or null for seq 1
 head.json  = JCS({"entryHash","seq","versionHash"}) of the latest entry`
 
+const node = `GET <collection>/log?after=<seq>&limit=<n>
+# -> { "collection": {...collection.json, keys}, "head": {...head.json}, "entries": [...] }
+
+GET <collection>/versions/<v>/pack?base=<v>&sets=public|all
+# -> application/x-tar; x-underlay-version, x-underlay-base, x-underlay-sets
+
+GET <collection>/files/<fileHash>          # the bytes, or a redirect to them; HEAD too
+
+# <v> is a semver, a version hash (ulv2:...) or latest
+# underlay.org: <collection> = https://underlay.org/api/collections/<owner>/<slug>`
+
 export default function ProtocolRepositories() {
   return (
     <DocsLayout title="Repositories" eyebrow="Protocol v2">
@@ -112,6 +123,35 @@ export default function ProtocolRepositories() {
         <a href="/docs/protocol/push-and-pull#delta-push">delta push</a>, so a server never accepts
         tree nodes from outside.
       </p>
+
+      <h2 id="serving-over-http">Serving over HTTP</h2>
+      <p>
+        An <strong>Underlay node</strong> is a server that lets clients, mirrors and other nodes
+        copy and verify its collections. It must serve these three reads under each
+        collection&rsquo;s URL. Push, accounts, search and everything else a server offers are its
+        own API, outside the protocol.
+      </p>
+      <CodeBlock>{node}</CodeBlock>
+      <ul>
+        <li>
+          The log is paged: a client asks again from the last <code>seq</code> it got until it
+          reaches <code>head.seq</code>. Without <code>base</code>, a pack holds the whole version.
+        </li>
+        <li>
+          A collection, version or file the caller can&rsquo;t read is a <code>404</code>, whether
+          or not it exists. <code>403</code> means only that <code>sets=all</code> was asked for by
+          a caller who can read the public set but not the private one.
+        </li>
+        <li>
+          Authentication is the node&rsquo;s own. A node with no access control serves public sets
+          only.
+        </li>
+        <li>
+          A client trusts nothing a node sends: it verifies the log, receives packs under the rules
+          above, and checks files against their hash. A copy from a mirror carries the same
+          guarantees as one from the origin.
+        </li>
+      </ul>
     </DocsLayout>
   )
 }

@@ -71,7 +71,7 @@ export default function ProtocolOverview() {
         </li>
         <li>
           <Link to="/docs/protocol/repositories">Repositories</Link>: the storage layout any bucket
-          can hold, the signed version log, and packs for sync.
+          can hold, the signed version log, packs for sync, and the reads every node serves.
         </li>
         <li>
           <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: the HTTP exchanges for

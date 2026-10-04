@@ -158,8 +158,8 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Repositories',
         href: '/docs/protocol/repositories',
-        blurb: 'The bucket layout, the signed version log, packs for sync',
-        headings: ['Layout', 'Version log', 'Sync'],
+        blurb: 'The bucket layout, the signed version log, packs, what a node serves',
+        headings: ['Layout', 'Version log', 'Sync', 'Serving over HTTP'],
       },
       {
         title: 'Push and pull',

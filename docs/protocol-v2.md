@@ -378,6 +378,61 @@ gzip already. File bytes are not in packs. Reference implementation: `packVersio
   every new record leaf must have its body. Only then is the root written. A pack that fails any
   check is refused; objects it wrote are unreferenced.
 
+### 11.3 Serving over HTTP
+
+An **Underlay node** is an HTTP server that serves collections so that clients, mirrors and other
+nodes can copy and verify them. This section is everything a node must expose. Everything else a
+server offers (push, accounts, search, record and diff reads, a web UI) is its own API, outside
+the protocol.
+
+A node serves each collection under a **collection URL**: an absolute URL with no trailing slash,
+below which the paths here are resolved. How a node names collections in that URL is its own
+choice; underlay.org uses `https://underlay.org/api/collections/<owner>/<slug>`.
+
+```
+GET <collection>/log?after=<seq>&limit=<n>
+GET <collection>/versions/<v>/pack?base=<v>&sets=public|all
+GET <collection>/files/<fileHash>                                 HEAD too
+```
+
+- **Versions.** `<v>` is a semver (`v1.2.0`; the `v` is optional), a version hash
+  (`ulv2:<hex>`), or `latest`. A `base` must be a version of the same collection.
+- **Log.** 200 with `{"collection", "head", "entries"}`:
+  - `collection` is the collection's `collection.json` (section 11.1), signing keys included, and
+    `head` its `head.json`. Before the first version either may be `null`.
+  - `entries` are the log entries with `seq` greater than `after` (default 0), in `seq` order, at
+    most `limit`. A node may cap a page (underlay.org: 1,000 entries); a client asks again from the
+    last `seq` it got until it reaches `head.seq`.
+- **Pack.** 200 with the pack (section 11.2) of version `<v>` against `base`, as
+  `application/x-tar`. Without `base` the pack holds the whole version. `sets` defaults to
+  `public`; `all` sends the private set too. The response carries `x-underlay-version` (the
+  version hash), `x-underlay-base` (the base's version hash, or empty) and `x-underlay-sets`.
+- **Files.** The file's bytes, or a redirect to them; `HEAD` gives `content-length`.
+  `<fileHash>` is 64 hex characters, and a `sha256:` prefix is accepted. A node serves a file only
+  to a caller who can read a set that holds it (section 9).
+
+Errors are JSON, `{"error": <message>}`:
+
+- **404** for a collection, version, base or file the caller can't read, whether or not it exists.
+  A node never answers 403 for something the caller can't read, so a response can't confirm that
+  it exists.
+- **403** only for `sets=all` from a caller who can read the public set but not the private one.
+  The client can retry with `sets=public`.
+- **400** for a `sets` other than `public` or `all`.
+- **451** for a file the node may not serve for legal reasons.
+- Other statuses mean what HTTP says they mean (401 for bad credentials, 429 with `Retry-After`).
+
+Authentication is the node's own; underlay.org takes `Authorization: Bearer <API key>`. A node
+with no access control serves public sets only, and answers `sets=all` with 403.
+
+**A client trusts nothing a node sends.** It verifies the log (section 11.1), receives packs under
+section 11.2, and checks file bytes against their hash. A copy taken from any node, including a
+mirror run by someone else, carries the same guarantees as one taken from the origin.
+
+Open: which signing keys a client trusts. The reference client trusts the keys in the
+`collection.json` it is served and continues the chain from the last entry it verified. A
+well-known URL for a node's keys is still to be fixed (section 11.1).
+
 ## 12. Limits and constants
 
 All protocol constants are in `packages/protocol/src/constants.ts`, and the vectors file repeats them.
