@@ -57,6 +57,8 @@ export interface Env {
   /** Rate-limit bindings (wrangler.jsonc "ratelimits"); without them, no limit. */
   RL_ANON?: RateLimitBinding
   RL_USER?: RateLimitBinding
+  /** Anonymous pages, ARK and the auth routes (lib/limits.ts). */
+  RL_PAGE?: RateLimitBinding
   /** KF Auth's internal API key: KF orgs for new orgs, and /api/kf/summary. Optional. */
   AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
@@ -151,7 +153,13 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
         }
       : {}),
     ...(env.RL_ANON && env.RL_USER
-      ? { rateLimit: bindingRateLimiter({ anon: env.RL_ANON, user: env.RL_USER }) }
+      ? {
+          rateLimit: bindingRateLimiter({
+            anon: env.RL_ANON,
+            user: env.RL_USER,
+            page: env.RL_PAGE,
+          }),
+        }
       : {}),
     ...(assets ? { publicAssets: assets } : {}),
   }

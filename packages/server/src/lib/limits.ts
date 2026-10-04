@@ -1,10 +1,14 @@
 import * as schema from '../db/schema.js'
 /**
  * Abuse controls (edge-redesign.md, "Files"; v2-alignment-review.md, "Abuse
- * controls"): request budgets for /api/*, and the hash denylist.
+ * controls"): request budgets, and the hash denylist.
  *
- * Budgets are v1's: 60 requests a minute per IP when anonymous, 5,000 per user.
- * On Workers they're the rate-limit binding (per location, approximate); on Node
+ * Budgets are v1's for the API: 60 units a minute per IP when anonymous, 5,000
+ * per user. Anonymous pages (ARK resolution and the auth routes included) have
+ * their own per-IP budget, 600 a minute, since many readers can share an
+ * address. Every request the Worker serves spends from one of them; a page's own
+ * in-process API calls are part of its cost. Expensive requests cost more (requestCost). On
+ * Workers they're the rate-limit binding (per location, approximate); on Node
  * a fixed window in memory.
  *
  * The denylist is a table of file and record hashes that are never served:
@@ -13,15 +17,17 @@ import * as schema from '../db/schema.js'
  */
 import type { Db, RateLimiter } from '../ports.js'
 
-export const LIMITS = { anon: 60, user: 5_000 } as const
+export const LIMITS = { anon: 60, user: 5_000, page: 600 } as const
 const WINDOW_MS = 60_000
 
 /** A fixed-window limiter in memory (Node, one process). */
-export function memoryRateLimiter(limits: { anon: number; user: number } = LIMITS): RateLimiter {
+export function memoryRateLimiter(
+  limits: { anon: number; user: number; page: number } = LIMITS,
+): RateLimiter {
   const windows = new Map<string, { count: number; resetAt: number }>()
   let sweptAt = Date.now()
   return {
-    async check(kind, key) {
+    async check(kind, key, cost = 1) {
       const now = Date.now()
       if (now - sweptAt > WINDOW_MS) {
         for (const [k, w] of windows) if (w.resetAt < now) windows.delete(k)
@@ -30,7 +36,8 @@ export function memoryRateLimiter(limits: { anon: number; user: number } = LIMIT
       const id = `${kind}:${key}`
       let w = windows.get(id)
       if (!w || w.resetAt < now) windows.set(id, (w = { count: 0, resetAt: now + WINDOW_MS }))
-      return ++w.count <= limits[kind]
+      w.count += cost
+      return w.count <= limits[kind]
     },
   }
 }
@@ -40,12 +47,37 @@ export interface RateLimitBinding {
   limit(options: { key: string }): Promise<{ success: boolean }>
 }
 
-/** Cloudflare's rate-limit bindings, one per kind. */
+/** Cloudflare's rate-limit bindings, one per kind (pages fall back to the API's anonymous one). */
 export function bindingRateLimiter(b: {
   anon: RateLimitBinding
   user: RateLimitBinding
+  page?: RateLimitBinding | undefined
 }): RateLimiter {
-  return { check: async (kind, key) => (await b[kind].limit({ key })).success }
+  return {
+    // The binding counts one per call: a request costing n calls it n times.
+    async check(kind, key, cost = 1) {
+      const binding = b[kind] ?? b.anon
+      for (let i = 0; i < cost; i++) if (!(await binding.limit({ key })).success) return false
+      return true
+    },
+  }
+}
+
+/** What a request costs from its budget: whole-version reads cost most, pages more than a call. */
+const COSTS: [RegExp, number][] = [
+  [/^\/api\/collections\/[^/]+\/[^/]+\/export$/, 20],
+  [/\/versions\/[^/]+\/(pack|records\.ndjson(\.gz)?)$/, 10],
+  [/^\/api\/records\/batch$/, 5],
+  [/^\/api\/records\/[^/]+\/(provenance|history)$/, 5],
+  [/\/(diff|history)$/, 5],
+  // Pages: a record page reads its provenance; any page makes several calls.
+  [/^\/records\//, 5],
+  [/^\/(?!api\/)/, 2],
+]
+
+export function requestCost(path: string): number {
+  for (const [re, cost] of COSTS) if (re.test(path)) return cost
+  return 1
 }
 
 /**

@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import { createApp } from '../src/app.js'
 import * as schema from '../src/db/schema.js'
-import { memoryRateLimiter } from '../src/lib/limits.js'
+import { memoryRateLimiter, requestCost } from '../src/lib/limits.js'
 import { cleanup, harness } from './harness.js'
 import { setup } from './kf-app.js'
 
@@ -31,9 +31,9 @@ function untar(bytes: Uint8Array): Map<string, string> {
 const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: { type: 'object' } } }
 
 describe('rate limits', () => {
-  it('budgets /api/* per IP and per user, not counting a page’s own API calls', async () => {
+  it('budgets requests per IP and per user, not counting a page’s own API calls', async () => {
     const h = await harness()
-    const ports = { ...h.ports, rateLimit: memoryRateLimiter({ anon: 3, user: 5 }) }
+    const ports = { ...h.ports, rateLimit: memoryRateLimiter({ anon: 3, user: 5, page: 5 }) }
     const app = createApp(() => ({
       ports,
       config: { appUrl: 'http://test', deployment: 'test' },
@@ -51,6 +51,7 @@ describe('rate limits', () => {
       app.fetch(new Request(`http://test${path}`, { headers }))
     const ip = (a: string) => ({ 'cf-connecting-ip': a })
 
+    // A page spends from the page budget, its own four API calls from nothing.
     expect((await get('/somepage', ip('1.1.1.1'))).status).toBe(200)
     for (let i = 0; i < 3; i++) expect((await get('/api/health', ip('1.1.1.1'))).status).toBe(200)
     const limited = await get('/api/health', ip('1.1.1.1'))
@@ -68,6 +69,22 @@ describe('rate limits', () => {
     for (let i = 0; i < 3; i++)
       expect((await get('/api/health', fwd(`9.9.9.${i}, 3.3.3.3`))).status).toBe(200)
     expect((await get('/api/health', fwd('9.9.9.9, 3.3.3.3'))).status).toBe(429)
+
+    // Expensive reads cost more; ARK resolution and record pages count too.
+    expect(requestCost('/api/collections/org/c/export')).toBe(20)
+    expect(requestCost('/api/collections/org/c/versions/3/records.ndjson.gz')).toBe(10)
+    expect(requestCost('/api/records/abc/provenance')).toBe(5)
+    expect(requestCost('/records/abc')).toBe(5)
+    expect(requestCost('/ark:/12345/x')).toBe(2)
+    expect(requestCost('/api/health')).toBe(1)
+    expect((await get('/ark:/12345/x', ip('4.4.4.4'))).status).not.toBe(429)
+    expect((await get('/ark:/12345/x', ip('4.4.4.4'))).status).not.toBe(429)
+    expect((await get('/ark:/12345/x', ip('4.4.4.4'))).status).toBe(429)
+    // The auth routes have a budget of their own, per IP.
+    for (let i = 0; i < 5; i++)
+      expect((await get('/api/auth/get-session', ip('5.5.5.5'))).status).not.toBe(429)
+    expect((await get('/api/auth/get-session', ip('5.5.5.5'))).status).toBe(429)
+    expect((await get('/api/health', ip('5.5.5.5'))).status).toBe(200)
   })
 })
 

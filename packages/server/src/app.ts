@@ -25,7 +25,7 @@ import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Kf } from './auth/kf.js'
 import { type Meter, meter, newMeter } from './billing/usage.js'
-import { clientIp } from './lib/limits.js'
+import { clientIp, requestCost } from './lib/limits.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -101,6 +101,15 @@ export function createApp(setup: Setup) {
   app.post('/api/auth/organization/delete', (c) =>
     c.json({ error: 'Delete an organization with DELETE /api/accounts/:slug' }, 404),
   )
+
+  // The auth routes come before the principal is known: their budget is the IP's.
+  app.use('/api/auth/*', async (c, next) => {
+    const limiter = setup(c).ports.rateLimit
+    if (!limiter || inProcess.has(c.req.raw)) return next()
+    if (await limiter.check('page', `auth:${clientIp(c.req.raw.headers)}`)) return next()
+    c.header('Retry-After', '60')
+    return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)
+  })
 
   app.on(['GET', 'POST'], '/api/auth/*', (c) => {
     const { authHandler } = setup(c)
@@ -214,15 +223,18 @@ export function createApp(setup: Setup) {
     c.res = new Response(counted, c.res)
   })
 
-  // Request budgets (lib/limits.ts). The page renderer's in-process API calls
-  // are part of the page view that made them, so they don't count again.
-  app.use('/api/*', async (c, next) => {
+  // Request budgets (lib/limits.ts): API calls, pages and ARK alike. The page
+  // renderer's in-process API calls are part of the page view that made them,
+  // so they don't count again.
+  app.use('*', async (c, next) => {
     const limiter = c.var.ports.rateLimit
-    if (!limiter || inProcess.has(c.req.raw)) return next()
+    if (!limiter || inProcess.has(c.req.raw) || c.req.method === 'OPTIONS') return next()
     const p = c.var.principal
+    const cost = requestCost(c.req.path)
+    const kind = c.req.path.startsWith('/api/') ? 'anon' : 'page'
     const ok = p
-      ? await limiter.check('user', p.orgId ?? p.userId)
-      : await limiter.check('anon', clientIp(c.req.raw.headers))
+      ? await limiter.check('user', p.orgId ?? p.userId, cost)
+      : await limiter.check(kind, clientIp(c.req.raw.headers), cost)
     if (ok) return next()
     c.header('Retry-After', '60')
     return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)

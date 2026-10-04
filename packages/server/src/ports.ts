@@ -103,5 +103,6 @@ export interface Ports {
 
 /** Whether one more request under `key` fits its budget ('anon': per IP; 'user': per user). */
 export interface RateLimiter {
-  check(kind: 'anon' | 'user', key: string): Promise<boolean>
+  /** Spend `cost` (default 1) of the key's budget; false when it's spent. */
+  check(kind: 'anon' | 'user' | 'page', key: string, cost?: number): Promise<boolean>
 }

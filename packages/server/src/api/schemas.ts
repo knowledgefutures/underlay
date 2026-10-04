@@ -130,10 +130,14 @@ export function schemaRoutes() {
         .from(schema.schemas)
         .where(and(eq(schema.schemas.hash, one), visibleSchema(schema.schemas.hash, orgs)))
       if (!row) return jsonError(c, 404, 'Schema not found')
-      const [usage] = await db
-        .select({ n: sql<number>`count(DISTINCT collection_id)` })
-        .from(schema.schemaUsage)
-        .where(eq(schema.schemaUsage.schemaHash, one))
+      // Only the uses this caller can see: a private collection's isn't counted for others.
+      const [usage] = (await db.all(sql`
+        SELECT count(DISTINCT u.collection_id) AS n FROM ${schema.schemaUsage} u
+        JOIN ${schema.collections} c ON c.id = u.collection_id
+        WHERE u.schema_hash = ${one}
+          AND ((c.public = 1 AND u."set" = 'public')
+            ${orgs ? sql`OR c.organization_id IN ${orgs}` : sql``})
+      `)) as { n: number }[]
       const labels = (await labelsFor(c, [one])).get(one) ?? []
       return c.json({
         id: one,

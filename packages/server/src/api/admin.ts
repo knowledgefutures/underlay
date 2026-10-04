@@ -42,9 +42,9 @@ async function isSteward(c: Context<AppEnv>, userId: string | null): Promise<boo
   return !!userId && (await c.var.kf?.role(userId)) === 'admin'
 }
 
-/** 401/403 unless the caller is a steward; null when they are. */
+/** 401/403 unless the caller is a steward (with a write key, for a change); null when they are. */
 export async function stewardOnly(c: Context<AppEnv>): Promise<Response | null> {
-  const userId = person(c, false)
+  const userId = person(c, c.req.method !== 'GET' && c.req.method !== 'HEAD')
   if (!userId) return jsonError(c, 401, 'Unauthorized')
   return (await isSteward(c, userId)) ? null : jsonError(c, 403, 'Forbidden')
 }
