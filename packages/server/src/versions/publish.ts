@@ -143,6 +143,7 @@ export async function publishVersion(
           reconcileReport: lit<string | null>(null).as('reconcile_report'),
           changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
           createdAt: lit<number>(createdAt).as('created_at'),
+          publishedAt: lit<number>(now).as('published_at'),
         })
         .from(schema.collections)
         .where(and(headIsBase, fenceHolds(p.fence))) as never,

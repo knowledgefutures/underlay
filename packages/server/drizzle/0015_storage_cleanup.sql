@@ -7,6 +7,8 @@ CREATE TABLE `cleanup_runs` (
 	`requested_by` text,
 	`mark_run_id` text,
 	`state` text,
+	`seq` integer DEFAULT 0 NOT NULL,
+	`lease` integer,
 	`stats` text,
 	`error` text,
 	`started_at` integer,
@@ -25,5 +27,7 @@ CREATE TABLE `storage_fence` (
 );
 --> statement-breakpoint
 ALTER TABLE `push_sessions` ADD `cleaned_at` integer;--> statement-breakpoint
+ALTER TABLE `versions` ADD `published_at` integer;--> statement-breakpoint
+CREATE INDEX `versions_published_idx` ON `versions` (`published_at`);--> statement-breakpoint
 -- The write fence's one row (cleanup/fence.ts).
 INSERT INTO `storage_fence` (`id`, `epoch`) VALUES (1, 0);

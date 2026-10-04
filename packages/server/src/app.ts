@@ -10,6 +10,7 @@ import { accountRoutes } from './api/accounts.js'
 import { adminRoutes } from './api/admin.js'
 import { arkRoutes } from './api/ark.js'
 import { avatarRoutes } from './api/avatars.js'
+import { cleanupRoutes } from './api/cleanup.js'
 import { collectionRoutes } from './api/collections.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
@@ -233,6 +234,7 @@ export function createApp(setup: Setup) {
   // Before collectionRoutes: /api/accounts/me would match /api/accounts/:slug.
   app.route('/', accountRoutes())
   app.route('/', adminRoutes())
+  app.route('/', cleanupRoutes())
   app.route('/', statsRoutes())
   app.route('/', collectionRoutes())
 

@@ -145,6 +145,14 @@ const runJobs = async () => {
 }
 kick = () => void runJobs()
 setInterval(kick, 5000).unref()
+// The housekeeping Cloudflare's cron runs every 10 minutes (wrangler.jsonc triggers).
+setInterval(
+  () =>
+    void jobsTable
+      .enqueue({ type: 'maintenance.sweep' })
+      .catch((err) => console.error('[maintenance]', err)),
+  10 * 60 * 1000,
+).unref()
 
 const config = {
   appUrl,

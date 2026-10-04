@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "92de99aa-00bf-4fd2-a322-fd4a6305a4da",
+  "id": "3b941038-b8ae-4879-b9ab-579e9612d18a",
   "prevId": "9f8e22ed-5bb3-4450-b7aa-79d946873caa",
   "tables": {
     "abuse_reports": {
@@ -613,6 +613,21 @@
         "state": {
           "name": "state",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "lease": {
+          "name": "lease",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -3414,6 +3429,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": "(unixepoch('subsec') * 1000)"
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -3440,6 +3462,11 @@
         "versions_legacy_public_hash_idx": {
           "name": "versions_legacy_public_hash_idx",
           "columns": ["legacy_public_hash"],
+          "isUnique": false
+        },
+        "versions_published_idx": {
+          "name": "versions_published_idx",
+          "columns": ["published_at"],
           "isUnique": false
         }
       },

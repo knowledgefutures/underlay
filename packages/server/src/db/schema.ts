@@ -291,6 +291,12 @@ export const versions = sqliteTable(
     /** Change counts against the previous version (drive semver and webhooks). */
     changes: json<{ added: number; removed: number; updated: number }>('changes'),
     createdAt: createdAt(),
+    /**
+     * When this instance published it. Unlike createdAt, never historical (restore
+     * and migration keep the original time there). Storage cleanup re-marks from
+     * versions published since its mark began; null on rows from before 0015.
+     */
+    publishedAt: ts('published_at'),
   },
   (t) => [
     uniqueIndex('versions_collection_seq_uq').on(t.collectionId, t.seq),
@@ -298,6 +304,7 @@ export const versions = sqliteTable(
     index('versions_hash_idx').on(t.hash),
     index('versions_legacy_hash_idx').on(t.legacyHash),
     index('versions_legacy_public_hash_idx').on(t.legacyPublicHash),
+    index('versions_published_idx').on(t.publishedAt),
   ],
 )
 
@@ -943,6 +950,10 @@ export const cleanupRuns = sqliteTable(
     markRunId: text('mark_run_id'),
     /** Progress carried between the run's jobs. */
     state: json<Record<string, unknown>>('state'),
+    /** The job that may run next; a duplicate or stale delivery carries another. */
+    seq: integer('seq').notNull().default(0),
+    /** Held while a job of the run works, so a duplicate delivery waits. */
+    lease: ts('lease'),
     stats: json<CleanupStats>('stats'),
     /** Why it stopped (failed), or what it is waiting for (waiting). */
     error: text('error'),

@@ -11,12 +11,15 @@
  *   mirror.version      copy the next version to a bucket mirror (locations/mirror.ts);
  *                       queued after each publish, and by the sweep for laggards
  *   restore.version     rebuild a collection from a location, a version at a time
+ *   maintenance.sweep   the cron's housekeeping (every 10 minutes), storage cleanup included
+ *   cleanup.*           storage cleanup runs (cleanup/runs.ts)
  */
 import { type BumpType, fsck, readCollectionInfo, readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import './files/files.js'
 import { reconcileDue } from './billing/reconcile.js'
+import { cleanupTick } from './cleanup/runs.js'
 import * as schema from './db/schema.js'
 import './push/compact.js'
 import './push/parallel.js'
@@ -51,6 +54,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await ports.jobs.enqueueBatch(
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
+  // Storage cleanup: finished sessions and abandoned uploads, stalled runs, the weekly run.
+  await cleanupTick(ports)
 })
 
 /**
