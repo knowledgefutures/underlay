@@ -4,24 +4,21 @@
  * same trees when the version is pushed.
  */
 import {
-  applyFileSet,
   buildVersion,
   type BuildTypeInput,
   type Change,
   compareUtf8,
   compileSchema,
   deriveSemver,
-  emptySet,
-  fileRefs,
   fileTree,
   hashSchema,
   isPrivateSchema,
   iterate,
   keys,
   MissingFilesError,
+  rebuildFileRefs,
   OUT_OF_LINE_BYTES,
   type RecordEntry,
-  recordTree,
   RepoSource,
   type SetObject,
   sha256Hex,
@@ -65,42 +62,14 @@ export async function ensureRefs(
   state: VersionState,
 ): Promise<{ public: string | null; private: string | null }> {
   if (state.version.refs) return state.version.refs
-  const repo = local.repo
-  const out = { public: null as string | null, private: null as string | null }
-  for (const name of ['public', 'private'] as const) {
-    const set = state[name]
-    const counts = new Map<string, number>()
-    for (const t of Object.values(set.types)) {
-      for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
-        if (!e.body!.includes('"$file"')) continue
-        for (const h of fileRefs((JSON.parse(e.body!) as { data: unknown }).data)) {
-          counts.set(h, (counts.get(h) ?? 0) + 1)
-        }
-      }
-    }
-    const inSet: string[] = []
-    const sizes = new Map<string, number>()
-    for await (const e of iterate(new RepoSource(fileTree, repo), set.files.root)) {
-      inSet.push(e.key)
-      sizes.set(e.key, e.size)
-    }
-    const declared = name === 'private' ? inSet.filter((h) => !counts.has(h)) : []
-    const result = await applyFileSet(
-      repo,
-      { refsRoot: null, files: emptySet().files },
-      counts,
-      declared.length > 0 ? { add: declared, remove: [] } : null,
-      async (hs) => new Map(hs.filter((h) => sizes.has(h)).map((h) => [h, sizes.get(h)!])),
-    )
-    if (result.files.root !== set.files.root) {
-      throw new CliError(
-        `The ${name} file set of ${state.version.semver} doesn't match its records`,
-      )
-    }
-    out[name] = result.refsRoot
+  let refs
+  try {
+    refs = await rebuildFileRefs(local.repo, { public: state.public, private: state.private })
+  } catch (err) {
+    throw new CliError(`${state.version.semver}: ${(err as Error).message}`)
   }
-  local.writeVersion({ ...state.version, refs: out })
-  return out
+  local.writeVersion({ ...state.version, refs })
+  return refs
 }
 
 /** The staged operations, last one per (type, id) winning, sorted per type. */

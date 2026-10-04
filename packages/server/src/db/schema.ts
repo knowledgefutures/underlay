@@ -425,6 +425,39 @@ export const placements = sqliteTable(
   ],
 )
 
+/**
+ * Restoring a collection from a storage location (locations/restore.ts): one
+ * version per job, oldest first, into a new collection on this instance.
+ */
+export const restores = sqliteTable('restores', {
+  id: id(),
+  organizationId: text('organization_id')
+    .notNull()
+    .references(() => organization.id, { onDelete: 'cascade' }),
+  locationId: text('location_id')
+    .notNull()
+    .references(() => storageLocations.id, { onDelete: 'cascade' }),
+  /** The collection's id in the location (`collections/<id>/`). */
+  sourceCollectionId: text('source_collection_id').notNull(),
+  collectionId: text('collection_id')
+    .notNull()
+    .references(() => collections.id, { onDelete: 'cascade' }),
+  sets: text('sets', { enum: ['public', 'all'] }).notNull(),
+  /** Signing key ids trusted besides this deployment's own. */
+  trustKeyIds: json<string[]>('trust_key_ids').notNull(),
+  status: text('status', { enum: ['running', 'done', 'failed'] })
+    .notNull()
+    .default('running'),
+  restoredSeq: integer('restored_seq').notNull().default(0),
+  lastEntryHash: text('last_entry_hash'),
+  lastVersionHash: text('last_version_hash'),
+  error: text('error'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at')
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
+
 // --- Files -------------------------------------------------------------------------
 
 export const files = sqliteTable('files', {

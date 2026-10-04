@@ -10,6 +10,7 @@
  *   commit.assemble     (push/parallel.ts)
  *   mirror.version      copy the next version to a bucket mirror (locations/mirror.ts);
  *                       queued after each publish, and by the sweep for laggards
+ *   restore.version     rebuild a collection from a location, a version at a time
  */
 import { readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
@@ -21,6 +22,7 @@ import './push/compact.js'
 import './push/parallel.js'
 import './refs/log.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
+import './locations/restore.js'
 import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'
 import type { BumpType } from './versions/semver.js'

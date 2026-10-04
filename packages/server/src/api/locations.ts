@@ -14,6 +14,9 @@
  *   POST   /api/collections/:owner/:slug/placements {locationId, sets}
  *   POST   /api/collections/:owner/:slug/placements/:id/sync
  *   DELETE /api/collections/:owner/:slug/placements/:id
+ *   POST   /api/orgs/:org/restores                  {locationId, collectionId, slug, name?,
+ *                                                    trustKeyIds?}: rebuild a collection here
+ *   GET    /api/orgs/:org/restores/:id
  *
  * A location that serves objects without credentials may only hold public sets.
  * Deleting a mirror never deletes what it copied: the bucket is the customer's.
@@ -23,6 +26,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { validateSlug } from '../lib/slug.js'
 import {
   checkEndpoint,
   checkLocation,
@@ -30,6 +34,8 @@ import {
   type LocationRow,
 } from '../locations/locations.js'
 import { collectionMirrors, queueMirrors } from '../locations/mirror.js'
+import { inspectSource, RestoreError } from '../locations/restore.js'
+import { createCollectionRows } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
 import { isAdmin, membership } from './manage.js'
 
@@ -346,5 +352,85 @@ export function locationRoutes() {
     return c.body(null, 204)
   })
 
+  app.post('/api/orgs/:org/restores', async (c) => {
+    const org = await orgAdmin(c)
+    if (org instanceof Response) return org
+    const ports = c.var.ports
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    const loc = await orgLocation(c, org.id, String(body.locationId ?? ''))
+    if (!loc) return jsonError(c, 404, 'Location not found')
+    const sourceId = str(body.collectionId, 64)
+    if (!sourceId) return jsonError(c, 400, '"collectionId" names the collection in the location')
+    const slugError = validateSlug(body.slug)
+    if (slugError) return jsonError(c, 422, slugError)
+    const slug = body.slug as string
+    const [taken] = await ports.db
+      .select({ id: schema.collections.id })
+      .from(schema.collections)
+      .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
+    if (taken) return jsonError(c, 409, 'Collection already exists')
+    let source
+    try {
+      source = await inspectSource(ports, loc, sourceId)
+    } catch (err) {
+      if (err instanceof RestoreError) return jsonError(c, 422, err.message)
+      throw err
+    }
+    const trustKeyIds = Array.isArray(body.trustKeyIds)
+      ? body.trustKeyIds.filter((k): k is string => typeof k === 'string')
+      : []
+    const col = await createCollectionRows(ports, {
+      organizationId: org.id,
+      slug,
+      name: str(body.name, 200) ?? source.info.name ?? slug,
+      public: false,
+    })
+    const [restore] = await ports.db
+      .insert(schema.restores)
+      .values({
+        organizationId: org.id,
+        locationId: loc.id,
+        sourceCollectionId: sourceId,
+        collectionId: col.id,
+        sets: source.sets,
+        trustKeyIds,
+      })
+      .returning()
+    await ports.jobs.enqueue({ type: 'restore.version', restoreId: restore!.id })
+    return c.json(
+      {
+        restore: restoreView(restore!),
+        collection: { id: col.id, owner: org.slug, slug },
+        versions: source.head.seq,
+      },
+      202,
+    )
+  })
+
+  app.get('/api/orgs/:org/restores/:id', async (c) => {
+    const org = await orgAdmin(c)
+    if (org instanceof Response) return org
+    const [r] = await c.var.ports.db
+      .select()
+      .from(schema.restores)
+      .where(
+        and(eq(schema.restores.id, c.req.param('id')), eq(schema.restores.organizationId, org.id)),
+      )
+    if (!r) return jsonError(c, 404, 'Restore not found')
+    return c.json({ restore: restoreView(r) })
+  })
+
   return app
+}
+
+function restoreView(r: typeof schema.restores.$inferSelect) {
+  return {
+    id: r.id,
+    status: r.status,
+    collectionId: r.collectionId,
+    sets: r.sets,
+    restoredSeq: r.restoredSeq,
+    error: r.error,
+    updatedAt: r.updatedAt,
+  }
 }

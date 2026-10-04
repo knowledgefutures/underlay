@@ -24,6 +24,7 @@ export {
   type FileSetResult,
   type FileSizes,
   MissingFilesError,
+  rebuildFileRefs,
   type SetName,
 } from './repo/file-sets.js'
 export {

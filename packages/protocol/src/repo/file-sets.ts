@@ -26,6 +26,8 @@ import {
   iterate,
   mergeTree,
   type RecordEntry,
+  recordTree,
+  type SetObject,
   type TreeSummary,
 } from '../format.js'
 import { type Repo, RepoSink, RepoSource } from './repo.js'
@@ -160,4 +162,43 @@ export async function applyFileSet(
       : { root: null, count: 0, bytes: 0 },
     added: entering,
   }
+}
+
+/**
+ * The file reference count trees of a version, rebuilt from its records (they
+ * are writer bookkeeping and travel with no sync, mirror or restore). Every
+ * reference counts, and a private-set file no record references was declared.
+ * Throws if the rebuilt file sets differ from the version's.
+ */
+export async function rebuildFileRefs(
+  repo: Repo,
+  sets: { public: SetObject; private: SetObject },
+): Promise<{ public: string | null; private: string | null }> {
+  const out = { public: null as string | null, private: null as string | null }
+  for (const name of ['public', 'private'] as const) {
+    const set = sets[name]
+    const counts = new Map<string, number>()
+    for (const t of Object.values(set.types)) {
+      for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
+        for (const h of refsOfBody(e.body)) counts.set(h, (counts.get(h) ?? 0) + 1)
+      }
+    }
+    const sizes = new Map<string, number>()
+    for await (const e of iterate(new RepoSource(fileTree, repo), set.files.root)) {
+      sizes.set(e.key, e.size)
+    }
+    const declared = name === 'private' ? [...sizes.keys()].filter((h) => !counts.has(h)) : []
+    const result = await applyFileSet(
+      repo,
+      { refsRoot: null, files: { root: null, count: 0, bytes: 0 } },
+      counts,
+      declared.length > 0 ? { add: declared, remove: [] } : null,
+      async (hs) => new Map(hs.filter((h) => sizes.has(h)).map((h) => [h, sizes.get(h)!])),
+    )
+    if (result.files.root !== set.files.root) {
+      throw new Error(`The ${name} file set doesn't match its records' references`)
+    }
+    out[name] = result.refsRoot
+  }
+  return out
 }

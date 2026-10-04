@@ -245,7 +245,9 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
 }
 
 /** Bounded fields for collection lists, from the version metadata. */
-function summarize(metadata: Record<string, unknown> | null): schema.CollectionSummary | null {
+export function summarize(
+  metadata: Record<string, unknown> | null,
+): schema.CollectionSummary | null {
   if (!metadata) return null
   const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : undefined)
   const out: schema.CollectionSummary = {}
@@ -264,7 +266,7 @@ function summarize(metadata: Record<string, unknown> | null): schema.CollectionS
   return out
 }
 
-async function mergeCumulativeFiles(
+export async function mergeCumulativeFiles(
   ports: Ports,
   repo: Repo,
   root: string | null,
