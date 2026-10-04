@@ -34,7 +34,7 @@ import {
   type Ports,
   type TypeInput,
 } from '@underlay/server'
-import { getTableColumns } from 'drizzle-orm'
+import { eq, getTableColumns } from 'drizzle-orm'
 
 /** Anything that runs a parameterized query against the v1 database. */
 export interface V1Db {
@@ -492,6 +492,11 @@ export async function migrateCollection(
       .onConflictDoNothing()
   }
   report.legacyRecordAliases += aliases.length
+  // Publishing the replayed versions stamped the conversion time; keep v1's.
+  await ports.db
+    .update(schema.collections)
+    .set({ updatedAt: col.updated_at })
+    .where(eq(schema.collections.id, col.id))
 }
 
 /** Everything: accounts, collections (each with its history), then collection settings. */

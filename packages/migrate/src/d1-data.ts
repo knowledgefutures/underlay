@@ -10,8 +10,10 @@
  * `INSERT OR IGNORE`, so a row a migration already seeded (the platform
  * location) is kept rather than refused. Not OR REPLACE: replacing deletes the
  * row first, and the delete cascades to rows already imported (placements).
- * Foreign keys are checked at the end of the import, so table order doesn't
- * matter. Load into an empty database: existing rows win.
+ * Tables are written parents first, by their foreign keys: D1's remote import
+ * doesn't keep `defer_foreign_keys` across the file, so a child row ahead of its
+ * parent failed the whole import (found loading dev into staging). The pragma
+ * stays for any cycle. Load into an empty database: existing rows win.
  */
 import { createClient, type InValue } from '@libsql/client'
 
@@ -38,8 +40,32 @@ function literal(v: InValue): string {
 const out = process.stdout
 out.write('PRAGMA defer_foreign_keys = true;\n')
 const tables = await db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-for (const { name } of tables.rows as unknown as { name: string }[]) {
-  if (SKIP.test(name)) continue
+const names = (tables.rows as unknown as { name: string }[])
+  .map((r) => r.name)
+  .filter((n) => !SKIP.test(n))
+const parents = new Map<string, string[]>()
+for (const n of names) {
+  const fks = await db.execute(`SELECT DISTINCT "table" AS t FROM pragma_foreign_key_list('${n}')`)
+  const ts = (fks.rows as unknown as { t: string }[]).map((r) => r.t)
+  parents.set(
+    n,
+    ts.filter((t) => t !== n && names.includes(t)),
+  )
+}
+const ordered: string[] = []
+while (ordered.length < names.length) {
+  const ready = names.filter(
+    (n) => !ordered.includes(n) && parents.get(n)!.every((p) => ordered.includes(p)),
+  )
+  if (ready.length === 0) {
+    const rest = names.filter((n) => !ordered.includes(n))
+    console.error(`[d1-data] foreign key cycle among ${rest.join(', ')}; relying on deferral`)
+    ordered.push(...rest)
+    break
+  }
+  ordered.push(...ready)
+}
+for (const name of ordered) {
   const rows = await db.execute(`SELECT * FROM "${name}"`)
   if (rows.rows.length === 0) continue
   const cols = rows.columns.map((c) => `"${c}"`).join(', ')

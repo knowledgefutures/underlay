@@ -8,6 +8,7 @@ import { join } from 'node:path'
 
 import { PGlite } from '@electric-sql/pglite'
 import { hashRecord, hashSchema, legacyRecordHash, verifyLog } from '@underlay/protocol'
+import { dbSchema } from '@underlay/server'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { cleanup, harness } from '../../server/test/harness.js'
@@ -184,6 +185,11 @@ describe('v1 → v2 migration', () => {
 
       const json = async (path: string, user?: string) =>
         (await (await h.request(path, user ? { user } : {})).json()) as any
+      const [lib] = await h.ports.db.select().from(dbSchema.collections)
+      const v1Updated = (await pg.query(`SELECT updated_at FROM collections`)).rows[0] as {
+        updated_at: Date
+      }
+      expect(lib!.updatedAt.getTime()).toBe(v1Updated.updated_at.getTime())
       const versions = await json('/api/collections/org/lib/versions', 'u1')
       const first = await json('/api/collections/org/lib/versions/v1.0.0/records?type=Author', 'u1')
       expect(first.records.find((r: any) => r.id === 'c').data).toEqual({ name: 'C' })
