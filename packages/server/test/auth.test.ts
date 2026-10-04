@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createApp } from '../src/app.js'
@@ -197,5 +198,52 @@ describe('KF org links on organizations', () => {
     const link = (slug: string) => orgs.find((o) => o.slug === slug)?.kfOrgId
     expect(link('mine')).toBe('kf-mine')
     expect(link('theirs')).toBe('kf-default')
+
+    // Logos come from the upload only: better-auth's fields are any URL.
+    await auth.api.createOrganization({
+      body: {
+        name: 'logo',
+        slug: 'logo',
+        userId: user.id,
+        logo: 'https://evil.example/x.png',
+      } as never,
+    })
+    const [logo] = await h.ports.db
+      .select()
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, 'logo'))
+    expect(logo!.logo).toBeNull()
+    expect(logo!.avatarUrl).toBeNull()
+    await auth.api.createOrganization({
+      body: {
+        name: 'av',
+        slug: 'av',
+        userId: user.id,
+        avatarUrl: 'https://evil.example/x.png',
+      } as never,
+    })
+    const [av] = await h.ports.db
+      .select()
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, 'av'))
+    expect(av!.avatarUrl).toBeNull()
+
+    // better-auth's org update and delete are closed; the account routes apply the rules.
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+      authHandler: (req) => auth.handler(req),
+    }))
+    for (const route of ['update', 'delete']) {
+      const res = await app.fetch(
+        new Request(`http://test/api/auth/organization/${route}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ organizationId: 'org1' }),
+        }),
+      )
+      expect(res.status).toBe(404)
+    }
   })
 })

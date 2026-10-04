@@ -88,7 +88,8 @@ export function createAuth(
             additionalFields: {
               bio: { type: 'string', required: false, input: true },
               website: { type: 'string', required: false, input: true },
-              avatarUrl: { type: 'string', required: false, input: true },
+              // Set only by the logo upload (api/avatars.ts), never by a client.
+              avatarUrl: { type: 'string', required: false, input: false },
               // Server-controlled, as in v1: a caller must not claim another
               // institution's NAAN or the default-org flag.
               arkNaan: { type: 'string', required: false, input: false },
@@ -102,11 +103,13 @@ export function createAuth(
         organizationHooks: {
           beforeCreateOrganization: async ({ organization: org, user }) => {
             assertValidSlug(org.slug)
+            // Logo fields would take any URL; logos come from the upload only.
+            const base = { ...org, logo: null, avatarUrl: null }
             const asked = (org as { kfOrgId?: string | null }).kfOrgId
-            if (asked && kf && (await kf.entitled(user.id, asked))) return
+            if (asked && kf && (await kf.entitled(user.id, asked))) return { data: base }
             // Not one of theirs (or none asked): the server's choice, never the client's.
             const kfOrgId = kf ? await kf.defaultOrgId(user.id) : null
-            return { data: { ...org, kfOrgId: kfOrgId ?? null } }
+            return { data: { ...base, kfOrgId: kfOrgId ?? null } }
           },
           beforeUpdateOrganization: async ({ organization: org, user }) => {
             if (org.slug !== undefined) assertValidSlug(org.slug)

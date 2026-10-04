@@ -93,6 +93,15 @@ export function createApp(setup: Setup) {
   /** Requests the page renderer makes to this app in-process, with their page's context. */
   const inProcess = new WeakMap<Request, PageContext>()
 
+  // better-auth's org update and delete skip Underlay's rules (slugs, logos, the
+  // check that an org holds no collections). The account routes do both.
+  app.post('/api/auth/organization/update', (c) =>
+    c.json({ error: 'Update an organization with PATCH /api/accounts/:slug' }, 404),
+  )
+  app.post('/api/auth/organization/delete', (c) =>
+    c.json({ error: 'Delete an organization with DELETE /api/accounts/:slug' }, 404),
+  )
+
   app.on(['GET', 'POST'], '/api/auth/*', (c) => {
     const { authHandler } = setup(c)
     return authHandler

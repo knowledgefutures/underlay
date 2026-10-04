@@ -202,7 +202,7 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
     // Every version a deleted collection's log names still checks out in full. (Its
     // derived trees, file reference counts and the cumulative public files tree,
-    // aren't kept: a restore rebuilds them.)
+    // aren't kept: they're bookkeeping for new commits.)
     const platform = await h.ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
     for (const id of [a.id, cRow!.id]) {
       const report = await fsck(platform, {
@@ -248,6 +248,31 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     expect(again.stats!.unknown).toBeGreaterThan(0)
     expect(h.bucket.objects.has('repo/nodes/not-a-hash')).toBe(true)
     expect(again.stats!.deleted.nodes).toBeUndefined()
+  })
+
+  it('gives a collection deleted with its org a tombstone and its grace period', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('a')
+    await push(h, user, 'a', docs('a', 20, 'org pdf'), 'org pdf')
+    // However the org row goes, its collections cascade with it.
+    await h.ports.db.delete(schema.organization).where(eq(schema.organization.id, 'org1'))
+    const [stone] = await h.ports.db
+      .select()
+      .from(schema.collectionTombstones)
+      .where(eq(schema.collectionTombstones.collectionId, a.id))
+    expect(stone).toMatchObject({ organizationId: 'org1', slug: 'a', versions: 1 })
+    expect(stone!.totalBytes).toBeGreaterThan(0)
+    ageAll(h)
+    const mark = await run(h, 'mark')
+    expect(mark.stats!.collections).toBe(1)
+    const sweep = await run(h, 'sweep')
+    expect(sweep.stats!.deleted.files).toBeUndefined()
+    expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(true)
+    await pastGrace(h)
+    await run(h, 'mark')
+    await run(h, 'sweep')
+    expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(false)
   })
 
   it("keeps a deleted collection's leftovers that a later push reuses", async () => {
