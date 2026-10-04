@@ -12,7 +12,8 @@
  * - Keywords draft-07 doesn't define are ignored. That includes later drafts'
  *   keywords, which @cfworker/json-schema would otherwise enforce in any draft.
  * - `format` constrains strings only, with ajv-formats' definitions (see
- *   AJV_FORMATS below). Unknown formats are ignored.
+ *   AJV_FORMATS below), kept apart from the library's own table. Unknown
+ *   formats are ignored.
  * - A schema must itself be valid against the draft-07 meta-schema, every
  *   `pattern` must be a valid Unicode (`u` flag) regex, and every `$ref` must
  *   resolve inside the schema; all three are checked when it is compiled.
@@ -133,6 +134,7 @@ function build(schema: unknown): SchemaValidator {
   // A bare copy: the library tests membership with `in`, and annotates the
   // schema objects it is given.
   const body = bare(schema) as Schema
+  registerFormats()
   const meta = interpret(body, META_SCHEMA, '7', META_LOOKUP, true)
   if (!meta.valid) {
     throw new SchemaError(
@@ -229,7 +231,10 @@ function hasBranching(node: unknown): boolean {
   return false
 }
 
-/** Remove, in place, the keywords @cfworker/json-schema honours but draft-07 doesn't. */
+/**
+ * Remove, in place, the keywords @cfworker/json-schema honours but draft-07
+ * doesn't, and point formats at the dialect's definitions.
+ */
 function toDialect(node: unknown): void {
   if (Array.isArray(node)) {
     for (const item of node) toDialect(item)
@@ -237,6 +242,7 @@ function toDialect(node: unknown): void {
   }
   if (!isObject(node)) return
   for (const k of NOT_DRAFT_07) delete node[k]
+  namespaceFormat(node)
   for (const [k, v] of Object.entries(node)) {
     if (DATA_KEYWORDS.has(k)) continue
     if (MAP_KEYWORDS.has(k) && isObject(v)) {
@@ -363,12 +369,33 @@ const AJV_FORMATS: Record<string, (s: string) => boolean> = {
   byte: matches(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/m),
 }
 
-// The library reads formats from this shared table; there is no per-validator
-// option. Nothing else in the Worker uses the library, so replacing entries is
-// safe. Without a prototype, `format: "hasOwnProperty"` is an unknown format
-// (ignored) rather than a method called on every string.
-Object.assign(formats, AJV_FORMATS)
-Object.setPrototypeOf(formats, null)
+// The library reads formats from one shared table, with no per-validator
+// option. Overwriting its entries would change validation for any other user of
+// the library in the same bundle, so the dialect's formats are registered under
+// their own names (`underlay:date`, …) on first compile, and our copy of each
+// schema points at those (`namespaceFormat`). Formats the dialect doesn't know
+// are dropped from the copy: they are ignored, and a name like `hasOwnProperty`
+// never reaches the table's prototype.
+const FORMAT_PREFIX = 'underlay:'
+const DIALECT_FORMATS: Record<string, (s: string) => boolean> = Object.assign(
+  Object.create(null) as Record<string, (s: string) => boolean>,
+  Object.fromEntries(Object.entries(formats).filter(([k]) => !k.startsWith(FORMAT_PREFIX))),
+  AJV_FORMATS,
+)
+let formatsRegistered = false
+function registerFormats(): void {
+  if (formatsRegistered) return
+  const table = formats as Record<string, (s: string) => boolean>
+  for (const [name, check] of Object.entries(DIALECT_FORMATS)) table[FORMAT_PREFIX + name] = check
+  formatsRegistered = true
+}
+
+/** In our copy of a schema node: point `format` at the dialect's definition, or drop it. */
+function namespaceFormat(node: Record<string, unknown>): void {
+  if (typeof node.format !== 'string') return
+  if (Object.hasOwn(DIALECT_FORMATS, node.format)) node.format = FORMAT_PREFIX + node.format
+  else delete node.format
+}
 
 // --- Messages -----------------------------------------------------------------
 //
@@ -500,7 +527,7 @@ function describe(
     case 'pattern':
       return `must match pattern "${String(value())}"`
     case 'format':
-      return `must match format "${String(value())}"`
+      return `must match format "${String(value()).slice(FORMAT_PREFIX.length)}"`
     default:
       return e.error
   }
@@ -794,4 +821,6 @@ const META_SCHEMA: Schema = {
   default: true,
 }
 
+// The meta-schema's formats (uri, uri-reference, regex) are the dialect's too.
+toDialect(META_SCHEMA)
 const META_LOOKUP: Lookup = dereference(META_SCHEMA, Object.create(null) as Lookup, BASE_URI)

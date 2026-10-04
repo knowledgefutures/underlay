@@ -4,16 +4,19 @@
   "private": true,
   "description": "Underlay protocol v2: the format (canonical JSON, hashing, input rules, validation, content-addressed trees, version roots), the repository layout and signed version log, and the stores that hold them.",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "vectors": "tsx scripts/gen-vectors.ts"
+    "vectors": "tsx scripts/gen-vectors.ts",
+    "check-browser": "tsx scripts/check-browser-bundle.ts"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
+    "@noble/hashes": "^2.2.0",
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
@@ -21,6 +24,7 @@
     "@types/node": "^25.0.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "esbuild": "0.27.7",
     "fast-check": "^4.3.0",
     "miniflare": "5.20261001.0-alpha",
     "tsx": "^4.19.0",

@@ -11,7 +11,6 @@
  * alternatives (a size-aware chunker). The protocol has exactly one rule:
  * `protocolChunking`.
  */
-import { createHash } from 'node:crypto'
 
 import {
   INTERIOR_BOUNDARY_BITS_STEP,
@@ -19,10 +18,11 @@ import {
   LEAF_BOUNDARY_BITS,
   LEAF_MAX_ENTRIES,
 } from '../constants.js'
+import { sha256 } from '../sha256.js'
 
 /** The first 8 bytes of sha256(utf8(key)). */
 export function boundaryBytes(key: string): Uint8Array {
-  return createHash('sha256').update(key, 'utf8').digest().subarray(0, 8)
+  return sha256(key).subarray(0, 8)
 }
 
 /** Trailing zero bits of u(k), 0–64. */

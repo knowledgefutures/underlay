@@ -10,7 +10,7 @@
  * values are frozen (edge-redesign-build.md, "Decisions made while building").
  */
 
-/** The `underlay` field of every version root. */
+/** The `underlay` field of every version root this package writes. */
 export const FORMAT_VERSION = 2
 
 /** Prefix of a format-2 version hash string: `ulv2:<64 hex>`. */

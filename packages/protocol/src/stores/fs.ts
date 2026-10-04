@@ -7,8 +7,9 @@
  * through `serveSignedBlob`. Bytes still never pass through the API routes, and
  * the same client flow (presigned PUT, then GET by redirect) works as on R2.
  *
- * Node modules load on first use, so importing the package never pulls in
- * `node:fs` (browsers, Workers).
+ * Node's modules are fetched on first use with `process.getBuiltinModule`, so
+ * importing the package never pulls in `node:fs` (browsers, Workers), and no
+ * bundler trips over a `node:` import.
  */
 import type * as NodeFs from 'node:fs'
 import type * as NodeFsp from 'node:fs/promises'
@@ -39,14 +40,21 @@ interface NodeModules {
   path: typeof NodePath
   stream: typeof NodeStream
 }
-let nodeModules: Promise<NodeModules> | undefined
-const node = () =>
-  (nodeModules ??= Promise.all([
-    import('node:fs'),
-    import('node:fs/promises'),
-    import('node:path'),
-    import('node:stream'),
-  ]).then(([fs, fsp, path, stream]) => ({ fs, fsp, path, stream })))
+type GetBuiltin = (id: string) => unknown
+let nodeModules: NodeModules | undefined
+/** Node's modules, through `process.getBuiltinModule` so no bundler sees a `node:` import. */
+const node = async (): Promise<NodeModules> => {
+  if (nodeModules) return nodeModules
+  const get = (globalThis as { process?: { getBuiltinModule?: GetBuiltin } }).process
+    ?.getBuiltinModule
+  if (!get) throw new Error('fileStore needs Node (process.getBuiltinModule, Node ≥ 22.3)')
+  return (nodeModules = {
+    fs: get('node:fs') as typeof NodeFs,
+    fsp: get('node:fs/promises') as typeof NodeFsp,
+    path: get('node:path') as typeof NodePath,
+    stream: get('node:stream') as typeof NodeStream,
+  })
+}
 
 const enc = new TextEncoder()
 const hex = (b: ArrayBuffer) =>

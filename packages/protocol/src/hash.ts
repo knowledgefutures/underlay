@@ -1,11 +1,7 @@
-import { createHash } from 'node:crypto'
-
 import { jcs } from './jcs.js'
+import { sha256Hex } from './sha256.js'
 
-/** Lowercase hex SHA-256 of a string (as UTF-8) or bytes. */
-export function sha256Hex(input: string | Uint8Array): string {
-  return createHash('sha256').update(input).digest('hex')
-}
+export { sha256Hex }
 
 /**
  * The canonical record: a fixed `{"id","type","data"}` envelope with only `data`

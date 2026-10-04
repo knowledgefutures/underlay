@@ -35,6 +35,7 @@ import {
   sha256Hex,
   type TreeSink,
   type TreeSpec,
+  checkProtocolVersion,
   type VersionRoot,
   versionDigest,
   versionHash,
@@ -67,13 +68,29 @@ export const outOfLinePointer = (recordHash: string) => `${REF_PREFIX}${recordHa
 
 const dec = new TextDecoder()
 
-/** Per-isolate memory shared by every request and every repository. */
-const isolateLru = new Lru<unknown>(32 * 1024 * 1024, (v) => {
+const sizeOf = (v: unknown) => {
   if (typeof v === 'string') return v.length * 2
   if (v && typeof v === 'object' && 'approxBytes' in v)
     return (v as { approxBytes: number }).approxBytes
   return 1024
-})
+}
+
+/** A memory cache for decoded nodes and bodies, of about `bytes`. */
+export function repoLru(bytes: number): Lru<unknown> {
+  return new Lru<unknown>(bytes, sizeOf)
+}
+
+let shared: Lru<unknown> | undefined
+/**
+ * One memory cache for every repository in the process (a server isolate),
+ * created on first use. Repositories get a small private cache unless they ask
+ * for this one.
+ */
+export function sharedLru(bytes = 32 * 1024 * 1024): Lru<unknown> {
+  return (shared ??= repoLru(bytes))
+}
+
+const DEFAULT_MEMORY_BYTES = 8 * 1024 * 1024
 
 export class IntegrityError extends Error {
   constructor(message: string) {
@@ -83,12 +100,24 @@ export class IntegrityError extends Error {
 }
 
 export interface RepoOptions {
+  /** A shared cache for immutable bytes (the Cache API on Workers). None by default. */
   cache?: Cache
-  /** Namespaces cache and LRU keys (the location id). */
-  scope: string
-  /** False for locations we don't operate: verify every object before use. */
-  trusted: boolean
+  /** Namespaces cache and LRU keys when several locations share them (the location id). */
+  scope?: string
+  /**
+   * True only for locations you operate. Otherwise (the default) every object is
+   * hash-verified before it's used or cached.
+   */
+  trusted?: boolean
+  /** The memory cache to use, e.g. `sharedLru()`. */
   lru?: Lru<unknown>
+  /** Size of a private memory cache when `lru` isn't given (default 8 MB). */
+  memoryBytes?: number
+}
+
+/** Open the repository in a store. */
+export function openRepo(store: Store, opts: RepoOptions = {}): Repo {
+  return new Repo(store, opts)
 }
 
 export class Repo {
@@ -99,12 +128,12 @@ export class Repo {
 
   constructor(
     readonly blobs: Store,
-    opts: RepoOptions,
+    opts: RepoOptions = {},
   ) {
     this.cache = opts.cache ?? noCache
-    this.lru = opts.lru ?? isolateLru
-    this.scope = opts.scope
-    this.trusted = opts.trusted
+    this.lru = opts.lru ?? repoLru(opts.memoryBytes ?? DEFAULT_MEMORY_BYTES)
+    this.scope = opts.scope ?? ''
+    this.trusted = opts.trusted ?? false
   }
 
   #ck(key: string) {
@@ -246,10 +275,15 @@ export class Repo {
     return value
   }
 
-  root(hash: string): Promise<VersionRoot> {
-    return this.#json<VersionRoot>(keys.root(hash), (_t, root) => {
-      if (versionHash(root) !== hash) throw new IntegrityError(`Root ${hash} fails its hash`)
+  /** A version root. Throws UnsupportedProtocolError for a protocol version this package can't read. */
+  async root(hash: string): Promise<VersionRoot> {
+    const root = await this.#json<VersionRoot>(keys.root(hash), (_t, r) => {
+      // The version first: a later protocol hashes roots differently.
+      checkProtocolVersion(r)
+      if (versionHash(r) !== hash) throw new IntegrityError(`Root ${hash} fails its hash`)
     })
+    checkProtocolVersion(root)
+    return root
   }
 
   async putRoot(root: VersionRoot): Promise<string> {

@@ -12,6 +12,13 @@ import {
   TreeBuilder,
   utf8ByteLength,
   verifyTree,
+  emptySet,
+  jcs,
+  makeRoot,
+  PROTOCOL_VERSION,
+  sha256Hex,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  UnsupportedProtocolError,
 } from '../../src/format.js'
 import { gzip } from '../../src/repo/gzip.js'
 import { Lru } from '../../src/repo/lru.js'
@@ -177,6 +184,21 @@ describe('record trees in a repository', () => {
     await expect(
       collect(iterate(new RepoSource(recordTree, untrusted), root.hash, { payloads: true })),
     ).rejects.toThrow(IntegrityError)
+  })
+
+  it('refuses roots of a protocol version it does not read', async () => {
+    for (const trusted of [true, false]) {
+      const { blobs, repo } = freshRepo({ trusted })
+      const future = { underlay: 3, metadata: null, public: emptySet(), private: null }
+      const digest = sha256Hex(jcs(future))
+      await blobs.put(`roots/${digest}.json`, jcs(future))
+      await expect(repo.root(`ulv3:${digest}`)).rejects.toThrow(UnsupportedProtocolError)
+      await expect(repo.root(digest)).rejects.toThrow(/protocol version 3 is not supported/)
+    }
+    const { repo } = freshRepo()
+    const ok = makeRoot(null, emptySet(), null)
+    expect((await repo.root(await repo.putRoot(ok))).underlay).toBe(PROTOCOL_VERSION)
+    expect(SUPPORTED_PROTOCOL_VERSIONS).toContain(PROTOCOL_VERSION)
   })
 
   it('keeps each location under its prefix', async () => {

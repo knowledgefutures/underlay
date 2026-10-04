@@ -7,8 +7,6 @@
  *   commitment = sha256(JCS(private set object))
  *   version hash = "ulv2:" + sha256(JCS(root))
  */
-import { randomBytes } from 'node:crypto'
-
 import { FORMAT_VERSION, VERSION_HASH_PREFIX } from './constants.js'
 import { sha256Hex } from './hash.js'
 import { jcs } from './jcs.js'
@@ -50,9 +48,40 @@ export function isEmptySet(s: SetObject): boolean {
   return Object.keys(s.types).length === 0 && s.files.count === 0
 }
 
+/**
+ * The protocol version this package writes (FORMAT_VERSION). The package's own
+ * semver is independent of it.
+ */
+export const PROTOCOL_VERSION = FORMAT_VERSION
+
+/**
+ * The protocol versions this package reads, checked against `underlay` in every
+ * root it loads. Format 1 hashes are computed for migration, but format 1 never
+ * had repositories to read.
+ */
+export const SUPPORTED_PROTOCOL_VERSIONS: readonly number[] = [2]
+
+/** A root written in a protocol version this package can't read. */
+export class UnsupportedProtocolError extends Error {
+  constructor(readonly version: unknown) {
+    super(
+      `Underlay protocol version ${JSON.stringify(version)} is not supported (this package reads ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')})`,
+    )
+    this.name = 'UnsupportedProtocolError'
+  }
+}
+
+/** Throw unless a root's `underlay` version is one this package reads. */
+export function checkProtocolVersion(root: { underlay?: unknown }): void {
+  if (!SUPPORTED_PROTOCOL_VERSIONS.includes(root.underlay as number)) {
+    throw new UnsupportedProtocolError(root.underlay)
+  }
+}
+
 /** 32 random bytes as hex: one per collection, reused across its versions. */
 export function newSalt(): string {
-  return randomBytes(32).toString('hex')
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 export function privateCommitment(p: PrivateSetObject): string {
@@ -82,7 +111,12 @@ export function versionHash(root: VersionRoot): string {
 
 /** The bare hex digest of a `ulv2:` version hash (the object key under roots/). */
 export function versionDigest(hash: string): string {
-  if (!hash.startsWith(VERSION_HASH_PREFIX)) throw new Error(`Not a v2 version hash: ${hash}`)
+  if (!hash.startsWith(VERSION_HASH_PREFIX)) {
+    // `ulv<n>:` names another protocol version: say so rather than "malformed".
+    const other = /^ulv(\d+):/.exec(hash)
+    if (other) throw new UnsupportedProtocolError(Number(other[1]))
+    throw new Error(`Not a v2 version hash: ${hash}`)
+  }
   return hash.slice(VERSION_HASH_PREFIX.length)
 }
 

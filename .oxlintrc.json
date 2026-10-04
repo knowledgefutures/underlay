@@ -3,7 +3,42 @@
   "rules": {
     "no-unused-vars": "error",
     "no-console": "off",
-    "eqeqeq": ["error", "always", { "null": "ignore" }]
+    "eqeqeq": [
+      "error",
+      "always",
+      {
+        "null": "ignore"
+      }
+    ]
   },
-  "ignorePatterns": ["node_modules", "dist"]
+  "ignorePatterns": ["node_modules", "dist"],
+  "overrides": [
+    {
+      "files": [
+        "packages/protocol/src/{constants,file-refs,format,hash,input-rules,jcs,root,sha256,utf8,validate}.ts",
+        "packages/protocol/src/tree/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/repo/**",
+                  "**/stores/**",
+                  "node:*",
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "@underlay/server",
+                  "@underlay/server/*"
+                ],
+                "message": "The format half of @underlay/protocol is pure: no stores, repositories, I/O or platform (plan decision 18)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

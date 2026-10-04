@@ -11,6 +11,7 @@ import {
   PrefixedStore,
   type PresigningStore,
   Repo,
+  sharedLru,
   type Store,
 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
@@ -58,6 +59,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       cache,
       scope: `loc:${locationId}`,
       trusted: true,
+      lru: sharedLru(),
     })
     repos.set(locationId, repo)
     return repo

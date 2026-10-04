@@ -117,6 +117,18 @@ describe('compileSchema', () => {
     expect(valid({ format: 'date' }, 5)).toBe(true)
   })
 
+  it("leaves the library's own format table alone", async () => {
+    const lib = await import('@cfworker/json-schema')
+    const before = { ...lib.format } as Record<string, unknown>
+    expect(valid({ type: 'string', format: 'byte' }, '!!')).toBe(false)
+    expect(valid({ type: 'string', format: 'date-time' }, '2020-01-01T00:00:00')).toBe(false)
+    // Our definitions sit beside the library's under their own names.
+    for (const [k, v] of Object.entries(before)) expect(lib.format[k as 'date']).toBe(v)
+    expect('byte' in lib.format).toBe(false)
+    expect(Object.getPrototypeOf(lib.format)).toBe(Object.prototype)
+    expect(new lib.Validator({ type: 'string', format: 'byte' }).validate('!!').valid).toBe(true)
+  })
+
   it('ignores unknown formats', () => {
     expect(valid({ type: 'string', format: 'not-a-format' }, 'anything')).toBe(true)
   })
