@@ -5,6 +5,7 @@ import {
   ed25519Signer,
   entryHash,
   generateSigningKey,
+  keyIdOf,
   readHead,
   signEntry,
   verifyEntry,
@@ -19,6 +20,7 @@ const repoOver = (blobs = memoryStore()) => ({
 })
 
 const entry = (seq: number, prev: string | null) => ({
+  collectionId: 'c1',
   seq,
   semver: `v1.${seq - 1}.0`,
   versionHash: `ulv2:${String(seq).padStart(64, '0')}`,
@@ -38,6 +40,34 @@ describe('version log', () => {
     expect(await verifyEntry({ ...e, message: 'tampered' }, [signer.publicKey])).toBe(false)
     const other = await ed25519Signer(await generateSigningKey())
     expect(await verifyEntry(e, [other.publicKey])).toBe(false)
+  })
+
+  it('trusts a key only under its own id', async () => {
+    const trusted = await ed25519Signer(await generateSigningKey())
+    const forger = await ed25519Signer(await generateSigningKey())
+    expect(keyIdOf(trusted.publicKey.publicKey)).toBe(trusted.keyId)
+    // The forger signs under the trusted key's id and lists its own key under that id.
+    const e = await signEntry({ ...forger, keyId: trusted.keyId }, entry(1, null))
+    expect(await verifyEntry(e, [{ ...forger.publicKey, id: trusted.keyId }])).toBe(false)
+    expect(await verifyEntry(e, [trusted.publicKey])).toBe(false)
+  })
+
+  it("doesn't take one collection's log for another's", async () => {
+    const { blobs, repo } = repoOver()
+    const signer = await ed25519Signer(await generateSigningKey())
+    let prev: string | null = null
+    for (let seq = 1; seq <= 2; seq++) {
+      const e = await signEntry(signer, { ...entry(seq, prev), collectionId: 'c1' })
+      await appendLog(repo, 'c1', e)
+      prev = entryHash(e)
+    }
+    await expect(verifyLog(repo, 'c1', [signer.publicKey])).resolves.toBeTruthy()
+    // The same objects filed under another collection: every signature is good.
+    for (const [k, v] of [...blobs.objects]) {
+      if (k.startsWith('collections/c1/'))
+        blobs.objects.set(k.replace('collections/c1/', 'collections/c2/'), v)
+    }
+    await expect(verifyLog(repo, 'c2', [signer.publicKey])).rejects.toThrow(/names collection c1/)
   })
 
   it('derives the same key from the same seed', async () => {

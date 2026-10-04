@@ -14,6 +14,7 @@ import { and, asc, count, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 import { jsonError, requireCollection } from './access.js'
@@ -111,10 +112,13 @@ export function collectionRoutes() {
       return jsonError(c, 401, 'Unauthorized — mine=true requires a session')
     const orgIds = await memberOrgIds(db, p?.userId, scoped)
 
+    // A subquery, not the list: D1 binds at most 100 parameters per statement.
+    const myOrgs = db
+      .select({ id: schema.member.organizationId })
+      .from(schema.member)
+      .where(eq(schema.member.userId, p?.userId ?? ''))
     const visible = mine
-      ? orgIds.length > 0
-        ? inArray(schema.collections.organizationId, orgIds)
-        : sql`0`
+      ? inArray(schema.collections.organizationId, myOrgs)
       : eq(schema.collections.public, true)
     const conds = [visible, sql`${schema.collections.deletedAt} IS NULL`]
     if (q) conds.push(like(schema.collections.name, `%${q}%`))
@@ -176,7 +180,7 @@ export function collectionRoutes() {
     const tagFacets = (await db.all(sql`
       SELECT t.value AS name, count(*) AS count
       FROM ${schema.collections} c, json_each(c.summary, '$.tags') t
-      WHERE ${mine ? (orgIds.length ? inArray(sql`c.organization_id`, orgIds) : sql`0`) : sql`c.public = 1`}
+      WHERE ${mine ? inArray(sql`c.organization_id`, myOrgs) : sql`c.public = 1`}
         AND c.deleted_at IS NULL
       GROUP BY t.value ORDER BY count DESC LIMIT 50
     `)) as { name: string; count: number }[]
@@ -345,19 +349,18 @@ export function collectionRoutes() {
       .from(schema.member)
       .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
       .where(eq(schema.member.organizationId, org.id))
-    const defaults = await db
-      .select({ userId: schema.member.userId, slug: schema.organization.slug })
-      .from(schema.member)
-      .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-      .where(
-        and(
-          inArray(
-            schema.member.userId,
-            members.map((m) => m.userId),
-          ),
-          eq(schema.organization.isDefault, true),
-        ),
+    const defaults: { userId: string; slug: string }[] = []
+    for (const part of chunks(members.map((m) => m.userId))) {
+      defaults.push(
+        ...(await db
+          .select({ userId: schema.member.userId, slug: schema.organization.slug })
+          .from(schema.member)
+          .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
+          .where(
+            and(inArray(schema.member.userId, part), eq(schema.organization.isDefault, true)),
+          )),
       )
+    }
     return c.json(
       members.map((m) => ({
         role: m.role,

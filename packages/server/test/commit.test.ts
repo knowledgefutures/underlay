@@ -19,6 +19,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../src/versions/commit.js'
 import { MissingFilesError } from '../src/versions/file-refs.js'
+import { publishVersion } from '../src/versions/publish.js'
 import { cleanup, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -243,6 +244,92 @@ describe('commitVersion', () => {
     expect(v3.version.changes).toMatchObject({ removed: 1 })
   })
 
+  it('refuses a version holding one id in both sets', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const v1 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [type('Author', authorSchema, [up('Author', 'a', { name: 'A' })])],
+      metadata: null,
+    })
+    if (v1.status !== 'committed') throw new Error(v1.status)
+    // 'a' added to the private set without leaving the public one.
+    const both = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', authorSchema, null, [up('Author', 'a', { name: 'secret' })])],
+      metadata: null,
+    }).catch((e: Error) => e)
+    expect(both).toBeInstanceOf(Error)
+    expect((both as Error).message).toMatch(/in both the public and private sets/)
+    // Moving it (removed from one set, added to the other) is fine.
+    const moved = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', authorSchema, [del('a')], [up('Author', 'a', { name: 'secret' })])],
+      metadata: null,
+    })
+    expect(moved.status).toBe('committed')
+  })
+
+  it('moves file references with a type: public → private → delete', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const repo = await h.ports.stores.forCollection(c.id)
+    await h.ports.db
+      .insert(schema.files)
+      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
+    const v1 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [
+        type('Author', authorSchema, [
+          up('Author', 'a', { name: 'A', photo: { $file: `sha256:${FILE}` } }),
+          up('Author', 'b', { name: 'B' }),
+        ]),
+      ],
+      metadata: null,
+    })
+    if (v1.status !== 'committed') throw new Error(v1.status)
+    expect((await repo.root(v1.version.hash)).public.files.count).toBe(1)
+
+    // The type becomes private: a plain tree move, and its file goes with it.
+    const privAuthor = { ...authorSchema, private: true }
+    const v2 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', privAuthor, null)],
+      metadata: null,
+    })
+    if (v2.status !== 'committed') throw new Error(v2.status)
+    const root2 = await repo.root(v2.version.hash)
+    const priv2 = await repo.privateSet(root2.private!)
+    expect(priv2.types.Author!.schema).toBe(hashSchema(privAuthor))
+    expect(root2.public.files).toMatchObject({ root: null, count: 0 })
+    expect(priv2.files).toMatchObject({ count: 1, bytes: 1234 })
+
+    // Deleting the record that references it releases the file.
+    const v3 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v2.version),
+      types: [type('Author', privAuthor, null, [del('a')])],
+      metadata: null,
+    })
+    if (v3.status !== 'committed') throw new Error(v3.status)
+    const priv3 = await repo.privateSet((await repo.root(v3.version.hash)).private!)
+    expect(priv3.files).toMatchObject({ root: null, count: 0 })
+    expect(priv3.types.Author!.count).toBe(1)
+  })
+
   it('keeps file sets by reference', async () => {
     const h = await harness()
     const c = await h.collection()
@@ -257,9 +344,26 @@ describe('commitVersion', () => {
     }).catch((e) => e)
     expect(attempt).toBeInstanceOf(MissingFilesError)
 
+    // A file row alone isn't enough: the bytes must have been uploaded under this collection.
     await h.ports.db
       .insert(schema.files)
       .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    expect(
+      await commitVersion(h.ports, {
+        collectionId: c.id,
+        base: null,
+        types: [type('Author', authorSchema, [withPhoto('a')])],
+        metadata: null,
+      }).catch((e) => e),
+    ).toBeInstanceOf(MissingFilesError)
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
     const v1 = await commitVersion(h.ports, {
       collectionId: c.id,
       base: null,
@@ -327,5 +431,57 @@ describe('commitVersion', () => {
       total: 1,
       errors: [{ recordId: 'b', type: 'Author' }],
     })
+  })
+})
+
+describe('publishVersion', () => {
+  const row = (collectionId: string, id: string) => ({
+    id,
+    collectionId,
+    seq: 1,
+    semver: 'v1.0.0',
+    major: 1,
+    minor: 0,
+    patch: 0,
+    hash: `ulv2:${'0'.repeat(64)}`,
+    baseSemver: null,
+    message: null,
+    pushedBy: null,
+    appId: null,
+    actorId: null,
+    recordCount: 0,
+    publicRecordCount: 0,
+    fileCount: 0,
+    totalBytes: 0,
+    publicFileCount: 0,
+    publicTotalBytes: 0,
+    typeCounts: {},
+    publicTypeCounts: {},
+    hasPrivate: false,
+    publicRefsRoot: null,
+    privateRefsRoot: null,
+    changes: { added: 0, removed: 0, updated: 0 },
+  })
+
+  it('records a fork in the publish batch, and not when the publish loses', async () => {
+    const h = await harness()
+    const parent = await h.collection('parent')
+    const child = await h.collection('child')
+    const fork = { parentCollectionId: parent.id, parentSeq: 1, sets: 'public' as const }
+    const input = (id: string, baseVersionId: string | null) => ({
+      version: row(child.id, id),
+      baseVersionId,
+      collectionUpdate: { publicFilesRoot: null, summary: null },
+      schemaHashes: [],
+      usage: [],
+      fork,
+    })
+    // The head isn't 'nope', so this publish loses: no version, no fork row.
+    expect((await publishVersion(h.ports.db, input(crypto.randomUUID(), 'nope'))).ok).toBe(false)
+    expect(await h.ports.db.select().from(schema.forks)).toEqual([])
+    expect((await publishVersion(h.ports.db, input(crypto.randomUUID(), null))).ok).toBe(true)
+    expect(await h.ports.db.select().from(schema.forks)).toMatchObject([
+      { childCollectionId: child.id, parentCollectionId: parent.id, parentSeq: 1, sets: 'public' },
+    ])
   })
 })

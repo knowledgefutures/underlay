@@ -1,6 +1,7 @@
 /**
  * Fork (edge-redesign.md, Commit): the fork's first version is a new root that
- * reuses the source version's sets, plus a `forks` row. No data is copied.
+ * reuses the source version's sets, plus a `forks` row written in the same
+ * publish batch. No data is copied.
  *
  * A fork by an owner keeps the private set; it inherits the source collection's
  * salt so the private commitment (and so the version hash) stays the same and
@@ -18,9 +19,17 @@ import { publishVersion, type SchemaUsageChange } from './publish.js'
 
 export async function createCollectionRows(
   ports: Ports,
-  c: { organizationId: string; slug: string; name: string; public: boolean; privateSalt?: string },
+  c: {
+    organizationId: string
+    slug: string
+    name: string
+    public: boolean
+    privateSalt?: string
+    /** Restore only: keep the id the collection's signed log names. */
+    id?: string
+  },
 ): Promise<typeof schema.collections.$inferSelect> {
-  const id = crypto.randomUUID()
+  const id = c.id ?? crypto.randomUUID()
   await ports.db.batch([
     ports.db.insert(schema.collections).values({
       id,
@@ -122,13 +131,13 @@ export async function forkCollection(
     },
     schemaHashes: [],
     usage,
+    fork: {
+      parentCollectionId: source.collection.id,
+      parentSeq: v.seq,
+      sets: keepPrivate ? 'public+private' : 'public',
+    },
   })
   if (!published.ok) throw new Error('Fork publish lost a race on a brand-new collection')
-  await ports.db.insert(schema.forks).values({
-    childCollectionId: collection.id,
-    parentCollectionId: source.collection.id,
-    parentSeq: v.seq,
-  })
   const [version] = await ports.db
     .select()
     .from(schema.versions)

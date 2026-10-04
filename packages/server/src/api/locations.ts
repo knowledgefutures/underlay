@@ -225,10 +225,6 @@ export function locationRoutes() {
         ),
       )
     if (!row) return jsonError(c, 404, 'Placement not found')
-    const cols = await db
-      .select({ id: schema.collections.id })
-      .from(schema.collections)
-      .where(eq(schema.collections.organizationId, org.id))
     await db.batch([
       db.delete(schema.placements).where(eq(schema.placements.id, row.id)),
       db
@@ -237,7 +233,13 @@ export function locationRoutes() {
           and(
             eq(schema.placements.locationId, row.locationId),
             eq(schema.placements.role, 'mirror'),
-            inArray(schema.placements.collectionId, cols.length > 0 ? cols.map((x) => x.id) : ['']),
+            inArray(
+              schema.placements.collectionId,
+              db
+                .select({ id: schema.collections.id })
+                .from(schema.collections)
+                .where(eq(schema.collections.organizationId, org.id)),
+            ),
           ),
         ),
     ])
@@ -399,6 +401,18 @@ export function locationRoutes() {
       .from(schema.collections)
       .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
     if (taken) return jsonError(c, 409, 'Collection already exists')
+    // The restored collection keeps its id, which every entry of its signed log names.
+    const [present] = await ports.db
+      .select({ id: schema.collections.id })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, sourceId))
+    if (present) {
+      return jsonError(
+        c,
+        409,
+        'This instance already has that collection; restore brings back a collection that is gone',
+      )
+    }
     let source
     try {
       source = await inspectSource(ports, loc, sourceId)
@@ -410,6 +424,7 @@ export function locationRoutes() {
       ? body.trustKeyIds.filter((k): k is string => typeof k === 'string')
       : []
     const col = await createCollectionRows(ports, {
+      id: sourceId,
       organizationId: org.id,
       slug,
       name: str(body.name, 200) ?? source.info.name ?? slug,

@@ -1,0 +1,1 @@
+ALTER TABLE `forks` ADD `sets` text DEFAULT 'public' NOT NULL;

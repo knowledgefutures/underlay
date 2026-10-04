@@ -4,6 +4,19 @@ export function utf8(s: string): Uint8Array {
   return encoder.encode(s)
 }
 
+/** No lone UTF-16 surrogates: every high surrogate is followed by a low one, and vice versa. */
+export function isWellFormed(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const u = s.charCodeAt(i)
+    if (u < 0xd800 || u > 0xdfff) continue
+    if (u > 0xdbff) return false
+    const next = s.charCodeAt(i + 1)
+    if (!(next >= 0xdc00 && next <= 0xdfff)) return false
+    i++
+  }
+  return true
+}
+
 /** UTF-8 byte length of a well-formed string, without encoding it. */
 export function utf8ByteLength(s: string): number {
   let bytes = 0

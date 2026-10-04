@@ -22,6 +22,10 @@ import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
 import { ensureCollectionArk } from './ark.js'
+import { readJson } from './body.js'
+
+/** A metadata patch, like a push's opening body, is at most 8 MB. */
+const MAX_METADATA_BODY = 8 * 1024 * 1024
 
 /** The org named `orgSlug` and the caller's role in it (null when not a member). */
 export async function membership(c: Context<AppEnv>, orgSlug: string) {
@@ -165,7 +169,8 @@ export function manageRoutes() {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
     if (!c.var.principal) return jsonError(c, 401, 'Authentication required')
-    const body = (await c.req.json().catch(() => ({}))) as { targetOrg?: unknown; slug?: unknown }
+    const body = await readJson(c, 64 * 1024)
+    if (body instanceof Response) return body
     if (typeof body.targetOrg !== 'string') return jsonError(c, 400, '"targetOrg" is required')
     const target = await membership(c, body.targetOrg)
     if (!target.org) return jsonError(c, 404, 'Target org not found')
@@ -216,9 +221,9 @@ export function manageRoutes() {
   app.post('/api/collections/:owner/:slug/metadata', async (c) => {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
-    const patch = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
-    if (!patch || typeof patch !== 'object' || Array.isArray(patch))
-      return jsonError(c, 400, 'Body must be an object')
+    // Metadata goes into the version root, so it follows the input rules.
+    const patch = await readJson(c, MAX_METADATA_BODY)
+    if (patch instanceof Response) return patch
     const ports = c.var.ports
     const base = await headBase(ports, access.collection.id)
     if (!base) return jsonError(c, 422, 'No versions exist yet')

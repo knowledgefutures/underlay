@@ -1,7 +1,7 @@
 # Underlay protocol, format 2
 
-**Status: draft.** Every value marked _provisional_ can still change until the format is frozen.
-After the freeze, changing any of them needs a new format number. The reference implementation is
+**Status: final.** The format was frozen on 2026-10-03. Changing any value or rule here needs a new
+format number. The reference implementation is
 `packages/protocol` (`@underlay/protocol`). The test vectors are in `packages/protocol/test/vectors/v2.json`
 (see [Test vectors](#test-vectors)).
 
@@ -55,7 +55,7 @@ the information they need.
 Unicode is **not** normalized. `é` as U+00E9 and as U+0065 U+0301 are different ids with different
 hashes. The test vectors include both.
 
-The limits are provisional. A sample of production data (206,862 records) found a largest record
+The limits are final. A sample of production data (206,862 records) found a largest record
 of 12 KB and a longest id of 145 bytes.
 
 ## 4. Records
@@ -93,6 +93,7 @@ A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 
 **Which schemas are accepted.** A type schema must be a JSON object and a JSON Schema draft-07
 document.
+
 - A root `$schema`, if present, must be `http://json-schema.org/draft-07/schema` (with or without a
   trailing `#`); anything else is rejected.
 - A schema is rejected unless all of these hold:
@@ -104,6 +105,7 @@ document.
   another.
 
 **How records are validated.** Draft-07, with these rules:
+
 - Keywords alongside `$ref` are applied, as in draft 2019-09.
 - Keywords draft-07 doesn't define are ignored. That includes later drafts' keywords
   (`unevaluatedProperties`, `dependentRequired`, `prefixItems`, …) and draft-04's `id`. `$defs`
@@ -116,6 +118,7 @@ document.
   special meaning.
 
 **Formats.**
+
 - `format` constrains strings only, and only for these names: `date`, `time`, `date-time`,
   `iso-time`, `iso-date-time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`,
   `hostname`, `ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `json-pointer-uri-fragment`,
@@ -159,7 +162,7 @@ A tree is a sorted set of entries with unique keys, split into nodes. There are 
 
 ### 8.1 Shape
 
-Parameters (provisional):
+Parameters (final):
 
 | Name                          | Value                         |
 | ----------------------------- | ----------------------------- |
@@ -210,7 +213,17 @@ A node received from outside (tree sync, mirrors) must also satisfy all of the f
 - keys are strictly increasing within the node and across the whole tree;
 - every interior entry's `lastKey`, `count` and `bytes` match its child;
 - every child is exactly one level below its parent;
-- `count` ≥ 1 for every child.
+- `count` ≥ 1 for every child;
+- in a record tree, every key is a valid record id (section 3): not empty, at most `MAX_ID_BYTES`
+  UTF-8 bytes, and with no lone surrogate.
+
+A received record leaf must also match its body (section 11). For each entry, its body line (an
+out-of-line pointer resolved to its record) must:
+
+- hash to the entry's record hash;
+- be exactly the entry's size in bytes;
+- be the canonical form (section 4) of a record whose `id` is the entry's key and whose `type` is
+  the type of the tree the leaf is in.
 
 A node that hashes correctly but breaks a structural rule is invalid. Accepting one would give two
 different roots for one entry set. The reference `fsck` is `verifyTree` in
@@ -312,14 +325,19 @@ collections/<collectionId>/head.json
 Each collection has one log entry per version:
 
 ```
-entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","semver","seq","sig","versionHash"}
+entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","message","prev","semver","seq","sig","versionHash"}
 ```
 
+- `collectionId` is the id of the collection whose log this is (the `<collectionId>` in its keys).
+  It is signed, so an entry, or a whole log, can't be passed off as another collection's. A
+  collection restored from a location keeps its id.
 - `seq` counts from 1. `createdAt` is ISO 8601 UTC. `appId`, `actorId`, `baseSemver` and
   `message` may be `null`. Pusher identity is not recorded (open question).
 - `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry
   without `sig`).
-- `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key).
+- `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key). A
+  verifier uses a key only under that id: a key listed under any other id is ignored, so a key list
+  read from an untrusted location can't put a stranger's key under a trusted key's id.
 - **Entry hash** = hash(JCS(entry)), signature included.
 - `prev` is the entry hash of entry `seq − 1`, or `null` for `seq` 1. Entries form a hash chain,
   so a dropped, reordered or altered entry is detectable.
@@ -330,8 +348,9 @@ entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","se
   The platform also publishes its keys at a well-known URL (to be fixed with the Cloudflare
   deployment).
 
-A log is valid when every entry is present from 1 to `head.seq`, each `prev` chains, each signature
-verifies against a trusted key, and `head.entryHash` is the last entry's hash (`verifyLog` in
+A log is valid when every entry is present from 1 to `head.seq`, each names the collection being
+read, each `prev` chains, each signature verifies against a trusted key, and `head.entryHash` is
+the last entry's hash (`verifyLog` in
 `packages/protocol/src/repo/log.ts`).
 
 ### 11.2 Sync
@@ -352,7 +371,8 @@ gzip already. File bytes are not in packs. Reference implementation: `packVersio
   5. The root, last.
 - A pack never holds `collections/` objects; logs and `collection.json` travel separately.
 - **Receiving.** Before writing an object, the receiver checks it against its key: nodes and
-  out-of-line records by hash, bodies line by line against their leaf (which arrives first),
+  out-of-line records by hash, bodies line by line against their leaf's entries (section 8.3; the
+  leaf arrives first),
   schemas, private set objects and the root by hash and canonical JSON. Then, for every tree of
   every set received, it re-derives the tree: the entry changes from its base tree, merged into
   that base tree under section 8.1, must give exactly the received root, count and bytes, and
@@ -390,7 +410,9 @@ numeric order.
   no natural boundaries, so every leaf split is forced);
 - a file tree;
 - two version roots, one with a private set and its commitment;
-- file-reference extraction cases.
+- file-reference extraction cases;
+- one signed log entry, with the key seed it was signed with (Ed25519 signatures are
+  deterministic), its signed bytes, entry hash and `head.json`.
 
 Tree vectors give a recipe for generating their entries rather than listing them.
 `scripts/gen-vectors.ts --check` runs in CI. A failure there means a protocol change, which has to
@@ -417,3 +439,5 @@ These were made during implementation and recorded with their reasons in `edge-r
    plan also had a tree-sync push API; clients that hold their base push a locally computed diff
    through delta push and compare version hashes instead, so a server never accepts tree nodes
    from outside.
+10. Version log entries carry the collection's id (section 11.1). Without it, one collection's
+    entries verified as another's. Added 2026-10-03, before any log held real data.

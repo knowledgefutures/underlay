@@ -18,7 +18,9 @@
 import {
   type Change,
   compareUtf8,
+  diffTrees,
   emptySet,
+  getEntry,
   isEmptySet,
   iterate,
   makeRoot,
@@ -245,7 +247,13 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       if (pubChanges)
         throw new Error(`Type ${t.slug} is private; its changes belong to the private set`)
       if (pubRoot && !privRoot && !privChanges) {
-        priv = pubBase!
+        // The tree moves as it is (summary() drops the old schema hash). Its file
+        // references move with it, which reads the type's bodies: O(type size).
+        priv = summary(pubBase)
+        for await (const e of treeAsUpserts(repo, pubRoot)) {
+          refs.record('public', e.entry, null)
+          refs.record('private', null, e.entry)
+        }
       } else if (pubRoot) {
         priv = await merge(
           'private',
@@ -300,6 +308,31 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     }
   }
   await sink.flush()
+
+  // Record ids are unique per type across both sets (docs/protocol-v2.md §4). The
+  // base holds that, so only ids entering a set can break it: probe the other set
+  // for each, O(changes × height), and only for types with records in both.
+  // Parallel commits (prebuilt) take plain types only; their units don't move ids.
+  if (!input.prebuilt) {
+    for (const t of input.types) {
+      const pub = newPublic.types[t.slug]?.root ?? null
+      const priv = newPrivate.types[t.slug]?.root ?? null
+      if (!pub || !priv) continue
+      for (const [before, after, other] of [
+        [basePublic.types[t.slug]?.root ?? null, pub, priv],
+        [basePrivate.types[t.slug]?.root ?? null, priv, pub],
+      ] as const) {
+        for await (const d of diffTrees(source, before, after)) {
+          if (d.before || !d.after) continue
+          if (await getEntry(source, other, d.key)) {
+            throw new Error(
+              `Record ${JSON.stringify(d.key)} of type ${t.slug} is in both the public and private sets`,
+            )
+          }
+        }
+      }
+    }
+  }
 
   // Revalidate types whose schema changed (records pushed earlier were checked
   // against the old schema). O(type size), inherent to a schema change.

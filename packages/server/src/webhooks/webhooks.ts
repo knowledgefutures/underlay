@@ -16,6 +16,7 @@ import { createHmac, randomBytes } from 'node:crypto'
 
 import { and, eq, lt } from 'drizzle-orm'
 
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
@@ -173,19 +174,25 @@ export async function enqueueDeliveries(
   }
   const fresh = hooks.filter((h) => !done.has(h.id))
   if (fresh.length === 0) return 0
-  const rows = await db
-    .insert(schema.webhookDeliveries)
-    .values(
-      fresh.map((h) => ({
-        webhookId: h.id,
-        collectionId: row.c.id,
-        versionId,
-        semver: row.v.semver,
-        bumpType: bump,
-        payload,
-      })),
+  // A few rows per statement: each binds about 16 parameters, and D1 allows 100.
+  const rows: { id: string }[] = []
+  for (const part of chunks(fresh, 5)) {
+    rows.push(
+      ...(await db
+        .insert(schema.webhookDeliveries)
+        .values(
+          part.map((h) => ({
+            webhookId: h.id,
+            collectionId: row.c.id,
+            versionId,
+            semver: row.v.semver,
+            bumpType: bump,
+            payload,
+          })),
+        )
+        .returning({ id: schema.webhookDeliveries.id })),
     )
-    .returning({ id: schema.webhookDeliveries.id })
+  }
   await ports.jobs.enqueueBatch(rows.map((r) => ({ type: 'webhooks.deliver', deliveryId: r.id })))
   return rows.length
 }

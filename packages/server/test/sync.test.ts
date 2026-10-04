@@ -132,14 +132,21 @@ describe('sync endpoints', () => {
     expect(body.collection.keys).toHaveLength(1)
     expect(body.collection.keys[0]!.id).toBe(h.signer.keyId)
     expect(body.entries.map((e) => e.versionHash)).toEqual([v1.hash, v2.hash])
-    const head = await verifyLogEntries(body.entries, body.collection.keys, null)
+    const id = body.collection.id
+    const head = await verifyLogEntries(body.entries, body.collection.keys, null, id)
     expect(head).toEqual({ seq: 2, entryHash: body.head.entryHash })
     // Incremental: entries after a verified head.
     const rest = (await (await h.request(`${path}/log?after=1`)).json()) as { entries: LogEntry[] }
-    const first = await verifyLogEntries(body.entries.slice(0, 1), body.collection.keys, null)
-    expect(await verifyLogEntries(rest.entries, body.collection.keys, first)).toEqual(head)
+    const first = await verifyLogEntries(body.entries.slice(0, 1), body.collection.keys, null, id)
+    expect(await verifyLogEntries(rest.entries, body.collection.keys, first, id)).toEqual(head)
     // A tampered entry fails.
     const bad = { ...rest.entries[0]!, message: 'forged' }
-    await expect(verifyLogEntries([bad], body.collection.keys, first)).rejects.toThrow(/signature/)
+    await expect(verifyLogEntries([bad], body.collection.keys, first, id)).rejects.toThrow(
+      /signature/,
+    )
+    // So does a good entry checked as another collection's.
+    await expect(
+      verifyLogEntries(rest.entries, body.collection.keys, first, 'another'),
+    ).rejects.toThrow(/names collection/)
   })
 })

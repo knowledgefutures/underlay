@@ -1,6 +1,6 @@
 export * from './constants.js'
 export { jcs } from './jcs.js'
-export { compareUtf8, utf8, utf8ByteLength } from './utf8.js'
+export { compareUtf8, isWellFormed, utf8, utf8ByteLength } from './utf8.js'
 export {
   hashRecord,
   hashSchema,

@@ -186,6 +186,28 @@ describe('record trees in a repository', () => {
     ).rejects.toThrow(IntegrityError)
   })
 
+  it("refuses an untrusted body line that isn't its entry's record", async () => {
+    for (const lie of [
+      (e: RecordEntry) => ({ ...e, size: e.size + 1 }),
+      (e: RecordEntry) => {
+        // Hashes right, but holds another id's record.
+        const other = record('someone-else')
+        return { ...other, key: e.key }
+      },
+    ]) {
+      const { blobs, repo } = freshRepo()
+      const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
+      const b = new TreeBuilder(recordTree, sink)
+      ids(20).forEach((id, i) => b.addEntry(i === 3 ? lie(record(id)) : record(id)))
+      const root = b.finish().root!
+      await sink.flush()
+      const untrusted = new Repo(blobs, { trusted: false, lru: new Lru(8 << 20, () => 1024) })
+      await expect(
+        collect(iterate(new RepoSource(recordTree, untrusted), root.hash, { payloads: true })),
+      ).rejects.toThrow(/isn't its entry's record/)
+    }
+  })
+
   it('refuses roots of a protocol version it does not read', async () => {
     for (const trusted of [true, false]) {
       const { blobs, repo } = freshRepo({ trusted })

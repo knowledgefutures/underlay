@@ -7,8 +7,9 @@
  * Both are JCS (keys sorted: "e" < "l" < "t"). A node's hash is the lowercase hex
  * SHA-256 of those exact bytes. Leaf entries depend on the tree kind (TreeSpec).
  */
+import { MAX_ID_BYTES } from '../constants.js'
 import { sha256Hex } from '../hash.js'
-import { compareUtf8 } from '../utf8.js'
+import { compareUtf8, isWellFormed, utf8ByteLength } from '../utf8.js'
 
 const HEX64 = /^[0-9a-f]{64}$/
 
@@ -203,6 +204,10 @@ export const recordTree: TreeSpec<RecordEntry> = {
     ) {
       throw new NodeFormatError('Bad record entry')
     }
+    // A received node's ids follow the input rules too (docs/protocol-v2.md §3, §8.3).
+    if (key === '' || utf8ByteLength(key) > MAX_ID_BYTES)
+      throw new NodeFormatError('Bad record entry: the id is empty or over the id length limit')
+    if (!isWellFormed(key)) throw new NodeFormatError('Bad record entry: lone surrogate in an id')
     return { key, hash, size }
   },
   bytes: (e) => e.size,

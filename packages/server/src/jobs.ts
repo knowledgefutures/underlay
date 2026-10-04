@@ -61,12 +61,12 @@ export class SqliteJobs implements Jobs {
     })
   }
   async enqueueBatch(jobs: JobMessage[]) {
-    // D1-safe chunking of bound parameters (3 per row).
-    for (let i = 0; i < jobs.length; i += 30) {
+    // D1-safe chunking of bound parameters (6 per row, defaults included).
+    for (let i = 0; i < jobs.length; i += 15) {
       await this.db
         .insert(schema.jobs)
         .values(
-          jobs.slice(i, i + 30).map((job) => ({ type: job.type, payload: job, runAt: new Date() })),
+          jobs.slice(i, i + 15).map((job) => ({ type: job.type, payload: job, runAt: new Date() })),
         )
     }
   }

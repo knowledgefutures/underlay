@@ -15,7 +15,7 @@ import {
 import '../src/handlers.js'
 import { createApp } from '../src/app.js'
 import { MemoryCache } from '../src/cache.js'
-import { openNodeDb } from '../src/db/node.js'
+import { D1_MAX_BOUND_PARAMS, openNodeDb } from '../src/db/node.js'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs, SqliteJobs } from '../src/jobs.js'
 import type { Ports } from '../src/ports.js'
@@ -53,6 +53,8 @@ export interface Harness {
   signer: Signer
   /** Run queued jobs until none are ready. */
   drain(): Promise<number>
+  /** SQL statements sent so far (D1 runs at most 1,000 per invocation). */
+  statements(): number
   /** An org and a collection with a primary placement on the platform location. */
   collection(slug?: string): Promise<typeof schema.collections.$inferSelect>
 }
@@ -60,7 +62,11 @@ export interface Harness {
 export async function harness(): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'ul-it-'))
   dirs.push(dir)
-  const db = await openNodeDb(`file:${join(dir, 'db.sqlite')}`)
+  let statements = 0
+  const db = await openNodeDb(`file:${join(dir, 'db.sqlite')}`, {
+    maxBoundParams: D1_MAX_BOUND_PARAMS,
+    onStatement: () => void statements++,
+  })
   const bucket = memoryStore()
   const cache = new MemoryCache()
   const signer = await ed25519Signer(await generateSigningKey())
@@ -95,6 +101,7 @@ export async function harness(): Promise<Harness> {
     bucket,
     signer,
     drain: () => drainSqliteJobs(ports),
+    statements: () => statements,
     async member(id = 'u1') {
       await ensureOrg()
       await db

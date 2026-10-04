@@ -325,6 +325,48 @@ describe('negotiate (v1 compatibility)', () => {
     })
   })
 
+  it('checks chunked manifests against what the commit will diff against', async () => {
+    const { h, user, base } = await setup()
+    const deltaPush = async (records: object[]) => {
+      const res = await h.request(`${base}/push`, {
+        method: 'POST',
+        user,
+        json: { schemas: { Author } },
+      })
+      const sid = (await json(res)).session_id
+      await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: records })
+      expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+        201,
+      )
+    }
+    await deltaPush([rec('z', { name: 'Z' })])
+    const open = async (json_: object) =>
+      (
+        await json(
+          await h.request(`${base}/versions/negotiate`, {
+            method: 'POST',
+            user,
+            json: { schemas: { Author }, manifest_expected: 2, ...json_ },
+          }),
+        )
+      ).session_id
+    // One session names its base, the other commits on whatever the head is (v1 semantics).
+    const pinned = await open({ base_version: 'v1.0.0' })
+    const floating = await open({})
+    // Another push lands 'a' after both opened.
+    await deltaPush([rec('a', { name: 'A' })])
+    const manifest = (sid: string) =>
+      h.request(`${base}/versions/negotiate/${sid}/manifest`, {
+        method: 'POST',
+        user,
+        ndjson: manifestOf([rec('a', { name: 'A' })]),
+      })
+    expect(await json(await manifest(pinned))).toMatchObject({
+      needed_records: [hashOf('a', { name: 'A' })],
+    })
+    expect(await json(await manifest(floating))).toMatchObject({ needed_records: [] })
+  })
+
   it('accepts format 1 hashes for records with integer-like keys', async () => {
     const { h, user, c, base } = await setup()
     const Scores = { type: 'object' }

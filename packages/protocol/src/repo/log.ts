@@ -6,19 +6,22 @@
  * head log from the plan's Security notes: entries chain by `prev`, so a server
  * can't silently drop or reorder versions for one reader and not another.
  *
- *   entry     = {seq, semver, versionHash, baseSemver, message, appId, actorId,
- *                createdAt, prev, keyId, sig}
+ *   entry     = {collectionId, seq, semver, versionHash, baseSemver, message, appId,
+ *                actorId, createdAt, prev, keyId, sig}
  *   signed    = JCS(entry without "sig"), Ed25519, "sig" = base64url
  *   entryHash = sha256(JCS(entry))          (with "sig")
  *   prev      = entryHash of seq − 1, or null for seq 1
  *   head.json = {"seq", "entryHash", "versionHash"}, overwritten after the entry is written
  *
- * Pusher identity is omitted from the log (an open question in the plan).
+ * Pusher identity is omitted from the log (an open question in the plan). The
+ * collection id is signed, so one collection's entries never verify as another's.
  */
 import { jcs, sha256Hex } from '../format.js'
 import { IntegrityError, keys, type Repo } from './repo.js'
 
 export interface LogEntry {
+  /** The collection whose log this is. */
+  collectionId: string
   seq: number
   semver: string
   versionHash: string
@@ -104,11 +107,11 @@ export async function ed25519Signer(privateKeyB64: string): Promise<Signer> {
   ])
   const key = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign'])
   const jwk = await crypto.subtle.exportKey('jwk', key)
-  const publicKey = fromB64url(jwk.x!)
-  const id = sha256Hex(publicKey).slice(0, 16)
+  const publicKey = b64url(fromB64url(jwk.x!))
+  const id = keyIdOf(publicKey)
   return {
     keyId: id,
-    publicKey: { id, alg: 'Ed25519', publicKey: b64url(publicKey) },
+    publicKey: { id, alg: 'Ed25519', publicKey },
     sign: async (bytes) =>
       new Uint8Array(await crypto.subtle.sign('Ed25519', key, bytes as Uint8Array<ArrayBuffer>)),
   }
@@ -130,9 +133,16 @@ export async function signEntry(signer: Signer, e: UnsignedEntry): Promise<LogEn
   return { ...unsigned, sig }
 }
 
+/** A key's id: the first 16 hex characters of sha256(raw public key). */
+export const keyIdOf = (publicKey: string) => sha256Hex(fromB64url(publicKey)).slice(0, 16)
+
+/**
+ * Does a trusted key sign this entry? A key counts only under its own id, so a
+ * key list read from a location can't file a stranger's key under a trusted id.
+ */
 export async function verifyEntry(e: LogEntry, keys: PublicKeyInfo[]): Promise<boolean> {
   const k = keys.find((x) => x.id === e.keyId)
-  if (!k || k.alg !== 'Ed25519') return false
+  if (!k || k.alg !== 'Ed25519' || keyIdOf(k.publicKey) !== k.id) return false
   const pub = await crypto.subtle.importKey(
     'raw',
     fromB64url(k.publicKey) as Uint8Array<ArrayBuffer>,
@@ -187,21 +197,27 @@ export async function appendLog(repo: Repo, collectionId: string, entry: LogEntr
 }
 
 /**
- * Check log entries that continue a log: consecutive seqs from `after.seq + 1`
- * (or 1), each chaining to the previous entry's hash and signed by a trusted
- * key. Returns the new head. For mirrors and clients that already verified the
- * log up to `after`.
+ * Check log entries that continue collection `collectionId`'s log: consecutive
+ * seqs from `after.seq + 1` (or 1), each naming that collection, chaining to the
+ * previous entry's hash and signed by a trusted key. Returns the new head. For
+ * mirrors and clients that already verified the log up to `after`.
  */
 export async function verifyLogEntries(
   entries: readonly LogEntry[],
   trustedKeys: PublicKeyInfo[],
   after: { seq: number; entryHash: string } | null,
+  collectionId: string,
 ): Promise<{ seq: number; entryHash: string } | null> {
   let seq = after?.seq ?? 0
   let prev = after?.entryHash ?? null
   for (const e of entries) {
     seq++
     if (e.seq !== seq) throw new IntegrityError(`Log entry ${seq} has seq ${e.seq}`)
+    if (e.collectionId !== collectionId) {
+      throw new IntegrityError(
+        `Log entry ${seq} names collection ${String(e.collectionId)}, not ${collectionId}`,
+      )
+    }
     if (e.prev !== prev) throw new IntegrityError(`Log entry ${seq} does not chain to ${seq - 1}`)
     if (!(await verifyEntry(e, trustedKeys)))
       throw new IntegrityError(`Log entry ${seq} has a bad signature`)
@@ -227,7 +243,7 @@ export async function verifyLog(
     if (!e) throw new IntegrityError(`Log entry ${seq} is missing`)
     entries.push(e)
   }
-  const last = await verifyLogEntries(entries, trustedKeys, null)
+  const last = await verifyLogEntries(entries, trustedKeys, null, collectionId)
   if (last?.entryHash !== head.entryHash)
     throw new IntegrityError('head.json does not match the last log entry')
   return { head, entries }
