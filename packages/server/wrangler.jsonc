@@ -1,5 +1,5 @@
 // Underlay on Cloudflare Workers: one Worker per deployment, each with its own
-// D1 database, R2 bucket and queue (edge-redesign-build.md, "Deployment targets").
+// D1 database, R2 bucket and queues (edge-redesign-build.md, "Deployment targets").
 // Resources are named for the deployment's role, not the app version or host, so
 // they outlive both: prod serves next.underlay.org until it takes over www.
 //
@@ -57,12 +57,24 @@
         { "name": "RL_ANON", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } },
         { "name": "RL_USER", "namespace_id": "1002", "simple": { "limit": 5000, "period": 60 } },
       ],
+      // Interactive jobs, and bulk ones (one per invocation): jobs.ts BULK_JOBS.
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "underlay-staging-jobs" }],
+        "producers": [
+          { "binding": "JOBS", "queue": "underlay-staging-jobs" },
+          { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
+        ],
         "consumers": [
           {
             "queue": "underlay-staging-jobs",
             "max_batch_size": 10,
+            "max_concurrency": 10,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-staging-dead",
+          },
+          {
+            "queue": "underlay-staging-bulk",
+            "max_batch_size": 1,
+            "max_concurrency": 20,
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
@@ -95,12 +107,24 @@
         { "name": "RL_ANON", "namespace_id": "2001", "simple": { "limit": 60, "period": 60 } },
         { "name": "RL_USER", "namespace_id": "2002", "simple": { "limit": 5000, "period": 60 } },
       ],
+      // Interactive jobs, and bulk ones (one per invocation): jobs.ts BULK_JOBS.
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "underlay-prod-jobs" }],
+        "producers": [
+          { "binding": "JOBS", "queue": "underlay-prod-jobs" },
+          { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
+        ],
         "consumers": [
           {
             "queue": "underlay-prod-jobs",
             "max_batch_size": 10,
+            "max_concurrency": 10,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-prod-dead",
+          },
+          {
+            "queue": "underlay-prod-bulk",
+            "max_batch_size": 1,
+            "max_concurrency": 20,
             "max_retries": 10,
             "dead_letter_queue": "underlay-prod-dead",
           },

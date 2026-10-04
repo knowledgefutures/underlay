@@ -19,7 +19,7 @@ import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { createKf, type Kf } from './auth/kf.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
-import { QueueJobs, runJob } from './jobs.js'
+import { isBulk, QueueJobs, runJob } from './jobs.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports } from './ports.js'
 import { createStores } from './stores.js'
@@ -27,6 +27,8 @@ import { createStores } from './stores.js'
 export interface Env {
   DB: D1Database
   JOBS: Queue
+  /** Bulk jobs (jobs.ts BULK_JOBS); without it, everything goes to JOBS. */
+  JOBS_BULK?: Queue
   APP_URL: string
   DEPLOYMENT: string
   R2_ENDPOINT: string
@@ -57,6 +59,9 @@ export interface Env {
   INTERNAL_PREFIX?: string
 }
 
+/** Interactive jobs one invocation runs at once. */
+const INTERACTIVE_LANES = 4
+
 let signer: Promise<Signer> | null = null
 
 function makePorts(env: Env, ctx: ExecutionContext): Ports {
@@ -79,7 +84,7 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
     }),
     cache,
     signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),
-    jobs: new QueueJobs(env.JOBS as never),
+    jobs: new QueueJobs(env.JOBS as never, (env.JOBS_BULK ?? env.JOBS) as never),
     waitUntil: (p) => ctx.waitUntil(p),
     outboundFetch: (url, init) => fetch(url, init),
     locationFetch: (req) => fetch(req),
@@ -157,7 +162,7 @@ export default {
 
   async queue(batch: MessageBatch<JobMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
     const ports = makePorts(env, ctx)
-    for (const msg of batch.messages) {
+    const run = async (msg: (typeof batch.messages)[number]) => {
       try {
         await runJob(msg.body, ports)
         msg.ack()
@@ -166,6 +171,15 @@ export default {
         msg.retry({ delaySeconds: Math.min(3600, 2 ** msg.attempts) })
       }
     }
+    // The bulk queue delivers one job per invocation (wrangler.jsonc); an
+    // interactive batch's small jobs run a few at a time, sharing its CPU.
+    const queue = [...batch.messages]
+    const lanes = batch.messages.some((m) => isBulk(m.body.type)) ? 1 : INTERACTIVE_LANES
+    await Promise.all(
+      Array.from({ length: Math.min(lanes, queue.length) }, async () => {
+        for (let m = queue.shift(); m; m = queue.shift()) await run(m)
+      }),
+    )
   },
 
   async scheduled(

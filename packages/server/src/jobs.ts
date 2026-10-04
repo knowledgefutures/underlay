@@ -6,6 +6,11 @@
  *
  * Cloudflare: Cloudflare Queues; the Worker's `queue` handler calls runJob.
  * Node: a `jobs` table polled by an in-process runner.
+ *
+ * Two kinds (v2-scale-review.md S1, S2): bulk jobs can run for minutes or walk
+ * a whole collection, and go to their own queue, one per invocation; the rest
+ * are small and interactive (a webhook, a file check), and run several at a
+ * time so they never wait behind a bulk push, a mirror backfill or a restore.
  */
 import { and, asc, eq, lte, or, sql } from 'drizzle-orm'
 
@@ -13,6 +18,22 @@ import * as schema from './db/schema.js'
 import type { Db, JobMessage, Jobs, Ports } from './ports.js'
 
 export type JobHandler = (job: JobMessage, ports: Ports) => Promise<void>
+
+/** Job types that go to the bulk queue. Everything else is interactive. */
+export const BULK_JOBS: ReadonlySet<string> = new Set([
+  'push.commit', // async commits: 100k records and up
+  'commit.unit',
+  'commit.assemble',
+  'push.compact',
+  'refs.compact',
+  'refs.compactPart',
+  'refs.finishCompaction',
+  'mirror.version',
+  'restore.version',
+  'repo.repairLog',
+])
+
+export const isBulk = (type: string) => BULK_JOBS.has(type)
 
 const handlers = new Map<string, JobHandler>()
 
@@ -33,15 +54,29 @@ interface CfQueue {
   sendBatch(messages: { body: unknown; delaySeconds?: number }[]): Promise<void>
 }
 
+/** Jobs on Cloudflare Queues: interactive and bulk queues (one queue for both if no bulk is bound). */
 export class QueueJobs implements Jobs {
-  constructor(readonly queue: CfQueue) {}
+  constructor(
+    readonly queue: CfQueue,
+    readonly bulk: CfQueue = queue,
+  ) {}
+  #for(type: string) {
+    return isBulk(type) ? this.bulk : this.queue
+  }
   async enqueue(job: JobMessage, opts?: { delaySeconds?: number }) {
-    await this.queue.send(job, opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : undefined)
+    await this.#for(job.type).send(
+      job,
+      opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : undefined,
+    )
   }
   async enqueueBatch(jobs: JobMessage[]) {
-    // sendBatch takes at most 100 messages.
-    for (let i = 0; i < jobs.length; i += 100) {
-      await this.queue.sendBatch(jobs.slice(i, i + 100).map((body) => ({ body })))
+    for (const q of [this.queue, this.bulk]) {
+      const mine = jobs.filter((j) => this.#for(j.type) === q)
+      // sendBatch takes at most 100 messages.
+      for (let i = 0; i < mine.length; i += 100) {
+        await q.sendBatch(mine.slice(i, i + 100).map((body) => ({ body })))
+      }
+      if (this.bulk === this.queue) break
     }
   }
 }
@@ -84,7 +119,14 @@ async function claim(db: Db): Promise<typeof schema.jobs.$inferSelect | null> {
         and(eq(schema.jobs.status, 'running'), lte(schema.jobs.lockedUntil, new Date(now))),
       ),
     )
-    .orderBy(asc(schema.jobs.runAt))
+    // Interactive jobs first, as their own queue would run them.
+    .orderBy(
+      sql`CASE WHEN ${schema.jobs.type} IN (${sql.join(
+        [...BULK_JOBS].map((t) => sql`${t}`),
+        sql`, `,
+      )}) THEN 1 ELSE 0 END`,
+      asc(schema.jobs.runAt),
+    )
     .limit(1)
   const [job] = await db
     .update(schema.jobs)
