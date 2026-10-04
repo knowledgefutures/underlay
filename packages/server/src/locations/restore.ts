@@ -72,6 +72,65 @@ async function sourceRepo(ports: Ports, loc: LocationRow): Promise<Repo> {
   return openRepo(await locationStore(ports, loc))
 }
 
+/** A collection stored at a location, as the restore form lists it. */
+export interface SourceCollection {
+  id: string
+  owner: string
+  slug: string
+  name: string
+  versions: number
+  latest: { semver: string; createdAt: string } | null
+  /** Ids of the keys that sign its log; `own` is this deployment's (always trusted). */
+  keys: { id: string; own: boolean }[]
+}
+
+/** At most this many collections are read from one location for the picker. */
+const LIST_LIMIT = 200
+
+/**
+ * The collections a location holds: each `collections/<id>/collection.json`, with
+ * its head and latest log entry. There is no index object, so this lists every
+ * key under `collections/` (log entries included): fine for a backup bucket's
+ * size, and only run when someone opens the restore form.
+ */
+export async function listSourceCollections(
+  ports: Ports,
+  loc: LocationRow,
+): Promise<{ collections: SourceCollection[]; truncated: boolean }> {
+  const repo = await sourceRepo(ports, loc)
+  const own = (await ports.signer()).publicKey.id
+  const ids: string[] = []
+  let cursor: string | undefined
+  let truncated = false
+  do {
+    const page = await repo.blobs.list('collections/', cursor)
+    for (const k of page.keys) {
+      const m = /^collections\/([^/]+)\/collection\.json$/.exec(k)
+      if (!m) continue
+      if (ids.length === LIST_LIMIT) truncated = true
+      else ids.push(m[1]!)
+    }
+    cursor = page.cursor
+  } while (cursor && !truncated)
+  const collections = await Promise.all(
+    ids.map(async (id): Promise<SourceCollection | null> => {
+      const [info, head] = await Promise.all([readCollectionInfo(repo, id), readHead(repo, id)])
+      if (!info) return null
+      const latest = head ? await readLogEntry(repo, id, head.seq) : null
+      return {
+        id,
+        owner: info.owner,
+        slug: info.slug,
+        name: info.name,
+        versions: head?.seq ?? 0,
+        latest: latest ? { semver: latest.semver, createdAt: latest.createdAt } : null,
+        keys: info.keys.map((k) => ({ id: k.id, own: k.id === own })),
+      }
+    }),
+  )
+  return { collections: collections.filter((x) => x !== null), truncated }
+}
+
 /**
  * What a restore will read: the collection's info and head in the location, and
  * whether it holds the private sets. Throws when there's nothing to restore.

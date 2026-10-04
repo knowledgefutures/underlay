@@ -299,6 +299,9 @@ try {
         'Add a storage location',
         'Default mirrors',
         'Add default mirror',
+        // The seeded location is write-only, so it can't be restored from.
+        'Restore a collection',
+        'No location with read and write access',
       ],
       lacks: ['sealed-credentials'],
       user: 'u1',

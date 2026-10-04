@@ -14,16 +14,20 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const headers = ssrHeaders(request)
   const prefix = `/api/orgs/${params.owner}`
 
-  // Both are for owners and admins; anyone else gets 403 and the page says so.
-  const [locations, placements] = await Promise.all([
+  // All three are for owners and admins; anyone else gets 403 and the page says so.
+  const [locations, placements, restores] = await Promise.all([
     apiFetch(new URL(`${prefix}/locations`, base), { headers }),
     apiFetch(new URL(`${prefix}/placements`, base), { headers }),
+    apiFetch(new URL(`${prefix}/restores`, base), { headers }),
   ])
   if (locations.status === 404) throw new Response('Not Found', { status: 404 })
-  if (!locations.ok || !placements.ok) return { allowed: false, locations: [], placements: [] }
+  if (!locations.ok || !placements.ok) {
+    return { allowed: false, locations: [], placements: [], restores: [] }
+  }
   return {
     allowed: true,
     locations: (await locations.json()).locations ?? [],
     placements: (await placements.json()).placements ?? [],
+    restores: restores.ok ? ((await restores.json()).restores ?? []) : [],
   }
 }

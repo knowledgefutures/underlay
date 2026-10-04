@@ -2,13 +2,15 @@ import { type FormEvent, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import { SETS_LABELS } from '~/components/MirrorsSettings'
+import RestoreSection, { type Restore } from '~/components/RestoreSection'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Badge, Button, Field, Input, SectionHeading, Select } from '~/components/ui'
 
 /**
  * An org's storage locations (S3-compatible buckets it controls) and its
- * default mirrors, which every collection in the org inherits. Owners and
- * admins only (packages/server/src/api/locations.ts).
+ * default mirrors, which every collection in the org inherits, and restoring a
+ * collection from a location. Owners and admins only
+ * (packages/server/src/api/locations.ts).
  */
 
 interface Location {
@@ -78,6 +80,7 @@ export default function OwnerSettingsStorage() {
     allowed: boolean
     locations: Location[]
     placements: DefaultPlacement[]
+    restores: Restore[]
   }
   const api = `/api/orgs/${owner}`
 
@@ -526,6 +529,12 @@ export default function OwnerSettingsStorage() {
               </form>
             ) : null}
           </section>
+
+          <RestoreSection
+            owner={owner!}
+            locations={locations}
+            initialRestores={loaderData.restores}
+          />
         </>
       )}
     </SettingsLayout>

@@ -167,6 +167,60 @@ describe('restore', () => {
     expect(again.status).toBe(409)
   })
 
+  it('lists what a location holds, and the org’s restores, for the restore form', async () => {
+    const { f, a, c, versions } = await source()
+    const b = await harness()
+    const user = await b.member()
+    const loc = await location(b, user, f)
+    const listed = async () =>
+      (await (await b.request(`/api/orgs/org/locations/${loc}/collections`, { user })).json()) as {
+        collections: unknown[]
+        truncated: boolean
+      }
+    expect(await listed()).toEqual({
+      collections: [
+        {
+          id: c.id,
+          owner: 'org',
+          slug: 'books',
+          name: 'books',
+          versions: 2,
+          latest: { semver: versions[1]!.semver, createdAt: expect.any(String) },
+          keys: [{ id: a.signer.keyId, own: false }],
+          present: false,
+        },
+      ],
+      truncated: false,
+    })
+    // Members who aren't admins see neither.
+    await b.ports.db.insert(schema.user).values({ id: 'u2', name: 'u2', email: 'u2@example.org' })
+    await b.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org1', userId: 'u2', role: 'member' })
+    expect(
+      (await b.request(`/api/orgs/org/locations/${loc}/collections`, { user: 'u2' })).status,
+    ).toBe(403)
+    expect((await b.request('/api/orgs/org/restores', { user: 'u2' })).status).toBe(403)
+
+    await restore(b, user, loc, c.id, [a.signer.keyId])
+    expect((await listed()).collections).toEqual([expect.objectContaining({ present: true })])
+    const { restores } = (await (await b.request('/api/orgs/org/restores', { user })).json()) as {
+      restores: { status: string; slug: string; restoredSeq: number }[]
+    }
+    expect(restores).toEqual([
+      expect.objectContaining({ status: 'done', slug: 'restored', restoredSeq: 2 }),
+    ])
+
+    // A write-only location can't be read back.
+    await b.ports.db
+      .update(schema.storageLocations)
+      .set({ permissions: 'write' })
+      .where(eq(schema.storageLocations.id, loc))
+    expect((await b.request(`/api/orgs/org/locations/${loc}/collections`, { user })).status).toBe(
+      422,
+    )
+  })
+
   it("refuses a log re-signed with a forged key under a trusted key's id", async () => {
     const { f, a, c } = await source()
     const b = await harness()

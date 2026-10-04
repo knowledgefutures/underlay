@@ -18,14 +18,17 @@
  *   POST   /api/orgs/:org/restores                  {locationId, collectionId, slug, name?,
  *                                                    trustKeyIds?}: rebuild a collection here
  *   GET    /api/orgs/:org/restores/:id
+ *   GET    /api/orgs/:org/restores                  the org's 20 most recent restores
+ *   GET    /api/orgs/:org/locations/:id/collections what a read_write location holds, to restore
  *
  * A location that serves objects without credentials may only hold public sets.
  * Deleting a mirror never deletes what it copied: the bucket is the customer's.
  */
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { validateSlug } from '../lib/slug.js'
 import {
@@ -35,7 +38,7 @@ import {
   type LocationRow,
 } from '../locations/locations.js'
 import { collectionMirrors, queueMirrors } from '../locations/mirror.js'
-import { inspectSource, RestoreError } from '../locations/restore.js'
+import { inspectSource, listSourceCollections, RestoreError } from '../locations/restore.js'
 import { createCollectionRows } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
 import { isAdmin, membership } from './manage.js'
@@ -450,6 +453,48 @@ export function locationRoutes() {
       },
       202,
     )
+  })
+
+  app.get('/api/orgs/:org/locations/:id/collections', async (c) => {
+    const org = await orgAdmin(c)
+    if (org instanceof Response) return org
+    const loc = await orgLocation(c, org.id, c.req.param('id'))
+    if (!loc) return jsonError(c, 404, 'Location not found')
+    let listed
+    try {
+      listed = await listSourceCollections(c.var.ports, loc)
+    } catch (err) {
+      if (err instanceof RestoreError) return jsonError(c, 422, err.message)
+      return jsonError(c, 422, `Could not read the location: ${(err as Error).message}`)
+    }
+    // A collection this instance still has can't be restored (it keeps its id).
+    const present = new Set<string>()
+    for (const part of chunks(listed.collections.map((x) => x.id))) {
+      const rows = await c.var.ports.db
+        .select({ id: schema.collections.id })
+        .from(schema.collections)
+        .where(inArray(schema.collections.id, part))
+      for (const r of rows) present.add(r.id)
+    }
+    return c.json({
+      collections: listed.collections.map((x) => ({ ...x, present: present.has(x.id) })),
+      truncated: listed.truncated,
+    })
+  })
+
+  app.get('/api/orgs/:org/restores', async (c) => {
+    const org = await orgAdmin(c)
+    if (org instanceof Response) return org
+    const rows = await c.var.ports.db
+      .select({ restore: schema.restores, slug: schema.collections.slug })
+      .from(schema.restores)
+      .leftJoin(schema.collections, eq(schema.collections.id, schema.restores.collectionId))
+      .where(eq(schema.restores.organizationId, org.id))
+      .orderBy(desc(schema.restores.createdAt))
+      .limit(20)
+    return c.json({
+      restores: rows.map((r) => ({ ...restoreView(r.restore), slug: r.slug })),
+    })
   })
 
   app.get('/api/orgs/:org/restores/:id', async (c) => {
