@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLoaderData } from 'react-router'
+import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import DiscussionDrawer from '~/components/DiscussionDrawer'
 import { useAppContext } from '~/lib/app-context'
 
 const recordExample = `{"id":"pub-001","type":"Publication","data":{"title":"The Structure of Scientific Revolutions","doi":"10.1234/example"}}`
@@ -136,152 +134,9 @@ const provenanceExample = `GET /api/records/:hash/provenance
   ]
 }`
 
-interface Comment {
-  id: string
-  anchor: string
-  quote: string | null
-  quoteContext: { prefix: string; suffix: string } | null
-  parentId: string | null
-  userId: string
-  body: string
-  approvedAt: string | null
-  status: 'open' | 'answered' | 'decided' | 'changed'
-  resolutionNote: string | null
-  createdAt: string
-  editedAt: string | null
-  authorName: string
-  authorImage: string | null
-}
-
-type CommentsByAnchor = Record<string, Comment[]>
-
 export default function Protocol() {
-  const data = useLoaderData<{ counts: Record<string, number> }>()
   const { currentUser } = useAppContext()
-  const [comments, setComments] = useState<CommentsByAnchor>({})
-  const [drawerAnchor, setDrawerAnchor] = useState<string | null>(null)
-  const [selectionQuote, setSelectionQuote] = useState<string | null>(null)
-  const [selectionContext, setSelectionContext] = useState<{
-    prefix: string
-    suffix: string
-  } | null>(null)
-  const [popover, setPopover] = useState<{
-    x: number
-    y: number
-    anchor: string
-    quote: string
-    context: { prefix: string; suffix: string }
-  } | null>(null)
-  const [counts, setCounts] = useState<Record<string, number>>(data?.counts ?? {})
-  const popoverRef = useRef<HTMLDivElement>(null)
-
   const isSteward = currentUser?.kfRole === 'admin'
-
-  const fetchComments = useCallback(async () => {
-    const res = await fetch('/api/pages/protocol/comments')
-    if (res.ok) {
-      const data = await res.json()
-      setComments(data.comments ?? {})
-      const newCounts: Record<string, number> = {}
-      for (const [anchor, list] of Object.entries(data.comments ?? {})) {
-        newCounts[anchor] = (list as Comment[]).filter(
-          (c) => c.approvedAt && !c.parentId && c.status === 'open',
-        ).length
-      }
-      setCounts(newCounts)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchComments()
-  }, [fetchComments])
-
-  function findAnchorForNode(node: Node): string | null {
-    let el: HTMLElement | null =
-      node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement)
-    while (el) {
-      if (el.dataset.rfcSection) return el.dataset.rfcSection
-      el = el.parentElement
-    }
-    return null
-  }
-
-  useEffect(() => {
-    function handleMouseUp() {
-      const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || !sel.rangeCount) {
-        return
-      }
-      const range = sel.getRangeAt(0)
-      const text = sel.toString().trim()
-      if (!text || text.length < 3 || text.length > 2000) return
-
-      const anchor = findAnchorForNode(range.startContainer)
-      if (!anchor) return
-
-      const rect = range.getBoundingClientRect()
-      const fullText = range.startContainer.textContent ?? ''
-      const start = Math.max(0, range.startOffset - 40)
-      const end = Math.min(fullText.length, range.endOffset + 40)
-      const prefix = fullText.slice(start, range.startOffset)
-      const suffix = fullText.slice(range.endOffset, end)
-
-      setPopover({
-        x: rect.left + rect.width / 2,
-        y: rect.top - 10,
-        anchor,
-        quote: text,
-        context: { prefix, suffix },
-      })
-    }
-
-    function handleMouseDown(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setPopover(null)
-      }
-    }
-
-    document.addEventListener('mouseup', handleMouseUp)
-    document.addEventListener('mousedown', handleMouseDown)
-    return () => {
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.removeEventListener('mousedown', handleMouseDown)
-    }
-  }, [])
-
-  function openDrawerWithQuote(
-    anchor: string,
-    quote: string | null,
-    context: { prefix: string; suffix: string } | null,
-  ) {
-    setDrawerAnchor(anchor)
-    setSelectionQuote(quote)
-    setSelectionContext(context)
-    setPopover(null)
-    window.getSelection()?.removeAllRanges()
-  }
-
-  function openDrawerForSection(anchor: string) {
-    setDrawerAnchor(anchor)
-    setSelectionQuote(null)
-    setSelectionContext(null)
-  }
-
-  const closedThreads = Object.values(comments)
-    .flat()
-    .filter((c) => c.approvedAt && !c.parentId && c.status !== 'open')
-
-  const statusLabel: Record<string, string> = {
-    answered: 'Answered',
-    decided: 'Decided',
-    changed: 'Changed',
-  }
-
-  const statusColor: Record<string, string> = {
-    answered: 'text-blue-700',
-    decided: 'text-amber-700',
-    changed: 'text-green-700',
-  }
 
   return (
     <BaseLayout>
@@ -310,7 +165,7 @@ export default function Protocol() {
         </p>
 
         <div className="docs-prose">
-          <RfcSection id="overview" count={counts['overview'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="overview-section">
             <h2 id="overview">Overview</h2>
             <p>
               Underlay is a protocol for publishing, versioning, and collaborating on structured
@@ -325,13 +180,9 @@ export default function Protocol() {
               A single-file implementation of the Underlay protocol can be found at{' '}
               <a href="https://sus.knowledgefutures.org/">sus.knowledgefutures.org/</a>
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection
-            id="data-model"
-            count={counts['data-model'] ?? 0}
-            onOpen={openDrawerForSection}
-          >
+          <section id="data-model-section">
             <h2 id="data-model">Data model</h2>
             <p>The protocol has four primitives:</p>
             <ul>
@@ -356,13 +207,9 @@ export default function Protocol() {
                 convention.
               </li>
             </ul>
-          </RfcSection>
+          </section>
 
-          <RfcSection
-            id="record-identity"
-            count={counts['record-identity'] ?? 0}
-            onOpen={openDrawerForSection}
-          >
+          <section id="record-identity-section">
             <h2 id="record-identity">Record identity</h2>
             <p>
               A record's identity is the SHA-256 hash of its canonical JSON. The canonical form is:
@@ -416,13 +263,9 @@ export default function Protocol() {
             <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
               <code>{recordExample}</code>
             </pre>
-          </RfcSection>
+          </section>
 
-          <RfcSection
-            id="version-identity"
-            count={counts['version-identity'] ?? 0}
-            onOpen={openDrawerForSection}
-          >
+          <section id="version-identity-section">
             <h2 id="version-identity">Version identity</h2>
             <p>
               A version's hash is the SHA-256 of a canonical JSON object containing sorted hashes:
@@ -470,9 +313,9 @@ export default function Protocol() {
                 are <code>private</code> (e.g. <code>v1.2.0</code> {'->'} <code>v1.2.1</code>)
               </li>
             </ul>
-          </RfcSection>
+          </section>
 
-          <RfcSection id="push" count={counts['push'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="push-section">
             <h2 id="push">Push</h2>
             <p>
               All pushes use the negotiate protocol, a three-step flow similar to git's pack
@@ -515,9 +358,9 @@ export default function Protocol() {
               publishes nothing until it finishes, so there is no window in which a partially built
               version can be read.
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection id="pull" count={counts['pull'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="pull-section">
             <h2 id="pull">Pull</h2>
             <p>
               Clients can fetch a full manifest or a delta between two versions. Combined with the
@@ -576,9 +419,9 @@ export default function Protocol() {
               the cost of a round trip per page. Making the expected count explicit lets a client
               get the safety without the round trips.
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection id="schemas" count={counts['schemas'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="schemas-section">
             <h2 id="schemas">Schema semantics</h2>
             <p>
               Schemas are{' '}
@@ -626,9 +469,9 @@ export default function Protocol() {
               request. The server strips the extra fields before hashing and storing, so the stored
               records match the schema exactly. Hashes are recomputed after stripping.
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection id="files" count={counts['files'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="files-section">
             <h2 id="files">Files</h2>
             <p>
               Files are binary blobs stored by SHA-256 hash. Upload a file, then reference it from a
@@ -642,13 +485,9 @@ export default function Protocol() {
               Like records and schemas, files are globally deduplicated. The same PDF in ten
               collections is stored once.
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection
-            id="provenance"
-            count={counts['provenance'] ?? 0}
-            onOpen={openDrawerForSection}
-          >
+          <section id="provenance-section">
             <h2 id="provenance">Provenance</h2>
             <p>
               Because records are content-addressed, every record hash can be traced back to every
@@ -662,13 +501,9 @@ export default function Protocol() {
               the record's birthday on this server. This enables citation-like provenance: "this
               record first appeared in alice/papers v1.2.0 on 2026-01-15."
             </p>
-          </RfcSection>
+          </section>
 
-          <RfcSection
-            id="collaboration"
-            count={counts['collaboration'] ?? 0}
-            onOpen={openDrawerForSection}
-          >
+          <section id="collaboration-section">
             <h2 id="collaboration">Collaboration</h2>
             <p>Underlay supports collaboration through a small set of primitives:</p>
             <ul>
@@ -705,9 +540,9 @@ export default function Protocol() {
                 with private fields. Members of the source org can always fork.
               </li>
             </ul>
-          </RfcSection>
+          </section>
 
-          <RfcSection id="errors" count={counts['errors'] ?? 0} onOpen={openDrawerForSection}>
+          <section id="errors-section">
             <h2 id="errors">Errors</h2>
             <p>
               All error responses return JSON with an <code>error</code> field and an HTTP status
@@ -755,126 +590,19 @@ export default function Protocol() {
               existence. <code>403</code> is reserved for cases where the caller&rsquo;s identity is
               already established as insufficient for a resource they can see.
             </p>
-          </RfcSection>
+          </section>
         </div>
-
-        {closedThreads.length > 0 && (
-          <div className="border-rule mt-16 border-t pt-8">
-            <h2 className="mb-4 text-lg font-semibold">Decision log</h2>
-            <p className="text-ink-muted mb-6 text-sm">
-              Resolved discussions about this specification.
-            </p>
-            <div className="space-y-4">
-              {closedThreads.map((thread) => (
-                <div key={thread.id} className="border-rule rounded-surface border p-3">
-                  <div className="mb-1 flex items-center gap-2 text-xs">
-                    <span className={`font-medium ${statusColor[thread.status] ?? ''}`}>
-                      {statusLabel[thread.status] ?? thread.status}
-                    </span>
-                    <span className="text-ink-muted">
-                      {new Date(thread.createdAt).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
-                    </span>
-                    <span className="text-ink-muted">in</span>
-                    <button
-                      onClick={() => openDrawerForSection(thread.anchor)}
-                      className="text-link text-xs underline"
-                    >
-                      {thread.anchor}
-                    </button>
-                  </div>
-                  {thread.quote && (
-                    <div className="border-rule mb-2 border-l-2 pl-2 text-xs text-amber-800 italic">
-                      "{thread.quote}"
-                    </div>
-                  )}
-                  <p className="text-sm">{thread.body}</p>
-                  {thread.resolutionNote && (
-                    <div className="border-rule rounded-surface mt-2 border bg-gray-50 px-2 py-1.5 text-xs">
-                      <span className="font-medium">Resolution:</span> {thread.resolutionNote}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div className="border-rule mt-12 border-t pt-6">
           <p className="text-ink-muted text-xs">
-            Spotted an ambiguity, an error, or something that broke when you implemented it? Select
-            any text above to comment on it. The protocol is stewarded by{' '}
+            The protocol is stewarded by{' '}
             <a href="https://www.knowledgefutures.org" className="text-link underline">
               Knowledge Futures
             </a>{' '}
-            . We read everything, publish what moves the spec forward, and keep building.
+            .
           </p>
         </div>
       </div>
-
-      {popover && currentUser && (
-        <div
-          ref={popoverRef}
-          className="bg-ink text-parchment rounded-surface fixed z-50 px-3 py-1.5 text-xs font-medium shadow-lg"
-          style={{
-            left: popover.x,
-            top: popover.y,
-            transform: 'translate(-50%, -100%)',
-          }}
-        >
-          <button
-            onClick={() => openDrawerWithQuote(popover.anchor, popover.quote, popover.context)}
-          >
-            Comment on this
-          </button>
-        </div>
-      )}
-
-      {drawerAnchor && (
-        <DiscussionDrawer
-          page="protocol"
-          anchor={drawerAnchor}
-          quote={selectionQuote}
-          quoteContext={selectionContext}
-          comments={comments}
-          onClose={() => setDrawerAnchor(null)}
-          onRefresh={fetchComments}
-          isSteward={isSteward}
-        />
-      )}
     </BaseLayout>
-  )
-}
-
-function RfcSection({
-  id,
-  count,
-  onOpen,
-  children,
-}: {
-  id: string
-  count: number
-  onOpen: (id: string) => void
-  children: React.ReactNode
-}) {
-  return (
-    <div className="group relative" data-rfc-section={id}>
-      <div className="absolute top-0 -right-12 hidden lg:block">
-        <button
-          onClick={() => onOpen(id)}
-          className="text-ink-muted hover:text-ink hover:bg-parchment-dark flex h-7 min-w-[28px] items-center justify-center rounded-full text-xs transition-colors"
-          title={count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'}
-          aria-label={
-            count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'
-          }
-        >
-          {count > 0 ? count : '+'}
-        </button>
-      </div>
-      {children}
-    </div>
   )
 }

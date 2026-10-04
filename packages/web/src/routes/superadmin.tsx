@@ -14,12 +14,6 @@ const tools = [
     href: '/admin/abuse',
     description: 'Review reports of harmful content, and block or unblock file and record hashes.',
   },
-  {
-    name: 'Discussion Review',
-    href: '/admin/discussion',
-    description:
-      'Moderate comments on the protocol specification. Approve, decline, and resolve threads.',
-  },
 ]
 
 export default function Superadmin() {

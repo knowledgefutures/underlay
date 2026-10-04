@@ -841,7 +841,7 @@ export const webhookDeliveries = sqliteTable(
   ],
 )
 
-// --- ARKs, comments, settings ----------------------------------------------------------------
+// --- ARKs, settings ------------------------------------------------------------------------
 
 export const arkShoulders = sqliteTable('ark_shoulders', {
   id: id(),
@@ -872,30 +872,6 @@ export const arkRecordTypes = sqliteTable(
     redirectUrlField: text('redirect_url_field').notNull(),
   },
   (t) => [primaryKey({ columns: [t.collectionId, t.recordType] })],
-)
-
-export const pageComments = sqliteTable(
-  'page_comments',
-  {
-    id: id(),
-    page: text('page').notNull(),
-    anchor: text('anchor').notNull(),
-    quote: text('quote'),
-    quoteContext: json<{ prefix: string; suffix: string }>('quote_context'),
-    parentId: text('parent_id'),
-    userId: text('user_id').notNull(),
-    body: text('body').notNull(),
-    approvedAt: ts('approved_at'),
-    approvedBy: text('approved_by'),
-    status: text('status', { enum: ['open', 'answered', 'decided', 'changed'] })
-      .notNull()
-      .default('open'),
-    resolutionNote: text('resolution_note'),
-    createdAt: createdAt(),
-    editedAt: ts('edited_at'),
-    deletedAt: ts('deleted_at'),
-  },
-  (t) => [index('page_comments_page_idx').on(t.page)],
 )
 
 export const instanceSettings = sqliteTable('instance_settings', {

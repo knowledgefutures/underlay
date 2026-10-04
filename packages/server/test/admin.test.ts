@@ -7,7 +7,7 @@ import { setup } from './kf-app.js'
 afterAll(cleanup)
 
 // u1 is a steward in the fake KF Auth; u2 is not.
-describe('steward, discussion and KF summary routes', () => {
+describe('steward and KF summary routes', () => {
   it('lets only stewards read and set the featured explore lists', async () => {
     const { call, user } = await setup()
     await user('u1')
@@ -25,71 +25,6 @@ describe('steward, discussion and KF summary routes', () => {
       expect((await put({ [field]: ['org/c', 'x'] })).status).toBe(200)
       expect(await (await call(path, { user: 'u1' })).json()).toEqual({ [field]: ['org/c', 'x'] })
     }
-  })
-
-  it('shows approved comments to all and pending ones to their author; stewards moderate', async () => {
-    const { call, user } = await setup()
-    await user('u1')
-    await user('u2')
-    await user('u3')
-    const post = (u: string, json: unknown) =>
-      call('/api/pages/protocol/comments', { method: 'POST', user: u, json })
-
-    expect((await post('u2', { anchor: 's1' })).status).toBe(400)
-    expect((await call('/api/pages/protocol/comments', { method: 'POST', json: {} })).status).toBe(
-      401,
-    )
-    const made = await post('u2', { anchor: 's1', body: 'Why?', quote: 'the text' })
-    expect(made.status).toBe(201)
-    const { comment } = await made.json()
-
-    const visible = async (u?: string) => {
-      const r = await (await call('/api/pages/protocol/comments', u ? { user: u } : {})).json()
-      return (r.comments.s1 ?? []).map((x: { body: string }) => x.body)
-    }
-    expect(await visible()).toEqual([])
-    expect(await visible('u3')).toEqual([])
-    expect(await visible('u2')).toEqual(['Why?'])
-
-    const patch = (u: string, json: unknown) =>
-      call(`/api/pages/protocol/comments/${comment.id}`, { method: 'PATCH', user: u, json })
-    expect((await patch('u3', { body: 'hijack' })).status).toBe(403)
-    expect((await patch('u2', { approve: true })).status).toBe(403)
-    expect((await patch('u2', { body: 'Why not?' })).status).toBe(200)
-
-    const queue = await (await call('/api/admin/discussion', { user: 'u1' })).json()
-    expect(queue.pending.map((x: { body: string }) => x.body)).toEqual(['Why not?'])
-    expect((await call('/api/admin/discussion', { user: 'u2' })).status).toBe(403)
-
-    expect((await patch('u1', { approve: true, status: 'answered' })).status).toBe(200)
-    expect(await visible()).toEqual(['Why not?'])
-    // Approved: the author can no longer edit.
-    expect((await patch('u2', { body: 'changed' })).status).toBe(403)
-
-    // One level of replies only.
-    const reply = await post('u3', { anchor: 's1', body: 'Re', parentId: comment.id })
-    expect(reply.status).toBe(201)
-    const { comment: r } = await reply.json()
-    expect((await post('u3', { anchor: 's1', body: 'Re re', parentId: r.id })).status).toBe(400)
-
-    const del = (u: string, id: string) =>
-      call(`/api/pages/protocol/comments/${id}`, { method: 'DELETE', user: u })
-    expect((await del('u3', comment.id)).status).toBe(403)
-    expect((await del('u1', comment.id)).status).toBe(200)
-    expect(await visible()).toEqual([])
-  })
-
-  it('limits comments per user per minute', async () => {
-    const { call, user } = await setup()
-    await user('u2')
-    const post = () =>
-      call('/api/pages/p/comments', {
-        method: 'POST',
-        user: 'u2',
-        json: { anchor: 'a', body: 'x' },
-      })
-    for (let i = 0; i < 10; i++) expect((await post()).status).toBe(201)
-    expect((await post()).status).toBe(429)
   })
 
   it('answers KF Auth with an org’s collections, with the internal key only', async () => {

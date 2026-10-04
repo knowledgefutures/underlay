@@ -1,8 +1,9 @@
 /**
  * v1 (Postgres) → v2 conversion (edge-redesign.md, "Migration").
  *
- * 1. Accounts and settings: better-auth tables, organizations, ARK tables,
- *    instance settings and comments are copied row for row (same fields).
+ * 1. Accounts and settings: better-auth tables, organizations, ARK tables and
+ *    instance settings are copied row for row (same fields). v1's protocol
+ *    comments (page_comments) are not: v2 dropped the feature.
  * 2. Files: the `files` table is copied with v1 storage keys; `copyFiles`
  *    (files.ts) then moves the objects to their v2 keys.
  * 3. Collections: each collection's ready versions are replayed oldest first
@@ -193,7 +194,6 @@ export async function migrateCollectionSettings(
   await copyTable(v1, ports, 'ark_shoulders', schema.arkShoulders, report)
   await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report, ours)
   await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report, ours)
-  await copyTable(v1, ports, 'page_comments', schema.pageComments, report)
   // Labels move from v1 schema ids to format 2 schema hashes.
   const labels = await v1.query<{ label: string; schema: unknown; created_at: Date }>(
     'SELECT l.label, s.schema, l.created_at FROM schema_labels l JOIN schemas s ON s.id = l.schema_id',

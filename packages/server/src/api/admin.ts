@@ -1,14 +1,9 @@
 /**
- * Steward pages, protocol discussion and the KF dashboard summary (v1's
- * `server.ts` explore routes, `src/api/discussion.ts` and `src/api/kf-summary.ts`):
+ * Steward pages and the KF dashboard summary (v1's `server.ts` explore routes
+ * and `src/api/kf-summary.ts`):
  *
  *   GET|PUT /api/admin/explore-tags              {tags: string[]}             stewards
  *   GET|PUT /api/admin/explore-collections       {collections: "owner/slug"[]} stewards
- *   GET     /api/pages/:page/comments            approved, plus the caller's own
- *   POST    /api/pages/:page/comments            {anchor, body, quote?, quoteContext?, parentId?}
- *   PATCH   /api/pages/:page/comments/:id        author: body; steward: approve, status, note
- *   DELETE  /api/pages/:page/comments/:id        author or steward
- *   GET     /api/admin/discussion                stewards: pending and all threads
  *   GET     /api/kf/summary?kf_org_id=           KF Auth, with the internal API key
  *   POST    /api/abuse-reports                   {hash?, url?, reason, contact?}: anyone
  *   GET     /api/admin/abuse-reports             stewards: ?status=open|blocked|dismissed
@@ -25,7 +20,7 @@
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
  */
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -34,11 +29,6 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { forgetDenylist } from '../lib/limits.js'
 import { jsonError } from './access.js'
-
-const COMMENT_MAX = 8192
-/** Comments per user per minute (v1: 10, held in process memory). */
-const COMMENTS_PER_MINUTE = 10
-const STATUSES = ['open', 'answered', 'decided', 'changed'] as const
 
 /** The signed-in person (session or unscoped key), as v1's requireAuth + requireUnscopedKey. */
 function person(c: Context<AppEnv>, write: boolean): string | null {
@@ -116,197 +106,6 @@ export function adminRoutes() {
       return c.json({ ok: true, [field]: value })
     })
   }
-
-  app.get('/api/pages/:page/comments', async (c) => {
-    const userId = person(c, false)
-    const t = schema.pageComments
-    const rows = await c.var.ports.db
-      .select({
-        id: t.id,
-        page: t.page,
-        anchor: t.anchor,
-        quote: t.quote,
-        quoteContext: t.quoteContext,
-        parentId: t.parentId,
-        userId: t.userId,
-        body: t.body,
-        approvedAt: t.approvedAt,
-        status: t.status,
-        resolutionNote: t.resolutionNote,
-        createdAt: t.createdAt,
-        editedAt: t.editedAt,
-        authorName: schema.user.name,
-        authorImage: schema.user.image,
-      })
-      .from(t)
-      .innerJoin(schema.user, eq(schema.user.id, t.userId))
-      .where(
-        and(
-          eq(t.page, c.req.param('page')),
-          isNull(t.deletedAt),
-          userId ? or(isNotNull(t.approvedAt), eq(t.userId, userId)) : isNotNull(t.approvedAt),
-        ),
-      )
-      .orderBy(t.createdAt)
-    const comments: Record<string, typeof rows> = {}
-    for (const r of rows) (comments[r.anchor] ??= []).push(r)
-    return c.json({ comments })
-  })
-
-  app.post('/api/pages/:page/comments', async (c) => {
-    const userId = person(c, true)
-    if (!userId) return jsonError(c, 401, 'Authentication required')
-    const { db } = c.var.ports
-    const t = schema.pageComments
-    const [recent] = await db
-      .select({ n: count() })
-      .from(t)
-      .where(and(eq(t.userId, userId), gt(t.createdAt, new Date(Date.now() - 60_000))))
-    if ((recent?.n ?? 0) >= COMMENTS_PER_MINUTE) {
-      return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)
-    }
-    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
-    const anchor = str(b?.anchor, 200)
-    const body = str(b?.body, COMMENT_MAX)
-    const quote = b?.quote === undefined ? null : str(b.quote, 2000)
-    const qc = b?.quoteContext as { prefix?: unknown; suffix?: unknown } | undefined
-    const quoteContext =
-      qc === undefined
-        ? null
-        : str(qc?.prefix, 200) !== undefined && str(qc?.suffix, 200) !== undefined
-          ? { prefix: qc.prefix as string, suffix: qc.suffix as string }
-          : undefined
-    const parentId = b?.parentId === undefined ? null : str(b.parentId, 64)
-    if (
-      !anchor ||
-      !body ||
-      quote === undefined ||
-      quoteContext === undefined ||
-      parentId === undefined
-    ) {
-      return jsonError(c, 400, 'Invalid request')
-    }
-    if (parentId) {
-      const [parent] = await db
-        .select({ parentId: t.parentId })
-        .from(t)
-        .where(and(eq(t.id, parentId), eq(t.page, c.req.param('page')), isNull(t.deletedAt)))
-        .limit(1)
-      if (!parent) return jsonError(c, 404, 'Parent comment not found')
-      if (parent.parentId) return jsonError(c, 400, 'Cannot nest replies deeper than one level')
-    }
-    const [comment] = await db
-      .insert(t)
-      .values({ page: c.req.param('page'), anchor, quote, quoteContext, parentId, userId, body })
-      .returning()
-    return c.json({ comment }, 201)
-  })
-
-  app.patch('/api/pages/:page/comments/:id', async (c) => {
-    const userId = person(c, true)
-    if (!userId) return jsonError(c, 401, 'Authentication required')
-    const t = schema.pageComments
-    const b = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
-    const body = b.body === undefined ? undefined : str(b.body, COMMENT_MAX)
-    const note = b.resolutionNote === undefined ? undefined : str(b.resolutionNote, 2000)
-    const status = STATUSES.find((s) => s === b.status)
-    if (
-      (b.body !== undefined && !body) ||
-      (b.resolutionNote !== undefined && note === undefined) ||
-      (b.status !== undefined && !status) ||
-      (b.approve !== undefined && typeof b.approve !== 'boolean')
-    ) {
-      return jsonError(c, 400, 'Invalid request')
-    }
-    const [existing] = await c.var.ports.db
-      .select()
-      .from(t)
-      .where(and(eq(t.id, c.req.param('id')), isNull(t.deletedAt)))
-      .limit(1)
-    if (!existing) return jsonError(c, 404, 'Comment not found')
-    const steward = await isSteward(c, userId)
-    if (body) {
-      if (existing.userId !== userId) {
-        return jsonError(c, 403, "Cannot edit another user's comment")
-      }
-      if (existing.approvedAt && !steward) {
-        return jsonError(c, 403, 'Cannot edit an approved comment')
-      }
-    }
-    if ((b.approve !== undefined || status || note !== undefined) && !steward) {
-      return jsonError(c, 403, 'Steward access required')
-    }
-    const set: Partial<typeof t.$inferInsert> = {}
-    if (body) Object.assign(set, { body, editedAt: new Date() })
-    if (b.approve === true) Object.assign(set, { approvedAt: new Date(), approvedBy: userId })
-    if (status) set.status = status
-    if (note !== undefined) set.resolutionNote = note
-    if (!Object.keys(set).length) return jsonError(c, 400, 'No changes')
-    const [comment] = await c.var.ports.db
-      .update(t)
-      .set(set)
-      .where(eq(t.id, existing.id))
-      .returning()
-    return c.json({ comment })
-  })
-
-  app.delete('/api/pages/:page/comments/:id', async (c) => {
-    const userId = person(c, true)
-    if (!userId) return jsonError(c, 401, 'Authentication required')
-    const t = schema.pageComments
-    const [existing] = await c.var.ports.db
-      .select({ id: t.id, userId: t.userId })
-      .from(t)
-      .where(and(eq(t.id, c.req.param('id')), isNull(t.deletedAt)))
-      .limit(1)
-    if (!existing) return jsonError(c, 404, 'Comment not found')
-    if (existing.userId !== userId && !(await isSteward(c, userId))) {
-      return jsonError(c, 403, 'Forbidden')
-    }
-    await c.var.ports.db.update(t).set({ deletedAt: new Date() }).where(eq(t.id, existing.id))
-    return c.json({ ok: true })
-  })
-
-  app.get('/api/admin/discussion', async (c) => {
-    const userId = person(c, true)
-    if (!userId) return jsonError(c, 401, 'Authentication required')
-    if (!(await isSteward(c, userId))) return jsonError(c, 403, 'Steward access required')
-    const t = schema.pageComments
-    const { db } = c.var.ports
-    const pending = await db
-      .select({
-        id: t.id,
-        page: t.page,
-        anchor: t.anchor,
-        quote: t.quote,
-        body: t.body,
-        createdAt: t.createdAt,
-        authorName: schema.user.name,
-        authorImage: schema.user.image,
-      })
-      .from(t)
-      .innerJoin(schema.user, eq(schema.user.id, t.userId))
-      .where(and(isNull(t.approvedAt), isNull(t.deletedAt)))
-      .orderBy(t.createdAt)
-    const threads = await db
-      .select({
-        id: t.id,
-        page: t.page,
-        anchor: t.anchor,
-        quote: t.quote,
-        body: t.body,
-        status: t.status,
-        resolutionNote: t.resolutionNote,
-        approvedAt: t.approvedAt,
-        createdAt: t.createdAt,
-        authorName: schema.user.name,
-      })
-      .from(t)
-      .innerJoin(schema.user, eq(schema.user.id, t.userId))
-      .where(and(isNull(t.deletedAt), isNull(t.parentId)))
-      .orderBy(desc(t.createdAt))
-    return c.json({ pending, threads })
-  })
 
   app.get('/api/kf/summary', async (c) => {
     const kfOrgId = c.req.query('kf_org_id')
