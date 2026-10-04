@@ -16,8 +16,9 @@
 import { createHash } from 'node:crypto'
 
 import { copyObject, fileTree, getEntry, RepoSource } from '@underlay/protocol'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
@@ -51,31 +52,67 @@ export async function canReadFile(
   member: boolean,
   hash: string,
 ): Promise<boolean> {
+  return (await readableFiles(ports, collection, member, [hash])).has(hash)
+}
+
+/** canReadFile for many hashes, with the head's trees looked up once. */
+export async function readableFiles(
+  ports: Ports,
+  collection: typeof schema.collections.$inferSelect,
+  member: boolean,
+  hashes: string[],
+): Promise<Set<string>> {
   const repo = await ports.stores.forCollection(collection.id)
   const source = new RepoSource(fileTree, repo)
-  if (await getEntry(source, collection.publicFilesRoot, hash)) return true
-  if (!member || !collection.headVersionId) return false
-  const [v] = await ports.db
-    .select()
-    .from(schema.versions)
-    .where(eq(schema.versions.id, collection.headVersionId))
-  if (!v) return false
-  const root = await repo.root(v.hash)
-  if (await getEntry(source, root.public.files.root, hash)) return true
-  if (!root.private) return false
-  const priv = await repo.privateSet(root.private)
-  return !!(await getEntry(source, priv.files.root, hash))
+  const roots = [collection.publicFilesRoot]
+  if (member && collection.headVersionId) {
+    const [v] = await ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.id, collection.headVersionId))
+    if (v) {
+      const root = await repo.root(v.hash)
+      roots.push(root.public.files.root)
+      if (root.private) roots.push((await repo.privateSet(root.private)).files.root)
+    }
+  }
+  const out = new Set<string>()
+  for (const h of hashes) {
+    for (const r of roots) {
+      if (r && (await getEntry(source, r, h))) {
+        out.add(h)
+        break
+      }
+    }
+  }
+  return out
 }
 
 export async function presignDownload(ports: Ports, hash: string): Promise<string | null> {
-  const [f] = await ports.db.select().from(schema.files).where(eq(schema.files.hash, hash)).limit(1)
-  if (!f) return null
-  // Downloads are attachments: nothing renders on the bucket's domain either.
-  return ports.stores.fileBytes.presigner.presignGet(f.storageKey, {
-    expiresIn: PRESIGN_SECONDS,
-    disposition: `attachment; filename="${hash}"`,
-    contentType: f.mimeType,
-  })
+  return (await presignDownloads(ports, [hash])).get(hash) ?? null
+}
+
+/** Presigned download URLs for stored files, with the file rows read in chunks. */
+export async function presignDownloads(
+  ports: Ports,
+  hashes: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  for (const part of chunks([...new Set(hashes)])) {
+    const rows = await ports.db.select().from(schema.files).where(inArray(schema.files.hash, part))
+    for (const f of rows) {
+      // Downloads are attachments: nothing renders on the bucket's domain either.
+      out.set(
+        f.hash,
+        await ports.stores.fileBytes.presigner.presignGet(f.storageKey, {
+          expiresIn: PRESIGN_SECONDS,
+          disposition: `attachment; filename="${f.hash}"`,
+          contentType: f.mimeType,
+        }),
+      )
+    }
+  }
+  return out
 }
 
 /**

@@ -225,10 +225,6 @@ export function locationRoutes() {
         ),
       )
     if (!row) return jsonError(c, 404, 'Placement not found')
-    const cols = await db
-      .select({ id: schema.collections.id })
-      .from(schema.collections)
-      .where(eq(schema.collections.organizationId, org.id))
     await db.batch([
       db.delete(schema.placements).where(eq(schema.placements.id, row.id)),
       db
@@ -237,7 +233,13 @@ export function locationRoutes() {
           and(
             eq(schema.placements.locationId, row.locationId),
             eq(schema.placements.role, 'mirror'),
-            inArray(schema.placements.collectionId, cols.length > 0 ? cols.map((x) => x.id) : ['']),
+            inArray(
+              schema.placements.collectionId,
+              db
+                .select({ id: schema.collections.id })
+                .from(schema.collections)
+                .where(eq(schema.collections.organizationId, org.id)),
+            ),
           ),
         ),
     ])

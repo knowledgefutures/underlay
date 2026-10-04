@@ -12,51 +12,50 @@
  * caller's orgs. `q` matches labels and type slugs; schema bodies live in the
  * repository, not SQLite, so there is no full-text search over them.
  */
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { findVersion, loadView } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 
 const MAX_LABEL_LENGTH = 100
 
-async function callerOrgIds(c: Context<AppEnv>): Promise<string[]> {
+/**
+ * The caller's orgs as a SQL subquery (null for none). A subquery rather than a
+ * list: D1 binds at most 100 parameters, and a user can belong to more orgs.
+ */
+function callerOrgs(c: Context<AppEnv>): SQL | null {
   const p = c.var.principal
-  if (!p || p.collectionIds) return []
-  if (p.orgId) return [p.orgId]
-  const rows = await c.var.ports.db
-    .select({ id: schema.member.organizationId })
-    .from(schema.member)
-    .where(eq(schema.member.userId, p.userId))
-  return rows.map((r) => r.id)
+  if (!p || p.collectionIds) return null
+  if (p.orgId) return sql`(${p.orgId})`
+  return sql`(SELECT ${schema.member.organizationId} FROM ${schema.member} WHERE ${schema.member.userId} = ${p.userId})`
 }
 
 /** A SQL condition: this schema hash is visible to the caller. */
-function visibleSchema(hashCol: unknown, orgIds: string[]) {
+function visibleSchema(hashCol: unknown, orgs: SQL | null) {
   return sql`EXISTS (
     SELECT 1 FROM ${schema.schemaUsage} u
     JOIN ${schema.collections} c ON c.id = u.collection_id
     WHERE u.schema_hash = ${hashCol}
       AND ((c.public = 1 AND u."set" = 'public')
-        ${
-          orgIds.length
-            ? sql`OR c.organization_id IN (${sql.join(
-                orgIds.map((id) => sql`${id}`),
-                sql`, `,
-              )})`
-            : sql``
-        })
+        ${orgs ? sql`OR c.organization_id IN ${orgs}` : sql``})
   )`
 }
 
 async function labelsFor(c: Context<AppEnv>, hashes: string[]) {
   if (hashes.length === 0) return new Map<string, { label: string; createdAt: Date }[]>()
-  const rows = await c.var.ports.db
-    .select()
-    .from(schema.schemaLabels)
-    .where(inArray(schema.schemaLabels.schemaHash, hashes))
+  const rows = []
+  for (const part of chunks(hashes)) {
+    rows.push(
+      ...(await c.var.ports.db
+        .select()
+        .from(schema.schemaLabels)
+        .where(inArray(schema.schemaLabels.schemaHash, part))),
+    )
+  }
   const out = new Map<string, { label: string; createdAt: Date }[]>()
   for (const r of rows) {
     if (!out.has(r.schemaHash)) out.set(r.schemaHash, [])
@@ -120,7 +119,7 @@ export function schemaRoutes() {
   })
 
   app.get('/api/schemas', async (c) => {
-    const orgIds = await callerOrgIds(c)
+    const orgs = callerOrgs(c)
     const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50))
     const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
     const { db } = c.var.ports
@@ -129,7 +128,7 @@ export function schemaRoutes() {
       const [row] = await db
         .select()
         .from(schema.schemas)
-        .where(and(eq(schema.schemas.hash, one), visibleSchema(schema.schemas.hash, orgIds)))
+        .where(and(eq(schema.schemas.hash, one), visibleSchema(schema.schemas.hash, orgs)))
       if (!row) return jsonError(c, 404, 'Schema not found')
       const [usage] = await db
         .select({ n: sql<number>`count(DISTINCT collection_id)` })
@@ -148,7 +147,7 @@ export function schemaRoutes() {
     const label = c.req.query('label')
     const slug = c.req.query('slug')
     const q = c.req.query('q')
-    const conds = [visibleSchema(schema.schemas.hash, orgIds)]
+    const conds = [visibleSchema(schema.schemas.hash, orgs)]
     if (label)
       conds.push(
         sql`EXISTS (SELECT 1 FROM ${schema.schemaLabels} l WHERE l.schema_hash = ${schema.schemas.hash} AND l.label LIKE ${`%${label}%`})`,
@@ -189,13 +188,13 @@ export function schemaRoutes() {
   })
 
   app.get('/api/schemas/:id', async (c) => {
-    const orgIds = await callerOrgIds(c)
+    const orgs = callerOrgs(c)
     const hash = c.req.param('id')
     const { db } = c.var.ports
     const [row] = await db
       .select()
       .from(schema.schemas)
-      .where(and(eq(schema.schemas.hash, hash), visibleSchema(schema.schemas.hash, orgIds)))
+      .where(and(eq(schema.schemas.hash, hash), visibleSchema(schema.schemas.hash, orgs)))
     if (!row) return jsonError(c, 404, 'Schema not found')
     const usage = await db
       .select({
@@ -244,12 +243,7 @@ export function schemaRoutes() {
     const [row] = await c.var.ports.db
       .select()
       .from(schema.schemas)
-      .where(
-        and(
-          eq(schema.schemas.hash, hash),
-          visibleSchema(schema.schemas.hash, await callerOrgIds(c)),
-        ),
-      )
+      .where(and(eq(schema.schemas.hash, hash), visibleSchema(schema.schemas.hash, callerOrgs(c))))
     if (!row) return jsonError(c, 404, 'Schema not found')
     const inserted = await c.var.ports.db
       .insert(schema.schemaLabels)

@@ -18,6 +18,7 @@
 import { compareUtf8, diffTrees, fileTree, recordTree, RepoSource } from '@underlay/protocol'
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
@@ -399,40 +400,50 @@ export async function presenceOf(ports: Ports, hash: string): Promise<Presence[]
     }
   }
   out.push(...open.values())
-  // Forks: children whose parent contained it at the fork point.
-  const queue = [...out]
-  while (queue.length) {
-    const p = queue.shift()!
-    const children = await ports.db
-      .select()
-      .from(schema.forks)
-      .where(eq(schema.forks.parentCollectionId, p.collectionId))
-    for (const f of children) {
-      if (f.parentSeq < p.from || (p.to !== null && f.parentSeq >= p.to)) continue
-      // A fork carries only the sets it was made with.
-      if (p.set === 'private' && f.sets !== 'public+private') continue
-      if (
-        out.some(
-          (q) =>
-            q.collectionId === f.childCollectionId &&
-            q.type === p.type &&
-            q.id === p.id &&
-            q.set === p.set,
-        )
+  // Forks: children whose parent contained it at the fork point, one level of
+  // the fork graph per query (D1 runs at most 1,000 queries per invocation).
+  let frontier = [...out]
+  while (frontier.length) {
+    const forks: (typeof schema.forks.$inferSelect)[] = []
+    for (const part of chunks([...new Set(frontier.map((p) => p.collectionId))])) {
+      forks.push(
+        ...(await ports.db
+          .select()
+          .from(schema.forks)
+          .where(inArray(schema.forks.parentCollectionId, part))),
       )
-        continue
-      const removed = orphanRemovals.get(
-        `${f.childCollectionId}\u0000${p.set}\u0000${p.type}\u0000${p.id}`,
-      )
-      const child: Presence = {
-        ...p,
-        collectionId: f.childCollectionId,
-        from: 1,
-        to: removed ?? null,
-      }
-      out.push(child)
-      queue.push(child)
     }
+    const next: Presence[] = []
+    for (const p of frontier) {
+      for (const f of forks) {
+        if (f.parentCollectionId !== p.collectionId) continue
+        if (f.parentSeq < p.from || (p.to !== null && f.parentSeq >= p.to)) continue
+        // A fork carries only the sets it was made with.
+        if (p.set === 'private' && f.sets !== 'public+private') continue
+        if (
+          out.some(
+            (q) =>
+              q.collectionId === f.childCollectionId &&
+              q.type === p.type &&
+              q.id === p.id &&
+              q.set === p.set,
+          )
+        )
+          continue
+        const removed = orphanRemovals.get(
+          `${f.childCollectionId}\u0000${p.set}\u0000${p.type}\u0000${p.id}`,
+        )
+        const child: Presence = {
+          ...p,
+          collectionId: f.childCollectionId,
+          from: 1,
+          to: removed ?? null,
+        }
+        out.push(child)
+        next.push(child)
+      }
+    }
+    frontier = next
   }
   return out
 }

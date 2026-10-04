@@ -19,6 +19,8 @@ import {
   completeUpload,
   isHash,
   presignDownload,
+  presignDownloads,
+  readableFiles,
   safeMimeType,
   SMALL_UPLOAD_BYTES,
   startUpload,
@@ -59,15 +61,13 @@ export function fileRoutes() {
     if (!Array.isArray(body?.hashes) || body.hashes.length > 500) {
       return jsonError(c, 400, '"hashes" must be an array of at most 500 file hashes')
     }
+    // The head's trees and the file rows are read once, not per hash (D1: 1,000 queries).
+    const requested = body.hashes.filter((h): h is string => typeof h === 'string')
+    const valid = requested.map(cleanHash).filter(isHash)
+    const readable = await readableFiles(c.var.ports, access.collection, access.isMember, valid)
+    const urls = await presignDownloads(c.var.ports, [...readable])
     const out: Record<string, string | null> = {}
-    for (const requested of body.hashes) {
-      if (typeof requested !== 'string') continue
-      const hash = cleanHash(requested)
-      out[requested] =
-        isHash(hash) && (await canReadFile(c.var.ports, access.collection, access.isMember, hash))
-          ? await presignDownload(c.var.ports, hash)
-          : null
-    }
+    for (const r of requested) out[r] = urls.get(cleanHash(r)) ?? null
     return c.json(out)
   })
 

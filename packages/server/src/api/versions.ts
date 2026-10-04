@@ -26,6 +26,7 @@ import { desc, eq, inArray } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import {
   findVersion,
@@ -366,9 +367,10 @@ export function versionRoutes() {
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const hashes = await visibleFiles(view, 10_000)
-    const rows = hashes.length
-      ? await c.var.ports.db.select().from(schema.files).where(inHashes(hashes))
-      : []
+    const rows = []
+    for (const part of chunks(hashes)) {
+      rows.push(...(await c.var.ports.db.select().from(schema.files).where(inHashes(part))))
+    }
     const byHash = new Map(rows.map((r) => [r.hash, r]))
     // References aren't indexed per file in v2; the listing returns none.
     return c.json(
