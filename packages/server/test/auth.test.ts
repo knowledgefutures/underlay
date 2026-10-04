@@ -102,4 +102,42 @@ describe('better-auth on SQLite', () => {
     const members = await h.ports.db.select().from(schema.member)
     expect(members[0]).toMatchObject({ organizationId: orgs[0]!.id, role: 'owner' })
   })
+
+  it('sends /login to KF Auth, and renders the page only to show an error', async () => {
+    const h = await harness()
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+    )
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+      authHandler: (req) => auth.handler(req),
+      renderPage: async () => new Response('page'),
+    }))
+
+    const res = await app.fetch(new Request('http://test/login'))
+    expect(res.status).toBe(302)
+    const location = new URL(res.headers.get('location')!)
+    expect(location.origin + location.pathname).toBe('http://kf/api/auth/oauth2/authorize')
+    expect(location.searchParams.get('redirect_uri')).toBe(
+      'http://test/api/auth/oauth2/callback/kf-auth',
+    )
+    // The state cookie must reach the browser, or the callback can't be checked.
+    expect(res.headers.getSetCookie().some((c) => c.includes('better-auth.state'))).toBe(true)
+
+    const failed = await app.fetch(new Request('http://test/login?error=auth_failed'))
+    expect(await failed.text()).toBe('page')
+  })
 })

@@ -74,6 +74,35 @@ export function createApp(setup: Setup) {
       : c.json({ error: 'Auth is not configured', statusCode: 404 }, 404)
   })
 
+  // The UI's sign-in links point here; the page itself only shows errors (as v1's
+  // server.ts). Without this, /login renders a page that redirects to /login.
+  app.get('/login', async (c, next) => {
+    const { authHandler, config } = setup(c)
+    if (!authHandler || c.req.query('error') !== undefined) return next()
+    const origin = new URL(config.appUrl).origin
+    const headers = new Headers({
+      'content-type': 'application/json',
+      cookie: c.req.header('cookie') ?? '',
+      origin,
+    })
+    const res = await authHandler(
+      new Request(`${origin}/api/auth/sign-in/oauth2`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          providerId: 'kf-auth',
+          callbackURL: '/dashboard',
+          errorCallbackURL: '/login',
+        }),
+      }),
+    )
+    const body = (await res.json().catch(() => null)) as { url?: string } | null
+    if (!body?.url) return next()
+    const redirect = new Response(null, { status: 302, headers: { location: body.url } })
+    for (const cookie of res.headers.getSetCookie()) redirect.headers.append('set-cookie', cookie)
+    return redirect
+  })
+
   app.use('*', async (c, next) => {
     const { ports, config, authenticate } = setup(c)
     c.set('ports', ports)
