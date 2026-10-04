@@ -9,7 +9,8 @@
  * hash of its contents, so a redelivered batch rewrites the same object and the
  * log never counts it twice. `usage_rollups` are added to as each batch lands;
  * there a redelivered batch can count twice, until `usage.rebuild` recomputes
- * the day from the log, a page of log objects per job. Keep the log for at
+ * the day from the log, a page of log objects per job. The cron sweep queues
+ * that for each day once it's over; stewards can run it for any day. Keep the log for at
  * least the billing dispute window.
  */
 import { and, eq, sql } from 'drizzle-orm'

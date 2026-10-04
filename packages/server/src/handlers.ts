@@ -55,6 +55,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await reconcileDue(ports)
   // Customer storage locations, re-checked daily.
   await recheckLocations(ports)
+  // Yesterday's usage rollups, rebuilt once from the log (a retried batch counts once).
+  await rebuildYesterday(ports)
   // Mirrors that fell behind (a failed copy, a missed job) catch up.
   const lagging = await laggingPlacements(ports)
   await ports.jobs.enqueueBatch(
@@ -64,6 +66,15 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   // Last, and on its own: a failure here shouldn't rerun the rest.
   await cleanupTick(ports).catch((err) => console.error('[cleanup] tick failed:', err))
 })
+
+/** Queue the rebuild of yesterday's usage rollups, once (a marker in the internal area). */
+async function rebuildYesterday(ports: Ports) {
+  const day = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const marker = `usage-rebuild/queued-${day}`
+  if (await ports.stores.internal.head(marker)) return
+  await ports.stores.internal.put(marker, day)
+  await ports.jobs.enqueue({ type: 'usage.rebuild', day, step: 0 })
+}
 
 /**
  * fsck a collection's primary repository (protocol fsckStep): the log under this
