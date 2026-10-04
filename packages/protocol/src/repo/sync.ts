@@ -19,6 +19,7 @@ import {
   hashSchema,
   jcs,
   mergeTree,
+  type MergeStats,
   newNodes,
   type NodeSource,
   privateCommitment,
@@ -163,6 +164,8 @@ export interface ReceiveResult {
   root: VersionRoot
   objects: number
   bytes: number
+  /** Record changes from the base, over the sets received. */
+  changes: { added: number; removed: number; updated: number }
 }
 
 const HEX = '([0-9a-f]{64})'
@@ -217,16 +220,20 @@ export async function receiveVersion(
   const root = JSON.parse(dec.decode(rootBytes)) as VersionRoot
   const base = opts.base ? await repo.root(opts.base) : null
   const { pairs } = await setPairs(repo, root, base, opts.sets ?? 'public')
+  const changes = { added: 0, removed: 0, updated: 0 }
   for (const p of pairs) {
     for (const [slug, t] of Object.entries(p.set.types)) {
       await repo.schema(t.schema)
-      await checkTree(repo, recordTree, baseTreeOf(p, slug), t, `${p.name} ${slug}`)
+      const s = await checkTree(repo, recordTree, baseTreeOf(p, slug), t, `${p.name} ${slug}`)
+      changes.added += s.added
+      changes.removed += s.removed
+      changes.updated += s.updated
     }
     await checkTree(repo, fileTree, p.base?.files.root ?? null, p.set.files, `${p.name} files`)
   }
   // Last: a reader that finds the root can read everything below it.
   await put(keys.root(opts.target), rootBytes, 'application/json')
-  return { root, objects: count, bytes: total }
+  return { root, objects: count, bytes: total, changes }
 }
 
 /** Verify one pack object and write it; the root's bytes are returned, not written. */
@@ -307,7 +314,7 @@ async function checkTree<E>(
   baseRoot: string | null,
   want: TreeSummary,
   what: string,
-): Promise<void> {
+): Promise<MergeStats> {
   const source = nodesOnly(repo, spec)
   try {
     if (spec === (recordTree as TreeSpec<unknown>)) {
@@ -330,6 +337,7 @@ async function checkTree<E>(
     ) {
       throw new IntegrityError(`${what}: the tree is not the canonical tree of its entries`)
     }
+    return merged.stats
   } catch (err) {
     if (err instanceof IntegrityError) throw err
     // Missing nodes, keys out of order, malformed nodes: all a bad pack.
