@@ -266,12 +266,14 @@ describe('delta push', () => {
         '{"id":"dup","type":"Author","data":{"name":"a","name":"b"}}',
         '{"id":"big","type":"Author","data":{"name":"n","born":12345678901234567890}}',
         JSON.stringify(rec('extra', { name: 'E', nickname: 'e' })),
+        // Not a schema property, whatever JavaScript objects inherit.
+        JSON.stringify(rec('proto', { name: 'P', toString: 'x' })),
       ].join('\n'),
     })
     expect(res.status).toBe(422)
     const body = await json(res)
-    expect(body.totalErrors).toBe(4)
-    expect(body.validationErrors.map((e: { line: number }) => e.line)).toEqual([2, 3, 4, 5])
+    expect(body.totalErrors).toBe(5)
+    expect(body.validationErrors.map((e: { line: number }) => e.line)).toEqual([2, 3, 4, 5, 6])
     expect(body.validationErrors[1].errors[0]).toMatch(/duplicate_key/)
     expect(body.validationErrors[2].errors[0]).toMatch(/unsafe_integer/)
   })

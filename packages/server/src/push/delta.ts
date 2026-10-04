@@ -55,7 +55,13 @@ export interface LineError {
 
 export type IngestResult =
   | { ok: true; received: number }
-  | { ok: false; status: 400 | 409 | 422; error: string; details?: LineError[]; total?: number }
+  | {
+      ok: false
+      status: 400 | 409 | 413 | 422
+      error: string
+      details?: LineError[]
+      total?: number
+    }
 
 function lines(text: string): string[] {
   return text.split('\n').filter((l) => l.trim().length > 0)
@@ -110,7 +116,7 @@ export async function prepareRecords(
     let canonical = rec.canonical
     const props = typeSchema.properties as Record<string, unknown> | undefined
     if (props && data !== null && typeof data === 'object' && !Array.isArray(data)) {
-      const extra = Object.keys(data).filter((k) => !(k in props))
+      const extra = Object.keys(data).filter((k) => !Object.hasOwn(props, k))
       if (extra.length > 0) {
         if (!opts.stripUnknownFields) {
           fail({
@@ -162,7 +168,7 @@ export async function ingestRecords(
     stripUnknownFields: session.stripUnknownFields,
   })
   if ('tooManyLines' in prepared) {
-    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} records per batch` }
+    return { ok: false, status: 413, error: `At most ${MAX_BATCH_LINES} records per batch` }
   }
   if ('errors' in prepared) {
     return {
@@ -191,7 +197,7 @@ export async function ingestDeletes(
   const errors: LineError[] = []
   const all = lines(text)
   if (all.length > MAX_BATCH_LINES)
-    return { ok: false, status: 400, error: `At most ${MAX_BATCH_LINES} deletes per batch` }
+    return { ok: false, status: 413, error: `At most ${MAX_BATCH_LINES} deletes per batch` }
   all.forEach((l, i) => {
     let v: { type?: unknown; id?: unknown }
     try {
