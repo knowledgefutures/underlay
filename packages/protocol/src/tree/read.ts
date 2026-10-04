@@ -197,13 +197,28 @@ type Item<E> = { node: NodeDesc } | { entry: E }
  * hold identical entries and are skipped without being read; because node
  * boundaries depend only on keys, unchanged regions line up and the walk costs
  * O(changes × height) node reads.
+ *
+ * `after` resumes past a key: subtrees that end at or before it are skipped
+ * unread, so a page of a long diff costs that page, not everything before it.
  */
 export async function* diffTrees<E>(
   source: NodeSource<E>,
   a: string | null,
   b: string | null,
+  opts: { after?: string | undefined } = {},
 ): AsyncGenerator<DiffEntry<E>> {
   const spec = source.spec
+  const after = opts.after
+  /** Drop leading items wholly at or before `after`. */
+  const prune = (items: Item<E>[]) => {
+    if (after === undefined) return
+    while (items.length > 0) {
+      const head = items[0]!
+      const last = 'node' in head ? head.node.lastKey : spec.key(head.entry)
+      if (compareUtf8(last, after) > 0) return
+      items.shift()
+    }
+  }
   const xs: Item<E>[] = a === null ? [] : [{ node: await rootDesc(source, a) }]
   const ys: Item<E>[] = b === null ? [] : [{ node: await rootDesc(source, b) }]
   const expand = async (items: Item<E>[]) => {
@@ -216,6 +231,8 @@ export async function* diffTrees<E>(
     items.unshift(...children)
   }
   for (;;) {
+    prune(xs)
+    prune(ys)
     const x = xs[0]
     const y = ys[0]
     if (!x && !y) return

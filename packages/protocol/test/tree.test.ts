@@ -651,9 +651,42 @@ describe('read', () => {
         expect(diff.map((d) => `${d.key}:${d.before ? 1 : 0}${d.after ? 1 : 0}`)).toEqual(
           changes.map((c) => `${c.key}:1${c.entry ? 1 : 0}`),
         )
+        // Resuming past any key gives the rest of the same diff.
+        const resume = keys.length === 0 ? 'm' : keys[at % keys.length]!
+        const rest = await collect(
+          diffTrees(source, root, merged.root?.hash ?? null, { after: resume }),
+        )
+        expect(rest.map((d) => d.key)).toEqual(
+          diff.map((d) => d.key).filter((k) => compareUtf8(k, resume) > 0),
+        )
       }),
       { numRuns: 200 * RUNS },
     )
+  })
+})
+
+describe('diffTrees resumed', () => {
+  it('skips the subtrees before the resume key unread', async () => {
+    const { sink, source } = store()
+    const es = Array.from({ length: 4000 }, (_, i) => entry(`k${String(i).padStart(5, '0')}`))
+    const root = buildTree(recordTree, sink, es, { chunking: tiny })!.hash
+    // Every entry changes, so the walk reads every node of both trees.
+    const changed = es.map((e) => ({ key: e.key, entry: entry(e.key, 1) }))
+    const merged = (await mergeTree(source, sink, root, changed, { chunking: tiny })).root!.hash
+    let reads = 0
+    const counted = Object.assign(Object.create(source) as typeof source, {
+      node: (h: string) => {
+        reads++
+        return source.node(h)
+      },
+    })
+    const all = await collect(diffTrees(counted, root, merged))
+    const full = reads
+    reads = 0
+    const tail = await collect(diffTrees(counted, root, merged, { after: 'k03900' }))
+    expect(all).toHaveLength(4000)
+    expect(tail).toHaveLength(99)
+    expect(reads).toBeLessThan(full / 10)
   })
 })
 

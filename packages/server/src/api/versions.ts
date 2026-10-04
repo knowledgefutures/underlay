@@ -15,6 +15,7 @@
  */
 import {
   compareUtf8,
+  type DiffEntry,
   diffTrees,
   fileTree,
   iterate,
@@ -34,7 +35,6 @@ import {
   findVersion,
   getRecord,
   loadView,
-  type TypeView,
   typeRecords,
   type VersionView,
 } from '../versions/view.js'
@@ -273,7 +273,8 @@ export function versionRoutes() {
         since: from.semver,
         schemas,
         delta,
-        files: await visibleFiles(view, 100_000),
+        // The whole file list rides on the first page only, as for a full manifest.
+        files: cursor ? [] : await visibleFiles(view, 100_000),
         pagination: { limit, hasMore: next !== null, nextCursor: next },
         truncated: next !== null,
       })
@@ -330,6 +331,7 @@ export function versionRoutes() {
       const r = await getRecord(side, t, d.key)
       return { id: d.key, type: d.type, data: (JSON.parse(r!.body!) as { data: unknown }).data }
     }
+    const page: TypedDiff[] = []
     for await (const d of diffAll(fromView, view, cursor)) {
       if (n === limit) {
         next = encodeCursor(last!.type, last!.key)
@@ -337,10 +339,17 @@ export function versionRoutes() {
       }
       n++
       last = d
-      if (!d.before) added.push(await body(view, d))
-      else if (!d.after) removed.push(d.key)
-      else updated.push(await body(view, d))
+      page.push(d)
     }
+    // A page's bodies are read BODY_READS at a time, not one after another.
+    const bodies = await mapConcurrent(page, BODY_READS, (d) =>
+      d.after ? body(view, d) : Promise.resolve(null),
+    )
+    page.forEach((d, i) => {
+      if (!d.before) added.push(bodies[i]!)
+      else if (!d.after) removed.push(d.key)
+      else updated.push(bodies[i]!)
+    })
     const schemaChanged =
       !fromView ||
       JSON.stringify(fromView.types.map((t) => [t.slug, t.schemaHash])) !==
@@ -399,6 +408,27 @@ export function versionRoutes() {
 
 const inHashes = (hashes: string[]) => inArray(schema.files.hash, hashes)
 
+/** Concurrent body reads per diff page. */
+const BODY_READS = 16
+
+/** `f` over `items`, at most `limit` at a time, results in order. */
+async function mapConcurrent<T, R>(
+  items: T[],
+  limit: number,
+  f: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await f(items[i]!)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
 /** File hashes in the sets this view may read (deduplicated, sorted). */
 async function visibleFiles(view: VersionView, max: number): Promise<string[]> {
   const source = new RepoSource(fileTree, view.repo)
@@ -447,39 +477,51 @@ async function* diffAll(
   cursor: { t: string; k: string } | null,
 ): AsyncGenerator<TypedDiff> {
   const source = new RepoSource(recordTree, to.repo)
+  // A change to a blocked record (the denylist) isn't served.
+  const shown = (d: TypedDiff) => !(d.after && to.withheld.has(d.after.hash))
   const slugs = new Set([...(from?.types.map((t) => t.slug) ?? []), ...to.types.map((t) => t.slug)])
   for (const slug of [...slugs].sort(compareUtf8)) {
     if (cursor && compareUtf8(slug, cursor.t) < 0) continue
     const a = from?.types.find((t) => t.slug === slug)
     const b = to.types.find((t) => t.slug === slug)
-    const changes = new Map<string, TypedDiff>()
-    const collect = async (
-      x: TypeView | undefined,
-      y: TypeView | undefined,
-      set: 'public' | 'private',
-    ) => {
-      const xr = x?.[set]?.root ?? null
-      const yr = y?.[set]?.root ?? null
-      if (set === 'private' && !to.owner) return
-      for await (const d of diffTrees(source, xr, yr)) {
-        const prev = changes.get(d.key)
-        if (prev) {
-          // The same id changed in both sets: a move. Combine the halves.
-          const before = prev.before ?? d.before
-          const after = prev.after ?? d.after
-          if (before && after && before.hash === after.hash) changes.delete(d.key)
-          else changes.set(d.key, { type: slug, key: d.key, before, after })
-        } else {
-          changes.set(d.key, { type: slug, key: d.key, before: d.before, after: d.after })
-        }
+    // Each set's diff resumes past the cursor, and the two are joined in key
+    // order as they stream: memory is O(1) per type and a page costs that page.
+    const after = cursor && slug === cursor.t ? { after: cursor.k } : {}
+    const side = (set: 'public' | 'private') =>
+      set === 'private' && !to.owner
+        ? null
+        : diffTrees(source, a?.[set]?.root ?? null, b?.[set]?.root ?? null, after)[
+            Symbol.asyncIterator
+          ]()
+    const pub = side('public')
+    const priv = side('private')
+    let x = pub ? await pub.next() : null
+    let y = priv ? await priv.next() : null
+    const live = (r: IteratorResult<DiffEntry<RecordEntry>> | null) =>
+      r && !r.done ? r.value : null
+    for (;;) {
+      const p = live(x)
+      const q = live(y)
+      if (!p && !q) break
+      const order = p && q ? compareUtf8(p.key, q.key) : p ? -1 : 1
+      if (order < 0) {
+        const d = { type: slug, key: p!.key, before: p!.before, after: p!.after }
+        if (shown(d)) yield d
+        x = await pub!.next()
+      } else if (order > 0) {
+        const d = { type: slug, key: q!.key, before: q!.before, after: q!.after }
+        if (shown(d)) yield d
+        y = await priv!.next()
+      } else {
+        // The same id changed in both sets: a move. Combine the halves; one
+        // that keeps its hash isn't a change to a reader of both sets.
+        const before = p!.before ?? q!.before
+        const after_ = p!.after ?? q!.after
+        const d = { type: slug, key: p!.key, before, after: after_ }
+        if (!(before && after_ && before.hash === after_.hash) && shown(d)) yield d
+        x = await pub!.next()
+        y = await priv!.next()
       }
-    }
-    await collect(a, b, 'public')
-    await collect(a, b, 'private')
-    const keys = [...changes.keys()].sort(compareUtf8)
-    for (const k of keys) {
-      if (cursor && slug === cursor.t && compareUtf8(k, cursor.k) <= 0) continue
-      yield changes.get(k)!
     }
   }
 }
