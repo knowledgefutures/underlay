@@ -1,16 +1,11 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const handle = { title: 'Underlay' }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const base = fetchBase(request.url)
-  const res = await apiFetch(new URL('/api/collections?limit=6', base), {
-    headers: ssrHeaders(request),
-  })
-  if (!res.ok) return { featured: [] }
-  const data = await res.json()
+  const data = await loaderApi(request).json<any>('/api/collections?limit=6', {})
   // The instance's featured collections when it has picked some, else the most recently updated.
   const list = data.featuredCollections?.length ? data.featuredCollections : data.collections
   const collections = (list ?? []).slice(0, 6).map((c: any) => ({

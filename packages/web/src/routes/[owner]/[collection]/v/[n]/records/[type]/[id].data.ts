@@ -1,7 +1,6 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
-import { apiUrlBuilder } from '~/lib/share-token'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const handle = {
   title: (params: Record<string, string>) =>
@@ -10,16 +9,14 @@ export const handle = {
 
 /** One record at a version, with its history in the collection and the collection's nav data. */
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request, { share: true })
   const prefix = `/api/collections/${params.owner}/${params.collection}`
   const type = encodeURIComponent(params.type ?? '')
   const id = encodeURIComponent(params.id ?? '')
-  const json = (r: Response) => (r.ok ? r.json() : null)
   const [record, history, collectionData] = await Promise.all([
-    apiFetch(api(`${prefix}/versions/${params.n}/records/${type}/${id}`), { headers }).then(json),
-    apiFetch(api(`${prefix}/records/${type}/${id}/history`), { headers }).then(json),
-    apiFetch(api(prefix), { headers }).then(json),
+    api.json(`${prefix}/versions/${params.n}/records/${type}/${id}`, null),
+    api.json(`${prefix}/records/${type}/${id}/history`, null),
+    api.json(prefix, null),
   ])
   if (!record) throw new Response('Not Found', { status: 404 })
   return { record, history, collectionData }

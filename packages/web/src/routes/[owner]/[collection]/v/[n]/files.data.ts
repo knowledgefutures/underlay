@@ -1,7 +1,6 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
-import { apiUrlBuilder } from '~/lib/share-token'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const handle = {
   title: (params: Record<string, string>) =>
@@ -16,15 +15,12 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     throw redirect(`/${params.owner}/${params.collection}/v/${bare}/files${url.search}`)
   }
 
-  const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request, { share: true })
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
   const [version, collectionData] = await Promise.all([
-    apiFetch(api(`${prefix}/versions/${params.n}`), { headers }).then((r) =>
-      r.ok ? r.json() : null,
-    ),
-    apiFetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
+    api.json(`${prefix}/versions/${params.n}`, null),
+    api.json(prefix, null),
   ])
 
   if (!version) throw new Response('Not Found', { status: 404 })

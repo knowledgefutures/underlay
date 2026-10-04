@@ -12,11 +12,11 @@
  * caller sees that by reading the head back. Everything the version points to is
  * already in the repository, so there is never a half-built version.
  */
+import { type SetName } from '@underlay/protocol'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
-import type { SetName } from './file-refs.js'
 
 export interface NewVersionRow {
   id: string
@@ -219,13 +219,4 @@ export async function publishVersion(
     .where(eq(schema.collections.id, v.collectionId))
     .limit(1)
   return { ok: row?.head === v.id, headVersionId: row?.head ?? null }
-}
-
-/** The open schema usage rows of a collection, as `${set}\u0000${slug}` → schema hash. */
-export async function openSchemaUsage(db: Db, collectionId: string): Promise<Map<string, string>> {
-  const rows = await db
-    .select()
-    .from(schema.schemaUsage)
-    .where(and(eq(schema.schemaUsage.collectionId, collectionId), isNull(schema.schemaUsage.toSeq)))
-  return new Map(rows.map((r) => [`${r.set}\u0000${r.typeSlug}`, r.schemaHash]))
 }

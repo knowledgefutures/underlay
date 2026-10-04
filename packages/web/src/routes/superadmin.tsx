@@ -2,33 +2,24 @@ import { Link } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { useAppContext } from '~/lib/app-context'
-import { features } from '~/lib/features'
 
 const tools = [
   {
     name: 'Explore Page',
     href: '/admin/explore-tags',
     description: 'Manage featured collections and tag filters on the explore page.',
-    stewardOnly: true,
   },
   {
     name: 'Abuse Reports',
     href: '/admin/abuse',
     description: 'Review reports of harmful content, and block or unblock file and record hashes.',
-    stewardOnly: true,
   },
-  // Hidden until the discussion API exists (lib/features.ts).
-  ...(!features.discussion
-    ? []
-    : [
-        {
-          name: 'Discussion Review',
-          href: '/admin/discussion',
-          description:
-            'Moderate comments on the protocol specification. Approve, decline, and resolve threads.',
-          stewardOnly: true,
-        },
-      ]),
+  {
+    name: 'Discussion Review',
+    href: '/admin/discussion',
+    description:
+      'Moderate comments on the protocol specification. Approve, decline, and resolve threads.',
+  },
 ]
 
 export default function Superadmin() {

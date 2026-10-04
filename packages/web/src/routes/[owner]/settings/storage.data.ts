@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
 import { requireAuth } from '~/lib/auth-middleware'
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const middleware = [requireAuth]
 
@@ -10,15 +10,14 @@ export const handle = {
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const base = fetchBase(request.url)
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request)
   const prefix = `/api/orgs/${params.owner}`
 
   // All three are for owners and admins; anyone else gets 403 and the page says so.
   const [locations, placements, restores] = await Promise.all([
-    apiFetch(new URL(`${prefix}/locations`, base), { headers }),
-    apiFetch(new URL(`${prefix}/placements`, base), { headers }),
-    apiFetch(new URL(`${prefix}/restores`, base), { headers }),
+    api.get(`${prefix}/locations`),
+    api.get(`${prefix}/placements`),
+    api.get(`${prefix}/restores`),
   ])
   if (locations.status === 404) throw new Response('Not Found', { status: 404 })
   if (!locations.ok || !placements.ok) {

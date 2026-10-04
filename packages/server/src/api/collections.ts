@@ -93,7 +93,6 @@ export function collectionRoutes() {
     }
     return c.json({
       currentUser,
-      mirrorConfig: { enabled: false, upstream: '', nodeName: '', syncSchedule: '' },
       kfAccountUrl: c.var.config.kfAccountUrl ?? '',
       kfAuthUrl: c.var.config.kfAuthUrl ?? '',
     })

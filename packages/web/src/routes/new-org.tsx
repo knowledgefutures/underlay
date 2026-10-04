@@ -5,19 +5,12 @@ import BaseLayout from '~/components/BaseLayout'
 import { Alert, Button, Field, Input, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { slugify } from '~/lib/format'
 
 interface KfAccount {
   id: string
   name: string
   slug: string
-}
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/-{2,}/g, '-')
 }
 
 export default function NewOrg() {

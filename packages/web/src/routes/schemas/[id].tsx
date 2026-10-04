@@ -3,7 +3,6 @@ import { Link, useLoaderData } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
 import { Badge } from '~/components/ui'
-import Unavailable from '~/components/Unavailable'
 
 interface SchemaData {
   id: number
@@ -15,13 +14,7 @@ interface SchemaData {
 }
 
 export default function SchemaDetailPage() {
-  const loaded = useLoaderData() as SchemaData | { unavailable: true }
-  if ('unavailable' in loaded) {
-    return (
-      <Unavailable title="Schema">Schema pages aren't available on this server yet.</Unavailable>
-    )
-  }
-  return <SchemaDetail schema={loaded} />
+  return <SchemaDetail schema={useLoaderData() as SchemaData} />
 }
 
 function SchemaDetail({ schema }: { schema: SchemaData }) {

@@ -1,8 +1,7 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 import { loadSchemas } from '~/lib/schemas'
-import { apiUrlBuilder } from '~/lib/share-token'
 
 export const handle = {
   title: (params: Record<string, string>) =>
@@ -22,13 +21,12 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     )
   }
 
-  const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request, { share: true })
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
   const [data, schemas] = await Promise.all([
-    apiFetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
-    loadSchemas(api, headers, prefix, null),
+    api.json(prefix, null),
+    loadSchemas(api, prefix, null),
   ])
 
   if (!data) throw new Response('Not Found', { status: 404 })

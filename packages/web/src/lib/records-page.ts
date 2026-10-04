@@ -1,4 +1,4 @@
-import { apiFetch } from '~/lib/fetch-base'
+import type { LoaderApi } from '~/lib/fetch-base'
 
 export const RECORDS_PAGE_SIZE = 100
 
@@ -20,8 +20,7 @@ export interface RecordsPage {
  * offsets cheap (O(tree height)) and uncapped, so page numbers stay offsets.
  */
 export async function loadRecordsPage(
-  url: (path: string) => URL,
-  headers: Record<string, string>,
+  api: LoaderApi,
   prefix: string,
   version: { semver: string; schemas?: Record<string, unknown> },
   requestUrl: string,
@@ -36,8 +35,9 @@ export async function loadRecordsPage(
     limit: String(RECORDS_PAGE_SIZE),
     offset: String((page - 1) * RECORDS_PAGE_SIZE),
   })
-  const res = await apiFetch(url(`${prefix}/versions/${version.semver}/records?${q}`), { headers })
-  if (!res.ok) return { type, page, records: [], total: 0 }
-  const body = (await res.json()) as { records?: any[]; pagination?: { total?: number } }
+  const body = await api.json<{ records?: any[]; pagination?: { total?: number } }>(
+    `${prefix}/versions/${version.semver}/records?${q}`,
+    {},
+  )
   return { type, page, records: body.records ?? [], total: body.pagination?.total ?? 0 }
 }

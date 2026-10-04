@@ -21,19 +21,23 @@ import {
   appendLog,
   type BuildTypeInput,
   buildVersion,
+  bumpType,
   type CollectionInfo,
   compareUtf8,
+  deriveSemver,
+  FileRefDelta,
   fileTree,
   jcs,
   mergeTree,
+  parseSemver,
   readCollectionInfo,
   readHead,
   type Repo,
   RepoSink,
   RepoSource,
   setRecordTotals,
-  type Signer,
   signEntry,
+  type Signer,
   type TreeSummary,
   writeCollectionInfo,
 } from '@underlay/protocol'
@@ -41,9 +45,8 @@ import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { collectionFileSizes, FileRefDelta, fileSizes } from './file-refs.js'
+import { collectionFileSizes, fileSizes } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
-import { bumpType, deriveSemver, parseSemver } from './semver.js'
 
 export type { ChangeSource } from '@underlay/protocol'
 export type TypeInput = BuildTypeInput

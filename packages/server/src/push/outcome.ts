@@ -4,9 +4,10 @@
  * session's final state. Shared by finalize.ts and the parallel commit's
  * assembly (parallel.ts).
  */
+import { MissingFilesError } from '@underlay/protocol'
+
 import type { Ports } from '../ports.js'
 import type { CommitResult } from '../versions/commit.js'
-import { MissingFilesError } from '../versions/file-refs.js'
 import { transition } from './session.js'
 
 export interface Outcome {

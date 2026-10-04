@@ -3,13 +3,6 @@ import { isRouteErrorResponse, useRouteError, useRouteLoaderData } from 'react-r
 
 import BaseLayout from '~/components/BaseLayout'
 
-export class NotFoundError extends Error {
-  constructor(message?: string) {
-    super(message)
-    this.name = 'NotFoundError'
-  }
-}
-
 export default function NotFound({ message }: { message?: string }) {
   return (
     <div className="flex flex-col items-center justify-center px-4 py-24">
@@ -82,13 +75,6 @@ export class AppErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    if (this.state.error instanceof NotFoundError) {
-      return (
-        <BaseLayout>
-          <NotFound message={this.state.error.message} />
-        </BaseLayout>
-      )
-    }
     if (this.state.error) {
       return (
         <BaseLayout>

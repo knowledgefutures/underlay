@@ -9,6 +9,7 @@ import {
   entryAt,
   getEntry,
   iterate,
+  parseSemver,
   type PrivateSetObject,
   rankOf,
   type RecordEntry,
@@ -23,7 +24,6 @@ import { and, desc, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
-import { parseSemver } from './semver.js'
 
 export type VersionRow = typeof schema.versions.$inferSelect
 

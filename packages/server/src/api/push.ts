@@ -17,7 +17,7 @@
  *   GET    /:owner/:slug/versions/negotiate/:sid
  *   DELETE /:owner/:slug/versions/negotiate/:sid
  */
-import { checkSchema, fileTree, getEntry, RepoSource } from '@underlay/protocol'
+import { checkSchema, fileTree, getEntry, parseSemver, RepoSource } from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -50,7 +50,6 @@ import {
   type SessionRow,
   transition,
 } from '../push/session.js'
-import { parseSemver } from '../versions/semver.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
 import { BodyTooLarge, readJson, readLines, readText } from './body.js'
 

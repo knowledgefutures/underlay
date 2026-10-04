@@ -20,6 +20,15 @@ export function shortHash(hash: string, n: number): string {
   return `${full.slice(0, full.indexOf(':') + 1 + n)}…`
 }
 
+/** A URL slug typed or derived from a name: lowercase, hyphens, a-z0-9 only. */
+export function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-')
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return '0 B'
   const k = 1024

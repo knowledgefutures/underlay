@@ -19,6 +19,7 @@ import {
   type Change,
   compareUtf8,
   compileSchema,
+  declaredFiles,
   getEntry,
   hasArrayIndexKey,
   iterate,
@@ -31,7 +32,6 @@ import {
 
 import type { Ports } from '../ports.js'
 import { type CommitResult, commitVersion, type TypeInput } from '../versions/commit.js'
-import { declaredFiles } from '../versions/file-refs.js'
 import { isPrivateSchema, toRecordEntry } from './changes.js'
 import { headBase } from './delta.js'
 import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'

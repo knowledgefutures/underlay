@@ -4,7 +4,6 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, Input, SectionHeading, Select, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
-import { features } from '~/lib/features'
 
 export default function OwnerSettings() {
   const { owner } = useParams()
@@ -342,7 +341,7 @@ export default function OwnerSettings() {
       )}
 
       {/* ARK Identifiers */}
-      {features.ark && isAdmin && (
+      {isAdmin && (
         <div id="ark" className="border-rule mb-10 border-t pt-6">
           <SectionHeading>ARK Identifiers</SectionHeading>
 

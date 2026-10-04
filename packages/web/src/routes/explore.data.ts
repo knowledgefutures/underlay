@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const handle = { title: 'Explore · Underlay' }
 
@@ -17,10 +17,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (value) params.set(key, value)
   }
   params.set('sort', url.searchParams.get('sort') ?? 'featured')
-  const res = await apiFetch(new URL(`/api/collections?${params}`, fetchBase(request.url)), {
-    headers: ssrHeaders(request),
-  })
-  return res.ok ? res.json() : null
+  return loaderApi(request).json(`/api/collections?${params}`, null)
 }
 
 // CollectionExplorer keeps the URL in step with its filters (replace navigations):

@@ -95,8 +95,3 @@ function presigning(store: Store): PresigningStore {
   if (!store.presigner) throw new Error('The platform bucket store cannot presign; pass `files`')
   return store as PresigningStore
 }
-
-/** Forget a cached primary (after promoting a mirror). */
-export function invalidatePrimary(collectionId: string): void {
-  primaryCache.delete(collectionId)
-}

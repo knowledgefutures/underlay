@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { features } from '~/lib/features'
 
 /**
  * Shared shell for every settings surface (user, org, collection): a sticky
@@ -58,13 +57,13 @@ export const collectionSettingsRail: SettingsRailGroup[] = [
     items: [
       { label: 'Basics', to: '#basics' },
       { label: 'Metadata', to: '#metadata' },
-      ...(features.export ? [{ label: 'Export', to: '#export' }] : []),
+      { label: 'Export', to: '#export' },
     ],
   },
   {
     heading: 'Integrations',
     items: [
-      ...(features.ark ? [{ label: 'ARK identifiers', to: '#ark' }] : []),
+      { label: 'ARK identifiers', to: '#ark' },
       { label: 'Webhooks', to: '#webhooks' },
       { label: 'Mirrors', to: '#mirrors' },
     ],

@@ -1,8 +1,7 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 import { loadRecordsPage } from '~/lib/records-page'
-import { apiUrlBuilder } from '~/lib/share-token'
 
 export const handle = {
   title: (params: Record<string, string>) =>
@@ -17,18 +16,15 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     throw redirect(`/${params.owner}/${params.collection}/v/${bare}/records${url.search}`)
   }
 
-  const api = apiUrlBuilder(request, fetchBase(request.url))
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request, { share: true })
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
   const [version, collectionData] = await Promise.all([
-    apiFetch(api(`${prefix}/versions/${params.n}`), { headers }).then((r) =>
-      r.ok ? r.json() : null,
-    ),
-    apiFetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
+    api.json(`${prefix}/versions/${params.n}`, null),
+    api.json(prefix, null),
   ])
 
   if (!version) throw new Response('Not Found', { status: 404 })
-  const records = await loadRecordsPage(api, headers, prefix, version, request.url)
+  const records = await loadRecordsPage(api, prefix, version, request.url)
   return { version, collectionData, records }
 }

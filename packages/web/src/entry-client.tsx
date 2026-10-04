@@ -1,12 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { hydrateRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router'
 
 import { routes } from '~/App'
 
 import '~/global.css'
-
-const queryClient = new QueryClient()
 
 const router = createBrowserRouter(routes, {
   hydrationData: (window as any).__staticRouterHydrationData,
@@ -25,9 +22,4 @@ if (!router.state.initialized) {
   })
 }
 
-hydrateRoot(
-  document.getElementById('root')!,
-  <QueryClientProvider client={queryClient}>
-    <RouterProvider router={router} />
-  </QueryClientProvider>,
-)
+hydrateRoot(document.getElementById('root')!, <RouterProvider router={router} />)

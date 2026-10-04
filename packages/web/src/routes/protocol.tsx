@@ -4,7 +4,6 @@ import { Link, useLoaderData } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import DiscussionDrawer from '~/components/DiscussionDrawer'
 import { useAppContext } from '~/lib/app-context'
-import { features } from '~/lib/features'
 
 const recordExample = `{"id":"pub-001","type":"Publication","data":{"title":"The Structure of Scientific Revolutions","doi":"10.1234/example"}}`
 
@@ -179,7 +178,6 @@ export default function Protocol() {
   const isSteward = currentUser?.kfRole === 'admin'
 
   const fetchComments = useCallback(async () => {
-    if (!features.discussion) return
     const res = await fetch('/api/pages/protocol/comments')
     if (res.ok) {
       const data = await res.json()
@@ -209,8 +207,6 @@ export default function Protocol() {
   }
 
   useEffect(() => {
-    // No quote-to-comment popover until the discussion API exists (lib/features.ts).
-    if (!features.discussion) return
     function handleMouseUp() {
       const sel = window.getSelection()
       if (!sel || sel.isCollapsed || !sel.rangeCount) {
@@ -866,20 +862,18 @@ function RfcSection({
 }) {
   return (
     <div className="group relative" data-rfc-section={id}>
-      {features.discussion && (
-        <div className="absolute top-0 -right-12 hidden lg:block">
-          <button
-            onClick={() => onOpen(id)}
-            className="text-ink-muted hover:text-ink hover:bg-parchment-dark flex h-7 min-w-[28px] items-center justify-center rounded-full text-xs transition-colors"
-            title={count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'}
-            aria-label={
-              count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'
-            }
-          >
-            {count > 0 ? count : '+'}
-          </button>
-        </div>
-      )}
+      <div className="absolute top-0 -right-12 hidden lg:block">
+        <button
+          onClick={() => onOpen(id)}
+          className="text-ink-muted hover:text-ink hover:bg-parchment-dark flex h-7 min-w-[28px] items-center justify-center rounded-full text-xs transition-colors"
+          title={count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'}
+          aria-label={
+            count > 0 ? `${count} open thread${count === 1 ? '' : 's'}` : 'Start discussion'
+          }
+        >
+          {count > 0 ? count : '+'}
+        </button>
+      </div>
       {children}
     </div>
   )

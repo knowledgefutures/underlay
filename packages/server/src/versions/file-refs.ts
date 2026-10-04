@@ -16,15 +16,6 @@ import { and, eq, inArray } from 'drizzle-orm'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 
-export {
-  declaredFiles,
-  FileRefDelta,
-  type FileSetResult,
-  MissingFilesError,
-  referenceCounts,
-  type SetName,
-} from '@underlay/protocol'
-
 /** File sizes for hashes, from the files table (chunked for D1's bound-parameter limit). */
 export async function fileSizes(db: Db, hashes: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>()

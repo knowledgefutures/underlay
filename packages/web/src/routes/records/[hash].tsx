@@ -3,7 +3,6 @@ import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { Badge } from '~/components/ui'
-import Unavailable from '~/components/Unavailable'
 
 interface Reference {
   owner: string
@@ -33,15 +32,7 @@ function shortDate(d: string): string {
 }
 
 export default function RecordDetailPage() {
-  const loaded = useLoaderData() as RecordData | { unavailable: true }
-  if ('unavailable' in loaded) {
-    return (
-      <Unavailable title="Record">
-        Record provenance isn't available on this server yet.
-      </Unavailable>
-    )
-  }
-  return <RecordDetail record={loaded} />
+  return <RecordDetail record={useLoaderData() as RecordData} />
 }
 
 function RecordDetail({ record }: { record: RecordData }) {

@@ -121,7 +121,7 @@ async function listCollections(): Promise<CollectionRow[]> {
 /** A compiled validator returning error strings (empty = valid), or the compile error. */
 type Compiled = ((data: unknown) => string[]) | string
 
-// v1, exactly: src/lib/core/validate.ts at the repo root.
+// v1, exactly: src/lib/core/validate.ts on main.
 const addFormats = addFormatsModule as unknown as (ajv: Ajv) => void
 const ajv = new Ajv({ allErrors: true, strict: false })
 addFormats(ajv)

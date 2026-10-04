@@ -2,7 +2,6 @@ import { type FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Alert, Button } from '~/components/ui'
-import { features } from '~/lib/features'
 
 /**
  * The schema browser for one version of a collection: per-type cards with
@@ -27,7 +26,7 @@ export default function SchemaList({
   const [arkError, setArkError] = useState('')
 
   useEffect(() => {
-    if (!features.ark || !isOwner || !owner || !collection) return
+    if (!isOwner || !owner || !collection) return
     fetch(`/api/collections/${owner}/${collection}/ark/record-types`, {
       credentials: 'include',
     })
@@ -224,7 +223,7 @@ export default function SchemaList({
                 </table>
 
                 {/* ARK section for this type (owner only) */}
-                {features.ark && isOwner && urlFields.length > 0 && (
+                {isOwner && urlFields.length > 0 && (
                   <div className="border-rule bg-parchment-dark/30 border-t px-4 py-3">
                     <p className="text-ink-muted mb-2 text-xs font-medium tracking-wide uppercase">
                       ARK identifiers for this type

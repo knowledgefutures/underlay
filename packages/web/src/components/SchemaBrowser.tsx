@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Badge } from '~/components/ui'
-import { routeMissing } from '~/lib/features'
 
 interface SchemaResult {
   id: string
@@ -17,7 +16,6 @@ export default function SchemaBrowser() {
   const [filterType, setFilterType] = useState<'q' | 'label' | 'slug'>('q')
   const [schemas, setSchemas] = useState<SchemaResult[]>([])
   const [loading, setLoading] = useState(true)
-  const [unavailable, setUnavailable] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   async function load(q = '', type = filterType) {
@@ -27,8 +25,6 @@ export default function SchemaBrowser() {
     params.set('limit', '50')
     try {
       const res = await fetch(`/api/schemas?${params}`)
-      // v2 has no schema routes yet (lib/features.ts).
-      setUnavailable(await routeMissing(res))
       const data = await res.json()
       setSchemas(Array.isArray(data) ? data : data.id ? [data] : [])
     } catch {
@@ -103,10 +99,6 @@ export default function SchemaBrowser() {
       <div className="space-y-2">
         {loading ? (
           <p className="text-ink-muted py-8 text-center text-sm">Loading...</p>
-        ) : unavailable ? (
-          <p className="text-ink-muted py-8 text-center text-sm">
-            Schema search isn't available on this server yet.
-          </p>
         ) : schemas.length === 0 ? (
           <p className="text-ink-muted py-8 text-center text-sm">No schemas found.</p>
         ) : (

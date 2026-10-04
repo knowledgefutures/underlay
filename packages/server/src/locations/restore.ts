@@ -31,6 +31,7 @@ import {
   type LogEntry,
   openRepo,
   packVersion,
+  parseSemver,
   putFromParts,
   readCollectionInfo,
   readHead,
@@ -43,8 +44,8 @@ import {
   setRecordTotals,
   sha256Hasher,
   type SyncSets,
-  type VersionRoot,
   verifyLogEntries,
+  type VersionRoot,
   writeCollectionInfo,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
@@ -54,7 +55,6 @@ import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 import { mergeCumulativeFiles, summarize } from '../versions/commit.js'
 import { publishVersion, type SchemaUsageChange } from '../versions/publish.js'
-import { parseSemver } from '../versions/semver.js'
 import { locationStore, type LocationRow } from './locations.js'
 import { mirrorConfig } from './mirror.js'
 

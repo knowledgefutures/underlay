@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs, RouteObject } from 'react-router'
 
 import { RouteErrorBoundary } from '~/components/NotFound'
 import Root from '~/components/Root'
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { fetchContext } from '~/lib/fetch-base'
 import { buildDataRoutes } from '~/route-gen'
 
 const components = import.meta.glob<{ default: React.ComponentType }>('./routes/**/[!_]*.tsx')
@@ -13,12 +13,8 @@ const dataModules = import.meta.glob<{
   shouldRevalidate?: RouteObject['shouldRevalidate']
 }>('./routes/**/*.data.ts', { eager: true })
 
-async function rootLoader({ request }: LoaderFunctionArgs) {
-  const res = await apiFetch(`${fetchBase(request.url)}/api/context`, {
-    headers: ssrHeaders(request),
-  })
-  if (!res.ok) return { currentUser: null, kfAccountUrl: '', kfAuthUrl: '' }
-  return res.json()
+function rootLoader({ request }: LoaderFunctionArgs) {
+  return fetchContext(request)
 }
 
 const NotFound = () => import('~/routes/404').then((m) => ({ Component: m.default }))

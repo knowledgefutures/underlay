@@ -17,14 +17,15 @@ import {
   compareUtf8,
   type DiffEntry,
   diffTrees,
+  fileTree,
   getEntry,
   gzip,
+  iterate,
   leaves,
   OUT_OF_LINE_BYTES,
-  fileTree,
-  iterate,
   type RecordEntry,
   recordTree,
+  referenceCounts,
   RepoSource,
 } from '@underlay/protocol'
 import { desc, eq, inArray } from 'drizzle-orm'
@@ -34,7 +35,6 @@ import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
-import { referenceCounts } from '../versions/file-refs.js'
 import {
   findVersion,
   getRecord,

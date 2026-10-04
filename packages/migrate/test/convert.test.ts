@@ -16,18 +16,19 @@ import { migrateAll, migrateConfig, type V1Db } from '../src/convert.js'
 
 afterAll(cleanup)
 
-const root = join(import.meta.dirname, '../../..')
+/** v1's own migrations (from main at 7f6e1c6), the schema the converter reads. */
+const v1Schema = join(import.meta.dirname, 'v1-schema')
 
 /** v1 in PGlite; with `cursors`, ordered reads use server-side cursors fetched a row at a time. */
 async function v1Database(
   cursors = false,
 ): Promise<{ pg: PGlite; db: V1Db & { recordReads: number } }> {
   const pg = new PGlite()
-  const journal = JSON.parse(
-    await readFile(join(root, 'src/db/migrations/meta/_journal.json'), 'utf8'),
-  ) as { entries: { tag: string }[] }
+  const journal = JSON.parse(await readFile(join(v1Schema, 'meta/_journal.json'), 'utf8')) as {
+    entries: { tag: string }[]
+  }
   for (const { tag } of journal.entries) {
-    const sql = await readFile(join(root, `src/db/migrations/${tag}.sql`), 'utf8')
+    const sql = await readFile(join(v1Schema, `${tag}.sql`), 'utf8')
     for (const stmt of sql.split('--> statement-breakpoint')) if (stmt.trim()) await pg.exec(stmt)
   }
   let open = 0

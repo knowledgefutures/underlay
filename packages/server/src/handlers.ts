@@ -12,22 +12,21 @@
  *                       queued after each publish, and by the sweep for laggards
  *   restore.version     rebuild a collection from a location, a version at a time
  */
-import { fsck, readCollectionInfo, readHead } from '@underlay/protocol'
+import { type BumpType, fsck, readCollectionInfo, readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
-import { reconcileDue } from './billing/reconcile.js'
 import './files/files.js'
+import { reconcileDue } from './billing/reconcile.js'
 import * as schema from './db/schema.js'
-import { registerJob } from './jobs.js'
 import './push/compact.js'
 import './push/parallel.js'
 import './refs/log.js'
+import { registerJob } from './jobs.js'
 import { recheckLocations } from './locations/locations.js'
-import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import './locations/restore.js'
+import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'
-import type { BumpType } from './versions/semver.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
 registerJob('version.published', async (job, ports) => {

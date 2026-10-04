@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router'
 
-import { features } from '~/lib/features'
 import { bareSemver, formatBytes, prefixedHash, shortHash } from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 import { TokenLink } from '~/lib/share-token'
@@ -352,7 +351,7 @@ export default function CollectionOverviewBody({
                 {`GET /api/collections/${owner}/${collection}/versions`}
               </code>
             </div>
-            {features.export && version && (
+            {version && (
               <TokenLink
                 to={`/api/collections/${owner}/${collection}/export`}
                 className="text-link inline-block hover:underline"

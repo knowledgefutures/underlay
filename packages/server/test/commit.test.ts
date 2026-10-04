@@ -7,6 +7,7 @@ import {
   hashRecord,
   hashSchema,
   iterate,
+  MissingFilesError,
   readHead,
   type RecordEntry,
   recordTree,
@@ -21,7 +22,6 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../src/versions/commit.js'
-import { MissingFilesError } from '../src/versions/file-refs.js'
 import { publishVersion } from '../src/versions/publish.js'
 import { cleanup, harness } from './harness.js'
 

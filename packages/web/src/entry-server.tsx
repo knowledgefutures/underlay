@@ -9,7 +9,6 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToReadableStream } from 'react-dom/server'
 import {
   createStaticHandler,
@@ -22,6 +21,7 @@ import { assetTags } from 'virtual:underlay/client-assets'
 
 import { routes } from '~/App'
 import { type ApiFn, setSsrApiResolver } from '~/lib/fetch-base'
+import { escapeHtml } from '~/lib/markdown'
 
 import template from '../index.html?raw'
 
@@ -63,9 +63,6 @@ function fill(html: string, placeholder: string, content: string): string {
 function localRedirect(location: string): string {
   return location.startsWith('/') && !/^\/[/\\]/.test(location) ? location : '/'
 }
-
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /**
  * Route errors in the form createBrowserRouter revives on hydration (what
@@ -138,13 +135,10 @@ async function render(req: Request): Promise<Response> {
 async function renderContext(context: StaticHandlerContext): Promise<Response> {
   const { title, description } = pageMeta(context)
   const router = createStaticRouter(handler.dataRoutes, context)
-  const queryClient = new QueryClient()
 
   let renderError: unknown = null
   const stream = await renderToReadableStream(
-    <QueryClientProvider client={queryClient}>
-      <StaticRouterProvider router={router} context={context} hydrate={false} />
-    </QueryClientProvider>,
+    <StaticRouterProvider router={router} context={context} hydrate={false} />,
     {
       onError(err) {
         renderError = err

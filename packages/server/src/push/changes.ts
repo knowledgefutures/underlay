@@ -3,10 +3,9 @@
  * shared by the serial commit (delta.ts) and the units of a parallel commit
  * (parallel.ts).
  */
-import { type Change, type RecordEntry } from '@underlay/protocol'
+import { type Change, type RecordEntry, type SetName } from '@underlay/protocol'
 
 import type { Store } from '../ports.js'
-import type { SetName } from '../versions/file-refs.js'
 import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'
 
 export const isPrivateSchema = (s: Record<string, unknown>) => s.private === true

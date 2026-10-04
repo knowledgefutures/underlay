@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
 import { requireAuth } from '~/lib/auth-middleware'
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const middleware = [requireAuth]
 
@@ -10,16 +10,11 @@ export const handle = {
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const base = fetchBase(request.url)
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request)
 
   const [orgData, kfOrgs] = await Promise.all([
-    apiFetch(new URL(`/api/accounts/${params.owner}`, base), { headers }).then((r) =>
-      r.ok ? r.json() : null,
-    ),
-    apiFetch(new URL('/api/accounts/available-kf-orgs', base), { headers }).then((r) =>
-      r.ok ? r.json() : [],
-    ),
+    api.json(`/api/accounts/${params.owner}`, null),
+    api.json('/api/accounts/available-kf-orgs', []),
   ])
 
   if (!orgData) throw new Response('Not Found', { status: 404 })

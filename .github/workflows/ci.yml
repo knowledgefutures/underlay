@@ -21,7 +21,7 @@ jobs:
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -52,36 +52,6 @@ jobs:
 
       - name: Test
         run: pnpm test
-
-  # v2 (packages/*): the root vitest config leaves these out, so they run here.
-  v2:
-    name: v2 packages
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm v2:typecheck
-
-      - name: Test
-        run: pnpm v2:test
 
       - name: Browser bundle
         run: pnpm --filter @underlay/protocol check-browser

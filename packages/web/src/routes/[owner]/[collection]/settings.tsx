@@ -18,7 +18,6 @@ import {
 } from '~/components/ui'
 import WebhooksSettings from '~/components/WebhooksSettings'
 import { useAppContext } from '~/lib/app-context'
-import { features } from '~/lib/features'
 
 /**
  * Poll an async metadata job to completion.
@@ -482,76 +481,72 @@ export default function CollectionSettingsPage() {
       </section>
 
       {/* Export */}
-      {features.export && (
-        <section
-          id="export"
-          data-settings-section
-          className="border-rule mb-10 scroll-mt-6 border-t pt-6"
+      <section
+        id="export"
+        data-settings-section
+        className="border-rule mb-10 scroll-mt-6 border-t pt-6"
+      >
+        <SectionHeading>Export</SectionHeading>
+        <p className="text-ink-muted mb-3 text-sm">
+          Download a <code className="bg-parchment-dark px-1">.tar.gz</code> archive containing the
+          manifest, schema, records, and files for the latest version.
+        </p>
+        <a
+          href={`/api/collections/${owner}/${collection}/export`}
+          className={buttonClasses('secondary')}
         >
-          <SectionHeading>Export</SectionHeading>
-          <p className="text-ink-muted mb-3 text-sm">
-            Download a <code className="bg-parchment-dark px-1">.tar.gz</code> archive containing
-            the manifest, schema, records, and files for the latest version.
-          </p>
-          <a
-            href={`/api/collections/${owner}/${collection}/export`}
-            className={buttonClasses('secondary')}
-          >
-            Download archive
-          </a>
-        </section>
-      )}
+          Download archive
+        </a>
+      </section>
 
       {/* ARK Identifiers */}
-      {features.ark && (
-        <section
-          id="ark"
-          data-settings-section
-          className="border-rule mb-10 scroll-mt-6 border-t pt-6"
-        >
-          <SectionHeading>ARK Identifiers</SectionHeading>
-          {arkPath && arkSettings.enabled && (
-            <p className="text-ink-muted mb-3 text-sm">
-              Current ARK:{' '}
-              <Link to={arkPath} className="text-link font-mono text-sm hover:underline">
-                {arkPath.slice(1)}
-              </Link>
-            </p>
-          )}
-          <form onSubmit={handleUpdateArk} className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="arkEnabled"
-                checked={arkEnabled}
-                onChange={(e) => setArkEnabled(e.target.checked)}
-              />
-              <label htmlFor="arkEnabled" className="text-sm">
-                Enable ARK identifier
-              </label>
-            </div>
-            <div>
-              <label htmlFor="arkCustomUrl" className="mb-1 block text-sm font-medium">
-                Custom redirect URL{' '}
-                <span className="text-ink-muted font-normal">
-                  (optional — leave blank to redirect to collection page)
-                </span>
-              </label>
-              <Input
-                type="url"
-                id="arkCustomUrl"
-                value={arkCustomUrl}
-                onChange={(e) => setArkCustomUrl(e.target.value)}
-                placeholder="https://example.org/my-collection"
-              />
-            </div>
-            <div className="pt-2">
-              <Button type="submit" disabled={submitting === 'ark'}>
-                {submitting === 'ark' ? 'Saving…' : 'Save changes'}
-              </Button>
-            </div>
-          </form>
-        </section>
-      )}
+      <section
+        id="ark"
+        data-settings-section
+        className="border-rule mb-10 scroll-mt-6 border-t pt-6"
+      >
+        <SectionHeading>ARK Identifiers</SectionHeading>
+        {arkPath && arkSettings.enabled && (
+          <p className="text-ink-muted mb-3 text-sm">
+            Current ARK:{' '}
+            <Link to={arkPath} className="text-link font-mono text-sm hover:underline">
+              {arkPath.slice(1)}
+            </Link>
+          </p>
+        )}
+        <form onSubmit={handleUpdateArk} className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="arkEnabled"
+              checked={arkEnabled}
+              onChange={(e) => setArkEnabled(e.target.checked)}
+            />
+            <label htmlFor="arkEnabled" className="text-sm">
+              Enable ARK identifier
+            </label>
+          </div>
+          <div>
+            <label htmlFor="arkCustomUrl" className="mb-1 block text-sm font-medium">
+              Custom redirect URL{' '}
+              <span className="text-ink-muted font-normal">
+                (optional — leave blank to redirect to collection page)
+              </span>
+            </label>
+            <Input
+              type="url"
+              id="arkCustomUrl"
+              value={arkCustomUrl}
+              onChange={(e) => setArkCustomUrl(e.target.value)}
+              placeholder="https://example.org/my-collection"
+            />
+          </div>
+          <div className="pt-2">
+            <Button type="submit" disabled={submitting === 'ark'}>
+              {submitting === 'ark' ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </form>
+      </section>
 
       {/* Webhooks */}
       <section

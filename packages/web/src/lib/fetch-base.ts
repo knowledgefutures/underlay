@@ -58,3 +58,45 @@ export function clientHeaders(request: Request): Record<string, string> {
 export function ssrHeaders(request: Request): Record<string, string> {
   return { Cookie: request.headers.get('Cookie') ?? '', ...clientHeaders(request) }
 }
+
+export interface LoaderApi {
+  /** GET `path` on behalf of the page's request. */
+  get(path: string): Promise<Response>
+  /** GET `path`'s JSON body, or `fallback` when the response isn't ok. */
+  json<T = any>(path: string, fallback: T): Promise<T>
+}
+
+/**
+ * A loader's handle on the API: requests carry the page's cookies and client
+ * address. With `share`, they also carry the page's `?token=` share key (the
+ * API accepts it on GETs), so a shared-link viewer keeps their access across a
+ * collection's pages. Leave it off for routes outside a collection.
+ */
+export function loaderApi(request: Request, { share = false } = {}): LoaderApi {
+  const base = fetchBase(request.url)
+  const token = share ? new URL(request.url).searchParams.get('token') : null
+  const headers = ssrHeaders(request)
+  const get = (path: string) => {
+    const url = new URL(path, base)
+    if (token) url.searchParams.set('token', token)
+    return apiFetch(url, { headers })
+  }
+  return {
+    get,
+    json: async (path, fallback) => {
+      const res = await get(path)
+      return res.ok ? res.json() : fallback
+    },
+  }
+}
+
+/** The signed-in context (`/api/context`), or a signed-out one when the lookup fails. */
+export async function fetchContext(
+  request: Request,
+): Promise<{ currentUser: any } & Record<string, unknown>> {
+  return loaderApi(request).json('/api/context', {
+    currentUser: null,
+    kfAccountUrl: '',
+    kfAuthUrl: '',
+  })
+}

@@ -15,7 +15,7 @@
  * collections and their public set, as everywhere else in v2.
  */
 import { and, asc, eq, ne, sql } from 'drizzle-orm'
-import { type Context, Hono, type MiddlewareHandler } from 'hono'
+import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
@@ -76,42 +76,6 @@ export async function ensureCollectionArk(
     .insert(schema.arkCollections)
     .values({ collectionId: collection.id, arkId: collectionToArkId(collection.id) })
     .onConflictDoNothing()
-}
-
-export interface CollectionArkInfo {
-  naan: string
-  shoulder: string
-  arkId: string
-}
-
-/**
- * What a collection's ARK URLs are built from, or null when it has no enabled
- * ARK. Build URLs with buildArkUrl(naan, shoulder, arkId, semver?, type?, id?).
- */
-export async function collectionArkInfo(
-  db: Db,
-  collectionId: string,
-): Promise<CollectionArkInfo | null> {
-  const [row] = await db
-    .select({
-      arkId: schema.arkCollections.arkId,
-      orgId: schema.collections.organizationId,
-      naan: schema.organization.arkNaan,
-    })
-    .from(schema.arkCollections)
-    .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
-    .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
-    .where(
-      and(
-        eq(schema.arkCollections.collectionId, collectionId),
-        eq(schema.arkCollections.enabled, true),
-      ),
-    )
-    .limit(1)
-  if (!row) return null
-  const shoulder = await orgShoulder(db, row.orgId)
-  if (!shoulder) return null
-  return { naan: row.naan ?? DEFAULT_NAAN, shoulder, arkId: row.arkId }
 }
 
 // --- Resolution ---
@@ -369,16 +333,6 @@ async function arkPage(c: Context<AppEnv>): Promise<Response> {
   // request URL can be the internal one.
   const target = res.url.startsWith('/') ? `${c.var.config.appUrl}${res.url}` : res.url
   return c.redirect(target, 302)
-}
-
-/**
- * The /ark: handler as middleware, for mounting outside arkRoutes(). Must run
- * after the middleware that sets ports, config and principal.
- */
-export const arkMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') return next()
-  if (!c.req.path.startsWith('/ark:')) return next()
-  return arkPage(c)
 }
 
 // --- Settings access ---

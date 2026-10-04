@@ -14,13 +14,13 @@
  */
 import { createHmac, randomBytes } from 'node:crypto'
 
+import type { BumpType } from '@underlay/protocol'
 import { and, eq, lt } from 'drizzle-orm'
 
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
-import type { BumpType } from '../versions/semver.js'
 
 const DELIVERY_TIMEOUT_MS = 10_000
 export const MAX_ATTEMPTS = 5

@@ -2,35 +2,7 @@ import { Link, useLocation } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import DocsSearch from '~/components/DocsSearch'
-
-const nav = [
-  {
-    section: 'Getting started',
-    items: [
-      { label: 'Overview', href: '/docs' },
-      { label: 'Concepts', href: '/docs/concepts' },
-      { label: 'Quickstart', href: '/docs/quickstart' },
-      { label: 'Integration Guide', href: '/docs/integration' },
-    ],
-  },
-  {
-    section: 'API reference',
-    items: [
-      { label: 'Accounts', href: '/docs/api/accounts' },
-      { label: 'Collections', href: '/docs/api/collections' },
-      { label: 'Versions', href: '/docs/api/versions' },
-      { label: 'Files', href: '/docs/api/files' },
-    ],
-  },
-  {
-    section: 'Infrastructure',
-    items: [{ label: 'Self-hosting', href: '/docs/self-host' }],
-  },
-  {
-    section: 'Specification',
-    items: [{ label: 'Protocol', href: '/protocol' }],
-  },
-]
+import { docSections } from '~/lib/docs-pages'
 
 export default function DocsLayout({
   children,
@@ -50,17 +22,17 @@ export default function DocsLayout({
             <DocsSearch />
 
             <nav className="docs-nav">
-              {nav.map((group) => (
+              {docSections.map((group) => (
                 <div key={group.section} className="docs-nav-group">
                   <p className="docs-nav-heading">{group.section}</p>
                   <ul>
-                    {group.items.map((item) => (
-                      <li key={item.href}>
+                    {group.pages.map((page) => (
+                      <li key={page.href}>
                         <Link
-                          to={item.href}
-                          className={`docs-nav-link${currentPath === item.href ? ' active' : ''}`}
+                          to={page.href}
+                          className={`docs-nav-link${currentPath === page.href ? ' active' : ''}`}
                         >
-                          {item.label}
+                          {page.label ?? page.title}
                         </Link>
                       </li>
                     ))}

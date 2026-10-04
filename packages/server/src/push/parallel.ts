@@ -29,6 +29,7 @@ import {
   boundaryBytes,
   compareUtf8,
   dropRecordBody,
+  FileRefDelta,
   LEAF_BOUNDARY_BITS,
   mergeTree,
   type NodeDesc,
@@ -40,6 +41,7 @@ import {
   RepoSource,
   rootDesc,
   type Segment,
+  type SetName,
   type SetObject,
   trailingZeros,
   type TreeSummary,
@@ -51,7 +53,6 @@ import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion } from '../versions/commit.js'
-import { FileRefDelta, type SetName } from '../versions/file-refs.js'
 import { deltaChanges, isPrivateSchema } from './changes.js'
 import { commitOutcome, settleSession } from './outcome.js'
 import { blocksInRange, type RunBlock, type RunIndex, runMarks } from './runs.js'

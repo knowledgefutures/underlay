@@ -28,21 +28,3 @@ export function TokenLink({ to, ...props }: React.ComponentProps<typeof Link>) {
   const token = useShareToken()
   return <Link to={typeof to === 'string' ? withToken(to, token) : to} {...props} />
 }
-
-/** Extract the share token from a loader's request URL, or null. */
-function shareTokenFromRequest(requestUrl: string): string | null {
-  return new URL(requestUrl).searchParams.get('token')
-}
-
-/**
- * Loader helper: builds API URLs that forward the page's share token as a
- * ?token= query param (the API's auth middleware accepts it on GETs).
- */
-export function apiUrlBuilder(request: Request, base: string): (path: string) => URL {
-  const token = shareTokenFromRequest(request.url)
-  return (path: string) => {
-    const url = new URL(path, base)
-    if (token) url.searchParams.set('token', token)
-    return url
-  }
-}

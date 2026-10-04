@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { Alert, Button, Field, Input, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
+import { slugify } from '~/lib/format'
 
 export default function NewCollection() {
   const { currentUser } = useAppContext()
@@ -24,13 +25,6 @@ export default function NewCollection() {
   const [owner, setOwner] = useState(defaultOwner?.slug ?? '')
   const [slug, setSlug] = useState('')
 
-  function slugify(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '')
-      .replace(/-{2,}/g, '-')
-  }
   const [isPublic, setIsPublic] = useState(false)
   const [description, setDescription] = useState('')
   const [error, setError] = useState('')

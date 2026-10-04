@@ -1,8 +1,7 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
 import { requireAuth } from '~/lib/auth-middleware'
-import { features } from '~/lib/features'
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const middleware = [requireAuth]
 
@@ -12,27 +11,16 @@ export const handle = {
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const base = fetchBase(request.url)
-  const headers = ssrHeaders(request)
+  const api = loaderApi(request)
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
   const [data, arkSettings, webhooksResult, placements, locations] = await Promise.all([
-    apiFetch(new URL(prefix, base), { headers }).then((r) => (r.ok ? r.json() : null)),
-    features.ark
-      ? apiFetch(new URL(`${prefix}/ark`, base), { headers }).then((r) =>
-          r.ok ? r.json() : { enabled: false, customUrl: null, arkUrl: null },
-        )
-      : { enabled: false, customUrl: null, arkUrl: null },
-    apiFetch(new URL(`${prefix}/webhooks`, base), { headers }).then((r) =>
-      r.ok ? r.json() : { webhooks: [] },
-    ),
-    apiFetch(new URL(`${prefix}/placements`, base), { headers }).then((r) =>
-      r.ok ? r.json() : { headSeq: 0, placements: [] },
-    ),
+    api.json(prefix, null),
+    api.json(`${prefix}/ark`, { enabled: false, customUrl: null, arkUrl: null }),
+    api.json(`${prefix}/webhooks`, { webhooks: [] }),
+    api.json(`${prefix}/placements`, { headSeq: 0, placements: [] }),
     // Owners and admins only; anyone else gets 403 and no add-mirror form.
-    apiFetch(new URL(`/api/orgs/${params.owner}/locations`, base), { headers }).then((r) =>
-      r.ok ? r.json() : { locations: [] },
-    ),
+    api.json(`/api/orgs/${params.owner}/locations`, { locations: [] }),
   ])
 
   if (!data) throw new Response('Not Found', { status: 404 })

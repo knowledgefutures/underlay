@@ -1,18 +1,11 @@
 import type { LoaderFunctionArgs } from 'react-router'
 
-import { features } from '~/lib/features'
-import { apiFetch, fetchBase, ssrHeaders } from '~/lib/fetch-base'
+import { loaderApi } from '~/lib/fetch-base'
 
 export const handle = { title: 'Protocol · Underlay' }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  if (!features.discussion) return { counts: {} }
-  const base = fetchBase(request.url)
-  const res = await apiFetch(new URL('/api/pages/protocol/comments', base), {
-    headers: ssrHeaders(request),
-  })
-  if (!res.ok) return { counts: {} }
-  const data = await res.json()
+  const data = await loaderApi(request).json<any>('/api/pages/protocol/comments', {})
   const counts: Record<string, number> = {}
   for (const [anchor, list] of Object.entries(data.comments ?? {})) {
     counts[anchor] = (list as any[]).filter(
