@@ -17,6 +17,9 @@ import {
   compareUtf8,
   type DiffEntry,
   diffTrees,
+  gzip,
+  leaves,
+  OUT_OF_LINE_BYTES,
   fileTree,
   iterate,
   type RecordEntry,
@@ -112,8 +115,32 @@ async function* allRecords(
   }
 }
 
+/**
+ * Caching for a version's data: a published version never changes, so anything
+ * addressed by its semver or hash may be cached; `latest` moves. Anonymous
+ * reads are public for ten minutes (short enough that a collection made private
+ * or a blocked record stops being served soon); members' are private.
+ */
+function versionCaching(c: Context<AppEnv>) {
+  const n = c.req.param('n')
+  if (!n || n === 'latest' || c.req.method !== 'GET' || c.res.status !== 200) return
+  if (c.res.headers.has('cache-control')) return
+  c.res.headers.set(
+    'cache-control',
+    c.var.principal ? 'private, max-age=3600' : 'public, max-age=600, stale-while-revalidate=3600',
+  )
+}
+
 export function versionRoutes() {
   const app = new Hono<AppEnv>()
+  app.use('/:owner/:slug/versions/:n/*', async (c, next) => {
+    await next()
+    versionCaching(c)
+  })
+  app.use('/:owner/:slug/versions/:n', async (c, next) => {
+    await next()
+    versionCaching(c)
+  })
 
   app.get('/:owner/:slug/versions', async (c) => {
     const access = await requireCollection(c, 'read')
@@ -191,6 +218,58 @@ export function versionRoutes() {
         hasMore,
         nextCursor: hasMore && last ? encodeCursor(last.type, last.key) : null,
         total,
+      },
+    })
+  })
+
+  /**
+   * A type's public records as one gzip file: the stored leaf bodies concatenated
+   * (gzip allows several members), so a public read is copied, not re-encoded.
+   * Lines are canonical records, `{"id":…,"type":…,"data":…}`, without the
+   * `hash` records.ndjson adds (it's the SHA-256 of the line). Only the public
+   * set: a member's private records interleave by id, so they need records.ndjson.
+   * A leaf holding out-of-line or blocked records is re-encoded. Some gzip readers
+   * (browsers' DecompressionStream) stop after the first member.
+   */
+  app.get('/:owner/:slug/versions/:n/records.ndjson.gz', async (c) => {
+    const access = await requireCollection(c, 'read')
+    if (access instanceof Response) return access
+    const view = await viewFor(c, access)
+    if (view instanceof Response) return view
+    const want = c.req.query('type')
+    const types = view.types.filter((t) => t.public?.root && (!want || t.slug === want))
+    if (want && types.length === 0) return jsonError(c, 404, `No public records of type ${want}`)
+    const source = new RepoSource(recordTree, view.repo)
+    const body = new ReadableStream<Uint8Array>({
+      async start(ctl) {
+        try {
+          for (const t of types) {
+            for await (const leaf of leaves(source, t.public!.root)) {
+              const node = await source.node(leaf.hash)
+              const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
+              const plain = entries.every(
+                (e) => e.size <= OUT_OF_LINE_BYTES && !view.withheld.has(e.hash),
+              )
+              if (plain) {
+                ctl.enqueue(await view.repo.rawBody(leaf.hash))
+                continue
+              }
+              const lines = (await view.repo.bodyLines({ hash: leaf.hash, entries })).filter(
+                (_, i) => !view.withheld.has(entries[i]!.hash),
+              )
+              if (lines.length) ctl.enqueue(await gzip(lines.join('\n') + '\n'))
+            }
+          }
+          ctl.close()
+        } catch (err) {
+          ctl.error(err)
+        }
+      },
+    })
+    return new Response(body, {
+      headers: {
+        'content-type': 'application/gzip',
+        'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${view.version.semver}${want ? `-${want}` : ''}.ndjson.gz"`,
       },
     })
   })

@@ -84,7 +84,7 @@ const primaryDb = (env: Env) => {
 
 function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
   const db = req ? openD1(d1For(env, req)) : primaryDb(env)
-  const cache = new CfCache(caches as never, env.DEPLOYMENT)
+  const cache = new CfCache(caches as never, env.DEPLOYMENT, (p) => ctx.waitUntil(p))
   const s3 = s3Store({
     endpoint: env.R2_ENDPOINT,
     bucket: env.R2_BUCKET,

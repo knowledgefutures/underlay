@@ -37,6 +37,15 @@ export interface AppConfig {
 
 export type Authenticate = (req: Request, ports: Ports) => Promise<Principal | null>
 
+/**
+ * What one page view's in-process API calls share: the caller, authenticated
+ * once for the page, and collection access, resolved once per collection.
+ */
+export interface PageContext {
+  principal: Principal | null
+  access: Map<string, Promise<unknown>>
+}
+
 export type AppEnv = {
   Bindings: Record<string, unknown>
   Variables: {
@@ -47,6 +56,8 @@ export type AppEnv = {
     kf: Kf | null
     /** This request's usage (billing/usage.ts). */
     meter: Meter
+    /** Set on the page renderer's in-process API calls: what the page's calls share. */
+    page: PageContext | null
   }
 }
 
@@ -76,8 +87,8 @@ export type RenderPage = (
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
-  /** Requests the page renderer makes to this app in-process. */
-  const inProcess = new WeakSet<Request>()
+  /** Requests the page renderer makes to this app in-process, with their page's context. */
+  const inProcess = new WeakMap<Request, PageContext>()
 
   app.on(['GET', 'POST'], '/api/auth/*', (c) => {
     const { authHandler } = setup(c)
@@ -123,7 +134,9 @@ export function createApp(setup: Setup) {
     c.set('ports', ports)
     c.set('config', config)
     c.set('kf', kf ?? null)
-    c.set('principal', await authenticate(c.req.raw, ports))
+    const page = inProcess.get(c.req.raw) ?? null
+    c.set('page', page)
+    c.set('principal', page ? page.principal : await authenticate(c.req.raw, ports))
     c.set('meter', newMeter())
     await next()
   })
@@ -194,8 +207,9 @@ export function createApp(setup: Setup) {
     } catch {
       ctx = undefined
     }
+    const page: PageContext = { principal: c.var.principal, access: new Map() }
     return renderPage(c.req.raw, async (req) => {
-      inProcess.add(req)
+      inProcess.set(req, page)
       return app.fetch(req, c.env, ctx)
     })
   })

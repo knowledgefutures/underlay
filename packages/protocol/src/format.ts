@@ -66,6 +66,7 @@ export {
   getEntry,
   iterate,
   type IterateOptions,
+  leaves,
   newNodes,
   rankOf,
 } from './tree/read.js'

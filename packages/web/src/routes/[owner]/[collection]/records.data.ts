@@ -15,17 +15,12 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const headers = ssrHeaders(request)
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
-  const collectionData = await apiFetch(api(prefix), { headers }).then((r) =>
-    r.ok ? r.json() : null,
-  )
+  // Both at once: `latest` resolves the head on the server (a 404 when there is none).
+  const [collectionData, version] = await Promise.all([
+    apiFetch(api(prefix), { headers }).then((r) => (r.ok ? r.json() : null)),
+    apiFetch(api(`${prefix}/versions/latest`), { headers }).then((r) => (r.ok ? r.json() : null)),
+  ])
   if (!collectionData) throw new Response('Not Found', { status: 404 })
-
-  const latest = collectionData.latestVersion?.semver
-  const version = latest
-    ? await apiFetch(api(`${prefix}/versions/${latest}`), { headers }).then((r) =>
-        r.ok ? r.json() : null,
-      )
-    : null
 
   const records = version ? await loadRecordsPage(api, headers, prefix, version, request.url) : null
   return { version, collectionData, records }

@@ -29,6 +29,8 @@ export class CfCache implements Cache {
   constructor(
     readonly caches: CfCacheStorage,
     readonly namespace: string,
+    /** Run a cache write after the response (ctx.waitUntil), not on the request's path. */
+    readonly defer?: (p: Promise<unknown>) => void,
   ) {}
   #req(key: string) {
     return new Request(`https://cache.underlay.internal/${this.namespace}/${key}`)
@@ -39,11 +41,13 @@ export class CfCache implements Cache {
   }
   async put(key: string, value: Uint8Array, opts?: { ttlSeconds?: number }) {
     const ttl = opts?.ttlSeconds ?? 31_536_000
-    await this.caches.default.put(
+    const write = this.caches.default.put(
       this.#req(key),
       new Response(value as Uint8Array<ArrayBuffer>, {
         headers: { 'cache-control': `public, max-age=${ttl}, immutable` },
       }),
     )
+    if (this.defer) this.defer(write.catch((err: unknown) => console.error('[cache] put', err)))
+    else await write
   }
 }

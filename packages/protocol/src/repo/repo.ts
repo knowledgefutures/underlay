@@ -228,6 +228,17 @@ export class Repo {
     return lines
   }
 
+  /**
+   * A leaf body's stored bytes (gzip members), as written: for serving a run of
+   * leaves without decoding them. Pointer lines (out-of-line records) stay
+   * pointers; callers that need full records use bodyLines.
+   */
+  async rawBody(leafHash: string): Promise<Uint8Array> {
+    const bytes = await this.#immutable(keys.body(leafHash))
+    if (!bytes) throw new Error(`Missing body for leaf ${leafHash}`)
+    return bytes
+  }
+
   async #resolve(lines: string[]): Promise<string[]> {
     if (!lines.some((l) => l.startsWith(REF_PREFIX))) return lines
     return Promise.all(lines.map((l) => (l.startsWith(REF_PREFIX) ? this.#outOfLine(l) : l)))

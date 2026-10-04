@@ -102,12 +102,14 @@ export async function requireCollection(
   c: Context<AppEnv>,
   need: 'read' | 'write',
 ): Promise<CollectionAccess | Response> {
-  const access = await collectionAccess(
-    c.var.ports.db,
-    c.var.principal,
-    c.req.param('owner') ?? '',
-    c.req.param('slug') ?? '',
-  )
+  const owner = c.req.param('owner') ?? ''
+  const slug = c.req.param('slug') ?? ''
+  const resolve = () => collectionAccess(c.var.ports.db, c.var.principal, owner, slug)
+  // A page's in-process calls resolve each collection once (app.ts PageContext).
+  const memo = c.var.page?.access
+  const key = `${owner}/${slug}`
+  if (memo && !memo.has(key)) memo.set(key, resolve())
+  const access = (await (memo?.get(key) ?? resolve())) as CollectionAccess | null
   if (!access || !access.canRead) return jsonError(c, 404, 'Collection not found')
   if (need === 'write' && !access.canWrite) {
     return c.var.principal

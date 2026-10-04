@@ -138,6 +138,16 @@ async function* leavesFrom<E>(
   }
 }
 
+/** Every leaf of a tree, in key order (interior nodes read one path at a time). */
+export async function* leaves<E>(
+  source: NodeSource<E>,
+  root: string | null,
+): AsyncGenerator<NodeDesc> {
+  if (root === null) return
+  for await (const { leaf } of leavesFrom(source, await rootDesc(source, root), undefined, 0))
+    yield leaf
+}
+
 /** Iterate entries in key order from a position, prefetching leaves ahead. */
 export async function* iterate<E>(
   source: NodeSource<E>,

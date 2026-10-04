@@ -21,6 +21,7 @@ import {
   isHash,
   presignDownload,
   presignDownloads,
+  PRESIGN_SECONDS,
   readableFiles,
   safeMimeType,
   SMALL_UPLOAD_BYTES,
@@ -59,6 +60,8 @@ export function fileRoutes() {
       return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mimeType })
     meter(c.var.meter, 'file_downloads', 1)
     meter(c.var.meter, 'file_bytes', f.size)
+    // The presigned URL lasts PRESIGN_SECONDS: a browser may reuse the redirect until shortly before.
+    c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
     return c.redirect((await presignDownload(c.var.ports, hash))!, 302)
   })
 
