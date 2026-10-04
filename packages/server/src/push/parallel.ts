@@ -383,6 +383,7 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     onChange: (before, after) => refs.record(set, before, after),
   })
   await sink.flush()
+  await refs.resolve(repo)
   const survived = unit.through === null || merged.lastKey === unit.through
   const { added, removed, updated } = merged.stats
   const output: UnitOutput = {

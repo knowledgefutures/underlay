@@ -30,38 +30,67 @@ import {
   type SetObject,
   type TreeSummary,
 } from '../format.js'
-import { type Repo, RepoSink, RepoSource } from './repo.js'
+import { outOfLineHash, type Repo, RepoSink, RepoSource } from './repo.js'
 
 export type SetName = 'public' | 'private'
 
 const REF = 'r:'
 const DECLARED = 'd:'
 
-/** Accumulates reference count changes from record changes, per set. */
+/**
+ * Accumulates reference count changes from record changes, per set.
+ *
+ * A record stored out of line arrives as a pointer line when a writer adds it
+ * (its body isn't in hand) but as its full body when a reader hands it back.
+ * Pointers are counted by record hash here and turned into file references by
+ * `resolve`, which must run before `refs` is used.
+ */
 export class FileRefDelta {
   readonly refs: Record<SetName, Map<string, number>> = { public: new Map(), private: new Map() }
+  readonly #pointers: Record<SetName, Map<string, number>> = {
+    public: new Map(),
+    private: new Map(),
+  }
 
-  #bump(set: SetName, hashes: string[], by: number) {
-    const m = this.refs[set]
+  #bump(m: Map<string, number>, hashes: string[], by: number) {
     for (const h of hashes) m.set(h, (m.get(h) ?? 0) + by)
+  }
+
+  #body(set: SetName, body: string | undefined, by: number) {
+    if (body === undefined) throw new Error('File reference accounting needs record bodies')
+    const pointer = outOfLineHash(body)
+    if (pointer) this.#bump(this.#pointers[set], [pointer], by)
+    // Cheap prefilter: most records reference no files.
+    else if (body.includes('"$file"'))
+      this.#bump(this.refs[set], fileRefs((JSON.parse(body) as { data: unknown }).data), by)
   }
 
   /** Feed one record change in a set (mergeTree's onChange). */
   record(set: SetName, before: RecordEntry | null, after: RecordEntry | null): void {
-    if (before) this.#bump(set, refsOfBody(before.body), -1)
-    if (after) this.#bump(set, refsOfBody(after.body), +1)
+    if (before) this.#body(set, before.body, -1)
+    if (after) this.#body(set, after.body, +1)
+  }
+
+  /** Count the file references of out-of-line records seen as pointers. */
+  async resolve(repo: Repo): Promise<void> {
+    for (const set of ['public', 'private'] as const) {
+      for (const [hash, n] of this.#pointers[set]) {
+        if (n === 0) continue
+        const body = await repo.outOfLineRecord(hash)
+        if (body.includes('"$file"'))
+          this.#bump(this.refs[set], fileRefs((JSON.parse(body) as { data: unknown }).data), n)
+      }
+      this.#pointers[set].clear()
+    }
   }
 
   get touched(): boolean {
-    return [...this.refs.public.values(), ...this.refs.private.values()].some((n) => n !== 0)
+    const all = [this.refs, this.#pointers].flatMap((r) => [
+      ...r.public.values(),
+      ...r.private.values(),
+    ])
+    return all.some((n) => n !== 0)
   }
-}
-
-function refsOfBody(body: string | undefined): string[] {
-  if (body === undefined) throw new Error('File reference accounting needs record bodies')
-  // Cheap prefilter: most records reference no files.
-  if (!body.includes('"$file"')) return []
-  return fileRefs((JSON.parse(body) as { data: unknown }).data)
 }
 
 export interface FileSetResult {
@@ -177,12 +206,14 @@ export async function rebuildFileRefs(
   const out = { public: null as string | null, private: null as string | null }
   for (const name of ['public', 'private'] as const) {
     const set = sets[name]
-    const counts = new Map<string, number>()
+    const delta = new FileRefDelta()
     for (const t of Object.values(set.types)) {
       for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
-        for (const h of refsOfBody(e.body)) counts.set(h, (counts.get(h) ?? 0) + 1)
+        delta.record(name, null, e)
       }
     }
+    await delta.resolve(repo)
+    const counts = delta.refs[name]
     const sizes = new Map<string, number>()
     for await (const e of iterate(new RepoSource(fileTree, repo), set.files.root)) {
       sizes.set(e.key, e.size)

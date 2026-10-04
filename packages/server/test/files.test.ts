@@ -152,4 +152,45 @@ describe('files', () => {
     expect(ownerList.length).toBe(2)
     void c
   })
+
+  it('counts the file references of records stored out of line', async () => {
+    // Over 64 KB, a record's body is a pointer when written but the full JSON
+    // when read back, so its references must be counted through the pointer.
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('docs')
+    await h.ports.db.update(schema.collections).set({ public: true })
+    const base = '/api/collections/org/docs'
+    const pdf = 'large record pdf'
+    await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+    const big = (title: string) => ({
+      id: 'big',
+      type: 'Doc',
+      data: { title: title + 'x'.repeat(70_000), pdf: { $file: `sha256:${sha(pdf)}` } },
+    })
+    const push = async (open: object, records: object[], deletes: object[] = []) => {
+      const sid = (
+        await json(await h.request(`${base}/push`, { method: 'POST', user, json: open }))
+      ).session_id
+      if (records.length)
+        await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: records })
+      if (deletes.length)
+        await h.request(`${base}/push/${sid}/deletes`, { method: 'POST', user, ndjson: deletes })
+      const res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+      expect(res.status).toBe(201)
+      return json(res)
+    }
+    const files = async () =>
+      (await json(await h.request(`${base}/versions/latest/files`))).map((f: any) => f.hash)
+
+    await push({ schemas: { Doc } }, [big('First')])
+    expect(await files()).toEqual([sha(pdf)])
+    // Changing the record moves the count -1 and +1: it used to go negative here.
+    await push({ base: 'v1.0.0' }, [big('Second')])
+    expect(await files()).toEqual([sha(pdf)])
+    // Deleting it takes the file out of the set.
+    const v = await push({ base: 'v1.1.0' }, [], [{ type: 'Doc', id: 'big' }])
+    expect(v.semver).toBeTruthy()
+    expect(await files()).toEqual([])
+  })
 })

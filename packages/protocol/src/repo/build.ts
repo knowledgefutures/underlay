@@ -324,6 +324,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
   if (errorCount > 0) return { status: 'invalid', errors, total: errorCount }
 
   // File sets.
+  await refs.resolve(repo)
   const pubFiles = await applyFileSet(
     repo,
     { refsRoot: base?.publicRefsRoot ?? null, files: basePublic.files },

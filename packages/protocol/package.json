@@ -12,7 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "vectors": "tsx scripts/gen-vectors.ts",
-    "check-browser": "tsx scripts/check-browser-bundle.ts"
+    "check-browser": "tsx scripts/browser-bundle.ts"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",

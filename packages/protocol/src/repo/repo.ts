@@ -228,6 +228,11 @@ export class Repo {
     return Promise.all(lines.map((l) => (l.startsWith(REF_PREFIX) ? this.#outOfLine(l) : l)))
   }
 
+  /** An out-of-line record's canonical JSON, checked against its hash. */
+  outOfLineRecord(recordHash: string): Promise<string> {
+    return this.#outOfLine(outOfLinePointer(recordHash))
+  }
+
   async #outOfLine(pointer: string): Promise<string> {
     const hash = (JSON.parse(pointer) as { $ref: string }).$ref
     const b = await this.#immutable(keys.record(hash), async (bytes) => {
