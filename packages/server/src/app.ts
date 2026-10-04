@@ -7,6 +7,7 @@ import { type Context, type ExecutionContext, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
 import { accountRoutes } from './api/accounts.js'
+import { adminRoutes } from './api/admin.js'
 import { arkRoutes } from './api/ark.js'
 import { collectionRoutes } from './api/collections.js'
 import { exportRoutes } from './api/export.js'
@@ -143,6 +144,7 @@ export function createApp(setup: Setup) {
   app.route('/', locationRoutes())
   // Before collectionRoutes: /api/accounts/me would match /api/accounts/:slug.
   app.route('/', accountRoutes())
+  app.route('/', adminRoutes())
   app.route('/', collectionRoutes())
 
   // Everything else is a UI page, when the deployment renders one.

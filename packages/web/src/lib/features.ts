@@ -12,7 +12,7 @@ export const features = {
   /** /api/ark/*, /api/collections/:owner/:slug/ark*, /api/accounts/:slug/ark */
   ark: true,
   /** /api/pages/:page/comments and /api/admin/discussion */
-  discussion: false,
+  discussion: true,
 } as const
 
 /**
