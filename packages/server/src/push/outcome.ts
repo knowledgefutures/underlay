@@ -20,7 +20,6 @@ export interface Outcome {
 export type SessionCommitResult =
   | CommitResult
   | { status: 'base_moved'; current: string | null }
-  | { status: 'manifest_error'; body: Record<string, unknown> }
   | { status: 'parallel' }
 
 export const pendingOutcome = (sessionId: string): Outcome => ({
@@ -82,8 +81,6 @@ export async function commitOutcome(
     case 'conflict':
     case 'base_moved':
       return { status: 409, body: { error: 'Version conflict', statusCode: 409 } }
-    case 'manifest_error':
-      return { status: 400, body: r.body }
     case 'invalid':
       return {
         status: 422,

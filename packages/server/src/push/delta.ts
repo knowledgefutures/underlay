@@ -71,11 +71,7 @@ export async function prepareRecords(
   sessionId: string,
   inputs: SessionInputs,
   input: string | AsyncIterable<string>,
-  opts: {
-    stripUnknownFields: boolean
-    /** Adjust each entry, given the record's data as sent (negotiate adds legacy hashes). */
-    entryOf?: (e: RunEntry, data: unknown) => RunEntry
-  },
+  opts: { stripUnknownFields: boolean },
 ): Promise<
   { entries: RunEntry[] } | { errors: LineError[]; total: number } | { tooManyLines: true }
 > {
@@ -151,7 +147,7 @@ export async function prepareRecords(
       b: body,
       ...(isPrivate ? { p: true } : {}),
     }
-    entries.push(opts.entryOf ? opts.entryOf(entry, rec.data) : entry)
+    entries.push(entry)
   }
   return total > 0 ? { errors, total } : { entries }
 }
@@ -310,7 +306,6 @@ export async function commitDeltaSession(
   if (await planParallel(ports, session, { inputs, runs, base, repo, fence, ...sets })) {
     return { status: 'parallel' }
   }
-  const declared = 'all' in inputs.files ? null : inputs.files
   return commitVersion(ports, {
     collectionId: session.collectionId,
     fence,
@@ -320,7 +315,7 @@ export async function commitDeltaSession(
       priv: priv?.types ?? {},
     }),
     metadata: inputs.metadata,
-    ...(declared ? { declaredFiles: declared } : {}),
+    declaredFiles: inputs.files,
     message: session.message,
     pushedBy: session.userId,
     appId: session.appId,

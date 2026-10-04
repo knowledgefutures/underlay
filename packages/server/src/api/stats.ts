@@ -434,15 +434,15 @@ export function statsRoutes() {
   app.get('/api/admin/stats/operations', async (c) => {
     const weekAgo = Date.now() - 7 * DAY_MS
     const [sessions, failed, locations, uploads, jobs] = await Promise.all([
-      rows<{ kind: string; status: string; n: number }>(
+      rows<{ status: string; n: number }>(
         c,
-        sql`SELECT kind, status, count(*) AS n FROM push_sessions
+        sql`SELECT status, count(*) AS n FROM push_sessions
             WHERE status IN ('open', 'committing') OR created_at >= ${weekAgo}
-            GROUP BY kind, status`,
+            GROUP BY status`,
       ),
       rows<Record<string, unknown>>(
         c,
-        sql`SELECT s.id, s.kind, o.slug AS owner, c.slug, s.error, s.created_at AS createdAt
+        sql`SELECT s.id, o.slug AS owner, c.slug, s.error, s.created_at AS createdAt
             FROM push_sessions s JOIN collections c ON c.id = s.collection_id
             JOIN organization o ON o.id = c.organization_id
             WHERE s.status = 'failed' AND s.created_at >= ${weekAgo}
@@ -478,7 +478,6 @@ export function statsRoutes() {
       sessions: sessions.map((s) => ({ ...s, n: n(s.n) })),
       failedPushes: failed.map((f) => ({
         id: String(f.id),
-        kind: String(f.kind),
         owner: String(f.owner),
         slug: String(f.slug),
         error: parseError(f.error),

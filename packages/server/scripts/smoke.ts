@@ -4,8 +4,8 @@
  *
  *   npx tsx scripts/smoke.ts <baseUrl> <apiKey> <owner/collection>
  *
- * Pushes with the delta API (sync and async commits) and the v1 negotiate API,
- * then checks the head moved. Exits non-zero on any unexpected response.
+ * Pushes with the delta API (sync and async commits, and a full snapshot diffed
+ * against the manifest), then checks the head moved. Exits non-zero on any unexpected response.
  */
 const [baseUrl, key, collection] = process.argv.slice(2)
 if (!baseUrl || !key || !collection) {
@@ -83,29 +83,32 @@ for (let i = 0; i < 60 && status !== 'committed' && status !== 'failed'; i++) {
 }
 expect(status === 'committed', 'async commit finished')
 
-// 3. v1 negotiate: full snapshot with one change.
-const records = [
+// 3. A client that keeps no copy: read the head's manifest, diff the full
+// snapshot against it, and push only the differences.
+const { hashRecord } = await import('@underlay/protocol')
+const snapshot = [
   { id: `ada-${stamp}`, type: 'Author', data: { name: 'Ada Lovelace', born: 1815 } },
   { id: `grace-${stamp}`, type: 'Author', data: { name: 'Grace', born: 1906, 10: 'x', 9: 'y' } },
+  { id: `kurt-${stamp}`, type: 'Author', data: { name: 'Kurt' }, private: true },
 ]
-const { hashRecord, legacyRecordHash } = await import('@underlay/protocol')
-r = await call('POST', '/versions/negotiate', {
-  base_version: null,
-  schemas: { Author: { type: 'object' } },
-  manifest: records.map((x) => ({
-    id: x.id,
-    type: x.type,
-    hash: legacyRecordHash(x.id, x.type, x.data),
-  })),
+r = await call('GET', '/versions/latest/manifest')
+expect(r.status === 200, 'manifest')
+type Line = { id: string; type: string; hash: string; private?: boolean }
+const keyOf = (x: { type: string; id: string }) => JSON.stringify([x.type, x.id])
+const have = new Map((r.json.records as Line[]).map((m) => [keyOf(m), m]))
+const upserts = snapshot.filter((x) => {
+  const m = have.get(keyOf(x))
+  return m?.hash !== hashRecord(x.id, x.type, x.data).hash || !!m.private !== !!x.private
 })
-expect(r.status === 200, 'negotiate')
-void hashRecord
-const nsid = r.json.session_id
-expect(r.json.needed_records.length === 2, 'both records needed')
-r = await call('POST', `/versions/negotiate/${nsid}/records`, records, true)
-expect(r.status === 200, 'negotiate upload')
-r = await call('POST', `/versions/negotiate/${nsid}/commit`)
-expect(r.status === 201 && r.json.recordCount === 2, 'negotiate commit')
+const keep = new Set(snapshot.map(keyOf))
+const deletes = [...have.values()].filter((m) => !keep.has(keyOf(m)))
+expect(upserts.length === 2 && deletes.length === 0, 'diff: Ada changed, Grace new')
+r = await call('POST', '/push', { base: r.json.semver })
+sid = r.json.session_id
+r = await call('POST', `/push/${sid}/records`, upserts, true)
+expect(r.status === 200, 'upload the differences')
+r = await call('POST', `/push/${sid}/commit`)
+expect(r.status === 201 && r.json.recordCount === 3, 'commit')
 console.log('\nsmoke OK')
 
 export {}

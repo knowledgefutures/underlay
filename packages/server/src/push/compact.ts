@@ -22,11 +22,10 @@ import type { Ports } from '../ports.js'
 import { compactRuns, MAX_TIER, MERGE_FAN_IN, readRunIndex } from './runs.js'
 import { getSession, nextRunSeq } from './session.js'
 
-type RunKind = 'manifest' | 'records' | 'deletes'
+type RunKind = 'records' | 'deletes'
 
-/** Runs merged together: a delta session's records and deletes are one stream. */
+/** Runs merged together: a session's records and deletes are one stream. */
 const GROUPS: Record<RunKind, RunKind[]> = {
-  manifest: ['manifest'],
   records: ['records', 'deletes'],
   deletes: ['records', 'deletes'],
 }

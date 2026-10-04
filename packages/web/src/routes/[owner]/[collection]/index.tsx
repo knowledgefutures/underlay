@@ -62,7 +62,7 @@ export default function CollectionPage() {
               <span className="text-ink-muted">
                 API:{' '}
                 <code className="bg-parchment-dark rounded-control px-1.5 py-0.5 text-[11px]">
-                  POST /api/collections/{owner}/{collection}/versions/negotiate
+                  POST /api/collections/{owner}/{collection}/push
                 </code>
               </span>
             </div>

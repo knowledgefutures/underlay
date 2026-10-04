@@ -34,8 +34,8 @@ export interface SessionInputs {
   schemas: Record<string, Record<string, unknown>>
   /** The full new metadata. */
   metadata: Record<string, unknown> | null
-  /** Declared files to add and remove (delta), or the full declared list (negotiate). */
-  files: { add: string[]; remove: string[] } | { all: string[] }
+  /** Declared files to add and remove. */
+  files: { add: string[]; remove: string[] }
 }
 
 export type SessionRow = typeof schema.pushSessions.$inferSelect
@@ -106,9 +106,9 @@ export async function nextRunSeq(ports: Ports, sessionId: string): Promise<numbe
 export async function recordRun(
   ports: Ports,
   sessionId: string,
-  kind: 'manifest' | 'records' | 'deletes',
+  kind: 'records' | 'deletes',
   index: RunIndex,
-  counters: { records?: number; manifest?: number; needed?: number },
+  counters: { records?: number },
 ): Promise<void> {
   const count = index.blocks.reduce((n, b) => n + b.count, 0)
   await ports.db.batch([
@@ -126,8 +126,6 @@ export async function recordRun(
       .update(schema.pushSessions)
       .set({
         recordsReceived: sql`${schema.pushSessions.recordsReceived} + ${counters.records ?? 0}`,
-        manifestReceived: sql`${schema.pushSessions.manifestReceived} + ${counters.manifest ?? 0}`,
-        manifestNeeded: sql`${schema.pushSessions.manifestNeeded} + ${counters.needed ?? 0}`,
       })
       .where(eq(schema.pushSessions.id, sessionId)),
   ])
@@ -137,7 +135,7 @@ export async function recordRun(
 export async function sessionRuns(
   ports: Ports,
   sessionId: string,
-  kind?: 'manifest' | 'records' | 'deletes',
+  kind?: 'records' | 'deletes',
 ): Promise<RunIndex[]> {
   const rows = await ports.db
     .select()

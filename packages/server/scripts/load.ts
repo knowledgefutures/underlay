@@ -1,6 +1,6 @@
 /**
  * Load test against a running deployment (v2-scale-review.md, "Load test"):
- * concurrent delta pushes, negotiate pushes, a stream of small commits, and
+ * concurrent delta pushes, a stream of small commits, and
  * anonymous page and API reads, all at once. Reports latency percentiles,
  * status counts and commit times as JSON on stdout.
  *
@@ -8,8 +8,6 @@
  *
  *   --delta N         concurrent delta pushes (default 2)
  *   --records M       records per delta push (default 20000)
- *   --negotiate N     concurrent negotiate pushes (default 1)
- *   --snapshot M      records per negotiate snapshot (default 20000)
  *   --small N         small commits, one after another (default 10)
  *   --reads N         anonymous reads, eight at a time (default 100)
  *   --read-path P     what to read (default /explore; repeat for more)
@@ -21,7 +19,6 @@
  * private and named `load-<run>-…` under <owner>, which the keys must be able
  * to write to.
  */
-import { hashRecord } from '@underlay/protocol'
 
 const [baseArg, owner, ...rest] = process.argv.slice(2)
 const keys = (process.env.UL_KEYS ?? '').split(',').filter(Boolean)
@@ -38,8 +35,6 @@ const readPaths = rest.flatMap((a, i) => (rest[i - 1] === '--read-path' ? [a] : 
 const cfg = {
   delta: opt('delta', 2),
   records: opt('records', 20_000),
-  negotiate: opt('negotiate', 1),
-  snapshot: opt('snapshot', 20_000),
   small: opt('small', 10),
   reads: opt('reads', 100),
   readPaths: readPaths.length ? readPaths : ['/explore'],
@@ -164,63 +159,6 @@ async function deltaPush(i: number) {
   await settle('delta', key, `${col}/push/${sid}`, t0)
 }
 
-async function negotiatePush(i: number) {
-  const key = nextKey()
-  const col = await collection(key, `load-${run}-n${i}`)
-  const recs = Array.from({ length: cfg.snapshot }, (_, j) => record(j, `n${i}`))
-  const manifest = recs.map((r) => ({
-    id: r.id,
-    type: r.type,
-    hash: hashRecord(r.id, r.type, r.data).hash,
-  }))
-  const open = await call('negotiate open', key, 'POST', `${col}/versions/negotiate`, {
-    schemas: { Item },
-    manifest_expected: manifest.length,
-  })
-  const sid = open.json.session_id as string
-  const needed = new Set<string>()
-  for (let at = 0; at < manifest.length; at += 50_000) {
-    const chunk = manifest
-      .slice(at, at + 50_000)
-      .map((m) => JSON.stringify(m))
-      .join('\n')
-    const r = await call(
-      'negotiate manifest chunk',
-      key,
-      'POST',
-      `${col}/versions/negotiate/${sid}/manifest`,
-      undefined,
-      chunk,
-    )
-    for (const h of (r.json.needed_records as string[] | undefined) ?? []) needed.add(h)
-  }
-  const want = recs.filter((_, j) => needed.has(manifest[j]!.hash))
-  for (let at = 0; at < want.length; at += 10_000) {
-    const body = want
-      .slice(at, at + 10_000)
-      .map((r) => JSON.stringify(r))
-      .join('\n')
-    await call(
-      'negotiate records batch',
-      key,
-      'POST',
-      `${col}/versions/negotiate/${sid}/records`,
-      undefined,
-      body,
-    )
-  }
-  const t0 = performance.now()
-  const c = await call(
-    'negotiate commit',
-    key,
-    'POST',
-    `${col}/versions/negotiate/${sid}/commit`,
-    {},
-  )
-  if (c.status === 202) await settle('negotiate', key, `${col}/versions/negotiate/${sid}`, t0)
-  else note('negotiate commit→sync', performance.now() - t0, c.status)
-}
-
 async function smallCommits() {
   const key = nextKey()
   const col = await collection(key, `load-${run}-small`)
@@ -263,7 +201,6 @@ async function reads() {
 const started = performance.now()
 const results = await Promise.allSettled([
   ...Array.from({ length: cfg.delta }, (_, i) => deltaPush(i)),
-  ...Array.from({ length: cfg.negotiate }, (_, i) => negotiatePush(i)),
   smallCommits(),
   reads(),
 ])

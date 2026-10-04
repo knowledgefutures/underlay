@@ -16,10 +16,9 @@ import {
 } from '~/components/ui'
 
 interface Operations {
-  sessions: { kind: string; status: string; n: number }[]
+  sessions: { status: string; n: number }[]
   failedPushes: {
     id: string
-    kind: string
     owner: string
     slug: string
     error: string | null
@@ -49,9 +48,7 @@ export default function AdminOperations() {
       </AdminLayout>
     )
   }
-  const kinds = [...new Set(data.sessions.map((s) => s.kind))].sort()
-  const count = (kind: string, status: string) =>
-    data.sessions.find((s) => s.kind === kind && s.status === status)?.n ?? 0
+  const count = (status: string) => data.sessions.find((s) => s.status === status)?.n ?? 0
 
   return (
     <AdminLayout
@@ -62,13 +59,12 @@ export default function AdminOperations() {
       <p className="text-ink-muted mb-2 text-xs">
         Open sessions, and every session of the last 7 days.
       </p>
-      {kinds.length === 0 ? (
+      {data.sessions.length === 0 ? (
         <p className="text-ink-muted mb-8 text-sm">No pushes in the last 7 days.</p>
       ) : (
         <Table className="mb-8">
           <thead>
             <tr>
-              <Th>Kind</Th>
               {STATUSES.map((s) => (
                 <Th key={s} className="text-right">
                   {s}
@@ -77,16 +73,13 @@ export default function AdminOperations() {
             </tr>
           </thead>
           <tbody>
-            {kinds.map((k) => (
-              <tr key={k}>
-                <Td>{k}</Td>
-                {STATUSES.map((s) => (
-                  <Td key={s} className="text-right tabular-nums">
-                    {count(k, s) || '—'}
-                  </Td>
-                ))}
-              </tr>
-            ))}
+            <tr>
+              {STATUSES.map((s) => (
+                <Td key={s} className="text-right tabular-nums">
+                  {count(s) || '—'}
+                </Td>
+              ))}
+            </tr>
           </tbody>
         </Table>
       )}
@@ -97,7 +90,6 @@ export default function AdminOperations() {
               <code>
                 {f.owner}/{f.slug}
               </code>{' '}
-              <Badge>{f.kind}</Badge>{' '}
               <span className="text-ink-muted text-xs">{day(f.createdAt)}</span>{' '}
               <span className="text-red-800">{f.error ?? 'failed'}</span>
             </li>

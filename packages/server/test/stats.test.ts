@@ -114,7 +114,7 @@ describe('admin stats', () => {
     expect((await get('/api/admin/stats/billing?month=2001-01')).orgs[0].usage.api_calls).toBe(99)
 
     const ops = await get('/api/admin/stats/operations')
-    expect(ops.sessions).toEqual([{ kind: 'delta', status: 'committed', n: 1 }])
+    expect(ops.sessions).toEqual([{ status: 'committed', n: 1 }])
     expect(ops.failedPushes).toEqual([])
     expect(ops.locations).toEqual([])
   })

@@ -12,7 +12,6 @@ import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { commitDeltaSession } from './delta.js'
-import { commitNegotiateSession } from './negotiate.js'
 import {
   commitOutcome,
   type Outcome,
@@ -41,11 +40,7 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
   }
   // The change streams are rebuilt from the session's runs on each attempt.
   const outcome = await commitOutcome(sessionId, () =>
-    fenced<SessionCommitResult>(ports.db, (fence) =>
-      session.kind === 'delta'
-        ? commitDeltaSession(ports, session, fence)
-        : commitNegotiateSession(ports, session, fence),
-    ),
+    fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),
   )
   await settleSession(ports, sessionId, outcome)
   return outcome

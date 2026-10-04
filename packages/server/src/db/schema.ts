@@ -581,17 +581,12 @@ export const pushSessions = sqliteTable(
       .notNull()
       .references(() => collections.id, { onDelete: 'cascade' }),
     userId: text('user_id').notNull(),
-    /** negotiate: full-snapshot compatibility API; delta: upserts and deletes against a base. */
-    kind: text('kind', { enum: ['negotiate', 'delta'] }).notNull(),
     baseVersionId: text('base_version_id'),
     baseSemver: text('base_semver'),
     message: text('message'),
     appId: text('app_id'),
     actorId: text('actor_id'),
     stripUnknownFields: bool('strip_unknown_fields').notNull().default(false),
-    manifestExpected: integer('manifest_expected'),
-    manifestReceived: integer('manifest_received').notNull().default(0),
-    manifestNeeded: integer('manifest_needed').notNull().default(0),
     recordsReceived: integer('records_received').notNull().default(0),
     runs: integer('runs').notNull().default(0),
     status: text('status').$type<SessionStatus>().notNull().default('open'),
@@ -622,7 +617,7 @@ export const pushRuns = sqliteTable(
       .notNull()
       .references(() => pushSessions.id, { onDelete: 'cascade' }),
     seq: integer('seq').notNull(),
-    kind: text('kind', { enum: ['manifest', 'records', 'deletes'] }).notNull(),
+    kind: text('kind', { enum: ['records', 'deletes'] }).notNull(),
     objectKey: text('object_key').notNull(),
     count: integer('count').notNull(),
     /** Run key range, `type\u0000id`, for planning commit units. */

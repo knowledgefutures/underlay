@@ -42,10 +42,8 @@ import type { Store } from '../ports.js'
 export interface RunEntry {
   t: string
   k: string
-  /** Record hash (records and manifest runs). */
+  /** Record hash (records runs). */
   h?: string
-  /** v1 hash the client used, when it differs (negotiate compatibility). */
-  lh?: string
   /** Canonical record size in bytes. */
   s?: number
   /** Pushed as private. */

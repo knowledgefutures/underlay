@@ -372,7 +372,6 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
       .values({
         collectionId: c.id,
         userId: user,
-        kind: 'delta',
         status: 'committing',
         finalizeStartedAt: new Date(),
         expiresAt: new Date(Date.now() + DAY),

@@ -656,7 +656,6 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
 
     const inputs = await loadInputs(ports, sessionId)
     const hashes = schemaHashes(inputs.schemas)
-    const declared = 'all' in inputs.files ? null : inputs.files
     const outcome = await commitOutcome(sessionId, () =>
       commitVersion(ports, {
         collectionId: session.collectionId,
@@ -671,7 +670,7 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
           private: null,
         })),
         metadata: inputs.metadata,
-        ...(declared ? { declaredFiles: declared } : {}),
+        declaredFiles: inputs.files,
         message: session.message,
         pushedBy: session.userId,
         appId: session.appId,
