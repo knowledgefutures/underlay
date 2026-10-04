@@ -176,6 +176,13 @@ describe('files', () => {
           data: { title: 'Private', pdf: { $file: `sha256:${sha(priv)}` } },
           private: true,
         },
+        { id: 'd3', type: 'Doc', data: { title: 'Again', pdf: { $file: `sha256:${sha(pub)}` } } },
+        {
+          id: 'd4',
+          type: 'Doc',
+          data: { title: 'Hidden', pdf: { $file: `sha256:${sha(pub)}` } },
+          private: true,
+        },
       ],
     })
     expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
@@ -198,6 +205,11 @@ describe('files', () => {
     expect(anonList.map((f: any) => f.hash)).toEqual([sha(pub)])
     const ownerList = await json(await h.request(`${base}/versions/latest/files`, { user }))
     expect(ownerList.length).toBe(2)
+    // Reference counts follow the sets too: private references only for members.
+    const countsOf = (list: any[]) =>
+      Object.fromEntries(list.map((f: any) => [f.hash, f.referenceCount]))
+    expect(countsOf(anonList)).toEqual({ [sha(pub)]: 2 })
+    expect(countsOf(ownerList)).toEqual({ [sha(pub)]: 3, [sha(priv)]: 1 })
     void c
   })
 

@@ -500,6 +500,12 @@ export function FilesView({
                           </span>
                         )}
                       </div>
+                    ) : f.referenceCount > 0 ? (
+                      // v2 counts a file's references but doesn't list the records.
+                      <span className="text-ink-muted">
+                        {f.referenceCount.toLocaleString('en-US')} record
+                        {f.referenceCount === 1 ? '' : 's'}
+                      </span>
                     ) : (
                       <span className="text-ink-muted">—</span>
                     )}

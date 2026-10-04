@@ -120,6 +120,19 @@ export async function declaredFiles(repo: Repo, refsRoot: string | null): Promis
   return out
 }
 
+/** How many of a set's records reference each file, from its count tree. O(files). */
+export async function referenceCounts(
+  repo: Repo,
+  refsRoot: string | null,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  for await (const e of iterate(new RepoSource(countTree, repo), refsRoot, { after: REF })) {
+    if (!e.key.startsWith(REF)) break
+    out.set(e.key.slice(REF.length), e.n)
+  }
+  return out
+}
+
 /**
  * Apply a set's reference deltas (and, for the private set, declared-file
  * changes) to its count tree and file tree.

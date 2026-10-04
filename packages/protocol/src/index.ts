@@ -20,6 +20,7 @@ export {
 export {
   applyFileSet,
   declaredFiles,
+  referenceCounts,
   FileRefDelta,
   type FileSetResult,
   type FileSizes,

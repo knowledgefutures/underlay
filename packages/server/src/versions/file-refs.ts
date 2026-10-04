@@ -21,6 +21,7 @@ export {
   FileRefDelta,
   type FileSetResult,
   MissingFilesError,
+  referenceCounts,
   type SetName,
 } from '@underlay/protocol'
 

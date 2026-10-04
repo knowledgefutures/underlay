@@ -28,6 +28,7 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { referenceCounts } from '../versions/file-refs.js'
 import {
   findVersion,
   getRecord,
@@ -372,13 +373,21 @@ export function versionRoutes() {
       rows.push(...(await c.var.ports.db.select().from(schema.files).where(inHashes(part))))
     }
     const byHash = new Map(rows.map((r) => [r.hash, r]))
-    // References aren't indexed per file in v2; the listing returns none.
+    // Which records reference a file isn't indexed in v2 (it would take a scan of
+    // every body); how many do is, in each set's count tree. A caller who reads
+    // only the public set sees only public references, as in v1.
+    const counts = await referenceCounts(view.repo, view.version.publicRefsRoot)
+    if (view.private) {
+      for (const [h, n] of await referenceCounts(view.repo, view.version.privateRefsRoot))
+        counts.set(h, (counts.get(h) ?? 0) + n)
+    }
     return c.json(
       hashes.map((h) => ({
         hash: h,
         size: byHash.get(h)?.size ?? null,
         mimeType: byHash.get(h)?.mimeType ?? null,
         createdAt: byHash.get(h)?.createdAt ?? null,
+        referenceCount: counts.get(h) ?? 0,
         references: [],
       })),
     )
