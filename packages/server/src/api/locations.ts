@@ -10,10 +10,11 @@
  *   GET    /api/orgs/:org/placements                org defaults, inherited by every collection
  *   POST   /api/orgs/:org/placements                {locationId, sets}
  *   DELETE /api/orgs/:org/placements/:id            and the org's mirrors to that location
- *   GET    /api/collections/:owner/:slug/placements primary and mirrors, with progress and lag
+ *   GET    /api/collections/:owner/:slug/placements primary and mirrors, with progress, lag and
+ *                                                    whether each mirror comes from an org default
  *   POST   /api/collections/:owner/:slug/placements {locationId, sets}
  *   POST   /api/collections/:owner/:slug/placements/:id/sync
- *   DELETE /api/collections/:owner/:slug/placements/:id
+ *   DELETE /api/collections/:owner/:slug/placements/:id  (409 for one from an org default)
  *   POST   /api/orgs/:org/restores                  {locationId, collectionId, slug, name?,
  *                                                    trustKeyIds?}: rebuild a collection here
  *   GET    /api/orgs/:org/restores/:id
@@ -75,6 +76,14 @@ async function orgLocation(c: Context<AppEnv>, orgId: string, id: string) {
       and(eq(schema.storageLocations.id, id), eq(schema.storageLocations.organizationId, orgId)),
     )
   return loc ?? null
+}
+
+/** An org's default placements, which its collections inherit. */
+function orgDefaults(c: Context<AppEnv>, orgId: string) {
+  return c.var.ports.db
+    .select()
+    .from(schema.placements)
+    .where(and(eq(schema.placements.organizationId, orgId), isNull(schema.placements.collectionId)))
 }
 
 /** Whether a location may hold private sets: checked now, refused if public. */
@@ -166,12 +175,7 @@ export function locationRoutes() {
   app.get('/api/orgs/:org/placements', async (c) => {
     const org = await orgAdmin(c)
     if (org instanceof Response) return org
-    const rows = await c.var.ports.db
-      .select()
-      .from(schema.placements)
-      .where(
-        and(eq(schema.placements.organizationId, org.id), isNull(schema.placements.collectionId)),
-      )
+    const rows = await orgDefaults(c, org.id)
     return c.json({
       placements: rows.map((p) => ({ id: p.id, locationId: p.locationId, sets: p.sets })),
     })
@@ -261,12 +265,17 @@ export function locationRoutes() {
           .where(eq(schema.versions.id, access.collection.headVersionId))
       : []
     const headSeq = head?.seq ?? 0
+    const inherited = new Set(
+      (await orgDefaults(c, access.collection.organizationId)).map((d) => d.locationId),
+    )
     return c.json({
       headSeq,
       placements: rows.map(({ p, l }) => ({
         id: p.id,
         role: p.role,
         sets: p.sets,
+        // From an org default: removed with the default, not per collection.
+        inherited: p.role === 'mirror' && inherited.has(p.locationId),
         state: p.state,
         syncedSeq: p.role === 'primary' ? headSeq : p.syncedSeq,
         lag: p.role === 'primary' ? 0 : Math.max(0, headSeq - p.syncedSeq),
@@ -338,7 +347,28 @@ export function locationRoutes() {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Only org owners and admins manage mirrors')
-    const rows = await c.var.ports.db
+    const { db } = c.var.ports
+    const [p] = await db
+      .select({ locationId: schema.placements.locationId })
+      .from(schema.placements)
+      .where(
+        and(
+          eq(schema.placements.id, c.req.param('id')),
+          eq(schema.placements.collectionId, access.collection.id),
+          eq(schema.placements.role, 'mirror'),
+        ),
+      )
+    if (!p) return jsonError(c, 404, 'Placement not found')
+    // The next publish would make it again from the default.
+    const defaults = await orgDefaults(c, access.collection.organizationId)
+    if (defaults.some((d) => d.locationId === p.locationId)) {
+      return jsonError(
+        c,
+        409,
+        "This mirror comes from the org's default placements; remove it in the org's storage settings",
+      )
+    }
+    const rows = await db
       .delete(schema.placements)
       .where(
         and(

@@ -42,6 +42,7 @@ export function orgSettingsRail(owner: string): SettingsRailGroup[] {
       items: [
         { label: 'Profile', to: `/${owner}/settings` },
         { label: 'Members', to: `/${owner}/settings/members` },
+        { label: 'Storage', to: `/${owner}/settings/storage` },
       ],
     },
     {
@@ -65,6 +66,7 @@ export const collectionSettingsRail: SettingsRailGroup[] = [
     items: [
       ...(features.ark ? [{ label: 'ARK identifiers', to: '#ark' }] : []),
       { label: 'Webhooks', to: '#webhooks' },
+      { label: 'Mirrors', to: '#mirrors' },
     ],
   },
   {

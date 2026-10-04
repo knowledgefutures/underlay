@@ -138,7 +138,35 @@ try {
   const version = (await res.json()) as { semver: string }
   // Post-publish jobs (the reference log behind provenance) run from the jobs table.
   await drainSqliteJobs(ports)
-  console.log(`seeded org/authors ${version.semver}\n`)
+  console.log(`seeded org/authors ${version.semver}`)
+
+  // --- A storage location and a mirror of org/authors that failed, written as
+  // rows (adding one through the API needs LOCATION_KEY and a reachable bucket).
+  // After the drain, so no mirror job tries to reach it. u2 is a plain member.
+  await db.insert(schema.storageLocations).values({
+    id: 'loc1',
+    organizationId: 'org1',
+    kind: 's3',
+    name: 'Archive bucket',
+    endpoint: 'https://s3.example.org',
+    bucket: 'archive',
+    prefix: 'ul',
+    credentials: 'sealed-credentials',
+    permissions: 'write',
+    status: 'active',
+  })
+  const authors = (await db.select().from(schema.collections)).find((c) => c.slug === 'authors')
+  await db.insert(schema.placements).values({
+    collectionId: authors!.id,
+    locationId: 'loc1',
+    role: 'mirror',
+    sets: 'public',
+    state: 'error',
+    lastError: 'Access Denied',
+  })
+  await db.insert(schema.user).values({ id: 'u2', name: 'Bea', email: 'u2@example.org' })
+  await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u2', role: 'member' })
+  console.log('seeded a storage location and a mirror\n')
 
   // --- Pages.
   // A record hash and a schema id, for the provenance and schema pages.
@@ -226,6 +254,55 @@ try {
     { path: '/signup', status: 302, location: '/login' },
     { path: '/dashboard', status: 302, location: '/login' },
     { path: '/dashboard', status: 200, has: ['authors', 'secret'], user: 'u1' },
+    // Mirrors in collection settings: status for members, actions for admins.
+    {
+      path: '/org/authors/settings',
+      status: 200,
+      has: [
+        'Storage and mirrors',
+        'Underlay storage',
+        'Archive bucket',
+        'archive/ul',
+        'Access Denied',
+        '0 of 1',
+        '1 version behind',
+        'Sync now',
+        'Remove',
+      ],
+      user: 'u1',
+    },
+    {
+      path: '/org/authors/settings',
+      status: 200,
+      has: ['Archive bucket', 'Access Denied'],
+      lacks: ['Sync now', 'Add mirror'],
+      user: 'u2',
+    },
+    // The org's storage page: owners and admins only, credentials never shown.
+    {
+      path: '/org/settings/storage',
+      status: 200,
+      has: [
+        'Storage locations',
+        'Archive bucket',
+        'https://s3.example.org · archive/ul',
+        'Write only',
+        'Re-check',
+        'Add a storage location',
+        'Default mirrors',
+        'Add default mirror',
+      ],
+      lacks: ['sealed-credentials'],
+      user: 'u1',
+    },
+    {
+      path: '/org/settings/storage',
+      status: 200,
+      has: ['Only organization owners and admins manage storage.'],
+      lacks: ['Archive bucket'],
+      user: 'u2',
+    },
+    { path: '/org/settings/storage', status: 302, location: '/login' },
   ]
 
   for (const c of checks) {

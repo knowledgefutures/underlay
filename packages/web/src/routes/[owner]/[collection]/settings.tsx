@@ -1,6 +1,10 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
+import MirrorsSettings, {
+  type LocationOption,
+  type PlacementStatus,
+} from '~/components/MirrorsSettings'
 import SettingsLayout, { collectionSettingsRail } from '~/components/SettingsLayout'
 import {
   Alert,
@@ -73,7 +77,15 @@ async function pollMetadataJob(
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
   const { currentUser } = useAppContext()
-  const loaderData = useLoaderData() as { data: any; arkSettings: any; webhooks: any[] }
+  const loaderData = useLoaderData() as {
+    data: any
+    arkSettings: any
+    webhooks: any[]
+    placements: PlacementStatus
+    locations: LocationOption[]
+  }
+  const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
+  const isOrgAdmin = org?.role === 'owner' || org?.role === 'admin'
 
   const [data, setData] = useState<any>(loaderData.data)
   const [arkSettings, setArkSettings] = useState<any>(loaderData.arkSettings)
@@ -552,6 +564,22 @@ export default function CollectionSettingsPage() {
           owner={owner!}
           collection={collection!}
           initialWebhooks={loaderData.webhooks ?? []}
+        />
+      </section>
+
+      {/* Mirrors */}
+      <section
+        id="mirrors"
+        data-settings-section
+        className="border-rule mb-10 scroll-mt-6 border-t pt-6"
+      >
+        <SectionHeading>Storage and mirrors</SectionHeading>
+        <MirrorsSettings
+          owner={owner!}
+          collection={collection!}
+          initial={loaderData.placements}
+          locations={loaderData.locations}
+          canManage={isOrgAdmin}
         />
       </section>
 

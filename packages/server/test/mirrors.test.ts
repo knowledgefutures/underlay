@@ -120,6 +120,7 @@ async function placements(h: Harness, user: string, path: string) {
       syncedSeq: number
       lag: number
       lastError: string | null
+      inherited: boolean
     }[]
   }
 }
@@ -170,7 +171,13 @@ describe('bucket mirrors', () => {
     await h.drain()
     const status = await placements(h, user, path)
     const mirror = status.placements.find((p) => p.role === 'mirror')!
-    expect(mirror).toMatchObject({ syncedSeq: 2, lag: 0, state: 'active', lastError: null })
+    expect(mirror).toMatchObject({
+      syncedSeq: 2,
+      lag: 0,
+      state: 'active',
+      lastError: null,
+      inherited: false,
+    })
 
     // A third party with read access sees a complete, verifiable repository.
     const repo = mirrorRepo(f, 'mirror')
@@ -301,9 +308,12 @@ describe('bucket mirrors', () => {
     })
     expect(res.status).toBe(201)
     await h.drain()
+    const inherited = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    expect(inherited).toMatchObject({ syncedSeq: 2, lag: 0, inherited: true })
+    // An inherited mirror goes with the default, not per collection.
     expect(
-      (await placements(h, user, path)).placements.find((p) => p.role === 'mirror'),
-    ).toMatchObject({ syncedSeq: 2, lag: 0 })
+      (await h.request(`${path}/placements/${inherited.id}`, { method: 'DELETE', user })).status,
+    ).toBe(409)
     await h.collection('later')
     await push(h, user, '/api/collections/org/later', { schemas: { Book } }, [book('x', 'y')])
     await h.drain()

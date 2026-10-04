@@ -16,7 +16,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const headers = ssrHeaders(request)
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
-  const [data, arkSettings, webhooksResult] = await Promise.all([
+  const [data, arkSettings, webhooksResult, placements, locations] = await Promise.all([
     apiFetch(new URL(prefix, base), { headers }).then((r) => (r.ok ? r.json() : null)),
     features.ark
       ? apiFetch(new URL(`${prefix}/ark`, base), { headers }).then((r) =>
@@ -26,8 +26,21 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
     apiFetch(new URL(`${prefix}/webhooks`, base), { headers }).then((r) =>
       r.ok ? r.json() : { webhooks: [] },
     ),
+    apiFetch(new URL(`${prefix}/placements`, base), { headers }).then((r) =>
+      r.ok ? r.json() : { headSeq: 0, placements: [] },
+    ),
+    // Owners and admins only; anyone else gets 403 and no add-mirror form.
+    apiFetch(new URL(`/api/orgs/${params.owner}/locations`, base), { headers }).then((r) =>
+      r.ok ? r.json() : { locations: [] },
+    ),
   ])
 
   if (!data) throw new Response('Not Found', { status: 404 })
-  return { data, arkSettings, webhooks: webhooksResult.webhooks ?? [] }
+  return {
+    data,
+    arkSettings,
+    webhooks: webhooksResult.webhooks ?? [],
+    placements,
+    locations: locations.locations ?? [],
+  }
 }
