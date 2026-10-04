@@ -342,6 +342,12 @@ try {
       has: ['Storage locations', 'Archive bucket', 'Tools'],
       user: 'steward',
     },
+    {
+      path: '/admin/cleanup',
+      status: 200,
+      has: ['Waiting to be cleaned', 'Mark and sweep', 'No runs yet'],
+      user: 'steward',
+    },
     { path: '/admin/explore', status: 200, has: ['Explore page'], user: 'steward' },
     { path: '/admin/abuse', status: 200, has: ['Open reports'], user: 'steward' },
     // Mirrors in collection settings: status for members, actions for admins.

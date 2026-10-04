@@ -17,6 +17,7 @@ export const adminRail: SettingsRailGroup[] = [
     items: [
       { label: 'Billing', to: '/admin/billing' },
       { label: 'Operations', to: '/admin/operations' },
+      { label: 'Cleanup', to: '/admin/cleanup' },
     ],
   },
   {
