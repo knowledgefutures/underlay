@@ -420,10 +420,13 @@ export async function presenceOf(ports: Ports, hash: string): Promise<Presence[]
         if (f.parentSeq < p.from || (p.to !== null && f.parentSeq >= p.to)) continue
         // A fork carries only the sets it was made with.
         if (p.set === 'private' && f.sets !== 'public+private') continue
+        // Already inherited. The fork's own presences start after its first version
+        // (which writes no events), so a record it removed and added back keeps both.
         if (
           out.some(
             (q) =>
               q.collectionId === f.childCollectionId &&
+              q.from === 1 &&
               q.type === p.type &&
               q.id === p.id &&
               q.set === p.set,

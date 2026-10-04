@@ -185,6 +185,36 @@ describe('forks and access', () => {
     expect((await h.request(`/api/collections/files/${sha(priv)}`, { user })).status).toBe(302)
   })
 
+  it('keeps what a fork inherited when it removes a record and adds it back', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('lib')
+    const base = '/api/collections/org/lib'
+    const a = { id: 'a', type: 'Author', data: { name: 'A' } }
+    await push(h, user, base, { schemas: { Author } }, [a])
+    expect(
+      (
+        await h.request(`${base}/fork`, {
+          method: 'POST',
+          user,
+          json: { targetOrg: 'org', slug: 'lib-fork' },
+        })
+      ).status,
+    ).toBe(201)
+    await h.drain()
+    const fork = '/api/collections/org/lib-fork'
+    await push(h, user, fork, { base: 'v1.0.0' }, [], [{ type: 'Author', id: 'a' }])
+    await push(h, user, fork, {}, [a])
+    const refs = (
+      await json(await h.request(`/api/records/${h_('a', { name: 'A' })}/provenance`, { user }))
+    ).references
+    expect(refs.map((r: any) => `${r.collection}/${r.semver}`).sort()).toEqual([
+      'lib-fork/v1.0.0',
+      'lib-fork/v1.2.0',
+      'lib/v1.0.0',
+    ])
+  })
+
   it('serves a record body only when it has the requested hash', async () => {
     const h = await harness()
     const user = await h.member()
