@@ -71,6 +71,13 @@
       "when": 1791124589161,
       "tag": "0009_push_caps",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791125322468,
+      "tag": "0010_collection_tombstones",
+      "breakpoints": true
     }
   ]
 }

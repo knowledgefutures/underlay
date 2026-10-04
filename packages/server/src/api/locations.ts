@@ -426,6 +426,10 @@ export function locationRoutes() {
     const trustKeyIds = Array.isArray(body.trustKeyIds)
       ? body.trustKeyIds.filter((k): k is string => typeof k === 'string')
       : []
+    // The collection comes back: its tombstone (if this instance deleted it) is lifted.
+    await ports.db
+      .delete(schema.collectionTombstones)
+      .where(eq(schema.collectionTombstones.collectionId, sourceId))
     const col = await createCollectionRows(ports, {
       id: sourceId,
       organizationId: org.id,

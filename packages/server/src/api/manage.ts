@@ -11,7 +11,7 @@
  * Collection settings are mutable rows; nothing here rewrites version data.
  * A metadata edit is a new version that reuses every set: one root object.
  */
-import { and, eq } from 'drizzle-orm'
+import { and, count, eq, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -130,9 +130,38 @@ export function manageRoutes() {
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Forbidden')
     // Rows go (cascading to versions, sessions, placements, webhooks). Repository
     // objects stay until garbage collection exists (edge-redesign.md, Storage layout).
-    await c.var.ports.db
-      .delete(schema.collections)
-      .where(eq(schema.collections.id, access.collection.id))
+    // The tombstone keeps the counters the deletion zeroes, and tells reference-log
+    // compaction to drop the collection's events.
+    const { db } = c.var.ports
+    const col = access.collection
+    const [totals] = await db
+      .select({ n: count(), bytes: sql<number>`coalesce(sum(${schema.versions.totalBytes}), 0)` })
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, col.id))
+    await db.batch([
+      db
+        .insert(schema.collectionTombstones)
+        .values({
+          collectionId: col.id,
+          organizationId: col.organizationId,
+          slug: col.slug,
+          refEvents: col.refEvents,
+          refBytes: col.refBytes,
+          versions: totals?.n ?? 0,
+          totalBytes: Number(totals?.bytes ?? 0),
+          deletedBy: c.var.principal?.userId ?? null,
+        })
+        .onConflictDoUpdate({
+          target: schema.collectionTombstones.collectionId,
+          set: {
+            slug: col.slug,
+            refEvents: col.refEvents,
+            refBytes: col.refBytes,
+            deletedAt: new Date(),
+          },
+        }),
+      db.delete(schema.collections).where(eq(schema.collections.id, col.id)),
+    ])
     return c.json({ ok: true })
   })
 

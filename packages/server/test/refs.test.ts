@@ -141,6 +141,46 @@ describe('reference log', () => {
   })
 })
 
+describe('deleted collections', () => {
+  it('tombstones a deleted collection, and compaction drops its events', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const gone = await h.collection('gone')
+    await h.collection('kept')
+    const shared = { id: 's', type: 'Author', data: { name: 'shared' } }
+    await push(h, user, '/api/collections/org/gone', { schemas: { Author } }, [shared])
+    const before = await eventsFor(h.ports, h_('s', { name: 'shared' }))
+    expect(before.map((e) => e[2])).toEqual([gone.id])
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, gone.id))
+    expect(row!.refEvents).toBeGreaterThan(0)
+
+    expect((await h.request('/api/collections/org/gone', { method: 'DELETE', user })).status).toBe(
+      200,
+    )
+    const [tomb] = await h.ports.db.select().from(schema.collectionTombstones)
+    expect(tomb).toMatchObject({
+      collectionId: gone.id,
+      slug: 'gone',
+      refEvents: row!.refEvents,
+      versions: 1,
+      deletedBy: user,
+    })
+
+    // Enough commits elsewhere to compact the run holding the deleted collection's events.
+    const base = '/api/collections/org/kept'
+    await push(h, user, base, { schemas: { Author } }, [shared])
+    for (let i = 1; i < FAN_IN + 2; i++) {
+      await push(h, user, base, {}, [{ id: `k${i}`, type: 'Author', data: { name: String(i) } }])
+    }
+    const after = await eventsFor(h.ports, h_('s', { name: 'shared' }))
+    expect(after.map((e) => e[2])).not.toContain(gone.id)
+    expect(after.length).toBeGreaterThan(0)
+  })
+})
+
 describe('forks and access', () => {
   const sha = (b: string) => createHash('sha256').update(b).digest('hex')
   const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: {} } }

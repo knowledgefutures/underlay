@@ -649,6 +649,27 @@ export const commitUnits = sqliteTable(
   ],
 )
 
+/**
+ * A deleted collection (edge-redesign.md, Provenance and Metering): its id, owner
+ * and slug at deletion, and its counters as they stood, which the deletion zeroes
+ * along with the rows. Reference-log compaction drops the events of a tombstoned
+ * id that no collection holds any more; restoring the collection lifts it.
+ */
+export const collectionTombstones = sqliteTable('collection_tombstones', {
+  collectionId: text('collection_id').primaryKey(),
+  organizationId: text('organization_id').notNull(),
+  slug: text('slug').notNull(),
+  refEvents: integer('ref_events').notNull(),
+  refBytes: integer('ref_bytes').notNull(),
+  /** Versions and their logical bytes at deletion (the version rows go with the collection). */
+  versions: integer('versions').notNull(),
+  totalBytes: integer('total_bytes').notNull(),
+  deletedBy: text('deleted_by'),
+  deletedAt: ts('deleted_at')
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
+
 // --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------
 
 /**

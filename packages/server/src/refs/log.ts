@@ -280,12 +280,15 @@ export async function compactPart(ports: Ports, compactionId: string, part: numb
   )
   const heads = await Promise.all(streams.map(async (s) => ({ s, h: await s.next() })))
   const writer = new SegmentWriter(ports.stores.internal, (n) => `${comp.outputRun}-${part}-${n}`)
+  // Events of deleted collections (tombstoned, and not restored since) go.
+  const gone = await deletedCollections(ports)
   for (;;) {
     let best: (typeof heads)[number] | null = null
     for (const x of heads)
       if (!x.h.done && (!best || compareEvents(x.h.value, best.h.value as RefEvent) < 0)) best = x
     if (!best) break
-    await writer.add(best.h.value as RefEvent)
+    const event = best.h.value as RefEvent
+    if (!gone.has(event[2])) await writer.add(event)
     best.h = await best.s.next()
   }
   const segs = await writer.finish()
@@ -299,6 +302,15 @@ export async function compactPart(ports: Ports, compactionId: string, part: numb
     sql`SELECT count(*) AS done FROM ${schema.refCompactionParts} WHERE compaction_id = ${compactionId}`,
   )) as { done: number }[]
   if (done === comp.parts) await ports.jobs.enqueue({ type: 'refs.finishCompaction', compactionId })
+}
+
+/** Ids of tombstoned collections that no collection row holds (a restore lifts the tombstone). */
+async function deletedCollections(ports: Ports): Promise<Set<string>> {
+  const rows = (await ports.db.all(sql`
+    SELECT t.collection_id AS id FROM ${schema.collectionTombstones} t
+    WHERE NOT EXISTS (SELECT 1 FROM ${schema.collections} c WHERE c.id = t.collection_id)
+  `)) as { id: string }[]
+  return new Set(rows.map((r) => r.id))
 }
 
 /** Swap a finished compaction in atomically, then delete the inputs' objects. */
