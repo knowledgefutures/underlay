@@ -6,11 +6,14 @@
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY   the v2 bucket (R2)
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)
  *   SIGNING_KEY                             the target deployment's log key
+ *   V1_S3_ENDPOINT, V1_S3_BUCKET, V1_S3_ACCESS_KEY, V1_S3_SECRET_KEY
+ *                                           the v1 bucket: when set, file objects are
+ *                                           copied to their v2 keys (src/files.ts)
+ *   FILES_ONLY=1                            only copy files, into an existing TARGET_DB
  *   npx tsx packages/migrate/src/main.ts > report.json
  *
  * Then load the SQLite file into D1 (wrangler d1 export/import, or `.dump` and
- * `wrangler d1 execute --file --remote`). File objects aren't copied: point the
- * v2 bucket at the v1 bucket's keys or copy them first (build doc finding 16).
+ * `wrangler d1 execute --file --remote`).
  */
 import { ed25519Signer, generateSigningKey, s3Store } from '@underlay/protocol'
 import {
@@ -24,16 +27,18 @@ import {
 import postgres from 'postgres'
 
 import { migrateAll, type V1Db } from './convert.js'
+import { copyFiles } from './files.js'
 
 const env = process.env
-if (!env.V1_DATABASE_URL || !env.S3_ENDPOINT) {
+const filesOnly = env.FILES_ONLY === '1'
+if ((!env.V1_DATABASE_URL && !filesOnly) || !env.S3_ENDPOINT) {
   console.error(
     'Set V1_DATABASE_URL and the S3_* target bucket variables (see the header of this file).',
   )
   process.exit(2)
 }
 
-const sql = postgres(env.V1_DATABASE_URL, { max: 2 })
+const sql = postgres(env.V1_DATABASE_URL ?? '', { max: 2 })
 const v1: V1Db = {
   query: async (text, params) => (await sql.unsafe(text, (params ?? []) as never[])) as never,
 }
@@ -62,11 +67,29 @@ const ports: Ports = {
 }
 
 const started = Date.now()
-const report = await migrateAll(v1, ports, {
-  onCollection: (slug) => console.error(`[migrate] ${slug}`),
-})
-// Reference-log indexing and compaction run as jobs; finish them here.
-await drainSqliteJobs(ports)
+let report: object = {}
+if (!filesOnly) {
+  report = await migrateAll(v1, ports, {
+    onCollection: (slug) => console.error(`[migrate] ${slug}`),
+  })
+  // Reference-log indexing and compaction run as jobs; finish them here.
+  await drainSqliteJobs(ports)
+}
+if (env.V1_S3_BUCKET) {
+  const source = s3Store({
+    endpoint: env.V1_S3_ENDPOINT ?? env.S3_ENDPOINT,
+    bucket: env.V1_S3_BUCKET,
+    accessKeyId: env.V1_S3_ACCESS_KEY ?? '',
+    secretAccessKey: env.V1_S3_SECRET_KEY ?? '',
+    region: 'auto',
+  })
+  const files = await copyFiles(source, ports, {
+    onFile: (_, done, total) => {
+      if (done % 100 === 0 || done === total) console.error(`[files] ${done}/${total}`)
+    },
+  })
+  report = { ...report, files }
+}
 console.log(
   JSON.stringify({ ...report, seconds: Math.round((Date.now() - started) / 1000) }, null, 2),
 )

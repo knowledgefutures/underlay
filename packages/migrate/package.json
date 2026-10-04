@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "@underlay/protocol": "workspace:*",
     "@underlay/server": "workspace:*",
     "drizzle-orm": "^0.45.2",

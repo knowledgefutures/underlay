@@ -3,7 +3,8 @@
  *
  * 1. Accounts and settings: better-auth tables, organizations, ARK tables,
  *    instance settings and comments are copied row for row (same fields).
- * 2. Files: the `files` table is copied; objects stay at their storage keys.
+ * 2. Files: the `files` table is copied with v1 storage keys; `copyFiles`
+ *    (files.ts) then moves the objects to their v2 keys.
  * 3. Collections: each collection's ready versions are replayed oldest first
  *    through the v2 commit engine. Each version's changes are the diff between
  *    its v1 record set and the previous one, computed in Postgres and streamed
