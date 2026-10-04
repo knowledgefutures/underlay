@@ -109,6 +109,24 @@ describe('webhooks', () => {
     outboundCalls.length = 0
     await h.drain()
     expect(outboundCalls.length).toBe(0)
+
+    // A test delivery: a signed ping, whatever the filter, logged like any other.
+    res = await h.request(`${base}/webhooks/${hook.id}/test`, { method: 'POST', user })
+    expect(res.status).toBe(200)
+    const { deliveryId } = await json(res)
+    await h.drain()
+    expect(outboundCalls.length).toBe(1)
+    expect(JSON.parse(String(outboundCalls[0]!.init.body))).toMatchObject({
+      event: 'ping',
+      collection: { owner: 'org', slug: 'hooked' },
+      test: true,
+    })
+    deliveries = (await json(await h.request(`${base}/webhooks/${hook.id}/deliveries`, { user })))
+      .deliveries
+    expect(deliveries[0]).toMatchObject({ id: deliveryId, event: 'ping', status: 'success' })
+    expect((await h.request(`${base}/webhooks/nope/test`, { method: 'POST', user })).status).toBe(
+      404,
+    )
   })
 
   it('is for org owners and admins only', async () => {

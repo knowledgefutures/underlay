@@ -6,6 +6,7 @@
  *   POST   /:owner/:slug/webhooks                         {url, bumpFilter?, enabled?} → secret, once
  *   PATCH  /:owner/:slug/webhooks/:id
  *   DELETE /:owner/:slug/webhooks/:id
+ *   POST   /:owner/:slug/webhooks/:id/test                a signed ping, logged as a delivery
  *   GET    /:owner/:slug/webhooks/:id/deliveries?limit
  *   POST   /:owner/:slug/webhooks/:id/deliveries/:deliveryId/retry
  */
@@ -133,6 +134,41 @@ export function webhookRoutes() {
       )
       .returning({ id: schema.collectionWebhooks.id })
     return deleted.length ? c.json({ ok: true }) : jsonError(c, 404, 'Not found')
+  })
+
+  app.post('/:owner/:slug/webhooks/:id/test', async (c) => {
+    const access = await requireAdmin(c)
+    if (access instanceof Response) return access
+    const { db } = c.var.ports
+    const [hook] = await db
+      .select({ id: schema.collectionWebhooks.id })
+      .from(schema.collectionWebhooks)
+      .where(
+        and(
+          eq(schema.collectionWebhooks.id, c.req.param('id')),
+          eq(schema.collectionWebhooks.collectionId, access.collection.id),
+        ),
+      )
+      .limit(1)
+    if (!hook) return jsonError(c, 404, 'Not found')
+    const [delivery] = await db
+      .insert(schema.webhookDeliveries)
+      .values({
+        webhookId: hook.id,
+        collectionId: access.collection.id,
+        bumpType: 'patch',
+        event: 'ping',
+        payload: {
+          event: 'ping',
+          collection: { owner: access.owner.slug, slug: access.collection.slug },
+          version: null,
+          bumpType: 'patch',
+          test: true,
+        },
+      })
+      .returning({ id: schema.webhookDeliveries.id })
+    await c.var.ports.jobs.enqueue({ type: 'webhooks.deliver', deliveryId: delivery!.id })
+    return c.json({ ok: true, deliveryId: delivery!.id })
   })
 
   app.get('/:owner/:slug/webhooks/:id/deliveries', async (c) => {
