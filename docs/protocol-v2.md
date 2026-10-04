@@ -1,7 +1,7 @@
 # Underlay protocol, format 2
 
-**Status: draft.** Every value marked _provisional_ can still change until the format is frozen.
-After the freeze, changing any of them needs a new format number. The reference implementation is
+**Status: final.** The format was frozen on 2026-10-03. Changing any value or rule here needs a new
+format number. The reference implementation is
 `packages/protocol` (`@underlay/protocol`). The test vectors are in `packages/protocol/test/vectors/v2.json`
 (see [Test vectors](#test-vectors)).
 
@@ -55,7 +55,7 @@ the information they need.
 Unicode is **not** normalized. `é` as U+00E9 and as U+0065 U+0301 are different ids with different
 hashes. The test vectors include both.
 
-The limits are provisional. A sample of production data (206,862 records) found a largest record
+The limits are final. A sample of production data (206,862 records) found a largest record
 of 12 KB and a longest id of 145 bytes.
 
 ## 4. Records
@@ -162,7 +162,7 @@ A tree is a sorted set of entries with unique keys, split into nodes. There are 
 
 ### 8.1 Shape
 
-Parameters (provisional):
+Parameters (final):
 
 | Name                          | Value                         |
 | ----------------------------- | ----------------------------- |

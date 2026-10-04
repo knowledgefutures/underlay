@@ -6,8 +6,8 @@
  * different version hashes. None of them may change without a new format
  * number. See docs/protocol-v2.md.
  *
- * Status: PROVISIONAL until the tree-parameter experiments are done and the
- * values are frozen (edge-redesign-build.md, "Decisions made while building").
+ * Status: final. Frozen 2026-10-03 with the values the tree-parameter
+ * experiments chose (edge-redesign-build.md, "Tree parameter experiments").
  */
 
 /** The `underlay` field of every version root this package writes. */
