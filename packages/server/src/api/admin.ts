@@ -18,6 +18,8 @@
  *   DELETE  /api/admin/denylist/:hash            stewards
  *   POST    /api/admin/reconcile                 stewards: {collection: "owner/slug"} starts a run
  *   GET     /api/admin/reconcile?collection=     stewards: the last run's time and report
+ *   GET     /api/admin/usage?day=&account=       stewards: a day's usage rollups
+ *   POST    /api/admin/usage/rebuild             stewards: {day} recomputes them from the usage log
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
  */
@@ -25,6 +27,7 @@ import { and, count, desc, eq, gt, inArray, isNotNull, isNull, or, sql } from 'd
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { usageFor } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { forgetDenylist } from '../lib/limits.js'
@@ -424,6 +427,25 @@ export function adminRoutes() {
         !(col.reconciledAt && col.reconciledAt >= col.reconcileStartedAt),
       report: col.reconcileReport ?? [],
     })
+  })
+
+  const DAY = /^\d{4}-\d{2}-\d{2}$/
+  app.get('/api/admin/usage', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const day = c.req.query('day') ?? ''
+    if (!DAY.test(day)) return jsonError(c, 400, 'day must be YYYY-MM-DD')
+    return c.json({ day, rollups: await usageFor(c.var.ports, day, c.req.query('account')) })
+  })
+
+  app.post('/api/admin/usage/rebuild', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as { day?: unknown } | null
+    if (typeof b?.day !== 'string' || !DAY.test(b.day))
+      return jsonError(c, 400, 'day must be YYYY-MM-DD')
+    await c.var.ports.jobs.enqueue({ type: 'usage.rebuild', day: b.day })
+    return c.json({ ok: true, queued: true }, 202)
   })
 
   app.post('/api/abuse-reports', async (c) => {

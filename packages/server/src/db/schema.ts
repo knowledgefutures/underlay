@@ -669,6 +669,26 @@ export const commitUnits = sqliteTable(
 )
 
 /**
+ * Usage per day, account, collection and metric (edge-redesign.md, Metering):
+ * derived from the usage log (`usage/<day>/…` objects in the internal area), and
+ * rebuildable from it (billing/usage.ts). `collection_id` is '' when none applies.
+ */
+export const usageRollups = sqliteTable(
+  'usage_rollups',
+  {
+    day: text('day').notNull(),
+    accountId: text('account_id').notNull(),
+    collectionId: text('collection_id').notNull(),
+    metric: text('metric').notNull(),
+    amount: integer('amount').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.day, t.accountId, t.collectionId, t.metric] }),
+    index('usage_rollups_account_idx').on(t.accountId, t.day),
+  ],
+)
+
+/**
  * A deleted collection (edge-redesign.md, Provenance and Metering): its id, owner
  * and slug at deletion, and its counters as they stood, which the deletion zeroes
  * along with the rows. Reference-log compaction drops the events of a tombstoned

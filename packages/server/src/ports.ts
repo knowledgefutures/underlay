@@ -1,3 +1,6 @@
+import type { Cache, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
+import type { LibSQLDatabase } from 'drizzle-orm/libsql'
+
 /**
  * The ports the server is written against. Cloudflare and Node each supply
  * adapters; nothing outside the adapters knows which runtime it's on.
@@ -8,9 +11,7 @@
  *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
  *   Cache      Cache API on Workers, in-memory LRU on Node
  */
-import type { Cache, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
-import type { LibSQLDatabase } from 'drizzle-orm/libsql'
-
+import type { UsageSink } from './billing/usage.js'
 import type * as schema from './db/schema.js'
 
 export type { Cache, PresigningStore, Store } from '@underlay/protocol'
@@ -84,6 +85,8 @@ export interface Ports {
    * Node: in memory. Absent: no limit (tests).
    */
   rateLimit?: RateLimiter
+  /** Where requests' usage events go (billing/usage.ts). Absent: not metered. */
+  usage?: UsageSink
 }
 
 /** Whether one more request under `key` fits its budget ('anon': per IP; 'user': per user). */

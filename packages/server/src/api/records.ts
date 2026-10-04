@@ -14,11 +14,13 @@ import { and, eq, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { meter } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { presignDownload } from '../files/files.js'
 import { deniedHashes, isDenied } from '../lib/limits.js'
 import { type Presence, presenceOf } from '../refs/log.js'
+import { fileSizes } from '../versions/file-refs.js'
 import { getRecord, loadView } from '../versions/view.js'
 import { jsonError } from './access.js'
 
@@ -234,9 +236,16 @@ export function recordRoutes() {
     const hash = c.req.param('hash').replace(/^sha256:/, '')
     if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
     const { items } = await visiblePresence(c, hash, await memberOrgs(c))
-    if (!items.some((i) => i.p.kind === 'f')) return jsonError(c, 404, 'File not found')
+    const found = items.find((i) => i.p.kind === 'f')
+    if (!found) return jsonError(c, 404, 'File not found')
     const url = await presignDownload(c.var.ports, hash)
-    return url ? c.redirect(url, 302) : jsonError(c, 404, 'File not found')
+    if (!url) return jsonError(c, 404, 'File not found')
+    // Billed to the first collection the caller may read it from.
+    const on = { id: found.c.id, accountId: found.c.organizationId }
+    const [size] = (await fileSizes(c.var.ports.db, [hash])).values()
+    meter(c.var.meter, 'file_downloads', 1, on)
+    meter(c.var.meter, 'file_bytes', size ?? 0, on)
+    return c.redirect(url, 302)
   })
 
   return app

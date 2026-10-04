@@ -114,5 +114,7 @@ export async function requireCollection(
       ? jsonError(c, 403, 'Not authorized')
       : jsonError(c, 401, 'Authentication required')
   }
+  // Usage on this request is billed to the collection's owner (billing/usage.ts).
+  c.var.meter.collection = { id: access.collection.id, accountId: access.owner.id }
   return access
 }

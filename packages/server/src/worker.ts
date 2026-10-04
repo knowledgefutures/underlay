@@ -17,6 +17,7 @@ import { renderPage } from '@underlay/web'
 import { createApp } from './app.js'
 import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { createKf, type Kf } from './auth/kf.js'
+import { type UsageEvent, writeUsage } from './billing/usage.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
@@ -30,6 +31,8 @@ export interface Env {
   JOBS: Queue
   /** Bulk jobs (jobs.ts BULK_JOBS); without it, everything goes to JOBS. */
   JOBS_BULK?: Queue
+  /** Usage events (billing/usage.ts), a request's to a message; without it, nothing is metered. */
+  USAGE?: Queue
   APP_URL: string
   DEPLOYMENT: string
   R2_ENDPOINT: string
@@ -104,6 +107,18 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
     outboundFetch: (url, init) => fetch(url, init),
     locationFetch: (req) => fetch(req),
     ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
+    ...(env.USAGE
+      ? {
+          usage: {
+            record: (events: UsageEvent[]) =>
+              ctx.waitUntil(
+                (env.USAGE as unknown as { send(b: unknown): Promise<void> })
+                  .send({ events })
+                  .catch((err: unknown) => console.error('[usage] send failed', err)),
+              ),
+          },
+        }
+      : {}),
     ...(env.RL_ANON && env.RL_USER
       ? { rateLimit: bindingRateLimiter({ anon: env.RL_ANON, user: env.RL_USER }) }
       : {}),
@@ -177,6 +192,15 @@ export default {
 
   async queue(batch: MessageBatch<JobMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
     const ports = makePorts(env, ctx)
+    // The usage queue: a batch of requests' events becomes one log object.
+    if (batch.queue.endsWith('-usage')) {
+      const events = batch.messages.flatMap(
+        (m) => (m.body as unknown as { events: UsageEvent[] }).events ?? [],
+      )
+      await writeUsage(ports, events)
+      batch.ackAll()
+      return
+    }
     const run = async (msg: (typeof batch.messages)[number]) => {
       try {
         await runJob(msg.body, ports)

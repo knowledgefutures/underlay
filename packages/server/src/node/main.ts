@@ -35,6 +35,7 @@ import '../handlers.js'
 import { createApp, type RenderPage } from '../app.js'
 import { authenticator, createAuth } from '../auth/auth.js'
 import { createKf } from '../auth/kf.js'
+import { bufferedUsageSink } from '../billing/usage.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
@@ -107,6 +108,8 @@ const ports: Ports = {
   // RATE_LIMIT=off for load tests and local tools.
   ...(env.RATE_LIMIT === 'off' ? {} : { rateLimit: memoryRateLimiter() }),
 }
+// Usage events, buffered in the process and written every few seconds.
+ports.usage = bufferedUsageSink(() => ports)
 const jobsTable = new SqliteJobs(db)
 
 // One runner loop: wakes on enqueue and every few seconds for delayed jobs.

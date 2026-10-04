@@ -34,6 +34,7 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'reconcile.collection',
   'reconcile.version',
   'reconcile.finish',
+  'usage.rebuild',
 ])
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)

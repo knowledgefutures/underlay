@@ -21,6 +21,7 @@ import { syncRoutes } from './api/sync.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Kf } from './auth/kf.js'
+import { type Meter, meter, newMeter } from './billing/usage.js'
 import { clientIp } from './lib/limits.js'
 import type { Ports } from './ports.js'
 
@@ -44,6 +45,8 @@ export type AppEnv = {
     principal: Principal | null
     /** KF Auth profile and orgs; null where the deployment has no KF Auth. */
     kf: Kf | null
+    /** This request's usage (billing/usage.ts). */
+    meter: Meter
   }
 }
 
@@ -121,7 +124,22 @@ export function createApp(setup: Setup) {
     c.set('config', config)
     c.set('kf', kf ?? null)
     c.set('principal', await authenticate(c.req.raw, ports))
+    c.set('meter', newMeter())
     await next()
+  })
+
+  // Usage (billing/usage.ts): a collection API call and its response bytes, billed
+  // to the collection's owner, plus whatever the route metered. A page's own
+  // in-process API calls are part of the page view, which isn't metered.
+  app.use('/api/*', async (c, next) => {
+    await next()
+    if (inProcess.has(c.req.raw)) return
+    const m = c.var.meter
+    if (m.collection) {
+      meter(m, 'api_calls', 1)
+      meter(m, 'response_bytes', Number(c.res.headers.get('content-length') ?? 0) || 0)
+    }
+    if (m.events.length && c.var.ports.usage) c.var.ports.usage.record(m.events)
   })
 
   // Request budgets (lib/limits.ts). The page renderer's in-process API calls

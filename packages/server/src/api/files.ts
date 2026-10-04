@@ -12,6 +12,7 @@ import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { meter } from '../billing/usage.js'
 import * as schema from '../db/schema.js'
 import {
   canReadFile,
@@ -27,6 +28,7 @@ import {
   storeSmallFile,
 } from '../files/files.js'
 import { isDenied } from '../lib/limits.js'
+import { fileSizes } from '../versions/file-refs.js'
 import { jsonError, requireCollection } from './access.js'
 
 export function fileRoutes() {
@@ -55,6 +57,8 @@ export function fileRoutes() {
     if (!f) return head ? c.body(null, 404) : jsonError(c, 404, 'File not found')
     if (head)
       return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mimeType })
+    meter(c.var.meter, 'file_downloads', 1)
+    meter(c.var.meter, 'file_bytes', f.size)
     return c.redirect((await presignDownload(c.var.ports, hash))!, 302)
   })
 
@@ -72,6 +76,11 @@ export function fileRoutes() {
     const urls = await presignDownloads(c.var.ports, [...readable])
     const out: Record<string, string | null> = {}
     for (const r of requested) out[r] = urls.get(cleanHash(r)) ?? null
+    // A presigned URL is a download handed out: metered as one, at the file's size.
+    for (const s of await fileSizes(c.var.ports.db, [...urls.keys()])) {
+      meter(c.var.meter, 'file_downloads', 1)
+      meter(c.var.meter, 'file_bytes', s[1])
+    }
     return c.json(out)
   })
 
