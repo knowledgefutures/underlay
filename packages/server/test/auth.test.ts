@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createApp } from '../src/app.js'
-import { authenticator, createAuth } from '../src/auth/auth.js'
+import { authenticator, createAuth, keyConfig } from '../src/auth/auth.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
 
@@ -62,7 +62,7 @@ describe('better-auth on SQLite', () => {
     ).toBe(403)
     expect(
       (await call('/api/collections/org/authors/push', 'ul_bogus', { schemas: { Author } })).status,
-    ).toBe(404)
+    ).toBe(401)
     expect(
       (await call('/api/collections/org/authors/push', scoped.key, { schemas: { Author } })).status,
     ).toBe(200)
@@ -70,6 +70,26 @@ describe('better-auth on SQLite', () => {
     expect(
       (await call('/api/collections/org/other/push', scoped.key, { schemas: { Author } })).status,
     ).toBe(404)
+
+    // Keys are checked against their row; last_request is written once, not per call.
+    const rows = async () =>
+      (await h.ports.db.select().from(schema.apikey)).find(
+        (k) => k.start === write.key.slice(0, 6),
+      )!
+    const first = (await rows()).lastRequest
+    expect(first).not.toBeNull()
+    await call('/api/collections/org/authors/push', write.key, { schemas: { Author } })
+    expect((await rows()).lastRequest).toEqual(first)
+    // A disabled key stops working once the isolate's copy of its row expires.
+    keyConfig.cacheMs = 0
+    await h.ports.db
+      .update(schema.apikey)
+      .set({ enabled: false })
+      .where(eq(schema.apikey.id, (await rows()).id))
+    expect(
+      (await call('/api/collections/org/authors/push', write.key, { schemas: { Author } })).status,
+    ).toBe(401)
+    keyConfig.cacheMs = 30_000
 
     // The auth routes are mounted.
     const res = await app.fetch(new Request('http://test/api/auth/get-session'))

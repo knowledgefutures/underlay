@@ -2,7 +2,16 @@ import { createHash } from 'node:crypto'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { rebuildUsageDay, type UsageEvent, usageFor, writeUsage } from '../src/billing/usage.js'
+import {
+  isolateUsageSink,
+  newUsageBuffer,
+  rebuildUsageDay,
+  rebuildUsageStep,
+  usageBatch,
+  type UsageEvent,
+  usageFor,
+  writeUsage,
+} from '../src/billing/usage.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
 
@@ -65,5 +74,71 @@ describe('usage', () => {
     expect(await calls()).toBe(4)
     expect(await rebuildUsageDay(h.ports, day)).toBe(seen.length)
     expect(await calls()).toBe(2)
+
+    // A response the client abandons still counts its call, and its bytes so far.
+    seen.length = 0
+    const gone = await h.request(`${base}/versions/latest/records.ndjson`)
+    await gone.body!.cancel()
+    expect(of('api_calls')).toHaveLength(1)
+    // records.ndjson.gz bills the NDJSON it decompresses to, not the gzip bytes.
+    seen.length = 0
+    const gz = await h.request(`${base}/versions/latest/records.ndjson.gz`)
+    const wire = (await gz.arrayBuffer()).byteLength
+    const billed = of('response_bytes')[0]!.n
+    const ndjson = await (await h.request(`${base}/versions/latest/records.ndjson`)).text()
+    expect(billed).not.toBe(wire)
+    // Canonical lines, without the `,"hash":…` (74 bytes) records.ndjson adds.
+    expect(billed).toBe(new TextEncoder().encode(ndjson).byteLength - 74)
+  })
+
+  it('sends an isolate’s events in batches, and writes them directly when sending fails', async () => {
+    const h = await harness()
+    const buffer = newUsageBuffer()
+    const sent: UsageEvent[][] = []
+    const written: UsageEvent[][] = []
+    const waits: Promise<unknown>[] = []
+    let failing = false
+    const sink = isolateUsageSink(
+      buffer,
+      (p) => waits.push(p),
+      async (events) => {
+        if (failing) throw new Error('queue down')
+        sent.push(events)
+      },
+      async (events) => void written.push(events),
+    )
+    const ev = (r: string): UsageEvent => ({
+      r,
+      i: 0,
+      t: Date.now(),
+      a: 'org1',
+      c: 'c',
+      m: 'api_calls',
+      n: 1,
+    })
+    usageBatch.flushMs = 10
+    try {
+      for (let i = 0; i < 5; i++) sink.record([ev(`r${i}`)])
+      await Promise.all(waits)
+      expect(sent.map((b) => b.length)).toEqual([5])
+      // A full buffer goes at once.
+      usageBatch.maxEvents = 3
+      sink.record([ev('a'), ev('b'), ev('c')])
+      await Promise.all(waits)
+      expect(sent.map((b) => b.length)).toEqual([5, 3])
+      failing = true
+      sink.record([ev('x')])
+      await Promise.all(waits)
+      expect(written.map((b) => b.map((e) => e.r))).toEqual([['x']])
+    } finally {
+      usageBatch.flushMs = 5_000
+      usageBatch.maxEvents = 400
+    }
+
+    // A day rebuilds a listing page per step.
+    const day = new Date().toISOString().slice(0, 10)
+    for (let i = 0; i < 3; i++) await writeUsage(h.ports, [ev(`d${i}`)])
+    expect(await rebuildUsageStep(h.ports, day, 0)).toBeNull()
+    expect((await usageFor(h.ports, day, 'org1'))[0]!.amount).toBe(3)
   })
 })

@@ -163,7 +163,12 @@ export function createApp(setup: Setup) {
     c.set('kf', kf ?? null)
     const page = inProcess.get(c.req.raw) ?? null
     c.set('page', page)
-    c.set('principal', page ? page.principal : await authenticate(c.req.raw, ports))
+    try {
+      c.set('principal', page ? page.principal : await authenticate(c.req.raw, ports))
+    } catch (err) {
+      if ((err as Error).name !== 'InvalidKeyError') throw err
+      return c.json({ error: (err as Error).message, statusCode: 401 }, 401)
+    }
     c.set('meter', newMeter())
     await next()
   })
@@ -181,25 +186,30 @@ export function createApp(setup: Setup) {
       return
     }
     meter(m, 'api_calls', 1)
+    // The call and what the route metered count now, whatever becomes of the body.
+    sink.record(m.events.slice())
     const body = c.res.body
-    if (!body) {
-      sink.record(m.events)
-      return
-    }
+    if (!body) return
     // Response bytes are counted as they go out (most responses don't know their
-    // length up front); the request's events are recorded when the body ends.
+    // length up front), and recorded when the body ends or the client goes away.
+    const sent = m.events.length
     let bytes = 0
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      meter(m, 'response_bytes', m.logicalBytes ?? bytes)
+      sink.record(m.events.slice(sent))
+    }
     const counted = body.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, ctl) {
           bytes += chunk.byteLength
           ctl.enqueue(chunk)
         },
-        flush() {
-          meter(m, 'response_bytes', bytes)
-          sink.record(m.events)
-        },
-      }),
+        flush: finish,
+        cancel: finish,
+      } as Transformer<Uint8Array, Uint8Array>),
     )
     c.res = new Response(counted, c.res)
   })

@@ -15,7 +15,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError } from 'better-auth/api'
 import { genericOAuth } from 'better-auth/plugins'
 import { organization } from 'better-auth/plugins/organization'
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, inArray, ne } from 'drizzle-orm'
 
 import type { Principal } from '../api/access.js'
 import type { Authenticate } from '../app.js'
@@ -188,18 +188,22 @@ export function createAuth(
       user: {
         create: {
           after: async (user) => {
-            // Every user gets a personal (default) organization, as in v1.
-            let attempt = 0
-            let slug = defaultOrgSlugCandidate(user.email, attempt)
-            for (;;) {
-              const [taken] = await db
-                .select({ id: schema.organization.id })
-                .from(schema.organization)
-                .where(eq(schema.organization.slug, slug))
-                .limit(1)
-              if (!taken) break
-              slug = defaultOrgSlugCandidate(user.email, ++attempt)
-            }
+            // Every user gets a personal (default) organization, as in v1: the
+            // first free of 50 candidate slugs, read in one query.
+            const candidates = Array.from({ length: 50 }, (_, i) =>
+              defaultOrgSlugCandidate(user.email, i),
+            )
+            const taken = new Set(
+              (
+                await db
+                  .select({ slug: schema.organization.slug })
+                  .from(schema.organization)
+                  .where(inArray(schema.organization.slug, candidates))
+              ).map((r) => r.slug),
+            )
+            const slug =
+              candidates.find((s) => !taken.has(s)) ??
+              `${candidates[0]!.replace(/-\d+$/, '')}-${crypto.randomUUID().slice(0, 8)}`
             const orgId = crypto.randomUUID()
             await db.batch([
               db
@@ -218,10 +222,116 @@ export function createAuth(
 
 export type Auth = ReturnType<typeof createAuth>
 
+/** A Bearer key (or ?token=) that isn't a valid key: the request gets 401, not anonymity. */
+export class InvalidKeyError extends Error {
+  constructor() {
+    super('Invalid or expired API key')
+    this.name = 'InvalidKeyError'
+  }
+}
+
+export const keyConfig = {
+  /** How long an isolate trusts a key row it read (a revoked key works this much longer). */
+  cacheMs: 30_000,
+  /** `last_request` is written at most this often per key, not on every request. */
+  lastRequestEveryMs: 60 * 60 * 1000,
+}
+
+type KeyRow = typeof schema.apikey.$inferSelect
+const keyRows = new WeakMap<object, Map<string, { at: number; row: KeyRow | null }>>()
+
+const b64url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+
+/** better-auth stores JSON columns as strings, older rows twice over. */
+function jsonColumn<T>(v: unknown): T | null {
+  let out = v
+  for (let i = 0; i < 2 && typeof out === 'string'; i++) {
+    try {
+      out = JSON.parse(out)
+    } catch {
+      return null
+    }
+  }
+  return (out as T) ?? null
+}
+
+/** A key's row by its hash (better-auth's: unpadded base64url SHA-256), cached briefly. */
+async function keyRow(db: Db, key: string): Promise<KeyRow | null> {
+  const hashed = b64url(
+    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))),
+  )
+  let cache = keyRows.get(db)
+  if (!cache) keyRows.set(db, (cache = new Map()))
+  const hit = cache.get(hashed)
+  if (hit && Date.now() - hit.at < keyConfig.cacheMs) return hit.row
+  const [row] = await db
+    .select()
+    .from(schema.apikey)
+    .where(and(eq(schema.apikey.key, hashed), eq(schema.apikey.configId, 'default')))
+    .limit(1)
+  if (cache.size > 1_000) cache.clear()
+  cache.set(hashed, { at: Date.now(), row: row ?? null })
+  return row ?? null
+}
+
+/**
+ * Verify an API key against its row directly. better-auth's verifyApiKey writes
+ * the row on every request (lastRequest, updatedAt), a D1 write per keyed call;
+ * here `last_request` is written at most hourly. Keys with a usage limit
+ * (`remaining`) still go through better-auth, which counts them down.
+ */
+async function verifyKey(auth: Auth, ports: Ports, key: string): Promise<Principal | null> {
+  const row = await keyRow(ports.db, key)
+  if (!row || row.enabled === false) return null
+  if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null
+  let k = row as unknown as {
+    referenceId: string
+    permissions?: unknown
+    metadata?: unknown
+  }
+  if (row.remaining !== null) {
+    const result = await auth.api.verifyApiKey({ body: { key } }).catch(() => null)
+    if (!result?.valid || !result.key) return null
+    k = result.key as unknown as typeof k
+  } else if (
+    !row.lastRequest ||
+    Date.now() - row.lastRequest.getTime() > keyConfig.lastRequestEveryMs
+  ) {
+    const now = new Date()
+    row.lastRequest = now
+    ports.waitUntil(
+      ports.db
+        .update(schema.apikey)
+        .set({ lastRequest: now })
+        .where(eq(schema.apikey.id, row.id))
+        .then(() => {})
+        .catch((err: unknown) => console.error('[auth] lastRequest write failed', err)),
+    )
+  }
+  const perms = jsonColumn<Record<string, string[]>>(k.permissions)?.collections ?? []
+  const scope = perms.includes('admin') ? 'admin' : perms.includes('write') ? 'write' : 'read'
+  const metadata = jsonColumn<{ collectionIds?: string[] }>(k.metadata)
+  const [org] = await ports.db
+    .select({ id: schema.organization.id })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, k.referenceId))
+    .limit(1)
+  return {
+    userId: k.referenceId,
+    scope,
+    collectionIds: metadata?.collectionIds?.length ? metadata.collectionIds : null,
+    ...(org ? { orgId: org.id } : {}),
+  }
+}
+
 /**
  * The request authenticator: API keys (Bearer, or ?token= on GET for share
- * links), then the session cookie. An invalid Bearer key is anonymous here; the
- * routes answer 401/403 as needed.
+ * links), then the session cookie. A key that doesn't verify throws
+ * InvalidKeyError (401), rather than passing as anonymous.
  */
 export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
   return async (req, ports) => {
@@ -233,36 +343,9 @@ export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
         : null
     const key = bearer?.startsWith('Bearer ') ? bearer.slice(7) : queryToken
     if (key) {
-      try {
-        const result = await auth.api.verifyApiKey({ body: { key } })
-        if (result?.valid && result.key) {
-          const k = result.key as unknown as {
-            referenceId: string
-            permissions?: Record<string, string[]> | null
-            metadata?: { collectionIds?: string[] } | null
-          }
-          const perms = k.permissions?.collections ?? []
-          const scope = perms.includes('admin')
-            ? 'admin'
-            : perms.includes('write')
-              ? 'write'
-              : 'read'
-          const [org] = await ports.db
-            .select({ id: schema.organization.id })
-            .from(schema.organization)
-            .where(eq(schema.organization.id, k.referenceId))
-            .limit(1)
-          const principal: Principal = {
-            userId: k.referenceId,
-            scope,
-            collectionIds: k.metadata?.collectionIds?.length ? k.metadata.collectionIds : null,
-            ...(org ? { orgId: org.id } : {}),
-          }
-          return principal
-        }
-      } catch {
-        // Invalid or expired key: anonymous.
-      }
+      const principal = await verifyKey(auth, ports, key)
+      if (!principal) throw new InvalidKeyError()
+      return principal
     }
     try {
       const session = await auth.api.getSession({ headers: req.headers })

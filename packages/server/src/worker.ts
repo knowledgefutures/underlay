@@ -17,7 +17,7 @@ import { renderPage } from '@underlay/web'
 import { createApp } from './app.js'
 import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { createKf, type Kf } from './auth/kf.js'
-import { type UsageEvent, writeUsage } from './billing/usage.js'
+import { isolateUsageSink, newUsageBuffer, type UsageEvent, writeUsage } from './billing/usage.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
@@ -79,6 +79,8 @@ export interface Env {
 const INTERACTIVE_LANES = 4
 
 let signer: Promise<Signer> | null = null
+/** Usage events this isolate hasn't sent yet (billing/usage.ts isolateUsageSink). */
+const usageBuffer = newUsageBuffer()
 
 /** Which D1 a request reads: any replica for anonymous reads (db/replicas.ts), else the primary. */
 function d1For(env: Env, req: Request): D1Database {
@@ -139,14 +141,13 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
     ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
     ...(env.USAGE
       ? {
-          usage: {
-            record: (events: UsageEvent[]) =>
-              ctx.waitUntil(
-                (env.USAGE as unknown as { send(b: unknown): Promise<void> })
-                  .send({ events })
-                  .catch((err: unknown) => console.error('[usage] send failed', err)),
-              ),
-          },
+          usage: isolateUsageSink(
+            usageBuffer,
+            (p) => ctx.waitUntil(p),
+            (events: UsageEvent[]) =>
+              (env.USAGE as unknown as { send(b: unknown): Promise<void> }).send({ events }),
+            (events: UsageEvent[]) => writeUsage(makePorts(env, ctx), events),
+          ),
         }
       : {}),
     ...(env.RL_ANON && env.RL_USER
@@ -223,13 +224,13 @@ export default {
 
   async queue(batch: MessageBatch<JobMessage>, env: Env, ctx: ExecutionContext): Promise<void> {
     const ports = makePorts(env, ctx)
-    // The usage queue: a batch of requests' events becomes one log object.
+    // The usage queue: each message (an isolate's batch) becomes one log object,
+    // named by its contents, so a redelivered message rewrites the same object.
     if (batch.queue.endsWith('-usage')) {
-      const events = batch.messages.flatMap(
-        (m) => (m.body as unknown as { events: UsageEvent[] }).events ?? [],
-      )
-      await writeUsage(ports, events)
-      batch.ackAll()
+      for (const m of batch.messages) {
+        await writeUsage(ports, (m.body as unknown as { events: UsageEvent[] }).events ?? [])
+        m.ack()
+      }
       return
     }
     const run = async (msg: (typeof batch.messages)[number]) => {

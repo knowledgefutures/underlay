@@ -3,12 +3,13 @@
  * what requests use, which version data can't tell. API calls and response
  * bytes per collection, and file downloads and their bytes.
  *
- * A request's events travel together (one queue message on Workers; a buffer
- * on Node) and land in immutable `usage/<day>/<id>.ndjson` objects in the
- * internal area, a batch at a time. `usage_rollups` are added to as each batch
- * lands. Delivery is at least once, so a retried batch can count twice there;
- * the log can't, because every event carries its request id and position, and
- * `rebuildUsageDay` recomputes a day's rollups from it. Keep the log for at
+ * An isolate's events travel together (a queue message every few seconds on
+ * Workers; a buffer on Node) and land in immutable `usage/<day>/<hash>.ndjson`
+ * objects in the internal area, a batch at a time. An object is named by the
+ * hash of its contents, so a redelivered batch rewrites the same object and the
+ * log never counts it twice. `usage_rollups` are added to as each batch lands;
+ * there a redelivered batch can count twice, until `usage.rebuild` recomputes
+ * the day from the log, a page of log objects per job. Keep the log for at
  * least the billing dispute window.
  */
 import { and, eq, sql } from 'drizzle-orm'
@@ -37,6 +38,12 @@ export interface Meter {
   /** The collection a route resolved (requireCollection), and its owning account. */
   collection: { id: string; accountId: string } | null
   events: UsageEvent[]
+  /**
+   * Set by a route whose body is compressed storage (records.ndjson.gz): the
+   * uncompressed bytes it sent, billed instead of the wire bytes, so the same
+   * data costs the same whichever form it's read in.
+   */
+  logicalBytes?: number
 }
 
 export const newMeter = (): Meter => ({
@@ -82,11 +89,12 @@ export async function writeUsage(ports: Ports, events: UsageEvent[]): Promise<vo
   }
   for (const [day, list] of byDay) {
     // Log first: a rollup never counts what the log lacks.
-    await ports.stores.internal.put(
-      `${PREFIX}/${day}/${Date.now()}-${crypto.randomUUID()}.ndjson`,
-      list.map((e) => JSON.stringify(e)).join('\n') + '\n',
-      { contentType: 'application/x-ndjson' },
-    )
+    const body = list.map((e) => JSON.stringify(e)).join('\n') + '\n'
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))
+    const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    await ports.stores.internal.put(`${PREFIX}/${day}/${hash}.ndjson`, body, {
+      contentType: 'application/x-ndjson',
+    })
     await addRollups(ports, day, sum(list))
   }
 }
@@ -127,31 +135,81 @@ async function addRollups(ports: Ports, day: string, totals: Totals) {
   }
 }
 
-/** Recompute one day's rollups from the log, counting each event once. */
-export async function rebuildUsageDay(ports: Ports, day: string): Promise<number> {
+/** A day's rebuild in progress: where the listing is, and the totals so far. */
+interface RebuildState {
+  step: number
+  cursor: string | null
+  events: number
+  totals: [string, { accountId: string; collectionId: string; metric: string; amount: number }][]
+}
+
+const rebuildKey = (day: string) => `usage-rebuild/${day}.json`
+
+/**
+ * One job of a day's rebuild: a page of log objects (a listing page, up to
+ * 1,000) summed into the running totals, kept in the internal area between
+ * jobs. Memory holds the totals (one per account, collection and metric), not
+ * the events. The last page replaces the day's rollups. Returns the next step,
+ * or null when done.
+ */
+export async function rebuildUsageStep(
+  ports: Ports,
+  day: string,
+  step: number,
+): Promise<number | null> {
   const store = ports.stores.internal
-  const seen = new Set<string>()
-  const events: UsageEvent[] = []
+  const saved = step === 0 ? null : await store.get(rebuildKey(day))
+  const state: RebuildState = saved
+    ? (JSON.parse(await saved.text()) as RebuildState)
+    : { step: 0, cursor: null, events: 0, totals: [] }
+  if (state.step !== step) return null // a duplicate delivery
+  const totals: Totals = new Map(state.totals)
+  const page = await store.list(`${PREFIX}/${day}/`, state.cursor ?? undefined)
+  for (const key of page.keys) {
+    const obj = await store.get(key)
+    if (!obj) continue
+    const events = (await obj.text())
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as UsageEvent)
+    state.events += events.length
+    for (const [k, t] of sum(events)) {
+      const cur = totals.get(k)
+      if (cur) cur.amount += t.amount
+      else totals.set(k, t)
+    }
+  }
+  if (page.cursor) {
+    const next: RebuildState = {
+      step: step + 1,
+      cursor: page.cursor,
+      events: state.events,
+      totals: [...totals],
+    }
+    await store.put(rebuildKey(day), JSON.stringify(next), { contentType: 'application/json' })
+    return step + 1
+  }
+  await ports.db.delete(schema.usageRollups).where(eq(schema.usageRollups.day, day))
+  await addRollups(ports, day, totals)
+  await store.delete(rebuildKey(day)).catch(() => {})
+  return null
+}
+
+/** Recompute one day's rollups from the log, all its steps in this call (tests, small days). */
+export async function rebuildUsageDay(ports: Ports, day: string): Promise<number> {
+  let events = 0
+  const store = ports.stores.internal
   let cursor: string | undefined
   do {
     const page = await store.list(`${PREFIX}/${day}/`, cursor)
     for (const key of page.keys) {
       const obj = await store.get(key)
-      if (!obj) continue
-      for (const line of (await obj.text()).split('\n')) {
-        if (!line) continue
-        const e = JSON.parse(line) as UsageEvent
-        const id = `${e.r}\u0000${e.i}`
-        if (seen.has(id)) continue
-        seen.add(id)
-        events.push(e)
-      }
+      if (obj) events += (await obj.text()).split('\n').filter(Boolean).length
     }
     cursor = page.cursor
   } while (cursor)
-  await ports.db.delete(schema.usageRollups).where(eq(schema.usageRollups.day, day))
-  await addRollups(ports, day, sum(events))
-  return events.length
+  for (let step: number | null = 0; step !== null;) step = await rebuildUsageStep(ports, day, step)
+  return events
 }
 
 /** A day's rollups for an account (or every account). */
@@ -165,6 +223,64 @@ export async function usageFor(ports: Ports, day: string, accountId?: string) {
         accountId ? eq(schema.usageRollups.accountId, accountId) : undefined,
       ),
     )
+}
+
+export const usageBatch = {
+  /** How long an isolate holds events before sending them. */
+  flushMs: 5_000,
+  /** Events that go at once (a queue message is at most 128 KB; an event is ~150 bytes). */
+  maxEvents: 400,
+}
+
+/** An isolate's unsent events (Workers): module state, shared by its requests. */
+export interface UsageBuffer {
+  events: UsageEvent[]
+  scheduled: boolean
+}
+
+export const newUsageBuffer = (): UsageBuffer => ({ events: [], scheduled: false })
+
+/**
+ * Workers: an isolate's events go out together, one queue message per few
+ * seconds instead of one per request. The first event into an empty buffer
+ * schedules a send `flushMs` later on its request's waitUntil; a full buffer
+ * goes at once. A send that fails is retried, then written straight to the log
+ * (`fallback`), so a queue outage doesn't lose usage. An isolate evicted with
+ * events still waiting loses them: at most `flushMs` of one isolate's.
+ */
+export function isolateUsageSink(
+  buffer: UsageBuffer,
+  waitUntil: (p: Promise<unknown>) => void,
+  send: (events: UsageEvent[]) => Promise<void>,
+  fallback: (events: UsageEvent[]) => Promise<void>,
+): UsageSink {
+  const flush = async () => {
+    const out = buffer.events.splice(0, usageBatch.maxEvents)
+    if (out.length === 0) return
+    try {
+      await send(out).catch(() => send(out))
+    } catch (err) {
+      console.error('[usage] send failed twice; writing the batch directly', err)
+      await fallback(out).catch((e: unknown) => console.error('[usage] batch lost', e))
+    }
+  }
+  return {
+    record(events) {
+      if (events.length === 0) return
+      buffer.events.push(...events)
+      if (buffer.events.length >= usageBatch.maxEvents) {
+        waitUntil(flush())
+      } else if (!buffer.scheduled) {
+        buffer.scheduled = true
+        waitUntil(
+          new Promise((r) => setTimeout(r, usageBatch.flushMs)).then(async () => {
+            buffer.scheduled = false
+            while (buffer.events.length) await flush()
+          }),
+        )
+      }
+    },
+  }
 }
 
 /**
@@ -194,5 +310,7 @@ export function bufferedUsageSink(ports: () => Ports, flushMs = 10_000, max = 5_
 }
 
 registerJob('usage.rebuild', async (job, ports) => {
-  await rebuildUsageDay(ports, String(job.day))
+  const day = String(job.day)
+  const next = await rebuildUsageStep(ports, day, Number(job.step ?? 0))
+  if (next !== null) await ports.jobs.enqueue({ type: 'usage.rebuild', day, step: next })
 })

@@ -316,6 +316,10 @@ export function versionRoutes() {
               const plain = entries.every(
                 (e) => e.size <= OUT_OF_LINE_BYTES && !view.withheld.has(e.hash),
               )
+              // Billed as the NDJSON it decompresses to: a line and a newline per record.
+              c.var.meter.logicalBytes =
+                (c.var.meter.logicalBytes ?? 0) +
+                entries.reduce((n, e) => (view.withheld.has(e.hash) ? n : n + e.size + 1), 0)
               if (plain) {
                 ctl.enqueue(await view.repo.rawBody(leaf.hash))
                 continue
