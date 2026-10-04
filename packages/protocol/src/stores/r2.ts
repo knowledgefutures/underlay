@@ -11,6 +11,7 @@ import {
   type BlobHead,
   type BlobObject,
   joinParts,
+  type ListPage,
   type PutOptions,
   type PutPartsOptions,
   type Store,
@@ -54,11 +55,11 @@ export interface R2BucketLike {
     complete(parts: { partNumber: number; etag: string }[]): Promise<unknown>
     abort(): Promise<void>
   }>
-  list(options: {
-    prefix?: string
+  list(options: { prefix?: string; cursor?: string; limit?: number }): Promise<{
+    objects: { key: string; size?: number; uploaded?: Date }[]
+    truncated: boolean
     cursor?: string
-    limit?: number
-  }): Promise<{ objects: { key: string }[]; truncated: boolean; cursor?: string }>
+  }>
 }
 
 /** A store over an R2 binding. */
@@ -150,9 +151,10 @@ class R2Store implements Store {
     await this.bucket.delete(key)
   }
 
-  async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
+  async list(prefix: string, cursor?: string): Promise<ListPage> {
     const r = await this.bucket.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) })
     const keys = r.objects.map((o) => o.key)
-    return r.truncated && r.cursor ? { keys, cursor: r.cursor } : { keys }
+    const info = r.objects.map((o) => ({ size: o.size ?? 0, modified: o.uploaded?.getTime() ?? 0 }))
+    return r.truncated && r.cursor ? { keys, cursor: r.cursor, info } : { keys, info }
   }
 }

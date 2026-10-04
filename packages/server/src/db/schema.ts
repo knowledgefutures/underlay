@@ -591,6 +591,8 @@ export const pushSessions = sqliteTable(
     result: json<Record<string, unknown>>('result'),
     error: json<{ statusCode: number; error: string; [k: string]: unknown }>('error'),
     finalizeStartedAt: ts('finalize_started_at'),
+    /** When storage cleanup deleted the session's objects (sessions/<id>/) and run rows. */
+    cleanedAt: ts('cleaned_at'),
     /** A parallel commit's plan (push/parallel.ts): set once, when its units are queued. */
     commitPlan: text('commit_plan'),
     /** Held by the `commit.assemble` job while it runs (one assembler at a time). */
@@ -881,3 +883,76 @@ export const instanceSettings = sqliteTable('instance_settings', {
     .notNull()
     .$defaultFn(() => new Date()),
 })
+
+// --- Storage cleanup (planning: v2-storage-cleanup.md) -------------------------------
+
+/**
+ * The write fence: one row. A write phase that may reuse objects already in the
+ * bucket (writers skip keys that exist) reads `epoch` before it writes, and the
+ * statement that makes its objects reachable succeeds only if the epoch is
+ * unchanged and no deletion window is open (cleanup/fence.ts). The sweep bumps
+ * the epoch when it opens a window and again when it closes it.
+ */
+export const storageFence = sqliteTable('storage_fence', {
+  id: integer('id').primaryKey(),
+  epoch: integer('epoch').notNull().default(0),
+  /** A deletion window is open until then; writers wait for it. */
+  windowUntil: ts('window_until'),
+  windowRunId: text('window_run_id'),
+})
+
+export type CleanupStep = 'internal' | 'mark' | 'sweep'
+export type CleanupStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed'
+
+/** Objects and bytes, deleted (or, in a dry run, that would be). */
+export interface CleanupCount {
+  objects: number
+  bytes: number
+}
+
+export interface CleanupStats {
+  /** By kind: nodes, bodies, records, roots, private, files, collections, sessions, uploads, … */
+  deleted: Record<string, CleanupCount>
+  /** Keys listed (sweep) or rows looked at (internal). */
+  scanned: number
+  /** Listed keys of a shape the sweep doesn't delete. */
+  unknown: number
+  /** Hashes in the mark (mark, and a sweep's re-marks). */
+  marked: number
+  versions: number
+  collections: number
+  /** Database rows removed alongside (files, push runs). */
+  rows: number
+  /** Deletion windows a sweep opened. */
+  windows: number
+  /** Problems that didn't stop the run, first few. */
+  problems: string[]
+}
+
+/** One run of a cleanup step: what the admin Cleanup page lists. */
+export const cleanupRuns = sqliteTable(
+  'cleanup_runs',
+  {
+    id: id(),
+    step: text('step').$type<CleanupStep>().notNull(),
+    status: text('status').$type<CleanupStatus>().notNull().default('queued'),
+    trigger: text('trigger', { enum: ['manual', 'schedule'] }).notNull(),
+    dryRun: bool('dry_run').notNull().default(false),
+    requestedBy: text('requested_by'),
+    /** A sweep's mark (a done mark run). */
+    markRunId: text('mark_run_id'),
+    /** Progress carried between the run's jobs. */
+    state: json<Record<string, unknown>>('state'),
+    stats: json<CleanupStats>('stats'),
+    /** Why it stopped (failed), or what it is waiting for (waiting). */
+    error: text('error'),
+    startedAt: ts('started_at'),
+    finishedAt: ts('finished_at'),
+    updatedAt: ts('updated_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('cleanup_runs_created_idx').on(t.createdAt),
+    index('cleanup_runs_step_idx').on(t.step, t.status),
+  ],
+)

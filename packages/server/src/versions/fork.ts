@@ -12,6 +12,7 @@
 import { makeRoot, newSalt } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
+import { FenceError, fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { appendVersionLog } from './commit.js'
@@ -77,8 +78,6 @@ export async function forkCollection(
   if (targetRepo !== repo) throw new Error('Forks across storage locations are not supported yet')
 
   const newRoot = makeRoot(root.metadata, root.public, priv)
-  const hash = await repo.putRoot(newRoot)
-
   const v = source.version
   const keepPrivate = !!priv
   const usage: SchemaUsageChange[] = [
@@ -96,48 +95,58 @@ export async function forkCollection(
     })),
   ]
   const versionId = crypto.randomUUID()
-  const published = await publishVersion(ports.db, {
-    version: {
-      id: versionId,
-      collectionId: collection.id,
-      seq: 1,
-      semver: 'v1.0.0',
-      major: 1,
-      minor: 0,
-      patch: 0,
-      hash,
-      baseSemver: null,
-      message: `Forked from ${source.collection.slug} ${v.semver}`,
-      pushedBy: null,
-      appId: null,
-      actorId: null,
-      recordCount: keepPrivate ? v.recordCount : v.publicRecordCount,
-      publicRecordCount: v.publicRecordCount,
-      fileCount: keepPrivate ? v.fileCount : v.publicFileCount,
-      totalBytes: keepPrivate ? v.totalBytes : v.publicTotalBytes,
-      publicFileCount: v.publicFileCount,
-      publicTotalBytes: v.publicTotalBytes,
-      typeCounts: keepPrivate ? v.typeCounts : v.publicTypeCounts,
-      publicTypeCounts: v.publicTypeCounts,
-      hasPrivate: newRoot.private !== null,
-      publicRefsRoot: v.publicRefsRoot,
-      privateRefsRoot: keepPrivate ? v.privateRefsRoot : null,
-      changes: { added: keepPrivate ? v.recordCount : v.publicRecordCount, removed: 0, updated: 0 },
-    },
-    baseVersionId: null,
-    collectionUpdate: {
-      publicFilesRoot: root.public.files.root,
-      summary: source.collection.summary,
-    },
-    schemaHashes: [],
-    usage,
-    fork: {
-      parentCollectionId: source.collection.id,
-      parentSeq: v.seq,
-      sets: keepPrivate ? 'public+private' : 'public',
-    },
+  // The root write and the publish are one write phase under the storage fence.
+  await fenced(ports.db, async (fence) => {
+    const hash = await repo.putRoot(newRoot)
+    const published = await publishVersion(ports.db, {
+      fence,
+      version: {
+        id: versionId,
+        collectionId: collection.id,
+        seq: 1,
+        semver: 'v1.0.0',
+        major: 1,
+        minor: 0,
+        patch: 0,
+        hash,
+        baseSemver: null,
+        message: `Forked from ${source.collection.slug} ${v.semver}`,
+        pushedBy: null,
+        appId: null,
+        actorId: null,
+        recordCount: keepPrivate ? v.recordCount : v.publicRecordCount,
+        publicRecordCount: v.publicRecordCount,
+        fileCount: keepPrivate ? v.fileCount : v.publicFileCount,
+        totalBytes: keepPrivate ? v.totalBytes : v.publicTotalBytes,
+        publicFileCount: v.publicFileCount,
+        publicTotalBytes: v.publicTotalBytes,
+        typeCounts: keepPrivate ? v.typeCounts : v.publicTypeCounts,
+        publicTypeCounts: v.publicTypeCounts,
+        hasPrivate: newRoot.private !== null,
+        publicRefsRoot: v.publicRefsRoot,
+        privateRefsRoot: keepPrivate ? v.privateRefsRoot : null,
+        changes: {
+          added: keepPrivate ? v.recordCount : v.publicRecordCount,
+          removed: 0,
+          updated: 0,
+        },
+      },
+      baseVersionId: null,
+      collectionUpdate: {
+        publicFilesRoot: root.public.files.root,
+        summary: source.collection.summary,
+      },
+      schemaHashes: [],
+      usage,
+      fork: {
+        parentCollectionId: source.collection.id,
+        parentSeq: v.seq,
+        sets: keepPrivate ? 'public+private' : 'public',
+      },
+    })
+    if (published.fenced) throw new FenceError()
+    if (!published.ok) throw new Error('Fork publish lost a race on a brand-new collection')
   })
-  if (!published.ok) throw new Error('Fork publish lost a race on a brand-new collection')
   const [version] = await ports.db
     .select()
     .from(schema.versions)

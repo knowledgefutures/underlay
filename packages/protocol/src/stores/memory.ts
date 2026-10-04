@@ -2,6 +2,7 @@ import {
   type BlobHead,
   type BlobObject,
   joinParts,
+  type ListPage,
   type Presigner,
   type PutOptions,
   type PutPartsOptions,
@@ -28,7 +29,7 @@ export function memoryStore(): MemoryStore {
 export class MemoryStore implements Store {
   readonly objects = new Map<
     string,
-    { bytes: Uint8Array; contentType: string | null; cacheControl?: string }
+    { bytes: Uint8Array; contentType: string | null; cacheControl?: string; modified?: number }
   >()
   readonly multipart = new Map<string, Map<number, Uint8Array>>()
   puts = 0
@@ -59,6 +60,7 @@ export class MemoryStore implements Store {
       bytes: typeof body === 'string' ? enc.encode(body) : body.slice(),
       contentType: opts.contentType ?? null,
       ...(opts.cacheControl ? { cacheControl: opts.cacheControl } : {}),
+      modified: Date.now(),
     })
   }
 
@@ -73,12 +75,19 @@ export class MemoryStore implements Store {
     this.objects.delete(key)
   }
 
-  async list(prefix: string, cursor?: string) {
+  async list(prefix: string, cursor?: string): Promise<ListPage> {
     const keys = [...this.objects.keys()]
       .filter((k) => k.startsWith(prefix) && (!cursor || k > cursor))
       .sort()
     const page = keys.slice(0, 1000)
-    return page.length === 1000 ? { keys: page, cursor: page[page.length - 1]! } : { keys: page }
+    const info = page.map((k) => {
+      const o = this.objects.get(k)!
+      // Objects set directly (tests) have no write time: they count as old.
+      return { size: o.bytes.byteLength, modified: o.modified ?? 0 }
+    })
+    return page.length === 1000
+      ? { keys: page, cursor: page[page.length - 1]!, info }
+      : { keys: page, info }
   }
 
   readonly presigner: Presigner = {

@@ -15,6 +15,7 @@ import { and, count, eq, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
@@ -277,14 +278,18 @@ export function manageRoutes() {
         private: null,
       })),
     )
-    const r = await commitVersion(ports, {
-      collectionId: access.collection.id,
-      base,
-      types,
-      metadata,
-      message: 'Metadata update',
-      pushedBy: c.var.principal?.userId ?? null,
-    })
+    // No change streams, so a commit a deletion window interrupted simply runs again.
+    const r = await fenced(ports.db, (fence) =>
+      commitVersion(ports, {
+        collectionId: access.collection.id,
+        fence,
+        base,
+        types,
+        metadata,
+        message: 'Metadata update',
+        pushedBy: c.var.principal?.userId ?? null,
+      }),
+    )
     if (r.status === 'conflict') return jsonError(c, 409, 'Version conflict')
     if (r.status !== 'committed') return c.json({ semver: base.semver, unchanged: true })
     return c.json({ semver: r.version.semver, hash: r.version.hash, status: 'completed' }, 201)

@@ -596,6 +596,7 @@ describe('publishVersion', () => {
     const child = await h.collection('child')
     const fork = { parentCollectionId: parent.id, parentSeq: 1, sets: 'public' as const }
     const input = (id: string, baseVersionId: string | null) => ({
+      fence: 0,
       version: row(child.id, id),
       baseVersionId,
       collectionUpdate: { publicFilesRoot: null, summary: null },

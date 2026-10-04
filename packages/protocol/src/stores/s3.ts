@@ -8,6 +8,7 @@ import { AwsClient } from 'aws4fetch'
 import type {
   BlobHead,
   BlobObject,
+  ListPage,
   PresignGetOptions,
   Presigner,
   PresignPutOptions,
@@ -212,7 +213,7 @@ export class S3Store implements Store {
     await res.body?.cancel()
   }
 
-  async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
+  async list(prefix: string, cursor?: string): Promise<ListPage> {
     const u = new URL(this.#base)
     u.searchParams.set('list-type', '2')
     u.searchParams.set('prefix', prefix)
@@ -221,8 +222,18 @@ export class S3Store implements Store {
     if (!res.ok) return this.#fail(res, `LIST ${prefix}`)
     const xml = await res.text()
     const next = xmlValues(xml, 'NextContinuationToken')[0]
-    const keys = xmlValues(xml, 'Key')
-    return next ? { keys, cursor: next } : { keys }
+    const keys: string[] = []
+    const info: { size: number; modified: number }[] = []
+    // Each <Contents> block raw (entities are decoded once, per value).
+    for (const [, c] of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      keys.push(xmlValues(c!, 'Key')[0]!)
+      const modified = Date.parse(xmlValues(c!, 'LastModified')[0] ?? '')
+      info.push({
+        size: Number(xmlValues(c!, 'Size')[0] ?? 0),
+        modified: Number.isNaN(modified) ? 0 : modified,
+      })
+    }
+    return next ? { keys, cursor: next, info } : { keys, info }
   }
 
   async #presign(url: string, method: string, expiresIn: number, headers?: Record<string, string>) {

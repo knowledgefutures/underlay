@@ -289,6 +289,7 @@ async function planSnapshot(
 export async function commitNegotiateSession(
   ports: Ports,
   session: SessionRow,
+  fence: number,
 ): Promise<
   | CommitResult
   | { status: 'base_moved'; current: string | null }
@@ -344,6 +345,7 @@ export async function commitNegotiateSession(
 
   return commitVersion(ports, {
     collectionId: session.collectionId,
+    fence,
     base,
     types: plan.types,
     metadata,

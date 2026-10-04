@@ -6,13 +6,14 @@
  */
 import { MissingFilesError } from '@underlay/protocol'
 
+import { FenceError, StorageBusyError } from '../cleanup/fence.js'
 import type { Ports } from '../ports.js'
 import type { CommitResult } from '../versions/commit.js'
 import { transition } from './session.js'
 
 export interface Outcome {
-  /** 202: a parallel commit is still running. */
-  status: 201 | 202 | 409 | 422 | 400
+  /** 202: a parallel commit is still running. 503: storage cleanup got in the way; push again. */
+  status: 201 | 202 | 409 | 422 | 400 | 503
   body: Record<string, unknown>
 }
 
@@ -36,6 +37,16 @@ export async function commitOutcome(
   try {
     r = await run()
   } catch (err) {
+    // Only after `fenced` gave up (a parallel commit can't redo its units).
+    if (err instanceof FenceError || err instanceof StorageBusyError) {
+      return {
+        status: 503,
+        body: {
+          error: 'Storage cleanup ran while this push was committing. Push again.',
+          statusCode: 503,
+        },
+      }
+    }
     if (!(err instanceof MissingFilesError)) throw err
     return {
       status: 422,

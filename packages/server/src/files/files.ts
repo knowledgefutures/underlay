@@ -7,22 +7,28 @@
  *   - small: PUT through the API, hashed in memory (bounded by SMALL_UPLOAD_BYTES);
  *   - direct: a presigned PUT (or multipart part URLs) to a staging key, then a
  *     job streams the object, checks its hash, and copies it to the canonical
- *     repository key `files/<hash>` (mirrors need canonical keys; staging keys
- *     can then expire by lifecycle rule).
+ *     repository key `files/<hash>` (mirrors need canonical keys), then deletes
+ *     the staging object. Abandoned ones go in storage cleanup (cleanup/internal.ts).
  *
  * Proof of possession: an upload always carries the bytes, even when the
  * server already has the file, so "do you have X?" is never answered for free.
+ *
+ * Storing a file reuses the bytes when a `files` row exists, so the files row
+ * and the possession are written under the storage fence (cleanup/fence.ts):
+ * if the sweep deleted an unused copy meanwhile, the store runs again and puts
+ * the bytes back.
  */
 import { createHash } from 'node:crypto'
 
 import { copyObject, fileTree, getEntry, RepoSource } from '@underlay/protocol'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 
+import { FenceError, fenced, fenceHolds, fenceMoved } from '../cleanup/fence.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import { deniedHashes } from '../lib/limits.js'
-import type { Ports } from '../ports.js'
+import type { Db, Ports } from '../ports.js'
 
 /** PUT-through-the-API limit: the body is held in isolate memory to hash it. */
 export const SMALL_UPLOAD_BYTES = 32 * 1024 * 1024
@@ -130,47 +136,86 @@ export async function storeSmallFile(
 ): Promise<'stored' | 'mismatch'> {
   const actual = createHash('sha256').update(bytes).digest('hex')
   if (actual !== hash) return 'mismatch'
-  const [existing] = await ports.db
-    .select()
-    .from(schema.files)
-    .where(eq(schema.files.hash, hash))
-    .limit(1)
-  const key = existing?.storageKey ?? ports.stores.canonicalFileKey(hash)
-  if (!existing) {
-    await ports.stores.fileBytes.put(key, bytes, { contentType: mime, ifAbsent: true })
-    await ports.db
-      .insert(schema.files)
-      .values({
-        hash,
-        size: bytes.byteLength,
-        mimeType: mime,
-        storageKey: key,
-        verifiedAt: new Date(),
-      })
-      .onConflictDoNothing()
-  }
-  const [proved] = await ports.db
-    .select({ id: schema.fileUploads.id })
-    .from(schema.fileUploads)
-    .where(
-      and(
-        eq(schema.fileUploads.collectionId, collectionId),
-        eq(schema.fileUploads.hash, hash),
-        eq(schema.fileUploads.status, 'verified'),
-      ),
-    )
-    .limit(1)
-  if (!proved) {
-    await ports.db.insert(schema.fileUploads).values({
-      collectionId,
-      hash,
-      size: bytes.byteLength,
-      mimeType: mime,
-      storageKey: key,
-      status: 'verified',
-    })
-  }
+  await fenced(ports.db, async (fence) => {
+    const [existing] = await ports.db
+      .select()
+      .from(schema.files)
+      .where(eq(schema.files.hash, hash))
+      .limit(1)
+    const key = existing?.storageKey ?? ports.stores.canonicalFileKey(hash)
+    if (!existing) {
+      await ports.stores.fileBytes.put(key, bytes, { contentType: mime, ifAbsent: true })
+      await recordFile(
+        ports.db,
+        { hash, size: bytes.byteLength, mimeType: mime, storageKey: key },
+        fence,
+      )
+    }
+    const [proved] = await ports.db
+      .select({ id: schema.fileUploads.id })
+      .from(schema.fileUploads)
+      .where(
+        and(
+          eq(schema.fileUploads.collectionId, collectionId),
+          eq(schema.fileUploads.hash, hash),
+          eq(schema.fileUploads.status, 'verified'),
+        ),
+      )
+      .limit(1)
+    if (!proved) {
+      const lit = <T>(v: unknown) => sql<T>`${v}`
+      await ports.db.insert(schema.fileUploads).select(
+        ports.db
+          .select({
+            id: lit<string>(crypto.randomUUID()).as('id'),
+            collectionId: lit<string>(collectionId).as('collection_id'),
+            sessionId: lit<string | null>(null).as('session_id'),
+            hash: lit<string>(hash).as('hash'),
+            size: lit<number>(bytes.byteLength).as('size'),
+            mimeType: lit<string>(mime).as('mime_type'),
+            storageKey: lit<string>(key).as('storage_key'),
+            multipartUploadId: lit<string | null>(null).as('multipart_upload_id'),
+            status: lit<string>('verified').as('status'),
+            error: lit<string | null>(null).as('error'),
+            createdAt: lit<number>(Date.now()).as('created_at'),
+          })
+          .from(schema.storageFence)
+          .where(fenceHolds(fence)) as never,
+      )
+      if (await fenceMoved(ports.db, fence)) throw new FenceError()
+    }
+  })
   return 'stored'
+}
+
+/**
+ * Insert a `files` row (if there is none) only while the storage fence still
+ * holds; FenceError when it doesn't, so the caller redoes its write.
+ */
+export async function recordFile(
+  db: Db,
+  f: { hash: string; size: number; mimeType: string; storageKey: string },
+  fence: number,
+): Promise<void> {
+  const lit = <T>(v: unknown) => sql<T>`${v}`
+  const now = Date.now()
+  await db
+    .insert(schema.files)
+    .select(
+      db
+        .select({
+          hash: lit<string>(f.hash).as('hash'),
+          size: lit<number>(f.size).as('size'),
+          mimeType: lit<string>(f.mimeType).as('mime_type'),
+          storageKey: lit<string>(f.storageKey).as('storage_key'),
+          verifiedAt: lit<number>(now).as('verified_at'),
+          createdAt: lit<number>(now).as('created_at'),
+        })
+        .from(schema.storageFence)
+        .where(fenceHolds(fence)) as never,
+    )
+    .onConflictDoNothing()
+  if (await fenceMoved(db, fence)) throw new FenceError()
 }
 
 export interface UploadTicket {
@@ -271,25 +316,35 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
   if (actual !== u.hash) return fail(`Hash mismatch: uploaded bytes hash to ${actual}`)
   if (size !== u.size) return fail(`Size mismatch: ${size} bytes, declared ${u.size}`)
 
-  const [existing] = await ports.db
-    .select()
-    .from(schema.files)
-    .where(eq(schema.files.hash, u.hash))
-    .limit(1)
-  if (!existing) {
-    const storageKey = ports.stores.canonicalFileKey(u.hash)
-    // With the size, a store copies past CopyObject's 5 GiB in parts (UploadPartCopy).
-    await copyObject(blobs, u.storageKey, storageKey, size)
-    await ports.db
-      .insert(schema.files)
-      .values({ hash: u.hash, size, mimeType: u.mimeType, storageKey, verifiedAt: new Date() })
-      .onConflictDoNothing()
-  }
-  await blobs.delete(u.storageKey)
-  await ports.db
-    .update(schema.fileUploads)
-    .set({ status: 'verified' })
-    .where(eq(schema.fileUploads.id, uploadId))
+  // The write phase: from here a deletion window means doing it again (the
+  // staging object stays until the upload is verified, so it can).
+  const verified = await fenced(ports.db, async (fence) => {
+    const [existing] = await ports.db
+      .select()
+      .from(schema.files)
+      .where(eq(schema.files.hash, u.hash))
+      .limit(1)
+    if (!existing) {
+      const storageKey = ports.stores.canonicalFileKey(u.hash)
+      // With the size, a store copies past CopyObject's 5 GiB in parts (UploadPartCopy).
+      await copyObject(blobs, u.storageKey, storageKey, size)
+      await recordFile(ports.db, { hash: u.hash, size, mimeType: u.mimeType, storageKey }, fence)
+    }
+    const done = await ports.db
+      .update(schema.fileUploads)
+      .set({ status: 'verified' })
+      .where(
+        and(
+          eq(schema.fileUploads.id, uploadId),
+          eq(schema.fileUploads.status, 'verifying'),
+          fenceHolds(fence),
+        ),
+      )
+      .returning({ id: schema.fileUploads.id })
+    if (done.length === 0 && (await fenceMoved(ports.db, fence))) throw new FenceError()
+    return done.length === 1
+  })
+  if (verified) await blobs.delete(u.storageKey)
 }
 
 registerJob('files.verify', async (job, ports) => verifyUpload(ports, String(job.uploadId)))

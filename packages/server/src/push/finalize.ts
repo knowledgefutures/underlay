@@ -8,11 +8,18 @@
  */
 import { and, eq, lt } from 'drizzle-orm'
 
+import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { commitDeltaSession } from './delta.js'
 import { commitNegotiateSession } from './negotiate.js'
-import { commitOutcome, type Outcome, pendingOutcome, settleSession } from './outcome.js'
+import {
+  commitOutcome,
+  type Outcome,
+  pendingOutcome,
+  type SessionCommitResult,
+  settleSession,
+} from './outcome.js'
 import { resumeParallel } from './parallel.js'
 import { getSession } from './session.js'
 
@@ -32,16 +39,19 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
     await resumeParallel(ports, session)
     return pendingOutcome(sessionId)
   }
+  // The change streams are rebuilt from the session's runs on each attempt.
   const outcome = await commitOutcome(sessionId, () =>
-    session.kind === 'delta'
-      ? commitDeltaSession(ports, session)
-      : commitNegotiateSession(ports, session),
+    fenced<SessionCommitResult>(ports.db, (fence) =>
+      session.kind === 'delta'
+        ? commitDeltaSession(ports, session, fence)
+        : commitNegotiateSession(ports, session, fence),
+    ),
   )
   await settleSession(ports, sessionId, outcome)
   return outcome
 }
 
-/** Mark sessions whose idle timeout passed as expired (their objects expire by lifecycle rule). */
+/** Mark sessions whose idle timeout passed as expired (storage cleanup deletes their objects later). */
 export async function expireSessions(ports: Ports): Promise<void> {
   await ports.db
     .update(schema.pushSessions)

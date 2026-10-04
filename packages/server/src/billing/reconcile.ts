@@ -28,6 +28,7 @@ import {
 } from '@underlay/protocol'
 import { and, asc, eq, gte, isNull, lt, or, sql } from 'drizzle-orm'
 
+import { FenceError, fenceHolds, fenceMoved, writeFence } from '../cleanup/fence.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
@@ -249,6 +250,8 @@ export async function finishReconcile(ports: Ports, collectionId: string): Promi
   if (usageDiffers) diffs.push({ field: 'schemaUsage', was, now })
 
   // The cumulative public files tree: every file any version's public set held.
+  // Writing it is a write phase: the row update below holds only under its fence.
+  const fence = await writeFence(db)
   const sink = new RepoSink<FileEntry>(repo)
   const built = await mergeTree(
     new RepoSource(fileTree, repo),
@@ -278,8 +281,16 @@ export async function finishReconcile(ports: Ports, collectionId: string): Promi
     db
       .update(schema.collections)
       .set({ ...set, reconciledAt: new Date(), reconcileReport: report.length ? report : null })
-      .where(eq(schema.collections.id, collectionId)),
+      .where(and(eq(schema.collections.id, collectionId), fenceHolds(fence))),
   ] as unknown as Parameters<typeof db.batch>[0])
+  if (await fenceMoved(db, fence)) {
+    const [now] = await db
+      .select({ at: schema.collections.reconciledAt })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, collectionId))
+    // Not written: the job runs again (the finish is idempotent until it is).
+    if (!now?.at || now.at < c.reconcileStartedAt) throw new FenceError()
+  }
   return report
 }
 

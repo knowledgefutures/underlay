@@ -288,6 +288,7 @@ async function typeInputsForDelta(
 export async function commitDeltaSession(
   ports: Ports,
   session: SessionRow,
+  fence: number,
 ): Promise<
   CommitResult | { status: 'base_moved'; current: string | null } | { status: 'parallel' }
 > {
@@ -301,12 +302,13 @@ export async function commitDeltaSession(
   const root = base ? await repo.root(base.hash) : null
   const priv = root?.private ? await repo.privateSet(root.private) : null
   const sets = { pub: root?.public ?? emptySet(), priv: priv ?? emptySet() }
-  if (await planParallel(ports, session, { inputs, runs, base, repo, ...sets })) {
+  if (await planParallel(ports, session, { inputs, runs, base, repo, fence, ...sets })) {
     return { status: 'parallel' }
   }
   const declared = 'all' in inputs.files ? null : inputs.files
   return commitVersion(ports, {
     collectionId: session.collectionId,
+    fence,
     base,
     types: await typeInputsForDelta(ports, session, inputs, runs, {
       pub: root?.public.types ?? {},

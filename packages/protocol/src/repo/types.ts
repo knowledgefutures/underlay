@@ -12,6 +12,19 @@ export interface BlobObject extends BlobHead {
   text(): Promise<string>
 }
 
+/** What a listing knows about each key: its size and when it was last written (ms). */
+export interface ObjectInfo {
+  size: number
+  modified: number
+}
+
+/** A page of keys; `info`, when the store gives it, is aligned with `keys`. */
+export interface ListPage {
+  keys: string[]
+  cursor?: string
+  info?: ObjectInfo[]
+}
+
 export interface PutOptions {
   contentType?: string
   /** Cache-Control stored with the object and sent when it's served (s3, r2, memory; fs ignores it). */
@@ -50,8 +63,11 @@ export interface Store {
   head(key: string): Promise<BlobHead | null>
   /** `ifAbsent` on an existing key succeeds without writing (keys are immutable). */
   put(key: string, body: Uint8Array | string, opts?: PutOptions): Promise<void>
-  /** Keys under a prefix in byte order, a page at a time. */
-  list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }>
+  /**
+   * Keys under a prefix in byte order, a page at a time. The built-in stores also
+   * give each key's size and last write (storage cleanup ages and sizes by them).
+   */
+  list(prefix: string, cursor?: string): Promise<ListPage>
   /** Deleting an absent key succeeds. */
   delete(key: string): Promise<void>
   /**
@@ -281,9 +297,13 @@ export class PrefixedStore implements Store {
   delete(key: string) {
     return this.inner.delete(this.#k(key))
   }
-  async list(prefix: string, cursor?: string) {
+  async list(prefix: string, cursor?: string): Promise<ListPage> {
     const r = await this.inner.list(this.#k(prefix), cursor)
     const keys = r.keys.map((k) => k.slice(this.#p.length))
-    return r.cursor === undefined ? { keys } : { keys, cursor: r.cursor }
+    return {
+      keys,
+      ...(r.cursor === undefined ? {} : { cursor: r.cursor }),
+      ...(r.info ? { info: r.info } : {}),
+    }
   }
 }

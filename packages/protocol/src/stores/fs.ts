@@ -19,6 +19,7 @@ import type * as NodeStream from 'node:stream'
 import type {
   BlobHead,
   BlobObject,
+  ListPage,
   PresignGetOptions,
   Presigner,
   PresigningStore,
@@ -188,7 +189,7 @@ export class FileStore implements Store {
     await fsp.rm(p + '.__type', { force: true })
   }
 
-  async list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }> {
+  async list(prefix: string, cursor?: string): Promise<ListPage> {
     const { fsp, path: P } = await node()
     const root = P.resolve(this.root)
     const out: string[] = []
@@ -206,7 +207,15 @@ export class FileStore implements Store {
     await walk(root)
     out.sort()
     const page = out.slice(0, 1000)
-    return page.length === 1000 ? { keys: page, cursor: page[page.length - 1]! } : { keys: page }
+    const info = await Promise.all(
+      page.map(async (k) => {
+        const st = await fsp.stat(P.join(root, ...k.split('/'))).catch(() => null)
+        return { size: st?.size ?? 0, modified: st?.mtimeMs ?? 0 }
+      }),
+    )
+    return page.length === 1000
+      ? { keys: page, cursor: page[page.length - 1]!, info }
+      : { keys: page, info }
   }
 
   #signing(): FileStoreOptions {

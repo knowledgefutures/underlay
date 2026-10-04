@@ -262,6 +262,11 @@ export function createApp(setup: Setup) {
       c.header('Retry-After', '60')
       return c.json({ error: err.message, statusCode: 429 }, 429)
     }
+    // Storage cleanup held a write past its patience (cleanup/fence.ts): brief.
+    if (err.name === 'StorageBusyError' || err.name === 'FenceError') {
+      c.header('Retry-After', '30')
+      return c.json({ error: err.message, statusCode: 503 }, 503)
+    }
     console.error('[app]', err)
     return c.json({ error: 'Internal error', statusCode: 500 }, 500)
   })

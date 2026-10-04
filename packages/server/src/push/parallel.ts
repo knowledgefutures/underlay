@@ -84,6 +84,12 @@ const builderOpts = {
 
 interface CommitPlan {
   id: string
+  /**
+   * The storage fence epoch read before the units wrote anything. Assembly
+   * publishes under it, so a deletion window during the commit fails the push
+   * (503, push again) rather than publishing a tree with a hole.
+   */
+  fence?: number
   base: BaseVersion | null
   /** Per type: its base trees, which the units merge into. */
   types: Record<string, { privateType: boolean; public: TreeSummary; private: TreeSummary }>
@@ -234,6 +240,7 @@ export async function planParallel(
     repo: Repo
     pub: SetObject
     priv: SetObject
+    fence: number
   },
 ): Promise<boolean> {
   const { inputs, runs, pub, priv } = ctx
@@ -253,7 +260,7 @@ export async function planParallel(
 
   const planId = crypto.randomUUID()
   const dir = planDir(session.id, planId)
-  const plan: CommitPlan = { id: planId, base: ctx.base, types: {} }
+  const plan: CommitPlan = { id: planId, base: ctx.base, fence: ctx.fence, types: {} }
   const rows: (typeof schema.commitUnits.$inferInsert)[] = []
   for (const [slug, s] of Object.entries(inputs.schemas)) {
     const privateType = isPrivateSchema(s)
@@ -652,6 +659,8 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     const outcome = await commitOutcome(sessionId, () =>
       commitVersion(ports, {
         collectionId: session.collectionId,
+        // Plans written before the fence existed fail if any window has opened since.
+        fence: plan.fence ?? 0,
         base: plan.base,
         types: Object.entries(inputs.schemas).map(([slug, s]) => ({
           slug,

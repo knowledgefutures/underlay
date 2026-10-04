@@ -9,7 +9,10 @@
  *   4. CAS publish (publish.ts), then the signed log entry and head.json.
  *
  * Every object is written before the publish, keyed by content, so a crash or a
- * lost race leaves only unreferenced objects. Cost is O(changes) except where
+ * lost race leaves only unreferenced objects. The publish holds only under the
+ * storage fence the write phase began with (cleanup/fence.ts); when a deletion
+ * window opened since, commitVersion throws FenceError and the caller, which
+ * owns the change streams, runs the commit again (`fenced`). Cost is O(changes) except where
  * the work is inherently per-record: revalidating a type whose schema changed,
  * removing a type, and moving a type between sets when both sets hold records.
  *
@@ -43,6 +46,7 @@ import {
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
+import { FenceError, writeFence } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { collectionFileSizes, fileSizes } from './file-refs.js'
@@ -62,6 +66,11 @@ export interface BaseVersion {
 
 export interface CommitInput {
   collectionId: string
+  /**
+   * The storage fence epoch read when this commit's write phase began (before a
+   * parallel commit's units, or around a retry loop). Read here when absent.
+   */
+  fence?: number
   base: BaseVersion | null
   /** The full new type set: types in the base but not here are removed. */
   types: TypeInput[]
@@ -118,6 +127,7 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     .where(eq(schema.collections.id, input.collectionId))
     .limit(1)
   if (!collection) throw new Error(`Collection ${input.collectionId} not found`)
+  const fence = input.fence ?? (await writeFence(db))
 
   const built = await buildVersion(repo, {
     base: input.base,
@@ -220,12 +230,14 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
       : {}),
   }
   const published = await publishVersion(db, {
+    fence,
     version: versionRow,
     baseVersionId: base?.id ?? null,
     collectionUpdate: { publicFilesRoot, summary: summarize(input.metadata) },
     schemaHashes: [...new Set(input.types.map((t) => t.schemaHash))],
     usage,
   })
+  if (published.fenced) throw new FenceError()
   if (!published.ok) return { status: 'conflict', headVersionId: published.headVersionId }
 
   const [version] = await db

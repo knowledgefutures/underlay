@@ -48,9 +48,18 @@ import {
   type VersionRoot,
   writeCollectionInfo,
 } from '@underlay/protocol'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
+import {
+  FenceError,
+  fenced,
+  fenceHolds,
+  fenceMoved,
+  StorageBusyError,
+  writeFence,
+} from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
+import { recordFile } from '../files/files.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 import { mergeCumulativeFiles, summarize } from '../versions/commit.js'
@@ -162,6 +171,7 @@ async function copyFiles(
   prevRoot: VersionRoot | null,
   root: VersionRoot,
   sets: SyncSets,
+  fence: number,
 ): Promise<string[]> {
   const pairs: [string | null, string | null][] = [
     [prevRoot?.public.files.root ?? null, root.public.files.root],
@@ -221,16 +231,16 @@ async function copyFiles(
         }
       },
     })
-    await ports.db
-      .insert(schema.files)
-      .values({
+    await recordFile(
+      ports.db,
+      {
         hash: f.key,
         size: f.size,
         mimeType: head.contentType ?? 'application/octet-stream',
         storageKey,
-        verifiedAt: new Date(),
-      })
-      .onConflictDoNothing()
+      },
+      fence,
+    )
   }
   return publicAdded
 }
@@ -243,6 +253,8 @@ export async function restoreStep(ports: Ports, restoreId: string): Promise<bool
   try {
     return await step(ports, r)
   } catch (err) {
+    // Storage cleanup got in the way: nothing was published, so the job just runs again.
+    if (err instanceof FenceError || err instanceof StorageBusyError) throw err
     await db
       .update(schema.restores)
       .set({ status: 'failed', error: (err as Error).message.slice(0, 500), updatedAt: new Date() })
@@ -283,6 +295,8 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
     sid,
   )
 
+  // The step's write phase (objects, files, publish) runs under the storage fence.
+  const fence = await writeFence(db)
   const target = await ports.stores.forCollection(r.collectionId)
   const base = r.lastVersionHash
   const sets = r.sets as SyncSets
@@ -301,7 +315,7 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
       .set({ privateSalt: priv.salt })
       .where(eq(schema.collections.id, r.collectionId))
   }
-  const publicAdded = await copyFiles(ports, source, target, prevRoot, root, sets)
+  const publicAdded = await copyFiles(ports, source, target, prevRoot, root, sets, fence)
 
   // Publish with the version's original identity.
   const pubTotals = setRecordTotals(root.public)
@@ -345,6 +359,7 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
   const id = crypto.randomUUID()
   const fileCount = root.public.files.count + (priv?.files.count ?? 0)
   const published = await publishVersion(db, {
+    fence,
     version: {
       id,
       collectionId: r.collectionId,
@@ -385,6 +400,7 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
     ],
     usage,
   })
+  if (published.fenced) throw new FenceError()
   if (!published.ok) throw new RestoreError('The collection changed while it was being restored')
 
   // The signed entry, verbatim, under this collection; its keys come along.
@@ -396,12 +412,20 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
 
   const last = seq >= head.seq
   if (last) {
-    // New commits build on the head: give it its file reference counts.
-    const refs = await rebuildFileRefs(target, { public: root.public, private: priv ?? emptySet() })
-    await db
-      .update(schema.versions)
-      .set({ publicRefsRoot: refs.public, privateRefsRoot: refs.private })
-      .where(eq(schema.versions.id, id))
+    // New commits build on the head: give it its file reference counts (a
+    // write phase of its own, after the publish).
+    await fenced(db, async (f) => {
+      const refs = await rebuildFileRefs(target, {
+        public: root.public,
+        private: priv ?? emptySet(),
+      })
+      const set = await db
+        .update(schema.versions)
+        .set({ publicRefsRoot: refs.public, privateRefsRoot: refs.private })
+        .where(and(eq(schema.versions.id, id), fenceHolds(f)))
+        .returning({ id: schema.versions.id })
+      if (set.length === 0 && (await fenceMoved(db, f))) throw new FenceError()
+    })
   }
   await db
     .update(schema.restores)

@@ -11,10 +11,15 @@
  * If another commit won, 1 inserts nothing and the rest match nothing; the
  * caller sees that by reading the head back. Everything the version points to is
  * already in the repository, so there is never a half-built version.
+ *
+ * 1 also holds only while the storage fence the caller's write phase began
+ * under is unchanged (cleanup/fence.ts): if a deletion window opened since, an
+ * object the version reuses may be gone, so the caller redoes its writes.
  */
 import { type SetName } from '@underlay/protocol'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 
+import { fenceHolds, fenceMoved } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 
@@ -61,6 +66,8 @@ export interface SchemaUsageChange {
 
 export interface PublishInput {
   version: NewVersionRow
+  /** The storage fence epoch read before the version's objects were written. */
+  fence: number
   baseVersionId: string | null
   collectionUpdate: {
     publicFilesRoot: string | null
@@ -79,7 +86,7 @@ export interface PublishInput {
 export async function publishVersion(
   db: Db,
   p: PublishInput,
-): Promise<{ ok: boolean; headVersionId: string | null }> {
+): Promise<{ ok: boolean; headVersionId: string | null; fenced: boolean }> {
   const v = p.version
   const now = Date.now()
   const createdAt = v.createdAt?.getTime() ?? now
@@ -138,7 +145,7 @@ export async function publishVersion(
           createdAt: lit<number>(createdAt).as('created_at'),
         })
         .from(schema.collections)
-        .where(headIsBase) as never,
+        .where(and(headIsBase, fenceHolds(p.fence))) as never,
     ),
     // 2. Move the head, only if it is still the base and the row from 1 exists.
     db
@@ -218,5 +225,10 @@ export async function publishVersion(
     .from(schema.collections)
     .where(eq(schema.collections.id, v.collectionId))
     .limit(1)
-  return { ok: row?.head === v.id, headVersionId: row?.head ?? null }
+  const ok = row?.head === v.id
+  return {
+    ok,
+    headVersionId: row?.head ?? null,
+    fenced: !ok && (await fenceMoved(db, p.fence)),
+  }
 }
