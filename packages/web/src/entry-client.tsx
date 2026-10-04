@@ -2,8 +2,11 @@ import { hydrateRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router'
 
 import { routes } from '~/App'
+import { listenForStaleBuild } from '~/lib/stale-build'
 
 import '~/global.css'
+
+listenForStaleBuild()
 
 const router = createBrowserRouter(routes, {
   hydrationData: (window as any).__staticRouterHydrationData,
