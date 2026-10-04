@@ -16,6 +16,8 @@
  *   GET     /api/admin/denylist                  stewards
  *   POST    /api/admin/denylist                  stewards: {hash, kind, reason, reportId?}
  *   DELETE  /api/admin/denylist/:hash            stewards
+ *   POST    /api/admin/reconcile                 stewards: {collection: "owner/slug"} starts a run
+ *   GET     /api/admin/reconcile?collection=     stewards: the last run's time and report
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
  */
@@ -385,6 +387,42 @@ export function adminRoutes() {
             stats: stats.get(x.id) ?? { versions: 0, records: 0, files: 0, bytes: 0 },
           })),
       })),
+    })
+  })
+
+  const collectionBySlugs = async (c: Context<AppEnv>, ref: unknown) => {
+    const [owner, slug] = typeof ref === 'string' ? ref.split('/') : []
+    if (!owner || !slug) return null
+    const [row] = await c.var.ports.db
+      .select({ c: schema.collections })
+      .from(schema.collections)
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
+      .where(and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug)))
+    return row?.c ?? null
+  }
+
+  app.post('/api/admin/reconcile', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as { collection?: unknown } | null
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    await c.var.ports.jobs.enqueue({ type: 'reconcile.collection', collectionId: col.id })
+    return c.json({ ok: true, queued: true }, 202)
+  })
+
+  app.get('/api/admin/reconcile', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const col = await collectionBySlugs(c, c.req.query('collection'))
+    if (!col) return jsonError(c, 404, 'Collection not found (?collection=owner/slug)')
+    return c.json({
+      startedAt: col.reconcileStartedAt,
+      reconciledAt: col.reconciledAt,
+      running:
+        !!col.reconcileStartedAt &&
+        !(col.reconciledAt && col.reconciledAt >= col.reconcileStartedAt),
+      report: col.reconcileReport ?? [],
     })
   })
 

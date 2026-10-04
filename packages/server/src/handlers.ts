@@ -15,8 +15,9 @@
 import { readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
-import * as schema from './db/schema.js'
+import { reconcileDue } from './billing/reconcile.js'
 import './files/files.js'
+import * as schema from './db/schema.js'
 import { registerJob } from './jobs.js'
 import './push/compact.js'
 import './push/parallel.js'
@@ -41,6 +42,8 @@ registerJob('version.published', async (job, ports) => {
 registerJob('maintenance.sweep', async (_job, ports) => {
   await expireSessions(ports)
   await purgeOldDeliveries(ports)
+  // Weekly counter reconciliation, a few collections at a time.
+  await reconcileDue(ports)
   // Mirrors that fell behind (a failed copy, a missed job) catch up.
   const lagging = await laggingPlacements(ports)
   await ports.jobs.enqueueBatch(

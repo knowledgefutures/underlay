@@ -26,6 +26,15 @@ const ts = (name: string) => integer(name, { mode: 'timestamp_ms' })
 const bool = (name: string) => integer(name, { mode: 'boolean' })
 const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
+/** One counter a reconcile found wrong, and the value it wrote. */
+export interface ReconcileDiff {
+  field: string
+  /** The version, for per-version counters. */
+  seq?: number
+  was: unknown
+  now: unknown
+}
+
 // --- better-auth (same fields as v1, so sessions and keys port across) -------
 
 export const user = sqliteTable('user', {
@@ -213,6 +222,10 @@ export const collections = sqliteTable(
     /** Billing counters for the reference log (decision 18); rebuildable from version diffs. */
     refEvents: integer('ref_events').notNull().default(0),
     refBytes: integer('ref_bytes').notNull().default(0),
+    /** Reconcile (billing/reconcile.ts): started, finished, and what it corrected. */
+    reconcileStartedAt: ts('reconcile_started_at'),
+    reconciledAt: ts('reconciled_at'),
+    reconcileReport: json<ReconcileDiff[]>('reconcile_report'),
     deletedAt: ts('deleted_at'),
     createdAt: createdAt(),
     updatedAt: ts('updated_at')
@@ -269,6 +282,12 @@ export const versions = sqliteTable(
     privateRefsRoot: text('private_refs_root'),
     /** The reference log has this version's events (written by the refs.index job). */
     refsIndexed: bool('refs_indexed').notNull().default(false),
+    /** Its events and their billable bytes, once indexed (null on rows indexed before 0011). */
+    refEvents: integer('ref_events'),
+    refBytes: integer('ref_bytes'),
+    /** Last reconcile (billing/reconcile.ts), and what it corrected, if anything. */
+    reconciledAt: ts('reconciled_at'),
+    reconcileReport: json<ReconcileDiff[]>('reconcile_report'),
     /** Change counts against the previous version (drive semver and webhooks). */
     changes: json<{ added: number; removed: number; updated: number }>('changes'),
     createdAt: createdAt(),

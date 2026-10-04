@@ -42,7 +42,8 @@ const PART_EVENTS = 4_000_000
 
 // --- Generating a version's events ---------------------------------------------------
 
-async function* versionEvents(
+/** A version's events: the diff against the version before it, both sets, records and files. */
+export async function* versionEvents(
   ports: Ports,
   version: typeof schema.versions.$inferSelect,
 ): AsyncGenerator<RefEvent> {
@@ -192,7 +193,10 @@ export async function indexVersion(ports: Ports, versionId: string): Promise<voi
         refBytes: sql`${schema.collections.refBytes} + ${bytes}`,
       })
       .where(and(eq(schema.collections.id, version.collectionId), unindexed)),
-    db.update(schema.versions).set({ refsIndexed: true }).where(eq(schema.versions.id, versionId)),
+    db
+      .update(schema.versions)
+      .set({ refsIndexed: true, refEvents: events, refBytes: bytes })
+      .where(eq(schema.versions.id, versionId)),
   ] as unknown as Parameters<typeof db.batch>[0])
   await ports.jobs.enqueue({ type: 'refs.compact' })
 }

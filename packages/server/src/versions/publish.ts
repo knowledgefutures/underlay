@@ -130,6 +130,10 @@ export async function publishVersion(
           publicRefsRoot: lit<string | null>(v.publicRefsRoot).as('public_refs_root'),
           privateRefsRoot: lit<string | null>(v.privateRefsRoot).as('private_refs_root'),
           refsIndexed: lit<number>(0).as('refs_indexed'),
+          refEvents: lit<number | null>(null).as('ref_events'),
+          refBytes: lit<number | null>(null).as('ref_bytes'),
+          reconciledAt: lit<number | null>(null).as('reconciled_at'),
+          reconcileReport: lit<string | null>(null).as('reconcile_report'),
           changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
           createdAt: lit<number>(createdAt).as('created_at'),
         })
