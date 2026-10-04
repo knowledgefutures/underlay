@@ -49,6 +49,12 @@ have them, or have none, are skipped. It writes `UPDATE versions …` lines to
 `REFS_SQL` (default `./refs.sql`); apply them with `wrangler d1 execute … --file`.
 Without it nothing breaks: older trees take the slower path.
 
+**Pause storage cleanup first.** These tools write objects to the bucket now and their
+rows land in D1 later, outside the write fence, so a sweep in between would delete what
+they wrote. On a deployment that has storage cleanup (migration 0015), switch on "Pause
+marks and sweeps" at `/admin/cleanup` (or set `cleanup_paused` in `instance_settings`)
+before converting or repairing, and switch it off once every row is loaded.
+
 ## Tests
 
 `npx vitest run --root packages/migrate`: the converter against v1's own
