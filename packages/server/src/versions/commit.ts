@@ -96,16 +96,11 @@ export interface CommitInput {
   /** Validate a record's data against its type's schema; errors or null. Used when a schema changes. */
   validate?: (schema: Record<string, unknown>, data: unknown) => string[] | null
   /**
-   * Migration only: keep a v1 version's identity. Its semver (v1's rules may
-   * have differed over time), creation time and v1 hashes; and skip the
-   * post-publish job (webhooks would fire for history).
+   * Migration only: keep a v1 version's semver (v1's rules may have differed
+   * over time) and creation time, and skip the post-publish job (webhooks
+   * would fire for history).
    */
-  migrated?: {
-    semver: string
-    createdAt: Date
-    legacyHash: string | null
-    legacyPublicHash: string | null
-  }
+  migrated?: { semver: string; createdAt: Date }
 }
 
 export type CommitResult =
@@ -221,13 +216,7 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     publicRefsRoot: built.publicRefsRoot,
     privateRefsRoot: built.privateRefsRoot,
     changes: stats,
-    ...(input.migrated
-      ? {
-          createdAt: input.migrated.createdAt,
-          legacyHash: input.migrated.legacyHash,
-          legacyPublicHash: input.migrated.legacyPublicHash,
-        }
-      : {}),
+    ...(input.migrated ? { createdAt: input.migrated.createdAt } : {}),
   }
   const published = await publishVersion(db, {
     fence,

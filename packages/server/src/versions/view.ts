@@ -40,13 +40,6 @@ export async function findVersion(
     where = eq(schema.versions.id, headVersionId)
   } else if (n.startsWith('ulv2:')) {
     where = and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.hash, n))
-  } else if (n.startsWith('private:') || n.startsWith('public:')) {
-    where = and(
-      eq(schema.versions.collectionId, collectionId),
-      n.startsWith('private:')
-        ? eq(schema.versions.legacyHash, n)
-        : eq(schema.versions.legacyPublicHash, n),
-    )
   } else {
     where = and(
       eq(schema.versions.collectionId, collectionId),

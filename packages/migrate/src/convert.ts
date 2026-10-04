@@ -11,11 +11,10 @@
  *    its v1 record set and the previous one, computed in Postgres and streamed
  *    in (type, id) order (COLLATE "C" = UTF-8 byte order, the trees' order), so
  *    the cost is O(changes) per version. Metadata-patch versions (shared record
- *    sets) produce no record changes. Versions keep their v1 semver, time and
- *    hashes (as v1 aliases).
+ *    sets) produce no record changes. Versions keep their v1 semver and time.
  *
- * Records are re-hashed under v2. A record whose hash changes (integer-like
- * keys; JCS) gets a legacy_hashes alias. Field-level privacy is gone in v2:
+ * Records, schemas and versions are re-hashed under v2, and their v1 hashes are
+ * not kept: nothing outside the platform refers to them. Field-level privacy is gone in v2:
  * a type with private fields becomes a wholly private type, and the report says
  * so (edge-redesign.md asks to check this is unused before migrating).
  */
@@ -69,7 +68,6 @@ export interface MigrationReport {
   versions: number
   skippedVersions: { collection: string; semver: string; reason: string }[]
   recordUpserts: number
-  legacyRecordAliases: number
   fieldPrivateTypes: { collection: string; type: string }[]
   /**
    * v1 let a version hold one (type, id) twice with different data; v2 keys are
@@ -84,7 +82,6 @@ export const newReport = (): MigrationReport => ({
   versions: 0,
   skippedVersions: [],
   recordUpserts: 0,
-  legacyRecordAliases: 0,
   fieldPrivateTypes: [],
   duplicateIds: [],
   copied: {},
@@ -482,7 +479,6 @@ export async function migrateCollection(
   let prevRecords: string | null = null
   let prevFiles = new Set<string>()
   const everFiles = new Set<string>()
-  const aliases: { legacyHash: string; hash: string }[] = []
 
   for (const v of versions) {
     const recordsId = v.records_from_version_id ?? v.id
@@ -533,7 +529,6 @@ export async function migrateCollection(
           const target = privateType || d.upsert.private ? 'private' : 'public'
           const { hash, canonical } = hashRecord(d.id, row.slug, d.upsert.data)
           report.recordUpserts++
-          if (hash !== d.upsert.hash) aliases.push({ legacyHash: d.upsert.hash, hash })
           const size = utf8ByteLength(canonical)
           const body =
             size > OUT_OF_LINE_BYTES ? await repo.putOutOfLine(hash, canonical) : canonical
@@ -568,12 +563,7 @@ export async function migrateCollection(
       pushedBy: v.pushed_by,
       appId: v.app_id,
       actorId: v.actor_id,
-      migrated: {
-        semver: v.semver,
-        createdAt: v.created_at,
-        legacyHash: v.hash,
-        legacyPublicHash: v.public_hash,
-      },
+      migrated: { semver: v.semver, createdAt: v.created_at },
     })
     if (r.status === 'committed') {
       report.versions++
@@ -596,13 +586,6 @@ export async function migrateCollection(
     }
   }
 
-  for (let i = 0; i < aliases.length; i += 50) {
-    await ports.db
-      .insert(schema.legacyHashes)
-      .values(aliases.slice(i, i + 50).map((a) => ({ ...a, kind: 'record' as const })))
-      .onConflictDoNothing()
-  }
-  report.legacyRecordAliases += aliases.length
   await recordPossession(ports, col.id, everFiles)
   // Publishing the replayed versions stamped the conversion time; keep v1's.
   await ports.db

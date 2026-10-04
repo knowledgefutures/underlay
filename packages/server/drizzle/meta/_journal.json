@@ -120,6 +120,13 @@
       "when": 1791144083303,
       "tag": "0016_drop_negotiate",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1791144123221,
+      "tag": "0017_drop_v1_hashes",
+      "breakpoints": true
     }
   ]
 }

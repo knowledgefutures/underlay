@@ -49,10 +49,8 @@ export interface NewVersionRow {
   publicRefsRoot: string | null
   privateRefsRoot: string | null
   changes: { added: number; removed: number; updated: number }
-  /** Migration only: the v1 version's time and hashes. */
+  /** Migration only: the v1 version's time. */
   createdAt?: Date
-  legacyHash?: string | null
-  legacyPublicHash?: string | null
 }
 
 export interface SchemaUsageChange {
@@ -115,8 +113,6 @@ export async function publishVersion(
           minor: lit<number>(v.minor).as('minor'),
           patch: lit<number>(v.patch).as('patch'),
           hash: lit<string>(v.hash).as('hash'),
-          legacyHash: lit<string | null>(v.legacyHash ?? null).as('legacy_hash'),
-          legacyPublicHash: lit<string | null>(v.legacyPublicHash ?? null).as('legacy_public_hash'),
           baseSemver: lit<string | null>(v.baseSemver).as('base_semver'),
           message: lit<string | null>(v.message).as('message'),
           pushedBy: lit<string | null>(v.pushedBy).as('pushed_by'),

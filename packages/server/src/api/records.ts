@@ -8,7 +8,7 @@
  * Results are filtered by the caller's access before anything is returned,
  * counts included (edge-redesign.md, Security notes): a presence counts only if
  * it is in a public collection's public set, or in a collection of the caller's
- * orgs. v1 record hashes resolve through legacy_hashes.
+ * orgs.
  */
 import { and, eq, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
@@ -60,12 +60,7 @@ async function visiblePresence(
   cols = new Map<string, { c: Item['c']; owner: Item['owner'] }>(),
 ) {
   const { db } = c.var.ports
-  const [alias] = await db
-    .select()
-    .from(schema.legacyHashes)
-    .where(eq(schema.legacyHashes.legacyHash, hash))
-  const target = alias?.hash ?? hash
-  const presence = await presenceOf(c.var.ports, target)
+  const presence = await presenceOf(c.var.ports, hash)
   const missing = [...new Set(presence.map((p) => p.collectionId))].filter((id) => !cols.has(id))
   for (const part of chunks(missing)) {
     const rows = await db
@@ -82,7 +77,7 @@ async function visiblePresence(
     const visible = member || (col.c.public && p.set === 'public')
     return visible ? [{ p, c: col.c, owner: col.owner, member }] : []
   })
-  return { target, items }
+  return items
 }
 
 /**
@@ -165,10 +160,10 @@ export function recordRoutes() {
 
   app.get('/api/records/:hash/provenance', async (c) => {
     const hash = c.req.param('hash').replace(/^sha256:/, '')
-    const { target, items } = await visiblePresence(c, hash, await memberOrgs(c))
+    const items = await visiblePresence(c, hash, await memberOrgs(c))
     const records = items.filter((i) => i.p.kind === 'r')
     if (records.length === 0) return jsonError(c, 404, 'Record not found')
-    const rec = await firstBody(c, records, target)
+    const rec = await firstBody(c, records, hash)
     if (!rec) return jsonError(c, 404, 'Record not found')
     const parsed = JSON.parse(rec.body!) as { id: string; type: string; data: unknown }
     const byId = new Map(records.map((i) => [i.c.id, i]))
@@ -197,7 +192,7 @@ export function recordRoutes() {
     references.sort((a, b) => a.versionCreatedAt.getTime() - b.versionCreatedAt.getTime())
     return c.json({
       hash,
-      recordHash: target,
+      recordHash: hash,
       recordId: parsed.id,
       type: parsed.type,
       data: parsed.data,
@@ -217,12 +212,7 @@ export function recordRoutes() {
   app.get('/api/records/:hash/first', async (c) => {
     const hash = c.req.param('hash').replace(/^sha256:/, '')
     const { db } = c.var.ports
-    const [alias] = await db
-      .select()
-      .from(schema.legacyHashes)
-      .where(eq(schema.legacyHashes.legacyHash, hash))
-    const target = alias?.hash ?? hash
-    const adds = (await eventsFor(c.var.ports, target)).filter((e) => e[5] === '+')
+    const adds = (await eventsFor(c.var.ports, hash)).filter((e) => e[5] === '+')
     if (adds.length === 0) return jsonError(c, 404, 'Not found')
     const orgs = await memberOrgs(c)
     const cols = new Map<string, { c: Item['c']; owner: Item['owner'] }>()
@@ -252,7 +242,7 @@ export function recordRoutes() {
     if (!first) return jsonError(c, 404, 'Not found')
     const col = cols.get(first.e[2])!
     return c.json({
-      hash: target,
+      hash,
       kind: first.e[1] === 'r' ? 'record' : 'file',
       owner: col.owner.slug,
       collection: col.c.slug,
@@ -273,11 +263,12 @@ export function recordRoutes() {
     const cols = new Map<string, { c: Item['c']; owner: Item['owner'] }>()
     const lines: string[] = []
     for (const h of hashes) {
-      const { target, items } = await visiblePresence(c, h.replace(/^sha256:/, ''), orgs, cols)
+      const hash = h.replace(/^sha256:/, '')
+      const items = await visiblePresence(c, hash, orgs, cols)
       const rec = await firstBody(
         c,
         items.filter((i) => i.p.kind === 'r'),
-        target,
+        hash,
       )
       if (rec) lines.push(`${rec.body!.slice(0, -1)},"hash":"${rec.hash}"}`)
     }
@@ -289,7 +280,7 @@ export function recordRoutes() {
   app.get('/api/collections/files/:hash', async (c) => {
     const hash = c.req.param('hash').replace(/^sha256:/, '')
     if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
-    const { items } = await visiblePresence(c, hash, await memberOrgs(c))
+    const items = await visiblePresence(c, hash, await memberOrgs(c))
     const found = items.find((i) => i.p.kind === 'f')
     if (!found) return jsonError(c, 404, 'File not found')
     const url = await presignDownload(c.var.ports, hash)

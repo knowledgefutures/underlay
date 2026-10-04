@@ -253,9 +253,6 @@ export const versions = sqliteTable(
     patch: integer('patch').notNull(),
     /** `ulv2:<hex>`; the root document is roots/<hex>.json in the blob store. */
     hash: text('hash').notNull(),
-    /** v1 hashes of migrated versions (`private:…`, `public:…`). */
-    legacyHash: text('legacy_hash'),
-    legacyPublicHash: text('legacy_public_hash'),
     baseSemver: text('base_semver'),
     message: text('message'),
     pushedBy: text('pushed_by'),
@@ -302,8 +299,6 @@ export const versions = sqliteTable(
     uniqueIndex('versions_collection_seq_uq').on(t.collectionId, t.seq),
     uniqueIndex('versions_collection_semver_uq').on(t.collectionId, t.semver),
     index('versions_hash_idx').on(t.hash),
-    index('versions_legacy_hash_idx').on(t.legacyHash),
-    index('versions_legacy_public_hash_idx').on(t.legacyPublicHash),
     index('versions_published_idx').on(t.publishedAt),
   ],
 )
@@ -365,13 +360,6 @@ export const schemaUsage = sqliteTable(
     index('schema_usage_hash_idx').on(t.schemaHash),
   ],
 )
-
-/** v1 → v2 aliases for records and schemas re-hashed by JCS. */
-export const legacyHashes = sqliteTable('legacy_hashes', {
-  legacyHash: text('legacy_hash').primaryKey(),
-  kind: text('kind', { enum: ['record', 'schema'] }).notNull(),
-  hash: text('hash').notNull(),
-})
 
 // --- Storage locations and placements (edge-redesign.md, "Placements") -----------------
 

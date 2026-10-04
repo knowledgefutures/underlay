@@ -1,15 +1,7 @@
 export * from './constants.js'
 export { jcs } from './jcs.js'
 export { compareUtf8, isWellFormed, utf8, utf8ByteLength } from './utf8.js'
-export {
-  hashRecord,
-  hashSchema,
-  hasArrayIndexKey,
-  legacyRecordHash,
-  legacySchemaHash,
-  recordCanonical,
-  sha256Hex,
-} from './hash.js'
+export { hashRecord, hashSchema, recordCanonical, sha256Hex } from './hash.js'
 export { nativeSha256, sha256, sha256Hasher } from './sha256.js'
 export {
   checkRecordId,

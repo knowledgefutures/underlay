@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { PGlite } from '@electric-sql/pglite'
-import { hashRecord, hashSchema, legacyRecordHash, verifyLog } from '@underlay/protocol'
+import { hashRecord, hashSchema, sha256Hex, verifyLog } from '@underlay/protocol'
 import { dbSchema } from '@underlay/server'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -66,7 +66,7 @@ describe('v1 → v2 migration', () => {
     ['keyset pages', false],
     ['cursors', true],
   ])(
-    'replays a collection history with its privacy, files and legacy hashes (%s)',
+    'replays a collection history with its privacy and files, re-hashed (%s)',
     async (_, cursors) => {
       const { pg, db } = await v1Database(cursors)
       const q = (s: string, p: unknown[] = []) => pg.query(s, p)
@@ -96,7 +96,9 @@ describe('v1 → v2 migration', () => {
         // v1 let a version hold an id twice; the newer record object wins.
         cOld: { id: 'c', data: { name: 'C, older' } },
       }
-      const v1hash = (r: { id: string; data: unknown }) => legacyRecordHash(r.id, 'Author', r.data)
+      // v1's own record hashes: the converter re-hashes, so any unique value will do.
+      const v1hash = (r: { id: string; data: unknown }) =>
+        sha256Hex(JSON.stringify({ v1: [r.id, r.data] }))
       for (const r of Object.values(records)) {
         await q(
           `INSERT INTO record_objects (hash, record_id, type, data, size, created_at) VALUES ($1, $2, 'Author', $3, 10, $4) ON CONFLICT DO NOTHING`,
@@ -192,7 +194,6 @@ describe('v1 → v2 migration', () => {
           },
         ],
       })
-      expect(report.legacyRecordAliases).toBeGreaterThan(0)
 
       const json = async (path: string, user?: string) =>
         (await (await h.request(path, user ? { user } : {})).json()) as any
@@ -223,11 +224,15 @@ describe('v1 → v2 migration', () => {
       const file = await h.request(`/api/collections/org/lib/files/${FILE}`)
       expect(file.status).toBe(302)
       expect(file.headers.get('location')).toContain('files/ff/ff/legacy')
-      // Provenance by the v1 hash of b resolves through the alias (members only now).
-      const prov = await json(`/api/records/${v1hash(records.b)}/provenance`, 'u1')
-      expect(prov.recordHash).toBe(hashRecord('b', 'Author', records.b.data).hash)
+      // Provenance by b's v2 hash (members only now); its v1 hash is gone.
+      const bHash = hashRecord('b', 'Author', records.b.data).hash
+      const prov = await json(`/api/records/${bHash}/provenance`, 'u1')
+      expect(prov.recordHash).toBe(bHash)
+      expect(
+        (await h.request(`/api/records/${v1hash(records.b)}/provenance`, { user: 'u1' })).status,
+      ).toBe(404)
       expect(prov.references.map((r: any) => r.semver)).toEqual(['v1.0.0', 'v1.1.0', 'v1.1.1'])
-      // Legacy version hashes, and the signed log over the replayed history.
+      // The signed log over the replayed history; v1 version hashes don't resolve.
       const repo = await h.ports.stores.forCollection('11111111-1111-1111-1111-111111111111')
       const { entries } = await verifyLog(repo, '11111111-1111-1111-1111-111111111111', [
         h.signer.publicKey,
@@ -237,8 +242,10 @@ describe('v1 → v2 migration', () => {
         ['v1.1.0', '2026-02-01'],
         ['v1.1.1', '2026-03-01'],
       ])
-      const byLegacy = await json('/api/collections/org/lib/versions/private:v1.1.0', 'u1')
-      expect(byLegacy.semver).toBe('v1.1.0')
+      expect(
+        (await h.request('/api/collections/org/lib/versions/private:v1.1.0', { user: 'u1' }))
+          .status,
+      ).toBe(404)
     },
   )
 })

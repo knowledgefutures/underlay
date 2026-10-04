@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  hashRecord,
-  hashSchema,
-  hasArrayIndexKey,
-  jcs,
-  legacyRecordHash,
-  legacySchemaHash,
-} from '../src/index.js'
+import { hashRecord, hashSchema, jcs } from '../src/index.js'
 
 describe('jcs', () => {
   it('matches RFC 8785 §3.2.2 (primitives, numbers, escaping)', () => {
@@ -71,29 +64,23 @@ describe('jcs', () => {
 })
 
 describe('record and schema hashes', () => {
-  it('keeps v1 hashes for records without integer-like keys', () => {
-    // Golden value from v1's hash.test.ts.
+  it('hashes a record as its fixed envelope', () => {
     const { hash, canonical } = hashRecord('r1', 'Author', { name: 'Ada', year: 1815 })
     expect(canonical).toBe('{"id":"r1","type":"Author","data":{"name":"Ada","year":1815}}')
     expect(hash).toBe('adefbd10aa438f0c6ed1627817f391ac6cc0441737ee09b4ebcc30fbd8386c63')
-    expect(legacyRecordHash('r1', 'Author', { name: 'Ada', year: 1815 })).toBe(hash)
   })
 
-  it('keeps v1 schema hashes without integer-like keys', () => {
+  it('hashes a schema as its canonical JSON', () => {
     const schema = { type: 'object', properties: { name: { type: 'string' } } }
     expect(hashSchema(schema)).toBe(
       '2b7196d853bac7cea83330be9c2073848dedc10746eaf403bb5f73687531baf2',
     )
-    expect(legacySchemaHash(schema)).toBe(hashSchema(schema))
   })
 
-  it('re-hashes data with integer-like keys, and only that data', () => {
-    const data = { 9: 'x', 10: 'y' }
-    expect(hasArrayIndexKey(data)).toBe(true)
-    expect(hashRecord('r', 't', data).hash).not.toBe(legacyRecordHash('r', 't', data))
-    expect(hasArrayIndexKey({ a: [{ b: 1 }], c: '9' })).toBe(false)
-    expect(hasArrayIndexKey({ a: [{ '01': 1 }] })).toBe(false) // "01" is not an array index
-    expect(hasArrayIndexKey({ a: [{ 4294967295: 1 }] })).toBe(false) // 2^32−1 is not either
-    expect(hasArrayIndexKey({ a: [{ 4294967294: 1 }] })).toBe(true)
+  it('sorts integer-like keys as strings, not numbers', () => {
+    // JSON.stringify of a JS object would put "9" first.
+    expect(hashRecord('r', 't', { 9: 'x', 10: 'y' }).canonical).toBe(
+      '{"id":"r","type":"t","data":{"10":"y","9":"x"}}',
+    )
   })
 })
