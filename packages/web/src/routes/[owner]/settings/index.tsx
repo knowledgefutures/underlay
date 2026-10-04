@@ -253,7 +253,7 @@ export default function OwnerSettings() {
                 </Button>
               )}
             </form>
-            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 5 MB.</p>
+            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 1 MB.</p>
           </div>
         </div>
       )}

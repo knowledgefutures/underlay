@@ -50,6 +50,7 @@ try {
     jobs: new SqliteJobs(db),
     waitUntil: (p) => void p.catch((err) => console.error(err)),
     outboundFetch: async () => new Response('ok'),
+    publicAssets: { store: memoryStore(), baseUrl: 'https://assets.smoke.test' },
   }
   const app = createApp(() => ({
     ports,
@@ -180,6 +181,16 @@ try {
   await db.insert(schema.user).values({ id: 'u2', name: 'Bea', email: 'u2@example.org' })
   await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u2', role: 'member' })
   console.log('seeded a storage location and a mirror\n')
+
+  // --- An org logo, uploaded the way the settings page sends it.
+  const form = new FormData()
+  const pngBytes = new Uint8Array(64).fill(7)
+  pngBytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  form.append('avatar', new File([pngBytes], 'logo.png', { type: 'image/png' }))
+  res = await call('/api/accounts/org/avatar', { method: 'POST', body: form }, 'u1')
+  if (res.status !== 200) throw new Error(`avatar upload: ${res.status} ${await res.text()}`)
+  const { avatarUrl } = (await res.json()) as { avatarUrl: string }
+  console.log(`uploaded a logo: ${avatarUrl}\n`)
 
   // --- Pages.
   // A record hash and a schema id, for the provenance and schema pages.
@@ -357,6 +368,14 @@ try {
       lacks: ['Sync now', 'Add mirror'],
       user: 'u2',
     },
+    // The org's settings: the logo it has, and the upload form for owners.
+    {
+      path: '/org/settings',
+      status: 200,
+      has: [`src="${avatarUrl}"`, 'Upload logo', 'Remove', 'up to 1 MB'],
+      user: 'u1',
+    },
+    { path: '/org', status: 200, has: [avatarUrl] },
     // The org's storage page: owners and admins only, credentials never shown.
     {
       path: '/org/settings/storage',
