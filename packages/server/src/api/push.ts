@@ -28,6 +28,7 @@ import {
   ingestRecords,
   MAX_BATCH_BYTES,
   prepareRecords,
+  versionBase,
 } from '../push/delta.js'
 import { finalizeSession } from '../push/finalize.js'
 import {
@@ -333,8 +334,13 @@ export function pushRoutes() {
       if (!inputs.schemas[m.type])
         throw new ManifestError(`No schema defined for record type "${m.type}"`)
     }
-    const head = await headBase(ports, session.collectionId)
-    const trees = await baseTrees(ports, session.collectionId, head?.hash ?? null)
+    // Against what the commit will diff against (commitNegotiateSession): the
+    // session's base when it named one, otherwise whatever the head is.
+    const base =
+      session.baseSemver !== null
+        ? await versionBase(ports, session.baseVersionId)
+        : await headBase(ports, session.collectionId)
+    const trees = await baseTrees(ports, session.collectionId, base?.hash ?? null)
     const needed = await neededOf(trees, entries)
     const seq = await nextRunSeq(ports, session.id)
     if (seq === null) throw new ManifestError('Session is not open', 409)

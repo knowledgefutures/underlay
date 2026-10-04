@@ -218,8 +218,20 @@ export async function headBase(ports: Ports, collectionId: string): Promise<Base
     .innerJoin(schema.versions, eq(schema.versions.id, schema.collections.headVersionId))
     .where(eq(schema.collections.id, collectionId))
     .limit(1)
-  if (!row) return null
-  const v = row.v
+  return row ? asBase(row.v) : null
+}
+
+/** A version by id as a commit base (null for none). */
+export async function versionBase(
+  ports: Ports,
+  versionId: string | null,
+): Promise<BaseVersion | null> {
+  if (!versionId) return null
+  const [v] = await ports.db.select().from(schema.versions).where(eq(schema.versions.id, versionId))
+  return v ? asBase(v) : null
+}
+
+function asBase(v: typeof schema.versions.$inferSelect): BaseVersion {
   return {
     id: v.id,
     seq: v.seq,
