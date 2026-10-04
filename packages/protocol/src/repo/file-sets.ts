@@ -273,7 +273,7 @@ export async function applyFileSet(
 
 /**
  * The file reference count trees of a version, rebuilt from its records (they
- * are writer bookkeeping and travel with no sync, mirror or restore). Every
+ * are writer bookkeeping and travel with no sync or mirror). Every
  * reference counts, and a private-set file no record references was declared.
  * Throws if the rebuilt file sets differ from the version's.
  */

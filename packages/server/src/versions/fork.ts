@@ -26,11 +26,9 @@ export async function createCollectionRows(
     name: string
     public: boolean
     privateSalt?: string
-    /** Restore only: keep the id the collection's signed log names. */
-    id?: string
   },
 ): Promise<typeof schema.collections.$inferSelect> {
-  const id = c.id ?? crypto.randomUUID()
+  const id = crypto.randomUUID()
   await ports.db.batch([
     ports.db.insert(schema.collections).values({
       id,

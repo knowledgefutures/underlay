@@ -333,7 +333,7 @@ async function deleteCandidates(
       stats.windows++
       await remark(ports, marks, markStartedAt, group)
       let doomed = group.filter((c) => !live(c))
-      // A collection restored since it was listed has a row again.
+      // A collection whose row exists by now is live.
       const owners = doomed.filter((c) => c.kind === 'collections').map((c) => c.owner!)
       if (owners.length) {
         const inUse = new Set<string>()

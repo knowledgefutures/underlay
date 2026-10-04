@@ -41,7 +41,6 @@ export interface LocationOption {
   id: string
   name: string
   status: string
-  permissions: 'write' | 'read_write'
 }
 
 const STATE_STYLES: Record<Placement['state'], string> = {

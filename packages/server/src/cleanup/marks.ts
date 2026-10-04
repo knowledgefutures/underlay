@@ -139,8 +139,8 @@ export class Marker {
     const root = await this.repo.root(hash)
     await this.set(root.public)
     if (root.private) {
-      // A version restored with its public sets only keeps the commitment but not
-      // the object: nothing of it is here to keep.
+      // A version copied with its public sets only (a public mirror read back)
+      // keeps the commitment but not the object: nothing of it is here to keep.
       if (await this.repo.blobs.head(keys.privateSet(root.private))) {
         await this.set(await this.repo.privateSet(root.private))
       }

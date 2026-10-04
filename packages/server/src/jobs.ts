@@ -10,7 +10,7 @@
  * Two kinds (v2-scale-review.md S1, S2): bulk jobs can run for minutes or walk
  * a whole collection, and go to their own queue, one per invocation; the rest
  * are small and interactive (a webhook, a file check), and run several at a
- * time so they never wait behind a bulk push, a mirror backfill or a restore.
+ * time so they never wait behind a bulk push or a mirror backfill.
  */
 import { and, asc, eq, lte, or, sql } from 'drizzle-orm'
 
@@ -29,7 +29,6 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'refs.compactPart',
   'refs.finishCompaction',
   'mirror.version',
-  'restore.version',
   'repo.repairLog',
   'reconcile.collection',
   'reconcile.version',

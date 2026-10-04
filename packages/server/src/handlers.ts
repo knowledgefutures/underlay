@@ -10,7 +10,6 @@
  *   commit.assemble     (push/parallel.ts)
  *   mirror.version      copy the next version to a bucket mirror (locations/mirror.ts);
  *                       queued after each publish, and by the sweep for laggards
- *   restore.version     rebuild a collection from a location, a version at a time
  *   maintenance.sweep   the cron's housekeeping (every 10 minutes), storage cleanup included
  *   cleanup.*           storage cleanup runs (cleanup/runs.ts)
  */
@@ -26,7 +25,6 @@ import './push/parallel.js'
 import './refs/log.js'
 import { registerJob } from './jobs.js'
 import { recheckLocations } from './locations/locations.js'
-import './locations/restore.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'

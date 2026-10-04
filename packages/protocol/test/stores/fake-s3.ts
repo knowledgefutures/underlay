@@ -21,7 +21,8 @@ export interface FakeS3 {
 export async function startFakeS3(
   bucket = 'test',
   listenPort = 0,
-  opts: { publicRead?: boolean } = {},
+  /** region: refuse requests signed for another region, as S3 does, and name it on a bucket HEAD. */
+  opts: { publicRead?: boolean; region?: string } = {},
 ): Promise<FakeS3> {
   const objects: FakeS3['objects'] = new Map()
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
@@ -37,6 +38,18 @@ export async function startFakeS3(
     const signed =
       !!req.headers.authorization?.startsWith('AWS4-HMAC-SHA256') ||
       url.searchParams.has('X-Amz-Signature')
+    if (opts.region) {
+      const scope =
+        /Credential=[^/]+\/\d+\/([^/]+)\//.exec(req.headers.authorization ?? '')?.[1] ??
+        url.searchParams.get('X-Amz-Credential')?.split('/')[2]
+      const where = { 'x-amz-bucket-region': opts.region }
+      if (req.method === 'HEAD' && url.pathname.split('/').filter(Boolean).length === 1)
+        return void res.writeHead(scope === opts.region ? 200 : 403, where).end()
+      if (signed && scope !== opts.region)
+        return void res
+          .writeHead(400, where)
+          .end('<Error><Code>AuthorizationHeaderMalformed</Code></Error>')
+    }
     if (!signed && !(opts.publicRead && req.method === 'GET')) {
       res.writeHead(403).end('<Error><Code>AccessDenied</Code></Error>')
       return

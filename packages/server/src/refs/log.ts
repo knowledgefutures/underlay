@@ -284,7 +284,7 @@ export async function compactPart(ports: Ports, compactionId: string, part: numb
   )
   const heads = await Promise.all(streams.map(async (s) => ({ s, h: await s.next() })))
   const writer = new SegmentWriter(ports.stores.internal, (n) => `${comp.outputRun}-${part}-${n}`)
-  // Events of deleted collections (tombstoned, and not restored since) go.
+  // Events of deleted collections (tombstoned, with no row) go.
   const gone = await deletedCollections(ports)
   for (;;) {
     let best: (typeof heads)[number] | null = null
@@ -308,7 +308,7 @@ export async function compactPart(ports: Ports, compactionId: string, part: numb
   if (done === comp.parts) await ports.jobs.enqueue({ type: 'refs.finishCompaction', compactionId })
 }
 
-/** Ids of tombstoned collections that no collection row holds (a restore lifts the tombstone). */
+/** Ids of tombstoned collections that no collection row holds. */
 async function deletedCollections(ports: Ports): Promise<Set<string>> {
   const rows = (await ports.db.all(sql`
     SELECT t.collection_id AS id FROM ${schema.collectionTombstones} t

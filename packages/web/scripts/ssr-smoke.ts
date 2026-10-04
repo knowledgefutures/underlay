@@ -166,7 +166,7 @@ try {
     bucket: 'archive',
     prefix: 'ul',
     credentials: 'sealed-credentials',
-    permissions: 'write',
+    region: 'us-east-1',
     status: 'active',
   })
   const authors = (await db.select().from(schema.collections)).find((c) => c.slug === 'authors')
@@ -394,16 +394,14 @@ try {
         'Storage locations',
         'Archive bucket',
         'https://s3.example.org · archive/ul',
-        'Write only',
+        'us-east-1',
         'Re-check',
         'Add a storage location',
         'Default mirrors',
         'Add default mirror',
-        // The seeded location is write-only, so it can't be restored from.
-        'Restore a collection',
-        'No location with read and write access',
       ],
-      lacks: ['sealed-credentials'],
+      // Restore is gone, and access is always read and write.
+      lacks: ['sealed-credentials', 'Restore a collection', 'Write only', 'locRegion'],
       user: 'u1',
     },
     {

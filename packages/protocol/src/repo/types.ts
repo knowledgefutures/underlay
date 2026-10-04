@@ -52,7 +52,7 @@ export interface PresignPutOptions {
 
 /**
  * Where a repository's objects live: an S3-like bucket. The five methods are
- * what reading, writing, mirroring and restore need, and every store has them.
+ * what reading, writing and mirroring need, and every store has them.
  * Stores: `memoryStore()`, `fileStore(dir)`, `s3Store({…})`, `r2Store(binding)`.
  *
  * `list` cursors are opaque: pass back exactly what the previous page returned.

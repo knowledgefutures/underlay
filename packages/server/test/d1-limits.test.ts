@@ -136,7 +136,6 @@ describe('D1 limits', () => {
         organizationId: 'org1',
         kind: 's3',
         name: 'L',
-        permissions: 'write',
         status: 'active',
       })
       .returning()

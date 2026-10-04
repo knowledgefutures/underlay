@@ -1,7 +1,7 @@
 /**
  * The per-collection version log: one signed, hash-chained entry per version.
  *
- * It lets anyone holding a copy (a mirror, a restore, a frontend) check the
+ * It lets anyone holding a copy (a mirror, a clone, a frontend) check the
  * version history without the platform database, and it is the per-collection
  * head log from the plan's Security notes: entries chain by `prev`, so a server
  * can't silently drop or reorder versions for one reader and not another.
@@ -228,7 +228,7 @@ export async function verifyLogEntries(
 
 /**
  * Check a collection's whole log: signatures, the hash chain, and that the head
- * matches the last entry. O(versions); for restore and audits.
+ * matches the last entry. O(versions); for clones and audits.
  */
 export async function verifyLog(
   repo: Repo,

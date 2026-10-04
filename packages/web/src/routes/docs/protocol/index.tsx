@@ -55,7 +55,7 @@ export default function ProtocolOverview() {
         </li>
         <li>
           <strong>Portable history.</strong> Each collection has a signed, hash-chained log of its
-          versions, so a copy of its repository in any bucket can be verified and restored.
+          versions, so a copy of its repository in any bucket can be read and verified.
         </li>
       </ul>
 

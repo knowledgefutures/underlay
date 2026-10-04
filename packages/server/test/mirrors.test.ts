@@ -29,7 +29,7 @@ afterAll(async () => {
 const defaults = { ...mirrorConfig }
 afterEach(() => Object.assign(mirrorConfig, defaults))
 
-async function fake(opts: { publicRead?: boolean } = {}) {
+async function fake(opts: { publicRead?: boolean; region?: string } = {}) {
   const f = await startFakeS3('bucket', 0, opts)
   fakes.push(f)
   return f
@@ -84,7 +84,6 @@ async function addLocation(
       prefix,
       accessKeyId: 'AKID',
       secretAccessKey: 'secret',
-      permissions: 'read_write',
       ...extra,
     },
   })
@@ -263,6 +262,45 @@ describe('bucket mirrors', () => {
     const broken = await addLocation(h, user, f, 'x', { bucket: 'no-such-bucket' })
     expect(broken.body.check.ok).toBe(false)
     expect(broken.body.location.status).toBe('broken')
+  })
+
+  it('takes the region from the endpoint, and from the bucket when that is wrong', async () => {
+    const { h, user } = await setup()
+    const f = await fake({ region: 'eu-west-2' })
+    // The fake's endpoint names no region: us-east-1 first, then the bucket's answer.
+    const loc = await addLocation(h, user, f, 'r')
+    expect(loc.body.check.ok).toBe(true)
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.storageLocations)
+      .where(eq(schema.storageLocations.id, loc.body.location.id))
+    expect(row!.region).toBe('eu-west-2')
+    // A region given in the body is ignored.
+    const named = await addLocation(h, user, await fake(), 'n', { region: 'mars-1' })
+    expect((named.body.location as { region?: string }).region).toBe('us-east-1')
+
+    const { regionFor, checkEndpoint } = await import('../src/locations/locations.js')
+    expect(regionFor('https://s3.eu-west-2.amazonaws.com')).toBe('eu-west-2')
+    expect(regionFor('https://s3-ap-southeast-1.amazonaws.com')).toBe('ap-southeast-1')
+    expect(regionFor('https://s3.dualstack.us-west-2.amazonaws.com')).toBe('us-west-2')
+    expect(regionFor('https://s3.us-west-004.backblazeb2.com')).toBe('us-west-004')
+    expect(regionFor('https://abc.r2.cloudflarestorage.com')).toBe('auto')
+    expect(regionFor('https://s3.amazonaws.com')).toBe('us-east-1')
+    expect(regionFor('https://minio.example.org')).toBe('us-east-1')
+    // Outside dev and test: https only, and no private hosts.
+    expect(checkEndpoint('https://s3.eu-west-2.amazonaws.com')).toBeNull()
+    for (const bad of [
+      'http://s3.example.org',
+      'https://localhost:9000',
+      'https://127.0.0.1',
+      'https://10.0.0.5',
+      'https://[::1]',
+      'https://169.254.169.254',
+      'https://minio.internal',
+      'https://minio',
+    ])
+      expect(checkEndpoint(bad), bad).not.toBeNull()
+    expect(checkEndpoint('http://127.0.0.1:9000', true)).toBeNull()
   })
 
   it('fails a location whose lifecycle rules delete under its prefix, and warns on others', async () => {

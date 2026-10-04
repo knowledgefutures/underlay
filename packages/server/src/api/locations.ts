@@ -3,8 +3,8 @@
  * Org owners and admins manage them; members can read mirror status.
  *
  *   GET    /api/orgs/:org/locations
- *   POST   /api/orgs/:org/locations                 {name, endpoint, bucket, region?, prefix?,
- *                                                    accessKeyId, secretAccessKey, permissions}
+ *   POST   /api/orgs/:org/locations                 {name, endpoint, bucket, prefix?,
+ *                                                    accessKeyId, secretAccessKey}
  *   POST   /api/orgs/:org/locations/:id/check
  *   DELETE /api/orgs/:org/locations/:id             (its placements go too; bucket contents stay)
  *   GET    /api/orgs/:org/placements                org defaults, inherited by every collection
@@ -15,31 +15,23 @@
  *   POST   /api/collections/:owner/:slug/placements {locationId, sets}
  *   POST   /api/collections/:owner/:slug/placements/:id/sync
  *   DELETE /api/collections/:owner/:slug/placements/:id  (409 for one from an org default)
- *   POST   /api/orgs/:org/restores                  {locationId, collectionId, slug, name?,
- *                                                    trustKeyIds?}: rebuild a collection here
- *   GET    /api/orgs/:org/restores/:id
- *   GET    /api/orgs/:org/restores                  the org's 20 most recent restores
- *   GET    /api/orgs/:org/locations/:id/collections what a read_write location holds, to restore
  *
  * A location that serves objects without credentials may only hold public sets.
  * Deleting a mirror never deletes what it copied: the bucket is the customer's.
  */
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
-import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
-import { validateCollectionSlug } from '../lib/slug.js'
 import {
   checkEndpoint,
+  regionFor,
   checkLocation,
   encryptCredentials,
   type LocationRow,
 } from '../locations/locations.js'
 import { collectionMirrors, queueMirrors } from '../locations/mirror.js'
-import { inspectSource, listSourceCollections, RestoreError } from '../locations/restore.js'
-import { createCollectionRows } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
 import { isAdmin, membership } from './manage.js'
 
@@ -55,12 +47,15 @@ function locationView(l: LocationRow) {
     region: l.region,
     bucket: l.bucket,
     prefix: l.prefix,
-    permissions: l.permissions,
     status: l.status,
     lastError: l.lastError,
     verifiedAt: l.verifiedAt,
   }
 }
+
+/** Local endpoints over http (MinIO, a test fake) only on dev and test deployments. */
+const allowInsecure = (c: Context<AppEnv>) =>
+  c.var.config.deployment === 'dev' || c.var.config.deployment === 'test'
 
 async function orgAdmin(c: Context<AppEnv>) {
   if (!c.var.principal) return jsonError(c, 401, 'Authentication required')
@@ -94,6 +89,9 @@ async function allowSets(c: Context<AppEnv>, loc: LocationRow, sets: string) {
   if (sets !== 'public' && sets !== 'public+private') {
     return jsonError(c, 400, '"sets" is "public" or "public+private"')
   }
+  if (sets === 'public+private' && !loc.endpoint?.startsWith('https:') && !allowInsecure(c)) {
+    return jsonError(c, 422, 'Private sets need an https endpoint')
+  }
   const check = await checkLocation(c.var.ports, loc)
   if (!check.ok) return jsonError(c, 422, `The location failed its check: ${check.error}`)
   if (sets === 'public+private' && check.publicRead) {
@@ -126,29 +124,29 @@ export function locationRoutes() {
     if (!ports.locationKey)
       return jsonError(c, 409, 'This deployment has no LOCATION_KEY; locations are unavailable')
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    const endpointError = checkEndpoint(body.endpoint)
+    const endpointError = checkEndpoint(body.endpoint, allowInsecure(c))
     if (endpointError) return jsonError(c, 400, endpointError)
     const name = str(body.name, 200)
     const bucket = str(body.bucket, 255)
     const accessKeyId = str(body.accessKeyId)
     const secretAccessKey = str(body.secretAccessKey)
-    const permissions = body.permissions === 'read_write' ? 'read_write' : 'write'
     if (!name || !bucket || !accessKeyId || !secretAccessKey) {
       return jsonError(c, 400, 'name, bucket, accessKeyId and secretAccessKey are required')
     }
     const prefix = (str(body.prefix, 512) ?? '').replace(/^\/+|\/+$/g, '')
     const id = crypto.randomUUID()
+    const endpoint = (body.endpoint as string).replace(/\/+$/, '')
     await ports.db.insert(schema.storageLocations).values({
       id,
       organizationId: org.id,
       kind: 's3',
       name,
-      endpoint: (body.endpoint as string).replace(/\/+$/, ''),
-      region: str(body.region, 64),
+      endpoint,
+      // The check corrects it if the bucket says it lives elsewhere.
+      region: regionFor(endpoint),
       bucket,
       prefix,
       credentials: await encryptCredentials(ports, id, { accessKeyId, secretAccessKey }),
-      permissions,
     })
     const loc = (await orgLocation(c, org.id, id))!
     const check = await checkLocation(ports, loc)
@@ -387,144 +385,5 @@ export function locationRoutes() {
     return c.body(null, 204)
   })
 
-  app.post('/api/orgs/:org/restores', async (c) => {
-    const org = await orgAdmin(c)
-    if (org instanceof Response) return org
-    const ports = c.var.ports
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
-    const loc = await orgLocation(c, org.id, String(body.locationId ?? ''))
-    if (!loc) return jsonError(c, 404, 'Location not found')
-    const sourceId = str(body.collectionId, 64)
-    if (!sourceId) return jsonError(c, 400, '"collectionId" names the collection in the location')
-    const slugError = validateCollectionSlug(body.slug)
-    if (slugError) return jsonError(c, 422, slugError)
-    const slug = body.slug as string
-    const [taken] = await ports.db
-      .select({ id: schema.collections.id })
-      .from(schema.collections)
-      .where(and(eq(schema.collections.organizationId, org.id), eq(schema.collections.slug, slug)))
-    if (taken) return jsonError(c, 409, 'Collection already exists')
-    // The restored collection keeps its id, which every entry of its signed log names.
-    const [present] = await ports.db
-      .select({ id: schema.collections.id })
-      .from(schema.collections)
-      .where(eq(schema.collections.id, sourceId))
-    if (present) {
-      return jsonError(
-        c,
-        409,
-        'This instance already has that collection; restore brings back a collection that is gone',
-      )
-    }
-    let source
-    try {
-      source = await inspectSource(ports, loc, sourceId)
-    } catch (err) {
-      if (err instanceof RestoreError) return jsonError(c, 422, err.message)
-      throw err
-    }
-    const trustKeyIds = Array.isArray(body.trustKeyIds)
-      ? body.trustKeyIds.filter((k): k is string => typeof k === 'string')
-      : []
-    // The collection comes back: its tombstone (if this instance deleted it) is lifted.
-    await ports.db
-      .delete(schema.collectionTombstones)
-      .where(eq(schema.collectionTombstones.collectionId, sourceId))
-    const col = await createCollectionRows(ports, {
-      id: sourceId,
-      organizationId: org.id,
-      slug,
-      name: str(body.name, 200) ?? source.info.name ?? slug,
-      public: false,
-    })
-    const [restore] = await ports.db
-      .insert(schema.restores)
-      .values({
-        organizationId: org.id,
-        locationId: loc.id,
-        sourceCollectionId: sourceId,
-        collectionId: col.id,
-        sets: source.sets,
-        trustKeyIds,
-      })
-      .returning()
-    await ports.jobs.enqueue({ type: 'restore.version', restoreId: restore!.id })
-    return c.json(
-      {
-        restore: restoreView(restore!),
-        collection: { id: col.id, owner: org.slug, slug },
-        versions: source.head.seq,
-      },
-      202,
-    )
-  })
-
-  app.get('/api/orgs/:org/locations/:id/collections', async (c) => {
-    const org = await orgAdmin(c)
-    if (org instanceof Response) return org
-    const loc = await orgLocation(c, org.id, c.req.param('id'))
-    if (!loc) return jsonError(c, 404, 'Location not found')
-    let listed
-    try {
-      listed = await listSourceCollections(c.var.ports, loc)
-    } catch (err) {
-      if (err instanceof RestoreError) return jsonError(c, 422, err.message)
-      return jsonError(c, 422, `Could not read the location: ${(err as Error).message}`)
-    }
-    // A collection this instance still has can't be restored (it keeps its id).
-    const present = new Set<string>()
-    for (const part of chunks(listed.collections.map((x) => x.id))) {
-      const rows = await c.var.ports.db
-        .select({ id: schema.collections.id })
-        .from(schema.collections)
-        .where(inArray(schema.collections.id, part))
-      for (const r of rows) present.add(r.id)
-    }
-    return c.json({
-      collections: listed.collections.map((x) => ({ ...x, present: present.has(x.id) })),
-      truncated: listed.truncated,
-    })
-  })
-
-  app.get('/api/orgs/:org/restores', async (c) => {
-    const org = await orgAdmin(c)
-    if (org instanceof Response) return org
-    const rows = await c.var.ports.db
-      .select({ restore: schema.restores, slug: schema.collections.slug })
-      .from(schema.restores)
-      .leftJoin(schema.collections, eq(schema.collections.id, schema.restores.collectionId))
-      .where(eq(schema.restores.organizationId, org.id))
-      .orderBy(desc(schema.restores.createdAt))
-      .limit(20)
-    return c.json({
-      restores: rows.map((r) => ({ ...restoreView(r.restore), slug: r.slug })),
-    })
-  })
-
-  app.get('/api/orgs/:org/restores/:id', async (c) => {
-    const org = await orgAdmin(c)
-    if (org instanceof Response) return org
-    const [r] = await c.var.ports.db
-      .select()
-      .from(schema.restores)
-      .where(
-        and(eq(schema.restores.id, c.req.param('id')), eq(schema.restores.organizationId, org.id)),
-      )
-    if (!r) return jsonError(c, 404, 'Restore not found')
-    return c.json({ restore: restoreView(r) })
-  })
-
   return app
-}
-
-function restoreView(r: typeof schema.restores.$inferSelect) {
-  return {
-    id: r.id,
-    status: r.status,
-    collectionId: r.collectionId,
-    sets: r.sets,
-    restoredSeq: r.restoredSeq,
-    error: r.error,
-    updatedAt: r.updatedAt,
-  }
 }

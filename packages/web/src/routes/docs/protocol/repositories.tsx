@@ -41,8 +41,8 @@ export default function ProtocolRepositories() {
     <DocsLayout title="Repositories" eyebrow="Protocol v2">
       <p>
         A repository is how a bucket holds collections. The layout is the same in the
-        platform&rsquo;s own storage, in a customer&rsquo;s mirror bucket and in a restore source,
-        so any copy can be read, verified and restored without the server that wrote it.
+        platform&rsquo;s own storage and in a customer&rsquo;s mirror bucket, so any copy can be
+        read and verified without the server that wrote it.
       </p>
 
       <h2 id="layout">Layout</h2>
@@ -80,7 +80,7 @@ export default function ProtocolRepositories() {
       <ul>
         <li>
           <code>collectionId</code> is signed, so an entry or a whole log can&rsquo;t pass as
-          another collection&rsquo;s. A restored collection keeps its id.
+          another collection&rsquo;s.
         </li>
         <li>
           Entries form a hash chain through <code>prev</code>, so a dropped, reordered or altered

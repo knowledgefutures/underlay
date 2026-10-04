@@ -136,7 +136,7 @@ describe('placements', () => {
     ])
     await db
       .insert(schema.storageLocations)
-      .values({ id: 'other', kind: 'platform', name: 'Other', permissions: 'read_write' })
+      .values({ id: 'other', kind: 'platform', name: 'Other' })
     await expect(
       db
         .insert(schema.placements)

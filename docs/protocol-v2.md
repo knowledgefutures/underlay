@@ -296,7 +296,7 @@ semvers v1 gave them.
 ## 11. Repository layout
 
 A repository is how a storage location holds collections. It is the same on the platform's own
-bucket, on a customer's mirror and in a restore source. Keys are relative to the location's prefix.
+bucket and on a customer's mirror. Keys are relative to the location's prefix.
 The reference implementation is `packages/protocol/src/repo` (`@underlay/protocol`).
 
 ```
@@ -344,8 +344,7 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
 ```
 
 - `collectionId` is the id of the collection whose log this is (the `<collectionId>` in its keys).
-  It is signed, so an entry, or a whole log, can't be passed off as another collection's. A
-  collection restored from a location keeps its id.
+  It is signed, so an entry, or a whole log, can't be passed off as another collection's.
 - `seq` counts from 1. `createdAt` is ISO 8601 UTC. `appId`, `actorId`, `baseSemver` and
   `message` may be `null`. Pusher identity is not recorded (open question).
 - `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry

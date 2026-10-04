@@ -2,14 +2,13 @@ import { type FormEvent, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import { SETS_LABELS } from '~/components/MirrorsSettings'
-import RestoreSection, { type Restore } from '~/components/RestoreSection'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Badge, Button, Field, Input, SectionHeading, Select } from '~/components/ui'
 
 /**
  * An org's storage locations (S3-compatible buckets it controls) and its
- * default mirrors, which every collection in the org inherits, and restoring a
- * collection from a location. Owners and admins only
+ * default mirrors, which every collection in the org inherits. Owners and
+ * admins only
  * (packages/server/src/api/locations.ts).
  */
 
@@ -18,10 +17,10 @@ interface Location {
   name: string
   kind: 's3'
   endpoint: string
+  /** Derived from the endpoint, or named by the bucket when the check ran. */
   region: string | null
   bucket: string
   prefix: string
-  permissions: 'write' | 'read_write'
   status: 'active' | 'unverified' | 'broken' | 'disabled'
   lastError: string | null
   verifiedAt: string | null
@@ -49,16 +48,9 @@ const STATUS_STYLES: Record<Location['status'], string> = {
   disabled: 'text-ink-muted',
 }
 
-const PERMISSION_LABELS: Record<Location['permissions'], string> = {
-  write: 'Write only',
-  read_write: 'Read and write',
-}
-
 function describeCheck(name: string, check: CheckResult): string {
   if (!check.ok) return `${name} failed its check: ${check.error ?? 'unknown error'}`
-  const parts = [`${name} passed its check: Underlay can write`]
-  if (check.readBack) parts.push('and read back')
-  let text = parts.join(' ') + '.'
+  let text = `${name} passed its check: Underlay can write and read back.`
   if (check.publicRead) {
     text += ' Objects there can be read without credentials, so it can hold public records only.'
   }
@@ -70,11 +62,9 @@ const EMPTY_FORM = {
   name: '',
   endpoint: '',
   bucket: '',
-  region: '',
   prefix: '',
   accessKeyId: '',
   secretAccessKey: '',
-  permissions: 'write' as Location['permissions'],
 }
 
 export default function OwnerSettingsStorage() {
@@ -83,7 +73,6 @@ export default function OwnerSettingsStorage() {
     allowed: boolean
     locations: Location[]
     placements: DefaultPlacement[]
-    restores: Restore[]
   }
   const api = `/api/orgs/${owner}`
 
@@ -133,7 +122,6 @@ export default function OwnerSettingsStorage() {
         credentials: 'include',
         body: JSON.stringify({
           ...form,
-          region: form.region.trim() || undefined,
           prefix: form.prefix.trim() || undefined,
         }),
       })
@@ -287,7 +275,6 @@ export default function OwnerSettingsStorage() {
                           {loc.endpoint} · {[loc.bucket, loc.prefix].filter(Boolean).join('/')}
                         </p>
                         <div className="text-ink-muted mt-1 flex flex-wrap items-center gap-2 text-xs">
-                          <Badge>{PERMISSION_LABELS[loc.permissions]}</Badge>
                           {loc.region && <Badge>{loc.region}</Badge>}
                           {loc.verifiedAt && (
                             <span>checked {new Date(loc.verifiedAt).toLocaleString()}</span>
@@ -374,15 +361,6 @@ export default function OwnerSettingsStorage() {
                     required
                   />
                 </Field>
-                <Field label="Region" htmlFor="locRegion" hint="Optional.">
-                  <Input
-                    id="locRegion"
-                    value={form.region}
-                    onChange={field('region')}
-                    placeholder="auto"
-                    className="font-mono"
-                  />
-                </Field>
                 <Field
                   label="Prefix"
                   htmlFor="locPrefix"
@@ -397,23 +375,10 @@ export default function OwnerSettingsStorage() {
                   />
                 </Field>
                 <Field
-                  label="Access"
-                  htmlFor="locPermissions"
-                  hint="Read and write also lets a collection be restored from this location."
+                  label="Access key ID"
+                  htmlFor="locKeyId"
+                  hint="Needs read and write under the prefix."
                 >
-                  <Select
-                    id="locPermissions"
-                    value={form.permissions}
-                    onChange={field('permissions')}
-                  >
-                    {Object.entries(PERMISSION_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Access key ID" htmlFor="locKeyId">
                   <Input
                     id="locKeyId"
                     value={form.accessKeyId}
@@ -440,7 +405,8 @@ export default function OwnerSettingsStorage() {
               </div>
               <p className="text-ink-muted text-xs">
                 Adding a location checks it: Underlay writes a small object under the prefix, reads
-                it back when allowed, and tests whether the bucket can be read without credentials.
+                it back, and tests whether the bucket can be read without credentials. The region
+                comes from the endpoint and the bucket itself.
               </p>
               <Button type="submit" disabled={busy !== ''}>
                 {busy === 'add' ? 'Adding and checking…' : 'Add location'}
@@ -532,12 +498,6 @@ export default function OwnerSettingsStorage() {
               </form>
             ) : null}
           </section>
-
-          <RestoreSection
-            owner={owner!}
-            locations={locations}
-            initialRestores={loaderData.restores}
-          />
         </>
       )}
     </SettingsLayout>

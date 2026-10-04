@@ -1,7 +1,7 @@
 /**
  * A repository: one storage location's objects, in the documented layout
  * (docs/protocol-v2.md, "Repository layout"), read and written through a
- * Store. The platform primary, customer mirrors and restore all use this.
+ * Store. The platform primary, customer mirrors and clones all use this.
  *
  *   nodes/<hash>                          tree node JSON, gzip (hash of the uncompressed bytes)
  *   bodies/<leafHash>.ndjson.gz           the leaf's records, one canonical record per line, in

@@ -143,7 +143,7 @@ export async function markStep(
       .limit(50)
     if (rows.length === 0) Object.assign(s, { phase: 'possessions', after: null })
     for (const t of rows) {
-      // A restored collection has a row again (and its tombstone lifted); a row means live.
+      // A row means live, tombstone or not.
       const [live] = await db
         .select({ id: schema.collections.id })
         .from(schema.collections)
