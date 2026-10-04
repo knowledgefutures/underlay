@@ -19,28 +19,18 @@
  */
 import {
   appendLog,
-  bodyOfRecord,
+  type BuildTypeInput,
+  buildVersion,
   type CollectionInfo,
-  type Change,
   compareUtf8,
-  dropRecordBody,
-  emptySet,
   fileTree,
-  isEmptySet,
-  iterate,
   jcs,
-  makeRoot,
   mergeTree,
-  type PrivateSetObject,
   readCollectionInfo,
   readHead,
-  type RecordEntry,
-  recordPayloadBytes,
-  recordTree,
   type Repo,
   RepoSink,
   RepoSource,
-  type SetObject,
   setRecordTotals,
   type Signer,
   signEntry,
@@ -51,20 +41,12 @@ import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { applyFileSet, FileRefDelta, fileSizes, type SetName } from './file-refs.js'
+import { FileRefDelta, fileSizes } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
 import { bumpType, deriveSemver, parseSemver } from './semver.js'
 
-export type ChangeSource = Iterable<Change<RecordEntry>> | AsyncIterable<Change<RecordEntry>>
-
-export interface TypeInput {
-  slug: string
-  schema: Record<string, unknown>
-  schemaHash: string
-  /** Sorted changes per set (null: no changes there). Upserts carry `body`. */
-  public: ChangeSource | null
-  private: ChangeSource | null
-}
+export type { ChangeSource } from '@underlay/protocol'
+export type TypeInput = BuildTypeInput
 
 export interface BaseVersion {
   id: string
@@ -124,56 +106,6 @@ export type CommitResult =
       total: number
     }
 
-const MAX_REPORTED_ERRORS = 100
-const SPILL_BYTES = 4 * 1024 * 1024
-
-const summaryOf = (t: {
-  root: { hash: string; count: number; bytes: number } | null
-}): TreeSummary =>
-  t.root
-    ? { root: t.root.hash, count: t.root.count, bytes: t.root.bytes }
-    : { root: null, count: 0, bytes: 0 }
-
-const isPrivateSchema = (s: Record<string, unknown>) => s.private === true
-
-async function* asAsync<T>(src: Iterable<T> | AsyncIterable<T>): AsyncGenerator<T> {
-  yield* src as AsyncIterable<T>
-}
-
-/** Merge two sorted change streams; on equal keys the second wins. */
-async function* overlay(
-  a: AsyncIterable<Change<RecordEntry>>,
-  b: AsyncIterable<Change<RecordEntry>>,
-): AsyncGenerator<Change<RecordEntry>> {
-  const ai = a[Symbol.asyncIterator]()
-  const bi = b[Symbol.asyncIterator]()
-  let x = await ai.next()
-  let y = await bi.next()
-  while (!x.done || !y.done) {
-    if (y.done || (!x.done && compareUtf8(x.value.key, y.value.key) < 0)) {
-      yield x.value
-      x = await ai.next()
-    } else if (x.done || compareUtf8(y.value.key, x.value.key) < 0) {
-      yield y.value
-      y = await bi.next()
-    } else {
-      yield y.value
-      x = await ai.next()
-      y = await bi.next()
-    }
-  }
-}
-
-/** Every entry of a tree (with bodies) as upserts. */
-async function* treeAsUpserts(
-  repo: Repo,
-  root: string | null,
-): AsyncGenerator<Change<RecordEntry>> {
-  for await (const e of iterate(new RepoSource(recordTree, repo), root, { payloads: true })) {
-    yield { key: e.key, entry: e }
-  }
-}
-
 export async function commitVersion(ports: Ports, input: CommitInput): Promise<CommitResult> {
   const { db } = ports
   const repo = await ports.stores.forCollection(input.collectionId)
@@ -184,193 +116,29 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     .limit(1)
   if (!collection) throw new Error(`Collection ${input.collectionId} not found`)
 
+  const built = await buildVersion(repo, {
+    base: input.base,
+    types: input.types,
+    metadata: input.metadata,
+    ...(input.declaredFiles ? { declaredFiles: input.declaredFiles } : {}),
+    salt: collection.privateSalt,
+    fileSizes: (hashes) => fileSizes(db, hashes),
+    ...(input.validate ? { validate: input.validate } : {}),
+    ...(input.prebuilt ? { prebuilt: input.prebuilt } : {}),
+  })
+  if (built.status === 'invalid') return built
   const base = input.base
-  const baseRoot = base ? await repo.root(base.hash) : null
-  const basePublic: SetObject = baseRoot?.public ?? emptySet()
-  const basePrivate: SetObject = baseRoot?.private
-    ? await repo.privateSet(baseRoot.private)
-    : emptySet()
-
-  const source = new RepoSource(recordTree, repo)
-  const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
-  const builderOpts = {
-    payloadBytes: recordPayloadBytes,
-    dropPayload: dropRecordBody,
-    spillBytes: SPILL_BYTES,
-  }
-  const refs = input.prebuilt?.refs ?? new FileRefDelta()
-  const stats = input.prebuilt ? { ...input.prebuilt.stats } : { added: 0, removed: 0, updated: 0 }
-  let recordsChanged = stats.added + stats.removed + stats.updated > 0
-
-  const newPublic: SetObject = emptySet()
-  const newPrivate: SetObject = emptySet()
-
-  // Stats count per set: a record moving between sets is a removal and an addition.
-  const merge = async (
-    set: SetName,
-    baseTree: string | null,
-    changes: AsyncIterable<Change<RecordEntry>>,
-  ) => {
-    const result = await mergeTree(source, sink, baseTree, changes, {
-      ...builderOpts,
-      onChange: (before, after) => {
-        refs.record(set, before, after)
-        recordsChanged = true
-        if (before && after) stats.updated++
-        else if (after) stats.added++
-        else stats.removed++
-      },
-    })
-    return summaryOf(result)
-  }
-
-  const inputSlugs = new Set(input.types.map((t) => t.slug))
-  let schemaChanged = false
-
-  // Schemas are repository objects too (schemas/<hash>.json).
-  await Promise.all(
-    input.types.map(async (t) => {
-      if ((await repo.putSchema(t.schema)) !== t.schemaHash) {
-        throw new Error(`Schema for ${t.slug} does not match its hash`)
-      }
-    }),
-  )
-  sink.written.push(...input.types.map((t) => `schemas/${t.schemaHash}.json`))
-
-  for (const t of input.types) {
-    const pubBase = basePublic.types[t.slug]
-    const privBase = basePrivate.types[t.slug]
-    if ((pubBase ?? privBase)?.schema !== t.schemaHash) schemaChanged = true
-    const prebuilt = input.prebuilt?.trees[t.slug]
-    if (input.prebuilt) {
-      if (!prebuilt) throw new Error(`Parallel commit has no trees for type ${t.slug}`)
-      if (isPrivateSchema(t.schema)) {
-        newPrivate.types[t.slug] = { schema: t.schemaHash, ...prebuilt.private }
-      } else {
-        newPublic.types[t.slug] = { schema: t.schemaHash, ...prebuilt.public }
-        if (prebuilt.private.root)
-          newPrivate.types[t.slug] = { schema: t.schemaHash, ...prebuilt.private }
-      }
-      continue
-    }
-    const nowPrivate = isPrivateSchema(t.schema)
-    const wasPrivateType = !pubBase && !!privBase
-    const pubChanges = t.public ? asAsync(t.public) : null
-    const privChanges = t.private ? asAsync(t.private) : null
-
-    let pub: TreeSummary = { root: null, count: 0, bytes: 0 }
-    let priv: TreeSummary = { root: null, count: 0, bytes: 0 }
-    const pubRoot = pubBase?.root ?? null
-    const privRoot = privBase?.root ?? null
-
-    if (nowPrivate) {
-      // Every record of a private type is in the private set. If the type was
-      // public, its public records move over: a plain move when the private
-      // tree was empty, otherwise a merge.
-      if (pubChanges)
-        throw new Error(`Type ${t.slug} is private; its changes belong to the private set`)
-      if (pubRoot && !privRoot && !privChanges) {
-        priv = pubBase!
-      } else if (pubRoot) {
-        priv = await merge(
-          'private',
-          privRoot,
-          overlay(treeAsUpserts(repo, pubRoot), privChanges ?? asAsync([])),
-        )
-        for await (const e of treeAsUpserts(repo, pubRoot)) refs.record('public', e.entry, null)
-      } else {
-        priv = privChanges ? await merge('private', privRoot, privChanges) : summary(privBase)
-      }
-      if (pubRoot) recordsChanged = true
-    } else if (wasPrivateType) {
-      // A private type made public: its records become public (per-record flags
-      // were not kept while the whole type was private), except those this push
-      // marks private.
-      pub = await merge(
-        'public',
-        null,
-        overlay(treeAsUpserts(repo, privRoot), pubChanges ?? asAsync([])),
-      )
-      for await (const e of treeAsUpserts(repo, privRoot)) refs.record('private', e.entry, null)
-      priv = privChanges
-        ? await merge('private', null, privChanges)
-        : { root: null, count: 0, bytes: 0 }
-      recordsChanged = true
-    } else {
-      pub = pubChanges ? await merge('public', pubRoot, pubChanges) : summary(pubBase)
-      priv = privChanges ? await merge('private', privRoot, privChanges) : summary(privBase)
-    }
-
-    if (nowPrivate) {
-      newPrivate.types[t.slug] = { schema: t.schemaHash, ...priv }
-    } else {
-      newPublic.types[t.slug] = { schema: t.schemaHash, ...pub }
-      if (priv.root) newPrivate.types[t.slug] = { schema: t.schemaHash, ...priv }
-    }
-  }
-
-  // Removed types: drop their trees, and release their file references.
-  for (const [set, base_] of [
-    ['public', basePublic],
-    ['private', basePrivate],
-  ] as const) {
-    for (const [slug, entry] of Object.entries(base_.types)) {
-      if (inputSlugs.has(slug)) continue
-      schemaChanged = true
-      for await (const e of treeAsUpserts(repo, entry.root)) {
-        refs.record(set, e.entry, null)
-        stats.removed++
-        recordsChanged = true
-      }
-    }
-  }
-  await sink.flush()
-
-  // Revalidate types whose schema changed (records pushed earlier were checked
-  // against the old schema). O(type size), inherent to a schema change.
-  const errors: { recordId: string; type: string; errors: string[] }[] = []
-  let errorCount = 0
-  if (input.validate) {
-    for (const t of input.types) {
-      const before = basePublic.types[t.slug] ?? basePrivate.types[t.slug]
-      if (!before || before.schema === t.schemaHash) continue
-      for (const tree of [newPublic.types[t.slug], newPrivate.types[t.slug]]) {
-        for await (const e of iterate(source, tree?.root ?? null, { payloads: true })) {
-          const errs = input.validate(t.schema, (JSON.parse(e.body!) as { data: unknown }).data)
-          if (errs) {
-            errorCount++
-            if (errors.length < MAX_REPORTED_ERRORS)
-              errors.push({ recordId: e.key, type: t.slug, errors: errs })
-          }
-        }
-      }
-    }
-  }
-  if (errorCount > 0) return { status: 'invalid', errors, total: errorCount }
-
-  // File sets.
-  const pubFiles = await applyFileSet(
-    db,
-    repo,
-    { refsRoot: base?.publicRefsRoot ?? null, files: basePublic.files },
-    refs.refs.public,
-    null,
-  )
-  const privFiles = await applyFileSet(
-    db,
-    repo,
-    { refsRoot: base?.privateRefsRoot ?? null, files: basePrivate.files },
-    refs.refs.private,
-    input.declaredFiles ?? null,
-  )
-  newPublic.files = pubFiles.files
-  newPrivate.files = privFiles.files
-
-  // Root.
-  const privSet: PrivateSetObject = { ...newPrivate, salt: collection.privateSalt }
-  const root = makeRoot(input.metadata, newPublic, isEmptySet(newPrivate) ? null : privSet)
-  if (root.private) await repo.putPrivateSet(privSet)
-  const versionHash = await repo.putRoot(root)
+  const {
+    versionHash,
+    root,
+    basePublic,
+    basePrivate,
+    newPublic,
+    newPrivate,
+    stats,
+    schemaChanged,
+    recordsChanged,
+  } = built
   if (base && versionHash === base.hash) return { status: 'no_changes', versionHash }
 
   const sv = input.migrated
@@ -406,7 +174,7 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     ports,
     repo,
     collection.publicFilesRoot,
-    pubFiles.added,
+    built.publicFilesAdded,
   )
 
   const versionId = crypto.randomUUID()
@@ -433,8 +201,8 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     typeCounts,
     publicTypeCounts,
     hasPrivate: root.private !== null,
-    publicRefsRoot: pubFiles.refsRoot,
-    privateRefsRoot: privFiles.refsRoot,
+    publicRefsRoot: built.publicRefsRoot,
+    privateRefsRoot: built.privateRefsRoot,
     changes: stats,
     ...(input.migrated
       ? {
@@ -473,11 +241,8 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
       ? { type: 'refs.index', versionId }
       : { type: 'version.published', versionId, bump: bumpType(schemaChanged, recordsChanged) },
   )
-  return { status: 'committed', version: version!, written: sink.written }
+  return { status: 'committed', version: version!, written: built.written }
 }
-
-const summary = (t: TreeSummary | undefined): TreeSummary =>
-  t ? { root: t.root, count: t.count, bytes: t.bytes } : { root: null, count: 0, bytes: 0 }
 
 /** Bounded fields for collection lists, from the version metadata. */
 function summarize(metadata: Record<string, unknown> | null): schema.CollectionSummary | null {

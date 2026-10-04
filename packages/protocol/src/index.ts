@@ -10,6 +10,23 @@ export * from './repo/log.js'
 export { gunzip, gunzipText, gzip, isGzip, splitLines } from './repo/gzip.js'
 export { Lru } from './repo/lru.js'
 export {
+  type BuildInput,
+  type BuildResult,
+  type BuildTypeInput,
+  buildVersion,
+  type ChangeSource,
+  isPrivateSchema,
+} from './repo/build.js'
+export {
+  applyFileSet,
+  declaredFiles,
+  FileRefDelta,
+  type FileSetResult,
+  type FileSizes,
+  MissingFilesError,
+  type SetName,
+} from './repo/file-sets.js'
+export {
   type PackObject,
   type PackOptions,
   packVersion,
