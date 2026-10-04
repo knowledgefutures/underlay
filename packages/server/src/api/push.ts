@@ -529,17 +529,11 @@ export function pushRoutes() {
     const inputs = await loadInputs(ports, session.id)
     let prepared
     try {
-      prepared = await prepareRecords(
-        ports,
-        session.collectionId,
-        inputs,
-        readLines(c, MAX_BATCH_BYTES),
-        {
-          stripUnknownFields: session.stripUnknownFields,
-          // Keep the format 1 hash next to the v2 one, so a v1 manifest entry matches either.
-          entryOf: withLegacyHash,
-        },
-      )
+      prepared = await prepareRecords(ports, session.id, inputs, readLines(c, MAX_BATCH_BYTES), {
+        stripUnknownFields: session.stripUnknownFields,
+        // Keep the format 1 hash next to the v2 one, so a v1 manifest entry matches either.
+        entryOf: withLegacyHash,
+      })
     } catch (err) {
       if (err instanceof BodyTooLarge)
         return jsonError(c, 413, `Batches are limited to ${MAX_BATCH_BYTES} bytes`)

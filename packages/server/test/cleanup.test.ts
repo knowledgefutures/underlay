@@ -278,6 +278,43 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     expect(h.bucket.objects.has(`repo/files/${sha('the pdf')}`)).toBe(true)
   })
 
+  it('keeps a large record a push uploaded while the sweep ran', async () => {
+    const h = await harness()
+    const user = await h.member()
+    // Over OUT_OF_LINE_BYTES: stored as its own records/ object.
+    const big = { id: 'big', type: 'Doc', data: { title: 'x'.repeat(70_000) } }
+    await h.collection('old')
+    await push(h, user, 'old', [big])
+    const recordKeys = () => keys(h, 'repo/records/')
+    expect(recordKeys()).toHaveLength(1)
+    await h.request('/api/collections/org/old', { method: 'DELETE', user })
+    await pastGrace(h)
+    await run(h, 'mark')
+
+    // A new push uploads the same record and stays open while the sweep runs.
+    const fresh = await h.collection('new')
+    const base = '/api/collections/org/new'
+    const open = await h.request(`${base}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Doc } },
+    })
+    const sid = ((await open.json()) as { session_id: string }).session_id
+    await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: [big] })
+    // Staged in the session's area, not written to the repository yet.
+    expect(keys(h, `internal/sessions/${sid}/records/`)).toHaveLength(1)
+    ageAll(h)
+    const sweep = await run(h, 'sweep')
+    expect(sweep.stats!.deleted.records).toMatchObject({ objects: 1 })
+    expect(recordKeys()).toEqual([])
+
+    // The commit puts it back, under its fence.
+    const commit = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    expect(commit.status).toBe(201)
+    expect(recordKeys()).toHaveLength(1)
+    await healthy(h, fresh.id)
+  })
+
   it('gives the same result in many small jobs, shards and windows', async () => {
     const saved = { ...cleanupConfig }
     Object.assign(cleanupConfig, {

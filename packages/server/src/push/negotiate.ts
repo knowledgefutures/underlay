@@ -32,7 +32,7 @@ import {
 
 import type { Ports } from '../ports.js'
 import { type CommitResult, commitVersion, type TypeInput } from '../versions/commit.js'
-import { isPrivateSchema, toRecordEntry } from './changes.js'
+import { isPrivateSchema, takeStaged, toRecordEntry } from './changes.js'
 import { headBase } from './delta.js'
 import { mergeRuns, type RunEntry, type RunIndex } from './runs.js'
 import {
@@ -266,6 +266,7 @@ async function planSnapshot(
         const wanted = upload ? upload.h! : st.manifest.h!
         if (inBase && st.base!.hash === wanted) continue // unchanged
         if (upload) {
+          await takeStaged(internal, trees.repo, session.id, upload.b)
           yield { key: st.key, entry: toRecordEntry(upload) }
         } else {
           // Not uploaded, so the base has it (the pre-pass checked) in the other

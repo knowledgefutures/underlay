@@ -3,8 +3,9 @@
  * upserts (records) and deletes; the commit costs O(changes).
  *
  * Record lines go through the input rules, schema validation and canonical
- * hashing at upload, so commit never re-reads them. Large records are stored out
- * of line in the collection's repository right away, so runs stay small.
+ * hashing at upload, so commit never re-reads them. Large records are staged out
+ * of line in the session's area right away, so runs stay small; the commit puts
+ * them in the repository (changes.ts).
  */
 import {
   compileSchema,
@@ -27,7 +28,7 @@ import {
   type CommitResult,
   type TypeInput,
 } from '../versions/commit.js'
-import { deltaChanges, isPrivateSchema } from './changes.js'
+import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
 import { planParallel } from './parallel.js'
 import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
@@ -67,7 +68,7 @@ function lines(text: string): string[] {
  */
 export async function prepareRecords(
   ports: Ports,
-  collectionId: string,
+  sessionId: string,
   inputs: SessionInputs,
   input: string | AsyncIterable<string>,
   opts: {
@@ -85,7 +86,7 @@ export async function prepareRecords(
     if (errors.length < MAX_REPORTED) errors.push(e)
   }
   const entries: RunEntry[] = []
-  const repo = await ports.stores.forCollection(collectionId)
+  const internal = ports.stores.internal
   const source = typeof input === 'string' ? lines(input) : input
   let i = -1
   for await (const line of source) {
@@ -137,7 +138,10 @@ export async function prepareRecords(
     }
     const hash = sha256Hex(canonical)
     const size = utf8ByteLength(canonical)
-    const body = size > OUT_OF_LINE_BYTES ? await repo.putOutOfLine(hash, canonical) : canonical
+    const body =
+      size > OUT_OF_LINE_BYTES
+        ? await stageOutOfLine(internal, sessionId, hash, canonical)
+        : canonical
     const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
     const entry: RunEntry = {
       t: rec.type,
@@ -158,7 +162,7 @@ export async function ingestRecords(
   input: string | AsyncIterable<string>,
 ): Promise<IngestResult> {
   const inputs = await loadInputs(ports, session.id)
-  const prepared = await prepareRecords(ports, session.collectionId, inputs, input, {
+  const prepared = await prepareRecords(ports, session.id, inputs, input, {
     stripUnknownFields: session.stripUnknownFields,
   })
   if ('tooManyLines' in prepared) {
@@ -268,12 +272,13 @@ async function typeInputsForDelta(
   },
 ): Promise<TypeInput[]> {
   const internal = ports.stores.internal
+  const repo = await ports.stores.forCollection(session.collectionId)
   const hashes = schemaHashes(inputs.schemas)
   return Object.entries(inputs.schemas).map(([slug, s]) => {
     const privateType = isPrivateSchema(s)
     const sets = { pub: !!base.pub[slug]?.root, priv: !!base.priv[slug]?.root }
     const stream = (set: 'public' | 'private') =>
-      deltaChanges(internal, session.id, runs, slug, set, privateType, sets)
+      deltaChanges(internal, repo, session.id, runs, slug, set, privateType, sets)
     return {
       slug,
       schema: s,

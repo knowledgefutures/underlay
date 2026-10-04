@@ -450,6 +450,7 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const range = { after: unit.after, through: unit.through }
   const changes = deltaChanges(
     ports.stores.internal,
+    repo,
     session.id,
     runs,
     unit.type,
