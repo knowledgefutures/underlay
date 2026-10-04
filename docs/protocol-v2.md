@@ -51,10 +51,17 @@ the information they need.
 | Lone surrogates | A UTF-16 surrogate code unit, raw or `\u`-escaped, that is not part of a valid pair, in any string or key                                                                                                                                          | `lone_surrogate`   |
 | Depth           | Nesting deeper than `MAX_JSON_DEPTH` = 64 levels within `data`. Each object or array is one level, and the record envelope adds one more                                                                                                           | `too_deep`         |
 | Record size     | A canonical record (section 4) longer than `MAX_RECORD_BYTES` = 8,388,608 bytes                                                                                                                                                                    | `record_too_large` |
-| Record id       | Not a string, empty, or longer than `MAX_ID_BYTES` = 1,024 UTF-8 bytes                                                                                                                                                                             | `bad_id`           |
-| Type slug       | Not a string, empty, longer than 128 UTF-8 bytes, starting with `.`, or containing `/`, `\`, U+0000–U+001F or U+007F                                                                                                                               | `bad_type`         |
-| Envelope        | A record line that isn't an object with `id`, `type` and `data`, or whose optional `private` isn't a boolean                                                                                                                                       | `bad_envelope`     |
+| Record id       | Missing, not a string, empty, or longer than `MAX_ID_BYTES` = 1,024 UTF-8 bytes                                                                                                                                                                    | `bad_id`           |
+| Type slug       | Missing, not a string, empty, longer than 128 UTF-8 bytes, starting with `.`, or containing `/`, `\`, U+0000–U+001F or U+007F                                                                                                                      | `bad_type`         |
+| Envelope        | A record line that isn't an object, has no `data`, or whose optional `private` isn't a boolean                                                                                                                                                     | `bad_envelope`     |
 | Syntax          | Anything that isn't JSON (RFC 8259)                                                                                                                                                                                                                | `syntax`           |
+
+A line gets the code of the first rule it breaks, in this order: syntax, duplicate keys, unsafe
+integers, lone surrogates and depth (all found while parsing); then an envelope that isn't an
+object; the id; the type; a missing `data` or a bad `private`; and last the record size. The codes
+are part of the protocol: a node reports them (section 11.4) and the vectors list them.
+Members of a record line other than `id`, `type`, `data` and `private` are ignored: they are not
+part of the record, its canonical form or its hash.
 
 Unicode is **not** normalized. `é` as U+00E9 and as U+0065 U+0301 are different ids with different
 hashes. The test vectors include both.
@@ -88,8 +95,10 @@ A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 - A schema with `"private": true` at its root makes the type private (section 9). A root `private`
   that isn't a boolean is rejected, so that `"private": "true"` can't publish a type by accident.
 - `"private": true` on a property, at any depth (field-level privacy), is **rejected** in v2.
-- Limits: the schema's canonical form must be at most 256 KB, and `pattern` values and
-  `patternProperties` keys at most 256 characters each.
+- Limits: the schema's canonical form must be at most `MAX_SCHEMA_BYTES` = 256 KB, and `pattern`
+  values and `patternProperties` keys at most `MAX_PATTERN_LENGTH` = 256 UTF-16 code units each
+  (a string's JavaScript length). A `pattern` member inside `const`, `enum`, `default` or
+  `examples` is data, not a regex, and isn't limited.
 
 ### 5.1 Validation dialect
 
@@ -365,6 +374,8 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
   after the entry is written.
 - `collection.json` holds the collection's id, owner and slug, its name and description, and
   `keys`: the public keys (`{"id","alg":"Ed25519","publicKey": base64url raw}`) that sign its log.
+  It is neither hashed nor signed, and its formatting isn't fixed: readers parse it as JSON and
+  must not depend on its bytes.
   The platform also publishes its keys at a well-known URL (to be fixed with the Cloudflare
   deployment).
 
@@ -619,3 +630,10 @@ These were made during implementation and recorded with their reasons in `edge-r
     `protocolVersion`. No hashed value changed, but a reader of `v2.json` has to use the new key.
 12. `actorId` is written as `null` from 2026-10-04 (section 11.1). The entry's shape and hashing
     are unchanged.
+13. Gaps closed 2026-10-04, none changing a hash or a tree: `head.versionHash` is checked against
+    the last entry (section 11.1); `MAX_PATTERN_LENGTH` is a declared constant, counted in UTF-16
+    code units, and a `pattern` member inside `const`, `enum`, `default` or `examples` is no
+    longer mistaken for a regex (the reference implementation refused such schemas); a missing id
+    or type gets `bad_id` or `bad_type`, as the reference implementation always did, and the
+    order of the input rules is fixed; extra members of a record line are ignored, as they always
+    were; `collection.json`'s formatting is not part of the protocol.

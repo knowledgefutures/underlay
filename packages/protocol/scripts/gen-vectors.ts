@@ -97,6 +97,10 @@ const inputRuleCases = [
   '{"id":"","type":"t","data":1}',
   '{"id":"r","type":"a/b","data":1}',
   '{"id":"r","type":"t"}',
+  '{"type":"t","data":1}',
+  '{"id":"r","data":1}',
+  '{"id":"r","type":"t","data":1,"private":"yes"}',
+  '{"id":"r","type":"t","data":1,"note":"ignored","hash":"x"}',
   '{"id":"r","type":"t","data":{"9":3,"10":2}}',
 ].map(ruleCase)
 

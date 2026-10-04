@@ -44,3 +44,8 @@ export const MAX_ID_BYTES = 1_024
 export const MAX_TYPE_BYTES = 128
 /** Maximum canonical schema size in bytes. */
 export const MAX_SCHEMA_BYTES = 256 * 1024
+/**
+ * Longest `pattern` value or `patternProperties` key in a schema, in UTF-16 code
+ * units (JavaScript string length): long patterns are the main ReDoS vector.
+ */
+export const MAX_PATTERN_LENGTH = 256

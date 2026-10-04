@@ -414,6 +414,17 @@ describe('checkSchema', () => {
     expect(checkSchema('T', { patternProperties: { [long]: {} } })).toMatch(
       /"patternProperties" pattern longer than 256/,
     )
+    // A `pattern` member of instance data is no regex.
+    for (const kw of ['const', 'default', 'examples', 'enum'])
+      expect(
+        checkSchema('T', {
+          properties: {
+            a: {
+              [kw]: kw === 'enum' || kw === 'examples' ? [{ pattern: long }] : { pattern: long },
+            },
+          },
+        }),
+      ).toBe(null)
   })
 
   it('checks type slugs', () => {

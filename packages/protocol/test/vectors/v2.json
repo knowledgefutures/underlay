@@ -8,6 +8,7 @@
     "LEAF_MAX_ENTRIES": 8192,
     "MAX_ID_BYTES": 1024,
     "MAX_JSON_DEPTH": 64,
+    "MAX_PATTERN_LENGTH": 256,
     "MAX_RECORD_BYTES": 8388608,
     "MAX_SAFE_INTEGER_LITERAL": "9007199254740991",
     "MAX_SCHEMA_BYTES": 262144,
@@ -160,6 +161,27 @@
       "line": "{\"id\":\"r\",\"type\":\"t\"}",
       "ok": false,
       "error": "bad_envelope"
+    },
+    {
+      "line": "{\"type\":\"t\",\"data\":1}",
+      "ok": false,
+      "error": "bad_id"
+    },
+    {
+      "line": "{\"id\":\"r\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":1,\"private\":\"yes\"}",
+      "ok": false,
+      "error": "bad_envelope"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":1,\"note\":\"ignored\",\"hash\":\"x\"}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":1}",
+      "hash": "e5cb51e87c7f60c96132bd967d532a117ca7f3a167506d7bbeec4e62b76f25a1"
     },
     {
       "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"9\":3,\"10\":2}}",

@@ -27,14 +27,12 @@ import {
   type Schema,
 } from '@cfworker/json-schema'
 
-import { MAX_SCHEMA_BYTES } from './constants.js'
+import { MAX_PATTERN_LENGTH, MAX_SCHEMA_BYTES } from './constants.js'
 import { hashSchema } from './hash.js'
 import { checkTypeSlug } from './input-rules.js'
 import { jcs } from './jcs.js'
 import { utf8ByteLength } from './utf8.js'
 
-/** Longest `pattern` (or `patternProperties` key) accepted: long patterns are the main ReDoS vector. */
-const MAX_PATTERN_LENGTH = 256
 const MAX_CACHED_VALIDATORS = 500
 
 /** A schema that can't be compiled: not valid draft-07, or an unresolvable `$ref`. */
@@ -649,6 +647,8 @@ function findLongPattern(node: unknown): string | null {
   }
   if (!isObject(node)) return null
   for (const [key, value] of Object.entries(node)) {
+    // A `pattern` member inside instance data is no regex.
+    if (DATA_KEYWORDS.has(key)) continue
     if (key === 'pattern' && typeof value === 'string' && value.length > MAX_PATTERN_LENGTH) {
       return '"pattern"'
     }
