@@ -17,6 +17,7 @@ import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
 import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
+import { statsRoutes } from './api/stats.js'
 import { syncRoutes } from './api/sync.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
@@ -97,8 +98,9 @@ export function createApp(setup: Setup) {
       : c.json({ error: 'Auth is not configured', statusCode: 404 }, 404)
   })
 
-  // The protocol page became a docs section.
+  // Pages that moved: the protocol into the docs, the steward hub to /admin.
   app.get('/protocol', (c) => c.redirect('/docs/protocol', 301))
+  app.get('/superadmin', (c) => c.redirect('/admin', 301))
 
   // Old blog URLs: the posts moved to the KF site under the same slugs
   // (web's lib/kf-updates.ts links there too). `blog` is a reserved org slug.
@@ -229,6 +231,7 @@ export function createApp(setup: Setup) {
   // Before collectionRoutes: /api/accounts/me would match /api/accounts/:slug.
   app.route('/', accountRoutes())
   app.route('/', adminRoutes())
+  app.route('/', statsRoutes())
   app.route('/', collectionRoutes())
 
   // Everything else is a UI page, when the deployment renders one.

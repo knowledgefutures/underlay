@@ -61,12 +61,25 @@ try {
       return user ? { userId: user, scope: 'session', collectionIds: null } : null
     },
     renderPage,
+    // KF Auth stand-in: user "steward" is one; nobody else is.
+    kf: {
+      profile: async (userId) =>
+        userId === 'steward' ? { name: 'Steward', image: null, role: 'admin' } : null,
+      role: async (userId) => (userId === 'steward' ? 'admin' : null),
+      orgs: async () => [],
+      entitled: async () => false,
+      defaultOrgId: async () => null,
+      isInternalCall: () => false,
+    },
   }))
 
   // --- Seed: org "org" with member u1, a public and a private collection.
   await db.insert(schema.organization).values({ id: 'org1', name: 'Smoke Org', slug: 'org' })
   await db.insert(schema.user).values({ id: 'u1', name: 'Ada', email: 'u1@example.org' })
   await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u1', role: 'owner' })
+  await db
+    .insert(schema.user)
+    .values({ id: 'steward', name: 'Steward', email: 'steward@example.org' })
   for (const [slug, isPublic] of [
     ['authors', true],
     ['secret', false],
@@ -286,8 +299,40 @@ try {
     { path: '/new-org', status: 200, user: 'u1' },
     { path: '/invitations/accept?token=x', status: 200, has: ['Organization Invitation'] },
     { path: '/report', status: 200, has: ['Report content', 'What is wrong'] },
-    // u1 isn't a steward in the smoke (no KF Auth): the page says so.
+    // Steward pages: a rail of sections for stewards; everyone else is told no.
     { path: '/admin/abuse', status: 200, has: ['only available to admins'], user: 'u1' },
+    {
+      path: '/admin',
+      status: 200,
+      has: ['only available to admins'],
+      lacks: ['Holdings'],
+      user: 'u1',
+    },
+    { path: '/superadmin', status: 301, location: '/admin' },
+    {
+      path: '/admin',
+      status: 200,
+      has: ['Holdings', 'Needs attention', 'Organizations', 'Corpus', 'Billing', 'Operations'],
+      user: 'steward',
+    },
+    { path: '/admin?days=7', status: 200, has: ['Last 7 days', 'API calls'], user: 'steward' },
+    { path: '/admin/orgs', status: 200, has: ['Smoke Org', '/admin/orgs/org'], user: 'steward' },
+    {
+      path: '/admin/orgs/org',
+      status: 200,
+      has: ['Smoke Org', 'authors', 'Members (2)', 'u1@example.org'],
+      user: 'steward',
+    },
+    { path: '/admin/corpus', status: 200, has: ['Record types', 'Author'], user: 'steward' },
+    { path: '/admin/billing', status: 200, has: ['Counter health', 'Smoke Org'], user: 'steward' },
+    {
+      path: '/admin/operations',
+      status: 200,
+      has: ['Storage locations', 'Archive bucket', 'Tools'],
+      user: 'steward',
+    },
+    { path: '/admin/explore', status: 200, has: ['Explore page'], user: 'steward' },
+    { path: '/admin/abuse', status: 200, has: ['Open reports'], user: 'steward' },
     // Mirrors in collection settings: status for members, actions for admins.
     {
       path: '/org/authors/settings',

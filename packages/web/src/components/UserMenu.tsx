@@ -77,7 +77,7 @@ export default function UserMenu({
             </Link>
             {isSteward && (
               <Link
-                to="/superadmin"
+                to="/admin"
                 className="text-ink-light hover:bg-parchment-dark block px-3 py-2 text-sm transition-colors"
                 onClick={() => setOpen(false)}
               >

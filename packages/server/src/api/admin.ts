@@ -43,7 +43,7 @@ async function isSteward(c: Context<AppEnv>, userId: string | null): Promise<boo
 }
 
 /** 401/403 unless the caller is a steward; null when they are. */
-async function stewardOnly(c: Context<AppEnv>): Promise<Response | null> {
+export async function stewardOnly(c: Context<AppEnv>): Promise<Response | null> {
   const userId = person(c, false)
   if (!userId) return jsonError(c, 401, 'Unauthorized')
   return (await isSteward(c, userId)) ? null : jsonError(c, 403, 'Forbidden')

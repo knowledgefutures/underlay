@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import BaseLayout from '~/components/BaseLayout'
+import AdminLayout from '~/components/AdminLayout'
 import { Alert, Badge, Button, SectionHeading, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
@@ -60,114 +60,104 @@ export default function AdminAbuse() {
     await load()
   }
 
-  if (!isSteward) {
-    return (
-      <BaseLayout>
-        <div className="mx-auto max-w-2xl px-4 py-16 text-center">
-          <p className="text-ink-muted text-sm">This page is only available to admins.</p>
-        </div>
-      </BaseLayout>
-    )
-  }
-
   return (
-    <BaseLayout>
-      <div className="mx-auto max-w-4xl px-4 py-10">
-        <h1 className="mb-6 text-xl font-semibold tracking-tight">Abuse reports</h1>
-        {error && (
-          <Alert variant="error" className="mb-4">
-            {error}
-          </Alert>
-        )}
+    <AdminLayout
+      title="Abuse reports"
+      description="Reports of content that shouldn't be served, and the hashes that aren't."
+    >
+      {error && (
+        <Alert variant="error" className="mb-4">
+          {error}
+        </Alert>
+      )}
 
-        <SectionHeading>Open reports ({reports.length})</SectionHeading>
-        {reports.length === 0 ? (
-          <p className="text-ink-muted mb-8 text-sm">No open reports.</p>
-        ) : (
-          <div className="mb-8 space-y-3">
-            {reports.map((r) => (
-              <div key={r.id} className="border-rule rounded-surface border p-3 text-sm">
-                <p className="mb-1 whitespace-pre-wrap">{r.reason}</p>
-                <div className="text-ink-muted space-y-0.5 text-xs">
-                  {r.url && <p className="break-all">{r.url}</p>}
-                  {r.hash && <p className="font-mono break-all">{r.hash}</p>}
-                  <p>
-                    {new Date(r.createdAt).toLocaleString('en-US', { timeZone: 'UTC' })} UTC
-                    {r.contact ? ` · ${r.contact}` : ''}
-                  </p>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3">
-                  {r.hash && (
-                    <>
-                      <Select
-                        value={kinds[r.id] ?? 'file'}
-                        onChange={(e) =>
-                          setKinds((k) => ({ ...k, [r.id]: e.target.value as Entry['kind'] }))
-                        }
-                        className="w-auto"
-                      >
-                        <option value="file">File</option>
-                        <option value="record">Record</option>
-                      </Select>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() =>
-                          send('/api/admin/denylist', 'POST', {
-                            hash: r.hash,
-                            kind: kinds[r.id] ?? 'file',
-                            reason: r.reason.slice(0, 500),
-                            reportId: r.id,
-                          })
-                        }
-                      >
-                        Block hash
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    variant="link"
-                    size="sm"
-                    onClick={() =>
-                      send(`/api/admin/abuse-reports/${r.id}`, 'PATCH', { status: 'dismissed' })
-                    }
-                  >
-                    Dismiss
-                  </Button>
-                </div>
+      <SectionHeading>Open reports ({reports.length})</SectionHeading>
+      {reports.length === 0 ? (
+        <p className="text-ink-muted mb-8 text-sm">No open reports.</p>
+      ) : (
+        <div className="mb-8 space-y-3">
+          {reports.map((r) => (
+            <div key={r.id} className="border-rule rounded-surface border p-3 text-sm">
+              <p className="mb-1 whitespace-pre-wrap">{r.reason}</p>
+              <div className="text-ink-muted space-y-0.5 text-xs">
+                {r.url && <p className="break-all">{r.url}</p>}
+                {r.hash && <p className="font-mono break-all">{r.hash}</p>}
+                <p>
+                  {new Date(r.createdAt).toLocaleString('en-US', { timeZone: 'UTC' })} UTC
+                  {r.contact ? ` · ${r.contact}` : ''}
+                </p>
               </div>
-            ))}
-          </div>
-        )}
-
-        <SectionHeading>Denylist ({entries.length})</SectionHeading>
-        {entries.length === 0 ? (
-          <p className="text-ink-muted text-sm">Nothing is blocked.</p>
-        ) : (
-          <div className="space-y-2">
-            {entries.map((e) => (
-              <div
-                key={e.hash}
-                className="border-rule rounded-surface flex items-start justify-between gap-3 border px-3 py-2 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="font-mono text-xs break-all">{e.hash}</p>
-                  <p className="text-ink-muted text-xs">
-                    <Badge>{e.kind}</Badge> {e.reason}
-                  </p>
-                </div>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                {r.hash && (
+                  <>
+                    <Select
+                      value={kinds[r.id] ?? 'file'}
+                      onChange={(e) =>
+                        setKinds((k) => ({ ...k, [r.id]: e.target.value as Entry['kind'] }))
+                      }
+                      className="w-auto"
+                    >
+                      <option value="file">File</option>
+                      <option value="record">Record</option>
+                    </Select>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() =>
+                        send('/api/admin/denylist', 'POST', {
+                          hash: r.hash,
+                          kind: kinds[r.id] ?? 'file',
+                          reason: r.reason.slice(0, 500),
+                          reportId: r.id,
+                        })
+                      }
+                    >
+                      Block hash
+                    </Button>
+                  </>
+                )}
                 <Button
                   variant="link"
                   size="sm"
-                  onClick={() => send(`/api/admin/denylist/${e.hash}`, 'DELETE')}
+                  onClick={() =>
+                    send(`/api/admin/abuse-reports/${r.id}`, 'PATCH', { status: 'dismissed' })
+                  }
                 >
-                  Unblock
+                  Dismiss
                 </Button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </BaseLayout>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <SectionHeading>Denylist ({entries.length})</SectionHeading>
+      {entries.length === 0 ? (
+        <p className="text-ink-muted text-sm">Nothing is blocked.</p>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((e) => (
+            <div
+              key={e.hash}
+              className="border-rule rounded-surface flex items-start justify-between gap-3 border px-3 py-2 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="font-mono text-xs break-all">{e.hash}</p>
+                <p className="text-ink-muted text-xs">
+                  <Badge>{e.kind}</Badge> {e.reason}
+                </p>
+              </div>
+              <Button
+                variant="link"
+                size="sm"
+                onClick={() => send(`/api/admin/denylist/${e.hash}`, 'DELETE')}
+              >
+                Unblock
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </AdminLayout>
   )
 }

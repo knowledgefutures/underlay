@@ -16,6 +16,8 @@ export interface SettingsRailItem {
   label: string
   to: string
   danger?: boolean
+  /** Also active on paths below `to`. */
+  prefix?: boolean
 }
 
 export interface SettingsRailGroup {
@@ -103,6 +105,8 @@ export default function SettingsLayout({
   title,
   description,
   groups,
+  wide,
+  label = 'Settings',
   children,
 }: {
   /** Breadcrumb above the rail+content area, e.g. owner / collection. */
@@ -110,6 +114,10 @@ export default function SettingsLayout({
   title: string
   description?: string
   groups: SettingsRailGroup[]
+  /** Content as wide as the page allows (tables), instead of a reading width. */
+  wide?: boolean
+  /** The rail's accessible name. */
+  label?: string
   children: React.ReactNode
 }) {
   const location = useLocation()
@@ -140,15 +148,19 @@ export default function SettingsLayout({
       const id = item.to.slice(1)
       return activeAnchor ? activeAnchor === id : anchorIds[0] === id
     }
-    return location.pathname === item.to
+    // A section's own sub-pages (/admin/orgs/:slug) keep its item active.
+    return (
+      location.pathname === item.to ||
+      (item.prefix === true && location.pathname.startsWith(`${item.to}/`))
+    )
   }
 
   return (
     <BaseLayout>
-      <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className={`mx-auto ${wide ? 'max-w-6xl' : 'max-w-5xl'} px-4 py-8`}>
         {crumb && <div className="mb-4 text-sm">{crumb}</div>}
         <div className="flex items-start gap-8">
-          <nav className="sticky top-6 hidden w-44 shrink-0 md:block" aria-label="Settings">
+          <nav className="sticky top-6 hidden w-44 shrink-0 md:block" aria-label={label}>
             {groups.map((group, i) => (
               <div key={i} className="mb-5">
                 {group.heading && (
@@ -165,11 +177,11 @@ export default function SettingsLayout({
             ))}
           </nav>
 
-          <div className="max-w-2xl min-w-0 flex-1">
+          <div className={`${wide ? '' : 'max-w-2xl '}min-w-0 flex-1`}>
             {/* Mobile: the rail collapses to a scrollable row above the content. */}
             <nav
               className="border-rule mb-6 flex gap-1 overflow-x-auto border-b pb-2 md:hidden"
-              aria-label="Settings"
+              aria-label={label}
             >
               {groups
                 .flatMap((g) => g.items)
