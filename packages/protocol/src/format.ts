@@ -71,3 +71,11 @@ export {
 } from './tree/read.js'
 export { verifyTree, type VerifyResult } from './tree/verify.js'
 export { assembleTree, type Segment } from './tree/assemble.js'
+export {
+  type BumpType,
+  bumpType,
+  compareSemver,
+  deriveSemver,
+  parseSemver,
+  type SemverComponents,
+} from './semver.js'

@@ -15,7 +15,7 @@
   "overrides": [
     {
       "files": [
-        "packages/protocol/src/{constants,file-refs,format,hash,input-rules,jcs,root,sha256,utf8,validate}.ts",
+        "packages/protocol/src/{constants,file-refs,format,hash,input-rules,jcs,root,semver,sha256,utf8,validate}.ts",
         "packages/protocol/src/tree/**/*.ts"
       ],
       "rules": {
