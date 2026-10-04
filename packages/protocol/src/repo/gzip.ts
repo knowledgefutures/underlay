@@ -7,8 +7,8 @@
  * DecompressionStream stops after the first and throws "Trailing bytes after
  * end of compressed data" (found on staging, 2026-10-04). Node and workerd
  * (nodejs_compat) both expose zlib through `process.getBuiltinModule`, so it is
- * used there; browsers fall back to DecompressionStream, which reads single-member
- * bodies only.
+ * used there. Browsers use DecompressionStream, which may stop after one member,
+ * so their path splits the members itself (gunzipMembers).
  */
 
 async function pipe(
@@ -39,7 +39,50 @@ export const gunzip = (bytes: Uint8Array): Promise<Uint8Array> =>
           err ? reject(err) : resolve(new Uint8Array(out.buffer, out.byteOffset, out.byteLength)),
         ),
       )
-    : pipe(bytes, new DecompressionStream('gzip'))
+    : gunzipMembers(bytes, (b) => pipe(b, new DecompressionStream('gzip')))
+
+/**
+ * Gunzip with a decompressor that may read only one member (browsers'
+ * DecompressionStream). Whole input first; if that fails, the members are found
+ * one at a time: a member ends where a later gzip header starts and the bytes
+ * up to it decode on their own (a slice cut anywhere else is truncated or has
+ * trailing bytes). Exported for the test that stands in a one-member decoder.
+ */
+export async function gunzipMembers(
+  bytes: Uint8Array,
+  oneMember: (b: Uint8Array) => Promise<Uint8Array>,
+): Promise<Uint8Array> {
+  try {
+    return await oneMember(bytes)
+  } catch (first) {
+    const parts: Uint8Array[] = []
+    let start = 0
+    next: while (start < bytes.length) {
+      // A member is at least an 18-byte header and trailer.
+      for (let end = start + 18; end <= bytes.length; end++) {
+        const atHeader =
+          end === bytes.length ||
+          (bytes[end] === 0x1f && bytes[end + 1] === 0x8b && bytes[end + 2] === 0x08)
+        if (!atHeader) continue
+        try {
+          parts.push(await oneMember(bytes.subarray(start, end)))
+          start = end
+          continue next
+        } catch {
+          // Not this member's end: a header inside compressed data.
+        }
+      }
+      throw first
+    }
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0))
+    let off = 0
+    for (const p of parts) {
+      out.set(p, off)
+      off += p.byteLength
+    }
+    return out
+  }
+}
 
 export const gunzipText = async (bytes: Uint8Array) => dec.decode(await gunzip(bytes))
 
