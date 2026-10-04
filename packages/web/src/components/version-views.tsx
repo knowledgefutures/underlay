@@ -99,7 +99,11 @@ export function RecordsView({
     () => (version.schemas ?? {}) as Record<string, any>,
     [version.schemas],
   )
-  const allTypes = useMemo(() => Object.keys(schemasMap).sort(), [schemasMap])
+  // Every type, from the counts: a records page's version carries only the shown type's schema.
+  const allTypes = useMemo(
+    () => Object.keys(version.typeCounts ?? schemasMap).sort(),
+    [version.typeCounts, schemasMap],
+  )
   const currentType = loaded?.type ?? null
   const records = loaded?.records ?? []
   const totalRecords = loaded?.total ?? 0

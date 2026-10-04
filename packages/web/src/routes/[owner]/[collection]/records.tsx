@@ -32,7 +32,7 @@ export default function CollectionRecordsPage() {
           <>
             <VersionInfoBar
               version={version}
-              typeCount={Object.keys(version.schemas ?? {}).length}
+              typeCount={Object.keys(version.typeCounts ?? {}).length}
             />
             <RecordsView
               owner={owner!}

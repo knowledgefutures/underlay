@@ -166,15 +166,41 @@ export function versionRoutes() {
     if (access instanceof Response) return access
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
+    // ?records=<type> (empty: the first type) is a records page's one call: the
+    // version, a page of that type's records, and only that type's schema.
+    const pageType = c.req.query('records')
+    const shown =
+      pageType === undefined
+        ? view.types
+        : view.types.filter((t) => t.slug === (pageType || view.types[0]?.slug))
     const schemas: Record<string, unknown> = {}
     await Promise.all(
-      view.types.map(async (t) => (schemas[t.slug] = await view.repo.schema(t.schemaHash))),
+      shown.map(async (t) => (schemas[t.slug] = await view.repo.schema(t.schemaHash))),
     )
+    const t = pageType === undefined ? null : (shown[0] ?? null)
+    let recordsPage = null
+    if (pageType !== undefined) {
+      const limit = clamp(c.req.query('limit'), 100, 2000)
+      const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
+      const records: (RecordEntry & { type: string })[] = []
+      if (t) {
+        for await (const e of typeRecords(view, t, { offset, bodies: true })) {
+          records.push(e)
+          if (records.length === limit) break
+        }
+      }
+      recordsPage = {
+        type: t?.slug ?? null,
+        records: records.map(recordJson),
+        total: t?.count ?? 0,
+      }
+    }
     return c.json({
       ...versionSummary(view.version, view.owner),
       metadata: view.root.metadata,
       typeCounts: Object.fromEntries(view.types.map((t) => [t.slug, t.count])),
       schemas,
+      ...(recordsPage ? { recordsPage } : {}),
     })
   })
 

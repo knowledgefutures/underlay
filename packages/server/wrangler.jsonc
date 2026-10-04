@@ -34,7 +34,9 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat"],
-  "limits": { "cpu_ms": 300000 },
+  // Jobs keep their own budgets under 10,000 subrequests (cleanup/config.ts and the
+  // job chains); the higher cap is headroom for a whole-repository walk that runs long.
+  "limits": { "cpu_ms": 300000, "subrequests": 100000 },
   // The UI's client build (pnpm --filter @underlay/web build). Matching files are
   // served before the Worker runs; everything else reaches the Worker.
   "assets": { "directory": "../web/dist/client" },

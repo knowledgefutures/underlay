@@ -27,7 +27,10 @@ export default function VersionRecordsPage() {
           version={version.semver}
           isLatest={collectionData?.latestVersion?.semver === version.semver}
         />
-        <VersionInfoBar version={version} typeCount={Object.keys(version.schemas ?? {}).length} />
+        <VersionInfoBar
+          version={version}
+          typeCount={Object.keys(version.typeCounts ?? {}).length}
+        />
         <RecordsView
           owner={owner!}
           collection={collection!}

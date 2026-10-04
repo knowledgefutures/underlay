@@ -109,6 +109,24 @@ describe('read API', () => {
     expect((await json(await h.request(`${base}/versions`)))[0]).toMatchObject({ semver: 'v1.0.0' })
   })
 
+  it('serves a records page in the version call, with only its type’s schema', async () => {
+    const { h, user, base } = await setup()
+    const first = await json(await h.request(`${base}/versions/latest?records=&limit=10`, { user }))
+    expect(Object.keys(first.schemas)).toEqual(['Author'])
+    expect(Object.keys(first.typeCounts).sort()).toEqual(['Author', 'Book', 'Secret'])
+    expect(first.recordsPage).toMatchObject({ type: 'Author', total: 1200 })
+    expect(first.recordsPage.records).toHaveLength(10)
+    const books = await json(
+      await h.request(`${base}/versions/latest?records=Book&offset=295&limit=10`),
+    )
+    expect(Object.keys(books.schemas)).toEqual(['Book'])
+    expect(books.recordsPage.records).toHaveLength(5)
+    // Without ?records, every schema as before, and no page.
+    const plain = await json(await h.request(`${base}/versions/latest`))
+    expect(Object.keys(plain.schemas).sort()).toEqual(['Author', 'Book'])
+    expect(plain.recordsPage).toBeUndefined()
+  })
+
   it('pages records by offset and by cursor, within and across types', async () => {
     const { h, user, base } = await setup()
     // Offset deep in a type (v1 refused offsets past 10k; here it's a seek).

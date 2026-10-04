@@ -12,32 +12,25 @@ export interface RecordsPage {
 }
 
 /**
- * One page of a version's records, for the records pages' loaders.
- *
- * v1 fetched records from the browser after hydration, so a records page
- * rendered empty on the server. Loading the page here puts the first table in
- * the SSR HTML, and the loader re-runs when ?type= or ?page= changes. v2 makes
- * offsets cheap (O(tree height)) and uncapped, so page numbers stay offsets.
+ * A records page's version and first table in one call: `GET …/versions/:n
+ * ?records=<type>` gives the version, a page of that type's records, and only
+ * that type's schema (the type list is `typeCounts`).
  */
-export async function loadRecordsPage(
+export async function loadVersionRecords(
   api: LoaderApi,
   prefix: string,
-  version: { semver: string; schemas?: Record<string, unknown> },
+  n: string,
   requestUrl: string,
-): Promise<RecordsPage> {
+): Promise<{ version: any; records: RecordsPage } | null> {
   const params = new URL(requestUrl).searchParams
-  const types = Object.keys(version.schemas ?? {}).sort()
-  const type = params.get('type') || types[0] || null
   const page = Math.max(1, parseInt(params.get('page') ?? '1', 10) || 1)
-  if (!type) return { type, page, records: [], total: 0 }
   const q = new URLSearchParams({
-    type,
+    records: params.get('type') ?? '',
     limit: String(RECORDS_PAGE_SIZE),
     offset: String((page - 1) * RECORDS_PAGE_SIZE),
   })
-  const body = await api.json<{ records?: any[]; pagination?: { total?: number } }>(
-    `${prefix}/versions/${version.semver}/records?${q}`,
-    {},
-  )
-  return { type, page, records: body.records ?? [], total: body.pagination?.total ?? 0 }
+  const version = await api.json<any>(`${prefix}/versions/${n}?${q}`, null)
+  if (!version) return null
+  const r = version.recordsPage ?? { type: null, records: [], total: 0 }
+  return { version, records: { type: r.type, page, records: r.records, total: r.total } }
 }

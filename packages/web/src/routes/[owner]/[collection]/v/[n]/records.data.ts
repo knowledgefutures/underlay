@@ -1,7 +1,7 @@
 import { redirect, type LoaderFunctionArgs } from 'react-router'
 
 import { loaderApi } from '~/lib/fetch-base'
-import { loadRecordsPage } from '~/lib/records-page'
+import { loadVersionRecords } from '~/lib/records-page'
 
 export const handle = {
   title: (params: Record<string, string>) =>
@@ -19,12 +19,11 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const api = loaderApi(request, { share: true })
   const prefix = `/api/collections/${params.owner}/${params.collection}`
 
-  const [version, collectionData] = await Promise.all([
-    api.json(`${prefix}/versions/${params.n}`, null),
+  const [loaded, collectionData] = await Promise.all([
+    loadVersionRecords(api, prefix, params.n!, request.url),
     api.json(prefix, null),
   ])
 
-  if (!version) throw new Response('Not Found', { status: 404 })
-  const records = await loadRecordsPage(api, prefix, version, request.url)
-  return { version, collectionData, records }
+  if (!loaded) throw new Response('Not Found', { status: 404 })
+  return { version: loaded.version, collectionData, records: loaded.records }
 }
