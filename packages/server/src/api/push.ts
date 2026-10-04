@@ -17,14 +17,7 @@
  *   GET    /:owner/:slug/versions/negotiate/:sid
  *   DELETE /:owner/:slug/versions/negotiate/:sid
  */
-import {
-  checkSchema,
-  fileTree,
-  getEntry,
-  InputRuleError,
-  parseStrict,
-  RepoSource,
-} from '@underlay/protocol'
+import { checkSchema, fileTree, getEntry, RepoSource } from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -57,6 +50,7 @@ import {
 } from '../push/session.js'
 import { parseSemver } from '../versions/semver.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
+import { BodyTooLarge, readJson, readText } from './body.js'
 
 const MAX_OPEN_BYTES = 8 * 1024 * 1024
 const MAX_MANIFEST_CHUNK = 50_000
@@ -67,53 +61,6 @@ const ASYNC_ABOVE = 100_000
 registerJob('push.commit', async (job, ports) => {
   await finalizeSession(ports, String(job.sessionId))
 })
-
-class BodyTooLarge extends Error {}
-
-/** Read a request body as text, refusing more than `max` bytes without buffering them. */
-async function readText(c: Context<AppEnv>, max: number): Promise<string> {
-  const declared = Number(c.req.header('content-length') ?? NaN)
-  if (declared > max) throw new BodyTooLarge()
-  const body = c.req.raw.body
-  if (!body) return ''
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > max) {
-      await reader.cancel()
-      throw new BodyTooLarge()
-    }
-    chunks.push(value)
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks))
-}
-
-type JsonBody = Record<string, unknown>
-
-/** Parse a JSON body under the input rules (duplicate keys, unsafe integers, …). */
-async function readJson(c: Context<AppEnv>, max: number): Promise<JsonBody | Response> {
-  let text: string
-  try {
-    text = await readText(c, max)
-  } catch (err) {
-    if (err instanceof BodyTooLarge) return jsonError(c, 413, `Body exceeds ${max} bytes`)
-    throw err
-  }
-  if (text.trim() === '') return {}
-  try {
-    const v = parseStrict(text, 128)
-    if (v === null || typeof v !== 'object' || Array.isArray(v))
-      return jsonError(c, 400, 'Body must be a JSON object')
-    return v as JsonBody
-  } catch (err) {
-    if (err instanceof InputRuleError) return jsonError(c, 400, `${err.code}: ${err.message}`)
-    throw err
-  }
-}
 
 async function readNdjson(c: Context<AppEnv>): Promise<string | Response> {
   try {

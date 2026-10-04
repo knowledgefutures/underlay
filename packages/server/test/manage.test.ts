@@ -68,6 +68,22 @@ describe('collection management', () => {
       201,
     )
 
+    // Metadata and fork bodies follow the input rules, as pushes do.
+    for (const [path, body] of [
+      [`${base}/metadata`, '{"description":"a","description":"b"}'],
+      [`${base}/metadata`, '{"count":9007199254740993}'],
+      [`${base}/fork`, '{"targetOrg":"org","targetOrg":"org","slug":"dup"}'],
+    ] as const) {
+      const bad = await h.request(path, {
+        method: 'POST',
+        user,
+        body,
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(bad.status).toBe(400)
+      expect((await json(bad)).error).toMatch(/duplicate_key|unsafe_integer/)
+    }
+
     // Metadata edit: a patch version reusing every set.
     res = await h.request(`${base}/metadata`, {
       method: 'POST',
