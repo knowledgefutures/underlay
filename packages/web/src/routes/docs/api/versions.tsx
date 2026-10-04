@@ -68,7 +68,7 @@ const sessionPollRes = `{
 }`
 
 const noCopy = `# 1. What the head holds: page the manifest (members also see private records)
-GET .../versions/latest/manifest?limit=100000          # then ?cursor=<nextCursor>
+GET .../versions/latest/manifest?limit=25000           # then ?cursor=<nextCursor>
 # 2. Compare by (type, id): hash your current records (canonical form, SHA-256)
 #    new, changed hash, or changed privacy  -> upsert
 #    in the manifest but not in your data   -> delete
@@ -503,6 +503,13 @@ export default function DocsApiVersions() {
           Get a specific version by semver (e.g. <code>v1.1.0</code>) or version hash. Returns the
           full version object including schemas.
         </p>
+        <p>
+          With <code>?records=&lt;type&gt;</code> (empty for the first type), it also returns{' '}
+          <code>recordsPage</code>: a page of that type&rsquo;s records (<code>offset</code>,{' '}
+          <code>limit</code> as on <code>/records</code>) and the type&rsquo;s total, and{' '}
+          <code>schemas</code> holds only that type&rsquo;s schema; <code>typeCounts</code> still
+          lists every type. A records page needs only this one call.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -665,7 +672,11 @@ export default function DocsApiVersions() {
               <td>
                 <code>limit</code>
               </td>
-              <td>Entries per page (default 10000, max 100000)</td>
+              <td>
+                Entries per page (default 10000, max 25000). The first page also lists the
+                version&rsquo;s files, at most 25,000, with <code>filesTruncated: true</code> past
+                that
+              </td>
             </tr>
             <tr>
               <td>

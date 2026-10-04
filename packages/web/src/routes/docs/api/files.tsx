@@ -185,6 +185,39 @@ export default function DocsApiFiles() {
         </table>
       </div>
 
+      <div className="endpoint">
+        <h2>POST /api/collections/:owner/:slug/files/uploads</h2>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Start a direct upload to storage, for files over the 32 MB the PUT above takes. Body:{' '}
+          <code>{'{"hash", "size", "mimeType"?}'}</code>; a file is at most 5 TiB (larger:{' '}
+          <code>413</code>). Up to 5 GiB the ticket has one presigned <code>url</code> to PUT the
+          bytes to. Larger files are multipart: the ticket gives <code>partBytes</code> (every part
+          but the last is that long), <code>partCount</code> (at most 10,000) and the first 100
+          presigned <code>parts</code>.
+        </p>
+      </div>
+
+      <div className="endpoint">
+        <h2>GET /api/collections/:owner/:slug/files/uploads/:id/parts?from=n</h2>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          The next 100 presigned part URLs of a multipart upload, from part <code>n</code>. Each
+          part&rsquo;s PUT returns an <code>ETag</code>; keep them for completing.
+        </p>
+      </div>
+
+      <div className="endpoint">
+        <h2>POST /api/collections/:owner/:slug/files/uploads/:id/complete</h2>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Finish an upload (multipart: <code>{'{"parts": [{"partNumber", "etag"}, …]}'}</code>). The
+          server then hashes the bytes in the background; poll <code>GET …/files/uploads/:id</code>{' '}
+          until <code>status</code> is <code>verified</code> (or <code>failed</code>, with an{' '}
+          <code>error</code>).
+        </p>
+      </div>
+
       <hr className="border-rule my-6" />
 
       <h2 className="font-sans !text-base">File references in records</h2>
