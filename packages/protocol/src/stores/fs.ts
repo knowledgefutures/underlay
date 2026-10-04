@@ -24,6 +24,7 @@ import type {
   PresigningStore,
   PresignPutOptions,
   PutOptions,
+  PutPartsOptions,
   Store,
 } from '../repo/types.js'
 
@@ -156,6 +157,28 @@ export class FileStore implements Store {
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
     await fsp.writeFile(tmp, body)
     await fsp.rename(tmp, path)
+    if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
+  }
+
+  async putParts(
+    key: string,
+    parts: AsyncIterable<Uint8Array>,
+    opts: PutPartsOptions = {},
+  ): Promise<void> {
+    const { fsp, path: P, p: path } = await this.#at(key)
+    if (opts.ifAbsent && (await fsp.stat(path).catch(() => null))) return
+    await fsp.mkdir(P.dirname(path), { recursive: true })
+    // Appended part by part to a temporary file, renamed only once checked.
+    const tmp = `${path}.${crypto.randomUUID()}.tmp`
+    try {
+      await fsp.writeFile(tmp, new Uint8Array(0))
+      for await (const part of parts) await fsp.appendFile(tmp, part)
+      await opts.check?.()
+      await fsp.rename(tmp, path)
+    } catch (err) {
+      await fsp.rm(tmp, { force: true })
+      throw err
+    }
     if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
   }
 

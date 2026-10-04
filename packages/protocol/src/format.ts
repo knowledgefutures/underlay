@@ -10,7 +10,7 @@ export {
   recordCanonical,
   sha256Hex,
 } from './hash.js'
-export { nativeSha256, sha256 } from './sha256.js'
+export { nativeSha256, sha256, sha256Hasher } from './sha256.js'
 export {
   checkRecordId,
   checkTypeSlug,

@@ -7,7 +7,15 @@
  * The binding's types are declared structurally here, so the package needs no
  * Workers type definitions.
  */
-import type { BlobHead, BlobObject, PutOptions, Store } from '../repo/types.js'
+import {
+  type BlobHead,
+  type BlobObject,
+  joinParts,
+  type PutOptions,
+  type PutPartsOptions,
+  type Store,
+  writeInParts,
+} from '../repo/types.js'
 
 interface R2ObjectLike {
   size: number
@@ -34,6 +42,15 @@ export interface R2BucketLike {
     options?: { httpMetadata?: { contentType?: string }; onlyIf?: Headers },
   ): Promise<R2ObjectLike | null>
   delete(key: string): Promise<void>
+  /** Multipart uploads (Workers bindings have them; a stand-in may not). */
+  createMultipartUpload?(
+    key: string,
+    options?: { httpMetadata?: { contentType?: string } },
+  ): Promise<{
+    uploadPart(partNumber: number, value: Uint8Array): Promise<{ partNumber: number; etag: string }>
+    complete(parts: { partNumber: number; etag: string }[]): Promise<unknown>
+    abort(): Promise<void>
+  }>
   list(options: {
     prefix?: string
     cursor?: string
@@ -90,6 +107,35 @@ class R2Store implements Store {
     await this.bucket.put(key, body, {
       ...(opts.contentType ? { httpMetadata: { contentType: opts.contentType } } : {}),
       ...(opts.ifAbsent ? { onlyIf: new Headers({ 'if-none-match': '*' }) } : {}),
+    })
+  }
+
+  async putParts(
+    key: string,
+    parts: AsyncIterable<Uint8Array>,
+    opts: PutPartsOptions = {},
+  ): Promise<void> {
+    const { check, ...put } = opts
+    const multipart = this.bucket.createMultipartUpload?.bind(this.bucket)
+    if (!multipart) {
+      const bytes = await joinParts(parts)
+      await check?.()
+      return this.put(key, bytes, put)
+    }
+    if (opts.ifAbsent && (await this.bucket.head(key))) return
+    await writeInParts(parts, check, {
+      single: (bytes) => this.put(key, bytes, put),
+      begin: async () => {
+        const upload = await multipart(
+          key,
+          opts.contentType ? { httpMetadata: { contentType: opts.contentType } } : {},
+        )
+        return {
+          part: (n, bytes) => upload.uploadPart(n, bytes),
+          complete: async (done) => void (await upload.complete(done)),
+          abort: () => upload.abort(),
+        }
+      },
     })
   }
 

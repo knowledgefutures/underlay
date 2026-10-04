@@ -41,5 +41,22 @@ export function sha256Hex(input: string | Uint8Array): string {
   return native ? native.createHash('sha256').update(input).digest('hex') : portableSha256Hex(input)
 }
 
+/** SHA-256 over bytes that arrive in pieces (a file streamed in parts). */
+export function sha256Hasher(): { update(bytes: Uint8Array): void; hex(): string } {
+  if (native) {
+    const h = native.createHash('sha256')
+    return { update: (b) => void h.update(b), hex: () => h.digest('hex') }
+  }
+  const h = nobleSha256.create()
+  return {
+    update: (b) => void h.update(b),
+    hex: () => {
+      let out = ''
+      for (const b of h.digest()) out += b.toString(16).padStart(2, '0')
+      return out
+    },
+  }
+}
+
 /** Whether hashing is native (Node, Workers) or the portable fallback (browsers). */
 export const nativeSha256 = native !== undefined

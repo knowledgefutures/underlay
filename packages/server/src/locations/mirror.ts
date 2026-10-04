@@ -24,7 +24,9 @@ import {
   jcs,
   keys,
   type LogEntry,
+  putFromParts,
   readCollectionInfo,
+  readParts,
   RepoSource,
   type Store,
   type SyncSets,
@@ -36,7 +38,7 @@ import { and, asc, eq, isNull, lt, ne, or } from 'drizzle-orm'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
-import { fetchFor, locationStore } from './locations.js'
+import { locationStore } from './locations.js'
 
 const LEASE_MS = 15 * 60 * 1000
 
@@ -45,8 +47,8 @@ export const mirrorConfig = {
   objectsPerJob: 2000,
   /** File bytes one job copies (at least one file). */
   fileBytesPerJob: 256 * 1024 * 1024,
-  /** Files over this are copied in multipart parts of this size. */
-  partBytes: 64 * 1024 * 1024,
+  /** Files are read and written in parts of this size (S3 joins parts under 5 MiB). */
+  partBytes: 8 * 1024 * 1024,
 }
 
 type Placement = typeof schema.placements.$inferSelect
@@ -107,33 +109,14 @@ async function copyFileBytes(ports: Ports, dest: Store, hash: string, size: numb
     .where(eq(schema.files.hash, hash))
     .limit(1)
   if (!row) throw new Error(`File ${hash} is referenced but not stored`)
-  const src = ports.stores.fileBytes
-  if (size <= mirrorConfig.partBytes || !dest.presigner) {
-    const obj = await src.get(row.storageKey)
-    if (!obj) throw new Error(`File ${hash} is missing from storage`)
-    await dest.put(keys.file(hash), await obj.bytes(), { contentType: row.mimeType })
-    return
-  }
-  // Large: a multipart upload, part by part from ranged reads.
-  const p = dest.presigner
-  const upload = await p.createMultipart(keys.file(hash), row.mimeType)
-  try {
-    const parts: { partNumber: number; etag: string }[] = []
-    for (let offset = 0, n = 1; offset < size; offset += mirrorConfig.partBytes, n++) {
-      const obj = await src.get(row.storageKey, { offset, length: mirrorConfig.partBytes })
-      if (!obj) throw new Error(`File ${hash} is missing from storage`)
-      const url = await p.presignPart(keys.file(hash), upload, n, 600)
-      const res = await fetchFor(ports)(
-        new Request(url, { method: 'PUT', body: (await obj.bytes()) as BodyInit }),
-      )
-      if (!res.ok) throw new Error(`Uploading part ${n} of ${hash}: ${res.status}`)
-      parts.push({ partNumber: n, etag: res.headers.get('etag') ?? '' })
-    }
-    await p.completeMultipart(keys.file(hash), upload, parts)
-  } catch (err) {
-    await p.abortMultipart(keys.file(hash), upload).catch(() => {})
-    throw err
-  }
+  // Ranged reads into a multipart write: at most a part (or S3's 5 MiB minimum)
+  // of the file is held at once.
+  await putFromParts(
+    dest,
+    keys.file(hash),
+    readParts(ports.stores.fileBytes, row.storageKey, size, mirrorConfig.partBytes),
+    { contentType: row.mimeType },
+  )
 }
 
 /**

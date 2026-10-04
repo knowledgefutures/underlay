@@ -12,8 +12,10 @@ import type {
   Presigner,
   PresignPutOptions,
   PutOptions,
+  PutPartsOptions,
   Store,
 } from '../repo/types.js'
+import { writeInParts } from '../repo/types.js'
 
 export interface S3Config {
   endpoint: string
@@ -217,6 +219,35 @@ export class S3Store implements Store {
     if (opts.disposition) q['response-content-disposition'] = opts.disposition
     if (opts.contentType) q['response-content-type'] = opts.contentType
     return this.#presign(this.#url(key, q), 'GET', opts.expiresIn)
+  }
+
+  /** A multipart upload, each part a signed UploadPart: no presigned URLs, no whole object held. */
+  async putParts(
+    key: string,
+    parts: AsyncIterable<Uint8Array>,
+    opts: PutPartsOptions = {},
+  ): Promise<void> {
+    const { check, ...put } = opts
+    if (opts.ifAbsent && (await this.head(key))) return
+    await writeInParts(parts, check, {
+      single: (bytes) => this.put(key, bytes, put),
+      begin: async () => {
+        const id = await this.#createMultipart(key, opts.contentType)
+        return {
+          part: async (partNumber, bytes) => {
+            const res = await this.#fetch(
+              this.#url(key, { partNumber: String(partNumber), uploadId: id }),
+              { method: 'PUT', body: bytes as BodyInit },
+            )
+            if (!res.ok) return this.#fail(res, `UploadPart ${partNumber} of ${key}`)
+            await res.body?.cancel()
+            return { partNumber, etag: res.headers.get('etag') ?? '' }
+          },
+          complete: (done) => this.#completeMultipart(key, id, done),
+          abort: () => this.#abortMultipart(key, id),
+        }
+      },
+    })
   }
 
   #presignPut(key: string, opts: PresignPutOptions): Promise<string> {

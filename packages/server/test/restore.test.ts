@@ -15,6 +15,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
+import { mirrorConfig } from '../src/locations/mirror.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 const fakes: FakeS3[] = []
@@ -269,6 +270,36 @@ describe('restore', () => {
     const named = await restore(b, user, loc, c.id, [a.signer.keyId])
     expect(named.status).toBe('failed')
     expect(named.error).toMatch(/signature|No trusted key/)
+  })
+
+  it('copies files in parts, hashing as they pass, and refuses one that fails its hash', async () => {
+    mirrorConfig.partBytes = 4 // 'cover bytes' arrives in three ranged reads
+    try {
+      const { f, a, c, cover } = await source()
+      const b = await harness()
+      const user = await b.member()
+      const loc = await location(b, user, f)
+      const ok = await restore(b, user, loc, c.id, [a.signer.keyId])
+      expect(ok).toMatchObject({ status: 'done', error: null })
+      const stored = await b.ports.stores.fileBytes.get(b.ports.stores.canonicalFileKey(sha(cover)))
+      expect(await stored!.text()).toBe(cover)
+
+      // The same bucket, with the file's bytes swapped: the write never completes.
+      const fileKey = `backup/files/${sha(cover)}`
+      const other = [...f.objects.keys()].find((k) => k.startsWith('backup/bodies/'))!
+      f.objects.set(fileKey, f.objects.get(other)!)
+      const b2 = await harness()
+      const user2 = await b2.member()
+      const loc2 = await location(b2, user2, f)
+      const bad = await restore(b2, user2, loc2, c.id, [a.signer.keyId])
+      expect(bad.status).toBe('failed')
+      expect(bad.error).toMatch(/fails its hash or size/)
+      expect(
+        await b2.ports.stores.fileBytes.head(b2.ports.stores.canonicalFileKey(sha(cover))),
+      ).toBeNull()
+    } finally {
+      mirrorConfig.partBytes = 8 * 1024 * 1024
+    }
   })
 
   it('refuses a tampered bucket', async () => {

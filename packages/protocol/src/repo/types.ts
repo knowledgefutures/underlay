@@ -18,6 +18,11 @@ export interface PutOptions {
   ifAbsent?: boolean
 }
 
+export interface PutPartsOptions extends PutOptions {
+  /** Runs after the last part and before the object appears; throwing abandons the write. */
+  check?: () => void | Promise<void>
+}
+
 export interface PresignGetOptions {
   expiresIn: number
   /** Content-Disposition for the response. */
@@ -47,6 +52,12 @@ export interface Store {
   list(prefix: string, cursor?: string): Promise<{ keys: string[]; cursor?: string }>
   /** Deleting an absent key succeeds. */
   delete(key: string): Promise<void>
+  /**
+   * Write an object from parts, in order, without holding it whole: a multipart
+   * upload where the store has one. Every part but the last must be at least
+   * 5 MiB (S3's minimum). `putFromParts` falls back to put for stores without it.
+   */
+  putParts?(key: string, parts: AsyncIterable<Uint8Array>, opts?: PutPartsOptions): Promise<void>
   /** Server-side copy, where the store has one; `copyObject` falls back to get and put. */
   copy?(from: string, to: string): Promise<void>
   /** Presigned URLs and multipart uploads, where the store can hand out URLs. */
@@ -76,6 +87,111 @@ export async function copyObject(store: Store, from: string, to: string): Promis
   const obj = await store.get(from)
   if (!obj) throw new Error(`copyObject: ${from} does not exist`)
   await store.put(to, await obj.bytes(), obj.contentType ? { contentType: obj.contentType } : {})
+}
+
+/** An object read as consecutive byte ranges of `partBytes`. */
+export async function* readParts(
+  store: Store,
+  key: string,
+  size: number,
+  partBytes: number,
+): AsyncGenerator<Uint8Array> {
+  for (let offset = 0; offset < size; offset += partBytes) {
+    const obj = await store.get(key, { offset, length: Math.min(partBytes, size - offset) })
+    if (!obj) throw new Error(`${key} is missing`)
+    yield await obj.bytes()
+  }
+}
+
+/** Write from parts with the store's putParts, or by joining them and putting. */
+export async function putFromParts(
+  store: Store,
+  key: string,
+  parts: AsyncIterable<Uint8Array>,
+  opts: PutPartsOptions = {},
+): Promise<void> {
+  if (store.putParts) return store.putParts(key, parts, opts)
+  const bytes = await joinParts(parts)
+  await opts.check?.()
+  const { check: _, ...put } = opts
+  await store.put(key, bytes, put)
+}
+
+/** S3's (and R2's) smallest part, except the last. */
+export const MIN_PART_BYTES = 5 * 1024 * 1024
+
+/** A started multipart upload, as `writeInParts` drives it. */
+export interface MultipartWriter {
+  part(partNumber: number, bytes: Uint8Array): Promise<{ partNumber: number; etag: string }>
+  complete(parts: { partNumber: number; etag: string }[]): Promise<void>
+  abort(): Promise<void>
+}
+
+/**
+ * A multipart write from parts of any size: small ones are joined up to
+ * MIN_PART_BYTES, and an object that fits in one part is a plain `single` put.
+ * `check` runs before the object appears; a failure aborts the upload.
+ */
+export async function writeInParts(
+  parts: AsyncIterable<Uint8Array>,
+  check: (() => void | Promise<void>) | undefined,
+  w: { single(bytes: Uint8Array): Promise<void>; begin(): Promise<MultipartWriter> },
+): Promise<void> {
+  const it = joinUpTo(parts, MIN_PART_BYTES)[Symbol.asyncIterator]()
+  let cur = await it.next()
+  let next = cur.done ? cur : await it.next()
+  if (next.done) {
+    await check?.()
+    return w.single(cur.done ? new Uint8Array(0) : cur.value)
+  }
+  const upload = await w.begin()
+  try {
+    const done: { partNumber: number; etag: string }[] = []
+    while (!cur.done) {
+      done.push(await upload.part(done.length + 1, cur.value))
+      cur = next
+      next = cur.done ? cur : await it.next()
+    }
+    await check?.()
+    await upload.complete(done)
+  } catch (err) {
+    await upload.abort().catch(() => {})
+    throw err
+  }
+}
+
+/** Parts of at least `min` bytes (the last may be smaller), joining small ones. */
+async function* joinUpTo(
+  parts: AsyncIterable<Uint8Array>,
+  min: number,
+): AsyncGenerator<Uint8Array> {
+  let held: Uint8Array[] = []
+  let n = 0
+  for await (const p of parts) {
+    held.push(p)
+    n += p.byteLength
+    if (n >= min) {
+      yield held.length === 1 ? held[0]! : await joinParts(held)
+      held = []
+      n = 0
+    }
+  }
+  if (held.length > 0) yield held.length === 1 ? held[0]! : await joinParts(held)
+}
+
+/** Concatenate parts (stores with no multipart write). */
+export async function joinParts(
+  parts: AsyncIterable<Uint8Array> | Iterable<Uint8Array>,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = []
+  for await (const p of parts) chunks.push(p)
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0))
+  let off = 0
+  for (const c of chunks) {
+    out.set(c, off)
+    off += c.byteLength
+  }
+  return out
 }
 
 /** Every key under a prefix, following list pages. */
@@ -110,6 +226,11 @@ export class PrefixedStore implements Store {
   readonly #p: string
   readonly presigner?: Presigner
   readonly copy?: (from: string, to: string) => Promise<void>
+  readonly putParts?: (
+    key: string,
+    parts: AsyncIterable<Uint8Array>,
+    opts?: PutPartsOptions,
+  ) => Promise<void>
   constructor(
     readonly inner: Store,
     prefix: string,
@@ -131,6 +252,10 @@ export class PrefixedStore implements Store {
     if (inner.copy) {
       const copy = inner.copy.bind(inner)
       this.copy = (from, to) => copy(k(from), k(to))
+    }
+    if (inner.putParts) {
+      const putParts = inner.putParts.bind(inner)
+      this.putParts = (key, parts, opts) => putParts(k(key), parts, opts)
     }
   }
   #k = (key: string) => this.#p + key

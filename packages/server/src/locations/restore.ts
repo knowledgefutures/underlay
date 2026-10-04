@@ -31,15 +31,17 @@ import {
   type LogEntry,
   openRepo,
   packVersion,
+  putFromParts,
   readCollectionInfo,
   readHead,
   readLogEntry,
+  readParts,
   rebuildFileRefs,
   receiveVersion,
   type Repo,
   RepoSource,
   setRecordTotals,
-  sha256Hex,
+  sha256Hasher,
   type SyncSets,
   type VersionRoot,
   verifyLogEntries,
@@ -54,6 +56,7 @@ import { mergeCumulativeFiles, summarize } from '../versions/commit.js'
 import { publishVersion, type SchemaUsageChange } from '../versions/publish.js'
 import { parseSemver } from '../versions/semver.js'
 import { locationStore, type LocationRow } from './locations.js'
+import { mirrorConfig } from './mirror.js'
 
 type RestoreRow = typeof schema.restores.$inferSelect
 
@@ -190,20 +193,40 @@ async function copyFiles(
       .where(eq(schema.files.hash, f.key))
       .limit(1)
     if (have) continue
-    const obj = await source.blobs.get(keys.file(f.key))
-    if (!obj) throw new RestoreError(`File ${f.key} is missing from the location`)
-    const bytes = await obj.bytes()
-    if (bytes.byteLength !== f.size || sha256Hex(bytes) !== f.key) {
-      throw new RestoreError(`File ${f.key} in the location fails its hash or size`)
+    const head = await source.blobs.head(keys.file(f.key))
+    if (!head) throw new RestoreError(`File ${f.key} is missing from the location`)
+    // Read in parts, hashed as they pass, and written as a multipart upload that
+    // completes only if the bytes are the file: never the whole file in memory.
+    const hasher = sha256Hasher()
+    let seen = 0
+    const parts = async function* () {
+      for await (const p of readParts(
+        source.blobs,
+        keys.file(f.key),
+        f.size,
+        mirrorConfig.partBytes,
+      )) {
+        hasher.update(p)
+        seen += p.byteLength
+        yield p
+      }
     }
     const storageKey = ports.stores.canonicalFileKey(f.key)
-    await ports.stores.fileBytes.put(storageKey, bytes, { ifAbsent: true })
+    await putFromParts(ports.stores.fileBytes, storageKey, parts(), {
+      ifAbsent: true,
+      ...(head.contentType ? { contentType: head.contentType } : {}),
+      check: () => {
+        if (seen !== f.size || head.size !== f.size || hasher.hex() !== f.key) {
+          throw new RestoreError(`File ${f.key} in the location fails its hash or size`)
+        }
+      },
+    })
     await ports.db
       .insert(schema.files)
       .values({
         hash: f.key,
         size: f.size,
-        mimeType: obj.contentType ?? 'application/octet-stream',
+        mimeType: head.contentType ?? 'application/octet-stream',
         storageKey,
         verifiedAt: new Date(),
       })

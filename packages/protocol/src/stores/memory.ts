@@ -1,4 +1,12 @@
-import type { BlobHead, BlobObject, Presigner, PutOptions, Store } from '../repo/types.js'
+import {
+  type BlobHead,
+  type BlobObject,
+  joinParts,
+  type Presigner,
+  type PutOptions,
+  type PutPartsOptions,
+  type Store,
+} from '../repo/types.js'
 
 const enc = new TextEncoder()
 
@@ -48,6 +56,13 @@ export class MemoryStore implements Store {
       bytes: typeof body === 'string' ? enc.encode(body) : body.slice(),
       contentType: opts.contentType ?? null,
     })
+  }
+
+  async putParts(key: string, parts: AsyncIterable<Uint8Array>, opts: PutPartsOptions = {}) {
+    const bytes = await joinParts(parts)
+    await opts.check?.()
+    const { check: _, ...put } = opts
+    await this.put(key, bytes, put)
   }
 
   async delete(key: string) {

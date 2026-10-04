@@ -15,8 +15,11 @@ import {
   fileStore,
   listAll,
   memoryStore,
+  MIN_PART_BYTES,
   PrefixedStore,
+  putFromParts,
   type R2BucketLike,
+  readParts,
   r2Store,
   s3Store,
   serveSignedBlob,
@@ -123,6 +126,53 @@ for (const [name, make] of makers) {
       await store.put('stream', enc.encode('x'.repeat(100_000)))
       const obj = await store.get('stream')
       expect((await new Response(obj!.body).text()).length).toBe(100_000)
+    })
+
+    it('writes from parts, and a failed check leaves nothing behind', async () => {
+      async function* parts(n: number, size: number) {
+        for (let i = 0; i < n; i++) yield new Uint8Array(size).fill(65 + i)
+      }
+      await putFromParts(store, 'parts/ok', parts(3, 1000), { contentType: 'text/plain' })
+      const obj = await store.get('parts/ok')
+      expect(obj!.size).toBe(3000)
+      expect((await obj!.text()).slice(995, 1005)).toBe('AAAAABBBBB')
+      await expect(
+        putFromParts(store, 'parts/bad', parts(2, 10), {
+          check: () => {
+            throw new Error('hash mismatch')
+          },
+        }),
+      ).rejects.toThrow('hash mismatch')
+      expect(await store.head('parts/bad')).toBeNull()
+      await putFromParts(store, 'parts/ok', parts(1, 5), { ifAbsent: true })
+      expect((await store.head('parts/ok'))!.size).toBe(3000)
+      await putFromParts(store, 'parts/empty', parts(0, 0))
+      expect((await store.head('parts/empty'))!.size).toBe(0)
+      // Big enough for a real multipart upload: two full parts and a short one.
+      const big = MIN_PART_BYTES
+      await putFromParts(
+        store,
+        'parts/big',
+        (async function* () {
+          yield* parts(2, big)
+          yield new Uint8Array(7).fill(90)
+        })(),
+      )
+      expect((await store.head('parts/big'))!.size).toBe(2 * big + 7)
+      const tail = await store.get('parts/big', { offset: big - 2, length: 4 })
+      expect(await tail!.text()).toBe('AABB')
+      await expect(
+        putFromParts(store, 'parts/big-bad', parts(3, big), {
+          check: () => {
+            throw new Error('size mismatch')
+          },
+        }),
+      ).rejects.toThrow('size mismatch')
+      expect(await store.head('parts/big-bad')).toBeNull()
+      // readParts gives back the same bytes in ranges.
+      const back: number[] = []
+      for await (const p of readParts(store, 'parts/ok', 3000, 1024)) back.push(p.byteLength)
+      expect(back).toEqual([1024, 1024, 952])
     })
 
     it('copies, natively or by reading and writing', async () => {
