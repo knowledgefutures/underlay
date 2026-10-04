@@ -128,11 +128,12 @@ export default function ProtocolVersions() {
 
       <h2 id="semver">Semver</h2>
       <p>
-        Versions are numbered by the server from what changed against the previous version:{' '}
-        <strong>major</strong> when a type&rsquo;s schema changed or a type was added or removed,{' '}
-        <strong>minor</strong> when records changed (a record moving between the sets counts), and{' '}
+        Every node numbers versions the same way, from what changed against the version the push
+        started from: <strong>major</strong> when a type was added or removed or a type&rsquo;s
+        schema changed (making a type private or public changes its schema), <strong>minor</strong>{' '}
+        when records were added, removed or changed (a record moving between the sets counts), and{' '}
         <strong>patch</strong> otherwise, for example a metadata edit. A push that changes nothing
-        makes no version. The first version is <code>v1.0.0</code>.
+        makes no version. The first version is <code>v1.0.0</code>, and semvers only increase.
       </p>
     </DocsLayout>
   )

@@ -1,94 +1,82 @@
 import DocsLayout from '~/components/DocsLayout'
 
-const negotiateReq = `{
-  "base_version": "v1.0.0",
+const openReq = `{
+  "base": "v1.0.0",
   "schemas": {
     "Publication": {
       "type": "object",
       "properties": {
-        "title": {"type": "string"}
+        "title": {"type": "string"},
+        "pdf": {"type": "object"}
       }
     }
   },
-  "manifest": [
-    {"id": "pub-001", "type": "Publication", "hash": "abc123..."},
-    {"id": "pub-002", "type": "Publication", "hash": "def456..."},
-    {"id": "pub-003", "type": "Publication", "hash": "789abc..."}
-  ],
-  "files": ["7a8b9c..."],
-  "message": "Add new publications",
-  "metadata": {
-    "description": "PubPub archive"
+  "metadata_patch": {"description": "PubPub archive"},
+  "files": {"add": ["7a8b9c..."]},
+  "message": "Add new publications"
+}`
+
+const openRes = `{
+  "session_id": "uuid",
+  "base": "v1.0.0",
+  "needed_files": ["7a8b9c..."],
+  "expires_at": "2026-10-04T13:00:00.000Z",
+  "limits": {
+    "open_bytes": 8388608,
+    "batch_bytes": 16777216,
+    "batch_lines": 10000,
+    "session_idle_seconds": 3600,
+    "open_sessions": 20,
+    "file_bytes": 33554432
   }
 }`
 
-const negotiateRes = `{
-  "session_id": "uuid",
-  "needed_records": ["def456...", "789abc..."],
-  "needed_files": [],
-  "total_records": 3,
-  "total_files": 1,
-  "already_have_records": 1,
-  "already_have_files": 1
-}`
+const recordsReq = `{"id":"pub-002","type":"Publication","data":{"title":"New Paper"}}
+{"id":"pub-003","type":"Publication","data":{"title":"Draft"},"private":true}`
 
-const recordsRes = `{
-  "received": 2,
-  "remaining": 0,
-  "total_needed": 2
-}`
+const deletesReq = `{"type":"Publication","id":"pub-old"}`
 
 const commitRes = `{
   "semver": "v1.1.0",
   "hash": "ulv2:a1b2c3d4...",
   "recordCount": 3,
-  "fileCount": 1
-}`
-
-const chunkedStartReq = `{
-  "base_version": null,
-  "schemas": { "Preprint": { "type": "object", "properties": {...} } },
-  "manifest_expected": 3110000,
-  "message": "arXiv metadata"
-}`
-
-const chunkedStartRes = `{
-  "session_id": "uuid",
-  "manifest_expected": 3110000,
-  "manifest_received": 0,
-  "needed_files": [],
-  "total_files": 0,
-  "already_have_files": 0,
-  "next": "POST .../versions/negotiate/uuid/manifest"
-}`
-
-const manifestChunkRes = `{
-  "received": 50000,
-  "needed_records": ["def456...", "789abc..."],
-  "manifest_received": 150000,
-  "manifest_expected": 3110000
+  "fileCount": 1,
+  "changes": {"added": 2, "removed": 1, "updated": 0}
 }`
 
 const asyncCommitRes = `{
   "session_id": "uuid",
   "status": "committing",
-  "message": "Commit accepted. Poll GET .../versions/negotiate/uuid until status is \\"committed\\" or \\"failed\\"."
+  "poll": "GET /api/collections/:owner/:slug/push/uuid"
 }`
 
 const sessionPollRes = `{
   "session_id": "uuid",
   "status": "committed",
-  "total_records": 3110000,
-  "needed_records": 0,
-  "finalize_started_at": "2026-07-31T12:00:00.000Z",
+  "records_received": 3110000,
+  "expires_at": "2026-10-04T13:00:00.000Z",
+  "created_at": "2026-10-04T12:00:00.000Z",
+  "finalize_started_at": "2026-10-04T12:20:00.000Z",
   "result": {
     "semver": "v1.1.0",
     "hash": "ulv2:a1b2c3d4...",
     "recordCount": 3110000,
-    "fileCount": 0
+    "fileCount": 0,
+    "changes": {"added": 3110000, "removed": 0, "updated": 0}
   },
   "error": null
 }`
+
+const noCopy = `# 1. What the head holds: page the manifest (members also see private records)
+GET .../versions/latest/manifest?limit=100000          # then ?cursor=<nextCursor>
+# 2. Compare by (type, id): hash your current records (canonical form, SHA-256)
+#    new, changed hash, or changed privacy  -> upsert
+#    in the manifest but not in your data   -> delete
+# 3. Push only those, against the manifest's semver
+POST .../push  {"base": "<manifest semver>"}
+POST .../push/:sid/records   ...
+POST .../push/:sid/deletes   ...
+POST .../push/:sid/commit`
 
 const listRes = `[
   {
@@ -137,7 +125,7 @@ const manifestRes = `{
   "schemas": {"Publication": "abc123..."},
   "records": [
     {"id": "pub-001", "type": "Publication", "hash": "def456..."},
-    {"id": "pub-002", "type": "Publication", "hash": "789abc..."}
+    {"id": "pub-002", "type": "Publication", "hash": "789abc...", "private": true}
   ],
   "files": ["a1b2c3...", "d4e5f6..."],
   "pagination": {
@@ -163,8 +151,7 @@ const manifestDeltaRes = `{
     "limit": 10000,
     "hasMore": false,
     "nextCursor": null
-  },
-  "truncated": false
+  }
 }`
 
 const diffRes = `{
@@ -195,51 +182,48 @@ export default function DocsApiVersions() {
     <DocsLayout title="Versions API">
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
-        schema + records + file references. This page documents the <strong>negotiate</strong> push,
-        a three-step flow similar to git&rsquo;s pack negotiation. Clients that track their own
-        changes can send only those with{' '}
-        <a href="/docs/protocol/push-and-pull#delta-push">delta push</a>.
+        schemas, records and file references. You publish one with a <strong>delta push</strong>:
+        open a session against the version you started from, upload the records you add or change
+        and the ids you delete, and commit. The same exchange works against any Underlay node (
+        <a href="/docs/protocol/push-and-pull">Push and pull</a>).
       </p>
       <p>
         <strong>Version hashes</strong> are <code>ulv2:&lt;sha256&gt;</code>, the hash of the
         version&rsquo;s root, and are the same for every reader: the private set is in the root only
         as a salted commitment (see{' '}
-        <a href="/docs/protocol/versions#version-root">Trees and versions</a>). Versions converted
-        from v1 also answer to their old <code>private:</code> and <code>public:</code> hashes.
-        Record, schema and file hashes are bare hex with no prefix.
+        <a href="/docs/protocol/versions#version-root">Trees and versions</a>). Wherever a version
+        is named in a path (<code>:n</code>), it can be a semver (<code>v1.1.0</code>), a version
+        hash, or <code>latest</code>. Record, schema and file hashes are bare hex with no prefix.
       </p>
 
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2>Push Protocol (Negotiate → Records → Commit)</h2>
+        <h2>Delta push (open → upload → commit)</h2>
         <p>
-          You send a manifest of record hashes; the server tells you which ones it needs; you send
-          only those records; then you commit. For collections where most records are unchanged
-          between versions, only a few records are transferred.
+          A push costs work in proportion to what changed, not to the size of the collection. Only
+          the records you send are validated and hashed; unchanged records are never re-sent.
         </p>
 
-        <h3>Step 1: POST /api/collections/:owner/:slug/versions/negotiate</h3>
+        <h3>POST /api/collections/:owner/:slug/push</h3>
         <p className="scope">Auth: write scope</p>
-        <p>
-          Start a negotiate session. Send your full manifest of record hashes plus schemas. The
-          server checks which record and file hashes it already has and returns what it still needs.
-        </p>
+        <p>Open a session. Every field is optional.</p>
         <h4>Request</h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{negotiateReq}</code>
+          <code>{openReq}</code>
         </pre>
         <h4>Fields</h4>
         <table>
           <tbody>
             <tr>
               <td>
-                <code>base_version</code>
+                <code>base</code>
               </td>
               <td>
-                <strong>Required.</strong> The semver this push is based on (e.g.{' '}
-                <code>"v1.0.0"</code>). Use <code>null</code> for the first version. If the current
-                version doesn't match, returns <code>409 Conflict</code>.
+                The semver you started from. If it isn&rsquo;t the collection&rsquo;s head, the
+                answer is <code>409</code> with <code>currentVersion</code>. <code>null</code> or
+                absent applies the changes to whatever the head is (use <code>null</code> for the
+                first version).
               </td>
             </tr>
             <tr>
@@ -247,61 +231,44 @@ export default function DocsApiVersions() {
                 <code>schemas</code>
               </td>
               <td>
-                <strong>Required.</strong> Per-type JSON Schema map (e.g.{' '}
-                <code>{'{"TypeName": {schema}}'}</code>).
+                The full type set, <code>{'{"TypeName": schema}'}</code>. It replaces the
+                base&rsquo;s: a type left out is removed with its records. Absent keeps the
+                base&rsquo;s types.
               </td>
             </tr>
             <tr>
               <td>
-                <code>manifest</code>
+                <code>metadata</code> / <code>metadata_patch</code>
               </td>
               <td>
-                Array of <code>{'{"id", "type", "hash", "private"?}'}</code> objects. Each{' '}
-                <code>hash</code> is the SHA-256 of the canonical JSON{' '}
-                <code>{'{"id":...,"type":...,"data":...}'}</code>. <code>private: true</code> hides
-                that record from non-owners in <strong>this version only</strong> and must be
-                re-sent on every push — omitting it means public (default <code>false</code>).
-                Required unless you upload the manifest in chunks — see below. Capped at 500,000
-                entries.
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>manifest_expected</code>
-              </td>
-              <td>
-                Number of distinct record hashes you will upload in chunks. Mutually exclusive with{' '}
-                <code>manifest</code>. See "uploading the manifest in chunks" below.
+                <code>metadata</code> replaces the version metadata (<code>description</code>,{' '}
+                <code>readme</code>, <code>license</code>, …); <code>metadata_patch</code> merges
+                its top-level members into the base&rsquo;s. With neither, the metadata is kept.
               </td>
             </tr>
             <tr>
               <td>
                 <code>files</code>
               </td>
-              <td>Array of file hashes (SHA-256 hex strings) referenced by records.</td>
+              <td>
+                <code>{'{"add": [hash, …], "remove": [hash, …]}'}</code>: files to declare or drop
+                beyond those your records reference.
+              </td>
             </tr>
             <tr>
               <td>
-                <code>message</code>
+                <code>message</code>, <code>app_id</code>, <code>actor_id</code>
               </td>
-              <td>Human-readable commit message.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>metadata</code>
-              </td>
-              <td>
-                Optional object with version metadata (<code>description</code>, <code>readme</code>
-                , <code>license</code>, etc.). Merged with the previous version's metadata.
-              </td>
+              <td>Strings recorded in the version&rsquo;s signed log entry.</td>
             </tr>
             <tr>
               <td>
                 <code>strip_unknown_fields</code>
               </td>
               <td>
-                If <code>true</code>, the server strips fields not defined in the schema instead of
-                rejecting the push.
+                If <code>true</code>, top-level fields a record&rsquo;s schema doesn&rsquo;t list in{' '}
+                <code>properties</code> are dropped before the record is hashed, instead of refusing
+                the record.
               </td>
             </tr>
           </tbody>
@@ -310,213 +277,160 @@ export default function DocsApiVersions() {
           Response <span className="text-ink-muted font-normal">200</span>
         </h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{negotiateRes}</code>
-        </pre>
-
-        <h4>Large collections: uploading the manifest in chunks</h4>
-        <p>
-          The manifest above is a single JSON body, which is fine up to{' '}
-          <strong>500,000 entries</strong> (beyond that the endpoint returns <code>413</code>). At a
-          few million records it would be hundreds of megabytes, parsed whole. Instead, omit{' '}
-          <code>manifest</code> and declare how many records you will send:
-        </p>
-        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{chunkedStartReq}</code>
+          <code>{openRes}</code>
         </pre>
         <p>
-          The server opens the session without asking for any records yet — nothing in this response
-          is proportional to the collection:
-        </p>
-        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{chunkedStartRes}</code>
-        </pre>
-        <p>
-          Then <code>POST .../versions/negotiate/:sessionId/manifest</code> with up to{' '}
-          <strong>50,000</strong> JSONL entries per request (
-          <code>Content-Type: application/x-ndjson</code>), each line a{' '}
-          <code>{'{"id", "type", "hash", "private"?}'}</code> object. Each response tells you which
-          records from <em>that chunk</em> the server still needs, so you can start sending bodies
-          before the whole manifest is uploaded:
-        </p>
-        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{manifestChunkRes}</code>
-        </pre>
-        <p>
-          Chunks are idempotent: entries are keyed by hash, so re-sending a chunk after a timeout is
-          safe and <code>manifest_received</code> will not move. Commit refuses to build a version
-          until <code>manifest_received</code> equals <code>manifest_expected</code>, so a client
-          that dies partway through the upload cannot silently produce a version that dropped
-          records.
-        </p>
-        <p className="text-ink-muted">
-          The session's 10-minute expiry is an <em>idle</em> timeout — every manifest chunk and
-          record batch pushes it back — so a push that legitimately runs for an hour will not expire
-          underneath you.
+          <code>needed_files</code> are the declared files this collection doesn&rsquo;t hold yet:
+          upload them before you commit. <code>limits</code> are this node&rsquo;s; size your
+          batches by them. The session expires after <code>session_idle_seconds</code> without an
+          upload, and every upload pushes <code>expires_at</code> back.
         </p>
 
-        <h3>Step 2: POST .../negotiate/:sessionId/records</h3>
+        <h3>POST .../push/:sid/records</h3>
         <p className="scope">Auth: write scope</p>
         <p>
-          Send needed records as a JSONL body (<code>Content-Type: application/x-ndjson</code>).
-          Each line is one JSON record. Only send records whose hashes appear in{' '}
-          <code>needed_records</code> from the negotiate response.
-        </p>
-        <p>
-          <strong>Call this endpoint multiple times</strong> to send records in batches (up to
-          10,000 per request). The server tracks which records have been received. If{' '}
-          <code>needed_records</code> was empty, skip this step and go directly to commit.
+          Upserts as NDJSON (<code>Content-Type: application/x-ndjson</code>), one record per line:{' '}
+          <code>{'{"id", "type", "data", "private"?}'}</code>. Call it as many times as you need, up
+          to <code>batch_lines</code> lines and <code>batch_bytes</code> bytes each.
         </p>
         <h4>Request</h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{`{"id":"pub-002","type":"Publication","data":{"title":"New Paper"}}
-{"id":"pub-003","type":"Publication","data":{"title":"Another Paper"}}`}</code>
+          <code>{recordsReq}</code>
         </pre>
         <h4>
           Response <span className="text-ink-muted font-normal">200</span>
         </h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{recordsRes}</code>
+          <code>{'{ "received": 2 }'}</code>
         </pre>
         <p>
-          When <code>remaining</code> reaches 0, all needed records have been received and you can
-          commit.
+          Each line passes the input rules and its type&rsquo;s schema, and its type must be in the
+          session&rsquo;s type set. If any line fails, the answer is <code>422</code> with{' '}
+          <code>validationErrors</code>, one per failing line with its 1-based <code>line</code>{' '}
+          number, and nothing from the batch is stored.
         </p>
 
-        <h3>Step 3: POST .../negotiate/:sessionId/commit</h3>
+        <h3>POST .../push/:sid/deletes</h3>
         <p className="scope">Auth: write scope</p>
         <p>
-          Finalize the push. The server validates all records against schemas, computes version
-          hashes, and creates the new immutable version. No request body is needed.
+          Deletes as NDJSON, one <code>{'{"type", "id"}'}</code> per line; the answer is{' '}
+          <code>{'{ "received": n }'}</code>. Deleting an id the base doesn&rsquo;t hold is not an
+          error. Within a session the later upload of a (type, id) wins, whether it is a record or a
+          delete.
         </p>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{deletesReq}</code>
+        </pre>
+
+        <h3>PUT .../files/:hash</h3>
+        <p className="scope">Auth: write scope</p>
+        <p>
+          Upload a file&rsquo;s bytes under its SHA-256 hash: <code>201</code>, or <code>400</code>{' '}
+          if the bytes don&rsquo;t match the hash. Files over <code>file_bytes</code> are a{' '}
+          <code>413</code>; upload those through <a href="/docs/api/files">the Files API</a>. Every
+          file a new record references must be uploaded before the commit.
+        </p>
+
+        <h3>POST .../push/:sid/commit</h3>
+        <p className="scope">Auth: write scope</p>
+        <p>Build the version. No body is needed.</p>
         <h4>
           Response <span className="text-ink-muted font-normal">201</span>
         </h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{commitRes}</code>
         </pre>
-
-        <h4>Large pushes: async finalize</h4>
         <p>
-          Commit work is proportional to the size of the collection, so on a very large one it can
-          run for minutes — longer than a proxy or client will hold a request open. Pass{' '}
-          <code>?async=true</code> (or <code>{'{"async": true}'}</code> in the body) and the server
-          answers <code>202</code> immediately and builds the version in the background:
+          The semver follows from what changed against the base: <strong>major</strong> when a type
+          was added or removed or a schema changed, otherwise <strong>minor</strong> when any record
+          was added, removed or changed (moving between public and private counts), otherwise{' '}
+          <strong>patch</strong> (metadata or files only). A push that changes nothing makes no
+          version and answers <code>409</code>.
+        </p>
+        <p>
+          With <code>?async=true</code>, or whenever the push is large, the answer is{' '}
+          <code>202</code> and the version is built in the background:
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{asyncCommitRes}</code>
         </pre>
         <p>
-          Then poll <code>GET .../versions/negotiate/:sessionId</code> until <code>status</code> is{' '}
-          <code>committed</code> or <code>failed</code>. On success <code>result</code> holds
-          exactly what the synchronous <code>201</code> would have returned; on failure{' '}
-          <code>error</code> holds the rejection body it would have returned instead, so the two
-          paths are interchangeable apart from timing.
+          Poll <code>GET .../push/:sid</code> until <code>status</code> is <code>committed</code> (
+          <code>result</code> is the <code>201</code> body) or <code>failed</code> (
+          <code>error</code> is the rejection). The version isn&rsquo;t visible to readers until it
+          is committed.
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{sessionPollRes}</code>
         </pre>
-        <p className="text-ink-muted">
-          The version is not visible to readers until the finalize completes — it is created in a{' '}
-          <code>creating</code> state and only published at the end, so there is no window where a
-          half-built version can be read. A finalize whose process dies is swept and marked{' '}
-          <code>failed</code>, and its partial version removed.
+        <p>
+          <code>DELETE .../push/:sid</code> abandons a session.
         </p>
 
-        <h3>Privacy</h3>
+        <h3>Clients that keep no copy</h3>
         <p>
-          You can add <code>"private": true</code> at two levels in the schema, and at a third on
-          the manifest entry:
+          A client that exports its whole dataset each time, rather than tracking changes, reads the
+          head&rsquo;s manifest, diffs against it, and pushes only the differences. The upload is
+          the size of the changes, whatever the size of the collection.
         </p>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{noCopy}</code>
+        </pre>
+
+        <h3>Privacy</h3>
         <ul>
           <li>
-            <strong>Type-level:</strong> Add <code>"private": true</code> to a type definition to
-            hide all records of that type from public readers.
+            <strong>Type-level:</strong> <code>"private": true</code> at a schema&rsquo;s root hides
+            every record of that type from people outside the owning organization.
           </li>
           <li>
-            <strong>Field-level:</strong> Add <code>"private": true</code> to a field definition to
-            strip that field from records returned to public readers.
-          </li>
-          <li>
-            <strong>Record-level:</strong> Add <code>"private": true</code> to a{' '}
-            <strong>manifest entry</strong> (not the record body) to hide that one record. Unlike
-            type and field privacy — which live in the schema — this is declared per record per push
-            and stored on the version&rsquo;s reference to the record, so{' '}
-            <strong>it must be re-declared on every push; omitting it means public</strong>. The
-            manifest endpoint echoes <code>private</code> back so a round-trip is lossless.
+            <strong>Record-level:</strong> <code>"private": true</code> on a record line puts that
+            record in the version&rsquo;s private set. It belongs to this version&rsquo;s reference
+            to the record: a record keeps its flag until a later upload of the same id changes it.
           </li>
         </ul>
         <p>
-          Redaction is <strong>per-version and forward-only</strong>: marking a record private in v2
-          hides it in v2 only — v1 is immutable and still serves it at{' '}
-          <code>/versions/v1.0.0/records</code>. File access resolves across every ready version, so
-          a file referenced publicly in v1 stays downloadable after the referencing record is
-          redacted in v2.
+          <code>"private": true</code> on a property inside a schema (field-level privacy) is
+          refused. Put private fields in a private type, or push the whole record as private.
+          Privacy is per version: marking a record private in v1.1.0 doesn&rsquo;t change v1.0.0,
+          which still serves it.
         </p>
-        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{`"schemas": {
-  "Article": {
-    "type": "object",
-    "properties": {
-      "title": {"type": "string"},
-      "body": {"type": "string"},
-      "internalScore": {"type": "number", "private": true}
-    }
-  },
-  "InternalNote": {
-    "type": "object",
-    "private": true,
-    "properties": {
-      "note": {"type": "string"}
-    }
-  }
-}`}</code>
-        </pre>
-
-        <h3>Session management</h3>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>GET .../negotiate/:sessionId</code>
-              </td>
-              <td>Check session status. Returns remaining needed records and files.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>DELETE .../negotiate/:sessionId</code>
-              </td>
-              <td>Cancel a session. Returns 204.</td>
-            </tr>
-          </tbody>
-        </table>
 
         <h3>Errors</h3>
         <table>
           <tbody>
             <tr>
               <td>
-                <code>400</code>
+                <code>403</code>
               </td>
               <td>
-                Unexpected record hash. A submitted record doesn't match any needed hash, or the
-                batch is empty/malformed.
+                You can read the collection but not write to it, or the session is another
+                user&rsquo;s.
               </td>
             </tr>
             <tr>
               <td>
                 <code>404</code>
               </td>
-              <td>
-                Session expired or not found. Sessions expire after 10 minutes of inactivity — every
-                manifest chunk and record batch pushes the expiry back.
-              </td>
+              <td>Collection or session not found, or not visible to you.</td>
             </tr>
             <tr>
               <td>
                 <code>409</code>
               </td>
               <td>
-                Version conflict. Someone pushed since your <code>base_version</code>. Re-negotiate.
+                <code>base</code> isn&rsquo;t the head (<code>currentVersion</code> says what is),
+                the head moved before the commit, the session isn&rsquo;t open, or the push changes
+                nothing (<code>"No changes detected"</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>413</code>
+              </td>
+              <td>
+                A body over <code>open_bytes</code> or <code>batch_bytes</code>, a batch over{' '}
+                <code>batch_lines</code>, or a file over <code>file_bytes</code>.
               </td>
             </tr>
             <tr>
@@ -524,8 +438,17 @@ export default function DocsApiVersions() {
                 <code>422</code>
               </td>
               <td>
-                Schema validation failed, missing files, or records contain extra fields not defined
-                in the schema.
+                Records or deletes that fail (<code>validationErrors</code>), a schema that is
+                refused, or a commit with files not uploaded (<code>filesNeeded</code>).
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>429</code>
+              </td>
+              <td>
+                You have <code>open_sessions</code> sessions in progress (commit or abandon one), or
+                a rate limit (<code>Retry-After</code>).
               </td>
             </tr>
           </tbody>
@@ -577,8 +500,8 @@ export default function DocsApiVersions() {
         <h2>GET /api/collections/:owner/:slug/versions/:n</h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get a specific version by semver (e.g. <code>v1.1.0</code>). Returns the full version
-          object including schemas.
+          Get a specific version by semver (e.g. <code>v1.1.0</code>) or version hash. Returns the
+          full version object including schemas.
         </p>
       </div>
 
@@ -729,9 +652,11 @@ export default function DocsApiVersions() {
         <h2>GET /api/collections/:owner/:slug/versions/:n/manifest</h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get the manifest: every record's id, type and content hash, without the bodies. This is
+          Get the manifest: every record's id, type and content hash, without the bodies, in (type,
+          id) order. Members also see private records, marked <code>"private": true</code>. This is
           the cheapest way to learn what a version contains — at roughly 120 bytes per entry, a
-          million records is one order of magnitude smaller than fetching them.
+          million records is one order of magnitude smaller than fetching them — and what a client
+          that keeps no copy diffs against before it pushes.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -779,12 +704,6 @@ export default function DocsApiVersions() {
           <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false. The three
           lists drain independently and the cursor tracks each one, so a page late in the walk may
           contain only <code>updated</code> entries.
-        </p>
-        <p className="text-ink-muted">
-          <code>truncated</code> is retained for older clients, which treated a capped delta as
-          "give up and rebuild from the full manifest". It now simply mirrors{' '}
-          <code>pagination.hasMore</code>. Clients that understand the cursor should page instead of
-          rebuilding.
         </p>
       </div>
 

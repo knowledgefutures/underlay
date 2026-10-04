@@ -292,7 +292,11 @@ try {
     { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
     { path: '/docs/protocol/versions', status: 200, has: ['ulv2:', 'Access sets'] },
     { path: '/docs/protocol/repositories', status: 200, has: ['head.json', 'Version log'] },
-    { path: '/docs/protocol/push-and-pull', status: 200, has: ['Delta push', 'Negotiate'] },
+    {
+      path: '/docs/protocol/push-and-pull',
+      status: 200,
+      has: ['Delta push', 'Clients without a copy'],
+    },
     { path: '/docs', status: 200 },
     { path: '/org/secret', status: 404 },
     { path: '/org/secret', status: 200, has: ['secret'], user: 'u1' },

@@ -58,8 +58,8 @@ export default function DocsConcepts() {
       </p>
       <ul>
         <li>Schema changes → major bump</li>
-        <li>Record or file changes → minor bump</li>
-        <li>Metadata-only changes (readme, license, etc.) → patch bump</li>
+        <li>Record changes → minor bump</li>
+        <li>Metadata or file changes only (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
         Each version also has a <strong>hash</strong>, a SHA-256 digest of the canonical
@@ -160,46 +160,42 @@ export default function DocsConcepts() {
         type is stripped from the schema response.
       </p>
 
-      <h3>Field-level</h3>
-      <p>
-        Mark individual fields within a type as private by adding <code>"private": true</code> to
-        the field definition. The type remains visible, but those fields are stripped from records
-        returned to public readers.
-      </p>
-
       <h3>Record-level</h3>
       <p>
-        Mark an individual record private by setting <code>"private": true</code> on its{' '}
-        <strong>manifest entry</strong> in the negotiate request — not in the record body, which is
-        hashed as <code>{'{id, type, data}'}</code> and would reject the extra key:
+        Mark an individual record private by adding <code>"private": true</code> to its line when
+        you upload it. The flag is not part of the record&rsquo;s data or its hash:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-        <code>
-          {'{"id": "pub-001", "type": "Publication", "hash": "abc123…", "private": true}'}
-        </code>
+        <code>{'{"id": "pub-001", "type": "Publication", "data": {...}, "private": true}'}</code>
       </pre>
       <p>
         The record is dropped entirely from listings, manifests, diffs, exports and the NDJSON
-        stream for non-owners; members of the owning org still see it.
+        stream for non-members; members of the owning org still see it.
       </p>
       <p>
-        <strong>Privacy is recorded per version and must be re-declared on every push.</strong> The
-        flag lives on that version&rsquo;s reference to the record, not on the record itself — so
-        omitting it means public, and re-pushing a record without the flag republishes it. Read the
-        current flags back from <code>GET .../versions/:semver/manifest</code>, which echoes{' '}
-        <code>private</code> on the entries that carry it.
+        <strong>Privacy belongs to the version, not the record.</strong> A record keeps its set from
+        one version to the next until you upload it again: uploading it with{' '}
+        <code>"private": true</code> makes it private, and uploading it without the flag makes it
+        public. Read the current flags back from <code>GET .../versions/:semver/manifest</code>,
+        which marks private entries with <code>private</code>.
       </p>
       <p>
-        Redaction is <strong>forward-only</strong>: marking a record private in v2 hides it in v2
-        only. v1 is immutable and still serves it. Because file access resolves across every ready
-        version, a file referenced publicly in v1 also stays downloadable after the referencing
-        record is redacted in v2.
+        Redaction is <strong>forward-only</strong>: marking a record private in a new version hides
+        it from that version on. Earlier versions are immutable and still serve it. Because file
+        access resolves across every version, a file referenced publicly in an earlier version also
+        stays downloadable after the referencing record is made private.
+      </p>
+
+      <h3>Fields</h3>
+      <p>
+        <code>"private": true</code> on a field inside a schema is refused. Put private fields in a
+        private type, or push the whole record as private.
       </p>
 
       <p>
-        Private content is excluded from the <strong>public hash</strong> (used for verifying
-        publicly-visible content) but included in the <strong>private hash</strong> (used by owners
-        for full integrity verification).
+        A version&rsquo;s hash covers the private set only through a salted commitment, so public
+        readers can verify everything they can see without learning anything about the private
+        content. Members can check the private set against the commitment.
       </p>
     </DocsLayout>
   )

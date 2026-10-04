@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import DocsLayout from '~/components/DocsLayout'
 
 const pushExample = `{
-  "base_version": null,
+  "base": null,
   "message": "Initial import",
   "app_id": "my-app",
   "metadata": {
@@ -27,11 +27,7 @@ const pushExample = `{
         "email": {"type": "string"}
       }
     }
-  },
-  "manifest": [
-    {"id": "author-1", "type": "Author", "hash": "a1b2c3..."},
-    {"id": "article-1", "type": "Article", "hash": "d4e5f6..."}
-  ]
+  }
 }`
 
 const fileRef = '{"$file": "sha256:<hex>"}'
@@ -46,40 +42,69 @@ const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- becomes a "Publication" type with properties {title: string, doi: string, authorId: string}
 -- The record id is the primary key value.`
 
-const diffPush = `# 1. Get current state (returns the latest version's semver, e.g. "v1.2.0")
-curl https://underlay.org/api/collections/:owner/:slug/versions/latest
+const diffPush = `# 1. Open a session against the current version (its semver, e.g. "v1.2.0")
+curl -X POST https://underlay.org/api/collections/:owner/:slug/push \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer $KEY" \\
+  -d '{
+    "base": "v1.2.0",
+    "message": "Daily sync",
+    "files": {"add": ["9f86d0..."]}
+  }'
+# → {"session_id":"...","base":"v1.2.0","needed_files":["9f86d0..."],"limits":{...},...}
 
-# 2. Upload any new files
-HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
-curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:$HASH" \\
+# 2. Upload the files the server doesn't have yet
+curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:9f86d0..." \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 
-# 3. Hash your records and negotiate
-curl -X POST https://underlay.org/api/collections/:owner/:slug/versions/negotiate \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer $KEY" \\
-  -d '{
-    "base_version": "v1.2.0",
-    "message": "Daily sync",
-    "schemas": { ... },
-    "manifest": [
-      {"id": "record-1", "type": "Article", "hash": "abc123..."},
-      {"id": "record-2", "type": "Article", "hash": "def456..."}
-    ]
-  }'
-# → {"session_id":"...","needed_records":["def456..."],...}
-
-# 4. Send only the records the server needs (as JSONL)
-curl -X POST .../negotiate/SESSION_ID/records \\
+# 3. Upload new and changed records (NDJSON, repeatable)
+curl -X POST .../push/SESSION_ID/records \\
   -H "Content-Type: application/x-ndjson" \\
   -H "Authorization: Bearer $KEY" \\
   --data-binary '{"id":"record-2","type":"Article","data":{...}}'
 
+# 4. Delete records that are gone (NDJSON, repeatable)
+curl -X POST .../push/SESSION_ID/deletes \\
+  -H "Content-Type: application/x-ndjson" \\
+  -H "Authorization: Bearer $KEY" \\
+  --data-binary '{"type":"Article","id":"record-9"}'
+
 # 5. Commit
-curl -X POST .../negotiate/SESSION_ID/commit \\
-  -H "Authorization: Bearer $KEY"`
+curl -X POST .../push/SESSION_ID/commit \\
+  -H "Authorization: Bearer $KEY"
+# → 201 {"semver":"v1.3.0","hash":"ulv2:...","recordCount":...,"fileCount":...,"changes":{...}}`
+
+const snapshotDiff = `import { hashRecord } from '@underlay/protocol'
+
+const key = (r) => JSON.stringify([r.type, r.id])
+
+// 1. Read the current version's manifest, every page.
+const have = new Map() // key → { id, type, hash, private? }
+let base = null
+let cursor = null
+do {
+  const query = cursor ? \`?cursor=\${encodeURIComponent(cursor)}\` : ''
+  const res = await fetch(\`\${api}/versions/latest/manifest\${query}\`, { headers: auth })
+  if (res.status === 404) break // no versions yet
+  const page = await res.json()
+  base = page.semver
+  for (const m of page.records) have.set(key(m), m)
+  cursor = page.pagination.hasMore ? page.pagination.nextCursor : null
+} while (cursor)
+
+// 2. Diff your full export against it.
+const upserts = records.filter((r) => {
+  const m = have.get(key(r))
+  return !m || m.hash !== hashRecord(r.id, r.type, r.data).hash || !!m.private !== !!r.private
+})
+const keep = new Set(records.map(key))
+const deletes = [...have.values()]
+  .filter((m) => !keep.has(key(m)))
+  .map((m) => ({ type: m.type, id: m.id }))
+
+// 3. Open a session with "base": base, upload upserts and deletes in batches, commit.`
 
 const hashExample = `import { createHash } from 'node:crypto'
 
@@ -151,55 +176,74 @@ export default function DocsIntegration() {
 
       <h2>The Push Flow</h2>
       <p>
-        This guide uses the{' '}
-        <Link
-          to="/docs/protocol/push-and-pull#negotiate-compatibility"
-          className="text-link underline"
-        >
-          negotiate flow
-        </Link>
-        , which any HTTP client can drive from a full snapshot of its data. A client that tracks its
-        own changes can send only those with{' '}
+        Every push is a{' '}
         <Link to="/docs/protocol/push-and-pull#delta-push" className="text-link underline">
           delta push
-        </Link>{' '}
-        instead. The negotiate steps:
+        </Link>
+        : you send what changed since a base version, and the server builds the new version.
       </p>
       <ol>
-        <li>Get the current latest version (its semver string)</li>
-        <li>Upload any new binary files by hash</li>
         <li>
-          Hash your records and <strong>negotiate</strong>: send a manifest of record hashes. The
-          server responds with which records it needs.
+          <strong>Open a session</strong> with <code>base</code> set to the current version&rsquo;s
+          semver (<code>null</code> for the first push), plus any schemas, metadata and files to
+          declare. The response lists <code>needed_files</code> and the server&rsquo;s{' '}
+          <code>limits</code>.
         </li>
         <li>
-          <strong>Send records</strong>: upload only the needed records as JSONL (up to 10,000 per
-          batch). Skip if the server already has everything.
+          <strong>Upload files</strong> listed in <code>needed_files</code>, by hash.
         </li>
         <li>
-          <strong>Commit</strong>: finalize and create the version.
+          <strong>Upload records</strong> that are new or changed, as NDJSON, in batches within{' '}
+          <code>limits.batch_lines</code> and <code>limits.batch_bytes</code>.
         </li>
         <li>
-          On <code>409 Conflict</code>, re-fetch latest and retry from step 3
+          <strong>Upload deletes</strong>, <code>{'{"type", "id"}'}</code> per line, for records
+          that are gone.
+        </li>
+        <li>
+          <strong>Commit</strong>. On <code>409 Conflict</code>, someone else pushed first: diff
+          against the new head and push again.
         </li>
       </ol>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
       <p>
-        Above 50,000 records, send the manifest in chunks rather than as a single body; above
-        100,000, the commit runs asynchronously and you poll for the result. See{' '}
-        <Link to="/docs/api/versions" className="text-link underline">
-          the versions API
-        </Link>{' '}
-        for both. The push is otherwise identical, and produces the same version hash.
+        Within a session, the later upload of a <code>(type, id)</code> wins, whether a record or a
+        delete. Above 100,000 uploaded records the commit runs in the background: it answers{' '}
+        <code>202</code>, and you poll <code>GET .../push/SESSION_ID</code> until its{' '}
+        <code>status</code> is <code>committed</code> or <code>failed</code>. Add{' '}
+        <code>?async=true</code> to ask for that at any size.
+      </p>
+
+      <h2>Pushing a Full Export</h2>
+      <p>
+        If your app exports its whole dataset each time rather than tracking changes, diff the
+        export against the current version&rsquo;s manifest, then push the differences. The upload
+        is the size of the changes, whatever the size of the collection. See{' '}
+        <Link
+          to="/docs/protocol/push-and-pull#clients-without-a-copy"
+          className="text-link underline"
+        >
+          clients without a copy
+        </Link>
+        .
+      </p>
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+        <code>{snapshotDiff}</code>
+      </pre>
+      <p>
+        A record&rsquo;s set is part of the diff: a record that should become private or public is
+        uploaded again with its new <code>private</code> flag.
       </p>
 
       <h2>Record Hashing</h2>
       <p>
-        Before negotiating, you must hash each record client-side. The hash is the SHA-256 of a
-        fixed <code>{'{ id, type, data }'}</code> envelope with <code>data</code> in canonical JSON
-        (RFC 8785), so any implementation produces the same hash for the same content.
+        The server hashes the records you upload, so a push needs no hashing. You need the hash to
+        diff against a manifest. It is the SHA-256 of a fixed <code>{'{ id, type, data }'}</code>{' '}
+        envelope with <code>data</code> in canonical JSON (RFC 8785), so any implementation produces
+        the same hash for the same content. In JavaScript, use <code>hashRecord</code> from{' '}
+        <code>@underlay/protocol</code>, or:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashExample}</code>
@@ -244,14 +288,14 @@ export default function DocsIntegration() {
 
       <h2>First Push Example</h2>
       <p>
-        The negotiate request for a first push. Include <code>schemas</code> (a per-type JSON Schema
-        map), <code>metadata</code>, and a <code>manifest</code> of record hashes:
+        The body that opens the first push. Include <code>schemas</code> (a per-type JSON Schema
+        map) and <code>metadata</code>:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{pushExample}</code>
       </pre>
       <p>
-        After negotiating, send the needed records as JSONL, then commit. See the{' '}
+        Then upload the records as NDJSON and commit. See the{' '}
         <Link to="/docs/quickstart" className="text-link underline">
           Quickstart
         </Link>{' '}
@@ -286,38 +330,40 @@ export default function DocsIntegration() {
           Schema changes → <strong>major</strong> bump
         </li>
         <li>
-          Record or file changes → <strong>minor</strong> bump
+          Record changes, including a record becoming private or public → <strong>minor</strong>{' '}
+          bump
         </li>
         <li>
-          Metadata-only changes (readme, license, etc.) → <strong>patch</strong> bump
+          Metadata or file changes only → <strong>patch</strong> bump
         </li>
       </ul>
       <p>
-        The first version of a collection is always <code>v1.0.0</code>. The{' '}
-        <code>base_version</code> in a negotiate request is a semver string (or <code>null</code>{' '}
-        for the first push).
+        The first version of a collection is always <code>v1.0.0</code>. A push that changes nothing
+        makes no version. The <code>base</code> when opening a push is a semver string (or{' '}
+        <code>null</code> for the first push).
       </p>
 
       <h2>Privacy</h2>
-      <p>You can control what's publicly visible at three levels:</p>
+      <p>You can control what's publicly visible at two levels:</p>
       <ul>
         <li>
-          <strong>Private types:</strong> Add <code>"private": true</code> to a type in the schema.
-          All records of that type are hidden from public readers.
+          <strong>Private types:</strong> Add <code>"private": true</code> at the root of a
+          type&rsquo;s schema. All records of that type are hidden from public readers.
         </li>
         <li>
-          <strong>Private fields:</strong> Add <code>"private": true</code> to a field in the
-          schema. That field is stripped from public responses.
-        </li>
-        <li>
-          <strong>Private records:</strong> Add <code>"private": true</code> to individual records
-          in the manifest when negotiating. Those records are hidden from public queries.
+          <strong>Private records:</strong> Add <code>"private": true</code> to a record line when
+          uploading it. That record is hidden from public readers.
         </li>
       </ul>
       <p>
-        Private content is stored in the same version; the owner always sees everything. Public
-        readers see only the filtered view. The public content hash excludes private data, so
-        verifiers can confirm integrity of the public subset.
+        <code>"private": true</code> on a field inside a schema is refused. Put private fields in a
+        private type, or push the whole record as private.
+      </p>
+      <p>
+        Private content is stored in the same version; members of the owning organization see
+        everything, and public readers see the public set only. The version hash covers the private
+        set through a salted commitment, so public readers can verify the public set without
+        learning anything about the private one.
       </p>
 
       <h2>API Reference</h2>
@@ -328,44 +374,42 @@ export default function DocsIntegration() {
         <tbody>
           <tr>
             <td>
-              <code>POST .../versions/negotiate</code>
+              <code>POST .../push</code>
             </td>
-            <td>Start a push (hash negotiation)</td>
+            <td>Open a push session against a base version</td>
           </tr>
           <tr>
             <td>
-              <code>POST .../negotiate/:id/manifest</code>
+              <code>POST .../push/:id/records</code>
+            </td>
+            <td>Upload new or changed records (NDJSON, repeatable)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>POST .../push/:id/deletes</code>
+            </td>
+            <td>Delete records by type and id (NDJSON, repeatable)</td>
+          </tr>
+          <tr>
+            <td>
+              <code>POST .../push/:id/commit</code>
             </td>
             <td>
-              Upload the manifest in JSONL chunks, for collections too large to send it in one body
+              Build the version. Add <code>?async=true</code> to get a <code>202</code> and poll
+              instead of holding the request open
             </td>
           </tr>
           <tr>
             <td>
-              <code>POST .../negotiate/:id/records</code>
-            </td>
-            <td>Send needed records (JSONL, repeatable)</td>
-          </tr>
-          <tr>
-            <td>
-              <code>POST .../negotiate/:id/commit</code>
-            </td>
-            <td>
-              Finalize and create the version. Add <code>?async=true</code> to get a{' '}
-              <code>202</code> and poll instead of holding the request open
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <code>GET .../negotiate/:id</code>
+              <code>GET .../push/:id</code>
             </td>
             <td>Session status, and the result or error of an async commit</td>
           </tr>
           <tr>
             <td>
-              <code>DELETE .../negotiate/:id</code>
+              <code>DELETE .../push/:id</code>
             </td>
-            <td>Cancel a negotiate session</td>
+            <td>Abandon a push session</td>
           </tr>
           <tr>
             <td>
@@ -392,7 +436,7 @@ export default function DocsIntegration() {
             <td>
               <code>GET .../versions/:semver/manifest</code>
             </td>
-            <td>Get record hash manifest (supports delta via ?since=)</td>
+            <td>Record ids, types and hashes, paged (supports delta via ?since=)</td>
           </tr>
           <tr>
             <td>
@@ -429,27 +473,34 @@ export default function DocsIntegration() {
 
       <h2>Unknown Fields</h2>
       <p>
-        If records contain fields not defined in the schema, the commit returns <code>422</code>{' '}
-        with a list of extra fields per record. To accept stripping those fields before storage, set{' '}
-        <code>"strip_unknown_fields": true</code> in the negotiate request.
+        If a record has top-level fields its schema&rsquo;s <code>properties</code> doesn&rsquo;t
+        list, the records upload answers <code>422</code> with the extra fields per line. To strip
+        those fields instead, set <code>"strip_unknown_fields": true</code> when opening the push.
       </p>
       <p>
-        When stripping is enabled, the server removes extra fields, recomputes record hashes, and
-        stores only the schema-conformant data.
+        When stripping is enabled, the server removes the extra fields before hashing, and stores
+        only the schema-conformant data.
       </p>
 
       <h2>Error Handling</h2>
       <ul>
         <li>
-          <code>409 Conflict</code>: Another version was pushed since your <code>base_version</code>
-          . Re-negotiate.
+          <code>409 Conflict</code>: Another version was pushed since your <code>base</code> (the
+          response names <code>currentVersion</code>), or the push changes nothing. Diff against the
+          new head and push again.
         </li>
         <li>
-          <code>422 Unprocessable</code>: Records reference files that haven't been uploaded, schema
-          validation failed, or records contain fields not in the schema.
+          <code>413 Payload Too Large</code>: A batch or file is over the session&rsquo;s{' '}
+          <code>limits</code>. Split it.
         </li>
         <li>
-          <code>400 Bad Request</code>: Malformed JSONL, hash mismatch, or missing records.
+          <code>422 Unprocessable</code>: Records fail the input rules or their schema (
+          <code>validationErrors</code>, by line), a schema is refused, or the commit references
+          files that haven&rsquo;t been uploaded (<code>filesNeeded</code>).
+        </li>
+        <li>
+          <code>429 Too Many Requests</code>: Too many push sessions open at once (
+          <code>limits.open_sessions</code>), or a rate limit. Wait and retry.
         </li>
       </ul>
 
@@ -461,28 +512,23 @@ export default function DocsIntegration() {
           records in <code>{'{id, type, data}'}</code> format.
         </li>
         <li>
-          <strong>Hash each record:</strong> SHA-256 of its canonical form. See the hashing section
-          above or{' '}
-          <Link to="/docs/protocol/records" className="text-link underline">
-            Records and schemas
-          </Link>
-          .
+          <strong>Diff</strong> against the current version&rsquo;s manifest, unless your app
+          already knows what changed. See <em>Pushing a Full Export</em> above.
         </li>
         <li>
-          <strong>Negotiate:</strong> send the manifest of <code>{'{ id, type, hash }'}</code>{' '}
-          entries. The server tells you which records it already has.
+          <strong>Open a push</strong> with <code>base</code> set to that version.
         </li>
         <li>
-          <strong>Send missing records</strong> as JSONL. For large datasets, batch into groups of
-          5,000–10,000 records per request.
+          <strong>Upload</strong> the new and changed records and the deletes as NDJSON, in batches
+          within the session&rsquo;s <code>limits</code>.
         </li>
         <li>
           <strong>Commit</strong> to create the version.
         </li>
       </ol>
       <p>
-        A minimal Node.js/Python script typically takes 30-50 lines: query your data, map rows to
-        records, hash them, POST to negotiate. No SDK needed. See the{' '}
+        A minimal Node.js or Python script typically takes 30-50 lines: query your data, map rows to
+        records, diff, push. No SDK needed. See the{' '}
         <Link to="/docs/quickstart" className="text-link underline">
           Quickstart
         </Link>{' '}

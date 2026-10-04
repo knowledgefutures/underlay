@@ -1,3 +1,5 @@
+import { Link } from 'react-router'
+
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
 const layout = `nodes/<nodeHash>                          node JSON, gzip
@@ -25,6 +27,9 @@ const node = `GET <collection>/log?after=<seq>&limit=<n>
 
 GET <collection>/versions/<v>/pack?base=<v>&sets=public|all
 # -> application/x-tar; x-underlay-version, x-underlay-base, x-underlay-sets
+
+GET <collection>/versions/<v>/manifest?cursor=<c>
+# -> { "semver", "hash", "schemas", "records": [{ "id", "type", "hash", "private"? }], "pagination" }
 
 GET <collection>/files/<fileHash>          # the bytes, or a redirect to them; HEAD too
 
@@ -127,9 +132,9 @@ export default function ProtocolRepositories() {
       <h2 id="serving-over-http">Serving over HTTP</h2>
       <p>
         An <strong>Underlay node</strong> is a server that lets clients, mirrors and other nodes
-        copy and verify its collections. It must serve these three reads under each
-        collection&rsquo;s URL. Push, accounts, search and everything else a server offers are its
-        own API, outside the protocol.
+        copy and verify its collections. It serves these reads under each collection&rsquo;s URL,
+        and accepts <Link to="/docs/protocol/push-and-pull#delta-push">delta push</Link>. Accounts,
+        search and everything else a server offers are its own API, outside the protocol.
       </p>
       <CodeBlock>{node}</CodeBlock>
       <ul>

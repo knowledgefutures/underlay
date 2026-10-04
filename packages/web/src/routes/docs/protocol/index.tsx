@@ -74,8 +74,8 @@ export default function ProtocolOverview() {
           can hold, the signed version log, packs for sync, and the reads every node serves.
         </li>
         <li>
-          <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: the HTTP exchanges for
-          writing and reading versions, and compatibility with v1 clients.
+          <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: delta push, the one way to
+          publish on any node, and reading versions back.
         </li>
       </ul>
 

@@ -421,7 +421,6 @@ export function versionRoutes() {
         // The whole file list rides on the first page only, as for a full manifest.
         files: cursor ? [] : await visibleFiles(view, 100_000),
         pagination: { limit, hasMore: next !== null, nextCursor: next },
-        truncated: next !== null,
       })
     }
 

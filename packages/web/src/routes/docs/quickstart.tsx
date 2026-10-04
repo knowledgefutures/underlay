@@ -17,15 +17,12 @@ curl -X POST https://underlay.org/api/accounts/yourname/collections \\
     "public": true
   }'`
 
-const negotiateCode = `# Step 1: Hash your records and negotiate with the server
-# Record hash = SHA-256 of the canonical form (see Record hashing below)
-# For this example we'll use pre-computed hashes.
-
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate \\
+const openCode = `# Open a push session. base is null for the first version.
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
-    "base_version": null,
+    "base": null,
     "message": "Initial import",
     "app_id": "my-app",
     "metadata": {
@@ -41,28 +38,23 @@ curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/n
           "year": {"type": "integer"}
         }
       }
-    },
-    "manifest": [
-      {"id": "book-1", "type": "Book", "hash": "a1b2c3..."},
-      {"id": "book-2", "type": "Book", "hash": "d4e5f6..."}
-    ]
+    }
   }'
-# → {"session_id":"abc123","needed_records":["a1b2c3...","d4e5f6..."],...}`
+# → {"session_id":"SESSION_ID","base":null,"needed_files":[],"expires_at":"...","limits":{...}}`
 
-const sendRecordsCode = `# Step 2: Send the records the server needs (as JSONL)
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate/SESSION_ID/records \\
+const sendRecordsCode = `# Upload records as NDJSON, one per line
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/records \\
   -H "Content-Type: application/x-ndjson" \\
   -H "Authorization: Bearer $KEY" \\
   --data-binary @- << 'EOF'
 {"id":"book-1","type":"Book","data":{"author":"Douglas Hofstadter","title":"Gödel, Escher, Bach","year":1979}}
 {"id":"book-2","type":"Book","data":{"author":"Thomas Kuhn","title":"The Structure of Scientific Revolutions","year":1962}}
 EOF
-# → {"received":2,"remaining":0}`
+# → {"received":2}`
 
-const commitCode = `# Step 3: Commit the version
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate/SESSION_ID/commit \\
+const commitCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → {"semver":"v1.0.0","hash":"...","recordCount":2,"fileCount":0}`
+# → {"semver":"v1.0.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const readCode = `# Get collection info
 curl https://underlay.org/api/collections/yourname/my-dataset
@@ -73,32 +65,28 @@ curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/re
 # Get the manifest (list of record hashes)
 curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
 
-const updateCode = `# To push an update, negotiate again with base_version set.
-# The server already has book-1 and book-2, so needed_records
-# will only include the new/changed records.
-
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/versions/negotiate \\
+const updateCode = `# Open a session against the current version. Schemas and metadata
+# you leave out are kept.
+curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
-  -d '{
-    "base_version": "v1.0.0",
-    "message": "Add third book",
-    "manifest": [
-      {"id": "book-1", "type": "Book", "hash": "a1b2c3..."},
-      {"id": "book-2", "type": "Book", "hash": "d4e5f6..."},
-      {"id": "book-3", "type": "Book", "hash": "g7h8i9..."}
-    ]
-  }'
-# → {"session_id":"xyz789","needed_records":["g7h8i9..."],...}
+  -d '{"base": "v1.0.0", "message": "Add a book, drop another"}'
+# → {"session_id":"SESSION_ID","base":"v1.0.0",...}
 
-# Send only the new record, then commit
-curl -X POST .../negotiate/SESSION_ID/records \\
+# Upload the new or changed records
+curl -X POST .../push/SESSION_ID/records \\
   -H "Content-Type: application/x-ndjson" \\
   -H "Authorization: Bearer $KEY" \\
   --data-binary '{"id":"book-3","type":"Book","data":{"author":"Ludwig Wittgenstein","title":"Philosophical Investigations","year":1953}}'
 
-curl -X POST .../negotiate/SESSION_ID/commit -H "Authorization: Bearer $KEY"
-# → {"semver":"v1.1.0","hash":"...","recordCount":3,"fileCount":0}`
+# Delete records by type and id
+curl -X POST .../push/SESSION_ID/deletes \\
+  -H "Content-Type: application/x-ndjson" \\
+  -H "Authorization: Bearer $KEY" \\
+  --data-binary '{"type":"Book","id":"book-2"}'
+
+curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
+# → {"semver":"v1.1.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
 # → {"from":"v1.0.0","to":"v1.1.0","added":[...],"updated":[...],"removed":[]}`
@@ -113,7 +101,8 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
   --data-binary @paper.pdf
 
 # Reference in a record
-# {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}`
+# {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}
+# A commit whose records reference a file the server doesn't hold is refused (422, filesNeeded).`
 
 const hashingNote = `# Record hashing: SHA-256 of the canonical form
 #   '{"id":' + JSON(id) + ',"type":' + JSON(type) + ',"data":' + JCS(data) + '}'
@@ -154,8 +143,8 @@ export default function DocsQuickstart() {
             llms.txt
           </a>{' '}
           and tell it what data you want to push. It has everything it needs to create a collection,
-          write the push script, and handle hashing and negotiation for you. The steps below explain
-          the same flow manually.
+          write the push script, and batch the uploads for you. The steps below explain the same
+          flow manually.
         </p>
       </div>
 
@@ -185,35 +174,39 @@ export default function DocsQuickstart() {
 
       <h2>3. Push a version</h2>
       <p>
-        This quickstart uses the three-step{' '}
-        <Link
-          to="/docs/protocol/push-and-pull#negotiate-compatibility"
-          className="text-link hover:underline"
-        >
-          negotiate flow
+        A push is a{' '}
+        <Link to="/docs/protocol/push-and-pull#delta-push" className="text-link hover:underline">
+          delta push
         </Link>
-        : send a manifest of record hashes, upload only the records the server needs, then commit.
+        : open a session against a base version, upload the records that are new or changed and the
+        ids to delete, then commit. The server builds the version and numbers it.
       </p>
 
-      <h3>3a. Negotiate</h3>
+      <h3>3a. Open a session</h3>
       <p>
-        Hash each record and send the manifest. The server tells you which records it already has.
+        Send the schemas and metadata. The response includes the server&rsquo;s <code>limits</code>,
+        such as how many lines and bytes one upload may hold.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-        <code>{negotiateCode}</code>
+        <code>{openCode}</code>
       </pre>
 
-      <h3>3b. Send records</h3>
+      <h3>3b. Upload records</h3>
       <p>
-        Send the needed records as JSONL (one JSON object per line). For large datasets, send in
-        batches of up to 10,000 records per request. Skip this step if <code>needed_records</code>{' '}
-        is empty.
+        Send records as NDJSON (one JSON object per line). For large datasets, split them into
+        batches within <code>limits.batch_lines</code> (10,000 on underlay.org) and{' '}
+        <code>limits.batch_bytes</code>. Add <code>"private": true</code> to a line to keep that
+        record out of public view.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{sendRecordsCode}</code>
       </pre>
 
       <h3>3c. Commit</h3>
+      <p>
+        Large commits answer <code>202</code>; poll <code>GET .../push/SESSION_ID</code> until its{' '}
+        <code>status</code> is <code>committed</code> or <code>failed</code>.
+      </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{commitCode}</code>
       </pre>
@@ -225,12 +218,24 @@ export default function DocsQuickstart() {
 
       <h2>5. Push an update</h2>
       <p>
-        On subsequent pushes, set <code>base_version</code> to the current latest. The server
-        deduplicates, so only new or changed records need to be sent.
+        Set <code>base</code> to the current version and send only what changed. If someone else
+        pushed in the meantime, opening the session answers <code>409</code> with{' '}
+        <code>currentVersion</code>.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{updateCode}</code>
       </pre>
+      <p>
+        If your app exports its whole dataset each time rather than tracking changes, read the
+        current version&rsquo;s manifest and diff against it first. See{' '}
+        <Link
+          to="/docs/protocol/push-and-pull#clients-without-a-copy"
+          className="text-link hover:underline"
+        >
+          clients without a copy
+        </Link>
+        .
+      </p>
 
       <h2>6. Diff versions</h2>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -239,10 +244,12 @@ export default function DocsQuickstart() {
 
       <h2>Record hashing</h2>
       <p>
-        Each record must be hashed client-side before negotiating. The hash is the SHA-256 of a
+        You don&rsquo;t need to hash records to push them: the server hashes what you upload. You
+        need the hash to compare your data with a version&rsquo;s manifest. It is the SHA-256 of a
         fixed <code>{'{id, type, data}'}</code> envelope with <code>data</code> in canonical JSON
         (RFC 8785), so any client produces the same hash for the same data regardless of key
-        insertion order.
+        insertion order. In JavaScript, <code>hashRecord</code> from <code>@underlay/protocol</code>{' '}
+        does this.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashingNote}</code>
