@@ -19,6 +19,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../src/versions/commit.js'
 import { MissingFilesError } from '../src/versions/file-refs.js'
+import { publishVersion } from '../src/versions/publish.js'
 import { cleanup, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -401,5 +402,57 @@ describe('commitVersion', () => {
       total: 1,
       errors: [{ recordId: 'b', type: 'Author' }],
     })
+  })
+})
+
+describe('publishVersion', () => {
+  const row = (collectionId: string, id: string) => ({
+    id,
+    collectionId,
+    seq: 1,
+    semver: 'v1.0.0',
+    major: 1,
+    minor: 0,
+    patch: 0,
+    hash: `ulv2:${'0'.repeat(64)}`,
+    baseSemver: null,
+    message: null,
+    pushedBy: null,
+    appId: null,
+    actorId: null,
+    recordCount: 0,
+    publicRecordCount: 0,
+    fileCount: 0,
+    totalBytes: 0,
+    publicFileCount: 0,
+    publicTotalBytes: 0,
+    typeCounts: {},
+    publicTypeCounts: {},
+    hasPrivate: false,
+    publicRefsRoot: null,
+    privateRefsRoot: null,
+    changes: { added: 0, removed: 0, updated: 0 },
+  })
+
+  it('records a fork in the publish batch, and not when the publish loses', async () => {
+    const h = await harness()
+    const parent = await h.collection('parent')
+    const child = await h.collection('child')
+    const fork = { parentCollectionId: parent.id, parentSeq: 1, sets: 'public' as const }
+    const input = (id: string, baseVersionId: string | null) => ({
+      version: row(child.id, id),
+      baseVersionId,
+      collectionUpdate: { publicFilesRoot: null, summary: null },
+      schemaHashes: [],
+      usage: [],
+      fork,
+    })
+    // The head isn't 'nope', so this publish loses: no version, no fork row.
+    expect((await publishVersion(h.ports.db, input(crypto.randomUUID(), 'nope'))).ok).toBe(false)
+    expect(await h.ports.db.select().from(schema.forks)).toEqual([])
+    expect((await publishVersion(h.ports.db, input(crypto.randomUUID(), null))).ok).toBe(true)
+    expect(await h.ports.db.select().from(schema.forks)).toMatchObject([
+      { childCollectionId: child.id, parentCollectionId: parent.id, parentSeq: 1, sets: 'public' },
+    ])
   })
 })

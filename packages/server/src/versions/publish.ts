@@ -6,7 +6,8 @@
  * statements all carry the condition in SQL:
  *   1. insert the version row only if the head is still the base;
  *   2. move the head only if it is still the base and the row from 1 exists;
- *   3. close and open schema_usage rows only if the row from 1 exists.
+ *   3. close and open schema_usage rows only if the row from 1 exists;
+ *   4. for a fork's first version, the forks row, only if the row from 1 exists.
  * If another commit won, 1 inserts nothing and the rest match nothing; the
  * caller sees that by reading the head back. Everything the version points to is
  * already in the repository, so there is never a half-built version.
@@ -67,6 +68,12 @@ export interface PublishInput {
   }
   schemaHashes: string[]
   usage: SchemaUsageChange[]
+  /** A fork's first version: where it came from and which sets it carried. */
+  fork?: {
+    parentCollectionId: string
+    parentSeq: number
+    sets: 'public' | 'public+private'
+  }
 }
 
 export async function publishVersion(
@@ -180,6 +187,25 @@ export async function publishVersion(
       }
       return out
     }),
+    // 4. The fork row, only if the row from 1 exists.
+    ...(p.fork
+      ? [
+          db.insert(schema.forks).select(
+            db
+              .select({
+                childCollectionId: lit<string>(v.collectionId).as('child_collection_id'),
+                parentCollectionId: lit<string>(p.fork.parentCollectionId).as(
+                  'parent_collection_id',
+                ),
+                parentSeq: lit<number>(p.fork.parentSeq).as('parent_seq'),
+                sets: lit<string>(p.fork.sets).as('sets'),
+                createdAt: lit<number>(now).as('created_at'),
+              })
+              .from(schema.versions)
+              .where(eq(schema.versions.id, v.id)) as never,
+          ),
+        ]
+      : []),
   ]
   await db.batch(statements as unknown as Parameters<Db['batch']>[0])
 

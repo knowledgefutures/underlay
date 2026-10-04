@@ -1,6 +1,7 @@
 /**
  * Fork (edge-redesign.md, Commit): the fork's first version is a new root that
- * reuses the source version's sets, plus a `forks` row. No data is copied.
+ * reuses the source version's sets, plus a `forks` row written in the same
+ * publish batch. No data is copied.
  *
  * A fork by an owner keeps the private set; it inherits the source collection's
  * salt so the private commitment (and so the version hash) stays the same and
@@ -130,14 +131,13 @@ export async function forkCollection(
     },
     schemaHashes: [],
     usage,
+    fork: {
+      parentCollectionId: source.collection.id,
+      parentSeq: v.seq,
+      sets: keepPrivate ? 'public+private' : 'public',
+    },
   })
   if (!published.ok) throw new Error('Fork publish lost a race on a brand-new collection')
-  await ports.db.insert(schema.forks).values({
-    childCollectionId: collection.id,
-    parentCollectionId: source.collection.id,
-    parentSeq: v.seq,
-    sets: keepPrivate ? 'public+private' : 'public',
-  })
   const [version] = await ports.db
     .select()
     .from(schema.versions)
