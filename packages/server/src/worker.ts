@@ -16,6 +16,7 @@ import { renderPage } from '@underlay/web'
 
 import { createApp } from './app.js'
 import { type Auth, authenticator, createAuth } from './auth/auth.js'
+import { createKf, type Kf } from './auth/kf.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { QueueJobs, runJob } from './jobs.js'
@@ -46,6 +47,8 @@ export interface Env {
   OIDC_CLIENT_SECRET: string
   /** The KF account site, linked from the user menu. */
   OIDC_ACCOUNT_URL?: string
+  /** KF Auth's internal API key: KF orgs for new orgs, and /api/kf/summary. Optional. */
+  AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
 }
@@ -80,7 +83,23 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
   }
 }
 
-// One better-auth instance per isolate and database binding.
+// One KF Auth client and one better-auth instance per isolate and database binding.
+const kfs = new WeakMap<object, Kf>()
+function kfFor(env: Env, ports: Ports): Kf {
+  let kf = kfs.get(env.DB)
+  if (!kf) {
+    kf = createKf(ports.db, {
+      // No private network on Workers: server-to-server calls use the public URL.
+      internalUrl: env.OIDC_ISSUER_URL,
+      clientId: env.OIDC_CLIENT_ID,
+      clientSecret: env.OIDC_CLIENT_SECRET,
+      internalApiKey: env.AUTH_INTERNAL_API_KEY,
+    })
+    kfs.set(env.DB, kf)
+  }
+  return kf
+}
+
 const auths = new WeakMap<object, Auth>()
 function authFor(env: Env, ports: Ports): Auth {
   let auth = auths.get(env.DB)
@@ -99,6 +118,7 @@ function authFor(env: Env, ports: Ports): Auth {
         },
       },
       ports.waitUntil,
+      kfFor(env, ports),
     )
     auths.set(env.DB, auth)
   }
@@ -117,6 +137,7 @@ const app = createApp((c) => {
       kfAccountUrl: env.OIDC_ACCOUNT_URL,
     },
     authenticate: authenticator(() => authFor(env, ports)),
+    kf: kfFor(env, ports),
     authHandler: (req) => authFor(env, ports).handler(req),
     renderPage,
   }

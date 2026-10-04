@@ -72,12 +72,14 @@ export function collectionRoutes() {
           .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
           .where(eq(schema.member.userId, u.id))
         const def = orgs.find((o) => o.org.isDefault) ?? null
+        // The role decides steward pages; name and picture follow KF Auth (v1).
+        const profile = (await c.var.kf?.profile(u.id)) ?? null
         currentUser = {
           id: u.id,
           slug: def?.org.slug ?? null,
-          displayName: u.name ?? def?.org.name ?? null,
-          avatarUrl: u.image ?? null,
-          kfRole: null,
+          displayName: profile?.name ?? u.name ?? def?.org.name ?? null,
+          avatarUrl: profile?.image ?? u.image ?? null,
+          kfRole: profile?.role ?? null,
           defaultOrg: def ? { slug: def.org.slug, displayName: def.org.name } : null,
           orgs: orgs.map((o) => ({
             organizationId: o.org.id,
@@ -319,6 +321,11 @@ export function collectionRoutes() {
       .where(eq(schema.organization.slug, c.req.param('slug')))
       .limit(1)
     if (!org) return jsonError(c, 404, 'Not found')
+    const [shoulder] = await db
+      .select({ shoulder: schema.arkShoulders.shoulder })
+      .from(schema.arkShoulders)
+      .where(eq(schema.arkShoulders.organizationId, org.id))
+      .limit(1)
     // Public profile only (v1 returned the whole row, including kfOrgId).
     return c.json({
       id: org.id,
@@ -332,7 +339,7 @@ export function collectionRoutes() {
       createdAt: org.createdAt,
       isDefault: org.isDefault,
       arkNaan: org.arkNaan,
-      arkShoulder: null,
+      arkShoulder: shoulder?.shoulder ?? null,
     })
   })
 

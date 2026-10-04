@@ -22,6 +22,7 @@ import type { Authenticate } from '../app.js'
 import * as schema from '../db/schema.js'
 import { defaultOrgSlugCandidate, validateSlug } from '../lib/slug.js'
 import type { Db, Ports } from '../ports.js'
+import type { Kf } from './kf.js'
 
 export interface AuthConfig {
   appUrl: string
@@ -44,8 +45,13 @@ function assertValidSlug(slug: unknown) {
   if (err) throw new APIError('BAD_REQUEST', { message: err })
 }
 
-export function createAuth(db: Db, cfg: AuthConfig, waitUntil: (p: Promise<unknown>) => void) {
-  const kf = cfg.oidc
+export function createAuth(
+  db: Db,
+  cfg: AuthConfig,
+  waitUntil: (p: Promise<unknown>) => void,
+  kf?: Kf,
+) {
+  const oidc = cfg.oidc
   return betterAuth({
     database: drizzleAdapter(db, { provider: 'sqlite', schema, transaction: false }),
     baseURL: cfg.appUrl,
@@ -61,11 +67,11 @@ export function createAuth(db: Db, cfg: AuthConfig, waitUntil: (p: Promise<unkno
         config: [
           {
             providerId: 'kf-auth',
-            authorizationUrl: `${kf.issuerUrl}/api/auth/oauth2/authorize`,
-            tokenUrl: `${kf.internalUrl}/api/auth/oauth2/token`,
-            userInfoUrl: `${kf.internalUrl}/api/auth/oauth2/userinfo`,
-            clientId: kf.clientId,
-            clientSecret: kf.clientSecret,
+            authorizationUrl: `${oidc.issuerUrl}/api/auth/oauth2/authorize`,
+            tokenUrl: `${oidc.internalUrl}/api/auth/oauth2/token`,
+            userInfoUrl: `${oidc.internalUrl}/api/auth/oauth2/userinfo`,
+            clientId: oidc.clientId,
+            clientSecret: oidc.clientSecret,
             scopes: ['openid', 'profile', 'email', 'offline_access'],
             pkce: true,
             mapProfileToUser: (profile) => ({
@@ -86,17 +92,28 @@ export function createAuth(db: Db, cfg: AuthConfig, waitUntil: (p: Promise<unkno
               // Server-controlled, as in v1: a caller must not claim another
               // institution's NAAN or the default-org flag.
               arkNaan: { type: 'string', required: false, input: false },
-              kfOrgId: { type: 'string', required: false, input: false },
+              // Picked in the new-org form, and checked in the hooks below against
+              // the caller's own KF orgs: /api/kf/summary trusts it.
+              kfOrgId: { type: 'string', required: false, input: true },
               isDefault: { type: 'boolean', required: false, input: false, defaultValue: false },
             },
           },
         },
         organizationHooks: {
-          beforeCreateOrganization: async ({ organization: org }) => {
+          beforeCreateOrganization: async ({ organization: org, user }) => {
             assertValidSlug(org.slug)
+            const asked = (org as { kfOrgId?: string | null }).kfOrgId
+            if (asked && kf && (await kf.entitled(user.id, asked))) return
+            // Not one of theirs (or none asked): the server's choice, never the client's.
+            const kfOrgId = kf ? await kf.defaultOrgId(user.id) : null
+            return { data: { ...org, kfOrgId: kfOrgId ?? null } }
           },
-          beforeUpdateOrganization: async ({ organization: org }) => {
+          beforeUpdateOrganization: async ({ organization: org, user }) => {
             if (org.slug !== undefined) assertValidSlug(org.slug)
+            // Clearing is allowed; setting needs membership of that KF org.
+            const asked = (org as { kfOrgId?: string | null }).kfOrgId
+            if (!asked || (kf && (await kf.entitled(user.id, asked)))) return
+            throw new APIError('FORBIDDEN', { message: 'Not a KF organization you belong to' })
           },
         },
       }),
@@ -135,6 +152,33 @@ export function createAuth(db: Db, cfg: AuthConfig, waitUntil: (p: Promise<unkno
                   ne(schema.account.id, account.id),
                 ),
               )
+            // Link the personal org to the user's KF org. Not at user creation: KF
+            // Auth's internal API is looked up through this account row.
+            if (kf && account.providerId === 'kf-auth') {
+              const kfOrgId = await kf.defaultOrgId(account.userId)
+              if (kfOrgId) {
+                const [own] = await db
+                  .select({ id: schema.organization.id, kfOrgId: schema.organization.kfOrgId })
+                  .from(schema.organization)
+                  .innerJoin(
+                    schema.member,
+                    eq(schema.member.organizationId, schema.organization.id),
+                  )
+                  .where(
+                    and(
+                      eq(schema.member.userId, account.userId),
+                      eq(schema.organization.isDefault, true),
+                    ),
+                  )
+                  .limit(1)
+                if (own && !own.kfOrgId) {
+                  await db
+                    .update(schema.organization)
+                    .set({ kfOrgId })
+                    .where(eq(schema.organization.id, own.id))
+                }
+              }
+            }
           },
         },
       },
@@ -219,7 +263,14 @@ export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
     }
     try {
       const session = await auth.api.getSession({ headers: req.headers })
-      if (session) return { userId: session.user.id, scope: 'session', collectionIds: null }
+      if (session) {
+        return {
+          userId: session.user.id,
+          scope: 'session',
+          collectionIds: null,
+          sessionId: session.session.id,
+        }
+      }
     } catch {
       // No session.
     }

@@ -34,6 +34,7 @@ import { Hono } from 'hono'
 import '../handlers.js'
 import { createApp, type RenderPage } from '../app.js'
 import { authenticator, createAuth } from '../auth/auth.js'
+import { createKf } from '../auth/kf.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
@@ -138,24 +139,24 @@ try {
   console.warn('[underlay] @underlay/web is not built; serving the API only')
 }
 const staticFiles = serveStatic({ root: relative(process.cwd(), clientDir) })
+const oidc = {
+  issuerUrl: env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+  internalUrl: env.OIDC_ISSUER_INTERNAL_URL ?? env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
+  clientId: env.OIDC_CLIENT_ID ?? 'kf_underlay',
+  clientSecret: env.OIDC_CLIENT_SECRET ?? '',
+}
+const kf = createKf(db, { ...oidc, internalApiKey: env.AUTH_INTERNAL_API_KEY })
 const auth = createAuth(
   db,
-  {
-    appUrl,
-    secret: env.SESSION_SECRET ?? 'dev-secret-change-me',
-    oidc: {
-      issuerUrl: env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
-      internalUrl: env.OIDC_ISSUER_INTERNAL_URL ?? env.OIDC_ISSUER_URL ?? 'http://localhost:3000',
-      clientId: env.OIDC_CLIENT_ID ?? 'kf_underlay',
-      clientSecret: env.OIDC_CLIENT_SECRET ?? '',
-    },
-  },
+  { appUrl, secret: env.SESSION_SECRET ?? 'dev-secret-change-me', oidc },
   ports.waitUntil,
+  kf,
 )
 const app = createApp(() => ({
   ports,
   config,
   authenticate: authenticator(() => auth),
+  kf,
   authHandler: (req) => auth.handler(req),
   ...(renderPage ? { renderPage } : {}),
 }))

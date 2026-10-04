@@ -254,6 +254,14 @@ try {
     { path: '/signup', status: 302, location: '/login' },
     { path: '/dashboard', status: 302, location: '/login' },
     { path: '/dashboard', status: 200, has: ['authors', 'secret'], user: 'u1' },
+    // Account and org settings (their data comes from /api/accounts/*).
+    { path: '/settings', status: 200, has: ['<title>Settings · Underlay</title>'], user: 'u1' },
+    { path: '/settings', status: 302, location: '/login' },
+    { path: '/settings/sessions', status: 200, has: ['Active sessions'], user: 'u1' },
+    { path: '/org/settings', status: 200, has: ['Settings — org', 'Smoke Org'], user: 'u1' },
+    { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
+    { path: '/new-org', status: 200, user: 'u1' },
+    { path: '/invitations/accept?token=x', status: 200, has: ['Organization Invitation'] },
     // Mirrors in collection settings: status for members, actions for admins.
     {
       path: '/org/authors/settings',

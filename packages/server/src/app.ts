@@ -6,6 +6,7 @@
 import { type Context, type ExecutionContext, Hono } from 'hono'
 
 import type { Principal } from './api/access.js'
+import { accountRoutes } from './api/accounts.js'
 import { arkRoutes } from './api/ark.js'
 import { collectionRoutes } from './api/collections.js'
 import { exportRoutes } from './api/export.js'
@@ -18,6 +19,7 @@ import { schemaRoutes } from './api/schemas.js'
 import { syncRoutes } from './api/sync.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
+import type { Kf } from './auth/kf.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -38,6 +40,8 @@ export type AppEnv = {
     ports: Ports
     config: AppConfig
     principal: Principal | null
+    /** KF Auth profile and orgs; null where the deployment has no KF Auth. */
+    kf: Kf | null
   }
 }
 
@@ -49,6 +53,7 @@ export type Setup = (c: Context<AppEnv>) => {
   ports: Ports
   config: AppConfig
   authenticate: Authenticate
+  kf?: Kf
   /** better-auth's own routes (/api/auth/*): sign-in, callbacks, sessions, keys, orgs. */
   authHandler?: (req: Request) => Promise<Response>
   /**
@@ -80,6 +85,9 @@ export function createApp(setup: Setup) {
     const { authHandler, config } = setup(c)
     if (!authHandler || c.req.query('error') !== undefined) return next()
     const origin = new URL(config.appUrl).origin
+    // Only a path on this site: an open redirect would hand sign-ins to anyone.
+    const returnTo = c.req.query('return_to') ?? ''
+    const callbackURL = /^\/(?![/\\])/.test(returnTo) ? returnTo : '/dashboard'
     const headers = new Headers({
       'content-type': 'application/json',
       cookie: c.req.header('cookie') ?? '',
@@ -91,7 +99,7 @@ export function createApp(setup: Setup) {
         headers,
         body: JSON.stringify({
           providerId: 'kf-auth',
-          callbackURL: '/dashboard',
+          callbackURL,
           errorCallbackURL: '/login',
         }),
       }),
@@ -104,9 +112,10 @@ export function createApp(setup: Setup) {
   })
 
   app.use('*', async (c, next) => {
-    const { ports, config, authenticate } = setup(c)
+    const { ports, config, authenticate, kf } = setup(c)
     c.set('ports', ports)
     c.set('config', config)
+    c.set('kf', kf ?? null)
     c.set('principal', await authenticate(c.req.raw, ports))
     await next()
   })
@@ -132,6 +141,8 @@ export function createApp(setup: Setup) {
   app.route('/', schemaRoutes())
   app.route('/', manageRoutes())
   app.route('/', locationRoutes())
+  // Before collectionRoutes: /api/accounts/me would match /api/accounts/:slug.
+  app.route('/', accountRoutes())
   app.route('/', collectionRoutes())
 
   // Everything else is a UI page, when the deployment renders one.

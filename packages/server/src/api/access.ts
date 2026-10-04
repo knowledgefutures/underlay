@@ -20,6 +20,8 @@ export interface Principal {
   collectionIds: string[] | null
   /** Set for an API key owned by an organization: it acts as a member of that org only. */
   orgId?: string
+  /** The signed-in session's id (scope 'session' only). */
+  sessionId?: string
 }
 
 export interface CollectionAccess {

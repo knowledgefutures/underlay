@@ -23,6 +23,7 @@ export default function OwnerSettingsMembers() {
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
+  const [copied, setCopied] = useState('')
 
   async function loadMembers(organizationId: string) {
     const { data } = await authClient.organization.listMembers({
@@ -112,13 +113,22 @@ export default function OwnerSettingsMembers() {
       if (err) {
         setError(err.message ?? 'Failed to send invitation.')
       } else {
-        setSuccess(`Invitation sent to ${inviteEmail}.`)
+        // Nothing emails invitations yet: the inviter shares the link below.
+        setSuccess(
+          `Invitation created for ${inviteEmail}. Copy its link below and send it to them.`,
+        )
         setInviteEmail('')
         await loadInvitations(orgId)
       }
     } finally {
       setSubmitting(false)
     }
+  }
+
+  async function copyInviteLink(invitationId: string) {
+    const link = `${window.location.origin}/invitations/accept?token=${encodeURIComponent(invitationId)}`
+    await navigator.clipboard.writeText(link)
+    setCopied(invitationId)
   }
 
   async function handleCancelInvitation(invitationId: string) {
@@ -253,13 +263,18 @@ export default function OwnerSettingsMembers() {
                   )}
                 </div>
                 {isAdmin && (
-                  <Button
-                    variant="dangerLink"
-                    size="sm"
-                    onClick={() => handleCancelInvitation(inv.id)}
-                  >
-                    Cancel
-                  </Button>
+                  <div className="flex items-center gap-3">
+                    <Button variant="link" size="sm" onClick={() => copyInviteLink(inv.id)}>
+                      {copied === inv.id ? 'Copied' : 'Copy link'}
+                    </Button>
+                    <Button
+                      variant="dangerLink"
+                      size="sm"
+                      onClick={() => handleCancelInvitation(inv.id)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 )}
               </div>
             ))}

@@ -139,5 +139,63 @@ describe('better-auth on SQLite', () => {
 
     const failed = await app.fetch(new Request('http://test/login?error=auth_failed'))
     expect(await failed.text()).toBe('page')
+
+    // return_to survives sign-in when it is a path on this site, and only then.
+    const stateOf = async (q: string) => {
+      await h.ports.db.delete(schema.verification)
+      const r = await app.fetch(new Request(`http://test/login?return_to=${encodeURIComponent(q)}`))
+      expect(r.status).toBe(302)
+      const [v] = await h.ports.db.select().from(schema.verification)
+      return JSON.parse(v!.value) as { callbackURL: string }
+    }
+    expect((await stateOf('/invitations/accept?token=t')).callbackURL).toBe(
+      '/invitations/accept?token=t',
+    )
+    expect((await stateOf('//evil.example/x')).callbackURL).toBe('/dashboard')
+    expect((await stateOf('/\\evil.example')).callbackURL).toBe('/dashboard')
+    expect((await stateOf('https://evil.example/')).callbackURL).toBe('/dashboard')
+  })
+})
+
+describe('KF org links on organizations', () => {
+  it('keeps a kfOrgId the creator belongs to, and replaces any other', async () => {
+    const h = await harness()
+    const kf = {
+      profile: async () => null,
+      role: async () => null,
+      orgs: async () => [],
+      entitled: async (_u: string, id: string) => id === 'kf-mine',
+      defaultOrgId: async () => 'kf-default',
+      isInternalCall: () => false,
+    }
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+      kf,
+    )
+    const ctx = await auth.$context
+    const user = await ctx.internalAdapter.createUser({
+      name: 'Ada',
+      email: 'ada@example.org',
+      emailVerified: true,
+    })
+    const create = (slug: string, kfOrgId: string) =>
+      auth.api.createOrganization({ body: { name: slug, slug, userId: user.id, kfOrgId } as never })
+    await create('mine', 'kf-mine')
+    await create('theirs', 'kf-theirs')
+    const orgs = await h.ports.db.select().from(schema.organization)
+    const link = (slug: string) => orgs.find((o) => o.slug === slug)?.kfOrgId
+    expect(link('mine')).toBe('kf-mine')
+    expect(link('theirs')).toBe('kf-default')
   })
 })
