@@ -93,6 +93,7 @@ A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 
 **Which schemas are accepted.** A type schema must be a JSON object and a JSON Schema draft-07
 document.
+
 - A root `$schema`, if present, must be `http://json-schema.org/draft-07/schema` (with or without a
   trailing `#`); anything else is rejected.
 - A schema is rejected unless all of these hold:
@@ -104,6 +105,7 @@ document.
   another.
 
 **How records are validated.** Draft-07, with these rules:
+
 - Keywords alongside `$ref` are applied, as in draft 2019-09.
 - Keywords draft-07 doesn't define are ignored. That includes later drafts' keywords
   (`unevaluatedProperties`, `dependentRequired`, `prefixItems`, …) and draft-04's `id`. `$defs`
@@ -116,6 +118,7 @@ document.
   special meaning.
 
 **Formats.**
+
 - `format` constrains strings only, and only for these names: `date`, `time`, `date-time`,
   `iso-time`, `iso-date-time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`,
   `hostname`, `ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `json-pointer-uri-fragment`,
