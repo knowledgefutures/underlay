@@ -244,6 +244,35 @@ describe('commitVersion', () => {
     expect(v3.version.changes).toMatchObject({ removed: 1 })
   })
 
+  it('refuses a version holding one id in both sets', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const v1 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [type('Author', authorSchema, [up('Author', 'a', { name: 'A' })])],
+      metadata: null,
+    })
+    if (v1.status !== 'committed') throw new Error(v1.status)
+    // 'a' added to the private set without leaving the public one.
+    const both = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', authorSchema, null, [up('Author', 'a', { name: 'secret' })])],
+      metadata: null,
+    }).catch((e: Error) => e)
+    expect(both).toBeInstanceOf(Error)
+    expect((both as Error).message).toMatch(/in both the public and private sets/)
+    // Moving it (removed from one set, added to the other) is fine.
+    const moved = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: baseOf(v1.version),
+      types: [type('Author', authorSchema, [del('a')], [up('Author', 'a', { name: 'secret' })])],
+      metadata: null,
+    })
+    expect(moved.status).toBe('committed')
+  })
+
   it('moves file references with a type: public → private → delete', async () => {
     const h = await harness()
     const c = await h.collection()
