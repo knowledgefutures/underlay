@@ -20,7 +20,7 @@ import { and, eq, ne } from 'drizzle-orm'
 import type { Principal } from '../api/access.js'
 import type { Authenticate } from '../app.js'
 import * as schema from '../db/schema.js'
-import { defaultOrgSlugCandidate, validateSlug } from '../lib/slug.js'
+import { defaultOrgSlugCandidate, validateOrgSlug } from '../lib/slug.js'
 import type { Db, Ports } from '../ports.js'
 import type { Kf } from './kf.js'
 
@@ -41,7 +41,7 @@ export interface AuthConfig {
 }
 
 function assertValidSlug(slug: unknown) {
-  const err = validateSlug(slug)
+  const err = validateOrgSlug(slug)
   if (err) throw new APIError('BAD_REQUEST', { message: err })
 }
 

@@ -16,7 +16,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
-import { validateSlug } from '../lib/slug.js'
+import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
@@ -61,7 +61,7 @@ export function manageRoutes() {
       name?: unknown
       public?: unknown
     } | null
-    const slugError = validateSlug(body?.slug)
+    const slugError = validateCollectionSlug(body?.slug)
     if (slugError) return jsonError(c, 422, slugError)
     const slug = body!.slug as string
     const [taken] = await c.var.ports.db
@@ -100,7 +100,7 @@ export function manageRoutes() {
       set.public = body.public === true
     }
     if (body.slug !== undefined && body.slug !== access.collection.slug) {
-      const err = validateSlug(body.slug)
+      const err = validateCollectionSlug(body.slug)
       if (err) return jsonError(c, 422, err)
       const [taken] = await c.var.ports.db
         .select({ id: schema.collections.id })
@@ -205,7 +205,7 @@ export function manageRoutes() {
     if (!target.org) return jsonError(c, 404, 'Target org not found')
     if (!target.role) return jsonError(c, 403, 'Forbidden')
     const slug = typeof body.slug === 'string' ? body.slug : access.collection.slug
-    const err = validateSlug(slug)
+    const err = validateCollectionSlug(slug)
     if (err) return jsonError(c, 422, err)
     const head = access.collection.headVersionId
     if (!head) return jsonError(c, 422, 'Nothing to fork: the collection has no versions')

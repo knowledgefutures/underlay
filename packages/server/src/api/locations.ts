@@ -30,7 +30,7 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
-import { validateSlug } from '../lib/slug.js'
+import { validateCollectionSlug } from '../lib/slug.js'
 import {
   checkEndpoint,
   checkLocation,
@@ -396,7 +396,7 @@ export function locationRoutes() {
     if (!loc) return jsonError(c, 404, 'Location not found')
     const sourceId = str(body.collectionId, 64)
     if (!sourceId) return jsonError(c, 400, '"collectionId" names the collection in the location')
-    const slugError = validateSlug(body.slug)
+    const slugError = validateCollectionSlug(body.slug)
     if (slugError) return jsonError(c, 422, slugError)
     const slug = body.slug as string
     const [taken] = await ports.db

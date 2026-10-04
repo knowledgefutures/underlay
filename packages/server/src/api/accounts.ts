@@ -24,7 +24,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
-import { validateSlug } from '../lib/slug.js'
+import { validateOrgSlug } from '../lib/slug.js'
 import { jsonError } from './access.js'
 
 /**
@@ -79,7 +79,7 @@ async function collectionCount(c: Context<AppEnv>, orgId: string) {
 
 /** 422/409 for a slug change, or null when `slug` is free for org `orgId`. */
 async function slugProblem(c: Context<AppEnv>, slug: unknown, orgId: string) {
-  const err = validateSlug(slug)
+  const err = validateOrgSlug(slug)
   if (err) return jsonError(c, 422, err)
   const taken = await orgBySlug(c, slug as string)
   if (taken && taken.id !== orgId) return jsonError(c, 409, 'That slug is already taken')
