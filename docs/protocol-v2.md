@@ -304,6 +304,8 @@ collections/<collectionId>/head.json
 - **Self-contained.** Nothing in a location refers to another location.
 - Platform-internal data (push sessions, staging uploads, the reference log) is not part of a
   repository and is never copied to one.
+- Readers ignore keys outside this layout. The platform's location check writes
+  `.underlay/check.json` under the prefix.
 
 ### 11.1 Version log
 
