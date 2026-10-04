@@ -10,6 +10,8 @@ export default function InvitationsAccept() {
 
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
   const token = params.get('token') ?? ''
+  // KF Auth handles both sign-in and new accounts; /login returns here afterwards.
+  const signIn = `/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`
 
   const [success, setSuccess] = useState(false)
   const [orgSlug, setOrgSlug] = useState('')
@@ -67,19 +69,9 @@ export default function InvitationsAccept() {
             {!currentUser && token && (
               <p className="mt-2 text-xs">
                 You may need to{' '}
-                <a
-                  href={`/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                  className="underline"
-                >
-                  log in
+                <a href={signIn} className="underline">
+                  sign in
                 </a>{' '}
-                or
-                <Link
-                  to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                  className="ml-1 underline"
-                >
-                  sign up
-                </Link>{' '}
                 first.
               </p>
             )}
@@ -89,22 +81,12 @@ export default function InvitationsAccept() {
             {!currentUser ? (
               <div className="space-y-3">
                 <p className="text-ink-muted text-sm">
-                  You've been invited to join an organization. Please log in or sign up to accept.
+                  You've been invited to join an organization. Sign in to accept; a new account can
+                  be made on the way.
                 </p>
-                <div className="flex gap-3">
-                  <a
-                    href={`/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                    className={buttonClasses('primary', 'md', 'flex-1')}
-                  >
-                    Log in
-                  </a>
-                  <Link
-                    to={`/signup?redirect=${encodeURIComponent(`/invitations/accept?token=${token}`)}`}
-                    className={buttonClasses('secondary', 'md', 'flex-1')}
-                  >
-                    Sign up
-                  </Link>
-                </div>
+                <a href={signIn} className={buttonClasses('primary', 'md', 'w-full')}>
+                  Sign in
+                </a>
               </div>
             ) : (
               <form onSubmit={handleAccept} className="space-y-4">
