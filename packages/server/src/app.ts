@@ -97,6 +97,17 @@ export function createApp(setup: Setup) {
       : c.json({ error: 'Auth is not configured', statusCode: 404 }, 404)
   })
 
+  // Old blog URLs: the posts moved to the KF site under the same slugs
+  // (web's lib/kf-updates.ts links there too). `blog` is a reserved org slug.
+  const KF_SITE = 'https://www.knowledgefutures.org'
+  app.get('/blog', (c) => c.redirect(`${KF_SITE}/?tag=underlay`, 301))
+  app.get('/blog/:slug', (c) => {
+    const slug = c.req.param('slug')
+    return /^[a-z0-9-]+$/i.test(slug)
+      ? c.redirect(`${KF_SITE}/updates/${slug.toLowerCase()}`, 301)
+      : c.redirect(`${KF_SITE}/?tag=underlay`, 301)
+  })
+
   // The UI's sign-in links point here; the page itself only shows errors (as v1's
   // server.ts). Without this, /login renders a page that redirects to /login.
   app.get('/login', async (c, next) => {

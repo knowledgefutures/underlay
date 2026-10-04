@@ -69,9 +69,9 @@ function getEndpoints(slug: string, collectionSlug: string): Endpoint[] {
           {
             label: 'List files',
             method: 'GET',
-            path: `/api/collections/${slug}/${collectionSlug}/files`,
+            path: `/api/collections/${slug}/${collectionSlug}/versions/latest/files`,
             body: '',
-            description: 'Returns all files in the latest version.',
+            description: 'Returns the files in the latest version.',
           },
         ]
       : []),
