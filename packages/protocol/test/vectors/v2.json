@@ -521,5 +521,43 @@
       ],
       "refs": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
     }
-  ]
+  ],
+  "logEntry": {
+    "privateKeySeed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+    "publicKey": {
+      "id": "65b60673d6ed884b",
+      "alg": "Ed25519",
+      "publicKey": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ"
+    },
+    "unsigned": {
+      "collectionId": "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+      "seq": 2,
+      "semver": "v1.1.0",
+      "versionHash": "ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1",
+      "baseSemver": "v1.0.0",
+      "message": "Second version",
+      "appId": null,
+      "actorId": null,
+      "createdAt": "2026-10-03T12:00:00.000Z",
+      "prev": "a8e1776584a85cc42b07c3852ba3991dcc68651c69ee859907e12ffe5bf0467a"
+    },
+    "signedBytes": "{\"actorId\":null,\"appId\":null,\"baseSemver\":\"v1.0.0\",\"collectionId\":\"0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b\",\"createdAt\":\"2026-10-03T12:00:00.000Z\",\"keyId\":\"65b60673d6ed884b\",\"message\":\"Second version\",\"prev\":\"a8e1776584a85cc42b07c3852ba3991dcc68651c69ee859907e12ffe5bf0467a\",\"semver\":\"v1.1.0\",\"seq\":2,\"versionHash\":\"ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1\"}",
+    "entry": {
+      "collectionId": "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+      "seq": 2,
+      "semver": "v1.1.0",
+      "versionHash": "ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1",
+      "baseSemver": "v1.0.0",
+      "message": "Second version",
+      "appId": null,
+      "actorId": null,
+      "createdAt": "2026-10-03T12:00:00.000Z",
+      "prev": "a8e1776584a85cc42b07c3852ba3991dcc68651c69ee859907e12ffe5bf0467a",
+      "keyId": "65b60673d6ed884b",
+      "sig": "jMYs3Y7sZS_Cio90TjPtBwKue12TvSW0YMjYbHmLKZuVTHlBtdyiNDupdHjo8u-s-X6kDcOVb5O_n2PWPCynBg"
+    },
+    "canonical": "{\"actorId\":null,\"appId\":null,\"baseSemver\":\"v1.0.0\",\"collectionId\":\"0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b\",\"createdAt\":\"2026-10-03T12:00:00.000Z\",\"keyId\":\"65b60673d6ed884b\",\"message\":\"Second version\",\"prev\":\"a8e1776584a85cc42b07c3852ba3991dcc68651c69ee859907e12ffe5bf0467a\",\"semver\":\"v1.1.0\",\"seq\":2,\"sig\":\"jMYs3Y7sZS_Cio90TjPtBwKue12TvSW0YMjYbHmLKZuVTHlBtdyiNDupdHjo8u-s-X6kDcOVb5O_n2PWPCynBg\",\"versionHash\":\"ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1\"}",
+    "entryHash": "a4f4efbbb99240becb9cf7f4f5d560243ecdb919819972c7e1100320fcdcad7f",
+    "head": "{\"entryHash\":\"a4f4efbbb99240becb9cf7f4f5d560243ecdb919819972c7e1100320fcdcad7f\",\"seq\":2,\"versionHash\":\"ulv2:7d96a42b7841767d577510d2d25591e40a3ff67ae2bbdb16e15a2d12e0c60ed1\"}"
+  }
 }

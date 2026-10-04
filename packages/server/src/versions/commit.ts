@@ -307,6 +307,7 @@ export async function appendVersionLog(
   // collection.json first: a reader must find the key before an entry it signs.
   await publishCollectionInfo(ports, repo, collectionId, signer)
   const entry = await signEntry(signer, {
+    collectionId,
     seq: v.seq,
     semver: v.semver,
     versionHash: v.hash,

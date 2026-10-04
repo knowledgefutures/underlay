@@ -16,6 +16,8 @@ import {
   boundaryBytes,
   buildTree,
   compareUtf8,
+  ed25519Signer,
+  entryHash,
   type FileEntry,
   fileRefs,
   fileTree,
@@ -33,6 +35,7 @@ import {
   recordTree,
   type SetObject,
   sha256Hex,
+  signEntry,
   trailingZeros,
   versionHash,
 } from '../src/index.js'
@@ -337,6 +340,40 @@ const fileRefCases = [
   { data: [{ $file: `sha256:${H('a')}` }, { $file: `sha256:${H('a')}` }] },
 ].map((c) => ({ ...c, refs: fileRefs(c.data) }))
 
+// --- Version log ------------------------------------------------------------------
+
+// Ed25519 signatures are deterministic (RFC 8032), so a fixed seed fixes every byte.
+const logSeed = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 1)).toString('base64url')
+const logSigner = await ed25519Signer(logSeed)
+const logUnsigned = {
+  collectionId: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b',
+  seq: 2,
+  semver: 'v1.1.0',
+  versionHash: roots[0]!.versionHash,
+  baseSemver: 'v1.0.0',
+  message: 'Second version',
+  appId: null,
+  actorId: null,
+  createdAt: '2026-10-03T12:00:00.000Z',
+  prev: sha256Hex('entry 1'),
+}
+const logSigned = await signEntry(logSigner, logUnsigned)
+const { sig: _sig, ...logToSign } = logSigned
+const logEntry = {
+  privateKeySeed: logSeed,
+  publicKey: logSigner.publicKey,
+  unsigned: logUnsigned,
+  signedBytes: jcs(logToSign),
+  entry: logSigned,
+  canonical: jcs(logSigned),
+  entryHash: entryHash(logSigned),
+  head: jcs({
+    entryHash: entryHash(logSigned),
+    seq: logSigned.seq,
+    versionHash: logSigned.versionHash,
+  }),
+}
+
 const vectors = {
   format: 2,
   generatedBy: 'packages/protocol/scripts/gen-vectors.ts',
@@ -370,6 +407,7 @@ const vectors = {
   },
   roots,
   fileRefs: fileRefCases,
+  logEntry,
 }
 
 const text = JSON.stringify(vectors, null, 1) + '\n'

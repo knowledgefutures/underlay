@@ -6,19 +6,22 @@
  * head log from the plan's Security notes: entries chain by `prev`, so a server
  * can't silently drop or reorder versions for one reader and not another.
  *
- *   entry     = {seq, semver, versionHash, baseSemver, message, appId, actorId,
- *                createdAt, prev, keyId, sig}
+ *   entry     = {collectionId, seq, semver, versionHash, baseSemver, message, appId,
+ *                actorId, createdAt, prev, keyId, sig}
  *   signed    = JCS(entry without "sig"), Ed25519, "sig" = base64url
  *   entryHash = sha256(JCS(entry))          (with "sig")
  *   prev      = entryHash of seq − 1, or null for seq 1
  *   head.json = {"seq", "entryHash", "versionHash"}, overwritten after the entry is written
  *
- * Pusher identity is omitted from the log (an open question in the plan).
+ * Pusher identity is omitted from the log (an open question in the plan). The
+ * collection id is signed, so one collection's entries never verify as another's.
  */
 import { jcs, sha256Hex } from '../format.js'
 import { IntegrityError, keys, type Repo } from './repo.js'
 
 export interface LogEntry {
+  /** The collection whose log this is. */
+  collectionId: string
   seq: number
   semver: string
   versionHash: string
@@ -194,21 +197,27 @@ export async function appendLog(repo: Repo, collectionId: string, entry: LogEntr
 }
 
 /**
- * Check log entries that continue a log: consecutive seqs from `after.seq + 1`
- * (or 1), each chaining to the previous entry's hash and signed by a trusted
- * key. Returns the new head. For mirrors and clients that already verified the
- * log up to `after`.
+ * Check log entries that continue collection `collectionId`'s log: consecutive
+ * seqs from `after.seq + 1` (or 1), each naming that collection, chaining to the
+ * previous entry's hash and signed by a trusted key. Returns the new head. For
+ * mirrors and clients that already verified the log up to `after`.
  */
 export async function verifyLogEntries(
   entries: readonly LogEntry[],
   trustedKeys: PublicKeyInfo[],
   after: { seq: number; entryHash: string } | null,
+  collectionId: string,
 ): Promise<{ seq: number; entryHash: string } | null> {
   let seq = after?.seq ?? 0
   let prev = after?.entryHash ?? null
   for (const e of entries) {
     seq++
     if (e.seq !== seq) throw new IntegrityError(`Log entry ${seq} has seq ${e.seq}`)
+    if (e.collectionId !== collectionId) {
+      throw new IntegrityError(
+        `Log entry ${seq} names collection ${String(e.collectionId)}, not ${collectionId}`,
+      )
+    }
     if (e.prev !== prev) throw new IntegrityError(`Log entry ${seq} does not chain to ${seq - 1}`)
     if (!(await verifyEntry(e, trustedKeys)))
       throw new IntegrityError(`Log entry ${seq} has a bad signature`)
@@ -234,7 +243,7 @@ export async function verifyLog(
     if (!e) throw new IntegrityError(`Log entry ${seq} is missing`)
     entries.push(e)
   }
-  const last = await verifyLogEntries(entries, trustedKeys, null)
+  const last = await verifyLogEntries(entries, trustedKeys, null, collectionId)
   if (last?.entryHash !== head.entryHash)
     throw new IntegrityError('head.json does not match the last log entry')
   return { head, entries }

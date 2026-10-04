@@ -15,7 +15,9 @@
  *
  * Versions keep their semver, time and message, and the signed entries are
  * copied verbatim, so the restored log verifies against the original keys and
- * new versions continue its hash chain. After the last version the file
+ * new versions continue its hash chain. Entries name their collection, so the
+ * restored collection keeps the source collection's id, and an instance that
+ * still has that collection can't restore it again. After the last version the file
  * reference counts are rebuilt, so the collection takes new commits.
  */
 import {
@@ -196,6 +198,7 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
     [entry],
     trusted,
     r.lastEntryHash ? { seq: r.restoredSeq, entryHash: r.lastEntryHash } : null,
+    sid,
   )
 
   const target = await ports.stores.forCollection(r.collectionId)
@@ -303,7 +306,8 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
   if (!published.ok) throw new RestoreError('The collection changed while it was being restored')
 
   // The signed entry, verbatim, under this collection; its keys come along.
-  // Only the keys this restore trusted are published with it.
+  // Only the keys this restore trusted are published with it. The collection kept
+  // its id, so the entries, copied verbatim, still name it.
   if (seq === 1) await writeCollectionInfo(target, { ...info, id: r.collectionId, keys: trusted })
   await appendLog(target, r.collectionId, entry)
   await ports.jobs.enqueue({ type: 'refs.index', versionId: id })

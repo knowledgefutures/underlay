@@ -157,6 +157,14 @@ describe('restore', () => {
     expect(info!.keys.map((k) => k.id).sort()).toEqual([a.signer.keyId, b.signer.keyId].sort())
     const { entries } = await verifyLog(repo, restored!.id, info!.keys)
     expect(entries.map((e) => e.seq)).toEqual([1, 2, 3])
+    // Its entries name the collection, so it keeps the source's id, and can't be restored twice.
+    expect(restored!.id).toBe(c.id)
+    const again = await b.request('/api/orgs/org/restores', {
+      method: 'POST',
+      user,
+      json: { locationId: loc, collectionId: c.id, slug: 'again', trustKeyIds: [a.signer.keyId] },
+    })
+    expect(again.status).toBe(409)
   })
 
   it("refuses a log re-signed with a forged key under a trusted key's id", async () => {

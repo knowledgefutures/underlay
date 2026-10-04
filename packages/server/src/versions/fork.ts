@@ -18,9 +18,17 @@ import { publishVersion, type SchemaUsageChange } from './publish.js'
 
 export async function createCollectionRows(
   ports: Ports,
-  c: { organizationId: string; slug: string; name: string; public: boolean; privateSalt?: string },
+  c: {
+    organizationId: string
+    slug: string
+    name: string
+    public: boolean
+    privateSalt?: string
+    /** Restore only: keep the id the collection's signed log names. */
+    id?: string
+  },
 ): Promise<typeof schema.collections.$inferSelect> {
-  const id = crypto.randomUUID()
+  const id = c.id ?? crypto.randomUUID()
   await ports.db.batch([
     ports.db.insert(schema.collections).values({
       id,

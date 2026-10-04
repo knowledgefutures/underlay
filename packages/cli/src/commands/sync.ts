@@ -64,6 +64,7 @@ export async function pull(
     page.entries,
     keys,
     t && { seq: t.seq, entryHash: t.entryHash },
+    page.collection.id,
   )
   const latest = page.entries[page.entries.length - 1]!
   const head = local.headVersion()
@@ -351,6 +352,7 @@ export async function push(
     after.entries,
     after.collection!.keys,
     t && { seq: t.seq, entryHash: t.entryHash },
+    after.collection!.id,
   )
   const entry = after.entries[after.entries.length - 1]
   if (!entry || entry.versionHash !== result.hash) {

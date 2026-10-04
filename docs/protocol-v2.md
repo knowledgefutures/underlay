@@ -325,9 +325,12 @@ collections/<collectionId>/head.json
 Each collection has one log entry per version:
 
 ```
-entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","semver","seq","sig","versionHash"}
+entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","message","prev","semver","seq","sig","versionHash"}
 ```
 
+- `collectionId` is the id of the collection whose log this is (the `<collectionId>` in its keys).
+  It is signed, so an entry, or a whole log, can't be passed off as another collection's. A
+  collection restored from a location keeps its id.
 - `seq` counts from 1. `createdAt` is ISO 8601 UTC. `appId`, `actorId`, `baseSemver` and
   `message` may be `null`. Pusher identity is not recorded (open question).
 - `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry
@@ -345,8 +348,9 @@ entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","se
   The platform also publishes its keys at a well-known URL (to be fixed with the Cloudflare
   deployment).
 
-A log is valid when every entry is present from 1 to `head.seq`, each `prev` chains, each signature
-verifies against a trusted key, and `head.entryHash` is the last entry's hash (`verifyLog` in
+A log is valid when every entry is present from 1 to `head.seq`, each names the collection being
+read, each `prev` chains, each signature verifies against a trusted key, and `head.entryHash` is
+the last entry's hash (`verifyLog` in
 `packages/protocol/src/repo/log.ts`).
 
 ### 11.2 Sync
@@ -406,7 +410,9 @@ numeric order.
   no natural boundaries, so every leaf split is forced);
 - a file tree;
 - two version roots, one with a private set and its commitment;
-- file-reference extraction cases.
+- file-reference extraction cases;
+- one signed log entry, with the key seed it was signed with (Ed25519 signatures are
+  deterministic), its signed bytes, entry hash and `head.json`.
 
 Tree vectors give a recipe for generating their entries rather than listing them.
 `scripts/gen-vectors.ts --check` runs in CI. A failure there means a protocol change, which has to
@@ -433,3 +439,5 @@ These were made during implementation and recorded with their reasons in `edge-r
    plan also had a tree-sync push API; clients that hold their base push a locally computed diff
    through delta push and compare version hashes instead, so a server never accepts tree nodes
    from outside.
+10. Version log entries carry the collection's id (section 11.1). Without it, one collection's
+    entries verified as another's. Added 2026-10-03, before any log held real data.
