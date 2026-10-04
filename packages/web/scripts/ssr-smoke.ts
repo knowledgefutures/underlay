@@ -262,6 +262,9 @@ try {
     { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
     { path: '/new-org', status: 200, user: 'u1' },
     { path: '/invitations/accept?token=x', status: 200, has: ['Organization Invitation'] },
+    { path: '/report', status: 200, has: ['Report content', 'What is wrong'] },
+    // u1 isn't a steward in the smoke (no KF Auth): the page says so.
+    { path: '/admin/abuse', status: 200, has: ['only available to admins'], user: 'u1' },
     // Mirrors in collection settings: status for members, actions for admins.
     {
       path: '/org/authors/settings',

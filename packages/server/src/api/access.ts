@@ -89,7 +89,7 @@ export async function collectionAccess(
 
 export const jsonError = (
   c: Context<AppEnv>,
-  status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 451 | 500,
   error: string,
   extra: Record<string, unknown> = {},
 ) => c.json({ error, statusCode: status, ...extra }, status)

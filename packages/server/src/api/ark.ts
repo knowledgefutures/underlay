@@ -28,6 +28,7 @@ import {
   nextShoulderCounter,
   parseArkPath,
 } from '../lib/ark.js'
+import { deniedHashes } from '../lib/limits.js'
 import type { Db, Ports } from '../ports.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
 import { type CollectionAccess, collectionAccess, jsonError, type Principal } from './access.js'
@@ -232,7 +233,7 @@ export async function resolveArk(
 
     // Non-members get the public set only: a private-set record is not found.
     const repo = await ports.stores.forCollection(collection.id)
-    const view = await loadView(repo, v, member)
+    const view = await loadView(repo, v, member, await deniedHashes(db))
     const type = view.types.find((t) => t.slug === recordType)
     const rec = type ? await getRecord(view, type, recordId) : null
     if (!type || !rec) return notFound

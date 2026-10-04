@@ -509,6 +509,33 @@ export const denylist = sqliteTable('denylist', {
   createdAt: createdAt(),
 })
 
+/**
+ * Reports of content that shouldn't be served (POST /api/abuse-reports). A
+ * steward reviews them and blocks a hash through the denylist, or dismisses.
+ */
+export const abuseReports = sqliteTable(
+  'abuse_reports',
+  {
+    id: id(),
+    /** A file or record hash, when the reporter has one. */
+    hash: text('hash'),
+    /** The page or link the report is about. */
+    url: text('url'),
+    reason: text('reason').notNull(),
+    /** How to reach the reporter (optional). */
+    contact: text('contact'),
+    /** Set when the reporter was signed in. */
+    reporterId: text('reporter_id'),
+    status: text('status', { enum: ['open', 'blocked', 'dismissed'] })
+      .notNull()
+      .default('open'),
+    resolvedBy: text('resolved_by'),
+    resolvedAt: ts('resolved_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('abuse_reports_status_idx').on(t.status, t.createdAt)],
+)
+
 // --- Push sessions -------------------------------------------------------------------
 
 export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'expired'

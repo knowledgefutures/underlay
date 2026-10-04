@@ -57,7 +57,10 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
               Knowledge Futures
             </a>
           </div>
-          <div>
+          <div className="flex items-center gap-3">
+            <a href="/report" className="hover:text-ink underline">
+              Report content
+            </a>
             <a
               href="https://github.com/knowledgefutures/underlay"
               className="hover:text-ink underline"

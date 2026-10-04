@@ -17,6 +17,7 @@ import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { presignDownload } from '../files/files.js'
+import { deniedHashes, isDenied } from '../lib/limits.js'
 import { type Presence, presenceOf } from '../refs/log.js'
 import { getRecord, loadView } from '../versions/view.js'
 import { jsonError } from './access.js'
@@ -142,7 +143,7 @@ async function bodyAt(
           .where(and(eq(schema.versions.collectionId, item.c.id), eq(schema.versions.seq, seq)))
   if (!v) return null
   const repo = await c.var.ports.stores.forCollection(item.c.id)
-  const view = await loadView(repo, v, item.member)
+  const view = await loadView(repo, v, item.member, await deniedHashes(c.var.ports.db))
   const t = view.types.find((x) => x.slug === item.p.type)
   const rec = t ? await getRecord(view, t, item.p.id) : null
   return rec?.hash === hash ? rec : null
@@ -231,6 +232,7 @@ export function recordRoutes() {
 
   app.get('/api/collections/files/:hash', async (c) => {
     const hash = c.req.param('hash').replace(/^sha256:/, '')
+    if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
     const { items } = await visiblePresence(c, hash, await memberOrgs(c))
     if (!items.some((i) => i.p.kind === 'f')) return jsonError(c, 404, 'File not found')
     const url = await presignDownload(c.var.ports, hash)

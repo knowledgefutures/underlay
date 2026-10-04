@@ -84,12 +84,15 @@ export interface VersionView {
   private: PrivateSetObject | null
   types: TypeView[]
   owner: boolean
+  /** Record hashes never served (the denylist); typeRecords and getRecord skip them. */
+  withheld: ReadonlySet<string>
 }
 
 export async function loadView(
   repo: Repo,
   version: VersionRow,
   owner: boolean,
+  withheld: ReadonlySet<string> = new Set(),
 ): Promise<VersionView> {
   const root = await repo.root(version.hash)
   const priv = owner && root.private ? await repo.privateSet(root.private) : null
@@ -107,7 +110,7 @@ export async function loadView(
       privateType: !pub && !!pri,
     }
   })
-  return { version, repo, root, public: root.public, private: priv, types, owner }
+  return { version, repo, root, public: root.public, private: priv, types, owner, withheld }
 }
 
 export type VisibleRecord = RecordEntry & { type: string; set: 'public' | 'private' }
@@ -155,6 +158,7 @@ export async function* typeRecords(
       ...(after !== undefined ? { after } : {}),
     })
   for await (const { e, set } of mergeById(it(pubRoot), it(privRoot))) {
+    if (view.withheld.has(e.hash)) continue
     yield { ...e, type: type.slug, set }
   }
 }
@@ -205,6 +209,7 @@ export async function getRecord(
     if (!tree?.root) continue
     const hit = await getEntry(source, tree.root, id)
     if (!hit) continue
+    if (view.withheld.has(hit.hash)) return null
     const body = await bodyOf(source, tree.root, id)
     return { ...hit, body, type: type.slug, set }
   }

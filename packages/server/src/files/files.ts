@@ -21,6 +21,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
+import { deniedHashes } from '../lib/limits.js'
 import type { Ports } from '../ports.js'
 
 /** PUT-through-the-API limit: the body is held in isolate memory to hash it. */
@@ -98,7 +99,9 @@ export async function presignDownloads(
   hashes: string[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>()
-  for (const part of chunks([...new Set(hashes)])) {
+  // Blocked files get no URL, whatever route asked (lib/limits.ts).
+  const denied = await deniedHashes(ports.db)
+  for (const part of chunks([...new Set(hashes)].filter((h) => !denied.has(h)))) {
     const rows = await ports.db.select().from(schema.files).where(inArray(schema.files.hash, part))
     for (const f of rows) {
       // Downloads are attachments: nothing renders on the bucket's domain either.

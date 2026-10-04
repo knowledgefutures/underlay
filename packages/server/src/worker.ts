@@ -20,6 +20,7 @@ import { createKf, type Kf } from './auth/kf.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { QueueJobs, runJob } from './jobs.js'
+import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports } from './ports.js'
 import { createStores } from './stores.js'
 
@@ -47,6 +48,9 @@ export interface Env {
   OIDC_CLIENT_SECRET: string
   /** The KF account site, linked from the user menu. */
   OIDC_ACCOUNT_URL?: string
+  /** Rate-limit bindings (wrangler.jsonc "ratelimits"); without them, no limit. */
+  RL_ANON?: RateLimitBinding
+  RL_USER?: RateLimitBinding
   /** KF Auth's internal API key: KF orgs for new orgs, and /api/kf/summary. Optional. */
   AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
@@ -80,6 +84,9 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
     outboundFetch: (url, init) => fetch(url, init),
     locationFetch: (req) => fetch(req),
     ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
+    ...(env.RL_ANON && env.RL_USER
+      ? { rateLimit: bindingRateLimiter({ anon: env.RL_ANON, user: env.RL_USER }) }
+      : {}),
   }
 }
 

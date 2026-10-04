@@ -21,6 +21,7 @@ import { syncRoutes } from './api/sync.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Kf } from './auth/kf.js'
+import { clientIp } from './lib/limits.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -72,6 +73,8 @@ export type RenderPage = (
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
+  /** Requests the page renderer makes to this app in-process. */
+  const inProcess = new WeakSet<Request>()
 
   app.on(['GET', 'POST'], '/api/auth/*', (c) => {
     const { authHandler } = setup(c)
@@ -121,6 +124,20 @@ export function createApp(setup: Setup) {
     await next()
   })
 
+  // Request budgets (lib/limits.ts). The page renderer's in-process API calls
+  // are part of the page view that made them, so they don't count again.
+  app.use('/api/*', async (c, next) => {
+    const limiter = c.var.ports.rateLimit
+    if (!limiter || inProcess.has(c.req.raw)) return next()
+    const p = c.var.principal
+    const ok = p
+      ? await limiter.check('user', p.orgId ?? p.userId)
+      : await limiter.check('anon', clientIp(c.req.raw.headers))
+    if (ok) return next()
+    c.header('Retry-After', '60')
+    return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)
+  })
+
   app.get('/api/health', (c) =>
     c.json({
       ok: true,
@@ -159,7 +176,10 @@ export function createApp(setup: Setup) {
     } catch {
       ctx = undefined
     }
-    return renderPage(c.req.raw, async (req) => app.fetch(req, c.env, ctx))
+    return renderPage(c.req.raw, async (req) => {
+      inProcess.add(req)
+      return app.fetch(req, c.env, ctx)
+    })
   })
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))

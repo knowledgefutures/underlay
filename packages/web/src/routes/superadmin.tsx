@@ -11,6 +11,12 @@ const tools = [
     description: 'Manage featured collections and tag filters on the explore page.',
     stewardOnly: true,
   },
+  {
+    name: 'Abuse Reports',
+    href: '/admin/abuse',
+    description: 'Review reports of harmful content, and block or unblock file and record hashes.',
+    stewardOnly: true,
+  },
   // Hidden until the discussion API exists (lib/features.ts).
   ...(!features.discussion
     ? []

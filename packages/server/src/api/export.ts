@@ -18,6 +18,7 @@ import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { deniedHashes } from '../lib/limits.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 
@@ -40,7 +41,7 @@ export function exportRoutes() {
     )
     if (!v) return jsonError(c, 404, 'No versions found')
     const repo = await ports.stores.forCollection(access.collection.id)
-    const view = await loadView(repo, v, access.isMember)
+    const view = await loadView(repo, v, access.isMember, await deniedHashes(c.var.ports.db))
     const gzip = c.req.query('format') !== 'tar'
 
     // Files the caller may read, and which of them the platform has bytes for.

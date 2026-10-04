@@ -26,6 +26,7 @@ import {
   startUpload,
   storeSmallFile,
 } from '../files/files.js'
+import { isDenied } from '../lib/limits.js'
 import { jsonError, requireCollection } from './access.js'
 
 export function fileRoutes() {
@@ -37,6 +38,9 @@ export function fileRoutes() {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return head ? c.body(null, 404) : access
     const hash = cleanHash(c.req.param('hash'))
+    if (await isDenied(c.var.ports.db, hash)) {
+      return head ? c.body(null, 451) : jsonError(c, 451, 'This file is unavailable')
+    }
     if (
       !isHash(hash) ||
       !(await canReadFile(c.var.ports, access.collection, access.isMember, hash))

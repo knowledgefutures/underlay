@@ -38,6 +38,7 @@ import { createKf } from '../auth/kf.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
+import { memoryRateLimiter } from '../lib/limits.js'
 import { requestInit } from '../locations/locations.js'
 import type { Ports, PresigningStore } from '../ports.js'
 import { createStores } from '../stores.js'
@@ -103,6 +104,8 @@ const ports: Ports = {
   waitUntil: (p) => {
     p.catch((err) => console.error('[waitUntil]', err))
   },
+  // RATE_LIMIT=off for load tests and local tools.
+  ...(env.RATE_LIMIT === 'off' ? {} : { rateLimit: memoryRateLimiter() }),
 }
 const jobsTable = new SqliteJobs(db)
 

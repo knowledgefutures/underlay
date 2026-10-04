@@ -10,6 +10,12 @@
  *   DELETE  /api/pages/:page/comments/:id        author or steward
  *   GET     /api/admin/discussion                stewards: pending and all threads
  *   GET     /api/kf/summary?kf_org_id=           KF Auth, with the internal API key
+ *   POST    /api/abuse-reports                   {hash?, url?, reason, contact?}: anyone
+ *   GET     /api/admin/abuse-reports             stewards: ?status=open|blocked|dismissed
+ *   PATCH   /api/admin/abuse-reports/:id         stewards: {status: 'dismissed'|'open'}
+ *   GET     /api/admin/denylist                  stewards
+ *   POST    /api/admin/denylist                  stewards: {hash, kind, reason, reportId?}
+ *   DELETE  /api/admin/denylist/:hash            stewards
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
  */
@@ -19,6 +25,7 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { forgetDenylist } from '../lib/limits.js'
 import { jsonError } from './access.js'
 
 const COMMENT_MAX = 8192
@@ -379,6 +386,125 @@ export function adminRoutes() {
           })),
       })),
     })
+  })
+
+  app.post('/api/abuse-reports', async (c) => {
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    const hash = b?.hash === undefined || b.hash === '' ? null : str(b.hash, 80)
+    const url = b?.url === undefined || b.url === '' ? null : str(b.url, 2000)
+    const reason = str(b?.reason, 4000)?.trim()
+    const contact = b?.contact === undefined || b.contact === '' ? null : str(b.contact, 320)
+    if (hash === undefined || url === undefined || contact === undefined || !reason) {
+      return jsonError(c, 400, 'A reason is required; hash, url and contact are optional strings')
+    }
+    if (!hash && !url) return jsonError(c, 400, 'Name the content: a hash or a url')
+    const cleanHash = hash?.replace(/^sha256:/, '') ?? null
+    if (cleanHash && !/^[0-9a-f]{64}$/.test(cleanHash)) {
+      return jsonError(c, 400, 'hash must be 64 hex characters (a file or record hash)')
+    }
+    const [report] = await c.var.ports.db
+      .insert(schema.abuseReports)
+      .values({
+        hash: cleanHash,
+        url,
+        reason,
+        contact,
+        reporterId: c.var.principal?.userId ?? null,
+      })
+      .returning({ id: schema.abuseReports.id })
+    return c.json({ ok: true, id: report!.id }, 201)
+  })
+
+  app.get('/api/admin/abuse-reports', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const status = (['open', 'blocked', 'dismissed'] as const).find(
+      (s) => s === c.req.query('status'),
+    )
+    const t = schema.abuseReports
+    const reports = await c.var.ports.db
+      .select()
+      .from(t)
+      .where(eq(t.status, status ?? 'open'))
+      .orderBy(desc(t.createdAt))
+      .limit(200)
+    return c.json({ reports })
+  })
+
+  app.patch('/api/admin/abuse-reports/:id', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as { status?: unknown } | null
+    const status = (['open', 'dismissed'] as const).find((s) => s === b?.status)
+    if (!status)
+      return jsonError(c, 400, 'status must be "dismissed" or "open" (block through the denylist)')
+    const t = schema.abuseReports
+    const rows = await c.var.ports.db
+      .update(t)
+      .set({
+        status,
+        resolvedBy: status === 'open' ? null : c.var.principal!.userId,
+        resolvedAt: status === 'open' ? null : new Date(),
+      })
+      .where(eq(t.id, c.req.param('id')))
+      .returning({ id: t.id })
+    if (!rows.length) return jsonError(c, 404, 'Report not found')
+    return c.json({ ok: true })
+  })
+
+  app.get('/api/admin/denylist', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const entries = await c.var.ports.db
+      .select()
+      .from(schema.denylist)
+      .orderBy(desc(schema.denylist.createdAt))
+    return c.json({ entries })
+  })
+
+  app.post('/api/admin/denylist', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
+    const hash = str(b?.hash, 80)?.replace(/^sha256:/, '')
+    const kind = (['file', 'record'] as const).find((k) => k === b?.kind)
+    const reason = str(b?.reason, 4000)?.trim()
+    if (!hash || !/^[0-9a-f]{64}$/.test(hash) || !kind || !reason) {
+      return jsonError(c, 400, 'hash (64 hex), kind ("file" or "record") and reason are required')
+    }
+    const { db } = c.var.ports
+    const userId = c.var.principal!.userId
+    await db
+      .insert(schema.denylist)
+      .values({ hash, kind, reason })
+      .onConflictDoUpdate({ target: schema.denylist.hash, set: { kind, reason } })
+    // Every open report on this hash, and the one named, is resolved by the block.
+    const reportId = str(b?.reportId, 64)
+    const t = schema.abuseReports
+    await db
+      .update(t)
+      .set({ status: 'blocked', resolvedBy: userId, resolvedAt: new Date() })
+      .where(
+        and(
+          eq(t.status, 'open'),
+          reportId ? or(eq(t.hash, hash), eq(t.id, reportId)) : eq(t.hash, hash),
+        ),
+      )
+    forgetDenylist(db)
+    return c.json({ ok: true }, 201)
+  })
+
+  app.delete('/api/admin/denylist/:hash', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const { db } = c.var.ports
+    const rows = await db
+      .delete(schema.denylist)
+      .where(eq(schema.denylist.hash, c.req.param('hash').replace(/^sha256:/, '')))
+      .returning({ hash: schema.denylist.hash })
+    if (!rows.length) return jsonError(c, 404, 'Not on the denylist')
+    forgetDenylist(db)
+    return c.json({ ok: true })
   })
 
   return app

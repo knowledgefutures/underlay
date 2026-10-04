@@ -79,4 +79,14 @@ export interface Ports {
   locationFetch?: (req: Request) => Promise<Response>
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
+  /**
+   * Request budgets for /api/* (lib/limits.ts). Workers: the rate-limit binding;
+   * Node: in memory. Absent: no limit (tests).
+   */
+  rateLimit?: RateLimiter
+}
+
+/** Whether one more request under `key` fits its budget ('anon': per IP; 'user': per user). */
+export interface RateLimiter {
+  check(kind: 'anon' | 'user', key: string): Promise<boolean>
 }

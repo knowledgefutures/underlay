@@ -28,6 +28,7 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { deniedHashes } from '../lib/limits.js'
 import { referenceCounts } from '../versions/file-refs.js'
 import {
   findVersion,
@@ -78,7 +79,7 @@ async function viewFor(
   )
   if (!v) return jsonError(c, 404, n === 'latest' ? 'No versions' : 'Version not found')
   const repo = await c.var.ports.stores.forCollection(access.collection.id)
-  return loadView(repo, v, access.isMember)
+  return loadView(repo, v, access.isMember, await deniedHashes(c.var.ports.db))
 }
 
 /** Add the record hash to a canonical record line: `{"id",…,"data":…,"hash":"…"}`. */
@@ -243,7 +244,7 @@ export function versionRoutes() {
     if (since) {
       const from = await findVersion(c.var.ports.db, access.collection.id, since, null)
       if (!from) return jsonError(c, 404, `Version ${since} not found`)
-      const fromView = await loadView(view.repo, from, view.owner)
+      const fromView = await loadView(view.repo, from, view.owner, view.withheld)
       const delta = { added: [] as object[], updated: [] as object[], removed: [] as object[] }
       let n = 0
       let next: string | null = null
@@ -317,7 +318,7 @@ export function versionRoutes() {
       ? await findVersion(c.var.ports.db, access.collection.id, fromParam, null)
       : null
     if (fromParam && !from) return jsonError(c, 404, `Version ${fromParam} not found`)
-    const fromView = from ? await loadView(view.repo, from, view.owner) : null
+    const fromView = from ? await loadView(view.repo, from, view.owner, view.withheld) : null
     const added: object[] = []
     const updated: object[] = []
     const removed: string[] = []
