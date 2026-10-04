@@ -1,7 +1,7 @@
 /**
  * Write a migrated SQLite database's rows as SQL for D1.
  *
- *   npx tsx packages/migrate/src/d1-data.ts migrated.sqlite > data.sql
+ *   npx tsx packages/migrate/src/d1-data.ts migrated.sqlite [table,…] > data.sql
  *   wrangler d1 migrations apply <database> --env <env> --remote   (the schema)
  *   wrangler d1 execute <database> --env <env> --remote --file data.sql
  *
@@ -18,8 +18,10 @@
 import { createClient, type InValue } from '@libsql/client'
 
 const file = process.argv[2]
+/** Only these tables (e.g. rows a repair added to a database already loaded). */
+const only = process.argv[3] ? new Set(process.argv[3].split(',')) : null
 if (!file) {
-  console.error('Usage: d1-data.ts <migrated.sqlite>')
+  console.error('Usage: d1-data.ts <migrated.sqlite> [table,…]')
   process.exit(2)
 }
 
@@ -42,7 +44,7 @@ out.write('PRAGMA defer_foreign_keys = true;\n')
 const tables = await db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
 const names = (tables.rows as unknown as { name: string }[])
   .map((r) => r.name)
-  .filter((n) => !SKIP.test(n))
+  .filter((n) => !SKIP.test(n) && (!only || only.has(n)))
 const parents = new Map<string, string[]>()
 for (const n of names) {
   const fks = await db.execute(`SELECT DISTINCT "table" AS t FROM pragma_foreign_key_list('${n}')`)

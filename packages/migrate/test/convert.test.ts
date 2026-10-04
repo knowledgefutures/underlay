@@ -12,14 +12,16 @@ import { dbSchema } from '@underlay/server'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { cleanup, harness } from '../../server/test/harness.js'
-import { migrateAll, type V1Db } from '../src/convert.js'
+import { migrateAll, migrateConfig, type V1Db } from '../src/convert.js'
 
 afterAll(cleanup)
 
 const root = join(import.meta.dirname, '../../..')
 
 /** v1 in PGlite; with `cursors`, ordered reads use server-side cursors fetched a row at a time. */
-async function v1Database(cursors = false): Promise<{ pg: PGlite; db: V1Db }> {
+async function v1Database(
+  cursors = false,
+): Promise<{ pg: PGlite; db: V1Db & { recordReads: number } }> {
   const pg = new PGlite()
   const journal = JSON.parse(
     await readFile(join(root, 'src/db/migrations/meta/_journal.json'), 'utf8'),
@@ -30,10 +32,12 @@ async function v1Database(cursors = false): Promise<{ pg: PGlite; db: V1Db }> {
   }
   let open = 0
   let seq = 0
-  const db: V1Db = {
+  const db: V1Db & { recordReads: number } = {
+    recordReads: 0,
     query: async (text, params) => (await pg.query(text, params ?? [])).rows as never,
     ...(cursors && {
       cursor: async (text: string, params: unknown[]) => {
+        if (text.includes('JOIN record_objects')) db.recordReads++
         if (open++ === 0) await pg.query('BEGIN')
         const name = `c${++seq}`
         await pg.query(`DECLARE ${name} NO SCROLL CURSOR FOR ${text}`, params)
@@ -164,7 +168,13 @@ describe('v1 → v2 migration', () => {
       })
 
       const h = await harness()
+      // With cursors, also hold private changes on disk from the first one.
+      migrateConfig.holdInMemory = cursors ? 1 : 50_000
       const report = await migrateAll(db, h.ports)
+      migrateConfig.holdInMemory = 50_000
+      // Each type is read once per version with changes, not once per set:
+      // v1.0.0 and v1.1.0 (v1.1.1 shares v1.1.0's records).
+      if (cursors) expect(db.recordReads).toBe(2)
       await h.drain()
       expect(report).toMatchObject({
         collections: 1,
@@ -185,6 +195,14 @@ describe('v1 → v2 migration', () => {
 
       const json = async (path: string, user?: string) =>
         (await (await h.request(path, user ? { user } : {})).json()) as any
+      // Proof of possession for every file the collection's versions held.
+      expect(await h.ports.db.select().from(dbSchema.fileUploads)).toMatchObject([
+        { collectionId: '11111111-1111-1111-1111-111111111111', hash: FILE, status: 'verified' },
+      ])
+      // A run limited to named collections refuses a name it can't find.
+      await expect(
+        migrateAll(db, (await harness()).ports, { collections: ['org/nope'] }),
+      ).rejects.toThrow('No v1 collection: org/nope')
       const [lib] = await h.ports.db.select().from(dbSchema.collections)
       const v1Updated = (await pg.query(`SELECT updated_at FROM collections`)).rows[0] as {
         updated_at: Date

@@ -18,6 +18,12 @@
  * a type with private fields becomes a wholly private type, and the report says
  * so (edge-redesign.md asks to check this is unused before migrating).
  */
+import { createReadStream } from 'node:fs'
+import { appendFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+
 import {
   type Change,
   hashRecord,
@@ -34,7 +40,7 @@ import {
   type Ports,
   type TypeInput,
 } from '@underlay/server'
-import { eq, getTableColumns } from 'drizzle-orm'
+import { eq, getTableColumns, inArray } from 'drizzle-orm'
 
 /** Anything that runs a parameterized query against the v1 database. */
 export interface V1Db {
@@ -140,15 +146,53 @@ export async function migrateAccounts(
 }
 
 /** Collection-scoped tables, after the collections exist. */
+/**
+ * A verified upload row per file the collection's versions held: the proof of
+ * possession a commit needs to reference a file it no longer holds (B2), so a
+ * migrated collection can re-add a record whose file it once had without
+ * uploading the bytes again.
+ */
+export async function recordPossession(
+  ports: Ports,
+  collectionId: string,
+  hashes: Iterable<string>,
+): Promise<number> {
+  const all = [...hashes]
+  let n = 0
+  for (let i = 0; i < all.length; i += 50) {
+    const rows = await ports.db
+      .select()
+      .from(schema.files)
+      .where(inArray(schema.files.hash, all.slice(i, i + 50)))
+    const values = rows.map((f) => ({
+      collectionId,
+      hash: f.hash,
+      size: f.size,
+      mimeType: f.mimeType,
+      storageKey: ports.stores.canonicalFileKey(f.hash),
+      status: 'verified' as const,
+    }))
+    for (let j = 0; j < values.length; j += 10) {
+      await ports.db.insert(schema.fileUploads).values(values.slice(j, j + 10))
+    }
+    n += values.length
+  }
+  return n
+}
+
 export async function migrateCollectionSettings(
   v1: V1Db,
   ports: Ports,
   report: MigrationReport,
+  /** Only these collections' rows (all when absent). */
+  only?: Set<string>,
 ): Promise<void> {
-  await copyTable(v1, ports, 'collection_webhooks', schema.collectionWebhooks, report)
+  const ours = (r: Record<string, unknown>) =>
+    !only || only.has(String(r.collectionId)) ? r : null
+  await copyTable(v1, ports, 'collection_webhooks', schema.collectionWebhooks, report, ours)
   await copyTable(v1, ports, 'ark_shoulders', schema.arkShoulders, report)
-  await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report)
-  await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report)
+  await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report, ours)
+  await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report, ours)
   await copyTable(v1, ports, 'page_comments', schema.pageComments, report)
   // Labels move from v1 schema ids to format 2 schema hashes.
   const labels = await v1.query<{ label: string; schema: unknown; created_at: Date }>(
@@ -234,6 +278,71 @@ async function idBatches<T extends { id: string }>(
     },
     close: async () => {},
   }
+}
+
+type Routed = { public?: Change<RecordEntry>; private?: Change<RecordEntry> }
+
+export const migrateConfig = {
+  /** Held private changes past this many go to a temp file rather than memory. */
+  holdInMemory: 50_000,
+}
+
+/**
+ * Private changes read while the public side is being consumed, kept for the
+ * private side: in memory up to `migrateConfig.holdInMemory`, then in a temp file.
+ */
+class Held {
+  #mem: Change<RecordEntry>[] = []
+  #file: string | null = null
+
+  async push(c: Change<RecordEntry>) {
+    this.#mem.push(c)
+    if (this.#mem.length < migrateConfig.holdInMemory) return
+    this.#file ??= join(await mkdtemp(join(tmpdir(), 'ul-migrate-')), 'held.ndjson')
+    await appendFile(this.#file, this.#mem.map((x) => JSON.stringify(x)).join('\n') + '\n')
+    this.#mem = []
+  }
+
+  async *drain(): AsyncGenerator<Change<RecordEntry>> {
+    if (this.#file) {
+      const lines = createInterface({ input: createReadStream(this.#file), crlfDelay: Infinity })
+      for await (const l of lines) if (l) yield JSON.parse(l) as Change<RecordEntry>
+      await rm(dirname(this.#file), { recursive: true, force: true })
+      this.#file = null
+    }
+    yield* this.#mem
+    this.#mem = []
+  }
+}
+
+/**
+ * A type's changes, read from v1 once and split into the public and private
+ * streams buildVersion takes. It merges the public side to the end before
+ * starting the private side, so private changes met on the way are held until
+ * then. With `withPublic` false (a private type), the private side reads alone.
+ */
+function splitBySet(
+  source: AsyncGenerator<Routed>,
+  withPublic: boolean,
+): {
+  public: AsyncGenerator<Change<RecordEntry>> | null
+  private: AsyncGenerator<Change<RecordEntry>>
+} {
+  const held = new Held()
+  let publicDone = !withPublic
+  async function* pub() {
+    for await (const r of source) {
+      if (r.private) await held.push(r.private)
+      if (r.public) yield r.public
+    }
+    publicDone = true
+  }
+  async function* priv() {
+    if (!publicDone) throw new Error('splitBySet: the private side was read before the public side')
+    yield* held.drain()
+    if (!withPublic) for await (const r of source) if (r.private) yield r.private
+  }
+  return { public: withPublic ? pub() : null, private: priv() }
 }
 
 /** One type's record changes between two v1 record sets, in id order. */
@@ -372,6 +481,7 @@ export async function migrateCollection(
   let base: BaseVersion | null = null
   let prevRecords: string | null = null
   let prevFiles = new Set<string>()
+  const everFiles = new Set<string>()
   const aliases: { legacyHash: string; hash: string }[] = []
 
   for (const v of versions) {
@@ -387,6 +497,7 @@ export async function migrateCollection(
       [v.id],
     )
     const files = new Set(fileRows.map((f) => f.file_hash))
+    for (const h of files) everFiles.add(h)
 
     const types: TypeInput[] = schemaRows.map((row) => {
       const fixed = fixFieldPrivacy(row.schema)
@@ -401,46 +512,46 @@ export async function migrateCollection(
       const hasPub = !!root?.public.types[row.slug]?.root
       const hasPriv = !!basePriv?.types[row.slug]?.root
       const unchanged = prevRecords === recordsId
-      const stream = async function* (
-        set: 'public' | 'private',
-      ): AsyncGenerator<Change<RecordEntry>> {
-        const onDuplicate = (id: string, hash: string) => {
-          // Each set's stream reads the type, so a duplicate is seen once per set.
-          if (report.duplicateIds.some((x) => x.hash === hash && x.semver === v.semver)) return
-          report.duplicateIds.push({
-            collection: col.slug,
-            semver: v.semver,
-            type: row.slug,
-            id,
-            hash,
-          })
-        }
+      const onDuplicate = (id: string, hash: string) =>
+        report.duplicateIds.push({
+          collection: col.slug,
+          semver: v.semver,
+          type: row.slug,
+          id,
+          hash,
+        })
+      /** One v1 change, as a change in each set it touches. */
+      const routed = async function* (): AsyncGenerator<Routed> {
         for await (const d of typeDelta(v1, prevRecords, recordsId, row.slug, onDuplicate)) {
-          const inOther = set === 'public' ? hasPub : hasPriv
           if (!d.upsert) {
-            if (inOther) yield { key: d.id, entry: null }
+            yield {
+              ...(hasPub && { public: { key: d.id, entry: null } }),
+              ...(hasPriv && { private: { key: d.id, entry: null } }),
+            }
             continue
           }
           const target = privateType || d.upsert.private ? 'private' : 'public'
-          if (target !== set) {
-            if (inOther) yield { key: d.id, entry: null }
-            continue
-          }
           const { hash, canonical } = hashRecord(d.id, row.slug, d.upsert.data)
           report.recordUpserts++
           if (hash !== d.upsert.hash) aliases.push({ legacyHash: d.upsert.hash, hash })
           const size = utf8ByteLength(canonical)
           const body =
             size > OUT_OF_LINE_BYTES ? await repo.putOutOfLine(hash, canonical) : canonical
-          yield { key: d.id, entry: { key: d.id, hash, size, body } }
+          const upsert = { key: d.id, entry: { key: d.id, hash, size, body } }
+          // Leaving the other set, if the type is there.
+          const gone = { key: d.id, entry: null }
+          yield target === 'public'
+            ? { public: upsert, ...(hasPriv && { private: gone }) }
+            : { private: upsert, ...(hasPub && { public: gone }) }
         }
       }
+      const split = unchanged ? null : splitBySet(routed(), !privateType)
       return {
         slug: row.slug,
         schema: s,
         schemaHash: hashSchema(s),
-        public: unchanged || privateType ? null : stream('public'),
-        private: unchanged ? null : stream('private'),
+        public: split?.public ?? null,
+        private: split?.private ?? null,
       }
     })
 
@@ -492,6 +603,7 @@ export async function migrateCollection(
       .onConflictDoNothing()
   }
   report.legacyRecordAliases += aliases.length
+  await recordPossession(ports, col.id, everFiles)
   // Publishing the replayed versions stamped the conversion time; keep v1's.
   await ports.db
     .update(schema.collections)
@@ -503,17 +615,35 @@ export async function migrateCollection(
 export async function migrateAll(
   v1: V1Db,
   ports: Ports,
-  opts: { onCollection?: (slug: string) => void } = {},
+  opts: {
+    onCollection?: (slug: string) => void
+    /** Convert only these collections, named by id or `owner/slug` (accounts are always copied). */
+    collections?: string[]
+  } = {},
 ): Promise<MigrationReport> {
   const report = newReport()
   await migrateAccounts(v1, ports, report)
-  const cols = await v1.query<{ id: string; slug: string }>(
-    'SELECT id::text, slug FROM collections ORDER BY created_at',
+  const all = await v1.query<{ id: string; slug: string; owner: string }>(
+    `SELECT c.id::text, c.slug, o.slug AS owner FROM collections c
+     JOIN organization o ON o.id = c.organization_id ORDER BY c.created_at`,
   )
+  const wanted = opts.collections ? new Set(opts.collections) : null
+  const cols = wanted
+    ? all.filter((c) => wanted.has(c.id) || wanted.has(`${c.owner}/${c.slug}`))
+    : all
+  if (wanted && cols.length !== wanted.size) {
+    const found = new Set(cols.flatMap((c) => [c.id, `${c.owner}/${c.slug}`]))
+    throw new Error(`No v1 collection: ${[...wanted].filter((w) => !found.has(w)).join(', ')}`)
+  }
   for (const c of cols) {
     opts.onCollection?.(c.slug)
     await migrateCollection(v1, ports, c.id, report)
   }
-  await migrateCollectionSettings(v1, ports, report)
+  await migrateCollectionSettings(
+    v1,
+    ports,
+    report,
+    wanted ? new Set(cols.map((c) => c.id)) : undefined,
+  )
   return report
 }

@@ -14,24 +14,20 @@
  *                                           the v1 bucket: when set, file objects are
  *                                           copied to their v2 keys (src/files.ts)
  *   FILES_ONLY=1                            only copy files, into an existing TARGET_DB
+ *   COLLECTIONS=owner/slug,…                convert only these collections (ids work too);
+ *                                           accounts and files are still copied whole
  *   npx tsx packages/migrate/src/main.ts > report.json
  *
  * Then load the SQLite file into D1 (wrangler d1 export/import, or `.dump` and
  * `wrangler d1 execute --file --remote`).
  */
-import { ed25519Signer, generateSigningKey, s3Store } from '@underlay/protocol'
-import {
-  createStores,
-  drainSqliteJobs,
-  MemoryCache,
-  openNodeDb,
-  type Ports,
-  SqliteJobs,
-} from '@underlay/server'
+import { s3Store } from '@underlay/protocol'
+import { drainSqliteJobs } from '@underlay/server'
 import postgres from 'postgres'
 
 import { migrateAll, type V1Db } from './convert.js'
 import { copyFiles } from './files.js'
+import { migrationPorts } from './ports.js'
 import { sshPsql } from './ssh-psql.js'
 
 const env = process.env
@@ -56,34 +52,14 @@ const v1: V1Db = ssh ?? {
   query: async (text, params) => (await sql.unsafe(text, (params ?? []) as never[])) as never,
 }
 
-const db = await openNodeDb(env.TARGET_DB ?? 'file:./migrated.sqlite')
-const cache = new MemoryCache()
-const signer = await ed25519Signer(env.SIGNING_KEY ?? (await generateSigningKey()))
-const ports: Ports = {
-  db,
-  cache,
-  stores: createStores(db, cache, {
-    bucket: s3Store({
-      endpoint: env.S3_ENDPOINT,
-      bucket: env.S3_BUCKET ?? 'underlay',
-      accessKeyId: env.S3_ACCESS_KEY ?? '',
-      secretAccessKey: env.S3_SECRET_KEY ?? '',
-      region: env.S3_REGION ?? 'auto',
-    }),
-    repoPrefix: env.REPO_PREFIX ?? 'repo',
-    internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
-  }),
-  jobs: new SqliteJobs(db),
-  signer: async () => signer,
-  outboundFetch: () => Promise.reject(new Error('No outbound requests during migration')),
-  waitUntil: (p) => void p.catch((err) => console.error(err)),
-}
+const { ports } = await migrationPorts(env)
 
 const started = Date.now()
 let report: object = {}
 if (!filesOnly) {
   report = await migrateAll(v1, ports, {
     onCollection: (slug) => console.error(`[migrate] ${slug}`),
+    ...(env.COLLECTIONS && { collections: env.COLLECTIONS.split(',').map((c) => c.trim()) }),
   })
   // Reference-log indexing and compaction run as jobs; finish them here.
   await drainSqliteJobs(ports)

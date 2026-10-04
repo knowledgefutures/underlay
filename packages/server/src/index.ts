@@ -22,6 +22,7 @@ export {
   type CommitResult,
   type TypeInput,
 } from './versions/commit.js'
+export { appendVersionLog } from './versions/commit.js'
 export { createCollectionRows } from './versions/fork.js'
 export { compareSemver, parseSemver } from './versions/semver.js'
 import './handlers.js'
