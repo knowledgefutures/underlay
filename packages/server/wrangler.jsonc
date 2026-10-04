@@ -15,7 +15,7 @@
 //                                            (staging: dev's, as v1 dev; next: prod's)
 //
 // D1 migrations: wrangler d1 migrations apply <database_name> --env <env> --remote
-// The database ids below are placeholders until the databases are created.
+// prod's database id is a placeholder until that database is created.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "underlay",
@@ -45,7 +45,7 @@
         {
           "binding": "DB",
           "database_name": "underlay-staging",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "884ed8bb-14e8-4ea4-bdc4-81d433e5b551",
           "migrations_dir": "drizzle",
         },
       ],
