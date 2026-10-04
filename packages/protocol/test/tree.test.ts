@@ -57,7 +57,14 @@ async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
   return out
 }
 
-const keyArb = fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 6 })
+// Mostly ASCII, so keys collide and share prefixes; the rest any code point
+// (accents, combining marks, CJK, emoji, astral planes), where UTF-8 byte order
+// and UTF-16 order differ.
+const keyArb = fc.oneof(
+  { weight: 3, arbitrary: fc.string({ unit: 'grapheme-ascii', minLength: 1, maxLength: 6 }) },
+  { weight: 1, arbitrary: fc.string({ unit: 'grapheme', minLength: 1, maxLength: 4 }) },
+  { weight: 1, arbitrary: fc.string({ unit: 'binary', minLength: 1, maxLength: 4 }) },
+)
 const keySet = (max: number) => fc.uniqueArray(keyArb, { maxLength: max })
 
 describe('build', () => {
