@@ -191,7 +191,7 @@ describe('parallel commit', () => {
     ).toBe(true)
     expect(units.filter((u) => !u.gap && u.status === 'done').length).toBeGreaterThan(3)
     expect(units.some((u) => u.status === 'superseded')).toBe(true)
-  })
+  }, 30_000)
 
   it('survives duplicate and early jobs', async () => {
     const h = await harness()

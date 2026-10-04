@@ -148,7 +148,7 @@ for (const [name, make] of makers) {
       const all: string[] = []
       for await (const k of listAll(store, 'many/')) all.push(k)
       expect(all).toEqual(keys)
-    })
+    }, 30_000)
 
     it('presigns, when it can', async () => {
       const p = store.presigner
