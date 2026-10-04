@@ -1,4 +1,5 @@
 import {
+  applyFileSet,
   type Change,
   compareUtf8,
   fileTree,
@@ -9,12 +10,14 @@ import {
   readHead,
   type RecordEntry,
   recordTree,
+  Repo,
   RepoSource,
+  tracksTypes,
   utf8ByteLength,
   verifyLog,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../src/versions/commit.js'
@@ -328,6 +331,130 @@ describe('commitVersion', () => {
     const priv3 = await repo.privateSet((await repo.root(v3.version.hash)).private!)
     expect(priv3.files).toMatchObject({ root: null, count: 0 })
     expect(priv3.types.Author!.count).toBe(1)
+  })
+
+  it('moves and removes a type by its per-type file counts, reading no records', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const repo = await h.ports.stores.forCollection(c.id)
+    await h.ports.db
+      .insert(schema.files)
+      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
+    // Enough records for several leaves; three reference the file.
+    const authors = Array.from({ length: 3000 }, (_, i) =>
+      up(
+        'Author',
+        `a${i}`,
+        i % 1000 === 0 ? { name: `A${i}`, photo: { $file: `sha256:${FILE}` } } : { name: `A${i}` },
+      ),
+    )
+    const commit = async (base: BaseVersion | null, types: TypeInput[]) => {
+      const r = await commitVersion(h.ports, { collectionId: c.id, base, types, metadata: null })
+      if (r.status !== 'committed') throw new Error(r.status)
+      return r.version
+    }
+    const v1 = await commit(null, [
+      type('Author', authorSchema, authors),
+      type('Note', authorSchema, [up('Note', 'n', { name: 'n' })]),
+    ])
+    const reads = vi.spyOn(Repo.prototype, 'bodyLines')
+    reads.mockClear()
+
+    // Public → private, unchanged: the tree and its three references move as they are.
+    const privAuthor = { ...authorSchema, private: true }
+    const v2 = await commit(baseOf(v1), [
+      type('Author', privAuthor, null),
+      type('Note', authorSchema, null),
+    ])
+    expect(reads).not.toHaveBeenCalled()
+    const root1 = await repo.root(v1.hash)
+    const root2 = await repo.root(v2.hash)
+    const priv2 = await repo.privateSet(root2.private!)
+    expect(priv2.types.Author!.root).toBe(root1.public.types.Author!.root)
+    expect(priv2.files.count).toBe(1)
+    expect(root2.public.files.count).toBe(0)
+
+    // Private → public, unchanged: the same tree back, the same as a rebuild makes.
+    const v3 = await commit(baseOf(v2), [
+      type('Author', authorSchema, null),
+      type('Note', authorSchema, null),
+    ])
+    expect(reads).not.toHaveBeenCalled()
+    const root3 = await repo.root(v3.hash)
+    expect(root3.public.types.Author!.root).toBe(root1.public.types.Author!.root)
+    expect(root3.public.files.count).toBe(1)
+    expect(root3.private).toBeNull()
+    // Every record counts as added in the public set, as before.
+    expect(v3.changes).toMatchObject({ added: 3000 })
+
+    // Removing the type releases its references without reading it.
+    const v4 = await commit(baseOf(v3), [type('Note', authorSchema, null)])
+    expect(reads).not.toHaveBeenCalled()
+    const root4 = await repo.root(v4.hash)
+    expect(root4.public.files.count).toBe(0)
+    expect(v4.changes).toMatchObject({ removed: 3000 })
+    expect(v4.publicRefsRoot).toBeNull()
+    reads.mockRestore()
+  })
+
+  it('falls back to reading records on a count tree without per-type counts', async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const repo = await h.ports.stores.forCollection(c.id)
+    await h.ports.db
+      .insert(schema.files)
+      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
+    const v1 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [
+        type('Author', authorSchema, [
+          up('Author', 'a', { name: 'A', photo: { $file: `sha256:${FILE}` } }),
+        ]),
+      ],
+      metadata: null,
+    })
+    if (v1.status !== 'committed') throw new Error(v1.status)
+    // The count tree an older writer made: set counts only, no per-type keys or marker.
+    const legacy = await applyFileSet(
+      repo,
+      { refsRoot: null, files: { root: null, count: 0, bytes: 0 } },
+      new Map([[FILE, 1]]),
+      null,
+      async (hs) => new Map(hs.map((x) => [x, 1234])),
+    )
+    expect(await tracksTypes(repo, legacy.refsRoot)).toBe(false)
+    const reads = vi.spyOn(Repo.prototype, 'bodyLines')
+    reads.mockClear()
+    const v2 = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: { ...baseOf(v1.version), publicRefsRoot: legacy.refsRoot },
+      types: [type('Author', { ...authorSchema, private: true }, null)],
+      metadata: null,
+    })
+    if (v2.status !== 'committed') throw new Error(v2.status)
+    expect(reads).toHaveBeenCalled()
+    reads.mockRestore()
+    const root2 = await repo.root(v2.version.hash)
+    expect((await repo.privateSet(root2.private!)).files.count).toBe(1)
+    // The private tree was empty, so it starts with per-type counts; the public one stays legacy.
+    expect(await tracksTypes(repo, v2.version.privateRefsRoot)).toBe(true)
   })
 
   it('keeps file sets by reference', async () => {

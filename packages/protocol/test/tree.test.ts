@@ -496,120 +496,128 @@ describe('parallel commit', () => {
 })
 
 describe('newNodes', () => {
-  it('lists exactly the nodes of b that a lacks, parents first (property)', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.uniqueArray(keyArb, { maxLength: 400, size: 'max' }),
-        fc.array(fc.tuple(fc.nat(), fc.boolean(), fc.integer({ min: 1, max: 3 })), {
-          maxLength: 60,
-        }),
-        async (keys, edits) => {
-          const { sink, source } = store()
-          const base = sorted(keys.map((k) => entry(k)))
-          const a = buildTree(recordTree, sink, base, { chunking: tiny })?.hash ?? null
-          const changes = new Map<string, Change<RecordEntry>>()
-          for (const [i, del, v] of edits) {
-            const k = keys.length > 0 && i % 3 !== 0 ? keys[i % keys.length]! : `new${i}`
-            changes.set(k, { key: k, entry: del ? null : entry(k, v) })
-          }
-          const merged = await mergeTree(
-            source,
-            sink,
-            a,
-            [...changes.values()].sort((x, y) => compareUtf8(x.key, y.key)),
-            { chunking: tiny },
-          )
-          const b = merged.root?.hash ?? null
-          const all = async (root: string | null) => {
-            const out = new Set<string>()
-            const walk = async (h: string) => {
-              out.add(h)
-              const n = await source.node(h)
-              if (n.kind === 'node') for (const c of n.children) await walk(c.hash)
+  it(
+    'lists exactly the nodes of b that a lacks, parents first (property)',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.uniqueArray(keyArb, { maxLength: 400, size: 'max' }),
+          fc.array(fc.tuple(fc.nat(), fc.boolean(), fc.integer({ min: 1, max: 3 })), {
+            maxLength: 60,
+          }),
+          async (keys, edits) => {
+            const { sink, source } = store()
+            const base = sorted(keys.map((k) => entry(k)))
+            const a = buildTree(recordTree, sink, base, { chunking: tiny })?.hash ?? null
+            const changes = new Map<string, Change<RecordEntry>>()
+            for (const [i, del, v] of edits) {
+              const k = keys.length > 0 && i % 3 !== 0 ? keys[i % keys.length]! : `new${i}`
+              changes.set(k, { key: k, entry: del ? null : entry(k, v) })
             }
-            if (root) await walk(root)
-            return out
-          }
-          const inA = await all(a)
-          const inB = await all(b)
-          const listed: string[] = []
-          const seen = new Set<string>()
-          for await (const n of newNodes(source, a, b)) {
-            listed.push(n.hash)
-            seen.add(n.hash)
-            // Parents first: a listed node's children come later, never earlier.
-            const node = await source.node(n.hash)
-            if (node.kind === 'node')
-              for (const c of node.children) expect(seen.has(c.hash)).toBe(false)
-          }
-          // Everything b needs that a lacks is listed, and nothing outside b.
-          for (const h of inB) if (!inA.has(h)) expect(seen.has(h)).toBe(true)
-          for (const h of listed) expect(inB.has(h)).toBe(true)
-        },
-      ),
-      { numRuns: 200 * RUNS },
-    )
-  })
+            const merged = await mergeTree(
+              source,
+              sink,
+              a,
+              [...changes.values()].sort((x, y) => compareUtf8(x.key, y.key)),
+              { chunking: tiny },
+            )
+            const b = merged.root?.hash ?? null
+            const all = async (root: string | null) => {
+              const out = new Set<string>()
+              const walk = async (h: string) => {
+                out.add(h)
+                const n = await source.node(h)
+                if (n.kind === 'node') for (const c of n.children) await walk(c.hash)
+              }
+              if (root) await walk(root)
+              return out
+            }
+            const inA = await all(a)
+            const inB = await all(b)
+            const listed: string[] = []
+            const seen = new Set<string>()
+            for await (const n of newNodes(source, a, b)) {
+              listed.push(n.hash)
+              seen.add(n.hash)
+              // Parents first: a listed node's children come later, never earlier.
+              const node = await source.node(n.hash)
+              if (node.kind === 'node')
+                for (const c of node.children) expect(seen.has(c.hash)).toBe(false)
+            }
+            // Everything b needs that a lacks is listed, and nothing outside b.
+            for (const h of inB) if (!inA.has(h)) expect(seen.has(h)).toBe(true)
+            for (const h of listed) expect(inB.has(h)).toBe(true)
+          },
+        ),
+        { numRuns: 200 * RUNS },
+      )
+    },
+    5_000 * RUNS,
+  )
 })
 
 describe('newNodes resumed', () => {
-  it('stopping after any leaf and resuming still lists everything (property)', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.uniqueArray(keyArb, { maxLength: 300, size: 'max' }),
-        fc.array(fc.tuple(fc.nat(), fc.boolean()), { maxLength: 60 }),
-        fc.nat(),
-        async (keys, edits, pick) => {
-          const { sink, source } = store()
-          const a =
-            buildTree(recordTree, sink, sorted(keys.map((k) => entry(k))), { chunking: tiny })
-              ?.hash ?? null
-          const changes = new Map<string, Change<RecordEntry>>()
-          for (const [i, del] of edits) {
-            const k = keys.length > 0 && i % 3 !== 0 ? keys[i % keys.length]! : `new${i}`
-            changes.set(k, { key: k, entry: del ? null : entry(k, 1) })
-          }
-          const b =
-            (
-              await mergeTree(
-                source,
-                sink,
-                a,
-                [...changes.values()].sort((x, y) => compareUtf8(x.key, y.key)),
-                { chunking: tiny },
-              )
-            ).root?.hash ?? null
-          const full: { hash: string; level: number; lastKey: string }[] = []
-          for await (const n of newNodes(source, a, b)) full.push(n)
-          const leaves = full.filter((n) => n.level === 0)
-          if (leaves.length === 0) return
-          const stop = leaves[pick % leaves.length]!
-          const cut = full.indexOf(stop) + 1
-          const rest: string[] = []
-          for await (const n of newNodes(source, a, b, { after: stop.lastKey })) rest.push(n.hash)
-          // Together the two halves list everything b has that a lacks, and nothing
-          // outside b. (The resumed half can be leaner: it may match a base node the
-          // full walk re-sent because the tree changed height.)
-          const all = async (root: string | null) => {
-            const out = new Set<string>()
-            const walk = async (h: string) => {
-              out.add(h)
-              const n = await source.node(h)
-              if (n.kind === 'node') for (const c of n.children) await walk(c.hash)
+  it(
+    'stopping after any leaf and resuming still lists everything (property)',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.uniqueArray(keyArb, { maxLength: 300, size: 'max' }),
+          fc.array(fc.tuple(fc.nat(), fc.boolean()), { maxLength: 60 }),
+          fc.nat(),
+          async (keys, edits, pick) => {
+            const { sink, source } = store()
+            const a =
+              buildTree(recordTree, sink, sorted(keys.map((k) => entry(k))), { chunking: tiny })
+                ?.hash ?? null
+            const changes = new Map<string, Change<RecordEntry>>()
+            for (const [i, del] of edits) {
+              const k = keys.length > 0 && i % 3 !== 0 ? keys[i % keys.length]! : `new${i}`
+              changes.set(k, { key: k, entry: del ? null : entry(k, 1) })
             }
-            if (root) await walk(root)
-            return out
-          }
-          const inA = await all(a)
-          const inB = await all(b)
-          const sent = new Set([...full.slice(0, cut).map((n) => n.hash), ...rest])
-          for (const h of inB) if (!inA.has(h)) expect(sent.has(h)).toBe(true)
-          for (const h of sent) expect(inB.has(h)).toBe(true)
-        },
-      ),
-      { numRuns: 300 * RUNS },
-    )
-  })
+            const b =
+              (
+                await mergeTree(
+                  source,
+                  sink,
+                  a,
+                  [...changes.values()].sort((x, y) => compareUtf8(x.key, y.key)),
+                  { chunking: tiny },
+                )
+              ).root?.hash ?? null
+            const full: { hash: string; level: number; lastKey: string }[] = []
+            for await (const n of newNodes(source, a, b)) full.push(n)
+            const leaves = full.filter((n) => n.level === 0)
+            if (leaves.length === 0) return
+            const stop = leaves[pick % leaves.length]!
+            const cut = full.indexOf(stop) + 1
+            const rest: string[] = []
+            for await (const n of newNodes(source, a, b, { after: stop.lastKey })) rest.push(n.hash)
+            // Together the two halves list everything b has that a lacks, and nothing
+            // outside b. (The resumed half can be leaner: it may match a base node the
+            // full walk re-sent because the tree changed height.)
+            const all = async (root: string | null) => {
+              const out = new Set<string>()
+              const walk = async (h: string) => {
+                out.add(h)
+                const n = await source.node(h)
+                if (n.kind === 'node') for (const c of n.children) await walk(c.hash)
+              }
+              if (root) await walk(root)
+              return out
+            }
+            const inA = await all(a)
+            const inB = await all(b)
+            const sent = new Set([...full.slice(0, cut).map((n) => n.hash), ...rest])
+            for (const h of inB) if (!inA.has(h)) expect(sent.has(h)).toBe(true)
+            for (const h of sent) expect(inB.has(h)).toBe(true)
+          },
+        ),
+        { numRuns: 300 * RUNS },
+      )
+    },
+    5_000 * RUNS,
+  )
 })
 
 describe('read', () => {

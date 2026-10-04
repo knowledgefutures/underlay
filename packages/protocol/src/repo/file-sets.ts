@@ -9,6 +9,14 @@
  *
  *   "r:<fileHash>" → how many of the set's records reference the file
  *   "d:<fileHash>" → 1 when the file is declared (private set only)
+ *   "t:<type>/<fileHash>" → how many of the set's records of that type reference it
+ *   "m:types" → 1: this tree carries the "t:" keys
+ *
+ * The per-type counts let a type move between sets, or be removed, by moving
+ * its counts: O(files the type references), with no record bodies read. Trees
+ * written before them have no "m:types" marker; on those, moves and removals
+ * read the type's bodies as before, until the tree is rebuilt (rebuildFileRefs).
+ * A null tree (no references at all) needs no marker.
  *
  * A commit turns record changes into count deltas, applies them to the count
  * tree, and adds or removes files from the protocol file tree only when a file's
@@ -36,6 +44,11 @@ export type SetName = 'public' | 'private'
 
 const REF = 'r:'
 const DECLARED = 'd:'
+const TYPED = 't:'
+const MARKER = 'm:types'
+
+/** A per-type key's suffix: type slugs can't contain "/" (input rules). */
+const typedKey = (type: string, hash: string) => `${type}/${hash}`
 
 /**
  * Accumulates reference count changes from record changes, per set.
@@ -46,39 +59,53 @@ const DECLARED = 'd:'
  * `resolve`, which must run before `refs` is used.
  */
 export class FileRefDelta {
+  /** Per set: file hash → change in references. */
   readonly refs: Record<SetName, Map<string, number>> = { public: new Map(), private: new Map() }
+  /** Per set: "<type>/<file hash>" → change in that type's references. */
+  readonly typed: Record<SetName, Map<string, number>> = { public: new Map(), private: new Map() }
+  /** Per set: "<type>/<record hash>" of out-of-line records, until resolve(). */
   readonly #pointers: Record<SetName, Map<string, number>> = {
     public: new Map(),
     private: new Map(),
   }
 
-  #bump(m: Map<string, number>, hashes: string[], by: number) {
-    for (const h of hashes) m.set(h, (m.get(h) ?? 0) + by)
+  /** Change a type's references to a file by `n` (and the set's with it). */
+  add(set: SetName, type: string, hash: string, n: number): void {
+    if (n === 0) return
+    this.refs[set].set(hash, (this.refs[set].get(hash) ?? 0) + n)
+    const k = typedKey(type, hash)
+    this.typed[set].set(k, (this.typed[set].get(k) ?? 0) + n)
   }
 
-  #body(set: SetName, body: string | undefined, by: number) {
+  #refsOf(set: SetName, type: string, body: string, by: number) {
+    // Cheap prefilter: most records reference no files.
+    if (!body.includes('"$file"')) return
+    for (const h of fileRefs((JSON.parse(body) as { data: unknown }).data))
+      this.add(set, type, h, by)
+  }
+
+  #body(set: SetName, type: string, body: string | undefined, by: number) {
     if (body === undefined) throw new Error('File reference accounting needs record bodies')
     const pointer = outOfLineHash(body)
-    if (pointer) this.#bump(this.#pointers[set], [pointer], by)
-    // Cheap prefilter: most records reference no files.
-    else if (body.includes('"$file"'))
-      this.#bump(this.refs[set], fileRefs((JSON.parse(body) as { data: unknown }).data), by)
+    if (pointer) {
+      const k = typedKey(type, pointer)
+      this.#pointers[set].set(k, (this.#pointers[set].get(k) ?? 0) + by)
+    } else this.#refsOf(set, type, body, by)
   }
 
-  /** Feed one record change in a set (mergeTree's onChange). */
-  record(set: SetName, before: RecordEntry | null, after: RecordEntry | null): void {
-    if (before) this.#body(set, before.body, -1)
-    if (after) this.#body(set, after.body, +1)
+  /** Feed one record change of a type in a set (mergeTree's onChange). */
+  record(set: SetName, before: RecordEntry | null, after: RecordEntry | null, type: string): void {
+    if (before) this.#body(set, type, before.body, -1)
+    if (after) this.#body(set, type, after.body, +1)
   }
 
   /** Count the file references of out-of-line records seen as pointers. */
   async resolve(repo: Repo): Promise<void> {
     for (const set of ['public', 'private'] as const) {
-      for (const [hash, n] of this.#pointers[set]) {
+      for (const [k, n] of this.#pointers[set]) {
         if (n === 0) continue
-        const body = await repo.outOfLineRecord(hash)
-        if (body.includes('"$file"'))
-          this.#bump(this.refs[set], fileRefs((JSON.parse(body) as { data: unknown }).data), n)
+        const slash = k.lastIndexOf('/')
+        this.#refsOf(set, k.slice(0, slash), await repo.outOfLineRecord(k.slice(slash + 1)), n)
       }
       this.#pointers[set].clear()
     }
@@ -91,6 +118,27 @@ export class FileRefDelta {
     ])
     return all.some((n) => n !== 0)
   }
+}
+
+/** Whether a count tree carries per-type counts (a null tree trivially does). */
+export async function tracksTypes(repo: Repo, refsRoot: string | null): Promise<boolean> {
+  if (refsRoot === null) return true
+  return !!(await getEntry(new RepoSource(countTree, repo), refsRoot, MARKER))
+}
+
+/** One type's references per file, from a count tree that tracks types. O(those files). */
+export async function typeFileRefs(
+  repo: Repo,
+  refsRoot: string | null,
+  type: string,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  const prefix = TYPED + typedKey(type, '')
+  for await (const e of iterate(new RepoSource(countTree, repo), refsRoot, { after: prefix })) {
+    if (!e.key.startsWith(prefix)) break
+    out.set(e.key.slice(prefix.length), e.n)
+  }
+  return out
 }
 
 export interface FileSetResult {
@@ -143,6 +191,8 @@ export async function applyFileSet(
   refDeltas: Map<string, number>,
   declared: { add: string[]; remove: string[] } | null,
   fileSizes: FileSizes,
+  /** Per-type deltas ("<type>/<hash>"), kept when the base tree tracks types. */
+  typedDeltas?: Map<string, number>,
 ): Promise<FileSetResult> {
   const counts = new RepoSource(countTree, repo)
   const keyDelta = new Map<string, number>()
@@ -155,8 +205,21 @@ export async function applyFileSet(
     return { files: base.files, refsRoot: base.refsRoot, added: [] }
   }
 
-  // New counts, and whether each touched file is present before and after.
+  // Per-type counts, only on a tree that has them all (see the header).
   const countChanges: Change<CountEntry>[] = []
+  if (typedDeltas && (await tracksTypes(repo, base.refsRoot))) {
+    for (const [k, d] of typedDeltas) {
+      if (d === 0) continue
+      const key = TYPED + k
+      const old = (await getEntry(counts, base.refsRoot, key))?.n ?? 0
+      const n = old + d
+      if (n < 0) throw new Error(`Per-type file reference count for ${k} went negative`)
+      countChanges.push({ key, entry: n > 0 ? { key, n } : null })
+    }
+    if (base.refsRoot === null) countChanges.push({ key: MARKER, entry: { key: MARKER, n: 1 } })
+  }
+
+  // New counts, and whether each touched file is present before and after.
   const presence = new Map<string, { before: boolean; after: boolean }>()
   const hashesTouched = new Set([...keyDelta.keys()].map((k) => k.slice(2)))
   for (const h of hashesTouched) {
@@ -197,8 +260,10 @@ export async function applyFileSet(
     fileChanges,
   )
   await Promise.all([sink.flush(), fileSink.flush()])
+  // A tree left holding only its marker is no tree: nothing references a file.
+  const marked = refs.root?.count === 1 && (await getEntry(counts, refs.root.hash, MARKER))
   return {
-    refsRoot: refs.root?.hash ?? null,
+    refsRoot: marked ? null : (refs.root?.hash ?? null),
     files: files.root
       ? { root: files.root.hash, count: files.root.count, bytes: files.root.bytes }
       : { root: null, count: 0, bytes: 0 },
@@ -220,9 +285,9 @@ export async function rebuildFileRefs(
   for (const name of ['public', 'private'] as const) {
     const set = sets[name]
     const delta = new FileRefDelta()
-    for (const t of Object.values(set.types)) {
+    for (const [slug, t] of Object.entries(set.types)) {
       for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
-        delta.record(name, null, e)
+        delta.record(name, null, e, slug)
       }
     }
     await delta.resolve(repo)
@@ -238,6 +303,7 @@ export async function rebuildFileRefs(
       counts,
       declared.length > 0 ? { add: declared, remove: [] } : null,
       async (hs) => new Map(hs.filter((h) => sizes.has(h)).map((h) => [h, sizes.get(h)!])),
+      delta.typed[name],
     )
     if (result.files.root !== set.files.root) {
       throw new Error(`The ${name} file set doesn't match its records' references`)

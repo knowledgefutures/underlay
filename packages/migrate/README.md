@@ -14,7 +14,7 @@ v2 deployment. Background, decisions and run history: the meta repo's
 | `src/ssh-psql.ts`           | Reads a v1 database with no reachable port through `ssh … docker exec … psql` (read-only, cursors for ordered reads).                                                                   |
 | `src/files.ts`              | Copies v1 file objects to `<repo>/files/<hash>`, hash-checked, re-runnable.                                                                                                             |
 | `src/d1-data.ts`            | Writes a SQLite file's rows (or named tables) as SQL for `wrangler d1 execute --file`, parents before children.                                                                         |
-| `src/repair.ts`             | Brings an already-loaded deployment up to the current format without converting again: rewrites version logs, records file possession.                                                  |
+| `src/repair.ts`             | Brings an already-loaded deployment up to the current format without converting again: rewrites version logs, records file possession, rebuilds head count trees (`STEPS`).             |
 | `scripts/staging-env.sh`    | Environment for dev → staging (decrypts secrets into the shell only).                                                                                                                   |
 | `scripts/dev-to-staging.sh` | Runs the converter for dev → staging.                                                                                                                                                   |
 
@@ -41,6 +41,13 @@ To repair a loaded deployment, `repair.ts` needs a SQLite copy of its database:
 export already has the schema, without drizzle's bookkeeping) with
 `. packages/migrate/scripts/staging-env.sh`. Load the rows it adds with
 `d1-data.ts d1.sqlite <table>`.
+
+`STEPS` picks what `repair.ts` does (default `logs,possession`). `STEPS=refs` rebuilds
+each collection head's file reference count trees with per-type counts (2026-10-04),
+so moving or removing a type stops reading its records; heads whose trees already
+have them, or have none, are skipped. It writes `UPDATE versions …` lines to
+`REFS_SQL` (default `./refs.sql`); apply them with `wrangler d1 execute … --file`.
+Without it nothing breaks: older trees take the slower path.
 
 ## Tests
 

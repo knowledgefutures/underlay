@@ -8,6 +8,10 @@
  *   1. per (set, type): merge the base tree with that set's changes (unchanged
  *      trees are reused; a type that changes privacy moves its tree);
  *   2. removed types release their file references;
+ *
+ * Moving a type between sets, or removing one, moves or drops its file
+ * references by their per-type counts (file-sets.ts): O(files it references).
+ * On a base whose count trees predate those counts, it reads the type's bodies.
  *   3. types whose schema changed are revalidated (O(type size));
  *   4. file sets from reference-count deltas (file-sets.ts);
  *   5. the private set object and the root.
@@ -32,7 +36,14 @@ import {
   type TreeSummary,
   type VersionRoot,
 } from '../format.js'
-import { applyFileSet, FileRefDelta, type FileSizes, type SetName } from './file-sets.js'
+import {
+  applyFileSet,
+  FileRefDelta,
+  type FileSizes,
+  type SetName,
+  tracksTypes,
+  typeFileRefs,
+} from './file-sets.js'
 import {
   bodyOfRecord,
   dropRecordBody,
@@ -185,13 +196,14 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
   // Stats count per set: a record moving between sets is a removal and an addition.
   const merge = async (
     set: SetName,
+    type: string,
     baseTree: string | null,
     changes: AsyncIterable<Change<RecordEntry>>,
   ) => {
     const result = await mergeTree(source, sink, baseTree, changes, {
       ...builderOpts,
       onChange: (before, after) => {
-        refs.record(set, before, after)
+        refs.record(set, before, after, type)
         recordsChanged = true
         if (before && after) stats.updated++
         else if (after) stats.added++
@@ -203,6 +215,30 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
 
   const inputSlugs = new Set(input.types.map((t) => t.slug))
   let schemaChanged = false
+
+  // Whether each base count tree has per-type counts, and moving a type's references.
+  const refsRoots: Record<SetName, string | null> = {
+    public: base?.publicRefsRoot ?? null,
+    private: base?.privateRefsRoot ?? null,
+  }
+  const tracks: Record<SetName, boolean> = {
+    public: await tracksTypes(repo, refsRoots.public),
+    private: await tracksTypes(repo, refsRoots.private),
+  }
+  /** Move (or with `to` null, drop) a type's file references out of set `from`. */
+  const moveRefs = async (from: SetName, to: SetName | null, slug: string, tree: string | null) => {
+    if (tracks[from]) {
+      for (const [h, n] of await typeFileRefs(repo, refsRoots[from], slug)) {
+        refs.add(from, slug, h, -n)
+        if (to) refs.add(to, slug, h, n)
+      }
+      return
+    }
+    for await (const e of treeAsUpserts(repo, tree)) {
+      refs.record(from, e.entry, null, slug)
+      if (to) refs.record(to, null, e.entry, slug)
+    }
+  }
 
   // Schemas are repository objects too (schemas/<hash>.json).
   await Promise.all(
@@ -246,42 +282,45 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       // tree was empty, otherwise a merge.
       if (pubChanges)
         throw new Error(`Type ${t.slug} is private; its changes belong to the private set`)
-      if (pubRoot && !privRoot && !privChanges) {
-        // The tree moves as it is (summary() drops the old schema hash). Its file
-        // references move with it, which reads the type's bodies: O(type size).
-        priv = summary(pubBase)
-        for await (const e of treeAsUpserts(repo, pubRoot)) {
-          refs.record('public', e.entry, null)
-          refs.record('private', null, e.entry)
-        }
+      if (pubRoot && !privRoot) {
+        // The tree moves as it is (summary() drops the old schema hash), with its
+        // file references; this push's private changes then merge into it.
+        await moveRefs('public', 'private', t.slug, pubRoot)
+        priv = privChanges ? await merge('private', t.slug, pubRoot, privChanges) : summary(pubBase)
       } else if (pubRoot) {
+        // Records in both sets: the union is a merge, O(public part).
         priv = await merge(
           'private',
+          t.slug,
           privRoot,
           overlay(treeAsUpserts(repo, pubRoot), privChanges ?? asAsync([])),
         )
-        for await (const e of treeAsUpserts(repo, pubRoot)) refs.record('public', e.entry, null)
+        for await (const e of treeAsUpserts(repo, pubRoot))
+          refs.record('public', e.entry, null, t.slug)
       } else {
-        priv = privChanges ? await merge('private', privRoot, privChanges) : summary(privBase)
+        priv = privChanges
+          ? await merge('private', t.slug, privRoot, privChanges)
+          : summary(privBase)
       }
       if (pubRoot) recordsChanged = true
     } else if (wasPrivateType) {
       // A private type made public: its records become public (per-record flags
       // were not kept while the whole type was private), except those this push
-      // marks private.
-      pub = await merge(
-        'public',
-        null,
-        overlay(treeAsUpserts(repo, privRoot), pubChanges ?? asAsync([])),
-      )
-      for await (const e of treeAsUpserts(repo, privRoot)) refs.record('private', e.entry, null)
+      // marks private. The tree moves as it is and this push's public changes
+      // merge into it (trees are canonical, so this is the tree a rebuild makes).
+      // Stats count every record of the new public tree as added, as a rebuild did.
+      await moveRefs('private', 'public', t.slug, privRoot)
+      const before = { ...stats }
+      pub = await merge('public', t.slug, privRoot, pubChanges ?? asAsync([]))
+      Object.assign(stats, before)
+      stats.added += pub.count
       priv = privChanges
-        ? await merge('private', null, privChanges)
+        ? await merge('private', t.slug, null, privChanges)
         : { root: null, count: 0, bytes: 0 }
       recordsChanged = true
     } else {
-      pub = pubChanges ? await merge('public', pubRoot, pubChanges) : summary(pubBase)
-      priv = privChanges ? await merge('private', privRoot, privChanges) : summary(privBase)
+      pub = pubChanges ? await merge('public', t.slug, pubRoot, pubChanges) : summary(pubBase)
+      priv = privChanges ? await merge('private', t.slug, privRoot, privChanges) : summary(privBase)
     }
 
     if (nowPrivate) {
@@ -300,11 +339,9 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     for (const [slug, entry] of Object.entries(base_.types)) {
       if (inputSlugs.has(slug)) continue
       schemaChanged = true
-      for await (const e of treeAsUpserts(repo, entry.root)) {
-        refs.record(set, e.entry, null)
-        stats.removed++
-        recordsChanged = true
-      }
+      await moveRefs(set, null, slug, entry.root)
+      stats.removed += entry.count
+      if (entry.count > 0) recordsChanged = true
     }
   }
   await sink.flush()
@@ -364,6 +401,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     refs.refs.public,
     null,
     input.fileSizes,
+    refs.typed.public,
   )
   const privFiles = await applyFileSet(
     repo,
@@ -371,6 +409,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     refs.refs.private,
     input.declaredFiles ?? null,
     input.fileSizes,
+    refs.typed.private,
   )
   newPublic.files = pubFiles.files
   newPrivate.files = privFiles.files

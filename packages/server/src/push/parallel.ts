@@ -380,7 +380,7 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     ...builderOpts,
     range,
     leafOutput: (d) => leaves.push(d),
-    onChange: (before, after) => refs.record(set, before, after),
+    onChange: (before, after) => refs.record(set, before, after, unit.type),
   })
   await sink.flush()
   await refs.resolve(repo)
@@ -552,8 +552,8 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
             stats.added += out.stats.added
             stats.removed += out.stats.removed
             stats.updated += out.stats.updated
-            const m = refs.refs[set]
-            for (const [h, n] of out.refs) m.set(h, (m.get(h) ?? 0) + n)
+            // A unit covers one type, so its deltas are that type's too.
+            for (const [h, n] of out.refs) refs.add(set, type, h, n)
             return out.leaves
           },
         }))

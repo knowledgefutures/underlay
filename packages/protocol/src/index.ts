@@ -27,6 +27,8 @@ export {
   MissingFilesError,
   rebuildFileRefs,
   type SetName,
+  tracksTypes,
+  typeFileRefs,
 } from './repo/file-sets.js'
 export {
   type PackObject,
