@@ -1,20 +1,24 @@
-// Underlay v2 on Cloudflare Workers: one Worker per deployment, each with its own
+// Underlay on Cloudflare Workers: one Worker per deployment, each with its own
 // D1 database, R2 bucket and queue (edge-redesign-build.md, "Deployment targets").
+// Resources are named for the deployment's role, not the app version or host, so
+// they outlive both: prod serves next.underlay.org until it takes over www.
 //
 //   wrangler deploy --env staging     → staging.underlay.org
-//   wrangler deploy --env next        → next.underlay.org
+//   wrangler deploy --env prod        → next.underlay.org (www after the DNS switch)
 //
 // Secrets (wrangler secret put <NAME> --env <env>):
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   bucket-scoped R2 S3 credentials
 //   SIGNING_KEY                              Ed25519 seed for version logs (one per deployment)
+//   LOCATION_KEY                             32 bytes base64url; encrypts storage credentials
 //   SESSION_SECRET                           better-auth secret
-//   OIDC_CLIENT_SECRET                       kf_underlay client secret (shared with v1)
+//   OIDC_CLIENT_SECRET                       kf_underlay secret of that env's KF Auth instance
+//                                            (staging: dev's, as v1 dev; next: prod's)
 //
 // D1 migrations: wrangler d1 migrations apply <database_name> --env <env> --remote
 // The database ids below are placeholders until the databases are created.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "underlay-v2",
+  "name": "underlay",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat"],
@@ -25,64 +29,67 @@
   "observability": { "enabled": true },
   "env": {
     "staging": {
-      "name": "underlay-v2-staging",
+      "name": "underlay-staging",
       "routes": [{ "pattern": "staging.underlay.org", "custom_domain": true }],
       "vars": {
         "APP_URL": "https://staging.underlay.org",
         "DEPLOYMENT": "staging",
-        "R2_ENDPOINT": "https://b66a0000000000000000000000000000.r2.cloudflarestorage.com",
-        "R2_BUCKET": "underlay-v2-staging",
-        "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
+        "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
+        "R2_BUCKET": "underlay-staging",
+        // staging replaces dev.underlay.org: dev's data, dev's KF Auth.
+        "OIDC_ISSUER_URL": "https://dev-auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://dev-account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
       },
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "underlay-v2-staging",
+          "database_name": "underlay-staging",
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle",
         },
       ],
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "underlay-v2-staging-jobs" }],
+        "producers": [{ "binding": "JOBS", "queue": "underlay-staging-jobs" }],
         "consumers": [
           {
-            "queue": "underlay-v2-staging-jobs",
+            "queue": "underlay-staging-jobs",
             "max_batch_size": 10,
             "max_retries": 10,
-            "dead_letter_queue": "underlay-v2-staging-dead",
+            "dead_letter_queue": "underlay-staging-dead",
           },
         ],
       },
       "triggers": { "crons": ["*/10 * * * *"] },
     },
-    "next": {
-      "name": "underlay-v2-next",
+    "prod": {
+      "name": "underlay-prod",
       "routes": [{ "pattern": "next.underlay.org", "custom_domain": true }],
       "vars": {
         "APP_URL": "https://next.underlay.org",
-        "DEPLOYMENT": "next",
-        "R2_ENDPOINT": "https://b66a0000000000000000000000000000.r2.cloudflarestorage.com",
-        "R2_BUCKET": "underlay-v2-next",
+        "DEPLOYMENT": "prod",
+        "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
+        "R2_BUCKET": "underlay-prod",
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
       },
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "underlay-v2-next",
+          "database_name": "underlay-prod",
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "drizzle",
         },
       ],
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "underlay-v2-next-jobs" }],
+        "producers": [{ "binding": "JOBS", "queue": "underlay-prod-jobs" }],
         "consumers": [
           {
-            "queue": "underlay-v2-next-jobs",
+            "queue": "underlay-prod-jobs",
             "max_batch_size": 10,
             "max_retries": 10,
-            "dead_letter_queue": "underlay-v2-next-dead",
+            "dead_letter_queue": "underlay-prod-dead",
           },
         ],
       },

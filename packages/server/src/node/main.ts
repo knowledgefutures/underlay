@@ -12,6 +12,7 @@
  *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
  *   LOCATION_KEY      32 bytes (base64url) that encrypt customer storage credentials
  *   SESSION_SECRET, OIDC_ISSUER_URL, OIDC_ISSUER_INTERNAL_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET
+ *   OIDC_ACCOUNT_URL                      the KF account site, linked from the user menu
  *                     better-auth and KF Auth (same names as v1's .env files)
  */
 import { relative } from 'node:path'
@@ -120,7 +121,12 @@ const runJobs = async () => {
 kick = () => void runJobs()
 setInterval(kick, 5000).unref()
 
-const config = { appUrl, deployment: env.DEPLOYMENT ?? 'dev' }
+const config = {
+  appUrl,
+  deployment: env.DEPLOYMENT ?? 'dev',
+  kfAuthUrl: env.OIDC_ISSUER_URL,
+  kfAccountUrl: env.OIDC_ACCOUNT_URL,
+}
 
 // The UI (packages/web, built with `pnpm --filter @underlay/web build`). Without
 // a build, the API still runs and pages are 404.

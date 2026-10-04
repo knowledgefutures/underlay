@@ -26,8 +26,8 @@ export interface AppConfig {
   /** "staging", "next", "production" or "dev": shown in /api/health. */
   deployment: string
   /** KF Auth URLs the UI links to (account settings, sign-out). */
-  kfAuthUrl?: string
-  kfAccountUrl?: string
+  kfAuthUrl?: string | undefined
+  kfAccountUrl?: string | undefined
 }
 
 export type Authenticate = (req: Request, ports: Ports) => Promise<Principal | null>

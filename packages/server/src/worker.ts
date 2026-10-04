@@ -44,6 +44,8 @@ export interface Env {
   OIDC_ISSUER_URL: string
   OIDC_CLIENT_ID: string
   OIDC_CLIENT_SECRET: string
+  /** The KF account site, linked from the user menu. */
+  OIDC_ACCOUNT_URL?: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
 }
@@ -108,7 +110,12 @@ const app = createApp((c) => {
   const ports = makePorts(env, c.executionCtx as unknown as ExecutionContext)
   return {
     ports,
-    config: { appUrl: env.APP_URL, deployment: env.DEPLOYMENT },
+    config: {
+      appUrl: env.APP_URL,
+      deployment: env.DEPLOYMENT,
+      kfAuthUrl: env.OIDC_ISSUER_URL,
+      kfAccountUrl: env.OIDC_ACCOUNT_URL,
+    },
     authenticate: authenticator(() => authFor(env, ports)),
     authHandler: (req) => authFor(env, ports).handler(req),
     renderPage,
