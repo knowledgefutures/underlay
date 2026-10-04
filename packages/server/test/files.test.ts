@@ -99,6 +99,54 @@ describe('files', () => {
     ).toBe(0)
   })
 
+  it("doesn't let a commit reference another collection's file without uploading it", async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('v')
+    await h.collection('a')
+    await h.ports.db.update(schema.collections).set({ public: true })
+    const elsewhere = 'bytes only collection v has'
+    expect(
+      (
+        await h.request(`/api/collections/org/v/files/${sha(elsewhere)}`, {
+          method: 'PUT',
+          user,
+          body: elsewhere,
+        })
+      ).status,
+    ).toBe(201)
+
+    const base = '/api/collections/org/a'
+    const attempt = async (hash: string) => {
+      const sid = (
+        await json(
+          await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
+        )
+      ).session_id
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [{ id: 'd', type: 'Doc', data: { pdf: { $file: `sha256:${hash}` } } }],
+      })
+      const res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+      return { status: res.status, body: JSON.stringify(await json(res)).replaceAll(hash, 'H') }
+    }
+    const existing = await attempt(sha(elsewhere))
+    const nowhere = await attempt(sha('bytes nobody has'))
+    // Same refusal either way: the answer says nothing about other collections.
+    expect(existing.status).toBe(422)
+    expect(existing).toEqual(nowhere)
+    expect((await h.request(`${base}/files/${sha(elsewhere)}`)).status).toBe(404)
+
+    // Uploading the bytes under this collection is the proof that lets it commit.
+    expect(
+      (await h.request(`${base}/files/${sha(elsewhere)}`, { method: 'PUT', user, body: elsewhere }))
+        .status,
+    ).toBe(201)
+    expect((await attempt(sha(elsewhere))).status).toBe(201)
+    expect((await h.request(`${base}/files/${sha(elsewhere)}`)).status).toBe(302)
+  })
+
   it('serves files by redirect only to those who may read them', async () => {
     const h = await harness()
     const user = await h.member()

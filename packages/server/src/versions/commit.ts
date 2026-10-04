@@ -41,7 +41,7 @@ import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { FileRefDelta, fileSizes } from './file-refs.js'
+import { collectionFileSizes, FileRefDelta, fileSizes } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
 import { bumpType, deriveSemver, parseSemver } from './semver.js'
 
@@ -122,7 +122,11 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     metadata: input.metadata,
     ...(input.declaredFiles ? { declaredFiles: input.declaredFiles } : {}),
     salt: collection.privateSalt,
-    fileSizes: (hashes) => fileSizes(db, hashes),
+    // Migration copies v1's files as they were; every other commit proves possession.
+    fileSizes: (hashes) =>
+      input.migrated
+        ? fileSizes(db, hashes)
+        : collectionFileSizes(db, repo, collection, input.base?.hash ?? null, hashes),
     ...(input.validate ? { validate: input.validate } : {}),
     ...(input.prebuilt ? { prebuilt: input.prebuilt } : {}),
   })

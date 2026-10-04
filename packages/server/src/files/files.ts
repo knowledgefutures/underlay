@@ -78,9 +78,14 @@ export async function presignDownload(ports: Ports, hash: string): Promise<strin
   })
 }
 
-/** Store verified bytes at the canonical key and record the file. Idempotent. */
+/**
+ * Store verified bytes at the canonical key and record the file, and that this
+ * collection proved it holds them (a commit may then reference the file).
+ * Idempotent.
+ */
 export async function storeSmallFile(
   ports: Ports,
+  collectionId: string,
   hash: string,
   bytes: Uint8Array,
   mime: string,
@@ -92,19 +97,41 @@ export async function storeSmallFile(
     .from(schema.files)
     .where(eq(schema.files.hash, hash))
     .limit(1)
-  if (existing) return 'stored'
-  const key = ports.stores.canonicalFileKey(hash)
-  await ports.stores.fileBytes.put(key, bytes, { contentType: mime, ifAbsent: true })
-  await ports.db
-    .insert(schema.files)
-    .values({
+  const key = existing?.storageKey ?? ports.stores.canonicalFileKey(hash)
+  if (!existing) {
+    await ports.stores.fileBytes.put(key, bytes, { contentType: mime, ifAbsent: true })
+    await ports.db
+      .insert(schema.files)
+      .values({
+        hash,
+        size: bytes.byteLength,
+        mimeType: mime,
+        storageKey: key,
+        verifiedAt: new Date(),
+      })
+      .onConflictDoNothing()
+  }
+  const [proved] = await ports.db
+    .select({ id: schema.fileUploads.id })
+    .from(schema.fileUploads)
+    .where(
+      and(
+        eq(schema.fileUploads.collectionId, collectionId),
+        eq(schema.fileUploads.hash, hash),
+        eq(schema.fileUploads.status, 'verified'),
+      ),
+    )
+    .limit(1)
+  if (!proved) {
+    await ports.db.insert(schema.fileUploads).values({
+      collectionId,
       hash,
       size: bytes.byteLength,
       mimeType: mime,
       storageKey: key,
-      verifiedAt: new Date(),
+      status: 'verified',
     })
-    .onConflictDoNothing()
+  }
   return 'stored'
 }
 

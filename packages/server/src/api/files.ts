@@ -99,7 +99,13 @@ export function fileRoutes() {
     }
     if (bytes.byteLength > SMALL_UPLOAD_BYTES)
       return jsonError(c, 413, `File exceeds ${SMALL_UPLOAD_BYTES} bytes`)
-    const result = await storeSmallFile(c.var.ports, hash, bytes, safeMimeType(mime))
+    const result = await storeSmallFile(
+      c.var.ports,
+      access.collection.id,
+      hash,
+      bytes,
+      safeMimeType(mime),
+    )
     if (result === 'mismatch') return jsonError(c, 400, 'Hash mismatch', { expected: hash })
     return c.json({ hash, status: 'stored', size: bytes.byteLength }, 201)
   })

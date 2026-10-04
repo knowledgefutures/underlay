@@ -257,9 +257,26 @@ describe('commitVersion', () => {
     }).catch((e) => e)
     expect(attempt).toBeInstanceOf(MissingFilesError)
 
+    // A file row alone isn't enough: the bytes must have been uploaded under this collection.
     await h.ports.db
       .insert(schema.files)
       .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+    expect(
+      await commitVersion(h.ports, {
+        collectionId: c.id,
+        base: null,
+        types: [type('Author', authorSchema, [withPhoto('a')])],
+        metadata: null,
+      }).catch((e) => e),
+    ).toBeInstanceOf(MissingFilesError)
+    await h.ports.db.insert(schema.fileUploads).values({
+      collectionId: c.id,
+      hash: FILE,
+      size: 1234,
+      mimeType: 'image/png',
+      storageKey: `files/${FILE}`,
+      status: 'verified',
+    })
     const v1 = await commitVersion(h.ports, {
       collectionId: c.id,
       base: null,
