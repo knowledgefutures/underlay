@@ -72,6 +72,8 @@ export async function harness(): Promise<Harness> {
     jobs: new SqliteJobs(db),
     waitUntil: (p) => void p.catch((err) => console.error(err)),
     outboundFetch: (url, init) => outbound(url, init),
+    locationFetch: (req) => fetch(req),
+    locationKey: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url'),
   }
   let orgMade = false
   const ensureOrg = async () => {

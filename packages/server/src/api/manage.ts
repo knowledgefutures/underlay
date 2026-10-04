@@ -23,7 +23,8 @@ import { createCollectionRows, forkCollection } from '../versions/fork.js'
 import { jsonError, requireCollection } from './access.js'
 import { ensureCollectionArk } from './ark.js'
 
-async function membership(c: Context<AppEnv>, orgSlug: string) {
+/** The org named `orgSlug` and the caller's role in it (null when not a member). */
+export async function membership(c: Context<AppEnv>, orgSlug: string) {
   const p = c.var.principal
   const [org] = await c.var.ports.db
     .select()
@@ -41,7 +42,7 @@ async function membership(c: Context<AppEnv>, orgSlug: string) {
   return { org, role: m?.role ?? null }
 }
 
-const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'
+export const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'
 
 export function manageRoutes() {
   const app = new Hono<AppEnv>()

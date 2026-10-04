@@ -10,6 +10,7 @@ import { arkRoutes } from './api/ark.js'
 import { collectionRoutes } from './api/collections.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
+import { locationRoutes } from './api/locations.js'
 import { manageRoutes } from './api/manage.js'
 import { pushRoutes } from './api/push.js'
 import { recordRoutes } from './api/records.js'
@@ -101,6 +102,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', webhookRoutes())
   app.route('/', schemaRoutes())
   app.route('/', manageRoutes())
+  app.route('/', locationRoutes())
   app.route('/', collectionRoutes())
 
   // Everything else is a UI page, when the deployment renders one.

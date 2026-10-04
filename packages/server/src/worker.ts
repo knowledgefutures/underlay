@@ -38,6 +38,8 @@ export interface Env {
    */
   BUCKET?: R2BucketLike
   SIGNING_KEY: string
+  /** 32 bytes, base64url: encrypts customer storage credentials. */
+  LOCATION_KEY?: string
   SESSION_SECRET: string
   OIDC_ISSUER_URL: string
   OIDC_CLIENT_ID: string
@@ -71,6 +73,8 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
     jobs: new QueueJobs(env.JOBS as never),
     waitUntil: (p) => ctx.waitUntil(p),
     outboundFetch: (url, init) => fetch(url, init),
+    locationFetch: (req) => fetch(req),
+    ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
   }
 }
 

@@ -10,6 +10,7 @@
  *   BLOB_URL_SECRET   HMAC key for filesystem presigned URLs
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
  *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
+ *   LOCATION_KEY      32 bytes (base64url) that encrypt customer storage credentials
  *   SESSION_SECRET, OIDC_ISSUER_URL, OIDC_ISSUER_INTERNAL_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET
  *                     better-auth and KF Auth (same names as v1's .env files)
  */
@@ -35,6 +36,7 @@ import { authenticator, createAuth } from '../auth/auth.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
+import { requestInit } from '../locations/locations.js'
 import type { Ports, PresigningStore } from '../ports.js'
 import { createStores } from '../stores.js'
 import { guardedFetch } from './guarded-fetch.js'
@@ -93,6 +95,9 @@ const ports: Ports = {
     },
   },
   outboundFetch: guardedFetch,
+  // Customer storage endpoints are user-supplied URLs too.
+  locationFetch: async (req) => guardedFetch(req.url, await requestInit(req)),
+  ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
   waitUntil: (p) => {
     p.catch((err) => console.error('[waitUntil]', err))
   },

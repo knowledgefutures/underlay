@@ -373,6 +373,14 @@ export const storageLocations = sqliteTable('storage_locations', {
   createdAt: createdAt(),
 })
 
+/** A mirror copy in progress: version `seq`, stopped in tree `tree` after key `after`. */
+export interface MirrorCursor {
+  seq: number
+  /** -1: schemas next; 0…n-1: that tree; n: files; n+1: finishing. */
+  tree: number
+  after: string | null
+}
+
 /** The id of the deployment's own location, seeded by the first migration. */
 export const PLATFORM_LOCATION_ID = 'platform'
 
@@ -399,6 +407,10 @@ export const placements = sqliteTable(
       .default('active'),
     /** The last version (seq) fully copied to this location. */
     syncedSeq: integer('synced_seq').notNull().default(0),
+    /** Where a copy of the next version stopped, to resume (locations/mirror.ts). */
+    cursor: json<MirrorCursor>('cursor'),
+    /** Held by the job copying to this placement: one copy at a time. */
+    leaseUntil: ts('lease_until'),
     lastError: text('last_error'),
     updatedAt: ts('updated_at')
       .notNull()

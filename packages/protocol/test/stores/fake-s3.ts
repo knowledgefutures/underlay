@@ -13,7 +13,11 @@ export interface FakeS3 {
   close(): Promise<void>
 }
 
-export async function startFakeS3(bucket = 'test', listenPort = 0): Promise<FakeS3> {
+export async function startFakeS3(
+  bucket = 'test',
+  listenPort = 0,
+  opts: { publicRead?: boolean } = {},
+): Promise<FakeS3> {
   const objects = new Map<string, { bytes: Buffer; contentType: string | undefined }>()
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
   const requests: { method: string; url: string }[] = []
@@ -27,7 +31,7 @@ export async function startFakeS3(bucket = 'test', listenPort = 0): Promise<Fake
     const signed =
       !!req.headers.authorization?.startsWith('AWS4-HMAC-SHA256') ||
       url.searchParams.has('X-Amz-Signature')
-    if (!signed) {
+    if (!signed && !(opts.publicRead && req.method === 'GET')) {
       res.writeHead(403).end('<Error><Code>AccessDenied</Code></Error>')
       return
     }

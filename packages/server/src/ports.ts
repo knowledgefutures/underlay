@@ -67,6 +67,16 @@ export interface Ports {
    * reach; on Node this resolves the host and refuses private addresses.
    */
   outboundFetch(url: string, init: RequestInit): Promise<Response>
+  /**
+   * Key that encrypts storage location credentials (32 bytes, base64url;
+   * LOCATION_KEY). Without it, customer locations can't be added.
+   */
+  locationKey?: string
+  /**
+   * fetch for customer storage endpoints (user-supplied URLs): on Node it must
+   * refuse private addresses, as outboundFetch does.
+   */
+  locationFetch?: (req: Request) => Promise<Response>
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
 }

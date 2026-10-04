@@ -22,6 +22,12 @@ export interface S3Config {
   secretAccessKey: string
   /** "auto" for R2. */
   region?: string
+  /**
+   * fetch for the signed requests. The platform passes a guarded fetch for
+   * customer endpoints (user-supplied URLs); the default is the global fetch,
+   * with aws4fetch's retries.
+   */
+  fetch?: (req: Request) => Promise<Response>
 }
 
 export class S3Error extends Error {
@@ -58,8 +64,10 @@ export function s3Store(cfg: S3Config): S3Store {
 export class S3Store implements Store {
   readonly #aws: AwsClient
   readonly #base: string
+  readonly #custom: S3Config['fetch']
 
   constructor(cfg: S3Config) {
+    this.#custom = cfg.fetch
     this.#aws = new AwsClient({
       accessKeyId: cfg.accessKeyId,
       secretAccessKey: cfg.secretAccessKey,
@@ -68,6 +76,23 @@ export class S3Store implements Store {
       retries: 3,
     })
     this.#base = `${cfg.endpoint.replace(/\/$/, '')}/${cfg.bucket}`
+  }
+
+  async #fetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const custom = this.#custom
+    if (!custom) return this.#aws.fetch(url, init)
+    // Signed once, sent through the given fetch, retried on network errors and 5xx.
+    const req = await this.#aws.sign(url, init)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await custom(req.clone())
+        if (res.status < 500 || attempt >= 2) return res
+        await res.body?.cancel()
+      } catch (err) {
+        if (attempt >= 2) throw err
+      }
+      await new Promise((r) => setTimeout(r, 100 * 2 ** attempt))
+    }
   }
 
   readonly presigner: Presigner = {
@@ -109,7 +134,7 @@ export class S3Store implements Store {
           ? `bytes=${range.offset}-`
           : `bytes=${range.offset}-${range.offset + range.length - 1}`
     }
-    const res = await this.#aws.fetch(this.#url(key), { headers })
+    const res = await this.#fetch(this.#url(key), { headers })
     if (res.status === 404) {
       await res.body?.cancel()
       return null
@@ -133,7 +158,7 @@ export class S3Store implements Store {
   }
 
   async head(key: string): Promise<BlobHead | null> {
-    const res = await this.#aws.fetch(this.#url(key), { method: 'HEAD' })
+    const res = await this.#fetch(this.#url(key), { method: 'HEAD' })
     if (res.status === 404) return null
     if (!res.ok) return this.#fail(res, `HEAD ${key}`)
     return this.#head(res)
@@ -143,7 +168,7 @@ export class S3Store implements Store {
     const headers: Record<string, string> = {}
     if (opts.contentType) headers['content-type'] = opts.contentType
     if (opts.ifAbsent) headers['if-none-match'] = '*'
-    const res = await this.#aws.fetch(this.#url(key), {
+    const res = await this.#fetch(this.#url(key), {
       method: 'PUT',
       headers,
       body: body as BodyInit,
@@ -158,7 +183,7 @@ export class S3Store implements Store {
   }
 
   async delete(key: string): Promise<void> {
-    const res = await this.#aws.fetch(this.#url(key), { method: 'DELETE' })
+    const res = await this.#fetch(this.#url(key), { method: 'DELETE' })
     if (!res.ok && res.status !== 404) return this.#fail(res, `DELETE ${key}`)
     await res.body?.cancel()
   }
@@ -168,7 +193,7 @@ export class S3Store implements Store {
     u.searchParams.set('list-type', '2')
     u.searchParams.set('prefix', prefix)
     if (cursor) u.searchParams.set('continuation-token', cursor)
-    const res = await this.#aws.fetch(u.toString())
+    const res = await this.#fetch(u.toString())
     if (!res.ok) return this.#fail(res, `LIST ${prefix}`)
     const xml = await res.text()
     const next = xmlValues(xml, 'NextContinuationToken')[0]
@@ -204,7 +229,7 @@ export class S3Store implements Store {
   }
 
   async #createMultipart(key: string, contentType?: string): Promise<string> {
-    const res = await this.#aws.fetch(`${this.#url(key)}?uploads`, {
+    const res = await this.#fetch(`${this.#url(key)}?uploads`, {
       method: 'POST',
       headers: contentType ? { 'content-type': contentType } : {},
     })
@@ -241,7 +266,7 @@ export class S3Store implements Store {
         )
         .join('') +
       '</CompleteMultipartUpload>'
-    const res = await this.#aws.fetch(this.#url(key, { uploadId }), { method: 'POST', body: xml })
+    const res = await this.#fetch(this.#url(key, { uploadId }), { method: 'POST', body: xml })
     const text = await res.text()
     // S3 can answer 200 with an <Error> body for a failed completion.
     if (!res.ok || text.includes('<Error>')) {
@@ -254,7 +279,7 @@ export class S3Store implements Store {
 
   async copy(from: string, to: string): Promise<void> {
     const source = `/${this.#base.split('/').pop()}/${encodeKey(from)}`
-    const res = await this.#aws.fetch(this.#url(to), {
+    const res = await this.#fetch(this.#url(to), {
       method: 'PUT',
       headers: { 'x-amz-copy-source': source },
     })
@@ -269,7 +294,7 @@ export class S3Store implements Store {
   }
 
   async #abortMultipart(key: string, uploadId: string): Promise<void> {
-    const res = await this.#aws.fetch(this.#url(key, { uploadId }), { method: 'DELETE' })
+    const res = await this.#fetch(this.#url(key, { uploadId }), { method: 'DELETE' })
     if (!res.ok && res.status !== 404) return this.#fail(res, `AbortMultipartUpload ${key}`)
     await res.body?.cancel()
   }
