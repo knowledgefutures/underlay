@@ -1,5 +1,5 @@
 /** Read-only commands: status, log, diff, and managing remotes. */
-import { diffTrees, recordTree, RepoSource } from '@underlay/protocol'
+import { diffTrees, fsck as checkRepo, listAll, recordTree, RepoSource } from '@underlay/protocol'
 
 import { CliError, type Local } from '../local.js'
 import { versionState } from '../state.js'
@@ -105,4 +105,37 @@ export function remoteList(local: Local, say: Say): void {
   for (const [name, r] of Object.entries(local.remotes())) {
     say(`${name}  ${r.url}  ${r.collection}${r.token ? '  (token)' : ''}`)
   }
+}
+
+/**
+ * Check the local repository: every local version's root, trees, bodies and
+ * files, and any collection log stored in it (under the keys its
+ * collection.json declares, which shows integrity, not who signed). A clone
+ * verifies the remote's log over the API and doesn't keep it.
+ */
+export async function fsck(local: Local, opts: { files?: boolean }, say: Say): Promise<void> {
+  const repo = local.repo
+  const ids = new Set<string>()
+  for await (const k of listAll(repo.blobs, 'collections/')) {
+    const id = k.split('/')[1]
+    if (id) ids.add(id)
+  }
+  let ok = true
+  const show = (what: string, r: Awaited<ReturnType<typeof checkRepo>>) => {
+    say(
+      `${what}: ${r.ok ? 'ok' : 'PROBLEMS'} (${r.versions} versions, ${r.trees} trees, ${r.leaves} leaves, ${r.records} records, ${r.files} files)`,
+    )
+    for (const e of r.errors) say(`  ${e}`)
+    if (r.moreErrors) say(`  …and ${r.moreErrors} more`)
+    ok &&= r.ok
+  }
+  show(
+    'local versions',
+    await checkRepo(repo, {
+      versions: local.versions().map((v) => v.hash),
+      fileBytes: !!opts.files,
+    }),
+  )
+  for (const id of ids) show(`log of ${id}`, await checkRepo(repo, { collectionId: id }))
+  if (!ok) throw new CliError('fsck found problems')
 }

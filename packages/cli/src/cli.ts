@@ -6,7 +6,7 @@
 import { Command } from 'commander'
 
 import { commit } from './commands/commit.js'
-import { diff, log, remoteAdd, remoteList, remoteRemove, status } from './commands/info.js'
+import { diff, fsck, log, remoteAdd, remoteList, remoteRemove, status } from './commands/info.js'
 import { add, fileAdd, metaSet, rm, schemaSet } from './commands/stage.js'
 import { clone, pull, push } from './commands/sync.js'
 import { CliError, Local } from './local.js'
@@ -102,6 +102,12 @@ program
   .argument('<from>')
   .argument('<to>')
   .action((from: string, to: string) => diff(here(), from, to, say))
+
+program
+  .command('fsck')
+  .description('Check the local repository: versions, trees, bodies, files and logs')
+  .option('--files', 'hash every file, not just check it is there at its size')
+  .action((o: { files?: boolean }) => run(fsck(here(), o, say)))
 
 const remote = program.command('remote').description('Manage registries')
 remote

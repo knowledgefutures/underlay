@@ -19,6 +19,8 @@
  *   POST    /api/admin/reconcile                 stewards: {collection: "owner/slug"} starts a run
  *   GET     /api/admin/reconcile?collection=     stewards: the last run's time and report
  *   GET     /api/admin/usage?day=&account=       stewards: a day's usage rollups
+ *   POST    /api/admin/fsck                      stewards: {collection, fileBytes?} checks its repository
+ *   GET     /api/admin/fsck?collection=          stewards: the last check's report
  *   POST    /api/admin/usage/rebuild             stewards: {day} recomputes them from the usage log
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
@@ -427,6 +429,33 @@ export function adminRoutes() {
         !(col.reconciledAt && col.reconciledAt >= col.reconcileStartedAt),
       report: col.reconcileReport ?? [],
     })
+  })
+
+  app.post('/api/admin/fsck', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as {
+      collection?: unknown
+      fileBytes?: unknown
+    } | null
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    await c.var.ports.jobs.enqueue({
+      type: 'repo.fsck',
+      collectionId: col.id,
+      fileBytes: b?.fileBytes === true,
+    })
+    return c.json({ ok: true, queued: true }, 202)
+  })
+
+  app.get('/api/admin/fsck', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const col = await collectionBySlugs(c, c.req.query('collection'))
+    if (!col) return jsonError(c, 404, 'Collection not found (?collection=owner/slug)')
+    const obj = await c.var.ports.stores.internal.get(`fsck/${col.id}.json`)
+    if (!obj) return jsonError(c, 404, 'Not checked yet')
+    return c.json(JSON.parse(await obj.text()))
   })
 
   const DAY = /^\d{4}-\d{2}-\d{2}$/

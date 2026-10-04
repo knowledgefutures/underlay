@@ -12,7 +12,7 @@
  *                       queued after each publish, and by the sweep for laggards
  *   restore.version     rebuild a collection from a location, a version at a time
  */
-import { readHead } from '@underlay/protocol'
+import { fsck, readCollectionInfo, readHead } from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import { reconcileDue } from './billing/reconcile.js'
@@ -49,6 +49,29 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await ports.jobs.enqueueBatch(
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
+})
+
+/**
+ * fsck a collection's primary repository (protocol fsck): the log under this
+ * deployment's key and the keys collection.json declares, every version, tree,
+ * body and file. The report goes to the internal area, fsck/<collectionId>.json.
+ */
+registerJob('repo.fsck', async (job, ports) => {
+  const collectionId = String(job.collectionId)
+  const repo = await ports.stores.forCollection(collectionId)
+  const own = (await ports.signer()).publicKey
+  const info = await readCollectionInfo(repo, collectionId)
+  const report = await fsck(repo, {
+    collectionId,
+    trustedKeys: [own, ...(info?.keys ?? []).filter((k) => k.id !== own.id)],
+    fileBytes: job.fileBytes === true,
+  })
+  await ports.stores.internal.put(
+    `fsck/${collectionId}.json`,
+    JSON.stringify({ ...report, checkedAt: new Date().toISOString() }),
+    { contentType: 'application/json' },
+  )
+  if (!report.ok) console.error(`[fsck] ${collectionId}:`, report.errors.slice(0, 10))
 })
 
 registerJob('repo.repairLog', async (job, ports) => {

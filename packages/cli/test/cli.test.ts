@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../../server/src/db/schema.js'
 import { cleanup as cleanupHarness, harness, type Harness } from '../../server/test/harness.js'
 import { commit } from '../src/commands/commit.js'
-import { diff, log, remoteAdd, status } from '../src/commands/info.js'
+import { diff, fsck, log, remoteAdd, status } from '../src/commands/info.js'
 import { add, fileAdd, metaSet, rm, schemaSet } from '../src/commands/stage.js'
 import { clone, pull, push } from '../src/commands/sync.js'
 import { CliError, Local } from '../src/local.js'
@@ -184,6 +184,10 @@ describe('with a registry', () => {
       say,
     )
     expect(await contents(other)).toEqual(await contents(local))
+    // The clone checks out (a clone verifies the log over the API and keeps none).
+    const lines: string[] = []
+    await fsck(other, { files: true }, (l) => void lines.push(l))
+    expect(lines).toEqual([expect.stringMatching(/^local versions: ok \(1 versions/)])
 
     // Change it there, with the registry's salt now known: hashes match exactly.
     await writeFile(
@@ -208,6 +212,15 @@ describe('with a registry', () => {
     const got = await pull(local, 'origin', { fetch, force: true }, say)
     expect(got!.hash).toBe(v2!.hash)
     expect(await contents(local)).toEqual(await contents(other))
+
+    // A body gone from disk: fsck says so.
+    const { readdir, rm: rmFile } = await import('node:fs/promises')
+    const bodyDir = join(dir2, '.underlay', 'repo', 'bodies')
+    const [body] = await readdir(bodyDir)
+    await rmFile(join(bodyDir, body!))
+    const out: string[] = []
+    await expect(fsck(other, {}, (l) => void out.push(l))).rejects.toThrow(/fsck found problems/)
+    expect(out.join('\n')).toMatch(/PROBLEMS/)
   })
 
   it('clones without a token: public sets only', async () => {
