@@ -16,6 +16,15 @@
 //   AUTH_INTERNAL_API_KEY                    optional: KF Auth's internal API key (as v1). Without
 //                                            it new orgs can't link a KF org and
 //                                            /api/kf/summary answers 401.
+//   ASSETS_ACCESS_KEY_ID, ASSETS_SECRET_ACCESS_KEY
+//                                            optional: R2 S3 keys for ASSETS_BUCKET when there's
+//                                            no PUBLIC_ASSETS binding (else the R2_* keys)
+//
+// Public assets (org logos) go to a world-readable bucket per deployment, served at
+// ASSETS_BASE_URL: staging's own, and for prod the v1 public bucket, so migrated
+// avatar URLs keep resolving. The bucket is the PUBLIC_ASSETS binding, or
+// ASSETS_BUCKET through the S3 API. With neither, avatar uploads answer 503 and
+// everything else runs.
 //
 // D1 migrations: wrangler d1 migrations apply <database_name> --env <env> --remote
 // prod's database id is a placeholder until that database is created.
@@ -43,10 +52,16 @@
         "OIDC_ISSUER_URL": "https://dev-auth.knowledgefutures.org",
         "OIDC_ACCOUNT_URL": "https://dev-account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
+        // underlay-staging-public's custom domain.
+        "ASSETS_BASE_URL": "https://assets-staging.underlay.org",
       },
       // Repository and internal objects through the binding (no request signing, no
       // subrequest per object); file bytes keep the S3 API, which can presign.
-      "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "underlay-staging" }],
+      // PUBLIC_ASSETS: the world-readable bucket for org logos.
+      "r2_buckets": [
+        { "binding": "BUCKET", "bucket_name": "underlay-staging" },
+        { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
+      ],
       "d1_databases": [
         {
           "binding": "DB",
@@ -105,6 +120,10 @@
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
         "OIDC_ACCOUNT_URL": "https://account.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
+        // v1's public assets domain. Uploads answer 503 until the bucket is added: confirm
+        // v1 prod's S3_PUBLIC_BUCKET (v1's default is underlaypublic), then bind it as
+        // PUBLIC_ASSETS below, or set "ASSETS_BUCKET" with keys that reach it.
+        "ASSETS_BASE_URL": "https://assets.underlay.org",
       },
       // Repository and internal objects through the binding (no request signing, no
       // subrequest per object); file bytes keep the S3 API, which can presign.

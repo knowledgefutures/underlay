@@ -56,6 +56,16 @@ export interface Stores {
   stagingKey(uploadId: string): string
 }
 
+/**
+ * A world-readable bucket for assets that are public by nature (org logos),
+ * served directly at `baseUrl`. Never the platform bucket, which stays private.
+ */
+export interface PublicAssets {
+  store: Store
+  /** Public URL of the bucket root, no trailing slash, e.g. https://assets.underlay.org */
+  baseUrl: string
+}
+
 export interface Ports {
   stores: Stores
   db: Db
@@ -78,6 +88,8 @@ export interface Ports {
    * refuse private addresses, as outboundFetch does.
    */
   locationFetch?: (req: Request) => Promise<Response>
+  /** The deployment's public assets bucket; absent when it has none (avatar routes answer 503). */
+  publicAssets?: PublicAssets
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
   /**

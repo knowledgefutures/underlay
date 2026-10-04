@@ -23,7 +23,7 @@ import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
 import { isBulk, QueueJobs, runJob } from './jobs.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
-import type { JobMessage, Ports } from './ports.js'
+import type { JobMessage, Ports, PublicAssets } from './ports.js'
 import { createStores } from './stores.js'
 
 export interface Env {
@@ -61,6 +61,18 @@ export interface Env {
   AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
+  /**
+   * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
+   * Reached through the PUBLIC_ASSETS binding when there is one, otherwise
+   * ASSETS_BUCKET through the S3 API at R2_ENDPOINT, with ASSETS_ACCESS_KEY_ID
+   * and ASSETS_SECRET_ACCESS_KEY, or the R2_* keys when their token covers that
+   * bucket too. Without ASSETS_BASE_URL and one of the two, avatar uploads answer 503.
+   */
+  ASSETS_BASE_URL?: string
+  PUBLIC_ASSETS?: R2BucketLike
+  ASSETS_BUCKET?: string
+  ASSETS_ACCESS_KEY_ID?: string
+  ASSETS_SECRET_ACCESS_KEY?: string
 }
 
 /** Interactive jobs one invocation runs at once. */
@@ -82,9 +94,27 @@ const primaryDb = (env: Env) => {
   return db
 }
 
+function publicAssets(env: Env): PublicAssets | undefined {
+  if (!env.ASSETS_BASE_URL) return undefined
+  const baseUrl = env.ASSETS_BASE_URL.replace(/\/+$/, '')
+  if (env.PUBLIC_ASSETS) return { store: r2Store(env.PUBLIC_ASSETS), baseUrl }
+  const accessKeyId = env.ASSETS_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID
+  const secretAccessKey = env.ASSETS_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY
+  if (!env.ASSETS_BUCKET || !accessKeyId || !secretAccessKey) return undefined
+  const store = s3Store({
+    endpoint: env.R2_ENDPOINT,
+    bucket: env.ASSETS_BUCKET,
+    accessKeyId,
+    secretAccessKey,
+    region: 'auto',
+  })
+  return { store, baseUrl }
+}
+
 function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
   const db = req ? openD1(d1For(env, req)) : primaryDb(env)
   const cache = new CfCache(caches as never, env.DEPLOYMENT, (p) => ctx.waitUntil(p))
+  const assets = publicAssets(env)
   const s3 = s3Store({
     endpoint: env.R2_ENDPOINT,
     bucket: env.R2_BUCKET,
@@ -122,6 +152,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
     ...(env.RL_ANON && env.RL_USER
       ? { rateLimit: bindingRateLimiter({ anon: env.RL_ANON, user: env.RL_USER }) }
       : {}),
+    ...(assets ? { publicAssets: assets } : {}),
   }
 }
 

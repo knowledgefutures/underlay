@@ -11,6 +11,9 @@
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
  *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
  *   LOCATION_KEY      32 bytes (base64url) that encrypt customer storage credentials
+ *   S3_PUBLIC_BUCKET, ASSETS_BASE_URL     world-readable bucket for org logos (same S3
+ *                     endpoint and keys as S3_BUCKET, as in v1) and its public URL;
+ *                     without them avatar uploads answer 503
  *   SESSION_SECRET, OIDC_ISSUER_URL, OIDC_ISSUER_INTERNAL_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET
  *   OIDC_ACCOUNT_URL                      the KF account site, linked from the user menu
  *                     better-auth and KF Auth (same names as v1's .env files)
@@ -41,7 +44,7 @@ import { openNodeDb } from '../db/node.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import { memoryRateLimiter } from '../lib/limits.js'
 import { requestInit } from '../locations/locations.js'
-import type { Ports, PresigningStore } from '../ports.js'
+import type { Ports, PresigningStore, PublicAssets } from '../ports.js'
 import { createStores } from '../stores.js'
 import { guardedFetch } from './guarded-fetch.js'
 
@@ -68,6 +71,20 @@ if (env.S3_ENDPOINT) {
   })
   fsBlobs = local
   blobs = local
+}
+
+let publicAssets: PublicAssets | undefined
+if (env.S3_ENDPOINT && env.S3_PUBLIC_BUCKET && env.ASSETS_BASE_URL) {
+  publicAssets = {
+    store: s3Store({
+      endpoint: env.S3_ENDPOINT,
+      bucket: env.S3_PUBLIC_BUCKET,
+      accessKeyId: env.S3_ACCESS_KEY ?? '',
+      secretAccessKey: env.S3_SECRET_KEY ?? '',
+      region: env.S3_REGION ?? 'auto',
+    }),
+    baseUrl: env.ASSETS_BASE_URL.replace(/\/+$/, ''),
+  }
 }
 
 let signingKey = env.SIGNING_KEY
@@ -102,6 +119,7 @@ const ports: Ports = {
   // Customer storage endpoints are user-supplied URLs too.
   locationFetch: async (req) => guardedFetch(req.url, await requestInit(req)),
   ...(env.LOCATION_KEY ? { locationKey: env.LOCATION_KEY } : {}),
+  ...(publicAssets ? { publicAssets } : {}),
   waitUntil: (p) => {
     p.catch((err) => console.error('[waitUntil]', err))
   },
