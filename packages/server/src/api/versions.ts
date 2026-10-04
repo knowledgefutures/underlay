@@ -18,7 +18,6 @@ import {
   type DiffEntry,
   diffTrees,
   fileTree,
-  getEntry,
   gzip,
   iterate,
   leaves,
@@ -28,11 +27,11 @@ import {
   referenceCounts,
   RepoSource,
 } from '@underlay/protocol'
-import { desc, eq, inArray } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
-import { chunks } from '../db/chunks.js'
+import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
 import {
@@ -269,13 +268,16 @@ export function versionRoutes() {
       hash: string | null
     }[] = []
     let last: string | null = null
+    // Consecutive versions share most of the path to the record: a node seen
+    // before gives the same answer, so a lookup stops at the first shared node.
+    const memo = new Map<string, RecordEntry | null>()
     for (const v of versions) {
       const view = await loadView(repo, v, access.isMember, withheld)
       const t = view.types.find((x) => x.slug === type)
       let hash: string | null = null
       for (const tree of [t?.public, t?.private]) {
         if (!tree?.root) continue
-        const hit = await getEntry(source, tree.root, id)
+        const hit = await lookupShared(source, tree.root, id, memo)
         if (hit) hash = hit.hash
       }
       if (hash === last) continue
@@ -389,10 +391,18 @@ export function versionRoutes() {
     if (access instanceof Response) return access
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
-    const limit = clamp(c.req.query('limit'), 10_000, 100_000)
+    // Pages and the file list are bounded for a 128 MB isolate: tens of MB of JSON otherwise.
+    const limit = clamp(c.req.query('limit'), 10_000, MANIFEST_MAX)
     const cursor = decodeCursor(c.req.query('cursor'), undefined)
     const schemas = Object.fromEntries(view.types.map((t) => [t.slug, t.schemaHash]))
     const since = c.req.query('since')
+    const fileList = async () => {
+      if (cursor) return {}
+      const files = await visibleFiles(view, MANIFEST_MAX + 1)
+      return files.length > MANIFEST_MAX
+        ? { files: files.slice(0, MANIFEST_MAX), filesTruncated: true }
+        : { files }
+    }
 
     if (since) {
       const from = await findVersion(c.var.ports.db, access.collection.id, since, null)
@@ -426,8 +436,9 @@ export function versionRoutes() {
         since: from.semver,
         schemas,
         delta,
-        // The whole file list rides on the first page only, as for a full manifest.
-        files: cursor ? [] : await visibleFiles(view, 100_000),
+        // The file list rides on the first page only, as for a full manifest.
+        files: [],
+        ...(await fileList()),
         pagination: { limit, hasMore: next !== null, nextCursor: next },
       })
     }
@@ -454,7 +465,8 @@ export function versionRoutes() {
       hash: view.version.hash,
       schemas,
       records,
-      files: cursor ? [] : await visibleFiles(view, 100_000),
+      files: [],
+      ...(await fileList()),
       pagination: { limit, hasMore: next !== null, nextCursor: next },
     })
   })
@@ -506,7 +518,9 @@ export function versionRoutes() {
       !fromView ||
       JSON.stringify(fromView.types.map((t) => [t.slug, t.schemaHash])) !==
         JSON.stringify(view.types.map((t) => [t.slug, t.schemaHash]))
-    const fileDelta = fromView ? await fileCounts(fromView, view) : { added: 0, removed: 0 }
+    // File counts re-diff both file trees: on the first page only, not every page.
+    const fileDelta =
+      fromView && !cursor ? await fileCounts(fromView, view) : { added: 0, removed: 0 }
     return c.json({
       from: from?.semver ?? null,
       to: view.version.semver,
@@ -531,16 +545,25 @@ export function versionRoutes() {
     if (view instanceof Response) return view
     const hashes = await visibleFiles(view, 10_000)
     const rows = []
-    for (const part of chunks(hashes)) {
-      rows.push(...(await c.var.ports.db.select().from(schema.files).where(inHashes(part))))
+    for (const part of chunks(hashes, JSON_CHUNK)) {
+      rows.push(
+        ...(await c.var.ports.db
+          .select()
+          .from(schema.files)
+          .where(inJson(schema.files.hash, part))),
+      )
     }
     const byHash = new Map(rows.map((r) => [r.hash, r]))
     // Which records reference a file isn't indexed in v2 (it would take a scan of
     // every body); how many do is, in each set's count tree. A caller who reads
     // only the public set sees only public references, as in v1.
-    const counts = await referenceCounts(view.repo, view.version.publicRefsRoot)
-    if (view.private) {
-      for (const [h, n] of await referenceCounts(view.repo, view.version.privateRefsRoot))
+    // Only the listed hashes' range of each count tree, not the whole tree.
+    const range = hashes.length ? { from: hashes[0]!, through: hashes.at(-1)! } : undefined
+    const counts = range
+      ? await referenceCounts(view.repo, view.version.publicRefsRoot, range)
+      : new Map<string, number>()
+    if (view.private && range) {
+      for (const [h, n] of await referenceCounts(view.repo, view.version.privateRefsRoot, range))
         counts.set(h, (counts.get(h) ?? 0) + n)
     }
     return c.json(
@@ -558,7 +581,40 @@ export function versionRoutes() {
   return app
 }
 
-const inHashes = (hashes: string[]) => inArray(schema.files.hash, hashes)
+/** Most manifest records per page, and files in its list (underlay.org's caps; spec 11.3). */
+const MANIFEST_MAX = 25_000
+
+/**
+ * A key's entry in a record tree, remembering the answer for every node on the
+ * path: a later lookup that reaches a node already seen (an unchanged subtree)
+ * stops there.
+ */
+async function lookupShared(
+  source: RepoSource<RecordEntry>,
+  root: string,
+  key: string,
+  memo: Map<string, RecordEntry | null>,
+): Promise<RecordEntry | null> {
+  const path: string[] = []
+  let at: string | null = root
+  let found: RecordEntry | null = null
+  while (at !== null) {
+    const known = memo.get(at)
+    if (known !== undefined) {
+      found = known
+      break
+    }
+    path.push(at)
+    const node = await source.node(at)
+    if (node.kind === 'leaf') {
+      found = (node.entries as RecordEntry[]).find((e) => e.key === key) ?? null
+      break
+    }
+    at = node.children.find((ch) => compareUtf8(key, ch.lastKey) <= 0)?.hash ?? null
+  }
+  for (const h of path) memo.set(h, found)
+  return found
+}
 
 /** Versions a record history looks back over. */
 const MAX_HISTORY = 500

@@ -2,6 +2,7 @@ import { getEntry, hashRecord, recordTree, RepoSource } from '@underlay/protocol
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import { commitConfig } from '../src/api/push.js'
 import * as schema from '../src/db/schema.js'
 import { limits } from '../src/push/session.js'
 import { cleanup, type Harness, harness } from './harness.js'
@@ -106,6 +107,31 @@ describe('delta push', () => {
       duplex: 'half',
     } as RequestInit)
     expect(tooBig.status).toBe(413)
+  })
+
+  it('commits a small push that changes a large type’s schema as a job', async () => {
+    const { h, user, base } = await setup()
+    const push = async (open: object, records: object[]) => {
+      const sid = (
+        await json(await h.request(`${base}/push`, { method: 'POST', user, json: open }))
+      ).session_id
+      await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: records })
+      return h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    }
+    const names = ['a', 'b', 'c', 'd', 'e'].map((n) => rec(n, { name: n }))
+    expect((await push({ schemas: { Author } }, names)).status).toBe(201)
+    commitConfig.asyncAbove = 3
+    try {
+      // One record, the same schema: in the request.
+      expect((await push({}, [rec('f', { name: 'f' })])).status).toBe(201)
+      // One record, but the schema changes for a type of six: a job.
+      const looser = { ...Author, required: [] }
+      const res = await push({ schemas: { Author: looser } }, [rec('g', { name: 'g' })])
+      expect(res.status).toBe(202)
+      await h.drain()
+    } finally {
+      commitConfig.asyncAbove = 100_000
+    }
   })
 
   it('caps the sessions one user has in progress', async () => {

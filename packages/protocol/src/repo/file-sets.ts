@@ -172,11 +172,17 @@ export async function declaredFiles(repo: Repo, refsRoot: string | null): Promis
 export async function referenceCounts(
   repo: Repo,
   refsRoot: string | null,
+  /** Only files `from` … `through` (inclusive): O(that range), not the whole tree. */
+  range?: { from: string; through: string },
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>()
-  for await (const e of iterate(new RepoSource(countTree, repo), refsRoot, { after: REF })) {
+  // A key just before REF + from: the same with its last character dropped.
+  const after = range ? REF + range.from.slice(0, -1) : REF
+  for await (const e of iterate(new RepoSource(countTree, repo), refsRoot, { after })) {
     if (!e.key.startsWith(REF)) break
-    out.set(e.key.slice(REF.length), e.n)
+    const hash = e.key.slice(REF.length)
+    if (range && hash > range.through) break
+    if (!range || hash >= range.from) out.set(hash, e.n)
   }
   return out
 }

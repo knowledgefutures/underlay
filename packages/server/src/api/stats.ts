@@ -103,18 +103,13 @@ async function collectionFigures(c: Context<AppEnv>, orgId?: string) {
           coalesce(v.public_record_count, 0) AS publicRecords,
           coalesce(v.file_count, 0) AS files,
           coalesce(v.total_bytes, 0) AS latestBytes,
-          coalesce(h.versions, 0) AS versions,
-          coalesce(h.bytes, 0) AS historyBytes,
+          c.version_count AS versions,
+          c.history_bytes AS historyBytes,
           c.ref_events AS refEvents, c.ref_bytes AS refBytes,
-          h.lastPushAt, c.reconciled_at AS reconciledAt,
+          c.last_push_at AS lastPushAt, c.reconciled_at AS reconciledAt,
           coalesce(json_array_length(c.reconcile_report), 0) AS corrections
         FROM collections c
         LEFT JOIN versions v ON v.id = c.head_version_id
-        LEFT JOIN (
-          SELECT collection_id, count(*) AS versions, sum(total_bytes) AS bytes,
-            max(created_at) AS lastPushAt
-          FROM versions GROUP BY collection_id
-        ) h ON h.collection_id = c.id
         WHERE c.deleted_at IS NULL ${orgId ? sql`AND c.organization_id = ${orgId}` : sql``}`,
   )
   return found.map((r): CollectionFigures => ({
@@ -169,8 +164,10 @@ async function orgFigures(c: Context<AppEnv>) {
     collectionFigures(c),
   ])
   const memberCount = new Map(members.map((m) => [m.orgId, n(m.n)]))
+  const byOrg = new Map<string, CollectionFigures[]>()
+  for (const col of cols) byOrg.set(col.orgId, [...(byOrg.get(col.orgId) ?? []), col])
   const perOrg = orgs.map((o) => {
-    const mine = cols.filter((col) => col.orgId === o.id)
+    const mine = byOrg.get(o.id) ?? []
     return {
       id: o.id,
       slug: o.slug,
@@ -371,7 +368,8 @@ export function statsRoutes() {
     end.setUTCMonth(end.getUTCMonth() + 1)
     const [{ orgs, cols }, usage, tombstones, reconcile] = await Promise.all([
       orgFigures(c),
-      usageBy(c, 'account_id', sql`day LIKE ${`${month}-%`}`),
+      // A range, not LIKE: it can use the rollups' day index.
+      usageBy(c, 'account_id', sql`day >= ${`${month}-01`} AND day < ${isoDay(end.getTime())}`),
       rows<Record<string, unknown>>(
         c,
         sql`SELECT t.slug, o.slug AS owner, t.versions, t.total_bytes AS totalBytes,

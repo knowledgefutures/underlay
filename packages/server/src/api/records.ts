@@ -231,14 +231,20 @@ export function recordRoutes() {
       const col = cols.get(e[2])
       return !!col && (orgs.has(col.c.organizationId) || (col.c.public && e[3] === 'public'))
     })
-    let first: { e: (typeof adds)[number]; v: typeof schema.versions.$inferSelect } | null = null
-    for (const e of visible) {
-      const [v] = await db
-        .select()
-        .from(schema.versions)
-        .where(and(eq(schema.versions.collectionId, e[2]), eq(schema.versions.seq, e[4])))
-      if (v && (!first || v.createdAt < first.v.createdAt)) first = { e, v }
-    }
+    // The earliest of the versions the visible additions name, in one query.
+    if (visible.length === 0) return jsonError(c, 404, 'Not found')
+    const pairs = JSON.stringify(visible.map((e) => [e[2], e[4]]))
+    const [earliest] = (await db.all(sql`
+      SELECT v.id AS id FROM ${schema.versions} v
+      JOIN json_each(${pairs}) p
+        ON v.collection_id = json_extract(p.value, '$[0]') AND v.seq = json_extract(p.value, '$[1]')
+      ORDER BY v.created_at, v.seq LIMIT 1
+    `)) as { id: string }[]
+    const [v] = earliest
+      ? await db.select().from(schema.versions).where(eq(schema.versions.id, earliest.id))
+      : []
+    const e = v && visible.find((x) => x[2] === v.collectionId && x[4] === v.seq)
+    const first = v && e ? { e, v } : null
     if (!first) return jsonError(c, 404, 'Not found')
     const col = cols.get(first.e[2])!
     return c.json({

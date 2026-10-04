@@ -11,19 +11,20 @@ import {
   RepoSource,
   type TreeSummary,
 } from '@underlay/protocol'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
+import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 
-/** File sizes for hashes, from the files table (chunked for D1's bound-parameter limit). */
+/** File sizes for hashes, from the files table: a query per JSON_CHUNK hashes. */
 export async function fileSizes(db: Db, hashes: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>()
-  for (let i = 0; i < hashes.length; i += 90) {
+  for (const part of chunks(hashes, JSON_CHUNK)) {
     const rows = await db
       .select({ hash: schema.files.hash, size: schema.files.size })
       .from(schema.files)
-      .where(inArray(schema.files.hash, hashes.slice(i, i + 90)))
+      .where(inJson(schema.files.hash, part))
     for (const r of rows) out.set(r.hash, r.size)
   }
   return out
@@ -64,14 +65,14 @@ export async function collectionFileSizes(
     if (size === undefined) rest.push(h)
     else out.set(h, size)
   }
-  for (let i = 0; i < rest.length; i += 90) {
+  for (const part of chunks(rest, JSON_CHUNK)) {
     const rows = await db
       .select({ hash: schema.files.hash, size: schema.files.size })
       .from(schema.files)
       .innerJoin(schema.fileUploads, eq(schema.fileUploads.hash, schema.files.hash))
       .where(
         and(
-          inArray(schema.files.hash, rest.slice(i, i + 90)),
+          inJson(schema.files.hash, part),
           eq(schema.fileUploads.collectionId, collection.id),
           eq(schema.fileUploads.status, 'verified'),
         ),

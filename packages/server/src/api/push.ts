@@ -9,12 +9,22 @@
  *   GET    /:owner/:slug/push/:sid                 status (and result after an async commit)
  *   DELETE /:owner/:slug/push/:sid                 abandon
  */
-import { checkSchema, fileTree, getEntry, parseSemver, RepoSource } from '@underlay/protocol'
+import {
+  checkSchema,
+  fileTree,
+  getEntry,
+  hashSchema,
+  parseSemver,
+  RepoSource,
+} from '@underlay/protocol'
+import { and, eq, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import * as schema from '../db/schema.js'
 import { SMALL_UPLOAD_BYTES } from '../files/files.js'
 import { registerJob } from '../jobs.js'
+import type { Ports } from '../ports.js'
 import {
   headBase,
   ingestDeletes,
@@ -27,6 +37,7 @@ import {
   createSession,
   getSession,
   limits,
+  loadInputs,
   SESSION_TTL_MS,
   type SessionInputs,
   type SessionRow,
@@ -36,8 +47,11 @@ import { type CollectionAccess, jsonError, requireCollection } from './access.js
 import { BodyTooLarge, readJson, readLines, readText } from './body.js'
 
 const MAX_OPEN_BYTES = 8 * 1024 * 1024
-/** Commits above this many uploaded records run as a job even without ?async. */
-const ASYNC_ABOVE = 100_000
+/**
+ * Commits run as a job even without ?async above this many uploaded records,
+ * or base records whose type's schema changes (they're all revalidated).
+ */
+export const commitConfig = { asyncAbove: 100_000 }
 
 /**
  * This node's push limits, advertised when a session opens (docs/protocol-v2.md,
@@ -122,7 +136,8 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
   const wantsAsync =
     ['true', '1'].includes(c.req.query('async') ?? '') ||
     body.async === true ||
-    session.recordsReceived > ASYNC_ABOVE
+    session.recordsReceived > commitConfig.asyncAbove ||
+    (await revalidates(ports, session)) > commitConfig.asyncAbove
   if (
     !(await transition(ports, session.id, 'open', 'committing', { finalizeStartedAt: new Date() }))
   ) {
@@ -143,6 +158,37 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
   }
   const outcome = await finalizeSession(ports, session.id)
   return c.json(outcome.body, outcome.status)
+}
+
+/**
+ * Records of the base the commit has to revalidate: those of every type whose
+ * schema the session changes. A small push that changes a large type's schema
+ * is O(type size), so it goes to the async path too.
+ */
+async function revalidates(ports: Ports, session: SessionRow): Promise<number> {
+  if (!session.baseVersionId) return 0
+  const [base] = await ports.db
+    .select({ typeCounts: schema.versions.typeCounts })
+    .from(schema.versions)
+    .where(eq(schema.versions.id, session.baseVersionId))
+  if (!base) return 0
+  const open = await ports.db
+    .select({ slug: schema.schemaUsage.typeSlug, hash: schema.schemaUsage.schemaHash })
+    .from(schema.schemaUsage)
+    .where(
+      and(
+        eq(schema.schemaUsage.collectionId, session.collectionId),
+        isNull(schema.schemaUsage.toSeq),
+      ),
+    )
+  const was = new Map(open.map((u) => [u.slug, u.hash]))
+  const inputs = await loadInputs(ports, session.id)
+  let n = 0
+  for (const [slug, body] of Object.entries(inputs.schemas)) {
+    const before = was.get(slug)
+    if (before && before !== hashSchema(body)) n += base.typeCounts[slug] ?? 0
+  }
+  return n
 }
 
 function statusBody(s: SessionRow) {

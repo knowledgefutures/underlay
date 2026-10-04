@@ -293,13 +293,35 @@ async function collectionStage(ports: Ports, c: CollectionRow, s: State): Promis
   const diffs: Diff[] = []
   const set: Partial<typeof schema.collections.$inferInsert> = {}
 
-  // Reference-log counters: the sum over indexed versions.
+  // Reference-log counters: the sum over indexed versions. History totals: over all.
   const [sums] = (await db.all(sql`
-    SELECT coalesce(sum(ref_events), 0) AS events, coalesce(sum(ref_bytes), 0) AS bytes
-    FROM ${schema.versions} WHERE collection_id = ${c.id} AND refs_indexed = 1
-  `)) as { events: number; bytes: number }[]
+    SELECT coalesce(sum(CASE WHEN refs_indexed = 1 THEN ref_events END), 0) AS events,
+      coalesce(sum(CASE WHEN refs_indexed = 1 THEN ref_bytes END), 0) AS bytes,
+      count(*) AS versions, coalesce(sum(total_bytes), 0) AS historyBytes,
+      max(created_at) AS lastPushAt
+    FROM ${schema.versions} WHERE collection_id = ${c.id}
+  `)) as {
+    events: number
+    bytes: number
+    versions: number
+    historyBytes: number
+    lastPushAt: number | null
+  }[]
   const refEvents = Number(sums?.events ?? 0)
   const refBytes = Number(sums?.bytes ?? 0)
+  const history = {
+    versionCount: Number(sums?.versions ?? 0),
+    historyBytes: Number(sums?.historyBytes ?? 0),
+    lastPushAt: sums?.lastPushAt == null ? null : Number(sums.lastPushAt),
+  }
+  for (const [field, now] of Object.entries(history)) {
+    const was =
+      field === 'lastPushAt' ? (c.lastPushAt?.getTime() ?? null) : c[field as 'versionCount']
+    if (was !== now) {
+      diffs.push({ field, was, now })
+      Object.assign(set, { [field]: field === 'lastPushAt' && now !== null ? new Date(now) : now })
+    }
+  }
   if (c.refEvents !== refEvents) {
     diffs.push({ field: 'refEvents', was: c.refEvents, now: refEvents })
     set.refEvents = refEvents

@@ -249,9 +249,16 @@ export const collections = sqliteTable(
     /** Cumulative public file tree over every published version (file access checks). */
     publicFilesRoot: text('public_files_root'),
     summary: json<CollectionSummary>('summary'),
-    /** Billing counters for the reference log (decision 18); rebuildable from version diffs. */
+    /** Billing counters for the reference log (decision 21); rebuildable from version diffs. */
     refEvents: integer('ref_events').notNull().default(0),
     refBytes: integer('ref_bytes').notNull().default(0),
+    /**
+     * History totals, kept in the publish batch so steward stats read one row a
+     * collection instead of every version; reconcile checks them.
+     */
+    versionCount: integer('version_count').notNull().default(0),
+    historyBytes: integer('history_bytes').notNull().default(0),
+    lastPushAt: ts('last_push_at'),
     /** Reconcile (billing/reconcile.ts): started, finished, and what it corrected. */
     reconcileStartedAt: ts('reconcile_started_at'),
     reconciledAt: ts('reconciled_at'),

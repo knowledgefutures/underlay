@@ -152,6 +152,9 @@ export async function publishVersion(
         updatedAt: new Date(now),
         publicFilesRoot: p.collectionUpdate.publicFilesRoot,
         summary: p.collectionUpdate.summary,
+        versionCount: sql`${schema.collections.versionCount} + 1`,
+        historyBytes: sql`${schema.collections.historyBytes} + ${v.totalBytes}`,
+        lastPushAt: sql`max(coalesce(${schema.collections.lastPushAt}, 0), ${createdAt})`,
       })
       .where(and(headIsBase, versionExists)),
     ...p.schemaHashes.map((h) =>

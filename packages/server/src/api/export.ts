@@ -17,10 +17,10 @@
  * files are listed as withheld instead of sent.
  */
 import { fileTree, iterate, RepoSource, type TarEntry, tarStream } from '@underlay/protocol'
-import { inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
@@ -74,12 +74,9 @@ export function exportRoutes() {
     for (const h of withheldFiles) fileHashes.delete(h)
     const rows: (typeof schema.files.$inferSelect)[] = []
     const list = [...fileHashes.keys()]
-    for (let i = 0; i < list.length; i += 90) {
+    for (const part of chunks(list, JSON_CHUNK)) {
       rows.push(
-        ...(await ports.db
-          .select()
-          .from(schema.files)
-          .where(inArray(schema.files.hash, list.slice(i, i + 90)))),
+        ...(await ports.db.select().from(schema.files).where(inJson(schema.files.hash, part))),
       )
     }
     const stored = new Map(rows.map((r) => [r.hash, r]))

@@ -445,7 +445,7 @@ GET <collection>/files/<fileHash>                                 HEAD too
 "private"?}], "pagination": {"limit", "hasMore", "nextCursor"}}`.
   - Records come in (type, id) key order (section 7). `"private": true` marks a record of the
     private set; a caller who can't read the private set gets the public set only.
-  - Pages are at most `limit` records (underlay.org: default 10,000, at most 100,000). While
+  - Pages are at most `limit` records (underlay.org: default 10,000, at most 25,000). While
     `hasMore` is true, the client asks again with `cursor` set to `nextCursor`, which is opaque.
   - The manifest is what a client that keeps no copy of a collection diffs against before a push
     (section 11.4).
