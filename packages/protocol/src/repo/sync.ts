@@ -21,15 +21,18 @@ import {
   mergeTree,
   type MergeStats,
   newNodes,
+  NodeFormatError,
   type NodeSource,
   privateCommitment,
   type PrivateSetObject,
+  recordCanonical,
   type RecordEntry,
   recordTree,
   type SetObject,
   sha256Hex,
   type TreeSpec,
   type TreeSummary,
+  utf8ByteLength,
   type VersionRoot,
   versionDigest,
   versionHash,
@@ -268,11 +271,14 @@ export async function receiveVersion(
   const put = (key: string, bytes: Uint8Array, contentType: string) =>
     repo.blobs.put(key, bytes, { contentType, ifAbsent: true })
 
+  // The type of each received leaf's records, checked against its tree's type below.
+  const leafTypes = new Map<string, string>()
   for await (const { key, bytes } of objects) {
     count++
     total += bytes.byteLength
     try {
-      rootBytes = (await receiveObject(repo, key, bytes, opts.target, digest)) ?? rootBytes
+      rootBytes =
+        (await receiveObject(repo, key, bytes, opts.target, digest, leafTypes)) ?? rootBytes
     } catch (err) {
       if (err instanceof IntegrityError) throw err
       // Undecodable gzip or JSON is a bad object too.
@@ -288,7 +294,10 @@ export async function receiveVersion(
   for (const p of pairs) {
     for (const [slug, t] of Object.entries(p.set.types)) {
       await repo.schema(t.schema)
-      const s = await checkTree(repo, recordTree, baseTreeOf(p, slug), t, `${p.name} ${slug}`)
+      const s = await checkTree(repo, recordTree, baseTreeOf(p, slug), t, `${p.name} ${slug}`, {
+        slug,
+        leafTypes,
+      })
       changes.added += s.added
       changes.removed += s.removed
       changes.updated += s.updated
@@ -307,6 +316,7 @@ async function receiveObject(
   bytes: Uint8Array,
   target: string,
   digest: string,
+  leafTypes: Map<string, string>,
 ): Promise<Uint8Array | null> {
   const put = (k: string, b: Uint8Array, contentType: string) =>
     repo.blobs.put(k, b, { contentType, ifAbsent: true })
@@ -321,9 +331,12 @@ async function receiveObject(
     await put(key, bytes, 'application/gzip')
   } else if ((m = KEY.body.exec(key))) {
     // The leaf comes before its body, and its out-of-line records before it.
-    const leaf = await repo.decoded(recordTree, m[1]!).catch(() => null)
+    const leaf = await repo.decoded(recordTree, m[1]!).catch((err: Error) => {
+      if (err instanceof NodeFormatError) throw new IntegrityError(`${key}: ${err.message}`)
+      return null
+    })
     if (leaf?.kind !== 'leaf') throw new IntegrityError(`${key} arrived without its leaf`)
-    await checkBody(repo, key, bytes, leaf.entries)
+    leafTypes.set(m[1]!, await checkBody(repo, key, bytes, leaf.entries))
     await put(key, bytes, 'application/gzip')
   } else if ((m = KEY.schema.exec(key))) {
     if (hashSchema(canonical(key, bytes)) !== m[1])
@@ -345,15 +358,19 @@ async function receiveObject(
   return null
 }
 
-/** A body's lines, out-of-line records resolved, must hash to the leaf's entries. */
+/**
+ * A body's lines, out-of-line records resolved, must be the records the leaf's
+ * entries name (docs/protocol-v2.md §8.3). Returns the records' type.
+ */
 async function checkBody(
   repo: Repo,
   key: string,
   bytes: Uint8Array,
   entries: readonly RecordEntry[],
-): Promise<void> {
+): Promise<string> {
   const lines = splitLines(await gunzipText(bytes))
   if (lines.length !== entries.length) throw new IntegrityError(`${key}: wrong line count`)
+  let type: string | null = null
   for (let i = 0; i < lines.length; i++) {
     const ref = outOfLineHash(lines[i]!)
     let line = lines[i]!
@@ -362,9 +379,37 @@ async function checkBody(
       if (!rec) throw new IntegrityError(`${key}: out-of-line record ${ref} is missing`)
       line = await gunzipText(await rec.bytes())
     }
-    if (sha256Hex(line) !== entries[i]!.hash)
-      throw new IntegrityError(`${key}: line ${i} fails its hash`)
+    const t = checkRecordLine(`${key}: line ${i}`, line, entries[i]!)
+    if (type !== null && t !== type)
+      throw new IntegrityError(`${key}: holds records of more than one type`)
+    type = t
   }
+  if (type === null) throw new IntegrityError(`${key}: an empty leaf`)
+  return type
+}
+
+/**
+ * One record line against its leaf entry: it hashes to the entry's hash, its
+ * byte length is the entry's size, and it is the canonical record (section 4)
+ * with the entry's key as its id. Returns the record's type.
+ */
+function checkRecordLine(what: string, line: string, entry: RecordEntry): string {
+  if (sha256Hex(line) !== entry.hash) throw new IntegrityError(`${what} fails its hash`)
+  if (utf8ByteLength(line) !== entry.size)
+    throw new IntegrityError(`${what}: its size isn't the entry's (${entry.size})`)
+  let r: { id?: unknown; type?: unknown; data?: unknown }
+  try {
+    r = JSON.parse(line) as typeof r
+  } catch {
+    throw new IntegrityError(`${what} is not a canonical record`)
+  }
+  if (typeof r.id !== 'string' || typeof r.type !== 'string')
+    throw new IntegrityError(`${what} is not a canonical record`)
+  if (r.id !== entry.key)
+    throw new IntegrityError(`${what}: its id isn't the entry's key ${JSON.stringify(entry.key)}`)
+  if (recordCanonical(r.id, r.type, r.data) !== line)
+    throw new IntegrityError(`${what} is not a canonical record`)
+  return r.type
 }
 
 /**
@@ -378,14 +423,24 @@ async function checkTree<E>(
   baseRoot: string | null,
   want: TreeSummary,
   what: string,
+  records?: { slug: string; leafTypes: Map<string, string> },
 ): Promise<MergeStats> {
   const source = nodesOnly(repo, spec)
   try {
-    if (spec === (recordTree as TreeSpec<unknown>)) {
+    if (records) {
       for await (const n of newNodes(source, baseRoot, want.root)) {
-        if (n.level === 0 && !(await repo.blobs.head(keys.body(n.hash)))) {
-          throw new IntegrityError(`${what}: leaf ${n.hash} has no body`)
+        if (n.level !== 0) continue
+        const body = await repo.blobs.get(keys.body(n.hash))
+        if (!body) throw new IntegrityError(`${what}: leaf ${n.hash} has no body`)
+        // A leaf already held here (not in this pack) is checked from its stored body.
+        let type = records.leafTypes.get(n.hash)
+        if (type === undefined) {
+          const leaf = await repo.decoded(recordTree, n.hash)
+          if (leaf.kind !== 'leaf') throw new IntegrityError(`${what}: ${n.hash} is not a leaf`)
+          type = await checkBody(repo, keys.body(n.hash), await body.bytes(), leaf.entries)
         }
+        if (type !== records.slug)
+          throw new IntegrityError(`${what}: leaf ${n.hash} holds records of type ${type}`)
       }
     }
     const changes = (async function* (): AsyncGenerator<Change<E>> {

@@ -272,6 +272,85 @@ describe('tree sync', () => {
       ))
   })
 
+  describe("refuses leaf entries that don't match their records", () => {
+    // A hostile sender builds a canonical tree from entries that lie about their
+    // records: every node and body line still hashes to what points at it.
+    // Every object in the sender's store, in pack order, packed by hand: the
+    // library itself won't pack a node it can't decode.
+    const rawPack = (repo: Repo): PackObject[] => {
+      const order = ['schemas/', 'nodes/', 'records/', 'bodies/', 'private/', 'roots/']
+      return [...(repo.blobs as ReturnType<typeof memoryStore>).objects.entries()]
+        .map(([key, o]) => ({ key, bytes: o.bytes }))
+        .sort(
+          (a, b) =>
+            order.findIndex((p) => a.key.startsWith(p)) -
+            order.findIndex((p) => b.key.startsWith(p)),
+        )
+    }
+    const hostile = async (
+      lie: (good: RecordEntry) => RecordEntry,
+      pattern: RegExp,
+      byHand = false,
+    ) => {
+      const s = sender()
+      const entries = await Promise.all(ids('a', 50).map((id, i) => record(s.repo, 'A', id, i)))
+      entries[7] = lie(entries[7]!)
+      const tree = await s.tree(entries)
+      const v = await s.version(
+        { types: { A: { schema: hashSchema(SCHEMA), ...summary(tree) } }, files: emptySet().files },
+        null,
+      )
+      const r = openRepo(memoryStore())
+      const pack = byHand ? rawPack(s.repo) : await collect(packVersion(s.repo, v))
+      const err = await receiveVersion(r, pack, { target: v }).catch((e: Error) => e)
+      expect(err).toBeInstanceOf(IntegrityError)
+      expect((err as Error).message).toMatch(pattern)
+      expect(await r.blobs.head(`roots/${v.slice(5)}.json`)).toBe(null)
+    }
+    const line = (id: string, type: string, text: string) => {
+      const size = utf8ByteLength(text)
+      return { key: id, hash: sha256Hex(text), size, body: text }
+    }
+
+    it('a size that is not the record’s', () =>
+      hostile((e) => ({ ...e, size: e.size + 5 }), /size/))
+
+    it('an id that is not the record’s', () =>
+      hostile((e) => {
+        const { canonical } = hashRecord('someone-else', 'A', { v: 7 })
+        return line(e.key, 'A', canonical)
+      }, /id/))
+
+    it('a record of another type', () =>
+      hostile((e) => line(e.key, 'B', hashRecord(e.key, 'B', { v: 7 }).canonical), /type/))
+
+    it('a record line that is not canonical', () =>
+      hostile(
+        (e) => line(e.key, 'A', hashRecord(e.key, 'A', { v: 7 }).canonical.replace(':7', ': 7')),
+        /canonical/,
+      ))
+
+    it('a key with a lone surrogate', () =>
+      hostile(
+        (e) => {
+          const id = `${e.key}\uD800`
+          return line(id, 'A', hashRecord(id, 'A', { v: 7 }).canonical)
+        },
+        /surrogate/,
+        true,
+      ))
+
+    it('a key over the id length limit', () =>
+      hostile(
+        (e) => {
+          const id = `${e.key}${'x'.repeat(1100)}`
+          return line(id, 'A', hashRecord(id, 'A', { v: 7 }).canonical)
+        },
+        /id length/,
+        true,
+      ))
+  })
+
   it('refuses a tree that hashes correctly but is not canonical', async () => {
     // Built under a different chunking: every node is well formed and hashes to
     // its key, but the protocol would never build this tree from these entries.

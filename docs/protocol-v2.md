@@ -213,7 +213,17 @@ A node received from outside (tree sync, mirrors) must also satisfy all of the f
 - keys are strictly increasing within the node and across the whole tree;
 - every interior entry's `lastKey`, `count` and `bytes` match its child;
 - every child is exactly one level below its parent;
-- `count` ≥ 1 for every child.
+- `count` ≥ 1 for every child;
+- in a record tree, every key is a valid record id (section 3): not empty, at most `MAX_ID_BYTES`
+  UTF-8 bytes, and with no lone surrogate.
+
+A received record leaf must also match its body (section 11). For each entry, its body line (an
+out-of-line pointer resolved to its record) must:
+
+- hash to the entry's record hash;
+- be exactly the entry's size in bytes;
+- be the canonical form (section 4) of a record whose `id` is the entry's key and whose `type` is
+  the type of the tree the leaf is in.
 
 A node that hashes correctly but breaks a structural rule is invalid. Accepting one would give two
 different roots for one entry set. The reference `fsck` is `verifyTree` in
@@ -357,7 +367,8 @@ gzip already. File bytes are not in packs. Reference implementation: `packVersio
   5. The root, last.
 - A pack never holds `collections/` objects; logs and `collection.json` travel separately.
 - **Receiving.** Before writing an object, the receiver checks it against its key: nodes and
-  out-of-line records by hash, bodies line by line against their leaf (which arrives first),
+  out-of-line records by hash, bodies line by line against their leaf's entries (section 8.3; the
+  leaf arrives first),
   schemas, private set objects and the root by hash and canonical JSON. Then, for every tree of
   every set received, it re-derives the tree: the entry changes from its base tree, merged into
   that base tree under section 8.1, must give exactly the received root, count and bytes, and

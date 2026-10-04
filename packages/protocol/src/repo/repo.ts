@@ -36,6 +36,7 @@ import {
   type TreeSink,
   type TreeSpec,
   checkProtocolVersion,
+  utf8ByteLength,
   type VersionRoot,
   versionDigest,
   versionHash,
@@ -207,8 +208,12 @@ export class Repo {
       if (lines.length !== leaf.entries.length)
         throw new IntegrityError(`Body of ${leaf.hash}: wrong line count`)
       lines.forEach((l, i) => {
-        if (sha256Hex(l) !== leaf.entries[i]!.hash)
+        const e = leaf.entries[i]!
+        if (sha256Hex(l) !== e.hash)
           throw new IntegrityError(`Body of ${leaf.hash}: line ${i} fails its hash`)
+        // The line must also be the record the entry names: its size and its id.
+        if (utf8ByteLength(l) !== e.size || !l.startsWith(`{"id":${JSON.stringify(e.key)},"type":`))
+          throw new IntegrityError(`Body of ${leaf.hash}: line ${i} isn't its entry's record`)
       })
     }
     const bytes = await this.#immutable(key, check)
