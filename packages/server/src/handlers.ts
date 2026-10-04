@@ -13,7 +13,14 @@
  *   maintenance.sweep   the cron's housekeeping (every 10 minutes), storage cleanup included
  *   cleanup.*           storage cleanup runs (cleanup/runs.ts)
  */
-import { type BumpType, fsck, readCollectionInfo, readHead } from '@underlay/protocol'
+import {
+  type BumpType,
+  type FsckCursor,
+  type FsckReport,
+  fsckStep,
+  readCollectionInfo,
+  readHead,
+} from '@underlay/protocol'
 import { and, asc, eq, gt } from 'drizzle-orm'
 
 import './files/files.js'
@@ -26,6 +33,7 @@ import './refs/log.js'
 import { registerJob } from './jobs.js'
 import { recheckLocations } from './locations/locations.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
+import type { Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
@@ -58,26 +66,89 @@ registerJob('maintenance.sweep', async (_job, ports) => {
 })
 
 /**
- * fsck a collection's primary repository (protocol fsck): the log under this
- * deployment's key and the keys collection.json declares, every version, tree,
- * body and file. The report goes to the internal area, fsck/<collectionId>.json.
+ * fsck a collection's primary repository (protocol fsckStep): the log under this
+ * deployment's key and the keys collection.json declares, then every version
+ * against the one before, so each job checks a bounded number of changes. The
+ * report goes to the internal area, fsck/<collectionId>.json, and grows as the
+ * job chain runs (`running` until the last step).
  */
+export const fsckConfig = { changesPerJob: 1_000_000 }
+
+interface FsckState extends FsckReport {
+  running: boolean
+  step: number
+  cursor: FsckCursor | null
+  fileBytes: boolean
+  startedAt: string
+  checkedAt: string | null
+}
+
+const fsckKey = (collectionId: string) => `fsck/${collectionId}.json`
+
+async function saveFsck(ports: Ports, collectionId: string, state: FsckState) {
+  await ports.stores.internal.put(fsckKey(collectionId), JSON.stringify(state), {
+    contentType: 'application/json',
+  })
+}
+
 registerJob('repo.fsck', async (job, ports) => {
   const collectionId = String(job.collectionId)
+  await saveFsck(ports, collectionId, {
+    ok: true,
+    errors: [],
+    moreErrors: 0,
+    versions: 0,
+    trees: 0,
+    nodes: 0,
+    leaves: 0,
+    records: 0,
+    files: 0,
+    log: 'trusted keys',
+    running: true,
+    step: 0,
+    cursor: null,
+    fileBytes: job.fileBytes === true,
+    startedAt: new Date().toISOString(),
+    checkedAt: null,
+  })
+  await ports.jobs.enqueue({ type: 'repo.fsckStep', collectionId, step: 0 })
+})
+
+registerJob('repo.fsckStep', async (job, ports) => {
+  const collectionId = String(job.collectionId)
+  const obj = await ports.stores.internal.get(fsckKey(collectionId))
+  const state = obj ? (JSON.parse(await obj.text()) as FsckState) : null
+  if (!state?.running || state.step !== Number(job.step)) return // finished, or a duplicate
   const repo = await ports.stores.forCollection(collectionId)
   const own = (await ports.signer()).publicKey
   const info = await readCollectionInfo(repo, collectionId)
-  const report = await fsck(repo, {
+  const { report, cursor } = await fsckStep(repo, {
     collectionId,
     trustedKeys: [own, ...(info?.keys ?? []).filter((k) => k.id !== own.id)],
-    fileBytes: job.fileBytes === true,
+    fileBytes: state.fileBytes,
+    cursor: state.cursor,
+    changeBudget: fsckConfig.changesPerJob,
   })
-  await ports.stores.internal.put(
-    `fsck/${collectionId}.json`,
-    JSON.stringify({ ...report, checkedAt: new Date().toISOString() }),
-    { contentType: 'application/json' },
-  )
-  if (!report.ok) console.error(`[fsck] ${collectionId}:`, report.errors.slice(0, 10))
+  const room = Math.max(0, 100 - state.errors.length)
+  const next: FsckState = {
+    ...state,
+    ok: state.ok && report.ok,
+    errors: [...state.errors, ...report.errors.slice(0, room)],
+    moreErrors: state.moreErrors + report.moreErrors + Math.max(0, report.errors.length - room),
+    versions: state.versions + report.versions,
+    trees: state.trees + report.trees,
+    nodes: state.nodes + report.nodes,
+    leaves: state.leaves + report.leaves,
+    records: state.records + report.records,
+    files: state.files + report.files,
+    step: state.step + 1,
+    cursor,
+    running: cursor !== null,
+    checkedAt: cursor ? null : new Date().toISOString(),
+  }
+  await saveFsck(ports, collectionId, next)
+  if (cursor) await ports.jobs.enqueue({ type: 'repo.fsckStep', collectionId, step: next.step })
+  else if (!next.ok) console.error(`[fsck] ${collectionId}:`, next.errors.slice(0, 10))
 })
 
 registerJob('repo.repairLog', async (job, ports) => {

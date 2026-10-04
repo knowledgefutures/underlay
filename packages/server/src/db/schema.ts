@@ -26,6 +26,36 @@ const ts = (name: string) => integer(name, { mode: 'timestamp_ms' })
 const bool = (name: string) => integer(name, { mode: 'boolean' })
 const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
+/** A schema usage row as reconcile rebuilds it. */
+export interface UsageSpan {
+  schemaHash: string
+  typeSlug: string
+  set: 'public' | 'private'
+  fromSeq: number
+  toSeq: number | null
+}
+
+/** A reconcile run's progress (collections.reconcile_state). */
+export interface ReconcileState {
+  /** Bumped by each job; a job whose step isn't current is a duplicate delivery. */
+  step: number
+  /** Every version's totals again (a steward's run), or only those never checked. */
+  full: boolean
+  stage: 'versions' | 'collection'
+  /** The last seq handled in this stage. */
+  afterSeq: number
+  /** collection stage: the write fence's epoch when it began. */
+  fence?: number
+  /** collection stage: files are rebuilt from this seq's checkpoint (0: from nothing). */
+  filesFrom?: number
+  /** collection stage: the cumulative public files tree through afterSeq. */
+  filesRoot?: string | null
+  /** collection stage: version afterSeq's own public files tree, to diff the next against. */
+  prevFiles?: string | null
+  /** collection stage: schema usage replayed through afterSeq (open rows have toSeq null). */
+  usage?: UsageSpan[]
+}
+
 /** One counter a reconcile found wrong, and the value it wrote. */
 export interface ReconcileDiff {
   field: string
@@ -226,6 +256,14 @@ export const collections = sqliteTable(
     reconcileStartedAt: ts('reconcile_started_at'),
     reconciledAt: ts('reconciled_at'),
     reconcileReport: json<ReconcileDiff[]>('reconcile_report'),
+    /** A run in progress: where its job chain is, and what it has built so far. */
+    reconcileState: json<ReconcileState>('reconcile_state'),
+    /**
+     * The last finished run's checkpoint: the head seq it reached and the public
+     * files tree it verified there. The next run rebuilds that tree from here.
+     */
+    reconciledSeq: integer('reconciled_seq').notNull().default(0),
+    reconciledFilesRoot: text('reconciled_files_root'),
     deletedAt: ts('deleted_at'),
     createdAt: createdAt(),
     updatedAt: ts('updated_at')
@@ -714,6 +752,18 @@ export const refCompactions = sqliteTable('ref_compactions', {
     .default('running'),
   createdAt: createdAt(),
 })
+
+/** Units of a version being indexed in parts (refs/log.ts): done units and their counts. */
+export const refIndexUnits = sqliteTable(
+  'ref_index_units',
+  {
+    versionId: text('version_id').notNull(),
+    unit: integer('unit').notNull(),
+    events: integer('events').notNull(),
+    bytes: integer('bytes').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.versionId, t.unit] })],
+)
 
 export const refCompactionParts = sqliteTable(
   'ref_compaction_parts',

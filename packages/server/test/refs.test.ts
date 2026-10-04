@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
-import { eventsFor, FAN_IN } from '../src/refs/log.js'
+import { eventsFor, FAN_IN, indexConfig } from '../src/refs/log.js'
 import { lookupSegment, SegmentWriter } from '../src/refs/segments.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
@@ -115,6 +115,49 @@ describe('reference log', () => {
       .from(schema.collections)
       .where(eq(schema.collections.slug, 'lib'))
     expect(col!.refEvents).toBeGreaterThan(0)
+  })
+
+  it('indexes a large version in key-range units, live together', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const c = await h.collection('lib')
+    const base = '/api/collections/org/lib'
+    const authors = (n: number, tag: string) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `a${String(i).padStart(3, '0')}`,
+        type: 'Author',
+        data: { name: `${tag}${i}` },
+        ...(i % 5 === 0 ? { private: true } : {}),
+      }))
+    indexConfig.unitEvents = 10
+    try {
+      await push(h, user, base, { schemas: { Author } }, authors(60, 'x'))
+      await push(h, user, base, { base: 'v1.0.0' }, authors(60, 'y'))
+    } finally {
+      indexConfig.unitEvents = 1_000_000
+    }
+    const versions = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, c.id))
+    expect(versions.every((v) => v.refsIndexed)).toBe(true)
+    // 60 added, then 60 updated (a removal and an addition each).
+    expect(versions.map((v) => v.refEvents).sort()).toEqual([120, 60])
+    const runs = await h.ports.db.select().from(schema.refSegments)
+    expect(new Set(runs.map((r) => r.runId)).size).toBeGreaterThan(2)
+    expect(runs.every((r) => r.state === 'live')).toBe(true)
+    expect(await h.ports.db.select().from(schema.refIndexUnits)).toEqual([])
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, c.id))
+    expect(row!.refEvents).toBe(180)
+    // Every record's history comes out as it would from one run.
+    for (const i of [0, 1, 37, 59]) {
+      const id = `a${String(i).padStart(3, '0')}`
+      const events = await eventsFor(h.ports, h_(id, { name: `x${i}` }))
+      expect(events.map((e) => `${e[4]}${e[5]}`)).toEqual(['1+', '2-'])
+    }
   })
 
   it('compacts runs without changing answers', async () => {

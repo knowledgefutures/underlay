@@ -211,7 +211,12 @@ export function adminRoutes() {
     const b = (await c.req.json().catch(() => null)) as { collection?: unknown } | null
     const col = await collectionBySlugs(c, b?.collection)
     if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
-    await c.var.ports.jobs.enqueue({ type: 'reconcile.collection', collectionId: col.id })
+    // A steward's run checks every version again, not only new ones.
+    await c.var.ports.jobs.enqueue({
+      type: 'reconcile.collection',
+      collectionId: col.id,
+      full: true,
+    })
     return c.json({ ok: true, queued: true }, 202)
   })
 

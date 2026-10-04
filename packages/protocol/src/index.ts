@@ -6,7 +6,14 @@
 export * from './format.js'
 export * from './repo/types.js'
 export * from './repo/repo.js'
-export { fsck, type FsckOptions, type FsckReport } from './repo/fsck.js'
+export {
+  fsck,
+  type FsckCursor,
+  type FsckOptions,
+  type FsckReport,
+  fsckStep,
+  type FsckStepOptions,
+} from './repo/fsck.js'
 export * from './repo/log.js'
 export { gunzip, gunzipMembers, gunzipText, gzip, isGzip, splitLines } from './repo/gzip.js'
 export { Lru } from './repo/lru.js'

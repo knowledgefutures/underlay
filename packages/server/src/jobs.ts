@@ -25,16 +25,23 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'commit.unit',
   'commit.assemble',
   'push.compact',
+  'refs.index',
+  'refs.indexUnit',
   'refs.compact',
   'refs.compactPart',
   'refs.finishCompaction',
   'mirror.version',
   'repo.repairLog',
   'reconcile.collection',
+  'reconcile.step',
   'reconcile.version',
   'reconcile.finish',
   'usage.rebuild',
   'repo.fsck',
+  'repo.fsckStep',
+  // Hashes a whole file: four at once could blow an interactive batch's CPU.
+  'files.verify',
+  'maintenance.sweep',
 ])
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)

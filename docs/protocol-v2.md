@@ -366,8 +366,8 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
   deployment).
 
 A log is valid when every entry is present from 1 to `head.seq`, each names the collection being
-read, each `prev` chains, each signature verifies against a trusted key, and `head.entryHash` is
-the last entry's hash (`verifyLog` in
+read, each `prev` chains, each signature verifies against a trusted key, and `head.entryHash` and
+`head.versionHash` are the last entry's hash and `versionHash` (`verifyLog` in
 `packages/protocol/src/repo/log.ts`).
 
 ### 11.2 Sync

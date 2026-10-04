@@ -4,8 +4,10 @@
  *
  * Index changes, not snapshots. A version's events are the diff between it and
  * the previous version (+ added, - removed, both for an update or a set move),
- * so writing costs O(changes). They're produced by a job after publish — the
- * plan accepts seconds of lag — which is also exactly the rebuild procedure.
+ * so writing costs O(changes). They're produced by jobs after publish — the
+ * plan accepts seconds of lag — which is also exactly the rebuild procedure. A
+ * large version is indexed in key-range units, each a run of its own, that go
+ * live together.
  * A fork's first version writes no events; queries extend a parent's intervals
  * into its forks.
  *
@@ -15,7 +17,14 @@
  * segments cover the hash: O(log n) runs, each a cached index check and usually
  * no block read.
  */
-import { compareUtf8, diffTrees, fileTree, recordTree, RepoSource } from '@underlay/protocol'
+import {
+  compareUtf8,
+  diffTrees,
+  entryAt,
+  fileTree,
+  recordTree,
+  RepoSource,
+} from '@underlay/protocol'
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm'
 
 import { chunks } from '../db/chunks.js'
@@ -37,16 +46,78 @@ import {
 
 export const FAN_IN = 8
 const SPILL_EVENTS = 100_000
+
+export const indexConfig = {
+  /** Events one indexing job writes, about: a larger version is split into units. */
+  unitEvents: 1_000_000,
+  /** Key ranges one type is split into, at most. */
+  maxUnitsPerType: 1_000,
+}
 /** Events per compaction part, roughly: sizes the hash-range split. */
 const PART_EVENTS = 4_000_000
 
 // --- Generating a version's events ---------------------------------------------------
 
+/**
+ * What one indexing unit covers: everything (a small version), or one key range
+ * of one set's record tree of one type, or one set's file tree.
+ */
+export interface IndexScope {
+  set: 'public' | 'private'
+  kind: 'r' | 'f'
+  /** Record type (kind 'r'). */
+  slug?: string
+  /** Keys after `from` (null: from the start) through `to` (null: to the end). */
+  from: string | null
+  to: string | null
+}
+
 /** A version's events: the diff against the version before it, both sets, records and files. */
 export async function* versionEvents(
   ports: Ports,
   version: typeof schema.versions.$inferSelect,
+  scope?: IndexScope,
 ): AsyncGenerator<RefEvent> {
+  const repo = await ports.stores.forCollection(version.collectionId)
+  const { now, before } = await viewsOf(ports, version)
+  const records = new RepoSource(recordTree, repo)
+  const files = new RepoSource(fileTree, repo)
+  const c = version.collectionId
+  const seq = version.seq
+  const after = scope?.from ?? undefined
+  const past = (key: string) => scope?.to != null && compareUtf8(key, scope.to) > 0
+  for (const set of ['public', 'private'] as const) {
+    if (scope && scope.set !== set) continue
+    if (!scope || scope.kind === 'r') {
+      const slugs = new Set([
+        ...now.types.map((t) => t.slug),
+        ...(before?.types.map((t) => t.slug) ?? []),
+      ])
+      for (const slug of [...slugs].sort(compareUtf8)) {
+        if (scope && scope.slug !== slug) continue
+        const a = before?.types.find((t) => t.slug === slug)?.[set]?.root ?? null
+        const b = now.types.find((t) => t.slug === slug)?.[set]?.root ?? null
+        for await (const d of diffTrees(records, a, b, { after })) {
+          if (past(d.key)) break
+          if (d.before) yield [d.before.hash, 'r', c, set, seq, '-', slug, d.key]
+          if (d.after) yield [d.after.hash, 'r', c, set, seq, '+', slug, d.key]
+        }
+      }
+    }
+    if (!scope || scope.kind === 'f') {
+      const fa = (set === 'public' ? before?.public : before?.private)?.files.root ?? null
+      const fb = (set === 'public' ? now.public : now.private)?.files.root ?? null
+      for await (const d of diffTrees(files, fa, fb, { after })) {
+        if (past(d.key)) break
+        if (d.before) yield [d.key, 'f', c, set, seq, '-', '', '']
+        if (d.after) yield [d.key, 'f', c, set, seq, '+', '', '']
+      }
+    }
+  }
+}
+
+/** A version's view and the one before it's, both sets. */
+async function viewsOf(ports: Ports, version: typeof schema.versions.$inferSelect) {
   const repo = await ports.stores.forCollection(version.collectionId)
   const [prev] =
     version.seq > 1
@@ -62,36 +133,20 @@ export async function* versionEvents(
       : []
   const now = await loadView(repo, version, true)
   const before = prev ? await loadView(repo, prev, true) : null
-  const records = new RepoSource(recordTree, repo)
-  const files = new RepoSource(fileTree, repo)
-  const c = version.collectionId
-  const seq = version.seq
-  for (const set of ['public', 'private'] as const) {
-    const slugs = new Set([
-      ...now.types.map((t) => t.slug),
-      ...(before?.types.map((t) => t.slug) ?? []),
-    ])
-    for (const slug of [...slugs].sort(compareUtf8)) {
-      const a = before?.types.find((t) => t.slug === slug)?.[set]?.root ?? null
-      const b = now.types.find((t) => t.slug === slug)?.[set]?.root ?? null
-      for await (const d of diffTrees(records, a, b)) {
-        if (d.before) yield [d.before.hash, 'r', c, set, seq, '-', slug, d.key]
-        if (d.after) yield [d.after.hash, 'r', c, set, seq, '+', slug, d.key]
-      }
-    }
-    const fa = (set === 'public' ? before?.public : before?.private)?.files.root ?? null
-    const fb = (set === 'public' ? now.public : now.private)?.files.root ?? null
-    for await (const d of diffTrees(files, fa, fb)) {
-      if (d.before) yield [d.key, 'f', c, set, seq, '-', '', '']
-      if (d.after) yield [d.key, 'f', c, set, seq, '+', '', '']
-    }
-  }
+  return { now, before }
+}
+
+/** About how many events a version makes, from its change counts (0 when unknown). */
+export function estimatedEvents(version: typeof schema.versions.$inferSelect): number {
+  const ch = version.changes
+  return ch ? ch.added + ch.removed + 2 * ch.updated : 0
 }
 
 /** Sort events by hash, spilling to sorted runs past SPILL_EVENTS (bounded memory). */
 async function* sortedEvents(
   ports: Ports,
   scratch: string,
+  unit: number,
   events: AsyncIterable<RefEvent>,
 ): AsyncGenerator<RefEvent> {
   let buf: RefEvent[] = []
@@ -102,7 +157,9 @@ async function* sortedEvents(
       k: JSON.stringify(e.slice(1)),
       b: JSON.stringify(e),
     }))
-    runs.push(await writeRun(ports.stores.internal, scratch, runs.length + 1, entries))
+    // Units of one version share the scratch area; their run numbers don't overlap.
+    const n = unit * 1_000_000 + runs.length + 1
+    runs.push(await writeRun(ports.stores.internal, scratch, n, entries))
     buf = []
   }
   for await (const e of events) {
@@ -137,10 +194,10 @@ const segmentRows = (
   }))
 
 /**
- * Index one version: write its events as a tier-0 run, then record the run, the
- * flag and the collection's billing counters in one batch. Segment ids are
- * derived from the version, so a retried job rewrites the same objects, and the
- * batch only takes effect while the version is still unindexed.
+ * Index one version. A version of up to UNIT_EVENTS events is one unit, done
+ * here. A larger one is split into key-range units (per set and type, at ranks
+ * of the larger tree, so each holds about UNIT_EVENTS of the changes when they
+ * spread evenly), each a `refs.indexUnit` job on the bulk queue.
  */
 export async function indexVersion(ports: Ports, versionId: string): Promise<void> {
   const { db } = ports
@@ -153,39 +210,134 @@ export async function indexVersion(ports: Ports, versionId: string): Promise<voi
           .from(schema.forks)
           .where(eq(schema.forks.childCollectionId, version.collectionId))
       : []
-  const runId = `v-${versionId}`
+  // A fork's first version writes no events.
+  if (fork) return finishIndex(ports, version, 0)
+  const est = estimatedEvents(version)
+  if (est <= indexConfig.unitEvents) return indexUnit(ports, version, 0, 1, null)
+  const units = await planUnits(ports, version, Math.ceil(est / indexConfig.unitEvents))
+  await ports.jobs.enqueueBatch(
+    units.map((scope, unit) => ({
+      type: 'refs.indexUnit',
+      versionId,
+      unit,
+      units: units.length,
+      scope: JSON.stringify(scope),
+    })),
+  )
+}
+
+/** Key ranges for a large version: a type's share of `splits`, cut at ranks of its tree. */
+async function planUnits(
+  ports: Ports,
+  version: typeof schema.versions.$inferSelect,
+  splits: number,
+): Promise<IndexScope[]> {
+  const repo = await ports.stores.forCollection(version.collectionId)
+  const { now, before } = await viewsOf(ports, version)
+  const records = new RepoSource(recordTree, repo)
+  const total = Math.max(1, version.recordCount)
+  const units: IndexScope[] = []
+  for (const set of ['public', 'private'] as const) {
+    const slugs = new Set([
+      ...now.types.map((t) => t.slug),
+      ...(before?.types.map((t) => t.slug) ?? []),
+    ])
+    for (const slug of [...slugs].sort(compareUtf8)) {
+      const a = before?.types.find((t) => t.slug === slug)?.[set] ?? null
+      const b = now.types.find((t) => t.slug === slug)?.[set] ?? null
+      if ((a?.root ?? null) === (b?.root ?? null)) continue
+      const big = (b?.count ?? 0) >= (a?.count ?? 0) ? b : a
+      const n = Math.min(
+        indexConfig.maxUnitsPerType,
+        Math.max(1, Math.round(((big?.count ?? 0) * splits) / total)),
+      )
+      let from: string | null = null
+      for (let i = 1; i < n; i++) {
+        const at = await entryAt(records, big!.root, Math.floor((i * big!.count) / n))
+        if (!at || (from !== null && compareUtf8(at.key, from) <= 0)) continue
+        units.push({ set, kind: 'r', slug, from, to: at.key })
+        from = at.key
+      }
+      units.push({ set, kind: 'r', slug, from, to: null })
+    }
+    const fa = (set === 'public' ? before?.public : before?.private)?.files.root ?? null
+    const fb = (set === 'public' ? now.public : now.private)?.files.root ?? null
+    if (fa !== fb) units.push({ set, kind: 'f', from: null, to: null })
+  }
+  return units
+}
+
+/**
+ * One unit: its events, sorted, as a pending run of its own; when every unit of
+ * the version is in, they go live together (finishIndex). Segment ids derive
+ * from the version and unit, so a retried job rewrites the same objects.
+ */
+export async function indexUnit(
+  ports: Ports,
+  version: typeof schema.versions.$inferSelect,
+  unit: number,
+  units: number,
+  scope: IndexScope | null,
+): Promise<void> {
+  const { db } = ports
+  const runId = units === 1 ? `v-${version.id}` : `v-${version.id}-u${unit}`
   const writer = new SegmentWriter(ports.stores.internal, (n) => `${runId}-${n}`)
   let events = 0
   let bytes = 0
-  if (!fork) {
-    for await (const e of sortedEvents(ports, `refs-${versionId}`, versionEvents(ports, version))) {
-      await writer.add(e)
-      events++
-      bytes += eventBytes(e)
-    }
+  const scratch = `refs-${version.id}`
+  const sorted = sortedEvents(
+    ports,
+    scratch,
+    unit,
+    versionEvents(ports, version, scope ?? undefined),
+  )
+  for await (const e of sorted) {
+    await writer.add(e)
+    events++
+    bytes += eventBytes(e)
   }
   const segs = await writer.finish()
-  const unindexed = sql`(SELECT ${schema.versions.refsIndexed} FROM ${schema.versions} WHERE ${schema.versions.id} = ${versionId}) = 0`
-  const lit = <T>(v: unknown) => sql<T>`${v}`
   await db.batch([
-    ...segmentRows(segs, runId, 0, 'live').map((r) =>
-      db.insert(schema.refSegments).select(
-        db
-          .select({
-            id: lit<string>(r.id).as('id'),
-            runId: lit<string>(r.runId).as('run_id'),
-            tier: lit<number>(0).as('tier'),
-            firstHash: lit<string>(r.firstHash).as('first_hash'),
-            lastHash: lit<string>(r.lastHash).as('last_hash'),
-            count: lit<number>(r.count).as('count'),
-            bytes: lit<number>(r.bytes).as('bytes'),
-            state: lit<string>('live').as('state'),
-            createdAt: lit<number>(Date.now()).as('created_at'),
-          })
-          .from(schema.versions)
-          .where(and(eq(schema.versions.id, versionId), unindexed)) as never,
-      ),
+    ...segmentRows(segs, runId, 0, 'pending').map((r) =>
+      db.insert(schema.refSegments).values(r).onConflictDoNothing(),
     ),
+    db
+      .insert(schema.refIndexUnits)
+      .values({ versionId: version.id, unit, events, bytes })
+      .onConflictDoNothing(),
+  ] as unknown as Parameters<typeof db.batch>[0])
+  const [done] = (await db.all(sql`
+    SELECT count(*) AS n, coalesce(sum(events), 0) AS events, coalesce(sum(bytes), 0) AS bytes
+    FROM ${schema.refIndexUnits} WHERE version_id = ${version.id}
+  `)) as { n: number; events: number; bytes: number }[]
+  if (Number(done?.n) === units)
+    await finishIndex(ports, version, Number(done!.events), Number(done!.bytes))
+}
+
+/**
+ * Put a version's runs live, set its flag and counts, and add them to the
+ * collection's billing counters, in one batch that only takes effect while the
+ * version is still unindexed.
+ */
+async function finishIndex(
+  ports: Ports,
+  version: typeof schema.versions.$inferSelect,
+  events: number,
+  bytes = 0,
+): Promise<void> {
+  const { db } = ports
+  const unindexed = sql`(SELECT ${schema.versions.refsIndexed} FROM ${schema.versions} WHERE ${schema.versions.id} = ${version.id}) = 0`
+  await db.batch([
+    db
+      .update(schema.refSegments)
+      .set({ state: 'live' })
+      .where(
+        and(
+          sql`${schema.refSegments.runId} LIKE ${`v-${version.id}%`}`,
+          eq(schema.refSegments.state, 'pending'),
+          unindexed,
+        ),
+      ),
     db
       .update(schema.collections)
       .set({
@@ -196,7 +348,8 @@ export async function indexVersion(ports: Ports, versionId: string): Promise<voi
     db
       .update(schema.versions)
       .set({ refsIndexed: true, refEvents: events, refBytes: bytes })
-      .where(eq(schema.versions.id, versionId)),
+      .where(eq(schema.versions.id, version.id)),
+    db.delete(schema.refIndexUnits).where(eq(schema.refIndexUnits.versionId, version.id)),
   ] as unknown as Parameters<typeof db.batch>[0])
   await ports.jobs.enqueue({ type: 'refs.compact' })
 }
@@ -349,6 +502,20 @@ export async function finishCompaction(ports: Ports, compactionId: string): Prom
 }
 
 registerJob('refs.index', async (job, ports) => indexVersion(ports, String(job.versionId)))
+registerJob('refs.indexUnit', async (job, ports) => {
+  const [version] = await ports.db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.id, String(job.versionId)))
+  if (!version || version.refsIndexed) return
+  await indexUnit(
+    ports,
+    version,
+    Number(job.unit),
+    Number(job.units),
+    JSON.parse(String(job.scope)) as IndexScope,
+  )
+})
 registerJob('refs.compact', async (_job, ports) => planCompaction(ports))
 registerJob('refs.compactPart', async (job, ports) =>
   compactPart(ports, String(job.compactionId), Number(job.part)),

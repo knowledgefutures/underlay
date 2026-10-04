@@ -244,7 +244,7 @@ export async function verifyLog(
     entries.push(e)
   }
   const last = await verifyLogEntries(entries, trustedKeys, null, collectionId)
-  if (last?.entryHash !== head.entryHash)
+  if (last?.entryHash !== head.entryHash || entries.at(-1)?.versionHash !== head.versionHash)
     throw new IntegrityError('head.json does not match the last log entry')
   return { head, entries }
 }

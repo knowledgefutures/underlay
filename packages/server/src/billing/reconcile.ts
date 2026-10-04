@@ -1,51 +1,70 @@
 /**
  * Reconcile: every billing counter is a cache of something durable, rebuilt here
  * from that source, compared, reported and overwritten (edge-redesign.md,
- * "Metering, and rebuilding the counters"; decision 18).
+ * "Metering, and rebuilding the counters"; decision 21).
  *
- *   reconcile.collection   starts a run: one reconcile.version job per version
- *   reconcile.version      one version's totals from its root, and its reference-log
- *                          events and bytes from re-diffing it against the one before
- *   reconcile.finish       the collection: ref counters as the sum over its versions,
- *                          schema usage replayed from the roots, and the cumulative
- *                          public files tree rebuilt from every version's public files
+ * A run is one chain of `reconcile.step` jobs per collection, so it never floods
+ * the bulk queue, and each job handles a bounded number of versions:
  *
- * Each job is bulk work (jobs.ts). A run is due weekly (the cron sweep starts a
- * few at a time) and stewards can start one (POST /api/admin/reconcile).
- * Differences are logged and kept as the version's or collection's
- * `reconcile_report`; normal operation never makes any, since the counters are
- * written in the publish batch.
+ *   versions stage     each version's totals from its root, and its reference-log
+ *                      events and bytes from re-diffing it against the one before.
+ *                      Versions are immutable, so a scheduled run checks only those
+ *                      never checked; a steward's run (`full`) checks them all.
+ *   collection stage   schema usage replayed from every root (one or two reads a
+ *                      version), and the cumulative public files tree rebuilt from
+ *                      the last run's checkpoint by diffing consecutive versions'
+ *                      public file trees: O(changes since then), not O(history).
+ *                      Then the reference counters as a sum over the versions.
+ *
+ * The run's progress is `collections.reconcile_state`, advanced by a step number
+ * so a duplicate delivery can't fork the chain. A run is due weekly (the cron
+ * sweep starts a few at a time) and stewards can start one (POST
+ * /api/admin/reconcile). Differences are logged and kept as the version's or
+ * collection's `reconcile_report`; normal operation never makes any, since the
+ * counters are written in the publish batch.
  */
 import {
   compareUtf8,
+  diffTrees,
   type FileEntry,
   fileTree,
-  iterate,
   mergeTree,
   RepoSink,
   RepoSource,
   setRecordTotals,
 } from '@underlay/protocol'
-import { and, asc, eq, gte, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 
-import { FenceError, fenceHolds, fenceMoved, writeFence } from '../cleanup/fence.js'
+import { fenceHolds, fenceMoved, writeFence } from '../cleanup/fence.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
-import { versionEvents } from '../refs/log.js'
+import { estimatedEvents, versionEvents } from '../refs/log.js'
 import { eventBytes } from '../refs/segments.js'
 
 type Diff = schema.ReconcileDiff
+type State = schema.ReconcileState
+type Usage = schema.UsageSpan
 type VersionRow = typeof schema.versions.$inferSelect
+type CollectionRow = typeof schema.collections.$inferSelect
 
 export const reconcileConfig = {
   /** How often each collection is reconciled. */
   everyMs: 7 * 24 * 60 * 60 * 1000,
   /** Runs the sweep starts at once. */
-  perSweep: 2,
+  perSweep: 20,
   /** A run not finished after this is started again. */
   staleMs: 24 * 60 * 60 * 1000,
+  /** Versions one job checks, or folds into the collection's totals. */
+  versionsPerJob: 100,
+  /** Events one job re-derives, about (a version's diff against the one before). */
+  eventsPerJob: 1_000_000,
+  /**
+   * A version with more events than this isn't re-diffed: one job couldn't. Its
+   * totals are still checked, and its indexed counts stand.
+   */
+  maxRecountEvents: 5_000_000,
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
@@ -90,11 +109,13 @@ async function isForkStart(ports: Ports, v: VersionRow) {
   return !!f
 }
 
-/** Reconcile one version's row. Returns what it corrected. */
-export async function reconcileVersion(ports: Ports, versionId: string): Promise<Diff[]> {
+/**
+ * Reconcile one version's row. Returns what it corrected. A version whose events
+ * aren't indexed yet stays unchecked (reconciled_at null), so a later run checks
+ * its events once they are.
+ */
+export async function reconcileVersion(ports: Ports, v: VersionRow): Promise<Diff[]> {
   const { db } = ports
-  const [v] = await db.select().from(schema.versions).where(eq(schema.versions.id, versionId))
-  if (!v) return []
   const diffs: Diff[] = []
   const want: Partial<typeof schema.versions.$inferInsert> = {}
   for (const [field, value] of Object.entries(await versionTotals(ports, v))) {
@@ -104,8 +125,7 @@ export async function reconcileVersion(ports: Ports, versionId: string): Promise
       Object.assign(want, { [field]: value })
     }
   }
-  // Events only count once indexed; an unindexed version adds its own when it is.
-  if (v.refsIndexed) {
+  if (v.refsIndexed && estimatedEvents(v) <= reconcileConfig.maxRecountEvents) {
     let events = 0
     let bytes = 0
     if (!(await isForkStart(ports, v))) {
@@ -124,75 +144,162 @@ export async function reconcileVersion(ports: Ports, versionId: string): Promise
   if (diffs.length) console.error(`[reconcile] version ${v.id} (seq ${v.seq}):`, diffs)
   await db
     .update(schema.versions)
-    .set({ ...want, reconciledAt: new Date(), reconcileReport: diffs.length ? diffs : null })
+    .set({
+      ...want,
+      reconciledAt: v.refsIndexed ? new Date() : null,
+      reconcileReport: diffs.length ? diffs : null,
+    })
     .where(eq(schema.versions.id, v.id))
   return diffs
 }
 
-/** Start a run for a collection: every version is checked, then the collection. */
-export async function startReconcile(ports: Ports, collectionId: string): Promise<boolean> {
-  const { db } = ports
-  const started = new Date()
-  const won = await db
+/** Start (or restart) a run for a collection. */
+export async function startReconcile(
+  ports: Ports,
+  collectionId: string,
+  opts: { full?: boolean } = {},
+): Promise<boolean> {
+  const state: State = { step: 1, full: opts.full === true, stage: 'versions', afterSeq: 0 }
+  const won = await ports.db
     .update(schema.collections)
-    .set({ reconcileStartedAt: started })
+    .set({ reconcileStartedAt: new Date(), reconcileState: state })
     .where(eq(schema.collections.id, collectionId))
     .returning({ id: schema.collections.id })
   if (!won.length) return false
-  const versions = await db
-    .select({ id: schema.versions.id })
-    .from(schema.versions)
-    .where(eq(schema.versions.collectionId, collectionId))
-  if (versions.length === 0) {
-    await ports.jobs.enqueue({ type: 'reconcile.finish', collectionId })
-    return true
-  }
-  await ports.jobs.enqueueBatch(
-    versions.map((v) => ({ type: 'reconcile.version', versionId: v.id, collectionId })),
-  )
+  await ports.jobs.enqueue({ type: 'reconcile.step', collectionId, step: 1 })
   return true
 }
 
-/** After a version: once every version of the run is done, check the collection. */
-async function afterVersion(ports: Ports, collectionId: string) {
-  const [c] = await ports.db
-    .select({ started: schema.collections.reconcileStartedAt })
-    .from(schema.collections)
-    .where(eq(schema.collections.id, collectionId))
-  if (!c?.started) return
-  const [left] = await ports.db
-    .select({ id: schema.versions.id })
+/** The collection stage from its start: a fresh fence, files from the checkpoint. */
+async function collectionStart(ports: Ports, c: CollectionRow, s: State): Promise<State> {
+  const fromCheckpoint = !s.full && c.reconciledSeq > 0
+  return {
+    step: s.step,
+    full: s.full,
+    stage: 'collection',
+    afterSeq: 0,
+    fence: await writeFence(ports.db),
+    filesFrom: fromCheckpoint ? c.reconciledSeq : 0,
+    filesRoot: fromCheckpoint ? c.reconciledFilesRoot : null,
+    prevFiles: null,
+    usage: [],
+  }
+}
+
+/** Check the next versions; then on to the collection. */
+async function versionsStage(ports: Ports, c: CollectionRow, s: State): Promise<State> {
+  const rows = await ports.db
+    .select()
     .from(schema.versions)
     .where(
       and(
-        eq(schema.versions.collectionId, collectionId),
-        or(isNull(schema.versions.reconciledAt), lt(schema.versions.reconciledAt, c.started)),
+        eq(schema.versions.collectionId, c.id),
+        gt(schema.versions.seq, s.afterSeq),
+        s.full ? undefined : isNull(schema.versions.reconciledAt),
       ),
     )
-    .limit(1)
-  if (!left) await ports.jobs.enqueue({ type: 'reconcile.finish', collectionId })
+    .orderBy(asc(schema.versions.seq))
+    .limit(reconcileConfig.versionsPerJob)
+  let events = 0
+  for (const [i, v] of rows.entries()) {
+    await reconcileVersion(ports, v)
+    events += estimatedEvents(v)
+    if (events >= reconcileConfig.eventsPerJob && i < rows.length - 1)
+      return { ...s, afterSeq: v.seq }
+  }
+  if (rows.length === reconcileConfig.versionsPerJob) return { ...s, afterSeq: rows.at(-1)!.seq }
+  return collectionStart(ports, c, s)
 }
 
-/** The collection's counters, schema usage and public files tree. Returns what it corrected. */
-export async function finishReconcile(ports: Ports, collectionId: string): Promise<Diff[]> {
+/** Fold the next versions into the replayed usage and the rebuilt files tree. */
+async function foldVersions(ports: Ports, c: CollectionRow, s: State, rows: VersionRow[]) {
+  const repo = await ports.stores.forCollection(c.id)
+  const source = new RepoSource(fileTree, repo)
+  const usage = (s.usage ?? []).map((u) => ({ ...u }))
+  const filesFrom = s.filesFrom ?? 0
+  let prevFiles = s.prevFiles ?? null
+  const added = new Map<string, FileEntry>()
+  for (const v of rows) {
+    const root = await repo.root(v.hash)
+    const priv = root.private ? await repo.privateSet(root.private) : null
+    const now = new Map<string, string>()
+    for (const [slug, t] of Object.entries(root.public.types))
+      now.set(`public\u0000${slug}`, t.schema)
+    for (const [slug, t] of Object.entries(priv?.types ?? {}))
+      now.set(`private\u0000${slug}`, t.schema)
+    const open = new Map(
+      usage.filter((u) => u.toSeq === null).map((u) => [`${u.set}\u0000${u.typeSlug}`, u]),
+    )
+    for (const [k, u] of open) if (now.get(k) !== u.schemaHash) u.toSeq = v.seq
+    for (const [k, hash] of now) {
+      const o = open.get(k)
+      if (o && o.toSeq === null) continue
+      const [set, typeSlug] = k.split('\u0000') as ['public' | 'private', string]
+      usage.push({ schemaHash: hash, typeSlug, set, fromSeq: v.seq, toSeq: null })
+    }
+    // Files that entered the public set since the version before.
+    const files = root.public.files.root
+    if (v.seq > filesFrom) {
+      for await (const d of diffTrees(source, prevFiles, files))
+        if (d.after && !d.before) added.set(d.key, d.after)
+    }
+    prevFiles = files
+  }
+  let filesRoot = s.filesRoot ?? null
+  if (added.size) {
+    const sink = new RepoSink<FileEntry>(repo)
+    const merged = await mergeTree(
+      source,
+      sink,
+      filesRoot,
+      [...added.values()]
+        .sort((a, b) => compareUtf8(a.key, b.key))
+        .map((e) => ({ key: e.key, entry: e })),
+    )
+    await sink.flush()
+    filesRoot = merged.root?.hash ?? null
+  }
+  return { ...s, afterSeq: rows.at(-1)?.seq ?? s.afterSeq, prevFiles, filesRoot, usage }
+}
+
+const usageKey = (u: Usage) =>
+  `${u.set}|${u.typeSlug}|${u.fromSeq}|${u.toSeq ?? ''}|${u.schemaHash}`
+
+/**
+ * The collection stage: fold versions in a job at a time; at the head, compare
+ * and write. Returns null when the run is finished, else the next state.
+ */
+async function collectionStage(ports: Ports, c: CollectionRow, s: State): Promise<State | null> {
   const { db } = ports
-  const [c] = await db
-    .select()
-    .from(schema.collections)
-    .where(eq(schema.collections.id, collectionId))
-  if (!c?.reconcileStartedAt) return []
-  if (c.reconciledAt && c.reconciledAt >= c.reconcileStartedAt) return [] // already finished
-  const versions = await db
+  const rows = await db
     .select()
     .from(schema.versions)
-    .where(eq(schema.versions.collectionId, collectionId))
+    .where(and(eq(schema.versions.collectionId, c.id), gt(schema.versions.seq, s.afterSeq)))
     .orderBy(asc(schema.versions.seq))
+    .limit(reconcileConfig.versionsPerJob)
+  const folded = rows.length ? await foldVersions(ports, c, s, rows) : s
+  if (rows.length === reconcileConfig.versionsPerJob) return folded
+
+  // At the head, unless a publish moved it meanwhile (then fold that in next).
+  const [head] = c.headVersionId
+    ? await db
+        .select({ seq: schema.versions.seq })
+        .from(schema.versions)
+        .where(eq(schema.versions.id, c.headVersionId))
+    : []
+  const headSeq = head?.seq ?? 0
+  if (headSeq !== folded.afterSeq) return folded
+
   const diffs: Diff[] = []
   const set: Partial<typeof schema.collections.$inferInsert> = {}
 
   // Reference-log counters: the sum over indexed versions.
-  const refEvents = versions.reduce((n, v) => n + (v.refsIndexed ? (v.refEvents ?? 0) : 0), 0)
-  const refBytes = versions.reduce((n, v) => n + (v.refsIndexed ? (v.refBytes ?? 0) : 0), 0)
+  const [sums] = (await db.all(sql`
+    SELECT coalesce(sum(ref_events), 0) AS events, coalesce(sum(ref_bytes), 0) AS bytes
+    FROM ${schema.versions} WHERE collection_id = ${c.id} AND refs_indexed = 1
+  `)) as { events: number; bytes: number }[]
+  const refEvents = Number(sums?.events ?? 0)
+  const refBytes = Number(sums?.bytes ?? 0)
   if (c.refEvents !== refEvents) {
     diffs.push({ field: 'refEvents', was: c.refEvents, now: refEvents })
     set.refEvents = refEvents
@@ -202,96 +309,100 @@ export async function finishReconcile(ports: Ports, collectionId: string): Promi
     set.refBytes = refBytes
   }
 
-  // Schema usage, replayed from the roots in order.
-  const repo = await ports.stores.forCollection(collectionId)
-  type Usage = typeof schema.schemaUsage.$inferInsert
-  const rebuilt: Usage[] = []
-  const open = new Map<string, Usage>()
-  const publicFiles = new Map<string, FileEntry>()
-  for (const v of versions) {
-    const root = await repo.root(v.hash)
-    const priv = root.private ? await repo.privateSet(root.private) : null
-    const now = new Map<string, string>()
-    for (const [slug, t] of Object.entries(root.public.types))
-      now.set(`public\u0000${slug}`, t.schema)
-    for (const [slug, t] of Object.entries(priv?.types ?? {}))
-      now.set(`private\u0000${slug}`, t.schema)
-    for (const [k, u] of open) {
-      if (now.get(k) !== u.schemaHash) {
-        u.toSeq = v.seq
-        open.delete(k)
-      }
-    }
-    for (const [k, hash] of now) {
-      if (open.has(k)) continue
-      const [usageSet, typeSlug] = k.split('\u0000') as ['public' | 'private', string]
-      const u: Usage = {
-        schemaHash: hash,
-        collectionId,
-        typeSlug,
-        set: usageSet,
-        fromSeq: v.seq,
-        toSeq: null,
-      }
-      rebuilt.push(u)
-      open.set(k, u)
-    }
-    for await (const f of iterate(new RepoSource(fileTree, repo), root.public.files.root))
-      publicFiles.set(f.key, f)
-  }
+  // Schema usage.
+  const rebuilt = folded.usage ?? []
   const stored = await db
     .select()
     .from(schema.schemaUsage)
-    .where(eq(schema.schemaUsage.collectionId, collectionId))
-  const key = (u: Usage) => `${u.set}|${u.typeSlug}|${u.fromSeq}|${u.toSeq ?? ''}|${u.schemaHash}`
-  const was = stored.map(key).sort()
-  const now = rebuilt.map(key).sort()
+    .where(eq(schema.schemaUsage.collectionId, c.id))
+  const was = stored.map(usageKey).sort()
+  const now = rebuilt.map(usageKey).sort()
   const usageDiffers = !same(was, now)
   if (usageDiffers) diffs.push({ field: 'schemaUsage', was, now })
 
-  // The cumulative public files tree: every file any version's public set held.
-  // Writing it is a write phase: the row update below holds only under its fence.
-  const fence = await writeFence(db)
-  const sink = new RepoSink<FileEntry>(repo)
-  const built = await mergeTree(
-    new RepoSource(fileTree, repo),
-    sink,
-    null,
-    [...publicFiles.values()]
-      .sort((a, b) => compareUtf8(a.key, b.key))
-      .map((e) => ({ key: e.key, entry: e })),
-  )
-  await sink.flush()
-  const publicFilesRoot = built.root?.hash ?? null
-  if (publicFilesRoot !== c.publicFilesRoot) {
-    diffs.push({ field: 'publicFilesRoot', was: c.publicFilesRoot, now: publicFilesRoot })
-    set.publicFilesRoot = publicFilesRoot
+  // The cumulative public files tree.
+  const filesRoot = folded.filesRoot ?? null
+  if (filesRoot !== c.publicFilesRoot) {
+    diffs.push({ field: 'publicFilesRoot', was: c.publicFilesRoot, now: filesRoot })
+    set.publicFilesRoot = filesRoot
   }
 
-  const versionDiffs = versions.flatMap((v) => v.reconcileReport ?? [])
+  const versionDiffs = (
+    await db
+      .select({ report: schema.versions.reconcileReport })
+      .from(schema.versions)
+      .where(
+        and(eq(schema.versions.collectionId, c.id), isNotNull(schema.versions.reconcileReport)),
+      )
+      .limit(100)
+  ).flatMap((r) => r.report ?? [])
   const report = [...versionDiffs, ...diffs]
-  if (diffs.length) console.error(`[reconcile] collection ${collectionId}:`, diffs)
+  if (diffs.length) console.error(`[reconcile] collection ${c.id}:`, diffs)
+  // The tree's nodes were written across this stage's jobs: the write holds only
+  // under the fence read when it began, and only for the head it was built to.
   await db.batch([
     ...(usageDiffers
       ? [
-          db.delete(schema.schemaUsage).where(eq(schema.schemaUsage.collectionId, collectionId)),
-          ...chunks(rebuilt, 14).map((part) => db.insert(schema.schemaUsage).values(part)),
+          db.delete(schema.schemaUsage).where(eq(schema.schemaUsage.collectionId, c.id)),
+          ...chunks(rebuilt, 14).map((part) =>
+            db.insert(schema.schemaUsage).values(part.map((u) => ({ ...u, collectionId: c.id }))),
+          ),
         ]
       : []),
     db
       .update(schema.collections)
-      .set({ ...set, reconciledAt: new Date(), reconcileReport: report.length ? report : null })
-      .where(and(eq(schema.collections.id, collectionId), fenceHolds(fence))),
+      .set({
+        ...set,
+        reconciledAt: new Date(),
+        reconcileReport: report.length ? report : null,
+        reconcileState: null,
+        reconciledSeq: headSeq,
+        reconciledFilesRoot: filesRoot,
+      })
+      .where(
+        and(
+          eq(schema.collections.id, c.id),
+          c.headVersionId
+            ? eq(schema.collections.headVersionId, c.headVersionId)
+            : isNull(schema.collections.headVersionId),
+          sql`json_extract(${schema.collections.reconcileState}, '$.step') = ${s.step}`,
+          fenceHolds(s.fence ?? -1),
+        ),
+      ),
   ] as unknown as Parameters<typeof db.batch>[0])
-  if (await fenceMoved(db, fence)) {
-    const [now] = await db
-      .select({ at: schema.collections.reconciledAt })
-      .from(schema.collections)
-      .where(eq(schema.collections.id, collectionId))
-    // Not written: the job runs again (the finish is idempotent until it is).
-    if (!now?.at || now.at < c.reconcileStartedAt) throw new FenceError()
-  }
-  return report
+  const [after] = await db
+    .select({ state: schema.collections.reconcileState })
+    .from(schema.collections)
+    .where(eq(schema.collections.id, c.id))
+  if (!after || after.state === null) return null
+  // A deletion window opened: the nodes built so far may be gone, so start the stage again.
+  if (await fenceMoved(db, s.fence ?? -1)) return collectionStart(ports, c, s)
+  return folded // the head moved: fold the new versions in
+}
+
+/** One job of a run. */
+export async function reconcileStep(ports: Ports, collectionId: string, step: number) {
+  const { db } = ports
+  const [c] = await db
+    .select()
+    .from(schema.collections)
+    .where(eq(schema.collections.id, collectionId))
+  const s = c?.reconcileState
+  if (!c || !s || s.step !== step) return // finished, restarted, or a duplicate delivery
+  const next =
+    s.stage === 'versions' ? await versionsStage(ports, c, s) : await collectionStage(ports, c, s)
+  if (!next) return
+  const won = await db
+    .update(schema.collections)
+    .set({ reconcileState: { ...next, step: step + 1 } })
+    .where(
+      and(
+        eq(schema.collections.id, collectionId),
+        sql`json_extract(${schema.collections.reconcileState}, '$.step') = ${step}`,
+      ),
+    )
+    .returning({ id: schema.collections.id })
+  if (won.length) await ports.jobs.enqueue({ type: 'reconcile.step', collectionId, step: step + 1 })
 }
 
 /** Start the runs that are due (the cron sweep). */
@@ -324,12 +435,11 @@ export async function reconcileDue(ports: Ports): Promise<number> {
 }
 
 registerJob('reconcile.collection', async (job, ports) => {
-  await startReconcile(ports, String(job.collectionId))
+  await startReconcile(ports, String(job.collectionId), { full: job.full === true })
 })
-registerJob('reconcile.version', async (job, ports) => {
-  await reconcileVersion(ports, String(job.versionId))
-  await afterVersion(ports, String(job.collectionId))
+registerJob('reconcile.step', async (job, ports) => {
+  await reconcileStep(ports, String(job.collectionId), Number(job.step))
 })
-registerJob('reconcile.finish', async (job, ports) => {
-  await finishReconcile(ports, String(job.collectionId))
-})
+// Jobs of runs started before migration 0020; the sweep restarts those runs when they go stale.
+registerJob('reconcile.version', async () => {})
+registerJob('reconcile.finish', async () => {})

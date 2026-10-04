@@ -27,11 +27,18 @@ describe('job queues', () => {
     await jobs.enqueue({ type: 'commit.unit', unitId: 'u' })
     await jobs.enqueueBatch([
       { type: 'mirror.version', placementId: 'p' },
-      { type: 'files.verify', uploadId: 'f' },
+      { type: 'version.published', versionId: 'v' },
       ...Array.from({ length: 150 }, () => ({ type: 'commit.unit', unitId: 'u' })),
     ])
-    expect(interactive.sent).toEqual(['webhooks.deliver', 'files.verify'])
-    expect(bulk.sent).toHaveLength(152)
+    expect(interactive.sent).toEqual(['webhooks.deliver', 'version.published'])
+    // Hashing a whole file, indexing and the sweep are bulk work too.
+    await jobs.enqueueBatch([
+      { type: 'files.verify', uploadId: 'f' },
+      { type: 'refs.index', versionId: 'v' },
+      { type: 'maintenance.sweep' },
+    ])
+    expect(interactive.sent).toHaveLength(2)
+    expect(bulk.sent).toHaveLength(155)
     expect(bulk.sent.slice(0, 2)).toEqual(['commit.unit', 'mirror.version'])
 
     // With one queue bound, everything goes there once.
