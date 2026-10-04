@@ -424,7 +424,14 @@ export const placements = sqliteTable(
     uniqueIndex('placements_one_primary_uq')
       .on(t.collectionId)
       .where(sql`${t.role} = 'primary' AND ${t.collectionId} IS NOT NULL`),
-    uniqueIndex('placements_target_location_uq').on(t.collectionId, t.organizationId, t.locationId),
+    // One per target kind: exactly one of collection_id and organization_id is set, and
+    // SQLite treats NULLs as distinct, so a single index over both would never fire.
+    uniqueIndex('placements_collection_location_uq')
+      .on(t.collectionId, t.locationId)
+      .where(sql`${t.collectionId} IS NOT NULL`),
+    uniqueIndex('placements_org_location_uq')
+      .on(t.organizationId, t.locationId)
+      .where(sql`${t.organizationId} IS NOT NULL`),
     index('placements_location_idx').on(t.locationId),
   ],
 )

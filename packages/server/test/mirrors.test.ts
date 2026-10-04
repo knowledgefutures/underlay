@@ -307,8 +307,30 @@ describe('bucket mirrors', () => {
       json: { locationId: loc.body.location.id, sets: 'public' },
     })
     expect(res.status).toBe(201)
+    // The same default twice is a conflict, not a second row.
+    expect(
+      (
+        await h.request('/api/orgs/org/placements', {
+          method: 'POST',
+          user,
+          json: { locationId: loc.body.location.id, sets: 'public' },
+        })
+      ).status,
+    ).toBe(409)
     await h.drain()
-    const inherited = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    // Reads and publishes make the default concrete once per collection, however often they run.
+    for (let i = 0; i < 3; i++) await placements(h, user, path)
+    const mirrors = (await placements(h, user, path)).placements.filter((p) => p.role === 'mirror')
+    expect(mirrors.length).toBe(1)
+    expect(
+      (
+        await h.ports.db
+          .select()
+          .from(schema.placements)
+          .where(eq(schema.placements.locationId, loc.body.location.id))
+      ).length,
+    ).toBe(2) // the org default and this collection's row
+    const inherited = mirrors[0]!
     expect(inherited).toMatchObject({ syncedSeq: 2, lag: 0, inherited: true })
     // An inherited mirror goes with the default, not per collection.
     expect(
