@@ -44,8 +44,9 @@ import {
   trailingZeros,
   type TreeSummary,
 } from '@underlay/protocol'
-import { and, asc, eq, inArray, isNull, lt, or } from 'drizzle-orm'
+import { and, asc, count, eq, gte, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm'
 
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
@@ -324,23 +325,98 @@ export async function planParallel(
   return true
 }
 
-/** Queue every pending unit of a plan, or the assembly when none is left. Idempotent. */
+/**
+ * Commit units on the queue at once, per session and per account
+ * (v2-scale-review.md S3): a billion-record push plans about a thousand units,
+ * and they wait their turn instead of filling the bulk queue. A unit queued
+ * longer than `staleMs` ago and still pending counts as lost and goes again.
+ */
+export const unitLimits = { perSession: 32, perAccount: 64, staleMs: 30 * 60 * 1000 }
+
+/** Queue a plan's pending units (within the windows), or the assembly when none is left. Idempotent. */
 async function queueWork(
   ports: Ports,
   sessionId: string,
   planId: string,
   opts: { assembleOnly?: boolean } = {},
 ): Promise<void> {
-  const pending = await ports.db
+  const [pending] = await ports.db
     .select({ id: schema.commitUnits.id })
     .from(schema.commitUnits)
     .where(and(eq(schema.commitUnits.planId, planId), eq(schema.commitUnits.status, 'pending')))
-  if (pending.length === 0) {
+    .limit(1)
+  if (!pending) {
     await ports.jobs.enqueue({ type: 'commit.assemble', sessionId })
     return
   }
   if (opts.assembleOnly) return
-  await ports.jobs.enqueueBatch(pending.map((u) => ({ type: 'commit.unit', unitId: u.id })))
+  const session = await getSession(ports, sessionId)
+  if (session) await topUpUnits(ports, session.userId)
+}
+
+/**
+ * Put a user's waiting units on the queue, oldest session first, as far as the
+ * windows allow. Runs after planning and after every unit, so the windows refill
+ * as work finishes. A unit is claimed by setting `queuedAt`, so two top-ups
+ * never queue it twice.
+ */
+export async function topUpUnits(ports: Ports, userId: string): Promise<void> {
+  const { db } = ports
+  const u = schema.commitUnits
+  const sessions = await db
+    .select({ id: schema.pushSessions.id, planId: schema.pushSessions.commitPlan })
+    .from(schema.pushSessions)
+    .where(
+      and(
+        eq(schema.pushSessions.userId, userId),
+        eq(schema.pushSessions.status, 'committing'),
+        isNotNull(schema.pushSessions.commitPlan),
+      ),
+    )
+    .orderBy(asc(schema.pushSessions.createdAt))
+  const staleBefore = new Date(Date.now() - unitLimits.staleMs)
+  const inFlight = new Map<string, number>()
+  for (const s of sessions) {
+    const [row] = await db
+      .select({ n: count() })
+      .from(u)
+      .where(
+        and(
+          eq(u.sessionId, s.id),
+          eq(u.planId, s.planId!),
+          eq(u.status, 'pending'),
+          gte(u.queuedAt, staleBefore),
+        ),
+      )
+    inFlight.set(s.id, row?.n ?? 0)
+  }
+  let account = [...inFlight.values()].reduce((a, b) => a + b, 0)
+  for (const s of sessions) {
+    const room = Math.min(
+      unitLimits.perSession - inFlight.get(s.id)!,
+      unitLimits.perAccount - account,
+    )
+    if (room <= 0) continue
+    const waiting = or(isNull(u.queuedAt), lt(u.queuedAt, staleBefore))
+    const next = await db
+      .select({ id: u.id })
+      .from(u)
+      .where(and(eq(u.sessionId, s.id), eq(u.planId, s.planId!), eq(u.status, 'pending'), waiting))
+      .orderBy(asc(u.ord))
+      .limit(room)
+    if (next.length === 0) continue
+    const claimed: string[] = []
+    for (const part of chunks(next.map((x) => x.id))) {
+      const rows = await db
+        .update(u)
+        .set({ queuedAt: new Date() })
+        .where(and(inArray(u.id, part), eq(u.status, 'pending'), waiting))
+        .returning({ id: u.id })
+      claimed.push(...rows.map((r) => r.id))
+    }
+    await ports.jobs.enqueueBatch(claimed.map((unitId) => ({ type: 'commit.unit', unitId })))
+    account += claimed.length
+  }
 }
 
 /** A push.commit job found a plan already in place (a retry): make sure its work is queued. */
@@ -406,6 +482,8 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     )
     .limit(1)
   if (!left) await ports.jobs.enqueue({ type: 'commit.assemble', sessionId: session.id })
+  // A slot is free: refill this user's windows, this session's or the next one's.
+  await topUpUnits(ports, session.userId)
 }
 
 /** Units grouped per (set, type) tree, in key order, without superseded ones. */
@@ -524,9 +602,10 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
       return
     }
     if (rows.some((r) => r.status === 'failed')) {
-      const created = await mergeFailed(ports, sessionId, planId, rows)
+      await mergeFailed(ports, sessionId, planId, rows)
       await release()
-      await ports.jobs.enqueueBatch(created.map((unitId) => ({ type: 'commit.unit', unitId })))
+      // The merged units wait unqueued, like a new plan's.
+      await topUpUnits(ports, session.userId)
       return
     }
 

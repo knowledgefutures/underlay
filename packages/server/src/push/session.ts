@@ -6,7 +6,7 @@
  * list.
  */
 import { hashSchema } from '@underlay/protocol'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gt, or, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
@@ -15,6 +15,19 @@ import { readRunIndex, type RunIndex } from './runs.js'
 
 /** Idle timeout: pushed back by every upload. Runs live in storage, so this can be generous. */
 export const SESSION_TTL_MS = 60 * 60 * 1000
+
+/** Sessions one user may have open or committing at once (v2-scale-review.md S3). */
+export const limits = { openSessions: 20 }
+
+/** Refused: the user already has `limits.openSessions` sessions in progress. */
+export class SessionCapError extends Error {
+  constructor(readonly open: number) {
+    super(
+      `You have ${open} push sessions in progress, the most allowed. Commit or abort one (DELETE …/push/:id), or let it expire, then try again.`,
+    )
+    this.name = 'SessionCapError'
+  }
+}
 
 export interface SessionInputs {
   /** The full new type set: slug → schema. */
@@ -34,6 +47,22 @@ export async function createSession(
   row: Omit<typeof schema.pushSessions.$inferInsert, 'id' | 'expiresAt'>,
   inputs: SessionInputs,
 ): Promise<SessionRow> {
+  const [inProgress] = await ports.db
+    .select({ n: count() })
+    .from(schema.pushSessions)
+    .where(
+      and(
+        eq(schema.pushSessions.userId, row.userId),
+        or(
+          eq(schema.pushSessions.status, 'committing'),
+          and(
+            eq(schema.pushSessions.status, 'open'),
+            gt(schema.pushSessions.expiresAt, new Date()),
+          ),
+        ),
+      ),
+    )
+  if ((inProgress?.n ?? 0) >= limits.openSessions) throw new SessionCapError(inProgress!.n)
   const id = crypto.randomUUID()
   // Inputs first: a session row never points at missing inputs.
   await ports.stores.internal.put(inputsKey(id), JSON.stringify(inputs), {

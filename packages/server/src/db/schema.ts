@@ -580,6 +580,7 @@ export const pushSessions = sqliteTable(
   (t) => [
     index('push_sessions_collection_idx').on(t.collectionId),
     index('push_sessions_expires_idx').on(t.status, t.expiresAt),
+    index('push_sessions_user_idx').on(t.userId, t.status),
   ],
 )
 
@@ -638,9 +639,14 @@ export const commitUnits = sqliteTable(
     slicesKey: text('slices_key'),
     /** Leaves, change counts and file reference deltas, in the internal area. */
     outputKey: text('output_key'),
+    /** When the unit was put on the queue; null while it waits for room (push/parallel.ts). */
+    queuedAt: ts('queued_at'),
     createdAt: createdAt(),
   },
-  (t) => [index('commit_units_plan_idx').on(t.planId, t.set, t.type, t.ord)],
+  (t) => [
+    index('commit_units_plan_idx').on(t.planId, t.set, t.type, t.ord),
+    index('commit_units_status_idx').on(t.sessionId, t.status, t.queuedAt),
+  ],
 )
 
 // --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------

@@ -184,6 +184,11 @@ export function createApp(setup: Setup) {
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
   app.onError((err, c) => {
+    // Per-user caps (push/session.ts) are the caller's to fix, not ours.
+    if (err.name === 'SessionCapError') {
+      c.header('Retry-After', '60')
+      return c.json({ error: err.message, statusCode: 429 }, 429)
+    }
     console.error('[app]', err)
     return c.json({ error: 'Internal error', statusCode: 500 }, 500)
   })

@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
+import { limits } from '../src/push/session.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -46,6 +47,48 @@ async function head(h: Harness, collectionId: string) {
 }
 
 describe('delta push', () => {
+  it('caps the sessions one user has in progress', async () => {
+    const { h, user, base } = await setup()
+    const before = limits.openSessions
+    limits.openSessions = 2
+    try {
+      const open = () =>
+        h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } })
+      const a = ((await (await open()).json()) as { session_id: string }).session_id
+      expect((await open()).status).toBe(200)
+      const refused = await open()
+      expect(refused.status).toBe(429)
+      expect(((await refused.json()) as { error: string }).error).toMatch(/2 push sessions/)
+      // Negotiate sessions count too.
+      expect(
+        (
+          await h.request(`${base}/versions/negotiate`, {
+            method: 'POST',
+            user,
+            json: { schemas: { Author }, manifest: [] },
+          })
+        ).status,
+      ).toBe(429)
+      // Aborting one makes room; another user is unaffected.
+      expect(
+        (await h.request(`${base}/push/${a}`, { method: 'DELETE', user })).status,
+      ).toBeLessThan(300)
+      expect((await open()).status).toBe(200)
+      const other = await h.member('u2')
+      expect(
+        (
+          await h.request(`${base}/push`, {
+            method: 'POST',
+            user: other,
+            json: { schemas: { Author } },
+          })
+        ).status,
+      ).toBe(200)
+    } finally {
+      limits.openSessions = before
+    }
+  })
+
   it('opens, uploads, deletes and commits', async () => {
     const { h, user, c, base } = await setup()
     let res = await h.request(`${base}/push`, {

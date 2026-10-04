@@ -11,13 +11,18 @@ import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
-import { assembleParallel, parallelConfig } from '../src/push/parallel.js'
+import { drainSqliteJobs } from '../src/jobs.js'
+import { assembleParallel, parallelConfig, unitLimits } from '../src/push/parallel.js'
 import { isMark } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 afterAll(cleanup)
 const defaults = { ...parallelConfig }
-afterEach(() => Object.assign(parallelConfig, defaults))
+const unitDefaults = { ...unitLimits }
+afterEach(() => {
+  Object.assign(parallelConfig, defaults)
+  Object.assign(unitLimits, unitDefaults)
+})
 
 const Author = {
   type: 'object',
@@ -112,6 +117,49 @@ async function trees(h: Harness, collectionId: string) {
 }
 
 describe('parallel commit', () => {
+  it('keeps at most a window of units on the queue, and still commits', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('win')
+    const path = '/api/collections/org/win'
+    const m = markIds('w', 12)
+    Object.assign(unitLimits, { perSession: 3, perAccount: 3 })
+    Object.assign(parallelConfig, { above: 0, unitEntries: 1 })
+    const res = await h.request(`${path}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author } },
+    })
+    const sid = ((await res.json()) as { session_id: string }).session_id
+    await h.request(`${path}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [
+        ...Array.from({ length: 300 }, (_, i) => rec(`r${i}`, `n${i}`)),
+        ...m.map((k) => rec(k, k)),
+      ],
+    })
+    expect((await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+      202,
+    )
+    const queuedUnits = async () =>
+      (await h.ports.db.select().from(schema.jobs)).filter(
+        (j) => j.type === 'commit.unit' && j.status !== 'failed',
+      ).length
+    const planned = await h.ports.db.select().from(schema.commitUnits)
+    expect(planned.filter((u) => !u.gap).length).toBeGreaterThan(3)
+    let most = 0
+    for (;;) {
+      most = Math.max(most, await queuedUnits())
+      if ((await drainSqliteJobs(h.ports, { max: 1 })) === 0) break
+    }
+    expect(most).toBeLessThanOrEqual(3)
+    const status = (await (await h.request(`${path}/push/${sid}`, { user })).json()) as {
+      status: string
+    }
+    expect(status.status).toBe('committed')
+  })
+
   it('builds the same trees as the serial commit', async () => {
     const h = await harness()
     const user = await h.member()
