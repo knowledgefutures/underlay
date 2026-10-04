@@ -1,6 +1,9 @@
 # Underlay protocol v2
 
-**Status: stable** (2026-10-03). The reference implementation is
+**Status: stable.** Frozen on 2026-10-03. Changing any value or rule here that affects what is
+accepted, how trees are built or what is hashed needs a new protocol version (`PROTOCOL_VERSION`,
+the `underlay` field of every root); additions that leave all of those alone are recorded under
+[Changes](#changes-from-the-design-plan). The reference implementation is
 `packages/protocol` (`@underlay/protocol`). The test vectors are in `packages/protocol/test/vectors/v2.json`
 (see [Test vectors](#test-vectors)).
 
@@ -608,3 +611,6 @@ These were made during implementation and recorded with their reasons in `edge-r
    from outside.
 10. Version log entries carry the collection's id (section 11.1). Without it, one collection's
     entries verified as another's. Added 2026-10-03, before any log held real data.
+11. Naming, 2026-10-04: "format 2" is now "protocol v2". In the reference implementation
+    `FORMAT_VERSION` is `PROTOCOL_VERSION`, and the vectors file's top-level `format` key is
+    `protocolVersion`. No hashed value changed, but a reader of `v2.json` has to use the new key.

@@ -215,10 +215,13 @@ async function uploadFiles(local: Local, client: Client, files: Map<string, numb
       continue
     }
     // Large: a direct upload to storage, then wait for the registry to verify it.
+    type Part = { partNumber: number; url: string }
     const ticket = await client.post<{
       id: string
       url?: string
-      parts?: { partNumber: number; url: string }[]
+      partBytes?: number
+      partCount?: number
+      parts?: Part[]
     }>('/files/uploads', { hash, size })
     const fetchRaw = client.fetchImpl
     const parts: { partNumber: number; etag: string }[] = []
@@ -229,8 +232,18 @@ async function uploadFiles(local: Local, client: Client, files: Map<string, numb
       })
       if (!res.ok) throw new CliError(`Uploading file ${hash}: ${res.status}`)
     } else {
-      const partBytes = Math.ceil(size / ticket.parts!.length)
-      for (const p of ticket.parts!) {
+      const partBytes = ticket.partBytes ?? Math.ceil(size / ticket.parts!.length)
+      const partCount = ticket.partCount ?? ticket.parts!.length
+      // The ticket presigns the first page of parts; the rest come a page at a time.
+      let page = ticket.parts!
+      for (let n = 1; n <= partCount; n++) {
+        if (!page.some((x) => x.partNumber === n)) {
+          page = (
+            await client.json<{ parts: Part[] }>(`/files/uploads/${ticket.id}/parts?from=${n}`)
+          ).parts
+        }
+        const p = page.find((x) => x.partNumber === n)
+        if (!p) throw new CliError(`No upload URL for part ${n} of ${hash}`)
         const offset = (p.partNumber - 1) * partBytes
         const chunk = await local.repo.blobs.get(keys.file(hash), { offset, length: partBytes })
         const res = await fetchRaw(p.url, {

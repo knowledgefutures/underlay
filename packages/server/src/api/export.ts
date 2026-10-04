@@ -2,7 +2,7 @@
  * GET /api/collections/:owner/:slug/export?version=&format=tar|tar.gz
  *
  * A tar archive of what the caller may read (v1 layout, plus README.md):
- *   manifest.json             collection, version, schemas, missing files
+ *   manifest.json             collection, version, schemas, missing and withheld files
  *   README.md                 the version's metadata.readme, when there is one
  *   records/<Type>.ndjson     one {id,type,data,hash} per line
  *   files/<hash>              file bytes
@@ -11,6 +11,10 @@
  * give them without reading records (a type's NDJSON is its canonical bytes plus
  * a fixed `,"hash":"…"` and newline per record). gzip costs Worker CPU per byte,
  * so very large exports should ask for format=tar.
+ *
+ * Denylisted hashes are left out: records are withheld (when any are blocked, a
+ * pass over each type's tree nodes, not its bodies, gives the exact sizes), and
+ * files are listed as withheld instead of sent.
  */
 import { fileTree, iterate, RepoSource, type TarEntry, tarStream } from '@underlay/protocol'
 import { inArray } from 'drizzle-orm'
@@ -41,8 +45,24 @@ export function exportRoutes() {
     )
     if (!v) return jsonError(c, 404, 'No versions found')
     const repo = await ports.stores.forCollection(access.collection.id)
-    const view = await loadView(repo, v, access.isMember, await deniedHashes(c.var.ports.db))
+    const denied = await deniedHashes(c.var.ports.db)
+    const view = await loadView(repo, v, access.isMember, denied)
     const gzip = c.req.query('format') !== 'tar'
+
+    // Each type's NDJSON size and count, from its tree totals unless records are withheld.
+    const sizes = new Map<string, { count: number; bytes: number }>()
+    for (const t of view.types) {
+      if (denied.size === 0) {
+        sizes.set(t.slug, { count: t.count, bytes: t.bytes + t.count * PER_RECORD_EXTRA })
+        continue
+      }
+      const s = { count: 0, bytes: 0 }
+      for await (const e of typeRecords(view, t)) {
+        s.count++
+        s.bytes += e.size + PER_RECORD_EXTRA
+      }
+      sizes.set(t.slug, s)
+    }
 
     // Files the caller may read, and which of them the platform has bytes for.
     const fileSource = new RepoSource(fileTree, repo)
@@ -50,6 +70,8 @@ export function exportRoutes() {
     for (const r of [view.public.files.root, view.private?.files.root ?? null]) {
       for await (const f of iterate(fileSource, r)) fileHashes.set(f.key, f.size)
     }
+    const withheldFiles = [...fileHashes.keys()].filter((h) => denied.has(h))
+    for (const h of withheldFiles) fileHashes.delete(h)
     const rows: (typeof schema.files.$inferSelect)[] = []
     const list = [...fileHashes.keys()]
     for (let i = 0; i < list.length; i += 90) {
@@ -64,7 +86,7 @@ export function exportRoutes() {
 
     const schemas: Record<string, unknown> = {}
     for (const t of view.types) schemas[t.slug] = await repo.schema(t.schemaHash)
-    const recordCount = view.types.reduce((n, t) => n + t.count, 0)
+    const recordCount = [...sizes.values()].reduce((n, s) => n + s.count, 0)
     const manifest = enc.encode(
       JSON.stringify(
         {
@@ -81,12 +103,13 @@ export function exportRoutes() {
             recordCount,
             fileCount: fileHashes.size,
             totalBytes:
-              view.types.reduce((n, t) => n + t.bytes, 0) +
+              [...sizes.values()].reduce((n, s) => n + s.bytes - s.count * PER_RECORD_EXTRA, 0) +
               [...fileHashes.values()].reduce((a, b) => a + b, 0),
             createdAt: v.createdAt,
           },
           schemas,
           files_missing: list.filter((h) => !stored.has(h)),
+          files_withheld: withheldFiles,
         },
         null,
         2,
@@ -114,7 +137,7 @@ export function exportRoutes() {
       for (const t of view.types) {
         yield {
           name: `records/${t.slug}.ndjson`,
-          size: t.bytes + t.count * PER_RECORD_EXTRA,
+          size: sizes.get(t.slug)!.bytes,
           body: async function* () {
             let batch: string[] = []
             for await (const e of typeRecords(view, t, { bodies: true })) {

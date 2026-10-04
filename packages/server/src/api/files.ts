@@ -19,6 +19,8 @@ import {
   cleanHash,
   completeUpload,
   isHash,
+  MAX_FILE_BYTES,
+  presignParts,
   presignDownload,
   presignDownloads,
   PRESIGN_SECONDS,
@@ -139,6 +141,7 @@ export function fileRoutes() {
     if (!isHash(hash)) return jsonError(c, 400, '"hash" must be a sha256 file hash')
     if (!Number.isSafeInteger(size) || size < 0)
       return jsonError(c, 400, '"size" must be a byte count')
+    if (size > MAX_FILE_BYTES) return jsonError(c, 413, 'A file is at most 5 TiB')
     const ticket = await startUpload(c.var.ports, access.collection.id, {
       hash,
       size,
@@ -166,6 +169,26 @@ export function fileRoutes() {
     }
     await completeUpload(c.var.ports, u, body.parts)
     return c.json({ id: u.id, status: 'verifying' }, 202)
+  })
+
+  app.get('/:owner/:slug/files/uploads/:id/parts', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const from = Number(c.req.query('from') ?? 1)
+    if (!Number.isSafeInteger(from) || from < 1) return jsonError(c, 400, '"from" is a part number')
+    const [u] = await c.var.ports.db
+      .select()
+      .from(schema.fileUploads)
+      .where(
+        and(
+          eq(schema.fileUploads.id, c.req.param('id')),
+          eq(schema.fileUploads.collectionId, access.collection.id),
+          eq(schema.fileUploads.status, 'pending'),
+        ),
+      )
+      .limit(1)
+    if (!u || !u.multipartUploadId) return jsonError(c, 404, 'Upload not found')
+    return c.json({ parts: await presignParts(c.var.ports, u, from) })
   })
 
   app.get('/:owner/:slug/files/uploads/:id', async (c) => {

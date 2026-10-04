@@ -46,6 +46,36 @@ describe('files', () => {
     expect(h.bucket.objects.has(`repo/files/${sha(bytes)}`)).toBe(true)
   })
 
+  it('presigns multipart parts a page at a time, within 10,000 parts and 5 TiB', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('docs')
+    const base = '/api/collections/org/docs'
+    const start = (size: number) =>
+      h.request(`${base}/files/uploads`, { method: 'POST', user, json: { hash: sha('big'), size } })
+    const GiB = 1024 ** 3
+    const big = await json(await start(50 * GiB))
+    expect(big).toMatchObject({ partBytes: 100 * 1024 ** 2, partCount: 512 })
+    expect(big.parts).toHaveLength(100)
+    expect(big.parts[99].partNumber).toBe(100)
+    const next = await json(
+      await h.request(`${base}/files/uploads/${big.id}/parts?from=101`, { user }),
+    )
+    expect(next.parts.map((p: { partNumber: number }) => p.partNumber)).toEqual(
+      Array.from({ length: 100 }, (_, i) => 101 + i),
+    )
+    const tail = await json(
+      await h.request(`${base}/files/uploads/${big.id}/parts?from=501`, { user }),
+    )
+    expect(tail.parts).toHaveLength(12)
+    // The largest file takes bigger parts, never more than 10,000 of them.
+    const most = await json(await start(5 * 1024 * GiB))
+    expect(most.partCount).toBeLessThanOrEqual(10_000)
+    expect(most.partBytes * most.partCount).toBeGreaterThanOrEqual(5 * 1024 * GiB)
+    expect(most.parts).toHaveLength(100)
+    expect((await start(5 * 1024 * GiB + 1)).status).toBe(413)
+  })
+
   it('verifies direct uploads in a job and copies them to the canonical key', async () => {
     const h = await harness()
     const user = await h.member()

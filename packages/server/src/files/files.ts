@@ -36,6 +36,37 @@ export const SMALL_UPLOAD_BYTES = 32 * 1024 * 1024
 export const SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024
 export const PART_BYTES = 100 * 1024 * 1024
 export const PRESIGN_SECONDS = 300
+/** The largest object R2 and S3 store, and the most parts a multipart upload has. */
+export const MAX_FILE_BYTES = 5 * 1024 ** 4
+export const MAX_PARTS = 10_000
+/** Part URLs presigned per response: the ticket has the first page, the client asks for the rest. */
+export const PARTS_PAGE = 100
+
+/** A file's part size: PART_BYTES, or more (whole MiB) so it fits in MAX_PARTS parts. */
+export function partBytesFor(size: number): number {
+  const mib = 1024 * 1024
+  return Math.max(PART_BYTES, Math.ceil(Math.ceil(size / MAX_PARTS) / mib) * mib)
+}
+
+/** Presigned URLs for parts `from` … `from + PARTS_PAGE - 1` of a multipart upload. */
+export async function presignParts(
+  ports: Ports,
+  upload: { storageKey: string; multipartUploadId: string | null; size: number },
+  from: number,
+): Promise<{ partNumber: number; url: string }[]> {
+  if (!upload.multipartUploadId) return []
+  const count = Math.ceil(upload.size / partBytesFor(upload.size))
+  const last = Math.min(count, from + PARTS_PAGE - 1)
+  const presigner = ports.stores.fileBytes.presigner
+  const parts: { partNumber: number; url: string }[] = []
+  for (let n = Math.max(1, from); n <= last; n++) {
+    parts.push({
+      partNumber: n,
+      url: await presigner.presignPart(upload.storageKey, upload.multipartUploadId, n, 3600),
+    })
+  }
+  return parts
+}
 
 // Types that render or run in a browser are stored as inert bytes (v1 rule).
 const UNSAFE_MIME = /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml)/i
@@ -221,6 +252,10 @@ export async function recordFile(
 export interface UploadTicket {
   id: string
   url?: string
+  /** Multipart: every part but the last is partBytes long. */
+  partBytes?: number
+  partCount?: number
+  /** The first PARTS_PAGE parts; GET …/uploads/:id/parts?from=n for the rest. */
   parts?: { partNumber: number; url: string }[]
   expiresIn: number
 }
@@ -240,12 +275,12 @@ export async function startUpload(
     ticket.url = await blobs.presigner.presignPut(key, { expiresIn: 3600 })
   } else {
     multipartUploadId = await blobs.presigner.createMultipart(key, req.mimeType)
-    const n = Math.ceil(req.size / PART_BYTES)
-    ticket.parts = await Promise.all(
-      Array.from({ length: n }, async (_, i) => ({
-        partNumber: i + 1,
-        url: await blobs.presigner.presignPart(key, multipartUploadId!, i + 1, 3600),
-      })),
+    ticket.partBytes = partBytesFor(req.size)
+    ticket.partCount = Math.ceil(req.size / ticket.partBytes)
+    ticket.parts = await presignParts(
+      ports,
+      { storageKey: key, multipartUploadId, size: req.size },
+      1,
     )
   }
   await ports.db.insert(schema.fileUploads).values({

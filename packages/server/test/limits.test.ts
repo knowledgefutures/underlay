@@ -11,6 +11,23 @@ import { setup } from './kf-app.js'
 afterAll(cleanup)
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
+
+/** A tar archive's regular files by name (ustar; pax headers skipped). */
+function untar(bytes: Uint8Array): Map<string, string> {
+  const out = new Map<string, string>()
+  const text = (a: number, b: number) =>
+    new TextDecoder().decode(bytes.subarray(a, b)).replace(/\0.*$/s, '')
+  for (let at = 0; at + 512 <= bytes.length;) {
+    const name = text(at, at + 100)
+    if (!name) break
+    const size = parseInt(text(at + 124, at + 136).trim(), 8)
+    const kind = text(at + 156, at + 157)
+    if (kind === '0' || kind === '')
+      out.set(name, new TextDecoder().decode(bytes.subarray(at + 512, at + 512 + size)))
+    at += 512 + Math.ceil(size / 512) * 512
+  }
+  return out
+}
 const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: { type: 'object' } } }
 
 describe('rate limits', () => {
@@ -139,6 +156,15 @@ describe('denylist and abuse reports', () => {
       await call('/api/records/batch', { method: 'POST', json: { hashes: [spam.hash] } })
     ).text()
     expect(batch).toBe('')
+    // Export: the archive is whole, the record left out and the file listed as withheld.
+    const tar = untar(new Uint8Array(await (await call(`${base}/export?format=tar`)).arrayBuffer()))
+    const lines = tar.get('records/Doc.ndjson')!.trim().split('\n')
+    expect(lines.map((l) => JSON.parse(l).id)).toEqual(['b'])
+    expect(tar.has(`files/${sha(bad)}`)).toBe(false)
+    expect(tar.get(`files/${sha(good)}`)).toBe(good)
+    const manifest = JSON.parse(tar.get('manifest.json')!)
+    expect(manifest.files_withheld).toEqual([sha(bad)])
+    expect(manifest.version.recordCount).toBe(1)
 
     // Unblocking serves it again.
     expect(

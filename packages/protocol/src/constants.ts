@@ -7,6 +7,7 @@
  *
  * Status: stable. Frozen 2026-10-03 with the values the tree-parameter
  * experiments chose (edge-redesign-build.md, "Tree parameter experiments").
+ * No value here may change without a new PROTOCOL_VERSION.
  */
 
 /**
