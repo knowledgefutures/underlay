@@ -299,7 +299,7 @@ export async function appendVersionLog(
   collectionId: string,
   v: Pick<
     typeof schema.versions.$inferSelect,
-    'seq' | 'semver' | 'hash' | 'baseSemver' | 'message' | 'appId' | 'actorId' | 'createdAt'
+    'seq' | 'semver' | 'hash' | 'baseSemver' | 'message' | 'appId' | 'createdAt'
   >,
 ): Promise<void> {
   const head = await readHead(repo, collectionId)
@@ -318,7 +318,9 @@ export async function appendVersionLog(
     baseSemver: v.baseSemver,
     message: v.message,
     appId: v.appId,
-    actorId: v.actorId,
+    // The pusher's actor id is for the collection's members (it stays on the
+    // version row); the log is public with its collection, and on mirrors.
+    actorId: null,
     createdAt: v.createdAt.toISOString(),
     prev: head?.entryHash ?? null,
   })

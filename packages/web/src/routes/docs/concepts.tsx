@@ -152,6 +152,11 @@ export default function DocsConcepts() {
         A collection can be <strong>public</strong> (listed in browse, readable by anyone) or{' '}
         <strong>private</strong> (visible only to the owner and org members).
       </p>
+      <p>
+        A published version never changes, so anonymous reads of it are cached for ten minutes.
+        Making a collection private can therefore take up to about ten minutes to reach every
+        reader; making it public takes effect within seconds.
+      </p>
 
       <h3>Type-level</h3>
       <p>

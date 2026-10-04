@@ -349,7 +349,10 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
 - `collectionId` is the id of the collection whose log this is (the `<collectionId>` in its keys).
   It is signed, so an entry, or a whole log, can't be passed off as another collection's.
 - `seq` counts from 1. `createdAt` is ISO 8601 UTC. `appId`, `actorId`, `baseSemver` and
-  `message` may be `null`. Pusher identity is not recorded (open question).
+  `message` may be `null`. Pusher identity is not recorded, and since 2026-10-04 the reference
+  implementation writes `actorId` as `null`: the actor a push names is visible to the
+  collection's members only, and a log is as public as its collection. The field stays, so
+  earlier entries still verify.
 - `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry
   without `sig`).
 - `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key). A
@@ -614,3 +617,5 @@ These were made during implementation and recorded with their reasons in `edge-r
 11. Naming, 2026-10-04: "format 2" is now "protocol v2". In the reference implementation
     `FORMAT_VERSION` is `PROTOCOL_VERSION`, and the vectors file's top-level `format` key is
     `protocolVersion`. No hashed value changed, but a reader of `v2.json` has to use the new key.
+12. `actorId` is written as `null` from 2026-10-04 (section 11.1). The entry's shape and hashing
+    are unchanged.

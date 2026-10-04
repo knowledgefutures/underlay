@@ -8,8 +8,10 @@ import {
   type PublicKeyInfo,
   type Repo,
 } from '@underlay/protocol'
+import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -45,7 +47,7 @@ describe('fsck', () => {
       const open = await h.request(`${base}/push`, {
         method: 'POST',
         user,
-        json: i === 0 ? { schemas: { Doc } } : {},
+        json: i === 0 ? { schemas: { Doc } } : { actor_id: 'pubpub-user-7' },
       })
       const sid = ((await open.json()) as { session_id: string }).session_id
       await h.request(`${base}/push/${sid}/records`, {
@@ -59,6 +61,11 @@ describe('fsck', () => {
     }
     const repo = await h.ports.stores.forCollection(c.id)
     const trusted = [h.signer.publicKey]
+    // The actor a push names stays with the members: the public log carries null.
+    const entry = JSON.parse(await (await repo.blobs.get(`collections/${c.id}/log/2.json`))!.text())
+    expect(entry.actorId).toBeNull()
+    const [row] = await h.ports.db.select().from(schema.versions).where(eq(schema.versions.seq, 2))
+    expect(row!.actorId).toBe('pubpub-user-7')
     const ok = await fsck(repo, { collectionId: c.id, trustedKeys: trusted, fileBytes: true })
     expect(ok).toMatchObject({ ok: true, errors: [], versions: 2, files: 1, log: 'trusted keys' })
     expect(ok.records).toBeGreaterThan(2500)

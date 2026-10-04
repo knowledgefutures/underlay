@@ -119,8 +119,12 @@ async function* allRecords(
 /**
  * Caching for a version's data: a published version never changes, so anything
  * addressed by its semver or hash may be cached; `latest` moves. Anonymous
- * reads are public for ten minutes (short enough that a collection made private
- * or a blocked record stops being served soon); members' are private.
+ * reads are public for ten minutes, and stale for a minute more while a cache
+ * revalidates: a collection made private, or a blocked record, stops being
+ * served within about eleven minutes (accepted, decision D2 of alignment review
+ * 2; the settings page says so). Members' reads are private. Only 200s are
+ * cached, so a collection made public is readable as soon as the database says
+ * so.
  */
 function versionCaching(c: Context<AppEnv>) {
   const n = c.req.param('n')
@@ -128,7 +132,7 @@ function versionCaching(c: Context<AppEnv>) {
   if (c.res.headers.has('cache-control')) return
   c.res.headers.set(
     'cache-control',
-    c.var.principal ? 'private, max-age=3600' : 'public, max-age=600, stale-while-revalidate=3600',
+    c.var.principal ? 'private, max-age=3600' : 'public, max-age=600, stale-while-revalidate=60',
   )
 }
 

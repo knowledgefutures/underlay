@@ -279,6 +279,13 @@ export default function CollectionSettingsPage() {
               Public — visible to everyone
             </label>
           </div>
+          {data.public && !isPublic && (
+            <p className="text-ink-muted text-xs">
+              Making a collection private takes effect at once here, but copies of its versions
+              already cached by browsers and the network can still be served for up to about ten
+              minutes. Making it public takes effect within seconds.
+            </p>
+          )}
 
           <div className="pt-2">
             <Button type="submit" disabled={submitting === 'update'}>
