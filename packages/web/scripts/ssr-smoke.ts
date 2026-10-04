@@ -237,6 +237,19 @@ try {
       has: ['Versions — org/authors', 'v1.0.0', 'First load of authors', 'ulv2:'],
     },
     { path: '/org/authors/v/1.0.0/records', status: 200, has: ['Ada Lovelace'] },
+    // A record's page: its data and history; rows link to it.
+    {
+      path: '/org/authors/v/1.0.0/records/Author/ada',
+      status: 200,
+      has: ['Ada Lovelace', 'History in this collection', 'added', 'where else it appears'],
+    },
+    { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 404 },
+    { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 200, has: ['Kurt'], user: 'u1' },
+    {
+      path: '/org/authors/records?type=Author',
+      status: 200,
+      has: ['/org/authors/v/1.0.0/records/Author/ada'],
+    },
     { path: '/org/authors/v/v1.0.0', status: 302, location: '/org/authors/v/1.0.0' },
     { path: '/org/authors/schemas', status: 200, has: ['Author', 'born', 'integer'] },
     { path: '/org/authors/files', status: 200, has: ['Files — org/authors'] },

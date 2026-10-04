@@ -283,11 +283,11 @@ export function RecordsView({
                         </td>
                       )}
                       <td className="border-rule bg-parchment group-hover:bg-parchment-dark sticky right-0 w-8 border-b border-l p-2 transition-colors after:absolute after:inset-y-0 after:left-full after:w-0.5 after:bg-inherit">
-                        {r.hash && (
+                        {r.hash && currentType && (
                           <TokenLink
-                            to={`/records/${r.hash}`}
+                            to={`/${owner}/${collection}/v/${String(version.semver).replace(/^v/, '')}/records/${encodeURIComponent(currentType)}/${encodeURIComponent(r.id)}`}
                             className="text-ink-muted hover:text-ink inline-flex items-center"
-                            title="View record provenance"
+                            title="View this record"
                           >
                             <svg
                               className="h-3.5 w-3.5"

@@ -19,7 +19,7 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { presignDownload } from '../files/files.js'
 import { deniedHashes, isDenied } from '../lib/limits.js'
-import { type Presence, presenceOf } from '../refs/log.js'
+import { eventsFor, type Presence, presenceOf } from '../refs/log.js'
 import { fileSizes } from '../versions/file-refs.js'
 import { getRecord, loadView } from '../versions/view.js'
 import { jsonError } from './access.js'
@@ -205,6 +205,60 @@ export function recordRoutes() {
       firstSeen: references[0]?.versionCreatedAt ?? null,
       createdAt: references[0]?.versionCreatedAt ?? null,
       references,
+    })
+  })
+
+  /**
+   * Where a record or file first appeared, among the collections the caller may
+   * read: the earliest "+" event (edge-redesign.md, Provenance: the cheap
+   * answer most callers want). It reads only that hash's events and the versions
+   * they name, with no interval folding or fork expansion.
+   */
+  app.get('/api/records/:hash/first', async (c) => {
+    const hash = c.req.param('hash').replace(/^sha256:/, '')
+    const { db } = c.var.ports
+    const [alias] = await db
+      .select()
+      .from(schema.legacyHashes)
+      .where(eq(schema.legacyHashes.legacyHash, hash))
+    const target = alias?.hash ?? hash
+    const adds = (await eventsFor(c.var.ports, target)).filter((e) => e[5] === '+')
+    if (adds.length === 0) return jsonError(c, 404, 'Not found')
+    const orgs = await memberOrgs(c)
+    const cols = new Map<string, { c: Item['c']; owner: Item['owner'] }>()
+    for (const part of chunks([...new Set(adds.map((e) => e[2]))])) {
+      const rows = await db
+        .select({ c: schema.collections, owner: schema.organization })
+        .from(schema.collections)
+        .innerJoin(
+          schema.organization,
+          eq(schema.organization.id, schema.collections.organizationId),
+        )
+        .where(inArray(schema.collections.id, part))
+      for (const r of rows) cols.set(r.c.id, r)
+    }
+    const visible = adds.filter((e) => {
+      const col = cols.get(e[2])
+      return !!col && (orgs.has(col.c.organizationId) || (col.c.public && e[3] === 'public'))
+    })
+    let first: { e: (typeof adds)[number]; v: typeof schema.versions.$inferSelect } | null = null
+    for (const e of visible) {
+      const [v] = await db
+        .select()
+        .from(schema.versions)
+        .where(and(eq(schema.versions.collectionId, e[2]), eq(schema.versions.seq, e[4])))
+      if (v && (!first || v.createdAt < first.v.createdAt)) first = { e, v }
+    }
+    if (!first) return jsonError(c, 404, 'Not found')
+    const col = cols.get(first.e[2])!
+    return c.json({
+      hash: target,
+      kind: first.e[1] === 'r' ? 'record' : 'file',
+      owner: col.owner.slug,
+      collection: col.c.slug,
+      semver: first.v.semver,
+      createdAt: first.v.createdAt,
+      ...(first.e[1] === 'r' ? { type: first.e[6], id: first.e[7] } : {}),
     })
   })
 

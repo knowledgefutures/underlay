@@ -210,9 +210,14 @@ export function schemaRoutes() {
       .where(
         and(
           eq(schema.schemaUsage.schemaHash, hash),
-          eq(schema.collections.public, true),
-          eq(schema.schemaUsage.set, 'public'),
           isNull(schema.schemaUsage.toSeq),
+          // Public use for everyone; members also see their own orgs' private use.
+          orgs
+            ? or(
+                and(eq(schema.collections.public, true), eq(schema.schemaUsage.set, 'public')),
+                sql`${schema.collections.organizationId} IN ${orgs}`,
+              )
+            : and(eq(schema.collections.public, true), eq(schema.schemaUsage.set, 'public')),
         ),
       )
       .limit(50)
@@ -222,11 +227,15 @@ export function schemaRoutes() {
       schema: await schemaBody(c, hash),
       createdAt: row.createdAt,
       labels: (await labelsFor(c, [hash])).get(hash) ?? [],
-      usage: usage.map((u) => ({
-        slug: u.slug,
-        semver: u.headSemver,
-        collection: `${u.owner}/${u.collection}`,
-      })),
+      // A type used in both sets is one entry.
+      usage: [
+        ...new Map(
+          usage.map((u) => [
+            `${u.owner}/${u.collection}\u0000${u.slug}`,
+            { slug: u.slug, semver: u.headSemver, collection: `${u.owner}/${u.collection}` },
+          ]),
+        ).values(),
+      ],
     })
   })
 

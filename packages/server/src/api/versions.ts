@@ -17,6 +17,7 @@ import {
   compareUtf8,
   type DiffEntry,
   diffTrees,
+  getEntry,
   gzip,
   leaves,
   OUT_OF_LINE_BYTES,
@@ -220,6 +221,71 @@ export function versionRoutes() {
         total,
       },
     })
+  })
+
+  /** One record by type and id, at a version (v1 had this only through ARK). */
+  app.get('/:owner/:slug/versions/:n/records/:type/:id', async (c) => {
+    const access = await requireCollection(c, 'read')
+    if (access instanceof Response) return access
+    const view = await viewFor(c, access)
+    if (view instanceof Response) return view
+    const t = view.types.find((x) => x.slug === c.req.param('type'))
+    const rec = t ? await getRecord(view, t, c.req.param('id')) : null
+    if (!rec) return jsonError(c, 404, 'Record not found')
+    return c.json({ ...recordJson(rec), semver: view.version.semver })
+  })
+
+  /**
+   * A record's history in this collection: every version where it was added,
+   * changed or removed, oldest first, in the sets the caller may read. One
+   * lookup per version, O(versions × tree height); the newest MAX_HISTORY versions.
+   */
+  app.get('/:owner/:slug/records/:type/:id/history', async (c) => {
+    const access = await requireCollection(c, 'read')
+    if (access instanceof Response) return access
+    const { db } = c.var.ports
+    const versions = (
+      await db
+        .select()
+        .from(schema.versions)
+        .where(eq(schema.versions.collectionId, access.collection.id))
+        .orderBy(desc(schema.versions.seq))
+        .limit(MAX_HISTORY)
+    ).reverse()
+    const repo = await c.var.ports.stores.forCollection(access.collection.id)
+    const withheld = await deniedHashes(db)
+    const source = new RepoSource(recordTree, repo)
+    const type = c.req.param('type')
+    const id = c.req.param('id')
+    const changes: {
+      seq: number
+      semver: string
+      createdAt: Date
+      change: 'added' | 'updated' | 'removed'
+      hash: string | null
+    }[] = []
+    let last: string | null = null
+    for (const v of versions) {
+      const view = await loadView(repo, v, access.isMember, withheld)
+      const t = view.types.find((x) => x.slug === type)
+      let hash: string | null = null
+      for (const tree of [t?.public, t?.private]) {
+        if (!tree?.root) continue
+        const hit = await getEntry(source, tree.root, id)
+        if (hit) hash = hit.hash
+      }
+      if (hash === last) continue
+      changes.push({
+        seq: v.seq,
+        semver: v.semver,
+        createdAt: v.createdAt,
+        change: hash === null ? 'removed' : last === null ? 'added' : 'updated',
+        hash,
+      })
+      last = hash
+    }
+    if (changes.length === 0) return jsonError(c, 404, 'Record not found')
+    return c.json({ type, id, changes, truncated: versions.length === MAX_HISTORY })
   })
 
   /**
@@ -486,6 +552,9 @@ export function versionRoutes() {
 }
 
 const inHashes = (hashes: string[]) => inArray(schema.files.hash, hashes)
+
+/** Versions a record history looks back over. */
+const MAX_HISTORY = 500
 
 /** Concurrent body reads per diff page. */
 const BODY_READS = 16
