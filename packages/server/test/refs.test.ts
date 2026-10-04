@@ -141,6 +141,85 @@ describe('reference log', () => {
   })
 })
 
+describe('forks and access', () => {
+  const sha = (b: string) => createHash('sha256').update(b).digest('hex')
+  const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: {} } }
+
+  it("a public-only fork doesn't inherit the parent's private files or records", async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('lib')
+    await h.ports.db.update(schema.collections).set({ public: true })
+    const base = '/api/collections/org/lib'
+    const pub = 'public pdf'
+    const priv = 'private pdf'
+    for (const b of [pub, priv]) {
+      expect(
+        (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
+      ).toBe(201)
+    }
+    await push(h, user, base, { schemas: { Doc } }, [
+      { id: 'd1', type: 'Doc', data: { pdf: { $file: `sha256:${sha(pub)}` } } },
+      { id: 'd2', type: 'Doc', data: { pdf: { $file: `sha256:${sha(priv)}` } }, private: true },
+    ])
+
+    // A signed-in non-member forks the public collection into their own org.
+    await h.ports.db.insert(schema.user).values({ id: 'u2', name: 'u2', email: 'u2@example.org' })
+    await h.ports.db.insert(schema.organization).values({ id: 'org2', name: 'Two', slug: 'two' })
+    await h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org2', userId: 'u2', role: 'owner' })
+    expect(
+      (await h.request(`${base}/fork`, { method: 'POST', user: 'u2', json: { targetOrg: 'two' } }))
+        .status,
+    ).toBe(201)
+    await h.drain()
+
+    expect((await h.request(`/api/collections/files/${sha(priv)}`, { user: 'u2' })).status).toBe(
+      404,
+    )
+    const d2 = hashRecord('d2', 'Doc', { pdf: { $file: `sha256:${sha(priv)}` } }).hash
+    expect((await h.request(`/api/records/${d2}/provenance`, { user: 'u2' })).status).toBe(404)
+    // What the fork did carry stays reachable, and the parent's members still see both.
+    expect((await h.request(`/api/collections/files/${sha(pub)}`, { user: 'u2' })).status).toBe(302)
+    expect((await h.request(`/api/collections/files/${sha(priv)}`, { user })).status).toBe(302)
+  })
+
+  it('serves a record body only when it has the requested hash', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('lib')
+    const base = '/api/collections/org/lib'
+    await push(h, user, base, { schemas: { Author } }, [
+      { id: 'a', type: 'Author', data: { name: 'A' } },
+    ])
+    // The next version isn't indexed yet, so the log still places the old record at the head.
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { base: 'v1.0.0' } }),
+      )
+    ).session_id
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [{ id: 'a', type: 'Author', data: { name: 'A2' } }],
+    })
+    expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+      201,
+    )
+    const res = await h.request(`/api/records/${h_('a', { name: 'A' })}/provenance`, { user })
+    if (res.status === 200) expect((await json(res)).data).toEqual({ name: 'A' })
+    else expect(res.status).toBe(404)
+    const batch = await h.request('/api/records/batch', {
+      method: 'POST',
+      user,
+      json: { hashes: [h_('a', { name: 'A' })] },
+    })
+    for (const line of (await batch.text()).split('\n').filter(Boolean))
+      expect(JSON.parse(line).data).toEqual({ name: 'A' })
+  })
+})
+
 describe('segments', () => {
   it('never has false negatives, for any hash', async () => {
     const store = memoryStore()

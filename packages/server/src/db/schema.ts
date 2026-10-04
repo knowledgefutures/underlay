@@ -288,6 +288,10 @@ export const forks = sqliteTable('forks', {
     .references(() => collections.id, { onDelete: 'cascade' }),
   parentCollectionId: text('parent_collection_id').notNull(),
   parentSeq: integer('parent_seq').notNull(),
+  /** The sets the fork carried: a non-member's fork takes the public set only. */
+  sets: text('sets', { enum: ['public', 'public+private'] })
+    .notNull()
+    .default('public'),
   createdAt: createdAt(),
 })
 

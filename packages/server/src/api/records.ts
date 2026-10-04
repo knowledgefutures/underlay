@@ -67,10 +67,14 @@ async function visiblePresence(c: Context<AppEnv>, hash: string) {
   return { target, items }
 }
 
-/** The record body at a version where it was present. */
+/**
+ * The record body at a version where it was present, only if it is the record
+ * asked for: the log can lag the head, and an id can hold another record there.
+ */
 async function bodyAt(
   c: Context<AppEnv>,
   item: { p: Presence; c: typeof schema.collections.$inferSelect; member: boolean },
+  hash: string,
 ) {
   const seq = item.p.to === null ? null : item.p.to - 1
   const [v] =
@@ -87,7 +91,21 @@ async function bodyAt(
   const repo = await c.var.ports.stores.forCollection(item.c.id)
   const view = await loadView(repo, v, item.member)
   const t = view.types.find((x) => x.slug === item.p.type)
-  return t ? getRecord(view, t, item.p.id) : null
+  const rec = t ? await getRecord(view, t, item.p.id) : null
+  return rec?.hash === hash ? rec : null
+}
+
+/** The body from the first of these presences that still has it. */
+async function firstBody(
+  c: Context<AppEnv>,
+  items: { p: Presence; c: typeof schema.collections.$inferSelect; member: boolean }[],
+  hash: string,
+) {
+  for (const item of items) {
+    const rec = await bodyAt(c, item, hash)
+    if (rec) return rec
+  }
+  return null
 }
 
 export function recordRoutes() {
@@ -98,7 +116,7 @@ export function recordRoutes() {
     const { target, items } = await visiblePresence(c, hash)
     const records = items.filter((i) => i.p.kind === 'r')
     if (records.length === 0) return jsonError(c, 404, 'Record not found')
-    const rec = await bodyAt(c, records[0]!)
+    const rec = await firstBody(c, records, target)
     if (!rec) return jsonError(c, 404, 'Record not found')
     const parsed = JSON.parse(rec.body!) as { id: string; type: string; data: unknown }
     const { db } = c.var.ports
@@ -155,10 +173,12 @@ export function recordRoutes() {
       return jsonError(c, 400, '"hashes" must be 1–10,000 record hashes')
     const lines: string[] = []
     for (const h of hashes) {
-      const { items } = await visiblePresence(c, h.replace(/^sha256:/, ''))
-      const first = items.find((i) => i.p.kind === 'r')
-      if (!first) continue
-      const rec = await bodyAt(c, first)
+      const { target, items } = await visiblePresence(c, h.replace(/^sha256:/, ''))
+      const rec = await firstBody(
+        c,
+        items.filter((i) => i.p.kind === 'r'),
+        target,
+      )
       if (rec) lines.push(`${rec.body!.slice(0, -1)},"hash":"${rec.hash}"}`)
     }
     return new Response(lines.length ? lines.join('\n') + '\n' : '', {

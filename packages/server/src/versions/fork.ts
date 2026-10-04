@@ -128,6 +128,7 @@ export async function forkCollection(
     childCollectionId: collection.id,
     parentCollectionId: source.collection.id,
     parentSeq: v.seq,
+    sets: keepPrivate ? 'public+private' : 'public',
   })
   const [version] = await ports.db
     .select()

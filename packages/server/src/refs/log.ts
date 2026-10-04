@@ -409,6 +409,8 @@ export async function presenceOf(ports: Ports, hash: string): Promise<Presence[]
       .where(eq(schema.forks.parentCollectionId, p.collectionId))
     for (const f of children) {
       if (f.parentSeq < p.from || (p.to !== null && f.parentSeq >= p.to)) continue
+      // A fork carries only the sets it was made with.
+      if (p.set === 'private' && f.sets !== 'public+private') continue
       if (
         out.some(
           (q) =>
