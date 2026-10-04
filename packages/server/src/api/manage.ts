@@ -259,8 +259,11 @@ export function manageRoutes() {
     const repo = await ports.stores.forCollection(access.collection.id)
     const root = await repo.root(base.hash)
     const priv = root.private ? await repo.privateSet(root.private) : null
-    const metadata = { ...(root.metadata ?? {}), ...patch }
-    if (JSON.stringify(metadata) === JSON.stringify(root.metadata))
+    // A patch over the current metadata; null clears a field.
+    const merged: Record<string, unknown> = { ...(root.metadata ?? {}), ...patch }
+    for (const [k, v] of Object.entries(merged)) if (v === null) delete merged[k]
+    const metadata = Object.keys(merged).length ? merged : null
+    if (JSON.stringify(metadata) === JSON.stringify(root.metadata ?? null))
       return c.json({ semver: base.semver, unchanged: true })
     const hashes = new Map<string, string>()
     for (const [slug, t] of Object.entries(priv?.types ?? {})) hashes.set(slug, t.schema)

@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import MirrorsSettings, {
@@ -18,60 +18,6 @@ import {
 } from '~/components/ui'
 import WebhooksSettings from '~/components/WebhooksSettings'
 import { useAppContext } from '~/lib/app-context'
-
-/**
- * Poll an async metadata job to completion.
- *
- * Metadata edits create a patch version, whose cost scales with the record set,
- * so this legitimately runs for minutes on a large collection. There is no
- * timeout: the server-side sweep is what ends a job that will never finish, and
- * giving up here would only lose track of a write that is still going to land.
- * `onProgress` gets a note once the wait stops looking instant.
- */
-async function pollMetadataJob(
-  owner: string | undefined,
-  collection: string | undefined,
-  jobId: string,
-  onProgress: (message: string) => void,
-  signal: AbortSignal,
-): Promise<{ semver?: string; error?: string; aborted?: true }> {
-  const INTERVAL_MS = 1500
-  const NOTE_AFTER_MS = 4000
-  const startedAt = Date.now()
-  let noted = false
-
-  for (;;) {
-    await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS))
-    // The page was left: stop polling (the write still lands server-side).
-    if (signal.aborted) return { aborted: true }
-
-    let res: Response
-    try {
-      res = await fetch(`/api/collections/${owner}/${collection}/metadata/jobs/${jobId}`, {
-        credentials: 'include',
-        signal,
-      })
-    } catch (err) {
-      if (signal.aborted) return { aborted: true }
-      throw err
-    }
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      return { error: body.error ?? 'Lost track of the metadata update.' }
-    }
-
-    const job = await res.json()
-    if (job.status === 'completed') return { semver: job.result?.semver }
-    if (job.status === 'failed') {
-      return { error: job.error?.error ?? 'Metadata update failed.' }
-    }
-
-    if (!noted && Date.now() - startedAt > NOTE_AFTER_MS) {
-      noted = true
-      onProgress('Saving — this collection is large enough that the new version takes a while.')
-    }
-  }
-}
 
 export default function CollectionSettingsPage() {
   const { owner, collection } = useParams()
@@ -116,14 +62,6 @@ export default function CollectionSettingsPage() {
 
   // Transfer form
   const [transferTarget, setTransferTarget] = useState('')
-
-  // Aborted on unmount so a metadata-job poll doesn't outlive the page.
-  const pollAbort = useRef(new AbortController())
-  useEffect(() => {
-    const controller = new AbortController()
-    pollAbort.current = controller
-    return () => controller.abort()
-  }, [])
 
   function clearMessages() {
     setSuccess('')
@@ -182,43 +120,23 @@ export default function CollectionSettingsPage() {
       else payload.license = null
       payload.tags = tags.length > 0 ? tags : null
 
-      // Always async. Saving metadata creates a patch version, which on a
-      // multi-million-record collection takes longer than the proxy will hold a
-      // connection open — a synchronous save there dies at a bare 524 with no way
-      // to tell whether it landed. Polling costs one extra round trip on small
-      // collections and is the only thing that works on large ones.
-      const res = await fetch(`/api/collections/${owner}/${collection}/metadata?async=true`, {
-        method: 'PATCH',
+      // A patch version over the same trees: cheap at any collection size.
+      const res = await fetch(`/api/collections/${owner}/${collection}/metadata`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
       })
-
+      const body = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Metadata update failed.')
         return
       }
-
-      const accepted = await res.json()
-      if (accepted.unchanged) {
+      if (body.unchanged) {
         setSuccess('No changes to save.')
         return
       }
-
-      const outcome = await pollMetadataJob(
-        owner,
-        collection,
-        accepted.job_id,
-        setSuccess,
-        pollAbort.current.signal,
-      )
-      if (outcome.aborted) return
-      if (outcome.error) {
-        setError(outcome.error)
-        return
-      }
-      setSuccess(`Metadata updated (${outcome.semver}).`)
+      setSuccess(`Metadata updated (${body.semver}).`)
       const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
         credentials: 'include',
       })

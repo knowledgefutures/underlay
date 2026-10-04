@@ -96,6 +96,24 @@ describe('collection management', () => {
     expect(detail.latestVersion.metadata).toEqual({ title: 'T', description: 'Edited' })
     expect(detail.description).toBe('Edited')
 
+    // null clears a field (the settings page sends every field, empty ones as null).
+    res = await h.request(`${base}/metadata`, {
+      method: 'POST',
+      user,
+      json: { title: null, readme: null, description: 'Edited' },
+    })
+    expect(res.status).toBe(201)
+    expect((await json(res)).semver).toBe('v1.0.2')
+    expect((await json(await h.request(base))).latestVersion.metadata).toEqual({
+      description: 'Edited',
+    })
+    res = await h.request(`${base}/metadata`, {
+      method: 'POST',
+      user,
+      json: { title: null, description: 'Edited' },
+    })
+    expect(await json(res)).toEqual({ semver: 'v1.0.2', unchanged: true })
+
     // Fork into another org by a member there: public set only, no data copied.
     await h.ports.db.insert(schema.user).values({ id: 'u2', name: 'u2', email: 'u2@example.org' })
     await h.ports.db.insert(schema.organization).values({ id: 'org2', name: 'Two', slug: 'two' })
@@ -113,7 +131,7 @@ describe('collection management', () => {
     expect(fork).toMatchObject({
       owner: 'two',
       slug: 'new-one',
-      forkedFrom: { version: 'v1.0.1' },
+      forkedFrom: { version: 'v1.0.2' },
       version: { recordCount: 1 },
     })
     expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(4) // root, log entry, head.json
@@ -125,7 +143,7 @@ describe('collection management', () => {
     const [srcHead] = await h.ports.db
       .select()
       .from(schema.versions)
-      .where(eq(schema.versions.semver, 'v1.0.1'))
+      .where(eq(schema.versions.semver, 'v1.0.2'))
     const forkVersion = (
       await h.ports.db
         .select()
