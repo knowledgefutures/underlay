@@ -21,6 +21,7 @@ import {
   type R2BucketLike,
   readParts,
   r2Store,
+  s3CopyLimits,
   s3Store,
   serveSignedBlob,
   type Store,
@@ -242,6 +243,22 @@ describe('file store presigned URLs', () => {
     expect((await serveSignedBlob(store, new Request(tampered))).status).toBe(403)
     const wrongMethod = await serveSignedBlob(store, new Request(get, { method: 'PUT', body: 'x' }))
     expect(wrongMethod.status).toBe(403)
+  })
+})
+
+describe('s3 multipart copy', () => {
+  it('copies an object over the CopyObject limit in UploadPartCopy ranges', async () => {
+    const store = await fakeS3Store()
+    const bytes = new Uint8Array(1000).map((_, i) => i % 251)
+    await store.put('big/src', bytes)
+    const saved = { ...s3CopyLimits }
+    Object.assign(s3CopyLimits, { copyObjectMax: 100, partBytes: 300 })
+    try {
+      await copyObject(store, 'big/src', 'big/dest', 1000)
+    } finally {
+      Object.assign(s3CopyLimits, saved)
+    }
+    expect(await (await store.get('big/dest'))!.bytes()).toEqual(bytes)
   })
 })
 

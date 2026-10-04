@@ -63,6 +63,13 @@ export function s3Store(cfg: S3Config): S3Store {
   return new S3Store(cfg)
 }
 
+export const s3CopyLimits = {
+  /** CopyObject's limit; larger objects are copied in parts. */
+  copyObjectMax: 5 * 1024 ** 3,
+  /** Part size for multipart copies: 512 MiB, so 10,000 parts cover 5 TiB. */
+  partBytes: 512 * 1024 ** 2,
+}
+
 export class S3Store implements Store {
   readonly #aws: AwsClient
   readonly #base: string
@@ -308,8 +315,14 @@ export class S3Store implements Store {
     }
   }
 
-  async copy(from: string, to: string): Promise<void> {
+  /**
+   * CopyObject, or for an object over 5 GiB (CopyObject's limit; pass its size)
+   * a multipart copy whose parts are UploadPartCopy ranges of the source.
+   */
+  async copy(from: string, to: string, size?: number): Promise<void> {
     const source = `/${this.#base.split('/').pop()}/${encodeKey(from)}`
+    if (size !== undefined && size > s3CopyLimits.copyObjectMax)
+      return this.#copyInParts(source, to, size)
     const res = await this.#fetch(this.#url(to), {
       method: 'PUT',
       headers: { 'x-amz-copy-source': source },
@@ -321,6 +334,40 @@ export class S3Store implements Store {
         res.ok ? 500 : res.status,
         `CopyObject ${from} → ${to}: ${text.slice(0, 200)}`,
       )
+    }
+  }
+
+  async #copyInParts(source: string, to: string, size: number): Promise<void> {
+    const id = await this.#createMultipart(to)
+    try {
+      const parts: { partNumber: number; etag: string }[] = []
+      for (let start = 0; start < size; start += s3CopyLimits.partBytes) {
+        const partNumber = parts.length + 1
+        const end = Math.min(size, start + s3CopyLimits.partBytes) - 1
+        const res = await this.#fetch(
+          this.#url(to, { partNumber: String(partNumber), uploadId: id }),
+          {
+            method: 'PUT',
+            headers: {
+              'x-amz-copy-source': source,
+              'x-amz-copy-source-range': `bytes=${start}-${end}`,
+            },
+          },
+        )
+        const text = await res.text()
+        const etag = /<ETag>(.*?)<\/ETag>/.exec(text)?.[1]
+        if (!res.ok || text.includes('<Error>') || !etag) {
+          throw new S3Error(
+            res.ok ? 500 : res.status,
+            `UploadPartCopy ${to}: ${text.slice(0, 200)}`,
+          )
+        }
+        parts.push({ partNumber, etag: etag.replace(/&quot;/g, '"') })
+      }
+      await this.#completeMultipart(to, id, parts)
+    } catch (err) {
+      await this.#abortMultipart(to, id).catch(() => {})
+      throw err
     }
   }
 

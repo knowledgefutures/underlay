@@ -76,8 +76,22 @@ export async function startFakeS3(
     if (req.method === 'PUT' && q.has('uploadId')) {
       const up = uploads.get(q.get('uploadId')!)
       if (!up) return void res.writeHead(404).end('<Error><Code>NoSuchUpload</Code></Error>')
-      up.parts.set(Number(q.get('partNumber')), body)
-      res.writeHead(200, { etag: `"p${q.get('partNumber')}"` }).end()
+      const n = q.get('partNumber')
+      // UploadPartCopy: the part is a range of another object.
+      const copySource = req.headers['x-amz-copy-source']
+      if (typeof copySource === 'string') {
+        const src = objects.get(decodeURIComponent(copySource.replace(/^\/[^/]+\//, '')))
+        if (!src) return void res.writeHead(404).end('<Error><Code>NoSuchKey</Code></Error>')
+        const r = /^bytes=(\d+)-(\d+)$/.exec(String(req.headers['x-amz-copy-source-range'] ?? ''))
+        up.parts.set(
+          Number(n),
+          r ? src.bytes.subarray(Number(r[1]), Number(r[2]) + 1) : Buffer.from(src.bytes),
+        )
+        res.writeHead(200).end(`<CopyPartResult><ETag>"c${n}"</ETag></CopyPartResult>`)
+        return
+      }
+      up.parts.set(Number(n), body)
+      res.writeHead(200, { etag: `"p${n}"` }).end()
       return
     }
     if (req.method === 'POST' && q.has('uploadId')) {

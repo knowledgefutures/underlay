@@ -58,8 +58,11 @@ export interface Store {
    * 5 MiB (S3's minimum). `putFromParts` falls back to put for stores without it.
    */
   putParts?(key: string, parts: AsyncIterable<Uint8Array>, opts?: PutPartsOptions): Promise<void>
-  /** Server-side copy, where the store has one; `copyObject` falls back to get and put. */
-  copy?(from: string, to: string): Promise<void>
+  /**
+   * Server-side copy, where the store has one; `copyObject` falls back to get and
+   * put. Given the size, a store may copy a large object in parts (S3: over 5 GiB).
+   */
+  copy?(from: string, to: string, size?: number): Promise<void>
   /** Presigned URLs and multipart uploads, where the store can hand out URLs. */
   readonly presigner?: Presigner
 }
@@ -82,8 +85,13 @@ export interface Presigner {
 export type PresigningStore = Store & { readonly presigner: Presigner }
 
 /** Copy an object within a store: natively when it can, else by reading and writing it. */
-export async function copyObject(store: Store, from: string, to: string): Promise<void> {
-  if (store.copy) return store.copy(from, to)
+export async function copyObject(
+  store: Store,
+  from: string,
+  to: string,
+  size?: number,
+): Promise<void> {
+  if (store.copy) return store.copy(from, to, size)
   const obj = await store.get(from)
   if (!obj) throw new Error(`copyObject: ${from} does not exist`)
   await store.put(to, await obj.bytes(), obj.contentType ? { contentType: obj.contentType } : {})
@@ -225,7 +233,7 @@ export const noCache: Cache = {
 export class PrefixedStore implements Store {
   readonly #p: string
   readonly presigner?: Presigner
-  readonly copy?: (from: string, to: string) => Promise<void>
+  readonly copy?: (from: string, to: string, size?: number) => Promise<void>
   readonly putParts?: (
     key: string,
     parts: AsyncIterable<Uint8Array>,
@@ -251,7 +259,7 @@ export class PrefixedStore implements Store {
     }
     if (inner.copy) {
       const copy = inner.copy.bind(inner)
-      this.copy = (from, to) => copy(k(from), k(to))
+      this.copy = (from, to, size) => copy(k(from), k(to), size)
     }
     if (inner.putParts) {
       const putParts = inner.putParts.bind(inner)

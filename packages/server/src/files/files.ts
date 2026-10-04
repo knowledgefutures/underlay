@@ -28,8 +28,6 @@ import type { Ports } from '../ports.js'
 export const SMALL_UPLOAD_BYTES = 32 * 1024 * 1024
 /** Single presigned PUT limit (S3/R2); larger files use multipart. */
 export const SINGLE_PUT_BYTES = 5 * 1024 * 1024 * 1024
-/** Server-side copy limit; past it the verified staging object would need UploadPartCopy. */
-export const COPY_LIMIT_BYTES = 5 * 1024 * 1024 * 1024
 export const PART_BYTES = 100 * 1024 * 1024
 export const PRESIGN_SECONDS = 300
 
@@ -279,25 +277,13 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
     .where(eq(schema.files.hash, u.hash))
     .limit(1)
   if (!existing) {
-    let storageKey = ports.stores.canonicalFileKey(u.hash)
-    if (size <= COPY_LIMIT_BYTES) {
-      await copyObject(blobs, u.storageKey, storageKey)
-    } else {
-      // TODO(files): UploadPartCopy for >5 GB. Until then the staging object is kept
-      // as the file; the staging lifecycle rule must not cover verified uploads.
-      storageKey = u.storageKey
-    }
+    const storageKey = ports.stores.canonicalFileKey(u.hash)
+    // With the size, a store copies past CopyObject's 5 GiB in parts (UploadPartCopy).
+    await copyObject(blobs, u.storageKey, storageKey, size)
     await ports.db
       .insert(schema.files)
       .values({ hash: u.hash, size, mimeType: u.mimeType, storageKey, verifiedAt: new Date() })
       .onConflictDoNothing()
-    if (storageKey === u.storageKey) {
-      await ports.db
-        .update(schema.fileUploads)
-        .set({ status: 'verified' })
-        .where(eq(schema.fileUploads.id, uploadId))
-      return
-    }
   }
   await blobs.delete(u.storageKey)
   await ports.db
