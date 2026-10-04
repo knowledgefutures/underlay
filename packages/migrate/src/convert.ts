@@ -39,6 +39,22 @@ import { getTableColumns } from 'drizzle-orm'
 /** Anything that runs a parameterized query against the v1 database. */
 export interface V1Db {
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>
+  /**
+   * A server-side cursor over an ordered query, read `batch` rows at a time;
+   * `next` returns [] at the end. Optional: without it, ordered reads page by key,
+   * which re-sorts on every page when the order has no matching index (v1's
+   * indexes use the database collation, the converter needs COLLATE "C").
+   */
+  cursor?<T = Record<string, unknown>>(
+    text: string,
+    params: unknown[],
+    batch: number,
+  ): Promise<V1Cursor<T>>
+}
+
+export interface V1Cursor<T> {
+  next(): Promise<T[]>
+  close(): Promise<void>
 }
 
 export interface MigrationReport {
@@ -177,6 +193,39 @@ function fixFieldPrivacy(s: Record<string, unknown>): {
 }
 
 const PAGE = 2000
+/** Rows per cursor fetch: one sort, then one round trip per batch. */
+const CURSOR_BATCH = 10_000
+
+/**
+ * An ordered read by record id, a batch at a time: through a cursor where the
+ * reader has one, else keyset pages. `sql` takes `params`; `key` names the
+ * ordered id column. Paging appends `AND key > after` and a LIMIT.
+ */
+async function idBatches<T extends { id: string }>(
+  v1: V1Db,
+  sql: (keyClause: string) => string,
+  params: unknown[],
+  key: string,
+): Promise<V1Cursor<T>> {
+  const order = ` ORDER BY ${key} COLLATE "C"`
+  if (v1.cursor) return v1.cursor<T>(sql('') + order, params, CURSOR_BATCH)
+  let after = ''
+  let done = false
+  const n = params.length
+  return {
+    next: async () => {
+      if (done) return []
+      const rows = await v1.query<T>(
+        sql(` AND ${key} COLLATE "C" > $${n + 1}`) + `${order} LIMIT $${n + 2}`,
+        [...params, after, PAGE],
+      )
+      if (rows.length < PAGE) done = true
+      if (rows.length) after = rows[rows.length - 1]!.id
+      return rows
+    },
+    close: async () => {},
+  }
+}
 
 /** One type's record changes between two v1 record sets, in id order. */
 async function* typeDelta(
@@ -188,59 +237,68 @@ async function* typeDelta(
   id: string
   upsert: { data: unknown; private: boolean; hash: string } | null
 }> {
-  let afterU = ''
-  let afterD = ''
-  let ups: { id: string; private: boolean; h: string; data: unknown }[] = []
-  let dels: { id: string }[] = []
-  let doneU = false
-  let doneD = prev === null
-  const fillU = async () => {
-    if (doneU || ups.length) return
-    ups = await v1.query(
+  const upserts = await idBatches<{ id: string; private: boolean; h: string; data: unknown }>(
+    v1,
+    (keyClause) =>
       `SELECT vr.record_id AS id, vr.private, vr.record_hash AS h, ro.data
        FROM version_records vr JOIN record_objects ro ON ro.hash = vr.record_hash
-       WHERE vr.version_id = $1 AND vr.type = $2 AND vr.record_id COLLATE "C" > $3
+       WHERE vr.version_id = $1 AND vr.type = $2${keyClause}
          ${
            prev
-             ? `AND NOT EXISTS (SELECT 1 FROM version_records p WHERE p.version_id = $5
+             ? `AND NOT EXISTS (SELECT 1 FROM version_records p WHERE p.version_id = $3
               AND p.type = vr.type AND p.record_id = vr.record_id AND p.record_hash = vr.record_hash
               AND p.private = vr.private)`
              : ''
-         }
-       ORDER BY vr.record_id COLLATE "C" LIMIT $4`,
-      prev ? [cur, type, afterU, PAGE, prev] : [cur, type, afterU, PAGE],
-    )
-    if (ups.length < PAGE) doneU = true
-    if (ups.length) afterU = ups[ups.length - 1]!.id
+         }`,
+    prev ? [cur, type, prev] : [cur, type],
+    'vr.record_id',
+  )
+  const deletes = prev
+    ? await idBatches<{ id: string }>(
+        v1,
+        (keyClause) =>
+          `SELECT p.record_id AS id FROM version_records p
+           WHERE p.version_id = $1 AND p.type = $2${keyClause}
+             AND NOT EXISTS (SELECT 1 FROM version_records vr WHERE vr.version_id = $3
+                  AND vr.type = p.type AND vr.record_id = p.record_id)`,
+        [prev, type, cur],
+        'p.record_id',
+      )
+    : null
+  let ups: { id: string; private: boolean; h: string; data: unknown }[] = []
+  let dels: { id: string }[] = []
+  let doneU = false
+  let doneD = deletes === null
+  const fillU = async () => {
+    if (doneU || ups.length) return
+    ups = await upserts.next()
+    if (ups.length === 0) doneU = true
   }
   const fillD = async () => {
     if (doneD || dels.length) return
-    dels = await v1.query(
-      `SELECT p.record_id AS id FROM version_records p
-       WHERE p.version_id = $1 AND p.type = $2 AND p.record_id COLLATE "C" > $3
-         AND NOT EXISTS (SELECT 1 FROM version_records vr WHERE vr.version_id = $4
-              AND vr.type = p.type AND vr.record_id = p.record_id)
-       ORDER BY p.record_id COLLATE "C" LIMIT $5`,
-      [prev, type, afterD, cur, PAGE],
-    )
-    if (dels.length < PAGE) doneD = true
-    if (dels.length) afterD = dels[dels.length - 1]!.id
+    dels = await deletes!.next()
+    if (dels.length === 0) doneD = true
   }
   // Byte order, to match COLLATE "C".
   const lt = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0
-  for (;;) {
-    await fillU()
-    await fillD()
-    const u = ups[0]
-    const d = dels[0]
-    if (!u && !d) return
-    if (u && (!d || lt(u.id, d.id))) {
-      ups.shift()
-      yield { id: u.id, upsert: { data: u.data, private: u.private, hash: u.h } }
-    } else {
-      dels.shift()
-      yield { id: d!.id, upsert: null }
+  try {
+    for (;;) {
+      await fillU()
+      await fillD()
+      const u = ups[0]
+      const d = dels[0]
+      if (!u && !d) return
+      if (u && (!d || lt(u.id, d.id))) {
+        ups.shift()
+        yield { id: u.id, upsert: { data: u.data, private: u.private, hash: u.h } }
+      } else {
+        dels.shift()
+        yield { id: d!.id, upsert: null }
+      }
     }
+  } finally {
+    await upserts.close()
+    await deletes?.close()
   }
 }
 

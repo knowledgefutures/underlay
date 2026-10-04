@@ -1,7 +1,11 @@
 /**
  * Run a v1 → v2 migration.
  *
- *   V1_DATABASE_URL=postgres://…            the v1 database (read only)
+ *   V1_DATABASE_URL=postgres://…            the v1 database (read only), or:
+ *   V1_SSH="-i key -o BatchMode=yes user@host" and V1_CONTAINER=<swarm service>_postgres
+ *                                           read it with docker exec … psql on that host
+ *                                           (src/ssh-psql.ts); the container's name must
+ *                                           start with "<V1_CONTAINER>."
  *   TARGET_DB=file:./migrated.sqlite        the v2 SQLite database to fill
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY   the v2 bucket (R2)
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)
@@ -28,10 +32,11 @@ import postgres from 'postgres'
 
 import { migrateAll, type V1Db } from './convert.js'
 import { copyFiles } from './files.js'
+import { sshPsql } from './ssh-psql.js'
 
 const env = process.env
 const filesOnly = env.FILES_ONLY === '1'
-if ((!env.V1_DATABASE_URL && !filesOnly) || !env.S3_ENDPOINT) {
+if ((!env.V1_DATABASE_URL && !env.V1_SSH && !filesOnly) || !env.S3_ENDPOINT) {
   console.error(
     'Set V1_DATABASE_URL and the S3_* target bucket variables (see the header of this file).',
   )
@@ -39,7 +44,15 @@ if ((!env.V1_DATABASE_URL && !filesOnly) || !env.S3_ENDPOINT) {
 }
 
 const sql = postgres(env.V1_DATABASE_URL ?? '', { max: 2 })
-const v1: V1Db = {
+const ssh =
+  env.V1_SSH && !filesOnly
+    ? await sshPsql({
+        ssh: env.V1_SSH.split(/\s+/).map((a) => a.replace(/^~(?=\/)/, env.HOME ?? '~')),
+        container: env.V1_CONTAINER ?? '',
+        requirePrefix: `${env.V1_CONTAINER}.`,
+      })
+    : null
+const v1: V1Db = ssh ?? {
   query: async (text, params) => (await sql.unsafe(text, (params ?? []) as never[])) as never,
 }
 
@@ -93,4 +106,5 @@ if (env.V1_S3_BUCKET) {
 console.log(
   JSON.stringify({ ...report, seconds: Math.round((Date.now() - started) / 1000) }, null, 2),
 )
+ssh?.close()
 await sql.end()
