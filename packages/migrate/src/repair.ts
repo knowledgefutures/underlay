@@ -56,7 +56,9 @@ for (const c of cols) {
   for await (const k of listAll(repo.blobs, `collections/${c.id}/`)) old.push(k)
   for (const k of old) await repo.blobs.delete(k)
   for (const v of versions) await appendVersionLog(ports, repo, c.id, v)
-  const { entries } = await verifyLog(repo, c.id, [signer.publicKey])
+  // A collection with no versions has no log.
+  const { entries } =
+    versions.length > 0 ? await verifyLog(repo, c.id, [signer.publicKey]) : { entries: [] }
   if (entries.length !== versions.length) {
     throw new Error(
       `${c.owner}/${c.slug}: ${entries.length} log entries for ${versions.length} versions`,
