@@ -1,23 +1,23 @@
 /**
  * Org logos, stored in the deployment's public assets bucket and linked from
- * `organization.avatar_url` as an absolute URL (as v1 did).
+ * `organization.avatar_url` as an absolute URL (as v1 did). What's stored and
+ * what may be deleted is in lib/avatars.ts.
  *
  *   POST   /api/accounts/:owner/avatar    multipart/form-data, one image file
  *   DELETE /api/accounts/:owner/avatar
  *
- * Owners of the org only, as in v1; read-only and collection-scoped keys can't.
- * Objects are content-addressed (`avatars/<orgId>/<sha256>.<ext>`) and immutable.
- * An old logo is deleted only when its URL is under this deployment's
- * ASSETS_BASE_URL and the org's own folder: migrated URLs on another host
- * (staging's v1 links into production's bucket) are never touched.
+ * Owners of the org only, as for its other account routes: a session or an
+ * unscoped personal key. Read-only, collection-scoped and org-owned keys can't.
  */
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { deleteOwnedAvatar, sniffRaster } from '../lib/avatars.js'
 import type { PublicAssets } from '../ports.js'
 import { jsonError } from './access.js'
+import { orgBySlug, requireUser, roleIn } from './accounts.js'
 import { BodyTooLarge, readBytes } from './body.js'
 
 /** Logos show at a couple of hundred pixels; GitHub caps profile pictures at 1 MB too. */
@@ -28,53 +28,15 @@ const CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
-/**
- * The raster format of an image by its magic bytes, or null. SVG is never one:
- * the assets domain is underlay.org's, and an SVG there could run script.
- */
-export function sniffRaster(b: Uint8Array): { type: string; ext: string } | null {
-  const at = (offset: number, bytes: number[]) => bytes.every((v, i) => b[offset + i] === v)
-  const ascii = (offset: number, s: string) =>
-    at(
-      offset,
-      [...s].map((ch) => ch.charCodeAt(0)),
-    )
-  if (at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-    return { type: 'image/png', ext: 'png' }
-  if (at(0, [0xff, 0xd8, 0xff])) return { type: 'image/jpeg', ext: 'jpg' }
-  if (ascii(0, 'GIF87a') || ascii(0, 'GIF89a')) return { type: 'image/gif', ext: 'gif' }
-  if (ascii(0, 'RIFF') && ascii(8, 'WEBP')) return { type: 'image/webp', ext: 'webp' }
-  return null
-}
-
 type Org = typeof schema.organization.$inferSelect
 
 /** The org, when the caller owns it; otherwise the error response. */
 async function ownedOrg(c: Context<AppEnv>): Promise<Org | Response> {
-  const { db } = c.var.ports
-  const p = c.var.principal
-  if (!p) return jsonError(c, 401, 'Authentication required')
-  const [org] = await db
-    .select()
-    .from(schema.organization)
-    .where(eq(schema.organization.slug, c.req.param('owner') ?? ''))
-    .limit(1)
+  const userId = requireUser(c, true)
+  if (userId instanceof Response) return userId
+  const org = await orgBySlug(c, c.req.param('owner') ?? '')
   if (!org) return jsonError(c, 404, 'Organization not found')
-
-  let role: string | null = null
-  if (!p.collectionIds && p.scope !== 'read') {
-    // An org-owned key acts with its org's authority, and no other's.
-    if (p.orgId) role = p.orgId === org.id ? 'owner' : null
-    else {
-      const [m] = await db
-        .select({ role: schema.member.role })
-        .from(schema.member)
-        .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, p.userId)))
-        .limit(1)
-      role = m?.role ?? null
-    }
-  }
-  if (role !== 'owner')
+  if ((await roleIn(c, org.id, userId)) !== 'owner')
     return jsonError(c, 403, 'Must be an owner to update the organization avatar')
   return org
 }
@@ -84,23 +46,6 @@ function assetsOr503(c: Context<AppEnv>): PublicAssets | Response {
     c.var.ports.publicAssets ??
     jsonError(c, 503, 'Avatar uploads are not configured on this deployment')
   )
-}
-
-/**
- * Delete a logo this deployment stored for this org. Anything else (another
- * host, another org's folder, an unexpected key) is left alone. Non-fatal: an
- * orphaned logo is harmless, so storage errors are logged, not thrown.
- */
-async function deleteOwnedAvatar(assets: PublicAssets, orgId: string, url: string | null) {
-  const folder = `${assets.baseUrl}/avatars/${orgId}/`
-  if (!url?.startsWith(folder)) return
-  const name = url.slice(folder.length)
-  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/.test(name)) return
-  try {
-    await assets.store.delete(`avatars/${orgId}/${name}`)
-  } catch (err) {
-    console.error(`[avatars] Failed to delete ${url}:`, err)
-  }
 }
 
 export function avatarRoutes() {

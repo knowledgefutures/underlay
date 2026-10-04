@@ -24,6 +24,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { deleteOrgAvatars } from '../lib/avatars.js'
 import { validateOrgSlug } from '../lib/slug.js'
 import { jsonError } from './access.js'
 
@@ -32,7 +33,7 @@ import { jsonError } from './access.js'
  * (write routes refuse read keys). Collection-scoped and org-owned keys are
  * not a user, as in v1's requireUnscopedKey.
  */
-function requireUser(c: Context<AppEnv>, write: boolean): string | Response {
+export function requireUser(c: Context<AppEnv>, write: boolean): string | Response {
   const p = c.var.principal
   if (!p) return jsonError(c, 401, 'Authentication required')
   if (p.collectionIds || p.orgId) return jsonError(c, 403, 'This key cannot manage accounts')
@@ -40,7 +41,7 @@ function requireUser(c: Context<AppEnv>, write: boolean): string | Response {
   return p.userId
 }
 
-async function orgBySlug(c: Context<AppEnv>, slug: string) {
+export async function orgBySlug(c: Context<AppEnv>, slug: string) {
   const [org] = await c.var.ports.db
     .select()
     .from(schema.organization)
@@ -49,7 +50,7 @@ async function orgBySlug(c: Context<AppEnv>, slug: string) {
   return org ?? null
 }
 
-async function roleIn(c: Context<AppEnv>, orgId: string, userId: string) {
+export async function roleIn(c: Context<AppEnv>, orgId: string, userId: string) {
   const [m] = await c.var.ports.db
     .select({ role: schema.member.role })
     .from(schema.member)
@@ -172,6 +173,7 @@ export function accountRoutes() {
       db.delete(schema.organization).where(eq(schema.organization.id, org.id)),
       db.delete(schema.user).where(eq(schema.user.id, userId)),
     ])
+    await deleteOrgAvatars(c.var.ports.publicAssets, org.id)
     return c.json({ ok: true })
   })
 
@@ -313,6 +315,7 @@ export function accountRoutes() {
       db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id)),
       db.delete(schema.organization).where(eq(schema.organization.id, org.id)),
     ])
+    await deleteOrgAvatars(c.var.ports.publicAssets, org.id)
     return c.json({ ok: true })
   })
 

@@ -3,9 +3,10 @@ import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { AVATAR_MAX_BYTES, avatarRoutes, sniffRaster } from '../src/api/avatars.js'
+import { AVATAR_MAX_BYTES, avatarRoutes } from '../src/api/avatars.js'
 import type { AppEnv } from '../src/app.js'
 import * as schema from '../src/db/schema.js'
+import { sniffRaster } from '../src/lib/avatars.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -185,7 +186,7 @@ describe('org avatars', () => {
     expect(store.objects.get(avatarUrl.slice(BASE.length + 1))?.contentType).toBe('image/png')
   })
 
-  it('owners only: admins, members, strangers, read and scoped keys are refused', async () => {
+  it('owners only: admins, members, strangers, read, scoped and org keys are refused', async () => {
     expect((await upload(png(), 'image/png', {})).status).toBe(401)
     for (const o of [
       { user: 'u-admin' },
@@ -194,15 +195,27 @@ describe('org avatars', () => {
       { user: 'u1', scope: 'read' },
       { user: 'u1', scope: 'write', collections: 'c1' },
       { user: 'u1', scope: 'write', org: 'some-other-org' },
+      // Org-owned keys are not a user, as on the org's other account routes.
+      { user: 'k', scope: 'write', org: 'org1' },
     ]) {
       expect((await upload(png(), 'image/png', o)).status, JSON.stringify(o)).toBe(403)
       expect((await remove(o)).status, JSON.stringify(o)).toBe(403)
     }
     expect(store.objects.size).toBe(0)
-    // An org-owned key acts as its org.
-    expect(
-      (await upload(png(), 'image/png', { user: 'k', scope: 'write', org: 'org1' })).status,
-    ).toBe(200)
+    // An owner's unscoped personal key can.
+    expect((await upload(png(), 'image/png', { user: 'u1', scope: 'write' })).status).toBe(200)
+  })
+
+  it("deleting an org deletes its logos in this deployment's bucket, and no one else's", async () => {
+    await h.ports.db.insert(schema.organization).values({ id: 'org2', name: 'Two', slug: 'two' })
+    await h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org2', userId: 'u1', role: 'owner' })
+    for (const key of ['avatars/org2/a.png', 'avatars/org2/b.gif', 'avatars/org1/keep.png'])
+      store.objects.set(key, { bytes: png(), contentType: 'image/png' })
+    const res = await h.request('/api/accounts/two', { method: 'DELETE', user: 'u1' })
+    expect(res.status).toBe(200)
+    expect([...store.objects.keys()]).toEqual(['avatars/org1/keep.png'])
   })
 
   it('404s an unknown org', async () => {
