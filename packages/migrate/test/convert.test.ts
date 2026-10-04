@@ -87,12 +87,19 @@ describe('v1 → v2 migration', () => {
         a2: { id: 'a', data: { name: 'A2', photo: { $file: `sha256:${FILE}` } } },
         b: { id: 'b', data: { name: 'B', scores: { 10: 1, 9: 2 } } }, // integer-like keys: re-hashed
         c: { id: 'c', data: { name: 'C' } },
+        // v1 let a version hold an id twice; the newer record object wins.
+        cOld: { id: 'c', data: { name: 'C, older' } },
       }
       const v1hash = (r: { id: string; data: unknown }) => legacyRecordHash(r.id, 'Author', r.data)
       for (const r of Object.values(records)) {
         await q(
-          `INSERT INTO record_objects (hash, record_id, type, data, size) VALUES ($1, $2, 'Author', $3, 10) ON CONFLICT DO NOTHING`,
-          [v1hash(r), r.id, r.data],
+          `INSERT INTO record_objects (hash, record_id, type, data, size, created_at) VALUES ($1, $2, 'Author', $3, 10, $4) ON CONFLICT DO NOTHING`,
+          [
+            v1hash(r),
+            r.id,
+            r.data,
+            r === records.cOld ? '2020-01-01T00:00:00Z' : '2025-01-01T00:00:00Z',
+          ],
         )
       }
       const version = async (
@@ -137,6 +144,7 @@ describe('v1 → v2 migration', () => {
           [records.a1, false],
           [records.b, false],
           [records.c, true],
+          [records.cOld, true],
         ],
         { metadata: { title: 'Lib' }, at: '2026-01-01T00:00:00Z' },
       )
@@ -162,12 +170,23 @@ describe('v1 → v2 migration', () => {
         versions: 3,
         skippedVersions: [],
         fieldPrivateTypes: [],
+        duplicateIds: [
+          {
+            collection: 'lib',
+            semver: 'v1.0.0',
+            type: 'Author',
+            id: 'c',
+            hash: v1hash(records.cOld),
+          },
+        ],
       })
       expect(report.legacyRecordAliases).toBeGreaterThan(0)
 
       const json = async (path: string, user?: string) =>
         (await (await h.request(path, user ? { user } : {})).json()) as any
       const versions = await json('/api/collections/org/lib/versions', 'u1')
+      const first = await json('/api/collections/org/lib/versions/v1.0.0/records?type=Author', 'u1')
+      expect(first.records.find((r: any) => r.id === 'c').data).toEqual({ name: 'C' })
       expect(versions.map((v: any) => v.semver)).toEqual(['v1.1.1', 'v1.1.0', 'v1.0.0'])
       expect(versions.map((v: any) => v.recordCount)).toEqual([2, 2, 3])
       // Anonymous readers see only the public set: b went private in v1.1.0.

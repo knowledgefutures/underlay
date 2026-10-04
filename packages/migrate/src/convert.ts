@@ -64,6 +64,11 @@ export interface MigrationReport {
   recordUpserts: number
   legacyRecordAliases: number
   fieldPrivateTypes: { collection: string; type: string }[]
+  /**
+   * v1 let a version hold one (type, id) twice with different data; v2 keys are
+   * unique. The newest record object is kept (then the lower hash); these were dropped.
+   */
+  duplicateIds: { collection: string; semver: string; type: string; id: string; hash: string }[]
   copied: Record<string, number>
 }
 
@@ -74,6 +79,7 @@ export const newReport = (): MigrationReport => ({
   recordUpserts: 0,
   legacyRecordAliases: 0,
   fieldPrivateTypes: [],
+  duplicateIds: [],
   copied: {},
 })
 
@@ -199,15 +205,18 @@ const CURSOR_BATCH = 10_000
 /**
  * An ordered read by record id, a batch at a time: through a cursor where the
  * reader has one, else keyset pages. `sql` takes `params`; `key` names the
- * ordered id column. Paging appends `AND key > after` and a LIMIT.
+ * ordered id column, and `tiebreak` orders rows sharing an id. Paging appends
+ * `AND key > after` and a LIMIT, so it needs ids to be unique (it would skip a
+ * duplicate split across pages); cursors don't.
  */
 async function idBatches<T extends { id: string }>(
   v1: V1Db,
   sql: (keyClause: string) => string,
   params: unknown[],
   key: string,
+  tiebreak = '',
 ): Promise<V1Cursor<T>> {
-  const order = ` ORDER BY ${key} COLLATE "C"`
+  const order = ` ORDER BY ${key} COLLATE "C"${tiebreak}`
   if (v1.cursor) return v1.cursor<T>(sql('') + order, params, CURSOR_BATCH)
   let after = ''
   let done = false
@@ -233,6 +242,7 @@ async function* typeDelta(
   prev: string | null,
   cur: string,
   type: string,
+  onDuplicate: (id: string, hash: string) => void,
 ): AsyncGenerator<{
   id: string
   upsert: { data: unknown; private: boolean; hash: string } | null
@@ -252,6 +262,8 @@ async function* typeDelta(
          }`,
     prev ? [cur, type, prev] : [cur, type],
     'vr.record_id',
+    // Duplicate ids (v1 allowed them): the kept one first.
+    ', ro.created_at DESC, vr.record_hash',
   )
   const deletes = prev
     ? await idBatches<{ id: string }>(
@@ -281,6 +293,9 @@ async function* typeDelta(
   }
   // Byte order, to match COLLATE "C".
   const lt = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0
+  // A duplicated id (v1 allowed them) comes twice in a stream: use it once.
+  let lastUp: string | null = null
+  let lastDel: string | null = null
   try {
     for (;;) {
       await fillU()
@@ -288,11 +303,18 @@ async function* typeDelta(
       const u = ups[0]
       const d = dels[0]
       if (!u && !d) return
-      if (u && (!d || lt(u.id, d.id))) {
+      if (u && u.id === lastUp) {
         ups.shift()
+        onDuplicate(u.id, u.h)
+      } else if (u && (!d || lt(u.id, d.id))) {
+        ups.shift()
+        lastUp = u.id
         yield { id: u.id, upsert: { data: u.data, private: u.private, hash: u.h } }
+      } else if (d!.id === lastDel) {
+        dels.shift()
       } else {
         dels.shift()
+        lastDel = d!.id
         yield { id: d!.id, upsert: null }
       }
     }
@@ -382,7 +404,18 @@ export async function migrateCollection(
       const stream = async function* (
         set: 'public' | 'private',
       ): AsyncGenerator<Change<RecordEntry>> {
-        for await (const d of typeDelta(v1, prevRecords, recordsId, row.slug)) {
+        const onDuplicate = (id: string, hash: string) => {
+          // Each set's stream reads the type, so a duplicate is seen once per set.
+          if (report.duplicateIds.some((x) => x.hash === hash && x.semver === v.semver)) return
+          report.duplicateIds.push({
+            collection: col.slug,
+            semver: v.semver,
+            type: row.slug,
+            id,
+            hash,
+          })
+        }
+        for await (const d of typeDelta(v1, prevRecords, recordsId, row.slug, onDuplicate)) {
           const inOther = set === 'public' ? hasPub : hasPriv
           if (!d.upsert) {
             if (inOther) yield { key: d.id, entry: null }
