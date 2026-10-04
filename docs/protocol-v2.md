@@ -322,7 +322,9 @@ entry = {"actorId","appId","baseSemver","createdAt","keyId","message","prev","se
   `message` may be `null`. Pusher identity is not recorded (open question).
 - `sig` is base64url (no padding) of the Ed25519 signature over the UTF-8 bytes of JCS(entry
   without `sig`).
-- `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key).
+- `keyId` names the signing key. It is the first 16 hex characters of hash(raw public key). A
+  verifier uses a key only under that id: a key listed under any other id is ignored, so a key list
+  read from an untrusted location can't put a stranger's key under a trusted key's id.
 - **Entry hash** = hash(JCS(entry)), signature included.
 - `prev` is the entry hash of entry `seq − 1`, or `null` for `seq` 1. Entries form a hash chain,
   so a dropped, reordered or altered entry is detectable.

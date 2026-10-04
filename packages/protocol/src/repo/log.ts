@@ -104,11 +104,11 @@ export async function ed25519Signer(privateKeyB64: string): Promise<Signer> {
   ])
   const key = await crypto.subtle.importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign'])
   const jwk = await crypto.subtle.exportKey('jwk', key)
-  const publicKey = fromB64url(jwk.x!)
-  const id = sha256Hex(publicKey).slice(0, 16)
+  const publicKey = b64url(fromB64url(jwk.x!))
+  const id = keyIdOf(publicKey)
   return {
     keyId: id,
-    publicKey: { id, alg: 'Ed25519', publicKey: b64url(publicKey) },
+    publicKey: { id, alg: 'Ed25519', publicKey },
     sign: async (bytes) =>
       new Uint8Array(await crypto.subtle.sign('Ed25519', key, bytes as Uint8Array<ArrayBuffer>)),
   }
@@ -130,9 +130,16 @@ export async function signEntry(signer: Signer, e: UnsignedEntry): Promise<LogEn
   return { ...unsigned, sig }
 }
 
+/** A key's id: the first 16 hex characters of sha256(raw public key). */
+export const keyIdOf = (publicKey: string) => sha256Hex(fromB64url(publicKey)).slice(0, 16)
+
+/**
+ * Does a trusted key sign this entry? A key counts only under its own id, so a
+ * key list read from a location can't file a stranger's key under a trusted id.
+ */
 export async function verifyEntry(e: LogEntry, keys: PublicKeyInfo[]): Promise<boolean> {
   const k = keys.find((x) => x.id === e.keyId)
-  if (!k || k.alg !== 'Ed25519') return false
+  if (!k || k.alg !== 'Ed25519' || keyIdOf(k.publicKey) !== k.id) return false
   const pub = await crypto.subtle.importKey(
     'raw',
     fromB64url(k.publicKey) as Uint8Array<ArrayBuffer>,

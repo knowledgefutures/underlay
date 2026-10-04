@@ -179,9 +179,12 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
   const sid = r.sourceCollectionId
   const [info, head] = await Promise.all([readCollectionInfo(source, sid), readHead(source, sid)])
   if (!info || !head) throw new RestoreError(`The location has no collection ${sid}`)
-  const own = (await ports.signer()).keyId
-  const trusted = info.keys.filter((k) => k.id === own || r.trustKeyIds.includes(k.id))
-  if (trusted.length === 0) {
+  // Nothing the location says about keys is trusted: this deployment's key is
+  // taken from its own signer, and a named key must hash to its id (verifyEntry).
+  const own = (await ports.signer()).publicKey
+  const named = info.keys.filter((k) => k.id !== own.id && r.trustKeyIds.includes(k.id))
+  const trusted = [own, ...named]
+  if (!info.keys.some((k) => k.id === own.id) && named.length === 0) {
     throw new RestoreError(
       `No trusted key signs this log (its keys: ${info.keys.map((k) => k.id).join(', ')}); name one in trustKeyIds`,
     )
@@ -300,7 +303,8 @@ async function step(ports: Ports, r: RestoreRow): Promise<boolean> {
   if (!published.ok) throw new RestoreError('The collection changed while it was being restored')
 
   // The signed entry, verbatim, under this collection; its keys come along.
-  if (seq === 1) await writeCollectionInfo(target, { ...info, id: r.collectionId })
+  // Only the keys this restore trusted are published with it.
+  if (seq === 1) await writeCollectionInfo(target, { ...info, id: r.collectionId, keys: trusted })
   await appendLog(target, r.collectionId, entry)
   await ports.jobs.enqueue({ type: 'refs.index', versionId: id })
 

@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto'
 
-import { readCollectionInfo, verifyLog } from '@underlay/protocol'
+import {
+  ed25519Signer,
+  entryHash,
+  generateSigningKey,
+  jcs,
+  type LogEntry,
+  readCollectionInfo,
+  signEntry,
+  verifyLog,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -148,6 +157,56 @@ describe('restore', () => {
     expect(info!.keys.map((k) => k.id).sort()).toEqual([a.signer.keyId, b.signer.keyId].sort())
     const { entries } = await verifyLog(repo, restored!.id, info!.keys)
     expect(entries.map((e) => e.seq)).toEqual([1, 2, 3])
+  })
+
+  it("refuses a log re-signed with a forged key under a trusted key's id", async () => {
+    const { f, a, c } = await source()
+    const b = await harness()
+    const user = await b.member()
+    const loc = await location(b, user, f)
+    // Whoever controls the bucket re-signs the log with their own key, filed under
+    // the id of a key the restoring instance trusts, and rewrites history's messages.
+    const forge = async (keyId: string) => {
+      const attacker = await ed25519Signer(await generateSigningKey())
+      const signer = { ...attacker, keyId }
+      const dir = `backup/collections/${c.id}`
+      const read = (k: string) => JSON.parse(f.objects.get(k)!.bytes.toString()) as any
+      const head = read(`${dir}/head.json`)
+      let prev: string | null = null
+      let last: LogEntry | null = null
+      for (let seq = 1; seq <= head.seq; seq++) {
+        const { sig: _sig, keyId: _keyId, ...e } = read(`${dir}/log/${seq}.json`)
+        last = await signEntry(signer, { ...e, message: 'forged', prev })
+        prev = entryHash(last)
+        f.objects.set(`${dir}/log/${seq}.json`, {
+          bytes: Buffer.from(jcs(last)),
+          contentType: 'application/json',
+        })
+      }
+      f.objects.set(`${dir}/head.json`, {
+        bytes: Buffer.from(jcs({ entryHash: prev, seq: head.seq, versionHash: last!.versionHash })),
+        contentType: 'application/json',
+      })
+      const info = read(`${dir}/collection.json`)
+      info.keys = [{ ...attacker.publicKey, id: keyId }]
+      f.objects.set(`${dir}/collection.json`, {
+        bytes: Buffer.from(JSON.stringify(info)),
+        contentType: 'application/json',
+      })
+    }
+
+    // Under the restoring deployment's own key id: its real key is what counts.
+    await forge(b.signer.keyId)
+    const own = await restore(b, user, loc, c.id, [])
+    expect(own.status).toBe('failed')
+    expect(own.error).toMatch(/signature|No trusted key/)
+    await b.ports.db.delete(schema.collections).where(eq(schema.collections.slug, 'restored'))
+
+    // Under a key id named in trustKeyIds: the id must be the hash of the key.
+    await forge(a.signer.keyId)
+    const named = await restore(b, user, loc, c.id, [a.signer.keyId])
+    expect(named.status).toBe('failed')
+    expect(named.error).toMatch(/signature|No trusted key/)
   })
 
   it('refuses a tampered bucket', async () => {

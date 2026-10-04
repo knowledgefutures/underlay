@@ -5,6 +5,7 @@ import {
   ed25519Signer,
   entryHash,
   generateSigningKey,
+  keyIdOf,
   readHead,
   signEntry,
   verifyEntry,
@@ -38,6 +39,16 @@ describe('version log', () => {
     expect(await verifyEntry({ ...e, message: 'tampered' }, [signer.publicKey])).toBe(false)
     const other = await ed25519Signer(await generateSigningKey())
     expect(await verifyEntry(e, [other.publicKey])).toBe(false)
+  })
+
+  it('trusts a key only under its own id', async () => {
+    const trusted = await ed25519Signer(await generateSigningKey())
+    const forger = await ed25519Signer(await generateSigningKey())
+    expect(keyIdOf(trusted.publicKey.publicKey)).toBe(trusted.keyId)
+    // The forger signs under the trusted key's id and lists its own key under that id.
+    const e = await signEntry({ ...forger, keyId: trusted.keyId }, entry(1, null))
+    expect(await verifyEntry(e, [{ ...forger.publicKey, id: trusted.keyId }])).toBe(false)
+    expect(await verifyEntry(e, [trusted.publicKey])).toBe(false)
   })
 
   it('derives the same key from the same seed', async () => {
