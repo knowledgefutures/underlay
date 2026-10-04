@@ -56,8 +56,17 @@ import { BodyTooLarge, readJson, readText } from './body.js'
 const MAX_OPEN_BYTES = 8 * 1024 * 1024
 const MAX_MANIFEST_CHUNK = 50_000
 const MAX_INLINE_MANIFEST = 50_000
-/** Commits above this many uploaded records run as a job even without ?async. */
+/** Commits above this many uploaded records (or negotiate manifest entries) run as a job even without ?async. */
 const ASYNC_ABOVE = 100_000
+/**
+ * The largest snapshot a negotiate push may send. Its commit diffs the whole
+ * snapshot in one job, about 5 minutes of CPU at this size (v2-limits-and-costs.md,
+ * "Records per collection"; v2-scale-review.md S4). Delta pushes commit in
+ * parallel units and have no such ceiling.
+ */
+export const negotiateLimits = { maxEntries: 10_000_000 }
+const TOO_BIG_FOR_NEGOTIATE = () =>
+  `Negotiate pushes are limited to ${negotiateLimits.maxEntries.toLocaleString('en-US')} records, the most one commit job can diff. Push larger collections with a delta push (POST …/push: upserts and deletes against the head), which commits in parallel.`
 
 registerJob('push.commit', async (job, ports) => {
   await finalizeSession(ports, String(job.sessionId))
@@ -130,7 +139,8 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
   const wantsAsync =
     ['true', '1'].includes(c.req.query('async') ?? '') ||
     body.async === true ||
-    session.recordsReceived > ASYNC_ABOVE
+    session.recordsReceived > ASYNC_ABOVE ||
+    session.manifestReceived > ASYNC_ABOVE
   if (
     !(await transition(ports, session.id, 'open', 'committing', { finalizeStartedAt: new Date() }))
   ) {
@@ -386,6 +396,9 @@ export function pushRoutes() {
         `Inline manifests are limited to ${MAX_INLINE_MANIFEST} entries; set manifest_expected and upload chunks.`,
       )
     }
+    if (chunked && Number(body.manifest_expected) > negotiateLimits.maxEntries) {
+      return jsonError(c, 413, TOO_BIG_FOR_NEGOTIATE())
+    }
     const entries: ManifestLine[] = []
     for (const m of inline) {
       const parsed = parseManifestLine(m)
@@ -467,6 +480,9 @@ export function pushRoutes() {
         400,
         `Chunk too large. Maximum ${MAX_MANIFEST_CHUNK} manifest entries per request.`,
       )
+    if (session.manifestReceived + lines.length > negotiateLimits.maxEntries) {
+      return jsonError(c, 413, TOO_BIG_FOR_NEGOTIATE())
+    }
     const entries: ManifestLine[] = []
     for (const line of lines) {
       let v: unknown

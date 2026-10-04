@@ -2,6 +2,7 @@ import { getEntry, hashRecord, legacyRecordHash, recordTree, RepoSource } from '
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import { negotiateLimits } from '../src/api/push.js'
 import * as schema from '../src/db/schema.js'
 import { limits } from '../src/push/session.js'
 import { cleanup, type Harness, harness } from './harness.js'
@@ -366,6 +367,37 @@ describe('negotiate (v1 compatibility)', () => {
       manifest_expected: 2,
       manifest_received: 1,
     })
+  })
+
+  it('refuses snapshots past the negotiate ceiling, pointing to delta push', async () => {
+    const { h, user, base } = await setup()
+    const before = negotiateLimits.maxEntries
+    negotiateLimits.maxEntries = 2
+    try {
+      let res = await h.request(`${base}/versions/negotiate`, {
+        method: 'POST',
+        user,
+        json: { schemas: { Author }, manifest_expected: 3 },
+      })
+      expect(res.status).toBe(413)
+      expect((await json(res)).error).toMatch(/delta push/)
+      res = await h.request(`${base}/versions/negotiate`, {
+        method: 'POST',
+        user,
+        json: { schemas: { Author }, manifest_expected: 2 },
+      })
+      const sid = (await json(res)).session_id
+      const chunk = (ids: string[]) =>
+        h.request(`${base}/versions/negotiate/${sid}/manifest`, {
+          method: 'POST',
+          user,
+          ndjson: manifestOf(ids.map((i) => rec(i, { name: i }))),
+        })
+      expect((await chunk(['a', 'b'])).status).toBe(200)
+      expect((await chunk(['c'])).status).toBe(413)
+    } finally {
+      negotiateLimits.maxEntries = before
+    }
   })
 
   it('checks chunked manifests against what the commit will diff against', async () => {
