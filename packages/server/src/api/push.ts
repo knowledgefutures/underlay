@@ -13,12 +13,21 @@ import { checkSchema, fileTree, getEntry, parseSemver, RepoSource } from '@under
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { SMALL_UPLOAD_BYTES } from '../files/files.js'
 import { registerJob } from '../jobs.js'
-import { headBase, ingestDeletes, ingestRecords, MAX_BATCH_BYTES } from '../push/delta.js'
+import {
+  headBase,
+  ingestDeletes,
+  ingestRecords,
+  MAX_BATCH_BYTES,
+  MAX_BATCH_LINES,
+} from '../push/delta.js'
 import { finalizeSession } from '../push/finalize.js'
 import {
   createSession,
   getSession,
+  limits,
+  SESSION_TTL_MS,
   type SessionInputs,
   type SessionRow,
   transition,
@@ -29,6 +38,19 @@ import { BodyTooLarge, readJson, readLines, readText } from './body.js'
 const MAX_OPEN_BYTES = 8 * 1024 * 1024
 /** Commits above this many uploaded records run as a job even without ?async. */
 const ASYNC_ABOVE = 100_000
+
+/**
+ * This node's push limits, advertised when a session opens (docs/protocol-v2.md,
+ * section 11.4). Read on each call: tests lower some of them.
+ */
+export const pushLimits = () => ({
+  open_bytes: MAX_OPEN_BYTES,
+  batch_bytes: MAX_BATCH_BYTES,
+  batch_lines: MAX_BATCH_LINES,
+  session_idle_seconds: SESSION_TTL_MS / 1000,
+  open_sessions: limits.openSessions,
+  file_bytes: SMALL_UPLOAD_BYTES,
+})
 
 registerJob('push.commit', async (job, ports) => {
   await finalizeSession(ports, String(job.sessionId))
@@ -234,6 +256,7 @@ export function pushRoutes() {
         inputs.files && 'add' in inputs.files ? inputs.files.add : [],
       ),
       expires_at: session.expiresAt,
+      limits: pushLimits(),
     })
   })
 

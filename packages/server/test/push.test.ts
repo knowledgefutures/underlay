@@ -148,7 +148,17 @@ describe('delta push', () => {
       json: { schemas: { Author }, metadata: { title: 'Authors' } },
     })
     expect(res.status).toBe(200)
-    let sid = (await json(res)).session_id
+    const opened = await json(res)
+    // The node advertises its limits (protocol section 11.4).
+    expect(opened.limits).toEqual({
+      open_bytes: 8 * 1024 * 1024,
+      batch_bytes: 16 * 1024 * 1024,
+      batch_lines: 10_000,
+      session_idle_seconds: 3600,
+      open_sessions: 20,
+      file_bytes: 32 * 1024 * 1024,
+    })
+    let sid = opened.session_id
     res = await h.request(`${base}/push/${sid}/records`, {
       method: 'POST',
       user,
