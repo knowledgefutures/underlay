@@ -19,14 +19,26 @@ export const cleanupConfig = {
   orphanAgeMs: 2 * DAY,
   /** A deleted collection's objects stay this long, so a mistaken delete can be recovered by hand. */
   tombstoneGraceMs: 7 * DAY,
-  /** Sessions, uploads and reports one cron tick cleans, at most. */
+  /*
+   * Budgets per job. A Worker invocation makes at most 10,000 subrequests (R2
+   * calls through the binding count) and 1,000 D1 queries.
+   */
+  /** Sessions, uploads and reports one batch of step 1 looks at, at most. */
   internalBatch: 40,
-  /** Tree nodes one mark job reads before it saves and hands over (checked between collections). */
-  markNodeBudget: 20_000,
+  /** Objects one batch of step 1 deletes, at most. */
+  internalObjects: 2_000,
+  /**
+   * Tree nodes one mark job reads before it saves and hands over. Checked between
+   * collections, so one collection's walk (about a node per 1,000 records) adds to it.
+   */
+  markNodeBudget: 3_000,
+  /** Collections one mark job takes (two queries each, against D1's 1,000). */
+  markCollections: 300,
   /** Hashes a mark may hold in memory; past it the run fails rather than run out (shard by prefix then). */
   maxMarked: 3_000_000,
-  /** Listing pages one sweep job reads. */
-  sweepPages: 40,
+  /** Listing pages one sweep job reads, and objects it deletes, at most. */
+  sweepPages: 20,
+  sweepDeletes: 2_000,
   /** How long a deletion window stays open, and the objects one window deletes at most. */
   windowMs: 30_000,
   windowObjects: 400,

@@ -278,6 +278,50 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     expect(h.bucket.objects.has(`repo/files/${sha('the pdf')}`)).toBe(true)
   })
 
+  it('gives the same result in many small jobs, shards and windows', async () => {
+    const saved = { ...cleanupConfig }
+    Object.assign(cleanupConfig, {
+      markNodeBudget: 1,
+      markCollections: 1,
+      sweepPages: 1,
+      windowObjects: 3,
+      sweepDeletes: 5,
+    })
+    try {
+      const h = await harness()
+      const user = await h.member()
+      const keep = await h.collection('keep')
+      await push(h, user, 'keep', docs('k', 1500, 'kept file'), 'kept file')
+      const keep2 = await h.collection('keep2')
+      await push(h, user, 'keep2', docs('q', 800))
+      for (const slug of ['gone1', 'gone2']) {
+        await h.collection(slug)
+        await push(h, user, slug, docs(slug, 1200, `${slug} file`), `${slug} file`)
+        await h.request(`/api/collections/org/${slug}`, { method: 'DELETE', user })
+      }
+      await pastGrace(h)
+      ageAll(h)
+      const mark = await run(h, 'mark')
+      expect(mark.status).toBe('done')
+      expect(mark.seq).toBeGreaterThan(2) // it took more than one job
+      expect(keys(h, `internal/cleanup/${mark.id}/`).length).toBeGreaterThan(1)
+      const sweep = await run(h, 'sweep')
+      expect(sweep.status).toBe('done')
+      expect(sweep.stats!.windows).toBeGreaterThan(3)
+      await healthy(h, keep.id)
+      await healthy(h, keep2.id)
+      for (const slug of ['gone1', 'gone2'])
+        expect(h.bucket.objects.has(`repo/files/${sha(`${slug} file`)}`)).toBe(false)
+      // Nothing left for another pass.
+      await run(h, 'mark')
+      const again = await run(h, 'sweep')
+      expect(Object.keys(again.stats!.deleted)).toEqual([])
+      await healthy(h, keep.id)
+    } finally {
+      Object.assign(cleanupConfig, saved)
+    }
+  })
+
   it('waits while a push is committing', async () => {
     const h = await harness()
     const user = await h.member()

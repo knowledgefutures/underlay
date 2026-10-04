@@ -11,6 +11,7 @@
  *
  * Only the platform location is marked and swept; customer locations never are.
  */
+import { openRepo, type Repo } from '@underlay/protocol'
 import { and, asc, eq, gt, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -25,6 +26,15 @@ export interface MarkState {
 }
 
 export const firstMarkState = (): MarkState => ({ phase: 'collections', after: null })
+
+/**
+ * The platform repository without the shared cache: a cached read costs a cache
+ * lookup and a cache write besides the bucket read, three subrequests a node.
+ */
+export async function markRepo(ports: Ports): Promise<Repo> {
+  const platform = await ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
+  return openRepo(platform.blobs, { trusted: true })
+}
 
 /** Collections deleted after this still keep their objects. */
 export const graceCutoff = () => new Date(Date.now() - cleanupConfig.tombstoneGraceMs)
@@ -83,9 +93,10 @@ export async function markStep(
 ): Promise<{ state: MarkState; stats: schema.CleanupStats }> {
   const { db } = ports
   const stats = emptyStats()
-  const repo = await ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
-  const marker = new Marker(repo, marks)
-  const spent = () => marks.reads >= cleanupConfig.markNodeBudget
+  const marker = new Marker(await markRepo(ports), marks)
+  let handled = 0
+  const spent = () =>
+    marks.reads >= cleanupConfig.markNodeBudget || handled >= cleanupConfig.markCollections
   const tooMany = () => {
     if (marks.size > cleanupConfig.maxMarked)
       throw new Error(
@@ -109,6 +120,7 @@ export async function markStep(
         tooMany()
       }
       s.after = c.id
+      handled++
       if (spent()) break
     }
   }
@@ -138,6 +150,7 @@ export async function markStep(
         tooMany()
       }
       s.after = t.id
+      handled++
       if (spent()) break
     }
   }

@@ -23,25 +23,32 @@ import { cleanupConfig, count, emptyStats, problem } from './config.js'
 
 const TERMINAL: schema.SessionStatus[] = ['committed', 'failed', 'expired']
 
-/** Delete everything under a prefix; returns objects and bytes (counted, not deleted, when dry). */
+/**
+ * Delete everything under a prefix, up to `budget` objects; returns objects and
+ * bytes (counted, not deleted, when dry) and whether it got to the end.
+ */
 export async function deletePrefix(
   store: Store,
   prefix: string,
   dryRun: boolean,
-): Promise<{ objects: number; bytes: number }> {
+  budget = Infinity,
+): Promise<{ objects: number; bytes: number; complete: boolean }> {
   let objects = 0
   let bytes = 0
   let cursor: string | undefined
   for (;;) {
     // Deleting moves the listing's start, so a real run lists from the top each time.
+    if (objects >= budget) return { objects, bytes, complete: false }
     const page = await store.list(prefix, dryRun ? cursor : undefined)
-    objects += page.keys.length
-    page.keys.forEach((_, i) => (bytes += page.info?.[i]?.size ?? 0))
-    if (!dryRun) await Promise.all(page.keys.map((k) => store.delete(k)))
+    const keys = page.keys.slice(0, Math.max(0, budget - objects))
+    objects += keys.length
+    keys.forEach((_, i) => (bytes += page.info?.[i]?.size ?? 0))
+    if (!dryRun) await Promise.all(keys.map((k) => store.delete(k)))
+    if (keys.length < page.keys.length) return { objects, bytes, complete: false }
     if (!page.cursor) break
     cursor = page.cursor
   }
-  return { objects, bytes }
+  return { objects, bytes, complete: true }
 }
 
 /** One batch of step 1. `done` is false while more is left than a batch takes. */
@@ -56,6 +63,7 @@ export async function cleanInternal(
   const stats = emptyStats()
   const now = Date.now()
   let more = false
+  let budget = cleanupConfig.internalObjects
 
   // Push sessions.
   const sessions = await db
@@ -71,10 +79,17 @@ export async function cleanInternal(
     .limit(batch + 1)
   if (sessions.length > batch) more = true
   for (const s of sessions.slice(0, batch)) {
+    if (budget <= 0) {
+      more = true
+      break
+    }
     stats.scanned++
-    const gone = await deletePrefix(internal, `sessions/${s.id}/`, dryRun)
+    const gone = await deletePrefix(internal, `sessions/${s.id}/`, dryRun, budget)
+    budget -= gone.objects
     count(stats, 'sessions', gone.bytes, gone.objects)
-    if (dryRun) continue
+    // A session bigger than what's left of the budget finishes next time.
+    if (!gone.complete) more = true
+    if (dryRun || !gone.complete) continue
     const [runs, units] = await Promise.all([
       db
         .delete(schema.pushRuns)
@@ -105,9 +120,11 @@ export async function cleanInternal(
       .where(inArray(schema.versions.id, part))
     const indexing = new Set(rows.filter((r) => !r.indexed).map((r) => r.id))
     for (const v of part) {
-      if (indexing.has(v)) continue
+      if (indexing.has(v) || budget <= 0) continue
       stats.scanned++
-      const gone = await deletePrefix(internal, `sessions/refs-${v}/`, dryRun)
+      const gone = await deletePrefix(internal, `sessions/refs-${v}/`, dryRun, budget)
+      budget -= gone.objects
+      if (!gone.complete) more = true
       count(stats, 'refs scratch', gone.bytes, gone.objects)
     }
   }

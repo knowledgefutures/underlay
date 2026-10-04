@@ -55,7 +55,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
   // Storage cleanup: finished sessions and abandoned uploads, stalled runs, the weekly run.
-  await cleanupTick(ports)
+  // Last, and on its own: a failure here shouldn't rerun the rest.
+  await cleanupTick(ports).catch((err) => console.error('[cleanup] tick failed:', err))
 })
 
 /**

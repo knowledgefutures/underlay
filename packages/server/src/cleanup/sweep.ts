@@ -32,7 +32,7 @@ import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { cleanupConfig, count, emptyStats } from './config.js'
 import { closeWindow, openWindow, type Window, windowStillOpen } from './fence.js'
-import { graceCutoff, possessionHeld } from './mark.js'
+import { graceCutoff, markRepo, possessionHeld } from './mark.js'
 import { Marker, type MarkSet } from './marks.js'
 
 /** Repository objects younger than this are never deleted (a write phase may be using them). */
@@ -209,8 +209,7 @@ async function remark(
 ): Promise<void> {
   const { db } = ports
   const since = new Date(markStartedAt - REMARK_SLACK_MS)
-  const repo = await ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
-  const marker = new Marker(repo, marks)
+  const marker = new Marker(await markRepo(ports), marks)
   let after: { at: Date; id: string } | null = null
   for (;;) {
     const rows: {
@@ -403,6 +402,8 @@ export async function sweepStep(
       start = { ...next }
     }
     s = next
+    const deleted = Object.values(stats.deleted).reduce((n, c) => n + c.objects, 0)
+    if (deleted >= cleanupConfig.sweepDeletes) break
   }
   if ((await flush()) === 'wait') return { state: start, stats, outcome: 'wait' }
   return { state: s, stats, outcome: s.area >= AREAS.length ? 'done' : 'more' }

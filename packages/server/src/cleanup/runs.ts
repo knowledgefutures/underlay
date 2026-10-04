@@ -210,15 +210,9 @@ async function runJob(
 
 registerJob('cleanup.internal', async (job, ports) =>
   runJob(ports, { type: job.type, runId: String(job.runId), seq: Number(job.seq) }, async (run) => {
-    const stats = emptyStats()
-    let done = false
-    for (let i = 0; i < 10 && !done; i++) {
-      const r = await cleanInternal(ports, { dryRun: run.dryRun })
-      addStats(stats, r.stats)
-      // A dry run sees the same batch every time.
-      done = r.done || run.dryRun
-    }
-    return { state: {}, stats, outcome: done ? 'done' : 'more' }
+    const r = await cleanInternal(ports, { dryRun: run.dryRun })
+    // A dry run would see the same batch every time: one is the answer.
+    return { state: {}, stats: r.stats, outcome: r.done || run.dryRun ? 'done' : 'more' }
   }),
 )
 
@@ -322,7 +316,8 @@ export async function cleanupTick(ports: Ports): Promise<void> {
     )
     .limit(5)
   for (const run of old) {
-    await deletePrefix(ports.stores.internal, `${runDir(run.id)}/`, false)
+    const gone = await deletePrefix(ports.stores.internal, `${runDir(run.id)}/`, false, 500)
+    if (!gone.complete) break
     const current = await getRun(db, run.id)
     await updateRun(db, run.id, { state: { ...current?.state, workDeleted: true } })
   }

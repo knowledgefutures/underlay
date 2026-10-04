@@ -141,6 +141,7 @@ export class Marker {
     let n = 0
     for (let seq = 1; seq <= (head?.seq ?? 0); seq++) {
       const entry = await readLogEntry(this.repo, collectionId, seq)
+      this.marks.reads++
       if (!entry)
         throw new Error(`Log entry ${seq} of deleted collection ${collectionId} is missing`)
       await this.version(entry.versionHash)
