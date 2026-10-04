@@ -12,6 +12,8 @@
     "lint": "oxlint .",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
+    "v2:typecheck": "pnpm --filter \"./packages/*\" typecheck",
+    "v2:test": "pnpm --filter \"./packages/*\" --workspace-concurrency=1 test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",

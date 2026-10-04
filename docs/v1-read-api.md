@@ -51,6 +51,7 @@ differ, only the UI fields are essential.
 ## Collections
 
 **`GET /api/collections`**
+
 - **Query**: `q`, `owner`, `tag`, `sort` (`name`, `records`, `featured`, or default updatedAt),
   `mine=true` (needs a session), `limit` (≤100, default 50), `offset`.
 - **Response**:
@@ -61,12 +62,13 @@ differ, only the UI fields are essential.
     featuredTags: string[], featuredCollections: [same item] }
   ```
 - **UI reads** (explore and dashboard): `ownerSlug, slug, name, public, description, tags,
-  latestVersion, recordCount, totalBytes, lastPushAt, updatedAt`, plus the facets and featured
+latestVersion, recordCount, totalBytes, lastPushAt, updatedAt`, plus the facets and featured
   fields.
 - **v1 bugs**: sorting, tag filters and facets run in memory over a window. The home page reads
   `semver`, which doesn't exist.
 
 **`GET /api/collections/:owner/:slug`**
+
 - **Response**:
   ```
   { id, slug, name, public, ownerSlug, ownerName, createdAt, updatedAt, description, ark,
@@ -75,17 +77,19 @@ differ, only the UI fields are essential.
   ```
 - **UI reads**:
   - collection fields: `public, id, ownerSlug, ownerName, description, versionCount, ark, name,
-    slug`;
+slug`;
   - version fields: `latestVersion.semver`, `.metadata.readme/description/tags`, and the
     overview's `semver, recordCount, fileCount, totalBytes, createdAt, typeCounts` (array or
     object), `message, baseSemver, appId, pushedBy, hash`.
 - Non-owners lose `pushedBy/actorId/signature` and private types in `typeCounts`.
 
 **`GET /api/accounts/:owner/collections`**
+
 - **Response**: `[{ id, slug, name, public, createdAt, updatedAt }]`. Members also see private
   collections; an unknown org gives `[]`.
 
 **`GET /api/collections/:owner/:slug/export?version=v1.2.3`**
+
 - Returns `<owner>-<slug>-<semver>.tar.gz` containing:
   - `manifest.json`: `{collection:{owner,slug,name,description}, version:{semver,hash,message,recordCount,fileCount,totalBytes,createdAt}, schemas, files_missing}`;
   - `records/<Type>.ndjson`;
@@ -94,12 +98,14 @@ differ, only the UI fields are essential.
 ## Versions
 
 **`GET .../versions?limit&offset`**
+
 - **Response**: a bare array, newest first:
   `[{ semver, hash, message, appId, actorId? (owner), recordCount, fileCount, totalBytes, createdAt, ark }]`.
 - **UI reads**: `semver, message, recordCount, fileCount, totalBytes, createdAt, hash, ark`. The
   version picker uses `?limit=20` and accepts an array or `{versions}`.
 
 **`GET .../versions/latest`, `GET .../versions/:n`**
+
 - **Response**:
   ```
   { semver, major, minor, patch, hash, baseSemver, message, metadata, pushedBy, appId, actorId,
@@ -108,9 +114,10 @@ differ, only the UI fields are essential.
   ```
 - **UI reads**: `semver, schemas` (its keys, and `[t].properties` for table columns),
   `recordCount, fileCount, totalBytes, createdAt, appId, hash, ark, message, metadata,
-  typeCounts, baseSemver, pushedBy`.
+typeCounts, baseSemver, pushedBy`.
 
 **`GET .../versions/:n/records?type&limit(≤2000, default 100)&offset(≤10000)&after|cursor`**
+
 - **Response**:
   `{ records: [{ id, type, data, hash, ark? }], pagination: { limit, hasMore, nextCursor, total } }`.
 - **Cursor**: `base64url(JSON {r:[recordId, recordHash]})`, or a bare id.
@@ -118,14 +125,17 @@ differ, only the UI fields are essential.
   past offset 10k, v1 answers 400.
 
 **`GET .../versions/:n/records.ndjson?type&after`**
+
 - Lines are `{id,type,data,hash}`. `X-Underlay-Record-Count` gives the total. Gzip is applied
   when accepted.
 
 **`GET .../versions/:n/files`**
+
 - **Response**: a bare array, `[{ hash, size, mimeType, createdAt, references: [{recordId,type,field}] }]`.
 - **UI reads**: `hash, mimeType, size, references[].type/.recordId`.
 
 **`GET .../versions/:n/manifest?since&limit(≤100k)&cursor`**
+
 - **Full**:
   `{ semver, hash, schemas: {slug: schemaHash}, records: [{id,type,hash,private?}], files: string[], pagination }`.
 - **Delta**:
@@ -133,6 +143,7 @@ differ, only the UI fields are essential.
 - Used by the CLI pull and mirror sync, not the UI.
 
 **`GET .../versions/:n/diff?from&limit(≤5000)&cursor`**
+
 - **Response**:
   `{ from, to, added: [{id,type,data}], updated: [{id,type,data}], removed: string[], pagination, meta: {schemaChanged, metadataChanged, filesAdded, filesRemoved} }`.
 - **UI reads**: `added, updated, removed, meta.*`. It also reads `meta.readmeChanged`, which v1
