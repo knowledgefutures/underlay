@@ -6,6 +6,8 @@
 
 This document is normative. Another implementation has to reproduce everything here byte for
 byte: it must accept and reject the same inputs, build the same trees, and compute the same hashes.
+A server that implements it (an **Underlay node**) serves the reads in section 11.3 and accepts
+pushes as in section 11.4, so that any client works against any node.
 
 Design background: the edge redesign plan and its build notes (`planning/kf/underlay/edge-redesign*.md`
 in the KF meta repo).
@@ -68,8 +70,6 @@ form** is a fixed envelope with only `data` canonicalized:
 
 - **Record hash** = hash(canonical form).
 - **Record size** = the length in bytes of the canonical form.
-- The envelope keeps the field order of v1, so a record without integer-like keys has the
-  same hash in both versions (see [v1 hashes](#13-v1-hashes)).
 - Record ids are unique per type within a version, across both access sets (section 9).
 
 **File references.** A record references a file through any object, at any depth of `data`, whose
@@ -269,13 +269,29 @@ root = { "underlay": 2, "metadata": object|null, "public": SetObject, "private":
 
 A version hash commits to content only. There is no parent pointer, so the same content gives the
 same hash in any collection (unless it has a private set, whose salt differs). Lineage, semver,
-messages and authorship are mutable server state.
+messages and authorship are recorded in the signed version log (section 11.1), not in the hash.
 
 What each reader can check:
 
 - Public readers get the root and can verify the version hash and everything in the public set.
   From the root they learn only whether a private set exists.
 - Owners also get the private set object, salt included, and can check it against the commitment.
+
+### 10.1 Semver
+
+Every version of a collection has a semver, `v<major>.<minor>.<patch>`, assigned by the node that
+commits it from what changed against the version's base (section 11.4):
+
+- The first version is `v1.0.0`.
+- **Major** (`v(M+1).0.0`) when the type set changed: a type was added or removed, or a type's
+  schema hash changed. Making a type private or public changes its schema, so it is major.
+- Otherwise **minor** (`vM.(m+1).0`) when any record was added, removed or changed in either set.
+  A record moving between the public and private sets is a change.
+- Otherwise **patch** (`vM.m.(p+1)`): only the metadata or the files changed.
+- A push whose version hash equals its base's makes no version.
+
+Semvers are unique within a collection and only increase. Versions converted from v1 keep the
+semvers v1 gave them.
 
 ## 11. Repository layout
 
@@ -392,6 +408,7 @@ choice; underlay.org uses `https://underlay.org/api/collections/<owner>/<slug>`.
 ```
 GET <collection>/log?after=<seq>&limit=<n>
 GET <collection>/versions/<v>/pack?base=<v>&sets=public|all
+GET <collection>/versions/<v>/manifest?cursor=<c>&limit=<n>
 GET <collection>/files/<fileHash>                                 HEAD too
 ```
 
@@ -407,6 +424,15 @@ GET <collection>/files/<fileHash>                                 HEAD too
   `application/x-tar`. Without `base` the pack holds the whole version. `sets` defaults to
   `public`; `all` sends the private set too. The response carries `x-underlay-version` (the
   version hash), `x-underlay-base` (the base's version hash, or empty) and `x-underlay-sets`.
+- **Manifest.** 200 with the version's records as the caller may read them, without bodies:
+  `{"semver", "hash", "schemas": {slug: schemaHash}, "records": [{"id", "type", "hash",
+"private"?}], "pagination": {"limit", "hasMore", "nextCursor"}}`.
+  - Records come in (type, id) key order (section 7). `"private": true` marks a record of the
+    private set; a caller who can't read the private set gets the public set only.
+  - Pages are at most `limit` records (underlay.org: default 10,000, at most 100,000). While
+    `hasMore` is true, the client asks again with `cursor` set to `nextCursor`, which is opaque.
+  - The manifest is what a client that keeps no copy of a collection diffs against before a push
+    (section 11.4).
 - **Files.** The file's bytes, or a redirect to them; `HEAD` gives `content-length`.
   `<fileHash>` is 64 hex characters, and a `sha256:` prefix is accepted. A node serves a file only
   to a caller who can read a set that holds it (section 9).
@@ -427,27 +453,115 @@ with no access control serves public sets only, and answers `sets=all` with 403.
 
 **A client trusts nothing a node sends.** It verifies the log (section 11.1), receives packs under
 section 11.2, and checks file bytes against their hash. A copy taken from any node, including a
-mirror run by someone else, carries the same guarantees as one taken from the origin.
+mirror run by someone else, carries the same guarantees as one taken from the origin. The manifest
+is not verifiable on its own: a client that needs proof reads packs.
 
 Open: which signing keys a client trusts. The reference client trusts the keys in the
 `collection.json` it is served and continues the chain from the last entry it verified. A
 well-known URL for a node's keys is still to be fixed (section 11.1).
 
+### 11.4 Publishing
+
+A client publishes a version with a **delta push**: it opens a session against a base version,
+uploads the records it adds or changes and the ids it deletes, and commits. The node builds the
+trees, signs the log entry and assigns the semver (section 10.1). This is the only way to publish;
+a node accepts no tree nodes or packs from clients.
+
+```
+POST   <collection>/push                         open a session
+POST   <collection>/push/<sid>/records           upserts, NDJSON
+POST   <collection>/push/<sid>/deletes           deletes, NDJSON
+PUT    <collection>/files/<fileHash>             file bytes
+POST   <collection>/push/<sid>/commit            ?async=true to commit in the background
+GET    <collection>/push/<sid>                   the session's status, and its result
+DELETE <collection>/push/<sid>                   abandon the session
+```
+
+**Opening.** The body is a JSON object; every member is optional.
+
+- `base`: the semver of the version the changes are against. If it isn't the collection's head,
+  the node answers 409 with `currentVersion`. `null` or absent applies the changes to whatever the
+  head is when the session opens.
+- `schemas`: the new type set, slug → schema (section 5). It replaces the base's: a type left out
+  is removed with its records. Absent keeps the base's types.
+- `metadata` replaces the base's metadata; `metadata_patch` merges its top-level members into it.
+  With neither, the metadata is kept.
+- `files`: `{"add": [fileHash, …], "remove": [fileHash, …]}`, files to declare or drop beyond
+  those records reference (section 9).
+- `message`, `app_id`, `actor_id`: strings recorded in the log entry.
+- `strip_unknown_fields`: see **Records** below.
+
+The node answers 200 with `{"session_id", "base", "needed_files", "expires_at", "limits"}`:
+
+- `base` is the semver the session is against, or `null` for a collection with no versions.
+- `needed_files` are the declared files the node doesn't hold for this collection. The client
+  uploads them before committing.
+- `expires_at`: the session expires after `limits.session_idle_seconds` without an upload.
+- `limits` is the node's own, and a client sizes its requests by it:
+
+| Limit                  | Meaning                                               | underlay.org |
+| ---------------------- | ----------------------------------------------------- | ------------ |
+| `open_bytes`           | Largest body when opening a session                   | 8 MiB        |
+| `batch_bytes`          | Largest records or deletes body                       | 16 MiB       |
+| `batch_lines`          | Most lines in one records or deletes body             | 10,000       |
+| `session_idle_seconds` | Idle time before an open session expires              | 3,600        |
+| `open_sessions`        | Sessions one user may have open or committing at once | 20           |
+| `file_bytes`           | Largest file through `PUT …/files/<fileHash>`         | 32 MiB       |
+
+**Records.** `POST …/records` takes NDJSON record lines, `{"id", "type", "data", "private"?}`,
+and answers `{"received": n}`. Each line passes the input rules (section 3) and its type's schema
+(section 5.1), and its type must be in the session's type set.
+
+- A record whose `data` is an object with top-level members its schema's root `properties` doesn't
+  list is refused, unless the session set `strip_unknown_fields`: then those members are dropped
+  before the record is hashed. A schema with no root `properties` accepts any members.
+- `"private": true` puts the record in the private set (section 9).
+- If any line fails, the node answers 422 with `validationErrors`, one per failing line with its
+  1-based `line` number, and stores nothing from the batch.
+
+**Deletes.** `POST …/deletes` takes NDJSON lines `{"type", "id"}` and answers `{"received": n}`.
+Deleting an id the base doesn't hold is not an error.
+
+Within a session, the later upload of a (type, id) wins, whether it is a record or a delete.
+Uploads may be repeated and split across any number of requests.
+
+**Files.** `PUT <collection>/files/<fileHash>` with the file's bytes stores a file for the
+collection: 201, or 400 if the bytes don't hash to `<fileHash>`. A node may offer other ways to
+upload larger files; underlay.org has `POST <collection>/files/uploads`. Every file a new record
+references, and every declared file, must be held for the collection by the time of the commit.
+
+**Commit.** `POST …/commit` builds the version.
+
+- 201 with `{"semver", "hash", "recordCount", "fileCount", "changes": {"added", "removed",
+"updated"}}` when it finishes within the request.
+- 202 with `{"session_id", "status": "committing"}` when it runs in the background: always with
+  `?async=true`, and whenever the node chooses. The client polls `GET …/push/<sid>` until `status`
+  is `committed` (its `result` is the 201 body) or `failed` (its `error` is the failure body).
+- A client that holds the base can compute the new version's hash itself, and should check it
+  against `hash`. The reference CLI does.
+
+**A client that keeps no copy** reads the base's manifest (section 11.3), compares each record of
+its current data with it by (type, id), hash and privacy, then uploads the records that are new,
+changed or moving between sets, and deletes the ids it no longer has. The upload is then the same
+size as the changes, whatever the collection's size.
+
+Errors are JSON, `{"error": <message>}`, with the reads' rules for 404 and authentication:
+
+- **403** for a caller who can read the collection but not write to it, or for another user's
+  session.
+- **409** when `base` isn't the head (`currentVersion` says what is), when the head moved before
+  the commit, when the session isn't open, and when the push changes nothing (`"No changes
+detected"`, with the head's `hash`).
+- **413** for a body over `open_bytes` or `batch_bytes`, a batch over `batch_lines`, or a file over
+  `file_bytes`.
+- **422** for records or deletes that fail (`validationErrors`), a schema that is refused, or a
+  commit with files the node doesn't hold (`filesNeeded`).
+- **429** when the user has `open_sessions` sessions in progress, or for a rate limit
+  (`Retry-After`).
+
 ## 12. Limits and constants
 
 All protocol constants are in `packages/protocol/src/constants.ts`, and the vectors file repeats them.
-
-## 13. v1 hashes
-
-v1 canonicalized `data` and schemas by sorting keys into a new object and then calling
-`JSON.stringify`. That puts array-index keys (canonical decimal integers below 2³² − 1) first, in
-numeric order.
-
-- The two versions agree whenever no object at any depth has an array-index key.
-- When one does, the v1 hash differs. Servers keep `(v1 hash → v2 hash)` aliases, and the
-  compatibility push API accepts v1 hashes from older clients.
-- v1 version hashes (`private:<hex>`, `public:<hex>`) are kept as aliases of the versions
-  they name.
 
 ## Test vectors
 
