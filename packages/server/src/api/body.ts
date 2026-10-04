@@ -11,12 +11,12 @@ import { jsonError } from './access.js'
 
 export class BodyTooLarge extends Error {}
 
-/** Read a request body as text, refusing more than `max` bytes without buffering them. */
-export async function readText(c: Context<AppEnv>, max: number): Promise<string> {
+/** Read a request body, refusing more than `max` bytes without buffering them. */
+export async function readBytes(c: Context<AppEnv>, max: number): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(c.req.header('content-length') ?? NaN)
   if (declared > max) throw new BodyTooLarge()
   const body = c.req.raw.body
-  if (!body) return ''
+  if (!body) return new Uint8Array()
   const reader = body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -30,7 +30,12 @@ export async function readText(c: Context<AppEnv>, max: number): Promise<string>
     }
     chunks.push(value)
   }
-  return new TextDecoder().decode(Buffer.concat(chunks))
+  return Buffer.concat(chunks)
+}
+
+/** Read a request body as text, refusing more than `max` bytes without buffering them. */
+export async function readText(c: Context<AppEnv>, max: number): Promise<string> {
+  return new TextDecoder().decode(await readBytes(c, max))
 }
 
 /**
