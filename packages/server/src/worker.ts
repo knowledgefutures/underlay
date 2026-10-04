@@ -19,6 +19,7 @@ import { type Auth, authenticator, createAuth } from './auth/auth.js'
 import { createKf, type Kf } from './auth/kf.js'
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
+import { readsAnyReplica } from './db/replicas.js'
 import { isBulk, QueueJobs, runJob } from './jobs.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports } from './ports.js'
@@ -64,8 +65,22 @@ const INTERACTIVE_LANES = 4
 
 let signer: Promise<Signer> | null = null
 
-function makePorts(env: Env, ctx: ExecutionContext): Ports {
-  const db = openD1(env.DB)
+/** Which D1 a request reads: any replica for anonymous reads (db/replicas.ts), else the primary. */
+function d1For(env: Env, req: Request): D1Database {
+  if (!env.DB.withSession || !readsAnyReplica(req)) return env.DB
+  return env.DB.withSession('first-unconstrained') as unknown as D1Database
+}
+
+/** The primary, for long-lived clients (better-auth, KF Auth) built once per isolate. */
+const primaries = new WeakMap<object, Ports['db']>()
+const primaryDb = (env: Env) => {
+  let db = primaries.get(env.DB)
+  if (!db) primaries.set(env.DB, (db = openD1(env.DB)))
+  return db
+}
+
+function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
+  const db = req ? openD1(d1For(env, req)) : primaryDb(env)
   const cache = new CfCache(caches as never, env.DEPLOYMENT)
   const s3 = s3Store({
     endpoint: env.R2_ENDPOINT,
@@ -97,10 +112,10 @@ function makePorts(env: Env, ctx: ExecutionContext): Ports {
 
 // One KF Auth client and one better-auth instance per isolate and database binding.
 const kfs = new WeakMap<object, Kf>()
-function kfFor(env: Env, ports: Ports): Kf {
+function kfFor(env: Env): Kf {
   let kf = kfs.get(env.DB)
   if (!kf) {
-    kf = createKf(ports.db, {
+    kf = createKf(primaryDb(env), {
       // No private network on Workers: server-to-server calls use the public URL.
       internalUrl: env.OIDC_ISSUER_URL,
       clientId: env.OIDC_CLIENT_ID,
@@ -117,7 +132,7 @@ function authFor(env: Env, ports: Ports): Auth {
   let auth = auths.get(env.DB)
   if (!auth) {
     auth = createAuth(
-      ports.db,
+      primaryDb(env),
       {
         appUrl: env.APP_URL,
         secret: env.SESSION_SECRET,
@@ -130,7 +145,7 @@ function authFor(env: Env, ports: Ports): Auth {
         },
       },
       ports.waitUntil,
-      kfFor(env, ports),
+      kfFor(env),
     )
     auths.set(env.DB, auth)
   }
@@ -139,7 +154,7 @@ function authFor(env: Env, ports: Ports): Auth {
 
 const app = createApp((c) => {
   const env = c.env as unknown as Env
-  const ports = makePorts(env, c.executionCtx as unknown as ExecutionContext)
+  const ports = makePorts(env, c.executionCtx as unknown as ExecutionContext, c.req.raw)
   return {
     ports,
     config: {
@@ -149,7 +164,7 @@ const app = createApp((c) => {
       kfAccountUrl: env.OIDC_ACCOUNT_URL,
     },
     authenticate: authenticator(() => authFor(env, ports)),
-    kf: kfFor(env, ports),
+    kf: kfFor(env),
     authHandler: (req) => authFor(env, ports).handler(req),
     renderPage,
   }
