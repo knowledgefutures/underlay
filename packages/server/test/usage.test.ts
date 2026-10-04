@@ -40,6 +40,7 @@ describe('usage', () => {
     h.ports.usage = { record: (events) => void seen.push(...events) }
     const list = await h.request(`${base}/versions/latest/records`)
     expect(list.status).toBe(200)
+    const listBytes = (await list.arrayBuffer()).byteLength
     expect((await h.request(`${base}/files/${sha(pdf)}`)).status).toBe(302)
     await h.request('/api/health') // not a collection: nothing billed
 
@@ -47,6 +48,8 @@ describe('usage', () => {
     expect(of('api_calls')).toHaveLength(2)
     expect(of('file_downloads')).toEqual([expect.objectContaining({ n: 1, c: c.id, a: 'org1' })])
     expect(of('file_bytes')[0]!.n).toBe(pdf.length)
+    // Counted as the body streamed out.
+    expect(of('response_bytes').map((e) => e.n)).toContain(listBytes)
     expect(seen.every((e) => e.a === 'org1' && e.c === c.id)).toBe(true)
     // Each request's events share its id, numbered from 0.
     const ids = new Set(seen.map((e) => e.r))

@@ -146,13 +146,35 @@ export function createApp(setup: Setup) {
   // in-process API calls are part of the page view, which isn't metered.
   app.use('/api/*', async (c, next) => {
     await next()
-    if (inProcess.has(c.req.raw)) return
+    const sink = c.var.ports.usage
+    if (inProcess.has(c.req.raw) || !sink) return
     const m = c.var.meter
-    if (m.collection) {
-      meter(m, 'api_calls', 1)
-      meter(m, 'response_bytes', Number(c.res.headers.get('content-length') ?? 0) || 0)
+    if (!m.collection) {
+      if (m.events.length) sink.record(m.events)
+      return
     }
-    if (m.events.length && c.var.ports.usage) c.var.ports.usage.record(m.events)
+    meter(m, 'api_calls', 1)
+    const body = c.res.body
+    if (!body) {
+      sink.record(m.events)
+      return
+    }
+    // Response bytes are counted as they go out (most responses don't know their
+    // length up front); the request's events are recorded when the body ends.
+    let bytes = 0
+    const counted = body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, ctl) {
+          bytes += chunk.byteLength
+          ctl.enqueue(chunk)
+        },
+        flush() {
+          meter(m, 'response_bytes', bytes)
+          sink.record(m.events)
+        },
+      }),
+    )
+    c.res = new Response(counted, c.res)
   })
 
   // Request budgets (lib/limits.ts). The page renderer's in-process API calls
