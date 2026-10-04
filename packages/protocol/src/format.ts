@@ -66,6 +66,7 @@ export {
   getEntry,
   iterate,
   type IterateOptions,
+  newNodes,
   rankOf,
 } from './tree/read.js'
 export { verifyTree, type VerifyResult } from './tree/verify.js'

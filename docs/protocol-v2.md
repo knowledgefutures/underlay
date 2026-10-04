@@ -332,6 +332,31 @@ A log is valid when every entry is present from 1 to `head.seq`, each `prev` cha
 verifies against a trusted key, and `head.entryHash` is the last entry's hash (`verifyLog` in
 `packages/protocol/src/repo/log.ts`).
 
+### 11.2 Sync
+
+A version moves between repositories as a **pack**: the repository objects it reaches that the
+receiver's base version doesn't, under their repository keys. On the wire a pack is a POSIX tar
+(PAX headers for names over 100 bytes), uncompressed; the objects are stored bytes, so most are
+gzip already. File bytes are not in packs. Reference implementation: `packVersion` and
+`receiveVersion` in `packages/protocol/src/repo/sync.ts`.
+
+- **Contents and order.**
+  1. The schemas the base doesn't have.
+  2. For each record tree of each set sent, the nodes the base's tree of that type (in that set,
+     else in the other set) doesn't have at the same position, parents before children; after
+     each new leaf, the out-of-line records its body points to, then the body.
+  3. The same for each set's file tree (nodes only).
+  4. The private set object, when the private set is sent.
+  5. The root, last.
+- A pack never holds `collections/` objects; logs and `collection.json` travel separately.
+- **Receiving.** Before writing an object, the receiver checks it against its key: nodes and
+  out-of-line records by hash, bodies line by line against their leaf (which arrives first),
+  schemas, private set objects and the root by hash and canonical JSON. Then, for every tree of
+  every set received, it re-derives the tree: the entry changes from its base tree, merged into
+  that base tree under section 8.1, must give exactly the received root, count and bytes, and
+  every new record leaf must have its body. Only then is the root written. A pack that fails any
+  check is refused; objects it wrote are unreferenced.
+
 ## 12. Limits and constants
 
 All protocol constants are in `packages/protocol/src/constants.ts`, and the vectors file repeats them.
@@ -386,3 +411,7 @@ These were made during implementation and recorded with their reasons in `edge-r
    the key.
 8. A large leaf body is one object of several concatenated gzip members (section 11). There are no
    separate part objects, so mirrors and third-party readers need only one rule.
+9. Tree sync is pull-only (section 11.2): a version moves as a pack the receiver re-derives. The
+   plan also had a tree-sync push API; clients that hold their base push a locally computed diff
+   through delta push and compare version hashes instead, so a server never accepts tree nodes
+   from outside.

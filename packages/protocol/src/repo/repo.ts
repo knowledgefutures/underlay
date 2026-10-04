@@ -65,6 +65,9 @@ export const keys = {
 
 const REF_PREFIX = '{"$ref":"'
 export const outOfLinePointer = (recordHash: string) => `${REF_PREFIX}${recordHash}"}`
+/** The record hash a body line points to, or null for an inline record. */
+export const outOfLineHash = (line: string): string | null =>
+  line.startsWith(REF_PREFIX) ? (JSON.parse(line) as { $ref: string }).$ref : null
 
 const dec = new TextDecoder()
 

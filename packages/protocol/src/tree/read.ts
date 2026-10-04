@@ -251,3 +251,52 @@ export async function* diffTrees<E>(
     }
   }
 }
+
+/**
+ * The nodes of tree `b` that tree `a` doesn't have at the same position, top
+ * down (a parent before its children). The walk is `diffTrees`' and costs the
+ * same: equal subtrees are skipped unread. This is what a sync sends.
+ */
+export async function* newNodes<E>(
+  source: NodeSource<E>,
+  a: string | null,
+  b: string | null,
+): AsyncGenerator<NodeDesc> {
+  if (b === null || a === b) return
+  const spec = source.spec
+  const xs: Item<E>[] = a === null ? [] : [{ node: await rootDesc(source, a) }]
+  const ys: Item<E>[] = [{ node: await rootDesc(source, b) }]
+  const expand = async (items: Item<E>[]) => {
+    const head = items.shift() as { node: NodeDesc }
+    const n = await source.node(head.node.hash)
+    const children: Item<E>[] =
+      n.kind === 'leaf'
+        ? n.entries.map((entry) => ({ entry }))
+        : n.children.map((node) => ({ node }))
+    items.unshift(...children)
+  }
+  for (;;) {
+    const x = xs[0]
+    const y = ys[0]
+    if (!y) return
+    if (x && 'node' in x && 'node' in y && x.node.hash === y.node.hash) {
+      xs.shift()
+      ys.shift()
+      continue
+    }
+    if (x && 'node' in x && ('entry' in y || x.node.level >= y.node.level)) {
+      await expand(xs)
+      continue
+    }
+    if ('node' in y) {
+      yield y.node
+      await expand(ys)
+      continue
+    }
+    // Both heads are entries: keep the two sides aligned by key.
+    const ky = spec.key(y.entry)
+    const c = x && 'entry' in x ? compareUtf8(spec.key(x.entry), ky) : 1
+    if (c <= 0) xs.shift()
+    if (c >= 0) ys.shift()
+  }
+}

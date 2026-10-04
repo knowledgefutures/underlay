@@ -9,6 +9,16 @@ export * from './repo/repo.js'
 export * from './repo/log.js'
 export { gunzip, gunzipText, gzip, isGzip, splitLines } from './repo/gzip.js'
 export { Lru } from './repo/lru.js'
+export {
+  type PackObject,
+  type PackOptions,
+  packVersion,
+  type ReceiveOptions,
+  type ReceiveResult,
+  receiveVersion,
+  type SyncSets,
+} from './repo/sync.js'
+export { type TarEntry, tarChunks, type TarFile, tarStream, untar } from './repo/tar.js'
 export { blobObject, MemoryStore, memoryStore } from './stores/memory.js'
 export { type S3Config, S3Error, S3Store, s3Store } from './stores/s3.js'
 export { FileStore, fileStore, type FileStoreOptions, serveSignedBlob } from './stores/fs.js'

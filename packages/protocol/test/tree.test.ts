@@ -16,6 +16,7 @@ import {
   MapSource,
   MemorySink,
   mergeTree,
+  newNodes,
   protocolChunking,
   rankOf,
   type NodeDesc,
@@ -491,6 +492,63 @@ describe('parallel commit', () => {
     expect(assembled.root?.hash).toBe(serial.root?.hash)
     // A path per segment, plus the root.
     expect(assembled.stats.readNodes).toBeLessThanOrEqual(3 * (root.level + 2) + 1)
+  })
+})
+
+describe('newNodes', () => {
+  it('lists exactly the nodes of b that a lacks, parents first (property)', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(keyArb, { maxLength: 400, size: 'max' }),
+        fc.array(fc.tuple(fc.nat(), fc.boolean(), fc.integer({ min: 1, max: 3 })), {
+          maxLength: 60,
+        }),
+        async (keys, edits) => {
+          const { sink, source } = store()
+          const base = sorted(keys.map((k) => entry(k)))
+          const a = buildTree(recordTree, sink, base, { chunking: tiny })?.hash ?? null
+          const changes = new Map<string, Change<RecordEntry>>()
+          for (const [i, del, v] of edits) {
+            const k = keys.length > 0 && i % 3 !== 0 ? keys[i % keys.length]! : `new${i}`
+            changes.set(k, { key: k, entry: del ? null : entry(k, v) })
+          }
+          const merged = await mergeTree(
+            source,
+            sink,
+            a,
+            [...changes.values()].sort((x, y) => compareUtf8(x.key, y.key)),
+            { chunking: tiny },
+          )
+          const b = merged.root?.hash ?? null
+          const all = async (root: string | null) => {
+            const out = new Set<string>()
+            const walk = async (h: string) => {
+              out.add(h)
+              const n = await source.node(h)
+              if (n.kind === 'node') for (const c of n.children) await walk(c.hash)
+            }
+            if (root) await walk(root)
+            return out
+          }
+          const inA = await all(a)
+          const inB = await all(b)
+          const listed: string[] = []
+          const seen = new Set<string>()
+          for await (const n of newNodes(source, a, b)) {
+            listed.push(n.hash)
+            seen.add(n.hash)
+            // Parents first: a listed node's children come later, never earlier.
+            const node = await source.node(n.hash)
+            if (node.kind === 'node')
+              for (const c of node.children) expect(seen.has(c.hash)).toBe(false)
+          }
+          // Everything b needs that a lacks is listed, and nothing outside b.
+          for (const h of inB) if (!inA.has(h)) expect(seen.has(h)).toBe(true)
+          for (const h of listed) expect(inB.has(h)).toBe(true)
+        },
+      ),
+      { numRuns: 200 * RUNS },
+    )
   })
 })
 

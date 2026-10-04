@@ -12,13 +12,12 @@
  * a fixed `,"hash":"…"` and newline per record). gzip costs Worker CPU per byte,
  * so very large exports should ask for format=tar.
  */
-import { fileTree, iterate, RepoSource } from '@underlay/protocol'
+import { fileTree, iterate, RepoSource, type TarEntry, tarStream } from '@underlay/protocol'
 import { inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
-import { type TarEntry, tarStream } from '../lib/tar.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 
