@@ -28,9 +28,9 @@ export function hashSchema(schema: unknown): string {
   return sha256Hex(jcs(schema))
 }
 
-// --- Legacy (format 1) hashing ----------------------------------------------
+// --- Legacy (v1) hashing ----------------------------------------------------
 //
-// Format 1 canonicalized by sorting keys into a new object and stringifying it,
+// v1 canonicalized by sorting keys into a new object and stringifying it,
 // so integer-like keys came out first in numeric order. Kept for the negotiate
 // compatibility layer and migration: v1 clients still send these hashes.
 

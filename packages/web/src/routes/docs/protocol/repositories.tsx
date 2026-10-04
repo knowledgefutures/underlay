@@ -22,7 +22,7 @@ head.json  = JCS({"entryHash","seq","versionHash"}) of the latest entry`
 
 export default function ProtocolRepositories() {
   return (
-    <DocsLayout title="Repositories">
+    <DocsLayout title="Repositories" eyebrow="Protocol v2">
       <p>
         A repository is how a bucket holds collections. The layout is the same in the
         platform&rsquo;s own storage, in a customer&rsquo;s mirror bucket and in a restore source,

@@ -205,8 +205,8 @@ export default function DocsApiVersions() {
         version&rsquo;s root, and are the same for every reader: the private set is in the root only
         as a salted commitment (see{' '}
         <a href="/docs/protocol/versions#version-root">Trees and versions</a>). Versions converted
-        from format 1 also answer to their old <code>private:</code> and <code>public:</code>{' '}
-        hashes. Record, schema and file hashes are bare hex with no prefix.
+        from v1 also answer to their old <code>private:</code> and <code>public:</code> hashes.
+        Record, schema and file hashes are bare hex with no prefix.
       </p>
 
       <hr className="border-rule my-6" />

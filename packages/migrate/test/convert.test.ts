@@ -223,7 +223,7 @@ describe('v1 → v2 migration', () => {
       const file = await h.request(`/api/collections/org/lib/files/${FILE}`)
       expect(file.status).toBe(302)
       expect(file.headers.get('location')).toContain('files/ff/ff/legacy')
-      // Provenance by the format 1 hash of b resolves through the alias (members only now).
+      // Provenance by the v1 hash of b resolves through the alias (members only now).
       const prov = await json(`/api/records/${v1hash(records.b)}/provenance`, 'u1')
       expect(prov.recordHash).toBe(hashRecord('b', 'Author', records.b.data).hash)
       expect(prov.references.map((r: any) => r.semver)).toEqual(['v1.0.0', 'v1.1.0', 'v1.1.1'])

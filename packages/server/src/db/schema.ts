@@ -253,7 +253,7 @@ export const versions = sqliteTable(
     patch: integer('patch').notNull(),
     /** `ulv2:<hex>`; the root document is roots/<hex>.json in the blob store. */
     hash: text('hash').notNull(),
-    /** Format 1 hashes of migrated versions (`private:…`, `public:…`). */
+    /** v1 hashes of migrated versions (`private:…`, `public:…`). */
     legacyHash: text('legacy_hash'),
     legacyPublicHash: text('legacy_public_hash'),
     baseSemver: text('base_semver'),
@@ -366,7 +366,7 @@ export const schemaUsage = sqliteTable(
   ],
 )
 
-/** Format 1 → format 2 aliases for records and schemas re-hashed by JCS. */
+/** v1 → v2 aliases for records and schemas re-hashed by JCS. */
 export const legacyHashes = sqliteTable('legacy_hashes', {
   legacyHash: text('legacy_hash').primaryKey(),
   kind: text('kind', { enum: ['record', 'schema'] }).notNull(),

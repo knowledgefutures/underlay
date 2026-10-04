@@ -97,7 +97,7 @@ export interface CommitInput {
   validate?: (schema: Record<string, unknown>, data: unknown) => string[] | null
   /**
    * Migration only: keep a v1 version's identity. Its semver (v1's rules may
-   * have differed over time), creation time and format 1 hashes; and skip the
+   * have differed over time), creation time and v1 hashes; and skip the
    * post-publish job (webhooks would fire for history).
    */
   migrated?: {

@@ -582,7 +582,7 @@ function schemaAt(location: string, root: Schema | boolean, lookup: Lookup): unk
   return node
 }
 
-// --- Bounds and format-2 rules ------------------------------------------------
+// --- Bounds and v2 rules -----------------------------------------------------
 
 /**
  * Check every schema in a push: see `checkSchema`. Returns the first error
@@ -598,14 +598,14 @@ export function checkSchemaBounds(schemas: Record<string, unknown>): string | nu
 
 /**
  * Bound a caller-supplied schema before it is compiled and run server-side, and
- * apply the format-2 schema rules:
+ * apply the v2 schema rules:
  *
  * - the type slug passes `checkTypeSlug`;
  * - the canonical (JCS) schema is at most MAX_SCHEMA_BYTES;
  * - no `pattern` or `patternProperties` key is longer than 256 characters;
  * - a root `private`, if present, is a boolean;
- * - no property is marked `"private": true`. Format 1 stripped such fields from
- *   public views; format 2 has no field-level privacy, and accepting the marker
+ * - no property is marked `"private": true`. v1 stripped such fields from
+ *   public views; v2 has no field-level privacy, and accepting the marker
  *   would publish a field its author meant to hide.
  *
  * Returns an error message, or null if the schema is acceptable.
@@ -666,7 +666,7 @@ function findLongPattern(node: unknown): string | null {
 
 /**
  * The JSON Pointer of the first property schema with `"private": true`, at any
- * depth: nested markers never did anything in format 1 either, and are refused
+ * depth: nested markers never did anything in v1 either, and are refused
  * for the same reason.
  */
 function findPrivateField(node: unknown, path: string): string | null {

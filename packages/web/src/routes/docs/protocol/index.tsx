@@ -4,14 +4,12 @@ import DocsLayout from '~/components/DocsLayout'
 
 export default function ProtocolOverview() {
   return (
-    <DocsLayout title="The Underlay protocol">
+    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v2">
       <p>
         Underlay is a protocol for publishing versioned, structured data. Every record, schema and
         file is identified by its SHA-256 hash. A version is a set of hash trees under one root, so
         its hash commits to everything in it, and two versions that share most of their content
-        share most of their storage. These pages describe <strong>format 2</strong>, which this
-        server implements. Format 2 is final: changing any value or rule in it needs a new format
-        number.
+        share most of their storage.
       </p>
 
       <h2 id="primitives">Primitives</h2>
@@ -77,7 +75,7 @@ export default function ProtocolOverview() {
         </li>
         <li>
           <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: the HTTP exchanges for
-          writing and reading versions, and compatibility with format 1 clients.
+          writing and reading versions, and compatibility with v1 clients.
         </li>
       </ul>
 

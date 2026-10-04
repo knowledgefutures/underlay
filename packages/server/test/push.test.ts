@@ -503,7 +503,7 @@ describe('negotiate (v1 compatibility)', () => {
     expect(await json(await manifest(floating))).toMatchObject({ needed_records: [] })
   })
 
-  it('accepts format 1 hashes for records with integer-like keys', async () => {
+  it('accepts v1 hashes for records with integer-like keys', async () => {
     const { h, user, c, base } = await setup()
     const Scores = { type: 'object' }
     const data = { 10: 'ten', 9: 'nine' }

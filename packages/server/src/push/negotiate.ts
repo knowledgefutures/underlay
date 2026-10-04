@@ -11,7 +11,7 @@
  * Commit diffs the base trees against the manifest in one sorted pass per type:
  * O(collection size), inherent to snapshots. Large pushers should use delta push.
  *
- * Format 1 hashes: a v1 client hashes data with integer-like keys differently
+ * v1 hashes: a v1 client hashes data with integer-like keys differently
  * (edge-redesign-build.md finding 6). Uploads compute both hashes, so a manifest
  * entry matches an upload by either.
  */
@@ -104,7 +104,7 @@ export async function neededOf(trees: BaseTrees, entries: ManifestLine[]): Promi
   return needed
 }
 
-/** Run entries for uploaded records: like delta uploads, plus the format 1 hash when it differs. */
+/** Run entries for uploaded records: like delta uploads, plus the v1 hash when it differs. */
 export function withLegacyHash(e: RunEntry, data: unknown): RunEntry {
   if (!hasArrayIndexKey(data)) return e
   const lh = legacyRecordHash(e.k, e.t, data)

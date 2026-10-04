@@ -12,10 +12,10 @@
  *    in (type, id) order (COLLATE "C" = UTF-8 byte order, the trees' order), so
  *    the cost is O(changes) per version. Metadata-patch versions (shared record
  *    sets) produce no record changes. Versions keep their v1 semver, time and
- *    hashes (as format 1 aliases).
+ *    hashes (as v1 aliases).
  *
- * Records are re-hashed under format 2. A record whose hash changes (integer-like
- * keys; JCS) gets a legacy_hashes alias. Field-level privacy is gone in format 2:
+ * Records are re-hashed under v2. A record whose hash changes (integer-like
+ * keys; JCS) gets a legacy_hashes alias. Field-level privacy is gone in v2:
  * a type with private fields becomes a wholly private type, and the report says
  * so (edge-redesign.md asks to check this is unused before migrating).
  */
@@ -194,7 +194,7 @@ export async function migrateCollectionSettings(
   await copyTable(v1, ports, 'ark_shoulders', schema.arkShoulders, report)
   await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report, ours)
   await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report, ours)
-  // Labels move from v1 schema ids to format 2 schema hashes.
+  // Labels move from v1 schema ids to v2 schema hashes.
   const labels = await v1.query<{ label: string; schema: unknown; created_at: Date }>(
     'SELECT l.label, s.schema, l.created_at FROM schema_labels l JOIN schemas s ON s.id = l.schema_id',
   )
@@ -223,7 +223,7 @@ interface V1Version {
 }
 
 /**
- * Format 2 refuses field-level privacy. A type that used it becomes a private
+ * Protocol v2 refuses field-level privacy. A type that used it becomes a private
  * type: its private fields are never exposed, at the cost of the public ones.
  */
 function fixFieldPrivacy(s: Record<string, unknown>): {
@@ -589,7 +589,7 @@ export async function migrateCollection(
       prevRecords = recordsId
       prevFiles = files
     } else {
-      // e.g. two v1 versions that differ only in what format 2 no longer records.
+      // e.g. two v1 versions that differ only in what v2 no longer records.
       report.skippedVersions.push({ collection: col.slug, semver: v.semver, reason: r.status })
       prevRecords = recordsId
       prevFiles = files

@@ -25,7 +25,7 @@ version hash = "ulv2:" + sha256(JCS(root))`
 
 export default function ProtocolVersions() {
   return (
-    <DocsLayout title="Trees and versions">
+    <DocsLayout title="Trees and versions" eyebrow="Protocol v2">
       <p>
         A version holds each type&rsquo;s records in a tree, its files in another, and lists them in
         a root object. The trees are built so that the same entries always give the same tree, which

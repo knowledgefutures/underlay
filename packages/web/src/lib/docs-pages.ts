@@ -140,7 +140,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Protocol',
         label: 'Overview',
         href: '/docs/protocol',
-        blurb: 'Format 2: what is content-addressed, and what it guarantees',
+        blurb: 'Protocol v2: what is content-addressed, and what it guarantees',
         headings: ['Primitives', 'What it guarantees', 'In this section', 'Reference'],
       },
       {
@@ -164,8 +164,8 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Push and pull',
         href: '/docs/protocol/push-and-pull',
-        blurb: 'Delta push, negotiate, pull, and format 1 compatibility',
-        headings: ['Delta push', 'Negotiate (compatibility)', 'Pull', 'Format 1 hashes', 'Errors'],
+        blurb: 'Delta push, negotiate, pull, and v1 compatibility',
+        headings: ['Delta push', 'Negotiate (compatibility)', 'Pull', 'v1 hashes', 'Errors'],
       },
     ],
   },

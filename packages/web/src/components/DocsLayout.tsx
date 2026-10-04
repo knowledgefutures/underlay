@@ -7,9 +7,12 @@ import { docSections } from '~/lib/docs-pages'
 export default function DocsLayout({
   children,
   title,
+  eyebrow,
 }: {
   children: React.ReactNode
   title: string
+  /** A short line above the title, e.g. the protocol version a page describes. */
+  eyebrow?: string
 }) {
   const location = useLocation()
   const currentPath = location.pathname.replace(/\/$/, '')
@@ -44,6 +47,7 @@ export default function DocsLayout({
         </aside>
 
         <div className="docs-main">
+          {eyebrow && <p className="text-ink-muted mb-1 font-mono text-xs">{eyebrow}</p>}
           <h1 className="mb-6 font-sans text-xl font-semibold tracking-tight">{title}</h1>
           <div className="docs-prose">{children}</div>
         </div>

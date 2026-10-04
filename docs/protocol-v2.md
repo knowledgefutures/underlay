@@ -1,7 +1,6 @@
-# Underlay protocol, format 2
+# Underlay protocol v2
 
-**Status: final.** The format was frozen on 2026-10-03. Changing any value or rule here needs a new
-format number. The reference implementation is
+**Status: stable** (2026-10-03). The reference implementation is
 `packages/protocol` (`@underlay/protocol`). The test vectors are in `packages/protocol/test/vectors/v2.json`
 (see [Test vectors](#test-vectors)).
 
@@ -69,8 +68,8 @@ form** is a fixed envelope with only `data` canonicalized:
 
 - **Record hash** = hash(canonical form).
 - **Record size** = the length in bytes of the canonical form.
-- The envelope keeps the field order of format 1, so a record without integer-like keys has the
-  same hash in both formats (see [Format 1 hashes](#12-format-1-hashes)).
+- The envelope keeps the field order of v1, so a record without integer-like keys has the
+  same hash in both versions (see [v1 hashes](#13-v1-hashes)).
 - Record ids are unique per type within a version, across both access sets (section 9).
 
 **File references.** A record references a file through any object, at any depth of `data`, whose
@@ -85,7 +84,7 @@ A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 
 - A schema with `"private": true` at its root makes the type private (section 9). A root `private`
   that isn't a boolean is rejected, so that `"private": "true"` can't publish a type by accident.
-- `"private": true` on a property, at any depth (field-level privacy), is **rejected** in format 2.
+- `"private": true` on a property, at any depth (field-level privacy), is **rejected** in v2.
 - Limits: the schema's canonical form must be at most 256 KB, and `pattern` values and
   `patternProperties` keys at most 256 characters each.
 
@@ -133,7 +132,7 @@ document.
 **What is normative.** Only the verdict. Error messages, and how many are reported, are not.
 
 The reference validator is `@cfworker/json-schema` with these rules applied
-(`packages/protocol/src/validate.ts`). Over all public production data it agrees with format 1's AJV
+(`packages/protocol/src/validate.ts`). Over all public production data it agrees with v1's AJV
 configuration: 139 schemas, 330,300 records, and 85,773 mutated records
 (`scripts/diff-validators.ts`).
 
@@ -383,16 +382,16 @@ gzip already. File bytes are not in packs. Reference implementation: `packVersio
 
 All protocol constants are in `packages/protocol/src/constants.ts`, and the vectors file repeats them.
 
-## 13. Format 1 hashes
+## 13. v1 hashes
 
-Format 1 canonicalized `data` and schemas by sorting keys into a new object and then calling
+v1 canonicalized `data` and schemas by sorting keys into a new object and then calling
 `JSON.stringify`. That puts array-index keys (canonical decimal integers below 2³² − 1) first, in
 numeric order.
 
-- The two formats agree whenever no object at any depth has an array-index key.
-- When one does, the format 1 hash differs. Servers keep `(format-1 hash → format-2 hash)` aliases,
-  and the compatibility push API accepts format 1 hashes from older clients.
-- Format 1 version hashes (`private:<hex>`, `public:<hex>`) are kept as aliases of the versions
+- The two versions agree whenever no object at any depth has an array-index key.
+- When one does, the v1 hash differs. Servers keep `(v1 hash → v2 hash)` aliases, and the
+  compatibility push API accepts v1 hashes from older clients.
+- v1 version hashes (`private:<hex>`, `public:<hex>`) are kept as aliases of the versions
   they name.
 
 ## Test vectors
@@ -427,7 +426,7 @@ These were made during implementation and recorded with their reasons in `edge-r
 2. Record-tree entries carry the record's size, so `bytes` can be verified from nodes alone.
 3. Record ids are limited to 1,024 UTF-8 bytes, which bounds node size.
 4. The unsafe-integer rule applies to integer literals in the source text.
-5. File references have one definition (section 4). Format 1 used two.
+5. File references have one definition (section 4). v1 used two.
 6. `LEAF_MAX_ENTRIES` is 8,192 (the plan had 16,384). The chunking rule stays fixed-probability
    rather than size-aware, because size-aware boundaries depend on position and that rules out
    parallel commit units.

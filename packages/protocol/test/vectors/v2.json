@@ -1,8 +1,7 @@
 {
-  "format": 2,
+  "protocolVersion": 2,
   "generatedBy": "packages/protocol/scripts/gen-vectors.ts",
   "constants": {
-    "FORMAT_VERSION": 2,
     "INTERIOR_BOUNDARY_BITS_STEP": 6,
     "INTERIOR_MAX_CHILDREN": 1024,
     "LEAF_BOUNDARY_BITS": 10,
@@ -13,6 +12,7 @@
     "MAX_SAFE_INTEGER_LITERAL": "9007199254740991",
     "MAX_SCHEMA_BYTES": 262144,
     "MAX_TYPE_BYTES": 128,
+    "PROTOCOL_VERSION": 2,
     "VERSION_HASH_PREFIX": "ulv2:"
   },
   "jcs": [

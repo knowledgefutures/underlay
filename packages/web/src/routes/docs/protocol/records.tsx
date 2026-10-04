@@ -34,7 +34,7 @@ const rules: [string, string, string][] = [
 
 export default function ProtocolRecords() {
   return (
-    <DocsLayout title="Records and schemas">
+    <DocsLayout title="Records and schemas" eyebrow="Protocol v2">
       <h2 id="canonical-json">Canonical JSON</h2>
       <p>
         Every hashed JSON document is written as{' '}
@@ -102,8 +102,8 @@ export default function ProtocolRecords() {
           <code>&quot;true&quot;</code> can&rsquo;t publish a type by accident.
         </li>
         <li>
-          <code>&quot;private&quot;: true</code> on a property is refused: format 2 has no
-          field-level privacy. Put private fields in a private type, or push the record as private.
+          <code>&quot;private&quot;: true</code> on a property is refused: v2 has no field-level
+          privacy. Put private fields in a private type, or push the record as private.
         </li>
         <li>
           A schema&rsquo;s canonical form is at most 256 KB, and each <code>pattern</code> at most

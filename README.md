@@ -23,7 +23,7 @@ on Node (SQLite, S3 or the filesystem). It is a pnpm workspace:
 | `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push.                                                                                                                                                  |
 | `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                    |
 
-`docs/protocol-v2.md` is the specification (format 2), with test vectors in
+`docs/protocol-v2.md` is the specification of Underlay protocol v2, with test vectors in
 `packages/protocol/test/vectors/`. `docs/v1-read-api.md` lists the v1 read shapes the API keeps.
 
 ## Development

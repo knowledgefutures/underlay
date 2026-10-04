@@ -8,7 +8,7 @@
  * Results are filtered by the caller's access before anything is returned,
  * counts included (edge-redesign.md, Security notes): a presence counts only if
  * it is in a public collection's public set, or in a collection of the caller's
- * orgs. Format 1 record hashes resolve through legacy_hashes.
+ * orgs. v1 record hashes resolve through legacy_hashes.
  */
 import { and, eq, gte, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'

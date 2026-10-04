@@ -49,7 +49,7 @@ export interface NewVersionRow {
   publicRefsRoot: string | null
   privateRefsRoot: string | null
   changes: { added: number; removed: number; updated: number }
-  /** Migration only: the v1 version's time and format 1 hashes. */
+  /** Migration only: the v1 version's time and hashes. */
   createdAt?: Date
   legacyHash?: string | null
   legacyPublicHash?: string | null

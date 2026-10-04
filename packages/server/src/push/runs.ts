@@ -44,7 +44,7 @@ export interface RunEntry {
   k: string
   /** Record hash (records and manifest runs). */
   h?: string
-  /** Format 1 hash the client used, when it differs (negotiate compatibility). */
+  /** v1 hash the client used, when it differs (negotiate compatibility). */
   lh?: string
   /** Canonical record size in bytes. */
   s?: number

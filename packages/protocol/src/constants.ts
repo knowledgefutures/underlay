@@ -1,19 +1,21 @@
 /**
- * Protocol constants for Underlay format 2.
+ * Protocol constants for Underlay protocol v2.
  *
  * Everything here is protocol: a second implementation must use the same values
  * or it will build different trees, accept different records, and compute
- * different version hashes. None of them may change without a new format
- * number. See docs/protocol-v2.md.
+ * different version hashes. See docs/protocol-v2.md.
  *
- * Status: final. Frozen 2026-10-03 with the values the tree-parameter
+ * Status: stable. Frozen 2026-10-03 with the values the tree-parameter
  * experiments chose (edge-redesign-build.md, "Tree parameter experiments").
  */
 
-/** The `underlay` field of every version root this package writes. */
-export const FORMAT_VERSION = 2
+/**
+ * The protocol version this package writes: the `underlay` field of every
+ * version root. The package's own semver is independent of it.
+ */
+export const PROTOCOL_VERSION = 2
 
-/** Prefix of a format-2 version hash string: `ulv2:<64 hex>`. */
+/** Prefix of a v2 version hash string: `ulv2:<64 hex>`. */
 export const VERSION_HASH_PREFIX = 'ulv2:'
 
 // --- Tree shape -------------------------------------------------------------

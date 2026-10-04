@@ -589,7 +589,7 @@ Records are content-addressed. The hash is the record's identity across the syst
 deduplication, manifest membership, and version integrity. Any client that pushes data must compute
 hashes exactly as the server does, or the push will fail with "Unexpected record hash".
 
-### Algorithm (format 2)
+### Algorithm (protocol v2)
 
 1. Canonicalize `data` with RFC 8785 (JCS): no whitespace, object keys sorted by their UTF-16
    code units, strings and numbers written as JSON.stringify writes them.
@@ -599,8 +599,8 @@ hashes exactly as the server does, or the push will fail with "Unexpected record
 3. Compute SHA-256 over the UTF-8 bytes of that string, as 64 lowercase hex characters.
 
 Do NOT build a sorted object and pass it to JSON.stringify: JavaScript lists integer-like
-keys ("9", "10") first whatever order they were added in, which is format 1's hash, not
-format 2's. The two agree unless some object in `data` has such a key.
+keys ("9", "10") first whatever order they were added in, which is the v1 hash, not
+the v2 one. The two agree unless some object in `data` has such a key.
 
 Every record line is also checked on its source text: duplicate keys, integer literals beyond
 2^53 - 1, lone surrogates, nesting over 64 levels, records over 8 MiB, and ids over 1,024
@@ -703,7 +703,7 @@ Underlay supports privacy at three levels that compose — a reader sees content
 Each version has a public set and a private set. Private content is visible only to members of
 the owning organization.
 
-Format 2 has NO field-level privacy: a schema with "private": true on a property is refused.
+Protocol v2 has NO field-level privacy: a schema with "private": true on a property is refused.
 Put private fields in a private type, or push the whole record as private.
 
 ### Private Types
@@ -753,7 +753,7 @@ Two rules you must design around:
   the public set, and learn only whether a private set exists. Members also get the private set
   object and can check it against the commitment.
 - A record moving between the sets is a record change: a MINOR bump.
-- Older versions converted from format 1 keep their "private:<hex>" and "public:<hex>" hashes as
+- Older versions converted from v1 keep their "private:<hex>" and "public:<hex>" hashes as
   aliases.
 
 ---

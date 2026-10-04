@@ -54,7 +54,7 @@ GET /api/records/:hash/provenance                                 # every versio
 
 export default function ProtocolPushPull() {
   return (
-    <DocsLayout title="Push and pull">
+    <DocsLayout title="Push and pull" eyebrow="Protocol v2">
       <p>
         These are the HTTP exchanges for writing and reading versions on an Underlay server. The{' '}
         <Link to="/docs/api/versions">Versions API</Link> lists every endpoint with its options.
@@ -101,9 +101,9 @@ export default function ProtocolPushPull() {
 
       <h2 id="negotiate-compatibility">Negotiate (compatibility)</h2>
       <p>
-        Format 1 clients push a <strong>snapshot</strong>: the manifest of every record&rsquo;s
-        hash, then the records the server asks for. Format 2 keeps that API, with the same paths and
-        shapes, for existing integrations.
+        v1 clients push a <strong>snapshot</strong>: the manifest of every record&rsquo;s hash, then
+        the records the server asks for. v2 keeps that API, with the same paths and shapes, for
+        existing integrations.
       </p>
       <CodeBlock>{negotiate}</CodeBlock>
       <p>
@@ -125,24 +125,21 @@ export default function ProtocolPushPull() {
         public set only; private types and records are absent from every read.
       </p>
 
-      <h2 id="format-1-hashes">Format 1 hashes</h2>
+      <h2 id="v1-hashes">v1 hashes</h2>
       <p>
-        Format 1 canonicalized by sorting keys into a new object and calling{' '}
-        <code>JSON.stringify</code>, which puts array-index keys (<code>&quot;0&quot;</code>,{' '}
-        <code>&quot;12&quot;</code>) first. The two formats give the same record and schema hashes
-        unless an object at some depth has such a key.
+        v1 canonicalized by sorting keys into a new object and calling <code>JSON.stringify</code>,
+        which puts array-index keys (<code>&quot;0&quot;</code>, <code>&quot;12&quot;</code>) first.
+        The two versions give the same record and schema hashes unless an object at some depth has
+        such a key.
       </p>
       <ul>
+        <li>Servers keep v1 → v2 aliases, and the negotiate API accepts v1 record hashes.</li>
         <li>
-          Servers keep format 1 → format 2 aliases, and the negotiate API accepts format 1 record
-          hashes.
+          v1 version hashes (<code>private:&lt;hex&gt;</code>, <code>public:&lt;hex&gt;</code>)
+          still resolve to the versions they named.
         </li>
         <li>
-          Format 1 version hashes (<code>private:&lt;hex&gt;</code>, <code>public:&lt;hex&gt;</code>
-          ) still resolve to the versions they named.
-        </li>
-        <li>
-          Format 1&rsquo;s field-level privacy is gone: a migrated type with private fields became a
+          v1&rsquo;s field-level privacy is gone: a migrated type with private fields became a
           wholly private type.
         </li>
       </ul>

@@ -7,7 +7,7 @@
  *   commitment = sha256(JCS(private set object))
  *   version hash = "ulv2:" + sha256(JCS(root))
  */
-import { FORMAT_VERSION, VERSION_HASH_PREFIX } from './constants.js'
+import { PROTOCOL_VERSION, VERSION_HASH_PREFIX } from './constants.js'
 import { sha256Hex } from './hash.js'
 import { jcs } from './jcs.js'
 
@@ -31,7 +31,7 @@ export interface PrivateSetObject extends SetObject {
 }
 
 export interface VersionRoot {
-  underlay: typeof FORMAT_VERSION
+  underlay: typeof PROTOCOL_VERSION
   metadata: Record<string, unknown> | null
   public: SetObject
   private: string | null
@@ -49,15 +49,9 @@ export function isEmptySet(s: SetObject): boolean {
 }
 
 /**
- * The protocol version this package writes (FORMAT_VERSION). The package's own
- * semver is independent of it.
- */
-export const PROTOCOL_VERSION = FORMAT_VERSION
-
-/**
  * The protocol versions this package reads, checked against `underlay` in every
- * root it loads. Format 1 hashes are computed for migration, but format 1 never
- * had repositories to read.
+ * root it loads. v1 hashes are computed for migration, but v1 never had
+ * repositories to read.
  */
 export const SUPPORTED_PROTOCOL_VERSIONS: readonly number[] = [2]
 
@@ -94,7 +88,7 @@ export function makeRoot(
   priv: PrivateSetObject | null,
 ): VersionRoot {
   return {
-    underlay: FORMAT_VERSION,
+    underlay: PROTOCOL_VERSION,
     metadata,
     public: pub,
     private: priv && !isEmptySet(priv) ? privateCommitment(priv) : null,

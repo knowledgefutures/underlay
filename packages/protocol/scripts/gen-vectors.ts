@@ -375,7 +375,7 @@ const logEntry = {
 }
 
 const vectors = {
-  format: 2,
+  protocolVersion: 2,
   generatedBy: 'packages/protocol/scripts/gen-vectors.ts',
   constants: await import('../src/constants.js').then((m) => ({ ...m })),
   jcs: jcsCases,
