@@ -134,6 +134,7 @@ export function RecordsView({
       } else if (page <= 4) {
         p = i + 1
       } else if (page >= totalPages - 3) {
+        // Includes a page past the end: the last seven.
         p = totalPages - 6 + i
       } else {
         p = page - 3 + i
@@ -141,6 +142,54 @@ export function RecordsView({
       pageNumbers.push(p)
     }
   }
+
+  const pastEnd = !!currentType && records.length === 0 && totalRecords > 0 && !recordsLoading
+  const pageHref = (p: number) => `${basePath}?type=${currentType}&page=${p}`
+  const step = 'border-rule hover:bg-parchment-dark rounded-control border px-2 py-1'
+  const pager = totalPages > 1 && (
+    <nav className="flex flex-wrap items-center justify-between gap-2 py-3 text-xs">
+      <span className="text-ink-muted">
+        {pastEnd
+          ? `${totalRecords.toLocaleString('en-US')} records`
+          : `Showing ${(offset + 1).toLocaleString('en-US')}–${Math.min(offset + pageSize, totalRecords).toLocaleString('en-US')} of ${totalRecords.toLocaleString('en-US')}`}
+      </span>
+      <div className="flex flex-wrap items-center gap-1">
+        {page > 1 && (
+          <>
+            <TokenLink to={pageHref(1)} className={step}>
+              « First
+            </TokenLink>
+            <TokenLink to={pageHref(Math.min(page - 1, totalPages))} className={step}>
+              ← Prev
+            </TokenLink>
+          </>
+        )}
+        {pageNumbers.map((p) => (
+          <TokenLink
+            key={p}
+            to={pageHref(p)}
+            className={
+              p === page
+                ? 'border-ink bg-ink text-parchment visited:text-parchment rounded-control border px-2 py-1 font-medium'
+                : step
+            }
+          >
+            {p.toLocaleString('en-US')}
+          </TokenLink>
+        ))}
+        {page < totalPages && (
+          <>
+            <TokenLink to={pageHref(page + 1)} className={step}>
+              Next →
+            </TokenLink>
+            <TokenLink to={pageHref(totalPages)} className={step}>
+              Last »
+            </TokenLink>
+          </>
+        )}
+      </div>
+    </nav>
+  )
 
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-[180px_1fr]">
@@ -315,45 +364,18 @@ export function RecordsView({
               </table>
             </div>
 
-            {totalPages > 1 && (
-              <nav className="flex items-center justify-between py-3 text-xs">
-                <span className="text-ink-muted">
-                  Showing {offset + 1}–{Math.min(offset + pageSize, totalRecords)} of{' '}
-                  {totalRecords.toLocaleString('en-US')}
-                </span>
-                <div className="flex items-center gap-1">
-                  {page > 1 && (
-                    <TokenLink
-                      to={`${basePath}?type=${currentType}&page=${page - 1}`}
-                      className="border-rule hover:bg-parchment-dark rounded-control border px-2 py-1"
-                    >
-                      ← Prev
-                    </TokenLink>
-                  )}
-                  {pageNumbers.map((p) => (
-                    <TokenLink
-                      key={p}
-                      to={`${basePath}?type=${currentType}&page=${p}`}
-                      className={
-                        p === page
-                          ? 'border-ink bg-ink text-parchment visited:text-parchment rounded-control border px-2 py-1 font-medium'
-                          : 'border-rule hover:bg-parchment-dark rounded-control border px-2 py-1'
-                      }
-                    >
-                      {p}
-                    </TokenLink>
-                  ))}
-                  {page < totalPages && (
-                    <TokenLink
-                      to={`${basePath}?type=${currentType}&page=${page + 1}`}
-                      className="border-rule hover:bg-parchment-dark rounded-control border px-2 py-1"
-                    >
-                      Next →
-                    </TokenLink>
-                  )}
-                </div>
-              </nav>
-            )}
+            {pager}
+          </div>
+        ) : pastEnd ? (
+          <div>
+            <p className="text-ink-muted py-8 text-center text-sm">
+              Page {page.toLocaleString('en-US')} is past the end (
+              {totalPages.toLocaleString('en-US')} page{totalPages === 1 ? '' : 's'}).{' '}
+              <TokenLink to={pageHref(totalPages)} className="text-link hover:underline">
+                Go to the last page
+              </TokenLink>
+            </p>
+            {pager}
           </div>
         ) : (
           <p className="text-ink-muted py-8 text-center text-sm">
