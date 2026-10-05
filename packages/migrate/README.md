@@ -7,16 +7,18 @@ v2 deployment. Background, decisions and run history: the meta repo's
 
 ## Tools
 
-|                             |                                                                                                                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/main.ts`               | The converter: v1 database → a v2 SQLite file plus repository objects in the target bucket, then (with `V1_S3_*`) copies file bytes to their v2 keys. Its header lists the environment. |
-| `src/convert.ts`            | The conversion itself: accounts, then each collection's versions replayed oldest first through `commitVersion`, then collection settings.                                               |
-| `src/ssh-psql.ts`           | Reads a v1 database with no reachable port through `ssh … docker exec … psql` (read-only, cursors for ordered reads).                                                                   |
-| `src/files.ts`              | Copies v1 file objects to `<repo>/files/<hash>`, hash-checked, re-runnable.                                                                                                             |
-| `src/d1-data.ts`            | Writes a SQLite file's rows (or named tables) as SQL for `wrangler d1 execute --file`, parents before children.                                                                         |
-| `src/repair.ts`             | Brings an already-loaded deployment up to the current format without converting again: rewrites version logs, records file possession, rebuilds head count trees (`STEPS`).             |
-| `scripts/staging-env.sh`    | Environment for dev → staging (decrypts secrets into the shell only).                                                                                                                   |
-| `scripts/dev-to-staging.sh` | Runs the converter for dev → staging.                                                                                                                                                   |
+|                              |                                                                                                                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.ts`                | The converter: v1 database → a v2 SQLite file plus repository objects in the target bucket, then (with `V1_S3_*`) copies file bytes to their v2 keys. Its header lists the environment. |
+| `src/convert.ts`             | The conversion itself: accounts, then each collection's versions replayed oldest first through `commitVersion`, then collection settings.                                               |
+| `src/ssh-psql.ts`            | Reads a v1 database with no reachable port through `ssh … docker exec … psql` (read-only, cursors for ordered reads).                                                                   |
+| `src/files.ts`               | Copies v1 file objects to `<repo>/files/<hash>`, hash-checked, re-runnable.                                                                                                             |
+| `src/d1-data.ts`             | Writes a SQLite file's rows (or named tables) as SQL for `wrangler d1 execute --file`, parents before children.                                                                         |
+| `src/repair.ts`              | Brings an already-loaded deployment up to the current format without converting again: rewrites version logs, records file possession, rebuilds head count trees (`STEPS`).             |
+| `scripts/staging-env.sh`     | Environment for dev → staging (decrypts secrets into the shell only).                                                                                                                   |
+| `scripts/dev-to-staging.sh`  | Runs the converter for dev → staging.                                                                                                                                                   |
+| `scripts/prod-env.sh`        | Environment for v1 production → prod (next.underlay.org).                                                                                                                               |
+| `scripts/v1-prod-to-prod.sh` | Runs the converter for v1 production → prod.                                                                                                                                            |
 
 ## dev → staging
 
@@ -54,6 +56,15 @@ rows land in D1 later, outside the write fence, so a sweep in between would dele
 they wrote. On a deployment that has storage cleanup (migration 0015), switch on "Pause
 marks and sweeps" at `/admin/cleanup` (or set `cleanup_paused` in `instance_settings`)
 before converting or repairing, and switch it off once every row is loaded.
+
+## v1 production → prod
+
+The same steps with `scripts/v1-prod-to-prod.sh`, `prod-env.sh`, database `underlay-prod`
+and `--env prod`. It reads production's Postgres (`underlay-prod_postgres`) for the whole
+run. Before the first load, check production for duplicate ids (the report lists the ones
+dropped) and for org slugs now reserved (`RESERVED_ORG_SLUGS` in
+`packages/server/src/lib/slug.ts`). A practice load can be replaced: empty D1, delete
+`repo/collections/` from `underlay-prod`, and load again at the DNS switch.
 
 ## Tests
 
