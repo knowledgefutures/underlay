@@ -30,7 +30,7 @@ import { and, asc, eq, gt, gte, inArray, or } from 'drizzle-orm'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { cleanupConfig, cleanupPaused, count, emptyStats } from './config.js'
+import { cleanupConfig, cleanupPaused, count, emptyStats, sample } from './config.js'
 import { closeWindow, openWindow, type Window, windowStillOpen } from './fence.js'
 import { graceCutoff, markRepo, possessionHeld } from './mark.js'
 import { Marker, type MarkKind, type MarkSet } from './marks.js'
@@ -283,6 +283,12 @@ async function remark(
   }
 }
 
+/** Count a candidate as deleted, and keep its key (a collection's prefix) as a sample. */
+function counted(stats: schema.CleanupStats, c: Candidate) {
+  count(stats, c.kind, c.size)
+  sample(stats, c.kind, c.kind === 'collections' ? `collections/${c.owner}/` : c.key)
+}
+
 /** Pushes committing now (recently started), which a deletion window would fail. */
 async function committing(ports: Ports): Promise<boolean> {
   const [row] = await ports.db
@@ -320,7 +326,7 @@ async function deleteCandidates(
   await remark(ports, marks, markStartedAt, candidates)
   const live = (c: Candidate) => !!c.token && marks.has(c.mark!, c.token)
   if (dryRun) {
-    for (const c of candidates) if (!live(c)) count(stats, c.kind, c.size)
+    for (const c of candidates) if (!live(c)) counted(stats, c)
     return 'ok'
   }
   const { db } = ports
@@ -360,7 +366,7 @@ async function deleteCandidates(
         if (!(open = await windowStillOpen(db, w))) break
         const part = doomed.slice(j, j + cleanupConfig.deleteConcurrency)
         await Promise.all(part.map((c) => c.store.delete(c.key)))
-        for (const c of part) count(stats, c.kind, c.size)
+        for (const c of part) counted(stats, c)
       }
     } finally {
       await closeWindow(db, w)

@@ -28,10 +28,15 @@ export const cleanupConfig = {
   /** Objects one batch of step 1 deletes, at most. */
   internalObjects: 2_000,
   /**
-   * Tree nodes one mark job reads before it saves and hands over. Checked between
-   * collections, so one collection's walk (about a node per 1,000 records) adds to it.
+   * Tree nodes one mark job reads before it saves and hands over (about a node per
+   * 1,000 records). Checked before every read, so a job stops inside a collection,
+   * or inside one version's tree.
    */
-  markNodeBudget: 3_000,
+  markNodeBudget: 5_000,
+  /** Nodes a mark reads at once. */
+  markConcurrency: 16,
+  /** Reads between a mark job's checkpoints (a shard, its place and its counts). */
+  markCheckpoint: 500,
   /** Collections one mark job takes (two queries each, against D1's 1,000). */
   markCollections: 300,
   /** Hashes a mark may hold in memory; past it the run fails rather than run out (shard by prefix then). */
@@ -90,6 +95,15 @@ export function count(stats: schema.CleanupStats, kind: string, bytes: number, o
   c.bytes += bytes
 }
 
+/** Keys a sweep keeps as samples, per kind. */
+export const SAMPLES_PER_KIND = 25
+
+/** Keep `key` as a sample of what a sweep deletes, unless the kind has enough. */
+export function sample(stats: schema.CleanupStats, kind: string, key: string) {
+  const list = ((stats.samples ??= {})[kind] ??= [])
+  if (list.length < SAMPLES_PER_KIND && !list.includes(key)) list.push(key)
+}
+
 export function problem(stats: schema.CleanupStats, msg: string) {
   if (stats.problems.length < 20) stats.problems.push(msg.slice(0, 300))
 }
@@ -105,6 +119,7 @@ export function addStats(a: schema.CleanupStats, b: schema.CleanupStats): schema
   a.rows += b.rows
   a.windows += b.windows
   for (const p of b.problems) problem(a, p)
+  for (const [k, list] of Object.entries(b.samples ?? {})) for (const key of list) sample(a, k, key)
   return a
 }
 

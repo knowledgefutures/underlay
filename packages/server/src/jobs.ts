@@ -42,6 +42,10 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   // Hashes a whole file: four at once could blow an interactive batch's CPU.
   'files.verify',
   'maintenance.sweep',
+  // Storage cleanup: a mark walks every tree on the platform, a sweep lists the bucket.
+  'cleanup.internal',
+  'cleanup.mark',
+  'cleanup.sweep',
 ])
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)

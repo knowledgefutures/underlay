@@ -8,7 +8,9 @@
  *
  * Each job claims the run with a lease and runs only if it carries the run's
  * current `seq`, so a duplicate or late delivery never forks a run in two. A
- * job that dies leaves the lease to expire, and the cron requeues the run.
+ * job that dies leaves the lease to expire, and the cron requeues the run. A
+ * long job (a mark) writes checkpoints as it goes: its place, its counts so far
+ * and a fresh lease, so the page shows progress and a requeued job resumes there.
  */
 import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 
@@ -138,11 +140,21 @@ async function claim(ports: Ports, runId: string, seq: number): Promise<RunRow |
   return current?.seq === seq && ACTIVE.includes(current.status) ? 'held' : null
 }
 
+/** Save a job's place and its counts so far (added to the run's), and renew its lease. */
+type Checkpoint = (
+  state: Record<string, unknown>,
+  stats: schema.CleanupStats,
+  marked?: number,
+) => Promise<void>
+
 /** Run one job of a run, then hand over to the next (or finish). */
 async function runJob(
   ports: Ports,
   job: { runId: string; seq: number; type: string },
-  work: (run: RunRow) => Promise<{
+  work: (
+    run: RunRow,
+    checkpoint: Checkpoint,
+  ) => Promise<{
     state: Record<string, unknown>
     stats: schema.CleanupStats
     outcome: 'more' | 'done' | 'wait'
@@ -162,8 +174,17 @@ async function runJob(
     if (run.status === 'queued')
       await updateRun(db, run.id, { status: 'running', startedAt: new Date() })
     const started = run.startedAt ?? new Date()
-    const r = await work({ ...run, startedAt: started })
-    const stats = addStats(run.stats ?? emptyStats(), r.stats)
+    const base = run.stats ?? emptyStats()
+    const checkpoint: Checkpoint = async (state, stats, marked) => {
+      const sum = addStats(structuredClone(base), stats)
+      if (marked !== undefined) sum.marked = marked
+      await db
+        .update(schema.cleanupRuns)
+        .set({ state, stats: sum, lease: new Date(), updatedAt: new Date() })
+        .where(and(eq(schema.cleanupRuns.id, run.id), eq(schema.cleanupRuns.seq, run.seq)))
+    }
+    const r = await work({ ...run, startedAt: started }, checkpoint)
+    const stats = addStats(base, r.stats)
     if (r.marked !== undefined) stats.marked = r.marked
     const waits = r.outcome === 'wait' ? Number(run.state?.waits ?? 0) + 1 : 0
     if (waits > MAX_WAITS) {
@@ -223,19 +244,29 @@ registerJob('cleanup.internal', async (job, ports) =>
 )
 
 registerJob('cleanup.mark', async (job, ports) =>
-  runJob(ports, { type: job.type, runId: String(job.runId), seq: Number(job.seq) }, async (run) => {
-    const internal = ports.stores.internal
-    const marks = new MarkSet()
-    await marks.load(internal, run.id, 'mark')
-    const r = await markStep(ports, marks, (run.state ?? firstMarkState()) as unknown as MarkState)
-    await marks.save(internal, run.id, 'mark')
-    return {
-      state: { ...r.state, thenSweep: run.state?.thenSweep ?? false },
-      stats: r.stats,
-      outcome: r.state.phase === 'done' ? 'done' : 'more',
-      marked: marks.size,
-    }
-  }),
+  runJob(
+    ports,
+    { type: job.type, runId: String(job.runId), seq: Number(job.seq) },
+    async (run, checkpoint) => {
+      const internal = ports.stores.internal
+      const thenSweep = run.state?.thenSweep ?? false
+      const marks = new MarkSet()
+      await marks.load(internal, run.id, 'mark')
+      const state = (run.state ?? firstMarkState()) as unknown as MarkState
+      const r = await markStep(ports, marks, state, async (place, stats) => {
+        // Shard first: a place never runs ahead of the marks saved for it.
+        await marks.save(internal, run.id, 'mark')
+        await checkpoint({ ...place, thenSweep }, stats, marks.size)
+      })
+      await marks.save(internal, run.id, 'mark')
+      return {
+        state: { ...r.state, thenSweep },
+        stats: r.stats,
+        outcome: r.state.phase === 'done' ? 'done' : 'more',
+        marked: marks.size,
+      }
+    },
+  ),
 )
 
 registerJob('cleanup.sweep', async (job, ports) =>

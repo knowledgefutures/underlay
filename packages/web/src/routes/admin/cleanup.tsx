@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLoaderData, useRevalidator } from 'react-router'
 
 import { compact, StatGrid, StatTile } from '~/components/admin-stats'
@@ -30,6 +30,7 @@ interface Run {
     rows: number
     windows: number
     problems: string[]
+    samples?: Record<string, string[]>
   } | null
   createdAt: number
   startedAt: number | null
@@ -103,57 +104,75 @@ export default function AdminCleanup() {
   }
   const { waiting, deletedCollections: dc } = data
   return (
-    <AdminLayout
-      title="Cleanup"
-      description="Deletes what the platform bucket no longer needs: finished push sessions, abandoned uploads, and the objects of deleted collections."
-    >
-      {data.paused && (
-        <Alert variant="info" className="mb-6">
-          Marks and sweeps are paused: none starts, and a sweep in progress deletes nothing until
-          this is switched off. Sessions and uploads are still cleaned.
-        </Alert>
-      )}
-      {data.fence.windowOpen && (
-        <Alert variant="info" className="mb-6">
-          A sweep has a deletion window open: pushes and uploads wait a few seconds for it.
-        </Alert>
-      )}
+    <>
+      <Follow active={data.runs.some((r) => ACTIVE.includes(r.status))} />
+      <AdminLayout
+        title="Cleanup"
+        description="Deletes what the platform bucket no longer needs: finished push sessions, abandoned uploads, and the objects of deleted collections."
+      >
+        {data.paused && (
+          <Alert variant="info" className="mb-6">
+            Marks and sweeps are paused: none starts, and a sweep in progress deletes nothing until
+            this is switched off. Sessions and uploads are still cleaned.
+          </Alert>
+        )}
+        {data.fence.windowOpen && (
+          <Alert variant="info" className="mb-6">
+            A sweep has a deletion window open: pushes and uploads wait a few seconds for it.
+          </Alert>
+        )}
 
-      <SectionHeading>Waiting to be cleaned</SectionHeading>
-      <StatGrid>
-        <StatTile
-          label="Finished push sessions"
-          value={compact(waiting.sessions)}
-          detail={`ready; ${compact(waiting.sessionsInGrace)} more within ${data.config.sessionGraceHours}h`}
-        />
-        <StatTile
-          label="Abandoned uploads"
-          value={compact(waiting.uploads)}
-          detail={`pending over ${data.config.uploadGraceHours}h`}
-        />
-        <StatTile
-          label="Deleted collections, ready"
-          value={`up to ${formatBytes(dc.ready.bytes)}`}
-          detail={`${compact(dc.ready.collections)} past their ${data.config.tombstoneGraceDays}-day grace, not yet swept`}
-        />
-        <StatTile
-          label="Deleted collections, in grace"
-          value={`up to ${formatBytes(dc.inGrace.bytes)}`}
-          detail={`${compact(dc.inGrace.collections)} kept for now, so a mistaken delete can be recovered`}
-        />
-      </StatGrid>
-      <p className="text-ink-muted mb-8 text-xs">
-        Deleted collections&rsquo; sizes are upper bounds: some of their objects may be shared with
-        collections that remain, and those stay.
-      </p>
+        <SectionHeading>Waiting to be cleaned</SectionHeading>
+        <StatGrid>
+          <StatTile
+            label="Finished push sessions"
+            value={compact(waiting.sessions)}
+            detail={`ready; ${compact(waiting.sessionsInGrace)} more within ${data.config.sessionGraceHours}h`}
+          />
+          <StatTile
+            label="Abandoned uploads"
+            value={compact(waiting.uploads)}
+            detail={`pending over ${data.config.uploadGraceHours}h`}
+          />
+          <StatTile
+            label="Deleted collections, ready"
+            value={`up to ${formatBytes(dc.ready.bytes)}`}
+            detail={`${compact(dc.ready.collections)} past their ${data.config.tombstoneGraceDays}-day grace, not yet swept`}
+          />
+          <StatTile
+            label="Deleted collections, in grace"
+            value={`up to ${formatBytes(dc.inGrace.bytes)}`}
+            detail={`${compact(dc.inGrace.collections)} kept for now, so a mistaken delete can be recovered`}
+          />
+        </StatGrid>
+        <p className="text-ink-muted mb-8 text-xs">
+          Deleted collections&rsquo; sizes are upper bounds: some of their objects may be shared
+          with collections that remain, and those stay.
+        </p>
 
-      <SectionHeading>Run</SectionHeading>
-      <Controls data={data} />
+        <SectionHeading>Run</SectionHeading>
+        <Controls data={data} />
 
-      <SectionHeading>Runs</SectionHeading>
-      <Runs runs={data.runs} />
-    </AdminLayout>
+        <SectionHeading>Runs</SectionHeading>
+        <Runs runs={data.runs} />
+      </AdminLayout>
+    </>
   )
+}
+
+const ACTIVE: Run['status'][] = ['queued', 'running', 'waiting']
+
+/** While a run is in progress, reload the page's data every few seconds. */
+function Follow({ active }: { active: boolean }) {
+  const revalidator = useRevalidator()
+  useEffect(() => {
+    if (!active) return
+    const t = setInterval(() => {
+      if (revalidator.state === 'idle') revalidator.revalidate()
+    }, 5000)
+    return () => clearInterval(t)
+  }, [active, revalidator])
+  return null
 }
 
 function Controls({ data }: { data: Cleanup }) {
@@ -371,6 +390,23 @@ function Details({ run }: { run: Run }) {
             <li key={p}>{p}</li>
           ))}
         </ul>
+      )}
+      {s.samples && Object.keys(s.samples).length > 0 && (
+        <details className="mt-1">
+          <summary className="cursor-pointer">
+            {run.dryRun ? 'Keys it would delete' : 'Keys it deleted'} (first of each kind)
+          </summary>
+          {Object.entries(s.samples).map(([kind, list]) => (
+            <div key={kind} className="mt-1">
+              <span className="text-ink font-medium">{kind}</span>
+              <ul className="font-mono text-[11px] break-all">
+                {list.map((k) => (
+                  <li key={k}>{k}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </details>
       )}
     </div>
   )

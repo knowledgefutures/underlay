@@ -940,6 +940,12 @@ export interface CleanupStats {
   windows: number
   /** Problems that didn't stop the run, first few. */
   problems: string[]
+  /**
+   * By kind, the first keys a sweep deleted (or, dry, would delete): a dry run
+   * can be checked before a real one. `collections/` lists each collection's
+   * prefix once.
+   */
+  samples?: Record<string, string[]>
 }
 
 /** One run of a cleanup step: what the admin Cleanup page lists. */

@@ -4,7 +4,7 @@ import { fsck, newSalt } from '@underlay/protocol'
 import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { cleanupConfig, getRun } from '../src/cleanup/config.js'
+import { cleanupConfig, emptyStats, getRun } from '../src/cleanup/config.js'
 import {
   closeWindow,
   FenceError,
@@ -13,9 +13,12 @@ import {
   writeFence,
 } from '../src/cleanup/fence.js'
 import { cleanInternal } from '../src/cleanup/internal.js'
+import { firstMarkState, markRepo, markStep, type MarkState } from '../src/cleanup/mark.js'
+import { Marker, MarkSet } from '../src/cleanup/marks.js'
 import { startRun } from '../src/cleanup/runs.js'
 import * as schema from '../src/db/schema.js'
 import { startUpload } from '../src/files/files.js'
+import { isBulk } from '../src/jobs.js'
 import { commitVersion } from '../src/versions/commit.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
@@ -222,6 +225,12 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     expect(dry.stats!.deleted.collections!.objects).toBeGreaterThan(0)
     expect(dry.stats!.windows).toBe(0)
     expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
+    // It keeps samples of what it would delete, a collection's prefix once.
+    expect(dry.stats!.samples!.files).toEqual([`files/${sha('only c')}`])
+    expect(dry.stats!.samples!.collections!.sort()).toEqual(
+      [`collections/${a.id}/`, `collections/${cRow!.id}/`].sort(),
+    )
+    expect(dry.stats!.samples!.nodes!.length).toBeGreaterThan(0)
 
     // The real sweep: c's own objects and file go; what b reaches stays.
     const sweep = await run(h, 'sweep')
@@ -418,6 +427,140 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     const done = (await getRun(h.ports.db, waiting.id))!
     expect(done.status).toBe('done')
     expect(keys(h, 'repo/nodes/').length).toBeLessThan(nodes)
+  })
+})
+
+describe('the mark’s budget', () => {
+  /** Every token a full, unbudgeted mark of these versions holds. */
+  async function fullMark(h: Harness, hashes: string[]) {
+    const marks = new MarkSet()
+    const marker = new Marker(await markRepo(h.ports), marks)
+    for (const v of hashes) expect(await marker.version(v)).toBe(true)
+    return marks
+  }
+
+  async function versionHashes(h: Harness, collectionId: string) {
+    const rows = await h.ports.db
+      .select({ hash: schema.versions.hash })
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, collectionId))
+    return rows.map((r) => r.hash)
+  }
+
+  it('stops inside one version’s tree and resumes there, marking only what is complete', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const c = await h.collection('big')
+    await push(h, user, 'big', docs('b', 4000, 'big file'), 'big file')
+    const [hash] = await versionHashes(h, c.id)
+    const full = await fullMark(h, [hash!])
+
+    const marks = new MarkSet()
+    const repo = await markRepo(h.ports)
+    let passes = 0
+    for (;;) {
+      passes++
+      const marker = new Marker(repo, marks, { budget: marks.reads + 1, concurrency: 1 })
+      const size = marks.size
+      const done = await marker.version(hash!)
+      if (done) break
+      // Each pass gets further, however small its budget.
+      expect(marks.size).toBeGreaterThan(size)
+      // Stopped part way: the version isn't marked yet, nor is anything incomplete.
+      expect([...marks.hashes].some((t) => t.startsWith('v:'))).toBe(false)
+      expect(passes).toBeLessThan(500)
+    }
+    expect(passes).toBeGreaterThan(2)
+    expect([...marks.hashes].sort()).toEqual([...full.hashes].sort())
+  })
+
+  it('carries a collection over many jobs and counts it once', async () => {
+    const saved = { ...cleanupConfig }
+    Object.assign(cleanupConfig, { markNodeBudget: 3, markConcurrency: 2 })
+    try {
+      const h = await harness()
+      const user = await h.member()
+      const c = await h.collection('big')
+      await push(h, user, 'big', docs('b', 3000))
+      await push(h, user, 'big', docs('n', 1500))
+      const mark = await run(h, 'mark')
+      expect(mark.status).toBe('done')
+      expect(mark.seq).toBeGreaterThan(5)
+      expect(mark.stats).toMatchObject({ collections: 1, versions: 2 })
+      const full = await fullMark(h, await versionHashes(h, c.id))
+      expect(mark.stats!.marked).toBeGreaterThanOrEqual(full.size)
+    } finally {
+      Object.assign(cleanupConfig, saved)
+    }
+  })
+
+  it('saves checkpoints a killed job resumes from', async () => {
+    const saved = { ...cleanupConfig }
+    Object.assign(cleanupConfig, { markCheckpoint: 1, markConcurrency: 1 })
+    try {
+      const h = await harness()
+      const user = await h.member()
+      const c = await h.collection('big')
+      await push(h, user, 'big', docs('b', 3000))
+      await push(h, user, 'big', docs('n', 1500))
+      const store = h.ports.stores.internal
+      const full = await fullMark(h, await versionHashes(h, c.id))
+
+      // The first job saves a few checkpoints, then dies.
+      const marks = new MarkSet()
+      let place: { state: MarkState; stats: ReturnType<typeof emptyStats> } | null = null
+      let checkpoints = 0
+      await expect(
+        markStep(h.ports, marks, firstMarkState(), async (state, stats) => {
+          await marks.save(store, 'run', 'mark')
+          place = { state, stats }
+          if (++checkpoints === 5) throw new Error('killed')
+        }),
+      ).rejects.toThrow('killed')
+      expect(place!.state.phase).toBe('collections')
+
+      // The next resumes from the last checkpoint with the shards saved so far.
+      const again = new MarkSet()
+      await again.load(store, 'run', 'mark')
+      expect(again.size).toBeGreaterThan(0)
+      const r = await markStep(h.ports, again, place!.state)
+      expect(r.state.phase).toBe('done')
+      expect(place!.stats.versions + r.stats.versions).toBe(2)
+      expect(place!.stats.collections + r.stats.collections).toBe(1)
+      for (const t of full.hashes) expect(again.hashes.has(t)).toBe(true)
+    } finally {
+      Object.assign(cleanupConfig, saved)
+    }
+  })
+
+  it('runs on the bulk queue', () => {
+    for (const step of ['internal', 'mark', 'sweep']) expect(isBulk(`cleanup.${step}`)).toBe(true)
+  })
+
+  it('shows progress on the run while a job works', async () => {
+    const saved = { ...cleanupConfig }
+    Object.assign(cleanupConfig, { markCheckpoint: 2, markConcurrency: 1 })
+    try {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('big')
+      await push(h, user, 'big', docs('b', 3000))
+      const r = await startRun(h.ports, 'mark', { trigger: 'manual' })
+      // Watch the row while the job runs.
+      const seen: number[] = []
+      const get = h.bucket.get.bind(h.bucket)
+      h.bucket.get = async (key: string) => {
+        const row = await getRun(h.ports.db, r.id)
+        if (row?.stats) seen.push(row.stats.marked)
+        return get(key)
+      }
+      await h.drain()
+      h.bucket.get = get
+      expect(Math.max(...seen)).toBeGreaterThan(0)
+      expect((await getRun(h.ports.db, r.id))!.status).toBe('done')
+    } finally {
+      Object.assign(cleanupConfig, saved)
+    }
   })
 })
 
