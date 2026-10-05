@@ -6,6 +6,11 @@
  *
  * Every call fails soft: KF Auth being down costs a role or an org list, never
  * a page.
+ *
+ * Refreshes are single-flight per user in an isolate: KF Auth rotates refresh
+ * tokens, so of two refreshes with the same token the second fails. One in
+ * another isolate can still lose that race, so a failed refresh reads the
+ * account row again for the token the winner stored.
  */
 import { and, eq } from 'drizzle-orm'
 
@@ -39,7 +44,10 @@ export interface KfOrg {
 export interface Kf {
   /** Profile for the app shell; cached for 30 s per isolate. */
   profile(userId: string): Promise<KfProfile | null>
-  /** The user's KF role, read fresh: for authorization. */
+  /**
+   * The user's KF role, read fresh: for authorization. When KF Auth can't be
+   * read, the role read in the last 30 s.
+   */
   role(userId: string): Promise<string | null>
   /** KF orgs the user belongs to; [] without the internal API. */
   orgs(userId: string): Promise<KfOrg[]>
@@ -54,33 +62,89 @@ export interface Kf {
 const PROFILE_TTL_MS = 30_000
 const TIMEOUT_MS = 5_000
 
-export function createKf(db: Db, cfg: KfConfig, fetcher: typeof fetch = fetch): Kf {
+export interface KfOptions {
+  /** How long a failed refresh waits before it reads the account row again. */
+  rereadDelayMs?: number
+}
+
+type AccountRow = typeof schema.account.$inferSelect
+
+/** A stored access token good for at least 30 s more. */
+const usable = (acct: AccountRow) =>
+  acct.accessToken && (acct.accessTokenExpiresAt?.getTime() ?? 0) > Date.now() + 30_000
+    ? acct.accessToken
+    : null
+
+export function createKf(
+  db: Db,
+  cfg: KfConfig,
+  fetcher: typeof fetch = fetch,
+  opts: KfOptions = {},
+): Kf {
+  const rereadDelayMs = opts.rereadDelayMs ?? 500
   const profiles = new Map<string, { profile: KfProfile; at: number }>()
+  /** Refreshes in flight, by user. */
+  const refreshing = new Map<string, Promise<string | null>>()
   const call = (url: string, init: RequestInit = {}) =>
     fetcher(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) })
 
-  async function accessToken(userId: string): Promise<string | null> {
+  const account = async (userId: string): Promise<AccountRow | null> => {
     const [acct] = await db
       .select()
       .from(schema.account)
       .where(and(eq(schema.account.userId, userId), eq(schema.account.providerId, 'kf-auth')))
       .limit(1)
+    return acct ?? null
+  }
+
+  async function accessToken(userId: string): Promise<string | null> {
+    const acct = await account(userId)
     if (!acct) return null
-    if (acct.accessToken && (acct.accessTokenExpiresAt?.getTime() ?? 0) > Date.now() + 30_000) {
-      return acct.accessToken
-    }
+    const token = usable(acct)
+    if (token) return token
     if (!acct.refreshToken) return null
+    let flight = refreshing.get(userId)
+    if (!flight) {
+      flight = refresh(userId, acct).finally(() => refreshing.delete(userId))
+      refreshing.set(userId, flight)
+    }
+    return flight
+  }
+
+  /** Refresh the token; when that fails, the token another refresh stored meanwhile. */
+  async function refresh(userId: string, acct: AccountRow): Promise<string | null> {
+    const token = await refreshWith(acct)
+    if (token) return token
+    await new Promise((r) => setTimeout(r, rereadDelayMs))
+    const again = await account(userId)
+    const stored = again && usable(again)
+    if (stored) return stored
+    console.warn(`[kf] no usable token for user ${userId} after a failed refresh`)
+    return null
+  }
+
+  async function refreshWith(acct: AccountRow): Promise<string | null> {
     const res = await call(`${cfg.internalUrl}/api/auth/oauth2/token`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
-        refresh_token: acct.refreshToken,
+        refresh_token: acct.refreshToken ?? '',
         client_id: cfg.clientId,
         client_secret: cfg.clientSecret,
       }),
+    }).catch((err: unknown) => {
+      console.warn(`[kf] token refresh for user ${acct.userId} failed:`, String(err))
+      return null
     })
-    if (!res.ok) return null
+    if (!res) return null
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.warn(
+        `[kf] token refresh for user ${acct.userId} failed: ${res.status} ${body.slice(0, 200)}`,
+      )
+      return null
+    }
     const tokens = (await res.json()) as {
       access_token?: string
       refresh_token?: string
@@ -108,7 +172,10 @@ export function createKf(db: Db, cfg: KfConfig, fetcher: typeof fetch = fetch): 
       const res = await call(`${cfg.internalUrl}/api/auth/oauth2/userinfo`, {
         headers: { authorization: `Bearer ${token}` },
       })
-      if (!res.ok) return null
+      if (!res.ok) {
+        console.warn(`[kf] userinfo for user ${userId} failed: ${res.status}`)
+        return null
+      }
       const p = (await res.json()) as Record<string, unknown>
       const str = (v: unknown) => (typeof v === 'string' ? v : null)
       return {
@@ -116,7 +183,8 @@ export function createKf(db: Db, cfg: KfConfig, fetcher: typeof fetch = fetch): 
         image: str(p.picture),
         role: str(p['https://knowledgefutures.org/role']) ?? str(p.role),
       }
-    } catch {
+    } catch (err) {
+      console.warn(`[kf] profile for user ${userId} failed:`, String(err))
       return null
     }
   }
@@ -160,7 +228,14 @@ export function createKf(db: Db, cfg: KfConfig, fetcher: typeof fetch = fetch): 
       return profile
     },
     async role(userId) {
-      return (await fetchProfile(userId))?.role ?? null
+      const profile = await fetchProfile(userId)
+      if (profile) {
+        profiles.set(userId, { profile, at: Date.now() })
+        return profile.role
+      }
+      // KF Auth couldn't say: the role read in the last 30 s, if any.
+      const hit = profiles.get(userId)
+      return hit && Date.now() - hit.at < PROFILE_TTL_MS ? hit.profile.role : null
     },
     async orgs(userId) {
       if (!cfg.internalApiKey) return []

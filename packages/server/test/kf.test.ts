@@ -95,4 +95,115 @@ describe('KF Auth client', () => {
     expect(await kf.profile('u1')).toBeNull()
     expect(kf.isInternalCall('Bearer ')).toBe(false)
   })
+
+  describe('refreshing an expired token', () => {
+    async function setup() {
+      const h = await harness()
+      const { db } = h.ports
+      await db.insert(schema.user).values({ id: 'u1', name: 'Ada', email: 'ada@example.org' })
+      await db.insert(schema.account).values({
+        id: 'a1',
+        accountId: 'kf-u1',
+        providerId: 'kf-auth',
+        userId: 'u1',
+        accessToken: 'stale',
+        refreshToken: 'r1',
+        accessTokenExpiresAt: new Date(Date.now() - 1000),
+      })
+      return db
+    }
+    const userinfo = (init?: RequestInit, valid = ['fresh', 'other']) =>
+      valid.some((t) => new Headers(init?.headers).get('authorization') === `Bearer ${t}`)
+        ? json({ 'https://knowledgefutures.org/role': 'admin' })
+        : json({}, 401)
+
+    it('refreshes once for concurrent requests, though KF Auth rotates refresh tokens', async () => {
+      const db = await setup()
+      const used = new Set<string>()
+      let refreshes = 0
+      const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/oauth2/token')) {
+          refreshes++
+          const token = new URLSearchParams(String(init?.body)).get('refresh_token')!
+          await new Promise((r) => setTimeout(r, 20))
+          // A refresh token works once.
+          if (used.has(token)) return json({ error: 'invalid_grant' }, 400)
+          used.add(token)
+          return json({ access_token: 'fresh', refresh_token: 'r2', expires_in: 3600 })
+        }
+        if (url.endsWith('/oauth2/userinfo')) return userinfo(init)
+        return json({}, 404)
+      }) as typeof fetch
+      const kf = createKf(
+        db,
+        { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+        fetcher,
+      )
+      const roles = await Promise.all(Array.from({ length: 8 }, () => kf.role('u1')))
+      expect(roles).toEqual(Array(8).fill('admin'))
+      expect(refreshes).toBe(1)
+    })
+
+    it('after losing the refresh to another isolate, uses the token it stored', async () => {
+      const db = await setup()
+      const warn = console.warn
+      const warnings: string[] = []
+      console.warn = (...a: unknown[]) => void warnings.push(a.map(String).join(' '))
+      try {
+        const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input)
+          if (url.endsWith('/oauth2/token')) {
+            // The other isolate's refresh won and stored its token.
+            await db
+              .update(schema.account)
+              .set({ accessToken: 'other', accessTokenExpiresAt: new Date(Date.now() + 3600_000) })
+              .where(eq(schema.account.id, 'a1'))
+            return json({ error: 'invalid_grant' }, 400)
+          }
+          if (url.endsWith('/oauth2/userinfo')) return userinfo(init)
+          return json({}, 404)
+        }) as typeof fetch
+        const kf = createKf(
+          db,
+          { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+          fetcher,
+          { rereadDelayMs: 0 },
+        )
+        expect(await kf.role('u1')).toBe('admin')
+        // The failure is logged with its status.
+        expect(warnings.some((w) => w.includes('refresh') && w.includes('400'))).toBe(true)
+      } finally {
+        console.warn = warn
+      }
+    })
+
+    it('keeps the role read in the last 30 s while KF Auth is unreachable', async () => {
+      const db = await setup()
+      let down = false
+      const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (down) throw new Error('connect ECONNREFUSED')
+        const url = String(input)
+        if (url.endsWith('/oauth2/token'))
+          return json({ access_token: 'fresh', refresh_token: 'r2', expires_in: 3600 })
+        if (url.endsWith('/oauth2/userinfo')) return userinfo(init)
+        return json({}, 404)
+      }) as typeof fetch
+      const warn = console.warn
+      console.warn = () => {}
+      try {
+        const kf = createKf(
+          db,
+          { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+          fetcher,
+          { rereadDelayMs: 0 },
+        )
+        expect(await kf.role('u1')).toBe('admin')
+        down = true
+        expect(await kf.role('u1')).toBe('admin')
+      } finally {
+        console.warn = warn
+      }
+    })
+  })
 })
