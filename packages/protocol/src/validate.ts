@@ -95,8 +95,9 @@ const validatorCache = new Map<string, SchemaValidator>()
 
 /**
  * Compile a type schema, reusing the validator for identical schema content.
- * Throws SchemaError if the schema is not valid draft-07 or a `$ref` doesn't
- * resolve. Run `checkSchema` first: this does not bound size or patterns.
+ * Throws SchemaError, and nothing else, if the schema is not valid draft-07 or
+ * a `$ref` doesn't resolve. Run `checkSchema` first: this does not bound size
+ * or patterns. `checkSchemaFull` runs both.
  */
 export function compileSchema(schema: unknown): SchemaValidator {
   let key: string
@@ -595,8 +596,28 @@ export function checkSchemaBounds(schemas: Record<string, unknown>): string | nu
 }
 
 /**
+ * Every acceptance check of protocol v2 sections 5 and 5.1 on one type's
+ * schema: `checkSchema`, then what compiling checks (an object at the root, a
+ * draft-07 `$schema`, the meta-schema, `u`-flag patterns, `$ref`s that
+ * resolve). The compiled validator is cached for the records that follow.
+ * Returns an error message, or null if the schema is acceptable; never throws.
+ */
+export function checkSchemaFull(slug: string, body: unknown): string | null {
+  try {
+    const error = checkSchema(slug, body)
+    if (error) return error
+    compileSchema(body)
+    return null
+  } catch (err) {
+    if (err instanceof SchemaError) return `Schema "${slug}": ${err.message}`
+    // Only a schema nested deep enough to overflow the stack gets here.
+    return `Schema "${slug}" could not be checked: ${(err as Error).message}`
+  }
+}
+
+/**
  * Bound a caller-supplied schema before it is compiled and run server-side, and
- * apply the v2 schema rules:
+ * apply the v2 schema rules (section 5; `checkSchemaFull` adds section 5.1's):
  *
  * - the type slug passes `checkTypeSlug`;
  * - the canonical (JCS) schema is at most MAX_SCHEMA_BYTES;
@@ -637,6 +658,7 @@ export function checkSchema(slug: string, body: unknown): string | null {
   return null
 }
 
+/** `node` is a schema, or an array of schemas; the walk is `findBadPattern`'s. */
 function findLongPattern(node: unknown): string | null {
   if (Array.isArray(node)) {
     for (const item of node) {
@@ -658,7 +680,11 @@ function findLongPattern(node: unknown): string | null {
         return '"patternProperties" pattern'
       }
     }
-    const found = findLongPattern(value)
+    // A map's keys are names, not keywords: a property called "enum" is a schema.
+    const found =
+      MAP_KEYWORDS.has(key) && isObject(value)
+        ? findLongPattern(Object.values(value))
+        : findLongPattern(value)
     if (found) return found
   }
   return null
@@ -681,10 +707,13 @@ function findPrivateField(node: unknown, path: string): string | null {
   for (const [k, v] of Object.entries(node)) {
     if (DATA_KEYWORDS.has(k)) continue
     const at = `${path}/${escapeSegment(k)}`
-    if (k === 'properties' && isObject(v)) {
+    // A map's keys are names, not keywords: a definition called "enum" is a schema.
+    if (MAP_KEYWORDS.has(k) && isObject(v)) {
       for (const [name, sub] of Object.entries(v)) {
         const subPath = `${at}/${escapeSegment(name)}`
-        if (isObject(sub) && sub.private === true) return JSON.stringify(subPath)
+        if (k === 'properties' && isObject(sub) && sub.private === true) {
+          return JSON.stringify(subPath)
+        }
         const found = findPrivateField(sub, subPath)
         if (found !== null) return found
       }

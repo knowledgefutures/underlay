@@ -34,6 +34,13 @@ import {
   untar,
   utf8ByteLength,
   bodyOfRecord,
+  checkPrivateSetObject,
+  checkSetObject,
+  checkVersionRoot,
+  jcs,
+  privateCommitment,
+  versionHash,
+  type VersionRoot,
 } from '../../src/index.js'
 
 const SCHEMA = { type: 'object', properties: { v: { type: 'integer' } } }
@@ -384,5 +391,120 @@ describe('tree sync', () => {
       (e: Error) => e,
     )
     expect((err as Error).message).toMatch(/not the canonical tree/)
+  })
+
+  describe('refuses a root or private set of the wrong shape (section 10)', () => {
+    const enc = new TextEncoder()
+    const H = (c: string) => c.repeat(64)
+    const good = { underlay: 2, metadata: null, public: emptySet(), private: null }
+    const entry = { schema: H('a'), root: null, count: 0, bytes: 0 }
+    const rootObject = (root: unknown): PackObject => ({
+      key: `roots/${versionHash(root as VersionRoot).slice(5)}.json`,
+      bytes: enc.encode(jcs(root)),
+    })
+    const receive = async (
+      root: unknown,
+      extra: PackObject[] = [],
+      r = openRepo(memoryStore()),
+    ) => {
+      const target = versionHash(root as VersionRoot)
+      const sets = extra.length > 0 ? ('all' as const) : ('public' as const)
+      const err = await receiveVersion(r, [...extra, rootObject(root)], { target, sets }).then(
+        () => null,
+        (e: Error) => e,
+      )
+      if (err) {
+        expect(err).toBeInstanceOf(IntegrityError)
+        expect(await r.blobs.head(`roots/${target.slice(5)}.json`)).toBe(null)
+      }
+      return err?.message ?? null
+    }
+
+    it('accepts a well-formed root', async () => {
+      expect(await receive(good)).toBe(null)
+      expect(await receive({ ...good, metadata: { title: 't' } })).toBe(null)
+    })
+
+    it('refuses members other than underlay, metadata, public and private', async () => {
+      expect(await receive({ ...good, extra: 1 })).toMatch(/root: unexpected fields/)
+      const { private: _p, ...noPrivate } = good
+      expect(await receive(noPrivate)).toMatch(/root: unexpected fields/)
+    })
+
+    it('refuses metadata that is not an object or null', async () => {
+      for (const metadata of [[], ['a'], 'text', 1, true])
+        expect(await receive({ ...good, metadata })).toMatch(/metadata must be an object or null/)
+    })
+
+    it('refuses a public set of the wrong shape', async () => {
+      const pub = (p: unknown) => receive({ ...good, public: p })
+      expect(await pub({ ...emptySet(), extra: 1 })).toMatch(/public set: unexpected fields/)
+      expect(await pub({ types: [], files: emptySet().files })).toMatch(/public set: bad types/)
+      expect(await pub({ types: {}, files: { root: null, count: 0, bytes: 5 } })).toMatch(
+        /root and bytes disagree/,
+      )
+      expect(await pub({ types: {}, files: { ...emptySet().files, x: 1 } })).toMatch(
+        /files: unexpected fields/,
+      )
+      expect(
+        await pub({ types: { T: { ...entry, schema: 'x' } }, files: emptySet().files }),
+      ).toMatch(/bad schema hash/)
+      for (const slug of [
+        'a/b',
+        '.hidden',
+        'a\\b',
+        'tab\t',
+        String.fromCharCode(0x7f),
+        'x'.repeat(129),
+      ])
+        expect(await pub({ types: { [slug]: entry }, files: emptySet().files })).toMatch(
+          /Type (must|exceeds)/,
+        )
+    })
+
+    it('refuses a private member that is not a commitment', async () => {
+      for (const priv of ['xyz', H('A'), 1, {}])
+        expect(await receive({ ...good, private: priv })).toMatch(/bad private commitment/)
+    })
+
+    it('refuses an empty or malformed private set, received or already held', async () => {
+      const set = (s: Omit<PrivateSetObject, 'salt'>, salt = newSalt()): PrivateSetObject => ({
+        ...s,
+        salt,
+      })
+      const withPrivate = (p: PrivateSetObject) => {
+        const commitment = privateCommitment(p)
+        const root = { ...good, private: commitment }
+        const obj = { key: `private/${commitment}.json`, bytes: enc.encode(jcs(p)) }
+        return { root, obj }
+      }
+      // A root names a private set only when it is non-empty.
+      const empty = withPrivate(set(emptySet()))
+      expect(await receive(empty.root, [empty.obj])).toMatch(/private\/.*: set: empty/)
+      const badSalt = withPrivate(set(emptySet(), 'salt'))
+      expect(await receive(badSalt.root, [badSalt.obj])).toMatch(/set: bad salt/)
+      // Already held here, so not in the pack: checked all the same.
+      const r = openRepo(memoryStore())
+      await r.putPrivateSet(set(emptySet(), H('b')))
+      const held = withPrivate(set(emptySet(), H('b')))
+      const err = await receiveVersion(r, [rootObject(held.root)], {
+        target: versionHash(held.root as VersionRoot),
+        sets: 'all',
+      }).catch((e: Error) => e)
+      expect(err).toBeInstanceOf(IntegrityError)
+      expect((err as Error).message).toMatch(/^Private set .*: set: empty/)
+    })
+
+    it('agrees with the roots and sets the library writes', async () => {
+      const { s, v1, v2 } = await twoVersions()
+      for (const v of [v1, v2]) {
+        const root = await s.repo.root(v)
+        expect(checkVersionRoot(root)).toBe(null)
+        expect(checkPrivateSetObject(await s.repo.privateSet(root.private!))).toBe(null)
+      }
+      expect(checkVersionRoot(makeRoot(null, emptySet(), null))).toBe(null)
+      expect(checkVersionRoot({ ...good, underlay: 3 })).toMatch(/bad protocol version/)
+      expect(checkSetObject(emptySet())).toBe(null)
+    })
   })
 })

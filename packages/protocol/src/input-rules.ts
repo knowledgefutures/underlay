@@ -70,15 +70,29 @@ interface Frame {
 const isHigh = (u: number) => u >= 0xd800 && u <= 0xdbff
 const isLow = (u: number) => u >= 0xdc00 && u <= 0xdfff
 
+/** The code unit of the four hex digits at `text[i]`, or -1. `parseInt` would take "12zz" or " 123". */
+function hex4(text: string, i: number): number {
+  let u = 0
+  for (let j = i; j < i + 4; j++) {
+    const d = text.charCodeAt(j)
+    const lower = d | 0x20
+    if (d >= C.Zero && d <= C.Nine) u = (u << 4) | (d - C.Zero)
+    else if (lower >= 0x61 && lower <= 0x66) u = (u << 4) | (lower - 0x57)
+    else return -1
+  }
+  return u
+}
+
 /**
  * Check `text` against the input rules: no duplicate object keys (compared after
  * unescaping), no integer literal outside ±(2^53 − 1), no lone surrogate (raw or
  * `\u`-escaped), nesting no deeper than `maxDepth` (each object or array is one
  * level). Throws InputRuleError on the first violation.
  *
- * Syntax is left to `JSON.parse`; on malformed input this may report a rule
- * violation instead of a syntax error, but it always terminates and never
- * accepts anything `JSON.parse` would reject.
+ * Syntax, apart from an unterminated string or a bad `\u` escape, is left to
+ * `JSON.parse`, as the protocol orders the codes: on malformed input this may
+ * report a rule violation instead of a syntax error. It always terminates, and
+ * throws nothing but InputRuleError.
  */
 export function scanJson(text: string, maxDepth: number = MAX_JSON_DEPTH): void {
   const n = text.length
@@ -99,11 +113,13 @@ export function scanJson(text: string, maxDepth: number = MAX_JSON_DEPTH): void 
           escaped = true
           const e = text.charCodeAt(i + 1)
           if (e === C.LowerU) {
-            u = parseInt(text.slice(i + 2, i + 6), 16)
-            if (Number.isNaN(u)) throw new InputRuleError('syntax', 'Bad \\u escape')
+            u = hex4(text, i + 2)
+            if (u < 0) throw new InputRuleError('syntax', 'Bad \\u escape')
             i += 6
           } else {
-            u = 0 // any other escape is a non-surrogate code unit
+            // Any other escape is a non-surrogate code unit. An invalid one
+            // (`\x`) is not a scan rule: JSON.parse reports it as `syntax`.
+            u = 0
             i += 2
           }
         } else {
@@ -124,13 +140,17 @@ export function scanJson(text: string, maxDepth: number = MAX_JSON_DEPTH): void 
       i++ // closing quote
       const top = stack[stack.length - 1]
       if (top?.isObject && top.expectKey) {
-        const raw = text.slice(start + 1, i - 1)
-        const key = escaped ? (JSON.parse(text.slice(start, i)) as string) : raw
-        top.keys ??= new Set()
-        if (top.keys.has(key)) {
-          throw new InputRuleError('duplicate_key', `Duplicate object key ${JSON.stringify(key)}`)
+        const key = escaped ? unescapeKey(text.slice(start, i)) : text.slice(start + 1, i - 1)
+        // A key that doesn't unescape can't be compared, and can't parse either:
+        // the scan goes on, so a later rule can still come first, and JSON.parse
+        // reports `syntax`.
+        if (key !== null) {
+          top.keys ??= new Set()
+          if (top.keys.has(key)) {
+            throw new InputRuleError('duplicate_key', `Duplicate object key ${JSON.stringify(key)}`)
+          }
+          top.keys.add(key)
         }
-        top.keys.add(key)
         top.expectKey = false
       }
       continue
@@ -192,6 +212,15 @@ export function scanJson(text: string, maxDepth: number = MAX_JSON_DEPTH): void 
     }
     // Whitespace, colon, and the literals true/false/null.
     i++
+  }
+}
+
+/** A quoted key, unescaped; null if it isn't a JSON string (`"\x"`, a raw control character). */
+function unescapeKey(quoted: string): string | null {
+  try {
+    return JSON.parse(quoted) as string
+  } catch {
+    return null
   }
 }
 

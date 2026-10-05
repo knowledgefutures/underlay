@@ -450,7 +450,9 @@ precede the body that points to them, and the root is last.
 A receiver MUST, before writing an object, verify it against its key: tree nodes and out-of-line
 records by hash; bodies line by line against their leaf's entries (Section 8.3), the leaf having
 arrived first; and schemas, the PrivateSetObject and the root by hash and canonical form. It MUST
-then, for every tree of every set received, merge the entry changes from its base tree into that
+reject a root that does not have exactly the members of Section 10, with `underlay` equal to 2,
+`metadata` an object or `null`, valid type slugs, and set totals of 0 for `null` roots, and a
+PrivateSetObject that is empty or lacks a 64-hex `salt`. It MUST then, for every tree of every set received, merge the entry changes from its base tree into that
 base tree under Section 8.1 and obtain exactly the received root, count and bytes, and MUST hold a
 body for every new record leaf. It MUST write the root only after all checks pass, and MUST refuse
 a pack that fails any check.
@@ -701,7 +703,11 @@ session uploaded more than 100,000 records or a schema change revalidates more t
 
 - the constants (Section 12);
 - JCS input and output pairs;
-- input-rule verdicts per record line;
+- input-rule verdicts per record line (`inputRules`), covering every code, the depth limit at
+  its boundary and the order of codes; and, for lines too long to list, a recipe and verdict
+  (`inputRuleRecipes`), covering the record size limit at its boundary;
+- schema acceptance verdicts (`schemaRules`): schemas, with the slug each is given under,
+  accepted or rejected under Sections 5 and 5.1;
 - canonical forms and hashes of records and schemas;
 - boundary hashes;
 - a list in key order;
@@ -761,3 +767,10 @@ Clarifications that change no hash, tree or accepted input:
     (Section 9); revalidation on a schema change (Section 10.1); `collection.json` has no
     `description` (Section 11.1); packs are ordered set by set (Section 11.2); which files are
     held for a collection, and the 400, 451 and repeated-commit responses (Sections 11.3, 11.4).
+15. 2026-10-05: the reference implementation brought into line with this document, changing no
+    hash or tree: a key with an invalid escape is `syntax`, not an exception, and a `\u` escape
+    needs exactly four hex digits (Section 3); field-level `private` and the pattern limit apply
+    to subschemas whose names are also data keywords (Section 5); a receiver checks the shape of
+    the root and PrivateSetObject (Section 11.2). The test vectors add `syntax`, `bad_type`,
+    depth-boundary and code-order cases, `inputRuleRecipes` (`record_too_large`) and
+    `schemaRules` (Sections 5, 5.1); existing vectors are unchanged.

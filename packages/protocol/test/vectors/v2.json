@@ -188,6 +188,598 @@
       "ok": true,
       "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"10\":2,\"9\":3}}",
       "hash": "b551945866116dcfa7737f4e687c4ffac0dcd4b2da992b1fb2a74d38a72bfe05"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":}",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "not json",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"abc",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"\\x\":1}}",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"\\u12zz\"}",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\",\"data\":1}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\",\"data\":1}",
+      "hash": "58de34201a31df6d3894dadc8f53e78253dd2a29bdfa085859c1c3fb0cf2711a"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\".t\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"a\\\\b\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\\u0001\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\\u007f\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"\",\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":1,\"data\":1}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
+      "ok": true,
+      "canonical": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
+      "hash": "786e1e92024cbce68554e5d7eb262885ab6496c11113a18d091e520f37784bfb"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}",
+      "ok": false,
+      "error": "too_deep"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":1,\"ignored\":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}",
+      "ok": false,
+      "error": "too_deep"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":1,\"a\":2},}",
+      "ok": false,
+      "error": "duplicate_key"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"\\x\":1,\"a\":1,\"a\":2}}",
+      "ok": false,
+      "error": "duplicate_key"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":{\"a\":\"\\u12zz\",\"a\":1}}",
+      "ok": false,
+      "error": "syntax"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"data\":[9007199254740992,\"\\ud83d\"]}",
+      "ok": false,
+      "error": "unsafe_integer"
+    },
+    {
+      "line": "[1]",
+      "ok": false,
+      "error": "bad_envelope"
+    },
+    {
+      "line": "{\"id\":\"\",\"type\":\"a/b\"}",
+      "ok": false,
+      "error": "bad_id"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\".t\"}",
+      "ok": false,
+      "error": "bad_type"
+    },
+    {
+      "line": "{\"id\":\"r\",\"type\":\"t\",\"private\":1}",
+      "ok": false,
+      "error": "bad_envelope"
+    }
+  ],
+  "inputRuleRecipes": [
+    {
+      "prefix": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"",
+      "repeat": "x",
+      "n": 8388577,
+      "suffix": "\"}",
+      "ok": true,
+      "hash": "5e2d87a257d005c13b4c6e0964741cc50a7b04bb65f430e2f088c1dc7504ac52"
+    },
+    {
+      "prefix": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"",
+      "repeat": "x",
+      "n": 8388578,
+      "suffix": "\"}",
+      "ok": false,
+      "error": "record_too_large"
+    },
+    {
+      "prefix": "{ \"id\" : \"r\" , \"type\" : \"t\" , \"data\" : \"",
+      "repeat": "x",
+      "n": 8388577,
+      "suffix": "\" }",
+      "ok": true,
+      "hash": "5e2d87a257d005c13b4c6e0964741cc50a7b04bb65f430e2f088c1dc7504ac52"
+    },
+    {
+      "prefix": "{\"id\":\"r\",\"type\":\"t\",\"data\":\"",
+      "repeat": "é",
+      "n": 4194289,
+      "suffix": "\"}",
+      "ok": false,
+      "error": "record_too_large"
+    }
+  ],
+  "schemaRules": [
+    {
+      "note": "an ordinary schema",
+      "slug": "T",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "a private type",
+      "slug": "T",
+      "schema": {
+        "private": true,
+        "type": "object"
+      },
+      "ok": true
+    },
+    {
+      "note": "root private false",
+      "slug": "T",
+      "schema": {
+        "private": false
+      },
+      "ok": true
+    },
+    {
+      "note": "root private not a boolean",
+      "slug": "T",
+      "schema": {
+        "private": "true"
+      },
+      "ok": false
+    },
+    {
+      "note": "root private null",
+      "slug": "T",
+      "schema": {
+        "private": null
+      },
+      "ok": false
+    },
+    {
+      "note": "a property called \"private\"",
+      "slug": "T",
+      "schema": {
+        "properties": {
+          "private": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "field-level private",
+      "slug": "T",
+      "schema": {
+        "properties": {
+          "ssn": {
+            "private": true
+          }
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "field-level private, nested in a definition",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "a": {
+            "properties": {
+              "b": {
+                "properties": {
+                  "c": {
+                    "private": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "field-level private under a definition called \"enum\"",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "enum": {
+            "properties": {
+              "s": {
+                "private": true
+              }
+            }
+          }
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "private on items, not a property",
+      "slug": "T",
+      "schema": {
+        "items": {
+          "private": true
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "private on a definition, not a property",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "a": {
+            "private": true
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "private inside default, which is data",
+      "slug": "T",
+      "schema": {
+        "properties": {
+          "a": {
+            "default": {
+              "properties": {
+                "b": {
+                  "private": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "pattern of 256",
+      "slug": "T",
+      "schema": {
+        "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "ok": true
+    },
+    {
+      "note": "pattern of 257",
+      "slug": "T",
+      "schema": {
+        "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "ok": false
+    },
+    {
+      "note": "pattern of 129 astral characters (258 UTF-16 code units)",
+      "slug": "T",
+      "schema": {
+        "pattern": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      },
+      "ok": false
+    },
+    {
+      "note": "patternProperties key of 257",
+      "slug": "T",
+      "schema": {
+        "patternProperties": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {}
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "pattern of 257 under a property called \"type\"",
+      "slug": "T",
+      "schema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "pattern of 257 inside enum, which is data",
+      "slug": "T",
+      "schema": {
+        "enum": [
+          {
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "note": "pattern of 257 inside const, which is data",
+      "slug": "T",
+      "schema": {
+        "const": {
+          "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "pattern of 257 inside default, which is data",
+      "slug": "T",
+      "schema": {
+        "default": {
+          "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "pattern of 257 inside examples, which is data",
+      "slug": "T",
+      "schema": {
+        "examples": [
+          {
+            "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "ok": true
+    },
+    {
+      "note": "slug with a slash",
+      "slug": "a/b",
+      "schema": {},
+      "ok": false
+    },
+    {
+      "note": "slug starting with \".\"",
+      "slug": ".t",
+      "schema": {},
+      "ok": false
+    },
+    {
+      "note": "empty slug",
+      "slug": "",
+      "schema": {},
+      "ok": false
+    },
+    {
+      "note": "slug over 128 bytes",
+      "slug": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "schema": {},
+      "ok": false
+    },
+    {
+      "note": "not an object",
+      "slug": "T",
+      "schema": true,
+      "ok": false
+    },
+    {
+      "note": "$schema draft-07",
+      "slug": "T",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "ok": true
+    },
+    {
+      "note": "$schema draft-07 without \"#\"",
+      "slug": "T",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema"
+      },
+      "ok": true
+    },
+    {
+      "note": "$schema 2020-12",
+      "slug": "T",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      },
+      "ok": false
+    },
+    {
+      "note": "$schema draft-04",
+      "slug": "T",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-04/schema#"
+      },
+      "ok": false
+    },
+    {
+      "note": "invalid against the meta-schema: type",
+      "slug": "T",
+      "schema": {
+        "type": "text"
+      },
+      "ok": false
+    },
+    {
+      "note": "invalid against the meta-schema: required",
+      "slug": "T",
+      "schema": {
+        "required": "a"
+      },
+      "ok": false
+    },
+    {
+      "note": "a pattern that needs the u flag",
+      "slug": "T",
+      "schema": {
+        "pattern": "^\\p{L}+$"
+      },
+      "ok": true
+    },
+    {
+      "note": "an invalid pattern",
+      "slug": "T",
+      "schema": {
+        "pattern": "("
+      },
+      "ok": false
+    },
+    {
+      "note": "a pattern invalid only with the u flag",
+      "slug": "T",
+      "schema": {
+        "pattern": "\\a"
+      },
+      "ok": false
+    },
+    {
+      "note": "a patternProperties key invalid only with the u flag",
+      "slug": "T",
+      "schema": {
+        "patternProperties": {
+          "\\a": {}
+        }
+      },
+      "ok": false
+    },
+    {
+      "note": "$ref to a definition",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "a": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/definitions/a"
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "$ref against the base URI",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "a": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "https://schema.underlay.invalid/#/definitions/a"
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "$ref to an $id",
+      "slug": "T",
+      "schema": {
+        "definitions": {
+          "a": {
+            "$id": "a.json",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "a.json"
+          }
+        }
+      },
+      "ok": true
+    },
+    {
+      "note": "$ref to the draft-07 meta-schema",
+      "slug": "T",
+      "schema": {
+        "$ref": "http://json-schema.org/draft-07/schema#"
+      },
+      "ok": true
+    },
+    {
+      "note": "unresolvable $ref",
+      "slug": "T",
+      "schema": {
+        "$ref": "#/definitions/missing"
+      },
+      "ok": false
+    },
+    {
+      "note": "unresolvable $ref to another document",
+      "slug": "T",
+      "schema": {
+        "properties": {
+          "x": {
+            "$ref": "other.json"
+          }
+        }
+      },
+      "ok": false
     }
   ],
   "recordHashes": [

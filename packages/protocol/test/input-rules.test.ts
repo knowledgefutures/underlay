@@ -67,6 +67,36 @@ describe('scanJson', () => {
     expect(code(() => parseStrict('{"a":1}'))).toBe(null)
   })
 
+  it('reports a key that does not unescape as syntax, at any depth', () => {
+    for (const text of [
+      String.raw`{"id":"a","type":"A","data":{"\x":1}}`,
+      String.raw`{"\x":1,"id":"a","type":"A","data":1}`,
+      String.raw`{"id":"a","type":"A","data":[{"k":[{"a\q":1}]}]}`,
+      // A raw control character, which JSON.parse refuses in any string.
+      `{"id":"a","type":"A","data":{"\\n\n":1}}`,
+    ]) {
+      expect(code(() => parseStrict(text))).toBe('syntax')
+      expect(code(() => parseRecordLine(text))).toBe('syntax')
+      expect(code(() => scanJson(text))).toBe(null)
+    }
+  })
+
+  it('requires four hex digits in a \\u escape', () => {
+    expect(code(() => scanJson(String.raw`["\u00e9\u00E9"]`))).toBe(null)
+    for (const bad of ['12zz', ' 123', '+123', '-123', '12'])
+      expect(code(() => scanJson(`["\\u${bad}"]`))).toBe('syntax')
+  })
+
+  it('reports the first rule the text breaks, then syntax', () => {
+    // A duplicate key before a syntax error.
+    expect(code(() => parseStrict('{"a":1,"a":2,"b":}'))).toBe('duplicate_key')
+    // A bad escape other than \u is not a scan rule: the duplicate after it is.
+    expect(code(() => parseStrict(String.raw`{"\x":1,"a":1,"a":2}`))).toBe('duplicate_key')
+    expect(code(() => parseStrict(String.raw`{"a":"\x","a":1}`))).toBe('duplicate_key')
+    // A bad \u escape is, and comes first.
+    expect(code(() => parseStrict(String.raw`{"a":"\u12zz","a":1}`))).toBe('syntax')
+  })
+
   it('never throws anything but InputRuleError, on any input', () => {
     fc.assert(
       fc.property(fc.string({ unit: 'binary' }), (s) => {
@@ -74,6 +104,15 @@ describe('scanJson', () => {
         return c === null || !c.startsWith('other')
       }),
       { numRuns: 2000 },
+    )
+    // Text made of JSON's own characters reaches keys with escapes.
+    const unit = fc.constantFrom(...'{}[]":,\\uxa0e1 ')
+    fc.assert(
+      fc.property(fc.string({ unit, maxLength: 40 }), (s) => {
+        const c = code(() => parseStrict(s))
+        return c === null || !c.startsWith('other')
+      }),
+      { numRuns: 5000 },
     )
   })
 

@@ -9,6 +9,7 @@
  */
 import { PROTOCOL_VERSION, VERSION_HASH_PREFIX } from './constants.js'
 import { sha256Hex } from './hash.js'
+import { checkTypeSlug } from './input-rules.js'
 import { jcs } from './jcs.js'
 
 export interface TreeSummary {
@@ -135,23 +136,59 @@ function checkSummary(t: unknown, where: string): string | null {
   if (!Number.isSafeInteger(s.count) || s.count < 0) return `${where}: bad count`
   if (!Number.isSafeInteger(s.bytes) || s.bytes < 0) return `${where}: bad bytes`
   if ((s.root === null) !== (s.count === 0)) return `${where}: root and count disagree`
+  if (s.root === null && s.bytes !== 0) return `${where}: root and bytes disagree`
   return null
 }
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
 
 /** Shape check for a set object read from storage or a peer. Returns an error or null. */
 export function checkSetObject(s: unknown, isPrivate = false): string | null {
   const set = s as PrivateSetObject
-  if (!set || typeof set !== 'object' || !set.types || typeof set.types !== 'object')
-    return 'set: bad types'
+  if (!isPlainObject(set) || !isPlainObject(set.types)) return 'set: bad types'
   const expected = isPrivate ? 3 : 2
   if (Object.keys(set).length !== expected) return 'set: unexpected fields'
   if (isPrivate && (typeof set.salt !== 'string' || !HEX64.test(set.salt))) return 'set: bad salt'
   for (const [slug, t] of Object.entries(set.types)) {
+    const slugError = checkTypeSlug(slug)
+    if (slugError) return `type ${JSON.stringify(slug)}: ${slugError}`
     const e = checkSummary(t, `type ${slug}`)
     if (e) return e
     if (typeof t.schema !== 'string' || !HEX64.test(t.schema))
       return `type ${slug}: bad schema hash`
     if (Object.keys(t).length !== 4) return `type ${slug}: unexpected fields`
   }
-  return checkSummary(set.files, 'files')
+  const e = checkSummary(set.files, 'files')
+  if (e) return e
+  if (Object.keys(set.files).length !== 3) return 'files: unexpected fields'
+  return null
+}
+
+const ROOT_MEMBERS = ['underlay', 'metadata', 'public', 'private']
+
+/**
+ * Shape check for a version root from a peer (section 10): exactly its four
+ * members, this protocol version, metadata an object or null, a valid public
+ * set, and a commitment or null. Returns an error or null.
+ */
+export function checkVersionRoot(r: unknown): string | null {
+  if (!isPlainObject(r)) return 'root: not an object'
+  if (Object.keys(r).length !== 4 || !ROOT_MEMBERS.every((k) => Object.hasOwn(r, k)))
+    return 'root: unexpected fields'
+  if (r.underlay !== PROTOCOL_VERSION) return 'root: bad protocol version'
+  if (r.metadata !== null && !isPlainObject(r.metadata))
+    return 'root: metadata must be an object or null'
+  if (r.private !== null && (typeof r.private !== 'string' || !HEX64.test(r.private)))
+    return 'root: bad private commitment'
+  const e = checkSetObject(r.public)
+  return e ? `public ${e}` : null
+}
+
+/**
+ * Shape check for a private set object: a root names one only for a non-empty
+ * private set (section 10). Returns an error or null.
+ */
+export function checkPrivateSetObject(s: unknown): string | null {
+  return checkSetObject(s, true) ?? (isEmptySet(s as SetObject) ? 'set: empty' : null)
 }

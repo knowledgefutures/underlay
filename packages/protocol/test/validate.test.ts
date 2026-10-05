@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   checkSchema,
   checkSchemaBounds,
+  checkSchemaFull,
   compileSchema,
+  InputRuleError,
   findExtraFields,
   MAX_SCHEMA_BYTES,
   SchemaError,
@@ -383,6 +385,19 @@ describe('checkSchema', () => {
     ).toMatch(/"\/definitions\/a\/properties\/b\/properties\/c"/)
     // A property named "private", or private in a data position, is not the marker.
     expect(checkSchema('T', { properties: { private: { type: 'boolean' } } })).toBe(null)
+    // Names in a map of subschemas are not keywords, whatever they are called.
+    for (const map of ['definitions', '$defs', 'properties', 'patternProperties', 'dependencies'])
+      for (const name of ['enum', 'const', 'default', 'examples', 'required', 'type'])
+        expect(
+          checkSchema('T', { [map]: { [name]: { properties: { s: { private: true } } } } }),
+        ).toMatch(`"/${map}/${name}/properties/s"`)
+    expect(checkSchema('T', { properties: { type: { private: true } } })).toMatch(
+      /"\/properties\/type"/,
+    )
+    // Only property schemas: `private` elsewhere is an unknown keyword.
+    expect(checkSchema('T', { items: { private: true } })).toBe(null)
+    expect(checkSchema('T', { definitions: { a: { private: true } } })).toBe(null)
+    expect(checkSchema('T', { allOf: [{ private: true }] })).toBe(null)
     expect(
       checkSchema('T', {
         properties: { a: { default: { properties: { b: { private: true } } } } },
@@ -425,11 +440,59 @@ describe('checkSchema', () => {
           },
         }),
       ).toBe(null)
+    // …but a map entry named after one of those keywords is a schema.
+    for (const map of ['properties', 'definitions', '$defs', 'patternProperties', 'dependencies'])
+      for (const name of ['type', 'required', 'enum', 'const', 'default', 'examples'])
+        expect(checkSchema('T', { [map]: { [name]: { type: 'string', pattern: long } } })).toMatch(
+          /"pattern" longer than 256/,
+        )
+    expect(
+      checkSchema('T', { definitions: { enum: { patternProperties: { [long]: {} } } } }),
+    ).toMatch(/"patternProperties" pattern longer than 256/)
   })
 
   it('checks type slugs', () => {
     expect(checkSchema('a/b', {})).toMatch(/Invalid type slug "a\/b"/)
     expect(checkSchema('.hidden', {})).toMatch(/Invalid type slug/)
+  })
+
+  it('checkSchemaFull applies every acceptance rule, and never throws', () => {
+    const ok = { type: 'object', properties: { name: { type: 'string', pattern: '^\\p{L}+$' } } }
+    expect(checkSchemaFull('Person', ok)).toBe(null)
+    // Section 5, as checkSchema.
+    expect(checkSchemaFull('a/b', ok)).toMatch(/Invalid type slug/)
+    expect(checkSchemaFull('T', { private: 1 })).toMatch(/"private" must be a boolean/)
+    expect(checkSchemaFull('T', { properties: { s: { private: true } } })).toMatch(/as private/)
+    expect(checkSchemaFull('T', { pattern: 'a'.repeat(257) })).toMatch(/longer than 256/)
+    // Section 5.1, which compiling checks.
+    expect(checkSchemaFull('T', [])).toBe('Schema "T": schema must be an object')
+    expect(
+      checkSchemaFull('T', { $schema: 'https://json-schema.org/draft/2020-12/schema' }),
+    ).toMatch(/^Schema "T": unsupported \$schema/)
+    expect(checkSchemaFull('T', { type: 'text' })).toMatch(/^Schema "T": schema is invalid/)
+    expect(checkSchemaFull('T', { pattern: '\\p{Foo}' })).toMatch(
+      /^Schema "T": pattern .* is invalid/,
+    )
+    expect(checkSchemaFull('T', { patternProperties: { '(?<a': {} } })).toMatch(/^Schema "T": /)
+    expect(checkSchemaFull('T', { $ref: '#/definitions/missing' })).toBe(
+      'Schema "T": can\'t resolve reference #/definitions/missing',
+    )
+    expect(checkSchemaFull('T', { $ref: 'http://json-schema.org/draft-07/schema#' })).toBe(null)
+    let deep: unknown = {}
+    for (let i = 0; i < 20_000; i++) deep = { items: deep }
+    expect(checkSchemaFull('T', deep)).toMatch(/^Schema "T"/)
+  })
+
+  it('SchemaError is its own class', () => {
+    let err: unknown
+    try {
+      compileSchema({ type: 'text' })
+    } catch (e) {
+      err = e
+    }
+    expect(err).toBeInstanceOf(SchemaError)
+    expect(err).not.toBeInstanceOf(InputRuleError)
+    expect((err as Error).name).toBe('SchemaError')
   })
 
   it('checkSchemaBounds returns the first error in a set', () => {

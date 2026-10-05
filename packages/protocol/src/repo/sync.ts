@@ -13,7 +13,9 @@
  */
 import {
   type Change,
+  checkPrivateSetObject,
   checkProtocolVersion,
+  checkVersionRoot,
   diffTrees,
   fileTree,
   hashSchema,
@@ -297,7 +299,10 @@ export async function receiveVersion(
 
   const root = JSON.parse(dec.decode(rootBytes)) as VersionRoot
   const base = opts.base ? await repo.root(opts.base) : null
-  const { pairs } = await setPairs(repo, root, base, opts.sets ?? 'public')
+  const { pairs, privateSet } = await setPairs(repo, root, base, opts.sets ?? 'public')
+  // Checked on arrival too; this covers a private set already held here.
+  const privateError = privateSet && checkPrivateSetObject(privateSet)
+  if (privateError) throw new IntegrityError(`Private set ${root.private}: ${privateError}`)
   const changes = { added: 0, removed: 0, updated: 0 }
   for (const p of pairs) {
     for (const [slug, t] of Object.entries(p.set.types)) {
@@ -354,12 +359,16 @@ async function receiveObject(
   } else if ((m = KEY.privateSet.exec(key))) {
     const set = canonical<PrivateSetObject>(key, bytes)
     if (privateCommitment(set) !== m[1]) throw new IntegrityError(`${key} fails its hash`)
+    const shape = checkPrivateSetObject(set)
+    if (shape) throw new IntegrityError(`${key}: ${shape}`)
     await put(key, bytes, 'application/json')
   } else if ((m = KEY.root.exec(key))) {
     if (m[1] !== digest) throw new IntegrityError(`The pack holds another version's root (${key})`)
     const r = canonical<VersionRoot>(key, bytes)
     checkProtocolVersion(r)
     if (versionHash(r) !== target) throw new IntegrityError(`${key} fails its hash`)
+    const shape = checkVersionRoot(r)
+    if (shape) throw new IntegrityError(`${key}: ${shape}`)
     return bytes
   } else {
     throw new IntegrityError(`A pack can't hold ${JSON.stringify(key)}`)

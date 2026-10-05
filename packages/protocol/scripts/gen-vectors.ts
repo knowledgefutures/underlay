@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import {
   boundaryBytes,
   buildTree,
+  checkSchemaFull,
   compareUtf8,
   ed25519Signer,
   entryHash,
@@ -26,17 +27,22 @@ import {
   InputRuleError,
   jcs,
   makeRoot,
+  MAX_PATTERN_LENGTH,
+  MAX_RECORD_BYTES,
+  MAX_TYPE_BYTES,
   MemorySink,
   type NodeDesc,
   parseRecordLine,
   privateCommitment,
   type PrivateSetObject,
+  recordCanonical,
   type RecordEntry,
   recordTree,
   type SetObject,
   sha256Hex,
   signEntry,
   trailingZeros,
+  utf8ByteLength,
   versionHash,
 } from '../src/index.js'
 
@@ -75,6 +81,7 @@ const ruleCase = (line: string) => {
 }
 
 const deep = (n: number) => '['.repeat(n) + ']'.repeat(n)
+const deepObject = (n: number) => '{"a":'.repeat(n - 1) + '{}' + '}'.repeat(n - 1)
 const inputRuleCases = [
   '{"id":"r1","type":"Author","data":{"name":"Ada","year":1815}}',
   '{"type":"Author","data":{"year":1815,"name":"Ada"},"id":"r1","private":true}',
@@ -102,7 +109,173 @@ const inputRuleCases = [
   '{"id":"r","type":"t","data":1,"private":"yes"}',
   '{"id":"r","type":"t","data":1,"note":"ignored","hash":"x"}',
   '{"id":"r","type":"t","data":{"9":3,"10":2}}',
+  // syntax
+  '{"id":"r","type":"t","data":}',
+  'not json',
+  '{"id":"r","type":"t","data":"abc',
+  '{"id":"r","type":"t","data":{"\\x":1}}',
+  '{"id":"r","type":"t","data":"\\u12zz"}',
+  // bad_type
+  `{"id":"r","type":"${'t'.repeat(MAX_TYPE_BYTES)}","data":1}`,
+  `{"id":"r","type":"${'t'.repeat(MAX_TYPE_BYTES + 1)}","data":1}`,
+  `{"id":"r","type":"${E_ACUTE.repeat(MAX_TYPE_BYTES / 2 + 1)}","data":1}`, // 130 UTF-8 bytes
+  '{"id":"r","type":".t","data":1}',
+  '{"id":"r","type":"a\\\\b","data":1}',
+  '{"id":"r","type":"t\\u0001","data":1}',
+  '{"id":"r","type":"t\\u007f","data":1}',
+  '{"id":"r","type":"","data":1}',
+  '{"id":"r","type":1,"data":1}',
+  // too_deep at the boundary: data may nest 64 levels, the envelope being one more,
+  // and so may members that are otherwise ignored.
+  `{"id":"r","type":"t","data":${deepObject(64)}}`,
+  `{"id":"r","type":"t","data":${deepObject(65)}}`,
+  `{"id":"r","type":"t","data":1,"ignored":${deep(65)}}`,
+  // Code order: the first rule the text breaks, then the envelope rules in order.
+  '{"id":"r","type":"t","data":{"a":1,"a":2},}',
+  '{"id":"r","type":"t","data":{"\\x":1,"a":1,"a":2}}',
+  '{"id":"r","type":"t","data":{"a":"\\u12zz","a":1}}',
+  '{"id":"r","type":"t","data":[9007199254740992,"\\ud83d"]}',
+  '[1]',
+  '{"id":"","type":"a/b"}',
+  '{"id":"r","type":".t"}',
+  '{"id":"r","type":"t","private":1}',
 ].map(ruleCase)
+
+// Lines too long to list: the line is `prefix`, `repeat` n times, then `suffix`.
+const recipeCase = (prefix: string, repeat: string, n: number, suffix: string) => {
+  const r = ruleCase(prefix + repeat.repeat(n) + suffix)
+  const verdict = 'error' in r ? { ok: false, error: r.error } : { ok: true, hash: r.hash }
+  return { prefix, repeat, n, suffix, ...verdict }
+}
+const dataPrefix = '{"id":"r","type":"t","data":"'
+// The longest string data whose canonical record is exactly MAX_RECORD_BYTES.
+const maxData = MAX_RECORD_BYTES - utf8ByteLength(recordCanonical('r', 't', ''))
+const inputRuleRecipes = [
+  recipeCase(dataPrefix, 'x', maxData, '"}'),
+  recipeCase(dataPrefix, 'x', maxData + 1, '"}'),
+  // Size is the canonical form's: whitespace in the line doesn't count…
+  recipeCase('{ "id" : "r" , "type" : "t" , "data" : "', 'x', maxData, '" }'),
+  // …and a character counts as its UTF-8 bytes.
+  recipeCase(dataPrefix, E_ACUTE, Math.ceil((maxData + 1) / 2), '"}'),
+]
+
+// --- Schema rules ---------------------------------------------------------------
+
+const LONG = 'a'.repeat(MAX_PATTERN_LENGTH + 1)
+// `ok` is the verdict of checkSchemaFull, which must be the one the case intends.
+const schemaCase = (note: string, schema: unknown, ok: boolean, slug = 'T') => {
+  const error = checkSchemaFull(slug, schema)
+  if ((error === null) !== ok) throw new Error(`schemaRules "${note}": ${error ?? 'accepted'}`)
+  return { note, slug, schema, ok }
+}
+const schemaRules = [
+  // Section 5
+  schemaCase('an ordinary schema', { type: 'object', properties: { a: { type: 'string' } } }, true),
+  schemaCase('a private type', { private: true, type: 'object' }, true),
+  schemaCase('root private false', { private: false }, true),
+  schemaCase('root private not a boolean', { private: 'true' }, false),
+  schemaCase('root private null', { private: null }, false),
+  schemaCase('a property called "private"', { properties: { private: { type: 'boolean' } } }, true),
+  schemaCase('field-level private', { properties: { ssn: { private: true } } }, false),
+  schemaCase(
+    'field-level private, nested in a definition',
+    { definitions: { a: { properties: { b: { properties: { c: { private: true } } } } } } },
+    false,
+  ),
+  schemaCase(
+    'field-level private under a definition called "enum"',
+    { definitions: { enum: { properties: { s: { private: true } } } } },
+    false,
+  ),
+  schemaCase('private on items, not a property', { items: { private: true } }, true),
+  schemaCase(
+    'private on a definition, not a property',
+    { definitions: { a: { private: true } } },
+    true,
+  ),
+  schemaCase(
+    'private inside default, which is data',
+    { properties: { a: { default: { properties: { b: { private: true } } } } } },
+    true,
+  ),
+  schemaCase('pattern of 256', { pattern: 'a'.repeat(MAX_PATTERN_LENGTH) }, true),
+  schemaCase('pattern of 257', { pattern: LONG }, false),
+  schemaCase(
+    'pattern of 129 astral characters (258 UTF-16 code units)',
+    { pattern: EMOJI.repeat(129) },
+    false,
+  ),
+  schemaCase('patternProperties key of 257', { patternProperties: { [LONG]: {} } }, false),
+  schemaCase(
+    'pattern of 257 under a property called "type"',
+    { properties: { type: { type: 'string', pattern: LONG } } },
+    false,
+  ),
+  schemaCase('pattern of 257 inside enum, which is data', { enum: [{ pattern: LONG }] }, true),
+  schemaCase('pattern of 257 inside const, which is data', { const: { pattern: LONG } }, true),
+  schemaCase('pattern of 257 inside default, which is data', { default: { pattern: LONG } }, true),
+  schemaCase(
+    'pattern of 257 inside examples, which is data',
+    { examples: [{ pattern: LONG }] },
+    true,
+  ),
+  schemaCase('slug with a slash', {}, false, 'a/b'),
+  schemaCase('slug starting with "."', {}, false, '.t'),
+  schemaCase('empty slug', {}, false, ''),
+  schemaCase('slug over 128 bytes', {}, false, 't'.repeat(MAX_TYPE_BYTES + 1)),
+  // Section 5.1
+  schemaCase('not an object', true, false),
+  schemaCase('$schema draft-07', { $schema: 'http://json-schema.org/draft-07/schema#' }, true),
+  schemaCase(
+    '$schema draft-07 without "#"',
+    { $schema: 'http://json-schema.org/draft-07/schema' },
+    true,
+  ),
+  schemaCase('$schema 2020-12', { $schema: 'https://json-schema.org/draft/2020-12/schema' }, false),
+  schemaCase('$schema draft-04', { $schema: 'http://json-schema.org/draft-04/schema#' }, false),
+  schemaCase('invalid against the meta-schema: type', { type: 'text' }, false),
+  schemaCase('invalid against the meta-schema: required', { required: 'a' }, false),
+  schemaCase('a pattern that needs the u flag', { pattern: '^\\p{L}+$' }, true),
+  schemaCase('an invalid pattern', { pattern: '(' }, false),
+  schemaCase('a pattern invalid only with the u flag', { pattern: '\\a' }, false),
+  schemaCase(
+    'a patternProperties key invalid only with the u flag',
+    { patternProperties: { '\\a': {} } },
+    false,
+  ),
+  schemaCase(
+    '$ref to a definition',
+    { definitions: { a: { type: 'string' } }, properties: { x: { $ref: '#/definitions/a' } } },
+    true,
+  ),
+  schemaCase(
+    '$ref against the base URI',
+    {
+      definitions: { a: { type: 'string' } },
+      properties: { x: { $ref: 'https://schema.underlay.invalid/#/definitions/a' } },
+    },
+    true,
+  ),
+  schemaCase(
+    '$ref to an $id',
+    {
+      definitions: { a: { $id: 'a.json', type: 'string' } },
+      properties: { x: { $ref: 'a.json' } },
+    },
+    true,
+  ),
+  schemaCase(
+    '$ref to the draft-07 meta-schema',
+    { $ref: 'http://json-schema.org/draft-07/schema#' },
+    true,
+  ),
+  schemaCase('unresolvable $ref', { $ref: '#/definitions/missing' }, false),
+  schemaCase(
+    'unresolvable $ref to another document',
+    { properties: { x: { $ref: 'other.json' } } },
+    false,
+  ),
+]
 
 // --- Hashes ---------------------------------------------------------------------
 
@@ -384,6 +557,8 @@ const vectors = {
   constants: await import('../src/constants.js').then((m) => ({ ...m })),
   jcs: jcsCases,
   inputRules: inputRuleCases,
+  inputRuleRecipes,
+  schemaRules,
   recordHashes,
   schemaHashes,
   boundary: boundaryCases,
