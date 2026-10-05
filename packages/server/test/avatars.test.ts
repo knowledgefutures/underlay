@@ -76,14 +76,20 @@ function headers(o: Opts) {
   return hs
 }
 
-function upload(bytes: Uint8Array, type: string, o: Opts = { user: 'u1' }, name = 'logo') {
+async function upload(bytes: Uint8Array, type: string, o: Opts = { user: 'u1' }, name = 'logo') {
   const form = new FormData()
   form.append('avatar', new File([bytes as BlobPart], name, { type }))
+  // Sent as encoded bytes: when the route stops reading an oversize body, Node's
+  // FormData body stream (undici, Node 24.21) enqueues into the cancelled stream
+  // and throws an unhandled error.
+  const encoded = new Response(form)
+  const hs = headers(o)
+  hs.set('content-type', encoded.headers.get('content-type')!)
   return app.fetch(
     new Request('http://test/api/accounts/org/avatar', {
       method: 'POST',
-      headers: headers(o),
-      body: form,
+      headers: hs,
+      body: await encoded.arrayBuffer(),
     }),
   )
 }
