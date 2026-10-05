@@ -148,19 +148,27 @@ interface FieldProps {
   label: React.ReactNode
   htmlFor?: string
   hint?: React.ReactNode
+  /** What's wrong with the value, shown in place of the hint. */
+  error?: React.ReactNode
   className?: string
   children: React.ReactNode
 }
 
-/** A labeled form control with an optional hint line below. */
-export function Field({ label, htmlFor, hint, className, children }: FieldProps) {
+/** A labeled form control with an optional hint or error line below. */
+export function Field({ label, htmlFor, hint, error, className, children }: FieldProps) {
   return (
     <div className={className}>
       <label htmlFor={htmlFor} className="text-ink mb-1.5 block text-sm font-medium">
         {label}
       </label>
       {children}
-      {hint && <p className="text-ink-muted mt-1 text-xs">{hint}</p>}
+      {error ? (
+        <p className="mt-1 text-xs text-red-700" role="alert">
+          {error}
+        </p>
+      ) : (
+        hint && <p className="text-ink-muted mt-1 text-xs">{hint}</p>
+      )}
     </div>
   )
 }

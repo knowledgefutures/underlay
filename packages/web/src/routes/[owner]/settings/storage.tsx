@@ -50,13 +50,18 @@ const STATUS_STYLES: Record<Location['status'], string> = {
 }
 
 function describeCheck(name: string, check: CheckResult): string {
-  if (!check.ok) return `${name} failed its check: ${check.error ?? 'unknown error'}`
+  if (!check.ok) return `${name} failed its check. ${check.error ?? ''}`.trim()
   let text = `${name} passed its check: Underlay can write and read back.`
   if (check.publicRead) {
     text += ' Objects there can be read without credentials, so it can hold public records only.'
   }
   for (const w of check.warnings ?? []) text += ` ${w}`
   return text
+}
+
+interface Note {
+  variant: 'success' | 'error'
+  text: string
 }
 
 const EMPTY_FORM = {
@@ -83,6 +88,10 @@ export default function OwnerSettingsStorage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  /** The add form's outcome, shown in the form; `field` puts it under that input. */
+  const [addNote, setAddNote] = useState<(Note & { field?: string | undefined }) | null>(null)
+  /** A re-check's outcome, shown on that location. */
+  const [checkNote, setCheckNote] = useState<(Note & { id: string }) | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [defaultLocation, setDefaultLocation] = useState('')
@@ -96,6 +105,8 @@ export default function OwnerSettingsStorage() {
   function clearMessages() {
     setSuccess('')
     setError('')
+    setAddNote(null)
+    setCheckNote(null)
   }
 
   async function failed(res: Response, fallback: string) {
@@ -126,12 +137,21 @@ export default function OwnerSettingsStorage() {
           prefix: form.prefix.trim() || undefined,
         }),
       })
-      if (!res.ok) return failed(res, 'Failed to add the location.')
+      if (!res.ok) {
+        // A location whose check fails isn't added (422); the error says why.
+        const body = (await res.json().catch(() => ({}))) as { error?: string; field?: string }
+        setAddNote({
+          variant: 'error',
+          text: body.error ?? "Couldn't add the location.",
+          field: body.field,
+        })
+        if (body.field === 'endpoint') document.getElementById('locEndpoint')?.focus()
+        return
+      }
       const body = (await res.json()) as { location: Location; check: CheckResult }
       setLocations((prev) => [...prev, body.location])
       setForm(EMPTY_FORM)
-      if (body.check.ok) setSuccess(describeCheck(body.location.name, body.check))
-      else setError(describeCheck(body.location.name, body.check))
+      setAddNote({ variant: 'success', text: describeCheck(body.location.name, body.check) })
     } finally {
       setBusy('')
     }
@@ -145,11 +165,18 @@ export default function OwnerSettingsStorage() {
         method: 'POST',
         credentials: 'include',
       })
-      if (!res.ok) return failed(res, 'Check failed.')
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        setCheckNote({ id: loc.id, variant: 'error', text: body.error ?? 'The check failed.' })
+        return
+      }
       const body = (await res.json()) as { location: Location; check: CheckResult }
       setLocations((prev) => prev.map((l) => (l.id === loc.id ? body.location : l)))
-      if (body.check.ok) setSuccess(describeCheck(loc.name, body.check))
-      else setError(describeCheck(loc.name, body.check))
+      setCheckNote({
+        id: loc.id,
+        variant: body.check.ok ? 'success' : 'error',
+        text: describeCheck(loc.name, body.check),
+      })
     } finally {
       setBusy('')
     }
@@ -279,8 +306,13 @@ export default function OwnerSettingsStorage() {
                           {loc.region && <Badge>{loc.region}</Badge>}
                           {loc.verifiedAt && <span>checked {formatDateTime(loc.verifiedAt)}</span>}
                         </div>
-                        {loc.lastError && (
+                        {loc.lastError && checkNote?.id !== loc.id && (
                           <p className="mt-1 text-xs break-words text-red-700">{loc.lastError}</p>
+                        )}
+                        {checkNote?.id === loc.id && (
+                          <Alert variant={checkNote.variant} className="mt-2">
+                            {checkNote.text}
+                          </Alert>
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-3 text-xs">
@@ -341,13 +373,18 @@ export default function OwnerSettingsStorage() {
                     required
                   />
                 </Field>
-                <Field label="Endpoint" htmlFor="locEndpoint">
+                <Field
+                  label="Endpoint"
+                  htmlFor="locEndpoint"
+                  error={addNote?.field === 'endpoint' ? addNote.text : undefined}
+                >
                   <Input
                     id="locEndpoint"
                     type="url"
                     value={form.endpoint}
                     onChange={field('endpoint')}
                     placeholder="https://s3.us-east-1.amazonaws.com"
+                    aria-invalid={addNote?.field === 'endpoint' || undefined}
                     required
                   />
                 </Field>
@@ -404,9 +441,11 @@ export default function OwnerSettingsStorage() {
               </div>
               <p className="text-ink-muted text-xs">
                 Adding a location checks it: Underlay writes a small object under the prefix, reads
-                it back, and tests whether the bucket can be read without credentials. The region
-                comes from the endpoint and the bucket itself.
+                it back, and tests whether the bucket can be read without credentials. A location
+                that fails the check isn't added. The region comes from the endpoint and the bucket
+                itself.
               </p>
+              {addNote && !addNote.field && <Alert variant={addNote.variant}>{addNote.text}</Alert>}
               <Button type="submit" disabled={busy !== ''}>
                 {busy === 'add' ? 'Adding and checking…' : 'Add location'}
               </Button>

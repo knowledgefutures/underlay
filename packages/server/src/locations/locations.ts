@@ -15,7 +15,14 @@
  *   tries an anonymous read: a location that serves objects to anyone is
  *   flagged public, and may hold public sets only.
  */
-import { type LifecycleRule, PrefixedStore, S3Store, type Store, s3Store } from '@underlay/protocol'
+import {
+  type LifecycleRule,
+  PrefixedStore,
+  S3Error,
+  S3Store,
+  type Store,
+  s3Store,
+} from '@underlay/protocol'
 import { and, asc, eq, isNull, lt, ne, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -153,16 +160,18 @@ registerJob('locations.check', async (job, ports) => {
 
 /** Validate a customer endpoint URL: a plain https origin on a public host. */
 export function checkEndpoint(endpoint: unknown, allowLocal = false): string | null {
-  if (typeof endpoint !== 'string') return '"endpoint" must be a URL'
+  const example = 'like https://s3.us-east-1.amazonaws.com'
+  if (typeof endpoint !== 'string' || !endpoint.trim()) return `Enter the endpoint, ${example}.`
   let u: URL
   try {
     u = new URL(endpoint)
   } catch {
-    return '"endpoint" must be a URL'
+    return `The endpoint isn't a web address. Enter one ${example}.`
   }
   if (u.protocol !== 'https:' && !(allowLocal && u.protocol === 'http:'))
-    return '"endpoint" must be https'
-  if (u.username || u.password || u.search || u.hash) return '"endpoint" must be a plain origin'
+    return 'The endpoint must start with https://.'
+  if (u.username || u.password || u.search || u.hash || u.pathname.replace(/\/+$/, ''))
+    return `Enter just the address, ${example}, with no path or login.`
   if (allowLocal) return null
   const host = u.hostname
     .replace(/^\[|\]$/g, '')
@@ -176,27 +185,53 @@ export function checkEndpoint(endpoint: unknown, allowLocal = false): string | n
     !host.includes('.') ||
     (ipKind(host) && isPrivateIp(host))
   ) {
-    return '"endpoint" must be a public host'
+    return 'The endpoint must be a public address, not localhost or a private network.'
   }
   return null
 }
 
 /**
- * The signing region an endpoint implies: AWS and most S3-compatible hosts name
- * it (`s3.eu-west-2.amazonaws.com`, `s3.us-west-004.backblazeb2.com`), R2 signs
- * with `auto`, and anything else gets us-east-1, which S3-compatible servers
- * accept by default. The location check corrects it from the bucket's answer.
+ * The signing region an endpoint names: AWS and most S3-compatible hosts do
+ * (`s3.eu-west-2.amazonaws.com`, `s3.us-west-004.backblazeb2.com`), R2 signs
+ * with `auto`, and AWS's global endpoint is us-east-1. Null for other hosts.
  */
-export function regionFor(endpoint: string): string {
+export function namedRegion(endpoint: string): string | null {
   let host: string
   try {
     host = new URL(endpoint).hostname.toLowerCase()
   } catch {
-    return 'us-east-1'
+    return null
   }
   if (host.endsWith('.r2.cloudflarestorage.com')) return 'auto'
+  if (host === 's3.amazonaws.com' || host.endsWith('.s3.amazonaws.com')) return 'us-east-1'
   const named = /(?:^|\.)s3[.-](?:dualstack\.)?([a-z]{2}(?:-[a-z]+)+-\d+)\./.exec(host)
-  return named?.[1] ?? 'us-east-1'
+  return named?.[1] ?? null
+}
+
+/**
+ * The region to sign with: the one the endpoint names, else us-east-1, which
+ * S3-compatible servers accept by default. The location check corrects it
+ * from the bucket's answer.
+ */
+export const regionFor = (endpoint: string) => namedRegion(endpoint) ?? 'us-east-1'
+
+/** A failed check in words for the person who set the location up. */
+export function explainCheckError(err: unknown, loc: Pick<LocationRow, 'endpoint' | 'bucket'>) {
+  let host = loc.endpoint ?? ''
+  try {
+    host = new URL(host).host
+  } catch {}
+  if (err instanceof LocationError) return err.message
+  if (err instanceof S3Error) {
+    // Cloudflare answers 530 (error 1016) for a host with no DNS record.
+    if (err.status === 530) return `Couldn't reach ${host}. Check the endpoint.`
+    if (err.status === 403)
+      return `The bucket refused these keys. Check the access key, the secret and the bucket's permissions. (${err.message})`
+    if (err.status === 404) return `No bucket named "${loc.bucket}" at ${host}.`
+    return err.message
+  }
+  // fetch itself failed: DNS, refused connection, TLS, timeout.
+  return `Couldn't reach ${host}: ${(err as Error).message}`
 }
 
 /**
@@ -310,7 +345,7 @@ export async function checkLocation(ports: Ports, loc: LocationRow): Promise<Che
     if (lifecycle.error) throw new LocationError(lifecycle.error)
     result.ok = true
   } catch (err) {
-    result.error = (err as Error).message.slice(0, 500)
+    result.error = explainCheckError(err, loc).slice(0, 500)
   }
   await ports.db
     .update(schema.storageLocations)

@@ -258,10 +258,19 @@ describe('bucket mirrors', () => {
     })
     expect(pub.status).toBe(201)
 
+    // A location whose first check fails isn't kept, and the answer says why.
     const f = await fake()
     const broken = await addLocation(h, user, f, 'x', { bucket: 'no-such-bucket' })
+    expect(broken.status).toBe(422)
     expect(broken.body.check.ok).toBe(false)
-    expect(broken.body.location.status).toBe('broken')
+    expect((broken.body as unknown as { error: string }).error).toMatch(
+      /^No bucket named "no-such-bucket" at /,
+    )
+    const rows = await h.ports.db
+      .select()
+      .from(schema.storageLocations)
+      .where(eq(schema.storageLocations.bucket, 'no-such-bucket'))
+    expect(rows).toEqual([])
   })
 
   it('takes the region from the endpoint, and from the bucket when that is wrong', async () => {
@@ -275,11 +284,13 @@ describe('bucket mirrors', () => {
       .from(schema.storageLocations)
       .where(eq(schema.storageLocations.id, loc.body.location.id))
     expect(row!.region).toBe('eu-west-2')
-    // A region given in the body is ignored.
+    // A region given in the body is ignored; with no region named, none is shown.
     const named = await addLocation(h, user, await fake(), 'n', { region: 'mars-1' })
-    expect((named.body.location as { region?: string }).region).toBe('us-east-1')
+    expect((named.body.location as { region?: string }).region).toBeNull()
 
-    const { regionFor, checkEndpoint } = await import('../src/locations/locations.js')
+    const { regionFor, namedRegion, checkEndpoint } = await import('../src/locations/locations.js')
+    expect(namedRegion('https://minio.example.org')).toBeNull()
+    expect(namedRegion('https://s3.amazonaws.com')).toBe('us-east-1')
     expect(regionFor('https://s3.eu-west-2.amazonaws.com')).toBe('eu-west-2')
     expect(regionFor('https://s3-ap-southeast-1.amazonaws.com')).toBe('ap-southeast-1')
     expect(regionFor('https://s3.dualstack.us-west-2.amazonaws.com')).toBe('us-west-2')
@@ -298,8 +309,13 @@ describe('bucket mirrors', () => {
       'https://169.254.169.254',
       'https://minio.internal',
       'https://minio',
+      'https://s3.example.org/bucket',
+      'https://key:secret@s3.example.org',
     ])
       expect(checkEndpoint(bad), bad).not.toBeNull()
+    // Messages are for people.
+    expect(checkEndpoint('http://s3.example.org')).toBe('The endpoint must start with https://.')
+    expect(checkEndpoint('https://localhost')).toMatch(/must be a public address/)
     expect(checkEndpoint('http://127.0.0.1:9000', true)).toBeNull()
   })
 
@@ -311,15 +327,17 @@ describe('bucket mirrors', () => {
     const check = async (xml: string | null | 'denied', prefix: string) => {
       f.lifecycle.xml = xml
       return (await addLocation(h, user, f, `l${Math.random()}`, { prefix })).body as unknown as {
+        error?: string
         check: { ok: boolean; error: string | null; warnings: string[] }
         location: { status: string; lastError: string | null }
       }
     }
-    // Expires everything: mirrors' objects would be deleted.
+    // Expires everything: mirrors' objects would be deleted, so it isn't added.
     const all = await check(rule('<Filter></Filter><Expiration><Days>30</Days></Expiration>'), 'ul')
     expect(all.check.ok).toBe(false)
     expect(all.check.error).toMatch(/deletes objects under ul\//)
-    expect(all.location.status).toBe('broken')
+    expect(all.error).toBe(all.check.error)
+    expect(all.location).toBeUndefined()
     // Expires another prefix, or only tagged objects: fine.
     const other = await check(
       rule('<Filter><Prefix>logs/</Prefix></Filter><Expiration><Days>1</Days></Expiration>'),

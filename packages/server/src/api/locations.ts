@@ -5,6 +5,7 @@
  *   GET    /api/orgs/:org/locations
  *   POST   /api/orgs/:org/locations                 {name, endpoint, bucket, prefix?,
  *                                                    accessKeyId, secretAccessKey}
+ *                                                    (422 and not kept when its first check fails)
  *   POST   /api/orgs/:org/locations/:id/check
  *   DELETE /api/orgs/:org/locations/:id             (its placements go too; bucket contents stay)
  *   GET    /api/orgs/:org/placements                org defaults, inherited by every collection
@@ -26,7 +27,7 @@ import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
 import {
   checkEndpoint,
-  regionFor,
+  namedRegion,
   checkLocation,
   encryptCredentials,
   type LocationRow,
@@ -125,13 +126,13 @@ export function locationRoutes() {
       return jsonError(c, 409, 'This deployment has no LOCATION_KEY; locations are unavailable')
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     const endpointError = checkEndpoint(body.endpoint, allowInsecure(c))
-    if (endpointError) return jsonError(c, 400, endpointError)
+    if (endpointError) return jsonError(c, 400, endpointError, { field: 'endpoint' })
     const name = str(body.name, 200)
     const bucket = str(body.bucket, 255)
     const accessKeyId = str(body.accessKeyId)
     const secretAccessKey = str(body.secretAccessKey)
     if (!name || !bucket || !accessKeyId || !secretAccessKey) {
-      return jsonError(c, 400, 'name, bucket, accessKeyId and secretAccessKey are required')
+      return jsonError(c, 400, 'Enter a name, the bucket, the access key and the secret.')
     }
     const prefix = (str(body.prefix, 512) ?? '').replace(/^\/+|\/+$/g, '')
     const id = crypto.randomUUID()
@@ -142,14 +143,19 @@ export function locationRoutes() {
       kind: 's3',
       name,
       endpoint,
-      // The check corrects it if the bucket says it lives elsewhere.
-      region: regionFor(endpoint),
+      // Null signs as us-east-1; the check fills it in when the bucket names its region.
+      region: namedRegion(endpoint),
       bucket,
       prefix,
       credentials: await encryptCredentials(ports, id, { accessKeyId, secretAccessKey }),
     })
     const loc = (await orgLocation(c, org.id, id))!
     const check = await checkLocation(ports, loc)
+    // A location exists only once it has worked; Re-check is for ones that break later.
+    if (!check.ok) {
+      await ports.db.delete(schema.storageLocations).where(eq(schema.storageLocations.id, id))
+      return jsonError(c, 422, check.error ?? 'The location check failed.', { check })
+    }
     return c.json({ location: locationView((await orgLocation(c, org.id, id))!), check }, 201)
   })
 
