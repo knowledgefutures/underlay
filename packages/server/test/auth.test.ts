@@ -60,6 +60,15 @@ describe('better-auth on SQLite', () => {
     expect(
       (await call('/api/collections/org/authors/push', read.key, { schemas: { Author } })).status,
     ).toBe(403)
+    // The scheme is case-insensitive.
+    const lower = await app.fetch(
+      new Request('http://test/api/collections/org/authors/push', {
+        method: 'POST',
+        headers: { authorization: `bearer  ${write.key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ schemas: { Author } }),
+      }),
+    )
+    expect(lower.status).toBe(200)
     expect(
       (await call('/api/collections/org/authors/push', 'ul_bogus', { schemas: { Author } })).status,
     ).toBe(401)

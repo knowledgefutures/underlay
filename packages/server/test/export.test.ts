@@ -76,5 +76,11 @@ describe('export', () => {
     execFileSync('tar', ['-xf', '../b.tar'], { cwd: join(dir, 'b') })
     const all = (await readFile(join(dir, 'b/records/Doc.ndjson'), 'utf8')).trim().split('\n')
     expect(all.length).toBe(2)
+
+    // An unknown format is refused, naming the ones there are.
+    const zip = await h.request(`${base}/export?format=zip`)
+    expect(zip.status).toBe(400)
+    expect(((await zip.json()) as { error: string }).error).toMatch(/tar or tar\.gz/)
+    expect((await h.request(`${base}/export?format=tar.gz`)).status).toBe(200)
   })
 })

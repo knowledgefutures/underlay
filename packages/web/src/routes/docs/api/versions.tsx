@@ -344,6 +344,11 @@ export default function DocsApiVersions() {
           <code>{commitRes}</code>
         </pre>
         <p>
+          <code>recordCount</code> here is every record in the version, private ones included: the
+          pusher is a member. Reads of the collection and its versions count what the caller may
+          see, so a public reader&rsquo;s count leaves private records out.
+        </p>
+        <p>
           The semver follows from what changed against the base: <strong>major</strong> when a type
           was added or removed or a schema changed, otherwise <strong>minor</strong> when any record
           was added, removed or changed (moving between public and private counts), otherwise{' '}
@@ -642,8 +647,8 @@ export default function DocsApiVersions() {
           <code>X-Underlay-Record-Count</code> tells you how many lines to expect — the count for{' '}
           <em>this</em> request, privacy-filtered for your access level and scoped to{' '}
           <code>?type=</code> if you passed one, so the comparison is exact. (Don&rsquo;t compare
-          against the version&rsquo;s <code>recordCount</code>: that is the full total and counts
-          private records you may not be receiving.) If you receive fewer, resume with{' '}
+          against the version&rsquo;s <code>recordCount</code>: it covers every type, and for
+          members it counts private records too.) If you receive fewer, resume with{' '}
           <code>?after=</code> set to the id of the last complete line you parsed — don't start
           over.
         </p>

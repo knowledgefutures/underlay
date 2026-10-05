@@ -17,6 +17,7 @@ const browseRes = `[
 const createReq = `{
   "slug": "my-dataset",
   "name": "My Dataset",
+  "description": "What the collection holds",
   "public": true
 }`
 
@@ -37,6 +38,7 @@ const getRes = `{
   "ownerName": "Knowledge Futures",
   "createdAt": "2026-01-15T00:00:00.000Z",
   "updatedAt": "2026-04-01T00:00:00.000Z",
+  "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0",
   "latestVersion": {
     "semver": "v3.2.0",
     "recordCount": 4521,
@@ -157,6 +159,9 @@ export default function DocsApiCollections() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{createReq}</code>
         </pre>
+        <p>
+          <code>description</code> is optional. It shows until a version&rsquo;s metadata gives one.
+        </p>
         <h3>
           Response <span className="text-ink-muted font-normal">201</span>
         </h3>
@@ -177,6 +182,12 @@ export default function DocsApiCollections() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{getRes}</code>
         </pre>
+        <p>
+          Counts are for the caller: <code>recordCount</code>, <code>fileCount</code> and{' '}
+          <code>totalBytes</code> include private records and files for the collection&rsquo;s
+          members, and leave them out for everyone else. <code>ark</code> is null when the
+          collection&rsquo;s ARK is off.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />

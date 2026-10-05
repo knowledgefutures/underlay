@@ -36,6 +36,9 @@ export function exportRoutes() {
   app.get('/:owner/:slug/export', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    const format = c.req.query('format') ?? 'tar.gz'
+    if (format !== 'tar' && format !== 'tar.gz')
+      return jsonError(c, 400, `Unknown format "${format.slice(0, 40)}": use tar or tar.gz`)
     const ports = c.var.ports
     const v = await findVersion(
       ports.db,
@@ -47,7 +50,7 @@ export function exportRoutes() {
     const repo = await ports.stores.forCollection(access.collection.id)
     const denied = await deniedHashes(c.var.ports.db)
     const view = await loadView(repo, v, access.isMember, denied)
-    const gzip = c.req.query('format') !== 'tar'
+    const gzip = format === 'tar.gz'
 
     // Each type's NDJSON size and count, from its tree totals unless records are withheld.
     const sizes = new Map<string, { count: number; bytes: number }>()

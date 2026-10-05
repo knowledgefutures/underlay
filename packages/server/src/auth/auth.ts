@@ -344,7 +344,9 @@ export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
       req.method === 'GET' || req.method === 'HEAD'
         ? new URL(req.url).searchParams.get('token')
         : null
-    const key = bearer?.startsWith('Bearer ') ? bearer.slice(7) : queryToken
+    // The scheme is case-insensitive (RFC 9110 §11.1).
+    const scheme = bearer && /^bearer\s+/i.exec(bearer)
+    const key = scheme ? bearer.slice(scheme[0].length).trim() : queryToken
     if (key) {
       const principal = await verifyKey(auth, ports, key)
       if (!principal) throw new InvalidKeyError()
