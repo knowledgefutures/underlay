@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
-import { docSections } from '~/lib/docs-pages'
+import { docSections, headingSlug } from '~/lib/docs-pages'
 
 const docs = docSections.flatMap((s) => s.pages)
 
@@ -22,10 +22,7 @@ export default function DocsSearch() {
       }
       for (const h of headingMatches) {
         if (!titleMatch || headingMatches.length > 0) {
-          const slug = h
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/(^-|-$)/g, '')
+          const slug = headingSlug(h)
           matches.push({ title: doc.title, href: `${doc.href}#${slug}`, context: h })
         }
       }

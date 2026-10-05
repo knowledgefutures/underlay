@@ -204,7 +204,30 @@ typeCounts, baseSemver, pushedBy`.
   - Non-owners get the public set's real contents, and its counts are exact, not upper bounds.
   - A version's `hash` is the v2 version hash for everyone. There's no separate public hash.
 - **Field-level privacy is gone**, so nothing is stripped from records.
-- **Manifest `files` and version `/files`** come from the set's file tree. They're
-  privacy-correct and paginated.
+- **Manifest `files` and version `/files`** come from the set's file tree and are
+  privacy-correct. The manifest lists files on its first page only, at most 25,000, then
+  `filesTruncated: true`; `/files` returns at most 10,000, with `references` always `[]` and a
+  `referenceCount`.
 - **Inconsistent v1 fields** (`typeCounts` array vs object, `labels` list vs objects) are kept
   where the UI depends on them.
+- **Auth**: an invalid `?token=` is a 401, as a Bearer key is; it no longer falls back to
+  anonymous. Org-owned keys spend their org's rate budget.
+- **Rate limits**: no `X-RateLimit-*` headers; a 429 has `Retry-After: 60`. Anonymous pages
+  (ARK resolution and `/api/auth/*` included) have their own budget of 600 a minute per IP, and
+  expensive reads cost more than one unit (`packages/server/src/lib/limits.ts`).
+- **Version params** also accept a `ulv2:` version hash.
+- **`/api/context`**: no `mirrorConfig`; adds `siteHost`. Server-rendered pages call the API
+  in-process on both runtimes.
+- **Records**: no per-record `ark`; members' private records carry `private: true`.
+- **records.ndjson**: no server-side gzip; `after` applies only with `?type=`.
+  `records.ndjson.gz?type=` is new (one type's public records as stored).
+- **Manifest**: the default limit is 10,000 and the maximum 25,000; no `truncated` field; delta
+  `removed` entries are `{id, type, hash}`.
+- **Provenance**: covers the caller's own organizations' collections as well as public ones,
+  adds `recordHash`, and is capped at 300 presences and 100 versions per collection.
+- **`POST /api/records/batch`**: 1 to 100 hashes.
+- **Export**: `?format=tar|tar.gz`; `manifest.json` adds `files_withheld`, and `README.md` is
+  included when the metadata has a readme.
+- **Health**: `{ok: true, version: 2, deployment, time}`.
+- **Agent links** (`/agent/<key>`) aren't ported: no route serves them, though the share panel
+  still builds the URL.

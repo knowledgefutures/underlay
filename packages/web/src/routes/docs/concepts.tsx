@@ -38,7 +38,7 @@ export default function DocsConcepts() {
       </p>
       <ul>
         <li>
-          A <strong>JSON Schema</strong> describing the structure of the records
+          A <strong>JSON Schema</strong> for each record type
         </li>
         <li>
           A set of <strong>records</strong> (the actual data)
@@ -57,20 +57,22 @@ export default function DocsConcepts() {
         changed:
       </p>
       <ul>
-        <li>Schema changes → major bump</li>
-        <li>Record changes → minor bump</li>
+        <li>A type added or removed, or a schema changed → major bump</li>
+        <li>Records added, removed or changed (including made private or public) → minor bump</li>
         <li>Metadata or file changes only (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
-        Each version also has a <strong>hash</strong>, a SHA-256 digest of the canonical
-        representation of the schema, records, and file references. Two versions with the same hash
-        have identical content.
+        Each version also has a <strong>hash</strong>: <code>ulv2:</code> followed by the SHA-256 of
+        the version root, which covers the metadata, every public schema, record and file, and a
+        salted commitment to the private ones. Two versions with the same hash have identical
+        content.
       </p>
 
       <h2>Record</h2>
       <p>
-        A <strong>record</strong> is a flat JSON object with an <code>id</code>, a <code>type</code>
-        , and a <code>data</code> payload. Records are the rows of your data.
+        A <strong>record</strong> has an <code>id</code>, a <code>type</code> and a{' '}
+        <code>data</code> payload. Records are the rows of your data. Within a version, a type and
+        an id identify one record.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{recordExample}</code>
@@ -80,7 +82,10 @@ export default function DocsConcepts() {
         hash of its canonical JSON (<code>{'{"id":...,"type":...,"data":...}'}</code>). This means:
       </p>
       <ul>
-        <li>The same record appearing in multiple collections is stored only once.</li>
+        <li>
+          Records are stored in content-addressed trees, so versions share every part of the data
+          they have in common.
+        </li>
         <li>
           Pushing a new version only transfers what changed (see{' '}
           <Link to="/docs/protocol/push-and-pull" className="text-link underline">
@@ -89,8 +94,8 @@ export default function DocsConcepts() {
           ).
         </li>
         <li>
-          Any record can be traced back to every collection and version that includes it (
-          <Link to="/docs/protocol/push-and-pull#pull" className="text-link underline">
+          A record&rsquo;s hash finds the collections and versions you can read that include it (
+          <Link to="/docs/api/records" className="text-link underline">
             provenance
           </Link>
           ).
@@ -102,14 +107,15 @@ export default function DocsConcepts() {
         and records together.
       </p>
       <p>
-        Records are validated against the schema on push. If a record contains fields not defined in
-        the schema, the push is rejected with a 422 listing the extra fields. Set{' '}
-        <code>strip_unknown_fields</code> to accept stripping them automatically.
+        Records are validated against their type&rsquo;s schema as they are uploaded. If a record
+        has top-level fields the schema&rsquo;s <code>properties</code> don&rsquo;t list, the upload
+        is refused with a 422 listing them. Set <code>strip_unknown_fields</code> when opening the
+        push to drop them instead.
       </p>
       <p>
-        Binary data is referenced via <code>{fileRef}</code>, a pointer to a content-addressed file
-        in the registry. The wire format for records is JSONL, one record per line, independently
-        hashable and streamable.
+        Binary data is referenced via <code>{fileRef}</code>, a pointer to a content-addressed file.
+        The wire format for records is NDJSON, one record per line, independently hashable and
+        streamable.
       </p>
 
       <h2>File</h2>
@@ -119,15 +125,17 @@ export default function DocsConcepts() {
         identical files are stored only once regardless of how many records reference them.
       </p>
       <p>
-        Files are uploaded before pushing a version. When you push, the registry verifies that every{' '}
-        <code>$file</code> reference in your records points to an existing file.
+        Files are uploaded before the commit that references them. The commit is refused unless
+        every <code>$file</code> reference in your records points to a file this collection holds:
+        uploaded to it, or already in one of its versions.
       </p>
 
       <h2>Accounts</h2>
       <p>Underlay has two account types:</p>
       <ul>
         <li>
-          <strong>Users</strong>: individual accounts with email/password login
+          <strong>Users</strong>: people, who sign in with KF Auth. Each user has a personal account
+          that can own collections.
         </li>
         <li>
           <strong>Organizations</strong>: group accounts with members who have roles (owner, admin,
@@ -135,16 +143,18 @@ export default function DocsConcepts() {
         </li>
       </ul>
       <p>
-        Both can own collections. API keys are scoped to an account and optionally to specific
-        collections, with permission levels <code>read</code> or <code>write</code> (
-        <code>admin</code> is not grantable through the API). A collection-scoped key is confined to
-        those collections and is refused on account and organization endpoints.
+        API keys belong to a user or an organization and may be confined to some collections. A key
+        has the scope <code>read</code>, <code>write</code> or <code>admin</code>, and never exceeds
+        its holder&rsquo;s role: <code>read</code> and <code>write</code> keys act as a member, and
+        an <code>admin</code> key keeps an owner&rsquo;s or admin&rsquo;s powers. A
+        collection-scoped key is refused on account and organization endpoints.
       </p>
 
       <h2>Privacy &amp; Visibility</h2>
       <p>
-        Underlay supports fine-grained privacy at three levels, allowing you to store sensitive data
-        alongside public data in the same collection.
+        Underlay has privacy at three levels, so private data can sit alongside public data in the
+        same collection. Each version has a public set and a private set; members of the owning
+        organization read both, everyone else the public set.
       </p>
 
       <h3>Collection-level</h3>
@@ -153,16 +163,16 @@ export default function DocsConcepts() {
         <strong>private</strong> (visible only to the owner and org members).
       </p>
       <p>
-        A published version never changes, so anonymous reads of it are cached for ten minutes.
-        Making a collection private can therefore take up to about ten minutes to reach every
-        reader; making it public takes effect within seconds.
+        A published version never changes, so anonymous reads of it are cached for up to about
+        eleven minutes. Making a collection private can therefore take that long to reach every
+        reader; making it public takes effect at once.
       </p>
 
       <h3>Type-level</h3>
       <p>
         Mark an entire record type as private in the schema by adding <code>"private": true</code>{' '}
-        to the type definition. All records of that type are hidden from public readers, and the
-        type is stripped from the schema response.
+        at the root of the type&rsquo;s schema. All records of that type are hidden from public
+        readers, and the type is absent from every read, schemas included.
       </p>
 
       <h3>Record-level</h3>
@@ -174,8 +184,8 @@ export default function DocsConcepts() {
         <code>{'{"id": "pub-001", "type": "Publication", "data": {...}, "private": true}'}</code>
       </pre>
       <p>
-        The record is dropped entirely from listings, manifests, diffs, exports and the NDJSON
-        stream for non-members; members of the owning org still see it.
+        The record is absent from listings, manifests, diffs, exports and the NDJSON stream for
+        non-members; members of the owning org still see it.
       </p>
       <p>
         <strong>Privacy belongs to the version, not the record.</strong> A record keeps its set from

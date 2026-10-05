@@ -9,28 +9,32 @@ A working directory holds a local repository in `.underlay/`: a repository in th
 gives the registry the same trees.
 
 ```
-underlay init | clone <url> <owner/slug> [dir] [--token]
+underlay init [dir] | clone <url> <owner/slug> [dir] [--token]
 underlay schema-set <file>        stage the type set ({type: schema})
-underlay add <file>               stage records (NDJSON {id, type, data, private?})
+underlay add <file> [--strip-unknown-fields]
+                                  stage records (NDJSON {id, type, data, private?})
 underlay rm <type> <ids…>         stage deletes
 underlay meta-set <file> | --clear
 underlay file add <paths…>        store files records reference ({"$file":"sha256:…"})
 underlay commit -m <message>
 underlay status | log | diff <from> <to>
+underlay fsck [--files]           verify the local repository
 underlay remote add <name> <url> -c <owner/slug> [-t <token>] | remove | list
-underlay pull [remote] [--force]
+underlay pull [remote] [--force]  remote defaults to origin
 underlay push [remote]
 ```
 
 - **pull** verifies the registry's signed log after what was last seen, then receives the newest
   version as a pack against the last synced one; every tree is re-derived before it's accepted.
-  With a token it fetches the private sets the token can read.
+  With a token it asks for the private sets too (`sets=all`), and falls back to the public sets
+  if the token can't read them.
 - **push** sends the local changes since the last sync as a delta push (upserts with their set,
   and deletes), uploads the files they need, and then requires the registry's new version to be
   the local one: the same hash, or, when the registry's private salt differs from a new local
-  repository's, the same records, files and metadata, checked by pulling it back.
+  repository's, the same records, files and metadata, checked by pulling it back. It refuses
+  while the registry has versions not yet pulled.
 - **Privacy** is carried: `private: true` on a record puts it in the private set locally and on
   the registry, and private types (`"private": true` in the schema) are private throughout.
 
 Before publishing: the npm name `@underlay/cli` belongs to a 2023 package from the earlier
-Underlay project, so publishing needs that account, a version above `0.0.1`, or another name.
+Underlay project, so publishing needs that account or another name.

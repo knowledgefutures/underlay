@@ -2,177 +2,241 @@ import { Link } from 'react-router'
 
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
-const delta = `# 1. Open a session against the version you started from (null for the first)
-POST /api/collections/:owner/:slug/push
-{
-  "base": "v1.2.0",
-  "schemas": { "Publication": { ... } },      // the full type set; omit to keep the base's
-  "metadata_patch": { "readme": "# ..." },    // or "metadata": {...} to replace it
-  "files": { "add": ["9f86d0..."] },          // hex hashes the new records reference
-  "message": "Weekly update"
-}
-# -> { "session_id": "...", "base": "v1.2.0", "needed_files": ["9f86d0..."], "expires_at": "...",
-#      "limits": { "batch_bytes": 16777216, "batch_lines": 10000, ... } }
+const endpoints = `POST   <collection>/push                  open a session
+POST   <collection>/push/<sid>/records    upload records (NDJSON)
+POST   <collection>/push/<sid>/deletes    upload deletes (NDJSON)
+PUT    <collection>/files/<fileHash>      upload a file
+POST   <collection>/push/<sid>/commit     commit (?async=true for the background)
+GET    <collection>/push/<sid>            session status
+DELETE <collection>/push/<sid>            abandon the session`
 
-PUT /api/collections/:owner/:slug/files/9f86d0...           # each needed file's bytes
+const exchange = `POST <collection>/push
+{"base": "v1.2.0", "schemas": {"Publication": {...}}, "metadata_patch": {"readme": "..."},
+ "files": {"add": ["9f86d0..."]}, "message": "Weekly update"}
+→ 200 {"session_id": "...", "base": "v1.2.0", "needed_files": ["9f86d0..."],
+       "expires_at": "...", "limits": {"open_bytes": ..., "batch_bytes": ..., "batch_lines": ...,
+       "session_idle_seconds": ..., "open_sessions": ..., "file_bytes": ...}}
 
-# 2. Upload what changed: upserts, then deletes (NDJSON, repeatable)
-POST /api/collections/:owner/:slug/push/:sid/records
-{"id":"pub-004","type":"Publication","data":{"title":"..."}}
-{"id":"pub-005","type":"Publication","data":{"title":"..."},"private":true}
-# -> { "received": 2 }
+PUT <collection>/files/9f86d0...                       (file bytes)
+→ 201
 
-POST /api/collections/:owner/:slug/push/:sid/deletes
+POST <collection>/push/<sid>/records
+{"id":"pub-004","type":"Publication","data":{...}}
+{"id":"pub-005","type":"Publication","data":{...},"private":true}
+→ 200 {"received": 2}
+
+POST <collection>/push/<sid>/deletes
 {"type":"Publication","id":"pub-003"}
+→ 200 {"received": 1}
 
-# 3. Commit
-POST /api/collections/:owner/:slug/push/:sid/commit
-# -> 201 { "semver": "v1.3.0", "hash": "ulv2:...", "recordCount": 4, "fileCount": 1, "changes": {...} }`
+POST <collection>/push/<sid>/commit
+→ 201 {"semver": "v1.3.0", "hash": "ulv2:...", "recordCount": 4, "fileCount": 1,
+       "changes": {"added": 2, "removed": 1, "updated": 0}}
+→ 202 {"session_id": "...", "status": "committing"}         (background commit)`
 
-const asyncCommit = `POST /api/collections/:owner/:slug/push/:sid/commit?async=true
-# -> 202 { "session_id": "...", "status": "committing" }
-
-GET /api/collections/:owner/:slug/push/:sid
-# -> { "status": "committed", "result": { "semver": "v1.3.0", "hash": "ulv2:...", ... } }`
-
-const noCopy = `# 1. The latest version's records, without bodies (paged: repeat with ?cursor=nextCursor)
-GET /api/collections/:owner/:slug/versions/latest/manifest
-# -> { "semver": "v1.2.0", "records": [{ "id": "pub-001", "type": "Publication", "hash": "...",
-#      "private"?: true }, ...], "pagination": { "hasMore": false, "nextCursor": null } }
-
-# 2. Locally: hash each current record, and compare by (type, id), hash and privacy
-#    new, changed or moving between sets  -> upsert
-#    in the manifest, gone from your data -> delete
-
-# 3. Delta push against that version
-POST /api/collections/:owner/:slug/push   { "base": "v1.2.0", ... }`
-
-const pull = `# The log, with the signing keys, after the last entry you have
-GET /api/collections/:owner/:slug/log?after=<seq>
-
-# A pack of what version :n has that your base doesn't (sets=all needs membership)
-GET /api/collections/:owner/:slug/versions/:n/pack?base=<n>&sets=public
-
-# Or read through the API
-GET /api/collections/:owner/:slug/versions/:n/records.ndjson.gz   # the whole version
-GET /api/collections/:owner/:slug/versions/:n/manifest?since=<n>  # what changed
-GET /api/collections/:owner/:slug/versions/:n/diff?from=<n>
-GET /api/records/:hash/provenance                                 # every version holding a record`
+const openMembers: [string, string][] = [
+  [
+    'base',
+    'The semver of the version the changes are against. If it is not the head, the server MUST answer 409 with currentVersion. null or absent: the head at opening.',
+  ],
+  [
+    'schemas',
+    'The complete type set, slug → schema. Replaces the base’s; an omitted type is removed with its records. Absent: the base’s type set.',
+  ],
+  ['metadata', 'Replaces the base’s metadata. An object or null.'],
+  [
+    'metadata_patch',
+    'An object whose top-level members are merged into the base’s metadata. Ignored if metadata is present.',
+  ],
+  [
+    'files',
+    '{"add": [fileHash, …], "remove": [fileHash, …]}: files declared or removed beyond those records reference.',
+  ],
+  ['message, app_id, actor_id', 'Strings recorded with the version.'],
+  ['strip_unknown_fields', 'Boolean; see Records.'],
+]
 
 export default function ProtocolPushPull() {
   return (
-    <DocsLayout title="Push and pull" eyebrow="Protocol v2">
-      <p>
-        Every Underlay node accepts pushes and serves pulls the same way, so a client written
-        against one works against any other. The <Link to="/docs/api/versions">Versions API</Link>{' '}
-        lists every endpoint with its options.
-      </p>
-
+    <DocsLayout title="Push and pull" eyebrow="Protocol v2 · §11.4, §13">
       <h2 id="delta-push">Delta push</h2>
       <p>
-        Delta push is the one way to publish. A client names the version it started from and sends
-        only its changes: upserted records with their set, and deletes. The commit costs in
-        proportion to the changes, at any collection size. The node builds the trees, signs the log
-        entry and numbers the version by the{' '}
-        <Link to="/docs/protocol/versions#semver">semver rules</Link>.
+        A client publishes a version by delta push: it opens a session against a base version,
+        uploads the records it adds or changes and the (type, id) pairs it deletes, and commits. The
+        server builds the trees, writes and signs the log entry, and assigns the semver (
+        <Link to="/docs/protocol/versions#semver">semver rules</Link>). Delta push is the only
+        publication mechanism; a server MUST NOT accept tree nodes or packs from clients.
       </p>
-      <CodeBlock>{delta}</CodeBlock>
+      <CodeBlock>{endpoints}</CodeBlock>
+
+      <h3>Opening a session</h3>
+      <p>The body is a JSON object; every member is OPTIONAL.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th>Meaning</th>
+          </tr>
+        </thead>
+        <tbody>
+          {openMembers.map(([m, what]) => (
+            <tr key={m}>
+              <td>
+                <code>{m}</code>
+              </td>
+              <td>{what}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        The response is 200 with <code>session_id</code>; <code>base</code> (the semver the session
+        is against, or <code>null</code>); <code>needed_files</code>, the declared files the server
+        does not hold for the collection, which the client MUST upload before committing;{' '}
+        <code>expires_at</code>, extended by each records or deletes request; and{' '}
+        <code>limits</code>, the server&rsquo;s own, by which a client MUST size its requests:{' '}
+        <code>open_bytes</code>, <code>batch_bytes</code>, <code>batch_lines</code>,{' '}
+        <code>session_idle_seconds</code>, <code>open_sessions</code> (per user, open or committing)
+        and <code>file_bytes</code>.
+      </p>
+
+      <h3>Records and deletes</h3>
       <ul>
         <li>
-          <code>base</code> must be the current latest version, or the push gets a <code>409</code>{' '}
-          with the current one; pull and push again.
+          <code>…/records</code> takes NDJSON record lines and answers{' '}
+          <code>{'{"received": n}'}</code>. Each line MUST satisfy the{' '}
+          <Link to="/docs/protocol/records#input-rules">input rules</Link> and its type&rsquo;s
+          schema, and its type MUST be in the session&rsquo;s type set.
         </li>
         <li>
-          <code>limits</code> in the answer are the node&rsquo;s own: the largest batch in bytes and
-          lines, the session idle timeout, sessions per user and the largest direct file upload.
-          Size batches by them; going over is a <code>413</code>.
+          A record whose <code>data</code> has top-level members absent from its schema&rsquo;s root{' '}
+          <code>properties</code> MUST be refused, unless the session set{' '}
+          <code>strip_unknown_fields</code>, in which case they are removed before hashing. A schema
+          without root <code>properties</code> admits any members.
         </li>
         <li>
-          Each record line goes through the{' '}
-          <Link to="/docs/protocol/records#input-rules">input rules</Link> and schema validation as
-          it arrives. A batch with any failing line gets a <code>422</code> listing them by line
-          number, and none of it is kept. Fields the schema&rsquo;s <code>properties</code>{' '}
-          don&rsquo;t list are refused unless the session sets <code>strip_unknown_fields</code>.
-        </li>
-        <li>Within a session, the later upload of a (type, id) wins, record or delete.</li>
-        <li>
-          Upload <code>needed_files</code> before committing. A commit whose records reference a
-          file the collection doesn&rsquo;t hold gets a <code>422</code> listing them.
+          If any line fails, the server MUST answer 422 with <code>validationErrors</code>, one per
+          failing line with its 1-based <code>line</code> among the request&rsquo;s non-empty lines,
+          and MUST store nothing from the request. A server MAY list only the first failures, with{' '}
+          <code>totalErrors</code> giving their number.
         </li>
         <li>
-          A commit that changes nothing gets a <code>409</code> (&ldquo;No changes detected&rdquo;)
-          and makes no version.
+          <code>…/deletes</code> takes NDJSON <code>{'{"type", "id"}'}</code> lines and answers{' '}
+          <code>{'{"received": n}'}</code>. The type MUST be in the session&rsquo;s type set.
+          Deleting a pair the base does not hold is not an error. A request with no lines is a 400.
         </li>
         <li>
-          Sessions expire when idle; every batch extends them. <code>DELETE …/push/:sid</code>{' '}
-          abandons one.
+          Within a session, the later upload of a (type, id) supersedes an earlier one, record or
+          delete.
         </li>
       </ul>
 
-      <h3>Long commits</h3>
-      <p>
-        Commit asynchronously when the push is large; a node may also choose to (underlay.org does
-        for every commit over 100,000 records). Poll the session until it is <code>committed</code>{' '}
-        or <code>failed</code>. Nothing is published until the commit finishes.
-      </p>
-      <CodeBlock>{asyncCommit}</CodeBlock>
+      <h3>Files and commit</h3>
+      <ul>
+        <li>
+          <code>PUT …/files/&lt;fileHash&gt;</code> stores a file for the collection: 201, or 400 if
+          the bytes do not hash to <code>&lt;fileHash&gt;</code>. A server MAY offer other upload
+          mechanisms. Every file a new record references, and every declared file, MUST be held for
+          the collection at commit: in a file tree of the base, in the public set of any earlier
+          version, or uploaded to the collection. A file held only for another collection is not
+          held, and every upload is hashed, even of a file the server already stores.
+        </li>
+        <li>
+          <code>…/commit</code> answers 201 with the version, or 202 when it runs in the background.
+          A client MAY request the background with <code>?async=true</code>; a server MAY choose it
+          for any commit. The client then polls <code>GET …/push/&lt;sid&gt;</code> until{' '}
+          <code>status</code> is <code>committed</code> (<code>result</code> holds the 201 body) or{' '}
+          <code>failed</code> (<code>error</code> holds the failure).
+        </li>
+        <li>Committing a session that has already committed answers 201 with the same body.</li>
+        <li>
+          A client that holds the base SHOULD compute the new version hash and compare it with the
+          returned <code>hash</code>.
+        </li>
+      </ul>
+      <CodeBlock>{exchange}</CodeBlock>
 
       <h2 id="clients-without-a-copy">Clients without a copy</h2>
       <p>
-        An integration that exports its whole dataset each time, rather than keeping a copy of what
-        it pushed, works out its changes from the latest version&rsquo;s manifest. The upload is
-        then only what changed, whatever the collection&rsquo;s size.
-      </p>
-      <CodeBlock>{noCopy}</CodeBlock>
-      <p>
-        Hashes are computed as in{' '}
-        <Link to="/docs/protocol/records#records">Records and schemas</Link>;{' '}
-        <code>hashRecord</code> in <code>@underlay/protocol</code> does it. If another push lands in
-        between, the push gets a <code>409</code>: read the manifest again and redo the diff.
+        Informative. A client that keeps no copy of the collection reads the base&rsquo;s{' '}
+        <Link to="/docs/protocol/repositories#serving-over-http">manifest</Link>, compares each of
+        its records with it by (type, id), record hash and set, uploads the records that are new,
+        changed or moved between sets, and deletes the pairs it no longer has. The upload is then
+        proportional to the changes. If another publication intervenes, the session or commit
+        answers 409 and the client repeats the comparison against the new head.
       </p>
 
       <h2 id="pull">Pull</h2>
       <p>
-        A client that keeps a copy verifies the signed log, then fetches a pack against the version
-        it last synced and checks it as described in{' '}
-        <Link to="/docs/protocol/repositories#sync">Sync</Link>. The log, pack and file reads are
-        the ones every node serves (
-        <Link to="/docs/protocol/repositories#serving-over-http">Serving over HTTP</Link>); the
-        others are this server&rsquo;s. Readers that want records rather than trees use the read
-        endpoints.
-      </p>
-      <CodeBlock>{pull}</CodeBlock>
-      <p>
-        <code>records.ndjson.gz</code> is the version&rsquo;s stored bodies concatenated: a reader
-        can hash each line and check it against the version&rsquo;s trees. Public readers see the
-        public set only; private types and records are absent from every read.
+        A client that keeps a copy reads the log after the last entry it holds, verifies it, and
+        requests a pack of the new head against the version it last received, which it receives
+        under the <Link to="/docs/protocol/repositories#packs">pack rules</Link>. Reads beyond the
+        log, packs, the manifest and files are a server&rsquo;s own API (for underlay.org, the{' '}
+        <Link to="/docs/api/versions">Versions API</Link>).
       </p>
 
       <h2 id="errors">Errors</h2>
       <p>
-        Errors are JSON with an <code>error</code> field. Content the caller may not see is a{' '}
-        <code>404</code>, never a <code>403</code>, so a response can&rsquo;t confirm it exists. The
-        statuses that mean something specific:
+        Errors carry <code>{'{"error": <message>}'}</code>. Authentication and 404 follow the
+        reads&rsquo; rules: content the caller may not read is 404, never 403.
       </p>
       <ul>
         <li>
-          <code>403</code>: the caller can read the collection but not write to it, or asked for{' '}
-          <code>sets=all</code> without access to the private set.
+          <code>403</code>: the caller may read the collection but not publish to it, or the session
+          belongs to another user.
         </li>
         <li>
-          <code>409</code>: <code>base</code> isn&rsquo;t the latest version, the latest moved
-          before the commit, the session isn&rsquo;t open, or the push changes nothing.
+          <code>400</code>: a malformed body, a <code>metadata</code> that is neither an object nor{' '}
+          <code>null</code>, or a request with no lines.
         </li>
         <li>
-          <code>413</code>: over one of the node&rsquo;s <code>limits</code>.
+          <code>409</code>: <code>base</code> is not the head (with <code>currentVersion</code>);
+          the head changed before the commit; the session is not open; or the publication changes
+          nothing (with the head&rsquo;s <code>hash</code>).
         </li>
         <li>
-          <code>422</code>: records, deletes or a schema that fail validation, or files the commit
-          needs and the node doesn&rsquo;t hold.
+          <code>413</code>: a body over <code>open_bytes</code> or <code>batch_bytes</code>, a
+          request over <code>batch_lines</code>, or a file over <code>file_bytes</code>.
         </li>
         <li>
-          <code>429</code>: too many sessions in progress, or a rate limit (with{' '}
-          <code>Retry-After</code>).
+          <code>422</code>: records or deletes that fail, a refused schema, records carried over
+          from the base that fail a changed schema (<code>validationErrors</code>), or a commit
+          lacking files (<code>filesNeeded</code>).
+        </li>
+        <li>
+          <code>429</code>: <code>open_sessions</code> sessions already in progress, or a rate limit
+          (with <code>Retry-After</code>).
+        </li>
+      </ul>
+
+      <h2 id="security-considerations">Security considerations</h2>
+      <ul>
+        <li>
+          A server MUST NOT serve a tree node or body by hash alone, and MUST serve a record, schema
+          or file located by hash only where it occurs in a set the caller may read.
+        </li>
+        <li>
+          A server MUST NOT treat content it holds for other collections as present in a session:
+          records are always uploaded in full, and a file counts only if it is held for the
+          collection.
+        </li>
+        <li>
+          The private-set salt prevents confirmation of guessed private content from the commitment;
+          the root reveals only whether a private set exists.
+        </li>
+        <li>
+          A version hash does not prove that a server shows every reader the same versions; the
+          signed, hash-chained log makes omission and reordering detectable.
+        </li>
+        <li>
+          Open issue: how a verifier obtains trusted signing keys is not specified. Trusting the
+          keys in a <code>collection.json</code> served by an untrusted server admits a forged
+          history on first contact.
+        </li>
+        <li>
+          File bytes SHOULD be served from an origin separate from the server&rsquo;s pages, with{' '}
+          <code>Content-Disposition: attachment</code>, so that an uploaded HTML or SVG file cannot
+          run in the server&rsquo;s origin.
         </li>
       </ul>
     </DocsLayout>

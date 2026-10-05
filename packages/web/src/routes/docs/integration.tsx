@@ -76,8 +76,7 @@ curl -X POST .../push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
 # → 201 {"semver":"v1.3.0","hash":"ulv2:...","recordCount":...,"fileCount":...,"changes":{...}}`
 
-const snapshotDiff = `import { hashRecord } from '@underlay/protocol'
-
+const snapshotDiff = `// hashRecord(record) → hex, as defined under "Record Hashing" below.
 const key = (r) => JSON.stringify([r.type, r.id])
 
 // 1. Read the current version's manifest, every page.
@@ -94,10 +93,12 @@ do {
   cursor = page.pagination.hasMore ? page.pagination.nextCursor : null
 } while (cursor)
 
-// 2. Diff your full export against it.
+// 2. Diff your full export against it. A record of a private type is private
+//    whatever its own flag says (privateTypes: the types whose schema has "private": true).
+const isPrivate = (r) => !!r.private || privateTypes.has(r.type)
 const upserts = records.filter((r) => {
   const m = have.get(key(r))
-  return !m || m.hash !== hashRecord(r.id, r.type, r.data).hash || !!m.private !== !!r.private
+  return !m || m.hash !== hashRecord(r) || !!m.private !== isPrivate(r)
 })
 const keep = new Set(records.map(key))
 const deletes = [...have.values()]
@@ -134,9 +135,10 @@ export default function DocsIntegration() {
 
       <h2>What is Underlay?</h2>
       <p>
-        Underlay is a versioned registry for structured knowledge. Apps push snapshots of their
-        data; Underlay preserves them, deduplicates records and files, and serves them via a stable
-        API. Think npm for data, or Docker Hub for structured content.
+        Underlay is a versioned registry for structured knowledge. Apps publish versions of their
+        data; Underlay keeps every version in content-addressed trees, so versions share what they
+        have in common, and serves them via a stable API. Think npm for data, or Docker Hub for
+        structured content.
       </p>
 
       <h2>Core Concepts</h2>
@@ -146,13 +148,13 @@ export default function DocsIntegration() {
           <code>:owner/:slug</code>.
         </li>
         <li>
-          <strong>Version</strong>: An immutable snapshot: JSON Schema + records + file references +
-          metadata. Identified by semver (e.g. <code>v1.0.0</code>).
+          <strong>Version</strong>: An immutable snapshot: a JSON Schema per type, records, file
+          references and metadata. Identified by semver (e.g. <code>v1.0.0</code>) or by its{' '}
+          <code>ulv2:</code> hash.
         </li>
         <li>
-          <strong>Record</strong>: A flat JSON object with an <code>id</code>, a <code>type</code>,
-          and a <code>data</code> payload conforming to the schema. Content-addressed by SHA-256
-          hash.
+          <strong>Record</strong>: An <code>id</code>, a <code>type</code> and a <code>data</code>{' '}
+          payload conforming to the type&rsquo;s schema. Content-addressed by SHA-256 hash.
         </li>
         <li>
           <strong>File</strong>: A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced
@@ -169,9 +171,10 @@ export default function DocsIntegration() {
         <code>{'Authorization: Bearer ul_your_key_here'}</code>
       </pre>
       <p>
-        Keys are scoped <code>read</code> or <code>write</code> — use <code>write</code> for pushing
-        data. <code>admin</code> is not grantable through the API; a request for it is clamped to{' '}
-        <code>write</code>.
+        Keys are scoped <code>read</code>, <code>write</code> or <code>admin</code>; use{' '}
+        <code>write</code> for pushing data. A key never exceeds its holder&rsquo;s role: a{' '}
+        <code>write</code> key acts as a member, and only an owner&rsquo;s or admin&rsquo;s{' '}
+        <code>admin</code> key can change visibility, delete or manage webhooks.
       </p>
 
       <h2>The Push Flow</h2>
@@ -184,10 +187,12 @@ export default function DocsIntegration() {
       </p>
       <ol>
         <li>
-          <strong>Open a session</strong> with <code>base</code> set to the current version&rsquo;s
-          semver (<code>null</code> for the first push), plus any schemas, metadata and files to
-          declare. The response lists <code>needed_files</code> and the server&rsquo;s{' '}
-          <code>limits</code>.
+          <strong>Open a session</strong> with <code>base</code> set to the semver you diffed
+          against (<code>null</code> for the first push; <code>null</code> means no conflict check),
+          plus any schemas, metadata and files to declare. <code>schemas</code>, when sent, is the
+          full type set: a type left out is removed. <code>metadata</code> replaces the metadata,{' '}
+          <code>metadata_patch</code> merges into it. The response lists <code>needed_files</code>{' '}
+          and the server&rsquo;s <code>limits</code>.
         </li>
         <li>
           <strong>Upload files</strong> listed in <code>needed_files</code>, by hash.
@@ -201,7 +206,7 @@ export default function DocsIntegration() {
           that are gone.
         </li>
         <li>
-          <strong>Commit</strong>. On <code>409 Conflict</code>, someone else pushed first: diff
+          <strong>Commit</strong>. On <code>409 Conflict</code>, someone else published first: diff
           against the new head and push again.
         </li>
       </ol>
@@ -210,10 +215,11 @@ export default function DocsIntegration() {
       </pre>
       <p>
         Within a session, the later upload of a <code>(type, id)</code> wins, whether a record or a
-        delete. Above 100,000 uploaded records the commit runs in the background: it answers{' '}
-        <code>202</code>, and you poll <code>GET .../push/SESSION_ID</code> until its{' '}
-        <code>status</code> is <code>committed</code> or <code>failed</code>. Add{' '}
-        <code>?async=true</code> to ask for that at any size.
+        delete. Above 100,000 uploaded records (or when a schema change revalidates more than
+        100,000 existing records) the commit runs in the background: it answers <code>202</code>,
+        and you poll <code>GET .../push/SESSION_ID</code> until its <code>status</code> is{' '}
+        <code>committed</code> or <code>failed</code>. Add <code>?async=true</code> to ask for that
+        at any size.
       </p>
 
       <h2>Pushing a Full Export</h2>
@@ -242,8 +248,7 @@ export default function DocsIntegration() {
         The server hashes the records you upload, so a push needs no hashing. You need the hash to
         diff against a manifest. It is the SHA-256 of a fixed <code>{'{ id, type, data }'}</code>{' '}
         envelope with <code>data</code> in canonical JSON (RFC 8785), so any implementation produces
-        the same hash for the same content. In JavaScript, use <code>hashRecord</code> from{' '}
-        <code>@underlay/protocol</code>, or:
+        the same hash for the same content. In JavaScript:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashExample}</code>
@@ -268,7 +273,7 @@ export default function DocsIntegration() {
         <li>
           Files are referenced as <code>{fileRef}</code>
         </li>
-        <li>No joins, no nesting. Keep records flat</li>
+        <li>No joins. Prefer flat records; nesting is allowed up to 64 levels</li>
       </ul>
 
       <h2>Metadata</h2>
@@ -454,13 +459,13 @@ export default function DocsIntegration() {
             <td>
               <code>POST /api/records/batch</code>
             </td>
-            <td>Fetch records by hash (NDJSON response)</td>
+            <td>Fetch up to 100 records by hash (NDJSON response)</td>
           </tr>
           <tr>
             <td>
               <code>GET /api/records/:hash/provenance</code>
             </td>
-            <td>Find which collections contain a record</td>
+            <td>Find which collections you can read contain a record</td>
           </tr>
           <tr>
             <td>
@@ -485,9 +490,10 @@ export default function DocsIntegration() {
       <h2>Error Handling</h2>
       <ul>
         <li>
-          <code>409 Conflict</code>: Another version was pushed since your <code>base</code> (the
-          response names <code>currentVersion</code>), or the push changes nothing. Diff against the
-          new head and push again.
+          <code>409 Conflict</code>: Another version was published since your <code>base</code>{' '}
+          (opening the session names <code>currentVersion</code>; at commit, re-read{' '}
+          <code>versions/latest</code>), or the push changes nothing. Diff against the new head and
+          push again.
         </li>
         <li>
           <code>413 Payload Too Large</code>: A batch or file is over the session&rsquo;s{' '}
@@ -501,6 +507,10 @@ export default function DocsIntegration() {
         <li>
           <code>429 Too Many Requests</code>: Too many push sessions open at once (
           <code>limits.open_sessions</code>), or a rate limit. Wait and retry.
+        </li>
+        <li>
+          <code>503 Service Unavailable</code>: Storage cleanup ran while the push was committing.
+          Push again.
         </li>
       </ul>
 

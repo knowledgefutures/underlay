@@ -35,7 +35,8 @@ curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
         "properties": {
           "title": {"type": "string"},
           "author": {"type": "string"},
-          "year": {"type": "integer"}
+          "year": {"type": "integer"},
+          "pdf": {"type": "object"}
         }
       }
     }
@@ -59,7 +60,7 @@ const commitCode = `curl -X POST https://underlay.org/api/collections/yourname/m
 const readCode = `# Get collection info
 curl https://underlay.org/api/collections/yourname/my-dataset
 
-# Get latest version records
+# Get the records of v1.0.0 (or /versions/latest/records)
 curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
 
 # Get the manifest (list of record hashes)
@@ -89,7 +90,8 @@ curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.1.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
-# → {"from":"v1.0.0","to":"v1.1.0","added":[...],"updated":[...],"removed":[]}`
+# → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],"removed":["book-2"],
+#    "pagination":{...},"meta":{...}}`
 
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
@@ -102,13 +104,12 @@ curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha2
 
 # Reference in a record
 # {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}
-# A commit whose records reference a file the server doesn't hold is refused (422, filesNeeded).`
+# A commit whose records reference a file this collection doesn't hold is refused (422, filesNeeded).
+# The Book schema above lists "pdf", so the field is accepted.`
 
-const hashingNote = `# Record hashing: SHA-256 of the canonical form
-#   '{"id":' + JSON(id) + ',"type":' + JSON(type) + ',"data":' + JCS(data) + '}'
-# JCS is RFC 8785 canonical JSON: no whitespace, object keys sorted.
-
-# Example in Node.js:
+const hashingNote = `// Record hashing: SHA-256 of the canonical form
+//   '{"id":' + JSON(id) + ',"type":' + JSON(type) + ',"data":' + JCS(data) + '}'
+// JCS is RFC 8785 canonical JSON: no whitespace, object keys sorted.
 import { createHash } from 'node:crypto'
 
 // Written out as a string: a sorted object passed to JSON.stringify
@@ -248,8 +249,7 @@ export default function DocsQuickstart() {
         need the hash to compare your data with a version&rsquo;s manifest. It is the SHA-256 of a
         fixed <code>{'{id, type, data}'}</code> envelope with <code>data</code> in canonical JSON
         (RFC 8785), so any client produces the same hash for the same data regardless of key
-        insertion order. In JavaScript, <code>hashRecord</code> from <code>@underlay/protocol</code>{' '}
-        does this.
+        insertion order.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{hashingNote}</code>

@@ -1,8 +1,9 @@
+import { useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import DocsSearch from '~/components/DocsSearch'
-import { docSections } from '~/lib/docs-pages'
+import { docSections, headingSlug } from '~/lib/docs-pages'
 
 export default function DocsLayout({
   children,
@@ -16,6 +17,17 @@ export default function DocsLayout({
 }) {
   const location = useLocation()
   const currentPath = location.pathname.replace(/\/$/, '')
+  const prose = useRef<HTMLDivElement>(null)
+
+  // Search links to headings by slug: give an h2 without an id its slug, then
+  // scroll to the linked one (it may not have had an id when the page loaded).
+  useEffect(() => {
+    for (const h of prose.current?.querySelectorAll('h2:not([id])') ?? []) {
+      h.id = headingSlug(h.textContent ?? '')
+    }
+    const id = decodeURIComponent(location.hash.slice(1))
+    if (id) document.getElementById(id)?.scrollIntoView()
+  }, [location.pathname, location.hash])
 
   return (
     <BaseLayout>
@@ -49,7 +61,9 @@ export default function DocsLayout({
         <div className="docs-main">
           {eyebrow && <p className="text-ink-muted mb-1 font-mono text-xs">{eyebrow}</p>}
           <h1 className="mb-6 font-sans text-xl font-semibold tracking-tight">{title}</h1>
-          <div className="docs-prose">{children}</div>
+          <div className="docs-prose" ref={prose}>
+            {children}
+          </div>
         </div>
       </div>
     </BaseLayout>

@@ -4,89 +4,126 @@ import DocsLayout from '~/components/DocsLayout'
 
 export default function ProtocolOverview() {
   return (
-    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v2">
+    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v2 · Stable, frozen 2026-10-03">
       <p>
-        Underlay is a protocol for publishing versioned, structured data. Every record, schema and
-        file is identified by its SHA-256 hash. A version is a set of hash trees under one root, so
-        its hash commits to everything in it, and two versions that share most of their content
-        share most of their storage.
+        Version 2 of the Underlay protocol specifies the canonical encoding and hashing of records,
+        schemas and files; the input rules published data must satisfy; the construction of record
+        and file trees; the version root and its hash; the repository layout in which collections
+        are stored; the signed version log; the pack format by which versions are copied; and the
+        HTTP interface by which servers serve and accept versions.
+      </p>
+      <p>
+        These pages restate the normative specification, <code>docs/protocol-v2.md</code>, section
+        by section. Where they differ, the specification is authoritative.
       </p>
 
-      <h2 id="primitives">Primitives</h2>
+      <h2 id="conformance">Conformance</h2>
+      <p>
+        The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be interpreted as described
+        in BCP 14 (<a href="https://www.rfc-editor.org/rfc/rfc2119">RFC 2119</a>,{' '}
+        <a href="https://www.rfc-editor.org/rfc/rfc8174">RFC 8174</a>) when they appear in all
+        capitals. Notes and examples are informative.
+      </p>
+      <p>
+        A conforming implementation accepts and rejects the same inputs, builds the same trees and
+        computes the same hashes as the specification, byte for byte. A change to any rule that
+        alters what is accepted, how a tree is built or what is hashed requires a new protocol
+        version.
+      </p>
+
+      <h2 id="terminology">Terminology</h2>
       <ul>
         <li>
-          <strong>Record</strong>: an <code>id</code>, a <code>type</code> and a <code>data</code>{' '}
-          payload of any JSON. Its hash is the SHA-256 of its canonical form.
+          <strong>Collection</strong>: a named sequence of versions, identified by a collection id.
         </li>
         <li>
-          <strong>Schema</strong>: a JSON Schema (draft-07) document per type. Records are validated
-          against it, and its hash is the SHA-256 of its canonical JSON.
+          <strong>Record</strong>: an <code>id</code>, a <code>type</code> and a JSON value{' '}
+          <code>data</code>.
         </li>
         <li>
-          <strong>File</strong>: bytes, addressed by the SHA-256 of their content. Records refer to
-          files with <code>{'{"$file": "sha256:…"}'}</code>.
+          <strong>Type</strong>: a named class of records, described by a <strong>schema</strong>{' '}
+          (JSON Schema draft-07).
         </li>
         <li>
-          <strong>Version</strong>: a root object listing, for each type, its schema hash and the
-          root of a tree of that type&rsquo;s records, plus a file tree and metadata. Its hash is{' '}
-          <code>ulv2:</code> followed by the SHA-256 of the root.
+          <strong>File</strong>: a byte string, identified by its SHA-256 hash.
+        </li>
+        <li>
+          <strong>Access set</strong>: one of a version&rsquo;s two partitions, <code>public</code>{' '}
+          and <code>private</code>.
+        </li>
+        <li>
+          <strong>Tree</strong>: a sorted set of entries partitioned into tree nodes by their keys.
+        </li>
+        <li>
+          <strong>Version</strong>: an immutable state of a collection, described by a root
+          document. Its <strong>version hash</strong> is <code>ulv2:</code> followed by the SHA-256
+          of the root.
+        </li>
+        <li>
+          <strong>Repository</strong>: the objects that represent collections in a storage location.
+        </li>
+        <li>
+          <strong>Server</strong> (also <em>Underlay node</em>): an HTTP service that serves
+          collections and may accept publications.
+        </li>
+        <li>
+          <strong>Owner</strong>: a party permitted to read a collection&rsquo;s private set, as
+          determined by the server.
         </li>
       </ul>
 
-      <h2 id="what-it-guarantees">What it guarantees</h2>
+      <h2 id="properties">Properties</h2>
+      <p>Informative. The rules below have these consequences:</p>
       <ul>
         <li>
-          <strong>Same content, same hash.</strong> A tree depends only on its entries, never on the
-          order they were added, so a version built in one push or in many has the same hash.
+          A tree depends only on its entries, not on the order of construction, so identical content
+          yields an identical version hash.
         </li>
         <li>
-          <strong>Verifiable without trust.</strong> A reader can check every object it fetches
-          against the hash that names it, and a version&rsquo;s whole public content against its
-          version hash.
+          Every object is verifiable against the hash that names it, and a version&rsquo;s public
+          content against its version hash.
         </li>
         <li>
-          <strong>Privacy without leaks.</strong> Each version has a public set and an optional
-          private set. Public readers can verify the public set and learn only that a private set
-          exists; the private set is committed to with a per-collection salt.
+          A reader of the public set learns of the private set only whether it exists; the private
+          set is committed to with a per-collection salt.
         </li>
         <li>
-          <strong>Cost follows change.</strong> A push, a diff or a sync costs in proportion to what
-          changed, because unchanged subtrees are reused by hash.
+          Publication, comparison and transfer cost in proportion to what changed, since unchanged
+          subtrees are shared by hash.
         </li>
         <li>
-          <strong>Portable history.</strong> Each collection has a signed, hash-chained log of its
-          versions, so a copy of its repository in any bucket can be read and verified.
+          Each collection&rsquo;s versions are recorded in a signed, hash-chained log, so a copy of
+          its repository in any location can be verified independently of the server that wrote it.
         </li>
       </ul>
 
-      <h2 id="in-this-section">In this section</h2>
+      <h2 id="contents">Contents</h2>
       <ul>
         <li>
-          <Link to="/docs/protocol/records">Records and schemas</Link>: canonical JSON, record and
-          schema hashes, input rules, validation, file references.
+          <Link to="/docs/protocol/records">Records and schemas</Link> (§§2–6): canonical JSON,
+          input rules, record and schema hashes, the validation dialect, files.
         </li>
         <li>
-          <Link to="/docs/protocol/versions">Trees and versions</Link>: how records become trees,
-          the public and private sets, the version root and its hash, semver.
+          <Link to="/docs/protocol/versions">Trees and versions</Link> (§§7–10): key order, tree
+          construction and encoding, access sets, the version root, semver.
         </li>
         <li>
-          <Link to="/docs/protocol/repositories">Repositories</Link>: the storage layout any bucket
-          can hold, the signed version log, packs for sync, and the reads every node serves.
+          <Link to="/docs/protocol/repositories">Repositories</Link> (§§11–11.3): the repository
+          layout, the version log, packs, and the HTTP reads every server provides.
         </li>
         <li>
-          <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: delta push, the one way to
-          publish on any node, and reading versions back.
+          <Link to="/docs/protocol/push-and-pull">Push and pull</Link> (§11.4, §13): delta push,
+          errors, and security considerations.
         </li>
       </ul>
 
       <h2 id="reference">Reference</h2>
       <p>
-        The normative specification is <code>docs/protocol-v2.md</code> in the{' '}
-        <a href="https://github.com/knowledgefutures/underlay">Underlay repository</a>. Another
-        implementation has to reproduce it byte for byte. The reference implementation is{' '}
-        <code>@underlay/protocol</code>, which runs in Node, Cloudflare Workers and browsers, and
-        test vectors for every hash and tree are in <code>packages/protocol/test/vectors/</code>.
-        The protocol is stewarded by{' '}
+        Specification: <code>docs/protocol-v2.md</code> in the{' '}
+        <a href="https://github.com/knowledgefutures/underlay">Underlay repository</a>. Reference
+        implementation: <code>@underlay/protocol</code> (<code>packages/protocol</code>), which runs
+        in Node, Cloudflare Workers and browsers. Test vectors:{' '}
+        <code>packages/protocol/test/vectors/v2.json</code>. The protocol is stewarded by{' '}
         <a href="https://www.knowledgefutures.org">Knowledge Futures</a>.
       </p>
     </DocsLayout>

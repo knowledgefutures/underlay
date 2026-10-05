@@ -298,6 +298,8 @@ try {
       has: ['Delta push', 'Clients without a copy'],
     },
     { path: '/docs', status: 200 },
+    { path: '/docs/api/records', status: 200, has: ['/api/records/batch', 'provenance'] },
+    { path: '/docs/api/sync-and-integrations', status: 200, has: ['Tree sync', 'Webhooks'] },
     { path: '/org/secret', status: 404 },
     { path: '/org/secret', status: 200, has: ['secret'], user: 'u1' },
     { path: '/org/nope', status: 404 },
