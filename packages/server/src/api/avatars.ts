@@ -66,13 +66,13 @@ export function avatarRoutes() {
       form = await new Response(body, { headers: { 'content-type': contentType } }).formData()
     } catch (err) {
       if (err instanceof BodyTooLarge)
-        return jsonError(c, 413, `Image must be ${AVATAR_MAX_BYTES / 1024 / 1024} MB or smaller`)
+        return jsonError(c, 413, `Image must be ${AVATAR_MAX_BYTES / 1024 / 1024} MiB or smaller`)
       return jsonError(c, 400, 'Malformed multipart body')
     }
     const file = [...form.values()].find((v): v is File => typeof v !== 'string')
     if (!file) return jsonError(c, 400, 'No file uploaded')
     if (file.size > AVATAR_MAX_BYTES)
-      return jsonError(c, 413, `Image must be ${AVATAR_MAX_BYTES / 1024 / 1024} MB or smaller`)
+      return jsonError(c, 413, `Image must be ${AVATAR_MAX_BYTES / 1024 / 1024} MiB or smaller`)
 
     // The declared type is the browser's guess from the file name; the bytes decide.
     const bytes = new Uint8Array(await file.arrayBuffer())

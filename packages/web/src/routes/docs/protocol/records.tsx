@@ -106,7 +106,7 @@ export default function ProtocolRecords() {
           privacy. Put private fields in a private type, or push the record as private.
         </li>
         <li>
-          A schema&rsquo;s canonical form is at most 256 KB, and each <code>pattern</code> (or{' '}
+          A schema&rsquo;s canonical form is at most 256 KiB, and each <code>pattern</code> (or{' '}
           <code>patternProperties</code> key) at most 256 UTF-16 code units. A <code>pattern</code>{' '}
           inside <code>const</code>, <code>enum</code>, <code>default</code> or{' '}
           <code>examples</code> is data, not a regex.

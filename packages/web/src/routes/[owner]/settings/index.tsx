@@ -251,7 +251,7 @@ export default function OwnerSettings() {
                 </Button>
               )}
             </div>
-            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 1 MB.</p>
+            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 1 MiB.</p>
           </div>
         </div>
       )}

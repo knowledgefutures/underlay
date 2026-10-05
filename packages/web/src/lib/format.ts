@@ -29,24 +29,27 @@ export function slugify(value: string) {
     .replace(/-{2,}/g, '-')
 }
 
-/** Byte sizes in decimal units, as labelled: 1 KB = 1,000 bytes, 1 MB = 1,000,000. */
+/**
+ * Byte sizes in binary units, labelled as such (1 KiB = 1,024 bytes), the way
+ * Cloudflare states its limits and the protocol states ours (5 TiB a file).
+ */
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return '0 B'
-  const k = 1000
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
+  const k = 1024
+  const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
 /**
- * Byte size with one fixed decimal ("1.0 KB"), capped at GB — the style of the
- * explore and home listings. formatBytes trims the decimal ("1 KB").
+ * Byte size with one fixed decimal ("1.0 KiB"), capped at GiB — the style of the
+ * explore and home listings. formatBytes trims the decimal ("1 KiB").
  */
 export function formatBytesFixed(bytes: number): string {
-  if (bytes < 1e3) return `${bytes} B`
-  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`
-  if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`
-  return `${(bytes / 1e9).toFixed(1)} GB`
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`
 }
 
 const SMALL_WORDS = new Set(['a', 'an', 'and', 'for', 'in', 'of', 'on', 'or', 'the', 'to'])

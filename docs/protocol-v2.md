@@ -95,7 +95,7 @@ A type's schema is a JSON Schema document. **Schema hash** = hash(JCS(schema)).
 - A schema with `"private": true` at its root makes the type private (section 9). A root `private`
   that isn't a boolean is rejected, so that `"private": "true"` can't publish a type by accident.
 - `"private": true` on a property, at any depth (field-level privacy), is **rejected** in v2.
-- Limits: the schema's canonical form must be at most `MAX_SCHEMA_BYTES` = 256 KB, and `pattern`
+- Limits: the schema's canonical form must be at most `MAX_SCHEMA_BYTES` = 256 KiB, and `pattern`
   values and `patternProperties` keys at most `MAX_PATTERN_LENGTH` = 256 UTF-16 code units each
   (a string's JavaScript length). A `pattern` member inside `const`, `enum`, `default` or
   `examples` is data, not a regex, and isn't limited.

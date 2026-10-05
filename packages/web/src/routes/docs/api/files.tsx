@@ -189,7 +189,7 @@ export default function DocsApiFiles() {
         <h2>POST /api/collections/:owner/:slug/files/uploads</h2>
         <p className="scope">Auth: write scope</p>
         <p>
-          Start a direct upload to storage, for files over the 32 MB the PUT above takes. Body:{' '}
+          Start a direct upload to storage, for files over the 32 MiB the PUT above takes. Body:{' '}
           <code>{'{"hash", "size", "mimeType"?}'}</code>; a file is at most 5 TiB (larger:{' '}
           <code>413</code>). Up to 5 GiB the ticket has one presigned <code>url</code> to PUT the
           bytes to. Larger files are multipart: the ticket gives <code>partBytes</code> (every part
