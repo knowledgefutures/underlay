@@ -16,7 +16,8 @@ export default function OwnerSettingsMembers() {
   const isOwner = org?.role === 'owner'
   const isAdmin = org?.role === 'admin' || isOwner
 
-  const [members, setMembers] = useState<any[]>([])
+  /** Null until the first load answers. */
+  const [members, setMembers] = useState<any[] | null>(null)
   const [invitations, setInvitations] = useState<any[]>([])
   const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
@@ -30,7 +31,7 @@ export default function OwnerSettingsMembers() {
     const { data } = await authClient.organization.listMembers({
       query: { organizationId },
     } as any)
-    if (data) setMembers((data as any).members ?? [])
+    setMembers((data as any)?.members ?? [])
   }
 
   async function loadInvitations(organizationId: string) {
@@ -172,8 +173,15 @@ export default function OwnerSettingsMembers() {
         </Alert>
       )}
 
-      <div className="mb-6 space-y-2">
-        {members.map((m: any) => (
+      <div className="mb-6 space-y-2" aria-busy={members === null}>
+        {members === null &&
+          [0, 1].map((i) => (
+            <div
+              key={i}
+              className="border-rule rounded-surface bg-parchment-dark/40 h-[58px] animate-pulse border"
+            />
+          ))}
+        {members?.map((m: any) => (
           <div
             key={m.id}
             className="border-rule rounded-surface flex items-center justify-between border p-3"

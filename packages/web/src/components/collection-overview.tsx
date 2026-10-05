@@ -2,7 +2,14 @@ import { useMemo } from 'react'
 import { Link } from 'react-router'
 
 import { Breakable } from '~/components/ui'
-import { bareSemver, formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
+import {
+  bareSemver,
+  formatBytes,
+  formatDate,
+  prefixedHash,
+  shortHash,
+  tagLabel,
+} from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 import { TokenLink } from '~/lib/share-token'
 
@@ -187,7 +194,7 @@ export default function CollectionOverviewBody({
                   to={`/explore?tag=${encodeURIComponent(tag)}`}
                   className="bg-parchment-dark text-ink-muted hover:text-ink rounded-control px-2 py-0.5 text-xs transition-colors"
                 >
-                  {tag}
+                  {tagLabel(tag)}
                 </Link>
               ))}
             </div>

@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import MirrorsSettings, {
@@ -63,9 +63,16 @@ export default function CollectionSettingsPage() {
   // Transfer form
   const [transferTarget, setTransferTarget] = useState('')
 
+  /** Basics' outcome, shown by its button; it goes as soon as the form is edited again. */
+  const [basicsNote, setBasicsNote] = useState('')
+  /** Saved private this visit: the cache note stays up after saving. */
+  const [madePrivate, setMadePrivate] = useState(false)
+  useEffect(() => setBasicsNote(''), [name, slugValue, isPublic])
+
   function clearMessages() {
     setSuccess('')
     setError('')
+    setBasicsNote('')
   }
 
   async function handleUpdate(e: FormEvent) {
@@ -89,7 +96,9 @@ export default function CollectionSettingsPage() {
           window.location.href = `/${owner}/${body.slug ?? slugValue.trim()}/settings`
           return
         }
-        setSuccess('Collection updated.')
+        if (data.public && !isPublic) setMadePrivate(true)
+        if (isPublic) setMadePrivate(false)
+        setBasicsNote('Saved.')
         const refreshed = await fetch(`/api/collections/${owner}/${collection}`, {
           credentials: 'include',
         })
@@ -279,7 +288,7 @@ export default function CollectionSettingsPage() {
               Public — visible to everyone
             </label>
           </div>
-          {data.public && !isPublic && (
+          {((data.public && !isPublic) || (madePrivate && !isPublic)) && (
             <p className="text-ink-muted text-xs">
               Making a collection private takes effect at once here, but copies of its versions
               already cached by browsers and the network can still be served for up to about ten
@@ -287,10 +296,15 @@ export default function CollectionSettingsPage() {
             </p>
           )}
 
-          <div className="pt-2">
+          <div className="flex items-center gap-3 pt-2">
             <Button type="submit" disabled={submitting === 'update'}>
               {submitting === 'update' ? 'Saving…' : 'Save changes'}
             </Button>
+            {basicsNote && (
+              <span className="text-sm text-green-700" role="status">
+                {basicsNote}
+              </span>
+            )}
           </div>
         </form>
       </section>

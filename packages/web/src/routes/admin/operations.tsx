@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { useLoaderData } from 'react-router'
 
 import { compact, day } from '~/components/admin-stats'
@@ -14,6 +14,7 @@ import {
   Td,
   Th,
 } from '~/components/ui'
+import { formatDateTime, plural } from '~/lib/format'
 
 interface Operations {
   sessions: { status: string; n: number }[]
@@ -175,7 +176,45 @@ export default function AdminOperations() {
   )
 }
 
-/** Start a job on one collection (owner/slug), then read back its last result. */
+/** What a tool's GET answers, enough to tell a finished run and say how it went. */
+interface ToolResult {
+  /** A finished run's time; changes when a new run finishes. */
+  finishedAt: string | null
+  running: boolean
+  /** The outcome in a sentence, and its problems if any. */
+  summary: string
+  problems: string[]
+}
+
+const reconcileResult = (r: any): ToolResult => {
+  const report: { field: string; seq?: number; was: unknown; now: unknown }[] = r.report ?? []
+  return {
+    finishedAt: r.reconciledAt ?? null,
+    running: !!r.running,
+    summary: report.length === 0 ? 'No corrections.' : `${plural(report.length, 'correction')}:`,
+    problems: report.map(
+      (d) =>
+        `${d.field}${d.seq !== undefined ? ` (version ${d.seq})` : ''}: ${JSON.stringify(d.was)} → ${JSON.stringify(d.now)}`,
+    ),
+  }
+}
+
+const fsckResult = (r: any): ToolResult => ({
+  finishedAt: r.checkedAt ?? null,
+  running: !!r.running,
+  summary: r.ok
+    ? `Repository OK: ${plural(r.versions, 'version')}, ${plural(r.records, 'record')}, ${plural(r.files, 'file')}; log checked with ${r.log}.`
+    : `${plural(r.errors.length + (r.moreErrors ?? 0), 'problem')} found:`,
+  problems: [
+    ...(r.errors ?? []),
+    ...(r.moreErrors ? [`…and ${plural(r.moreErrors, 'more problem')}`] : []),
+  ],
+})
+
+/**
+ * Start a job on one collection (owner/slug), follow it until it finishes, and
+ * say how it went; the raw result stays a click away.
+ */
 function CollectionTool({
   title,
   hint,
@@ -192,10 +231,38 @@ function CollectionTool({
   const [withBytes, setWithBytes] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   const [result, setResult] = useState<unknown>(null)
+  /** While following a run: the finish time of the run before it. */
+  const [following, setFollowing] = useState<{ before: string | null } | null>(null)
+  const read = endpoint.endsWith('/fsck') ? fsckResult : reconcileResult
+  const shown = result != null ? read(result) : null
+
+  async function fetchResult(): Promise<unknown | null> {
+    const res = await fetch(`${endpoint}?collection=${encodeURIComponent(collection.trim())}`, {
+      credentials: 'include',
+    })
+    return res.ok ? res.json().catch(() => null) : null
+  }
+
+  useEffect(() => {
+    if (!following) return
+    const t = setInterval(async () => {
+      const r = await fetchResult()
+      if (!r) return
+      const v = read(r)
+      if (!v.running && v.finishedAt && v.finishedAt !== following.before) {
+        setResult(r)
+        setMessage(null)
+        setFollowing(null)
+      }
+    }, 3000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [following])
 
   async function start(e: FormEvent) {
     e.preventDefault()
     setResult(null)
+    const prior = await fetchResult()
     const res = await fetch(endpoint, {
       method: 'POST',
       credentials: 'include',
@@ -206,22 +273,18 @@ function CollectionTool({
       }),
     })
     const body = await res.json().catch(() => ({}))
-    setMessage(
-      res.ok
-        ? { ok: true, text: 'Queued. Show the result once it has run.' }
-        : { ok: false, text: body.error ?? 'That failed.' },
-    )
+    if (res.ok) {
+      setMessage({ ok: true, text: 'Running…' })
+      setFollowing({ before: prior ? read(prior).finishedAt : null })
+    } else setMessage({ ok: false, text: body.error ?? 'That failed.' })
   }
 
   async function show() {
-    const res = await fetch(`${endpoint}?collection=${encodeURIComponent(collection.trim())}`, {
-      credentials: 'include',
-    })
-    const body = await res.json().catch(() => ({}))
-    if (res.ok) {
+    const r = await fetchResult()
+    if (r) {
       setMessage(null)
-      setResult(body)
-    } else setMessage({ ok: false, text: body.error ?? 'Nothing to show.' })
+      setResult(r)
+    } else setMessage({ ok: false, text: 'Nothing to show: it hasn’t run on this collection.' })
   }
 
   return (
@@ -242,22 +305,39 @@ function CollectionTool({
             Hash file bytes too
           </label>
         )}
-        <Button type="submit" size="sm">
-          Start
+        <Button type="submit" size="sm" disabled={!!following}>
+          {following ? 'Running…' : 'Start'}
         </Button>
         <Button type="button" variant="link" size="sm" onClick={show} disabled={!collection.trim()}>
           Show last result
         </Button>
       </div>
       {message && (
-        <Alert variant={message.ok ? 'success' : 'error'} className="mt-2 text-xs">
+        <Alert variant={message.ok ? 'info' : 'error'} className="mt-2 text-xs">
           {message.text}
         </Alert>
       )}
-      {result != null && (
-        <pre className="bg-parchment-dark rounded-surface mt-2 max-h-64 overflow-auto p-2 text-xs">
-          {JSON.stringify(result, null, 2)}
-        </pre>
+      {shown && (
+        <div className="mt-2 text-xs">
+          <Alert variant={shown.problems.length === 0 ? 'success' : 'error'}>
+            {shown.running ? 'Still running. ' : ''}
+            {shown.finishedAt && !shown.running ? `${formatDateTime(shown.finishedAt)}: ` : ''}
+            {shown.summary}
+            {shown.problems.length > 0 && (
+              <ul className="mt-1 list-disc pl-4">
+                {shown.problems.slice(0, 20).map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            )}
+          </Alert>
+          <details className="mt-1">
+            <summary className="text-ink-muted cursor-pointer">Details</summary>
+            <pre className="bg-parchment-dark rounded-surface mt-1 max-h-64 overflow-auto p-2">
+              {JSON.stringify(result, null, 2)}
+            </pre>
+          </details>
+        </div>
       )}
     </form>
   )

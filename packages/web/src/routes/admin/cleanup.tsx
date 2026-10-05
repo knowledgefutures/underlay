@@ -179,7 +179,12 @@ function Follow({ active }: { active: boolean }) {
 function Controls({ data }: { data: Cleanup }) {
   const revalidator = useRevalidator()
   const [dryRun, setDryRun] = useState(true)
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  /** The last action's outcome, shown in the box it came from. */
+  const [message, setMessage] = useState<{
+    where: 'internal' | 'marks' | 'settings'
+    ok: boolean
+    text: string
+  } | null>(null)
   const busy = (step: Step) =>
     data.runs.some(
       (r) =>
@@ -195,10 +200,11 @@ function Controls({ data }: { data: Cleanup }) {
       body: JSON.stringify({ step, ...opts }),
     })
     const body = await res.json().catch(() => ({}))
+    const where = step === 'internal' ? 'internal' : 'marks'
     setMessage(
       res.ok
-        ? { ok: true, text: 'Started. The runs below update as it goes; reload to follow it.' }
-        : { ok: false, text: body.error ?? 'That failed.' },
+        ? { where, ok: true, text: 'Started. The runs below update as it goes.' }
+        : { where, ok: false, text: body.error ?? 'That failed.' },
     )
     revalidator.revalidate()
   }
@@ -210,11 +216,17 @@ function Controls({ data }: { data: Cleanup }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) setMessage({ ok: false, text: 'Couldn’t change that setting.' })
+    if (!res.ok) setMessage({ where: 'settings', ok: false, text: 'Couldn’t change that setting.' })
     revalidator.revalidate()
   }
 
   const box = 'border-rule rounded-surface mb-3 border p-3'
+  const note = (where: NonNullable<typeof message>['where']) =>
+    message?.where === where && (
+      <Alert variant={message.ok ? 'success' : 'error'} className="mt-3 text-xs">
+        {message.text}
+      </Alert>
+    )
   return (
     <div className="mb-8">
       <div className={box}>
@@ -237,6 +249,7 @@ function Controls({ data }: { data: Cleanup }) {
             Dry run
           </Button>
         </div>
+        {note('internal')}
       </div>
 
       <div className={box}>
@@ -283,6 +296,7 @@ function Controls({ data }: { data: Cleanup }) {
             Dry run: count what the sweep would delete, delete nothing
           </label>
         </div>
+        {note('marks')}
       </div>
 
       <label className="flex items-center gap-2 text-sm">
@@ -305,11 +319,7 @@ function Controls({ data }: { data: Cleanup }) {
       <p className="text-ink-muted mt-1 text-xs">
         While anything writes to the bucket outside the app, such as the v1 migration tools.
       </p>
-      {message && (
-        <Alert variant={message.ok ? 'success' : 'error'} className="mt-3 text-xs">
-          {message.text}
-        </Alert>
-      )}
+      {note('settings')}
     </div>
   )
 }
