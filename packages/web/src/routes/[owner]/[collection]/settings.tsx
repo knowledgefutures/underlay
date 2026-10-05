@@ -568,8 +568,8 @@ export default function CollectionSettingsPage() {
         <div className="rounded-surface border border-red-200 p-4">
           <h2 className="mb-2 text-sm font-semibold text-red-700">Danger zone</h2>
           <p className="text-ink-muted mb-3 text-sm">
-            Permanently delete this collection and all its versions, records, and files. This cannot
-            be undone.
+            Deletes the collection and its versions now. Its stored data is kept for 7 days and then
+            removed. To recover it within those 7 days, contact Knowledge Futures.
           </p>
           <details className="group">
             <summary className="cursor-pointer text-sm text-red-700 hover:underline">
