@@ -207,4 +207,72 @@ describe('collection management', () => {
     ).toBe(200)
     expect((await h.request('/api/collections/two/renamed', { user })).status).toBe(404)
   })
+
+  it('keeps the description given at creation until a version gives one', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const res = await h.request('/api/accounts/org/collections', {
+      method: 'POST',
+      user,
+      json: { slug: 'described', description: '  Authors and books  ', public: true },
+    })
+    expect(res.status).toBe(201)
+    const base = '/api/collections/org/described'
+    const push = async (metadata: Record<string, unknown>, name: string) => {
+      const sid = (
+        await json(
+          await h.request(`${base}/push`, {
+            method: 'POST',
+            user,
+            json: { schemas: { Author }, metadata },
+          }),
+        )
+      ).session_id
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [{ id: 'a', type: 'Author', data: { name } }],
+      })
+      expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+        201,
+      )
+    }
+    expect((await json(await h.request(base))).description).toBe('Authors and books')
+    await push({ title: 'T' }, 'A')
+    expect((await json(await h.request(base))).description).toBe('Authors and books')
+    await push({ title: 'T', description: 'From the push' }, 'B')
+    expect((await json(await h.request(base))).description).toBe('From the push')
+  })
+
+  it("returns the collection's ARK and each version's", async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.request('/api/accounts/org/collections', {
+      method: 'POST',
+      user,
+      json: { slug: 'with-ark', public: true },
+    })
+    const base = '/api/collections/org/with-ark'
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [{ id: 'a', type: 'Author', data: { name: 'A' } }],
+    })
+    await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    const col = await json(await h.request(base))
+    expect(col.ark).toMatch(/\/ark:\d+\/ul\w+$/)
+    expect(col.latestVersion.ark).toBe(`${col.ark}.v1.0.0`)
+    const [listed] = await json(await h.request(`${base}/versions`))
+    expect(listed.ark).toBe(`${col.ark}.v1.0.0`)
+    expect((await json(await h.request(`${base}/versions/1.0.0`))).ark).toBe(`${col.ark}.v1.0.0`)
+
+    // A disabled ARK isn't shown.
+    await h.request(`${base}/ark`, { method: 'PATCH', user, json: { enabled: false } })
+    expect((await json(await h.request(base))).ark).toBeNull()
+  })
 })

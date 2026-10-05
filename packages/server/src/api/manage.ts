@@ -1,7 +1,7 @@
 /**
  * Creating and changing collections (v1 shapes).
  *
- *   POST   /api/accounts/:owner/collections            {slug, name?, public?}
+ *   POST   /api/accounts/:owner/collections            {slug, name?, description?, public?}
  *   PATCH  /api/collections/:owner/:slug               {name?, slug?, public?}
  *   DELETE /api/collections/:owner/:slug
  *   POST   /api/collections/:owner/:slug/transfer      {targetOrgSlug}
@@ -60,6 +60,7 @@ export function manageRoutes() {
     const body = (await c.req.json().catch(() => null)) as {
       slug?: unknown
       name?: unknown
+      description?: unknown
       public?: unknown
     } | null
     const slugError = validateCollectionSlug(body?.slug)
@@ -73,11 +74,16 @@ export function manageRoutes() {
     if (taken) return jsonError(c, 409, 'Collection already exists')
     const name =
       typeof body?.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 200) : slug
+    const description =
+      typeof body?.description === 'string' && body.description.trim()
+        ? body.description.trim().slice(0, 1000)
+        : null
     const col = await createCollectionRows(c.var.ports, {
       organizationId: org.id,
       slug,
       name,
       public: body?.public === true,
+      ...(description ? { summary: { description } } : {}),
     })
     // Every new collection gets an ARK, as in v1.
     await ensureCollectionArk(c.var.ports.db, { id: col.id, organizationId: org.id })

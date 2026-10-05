@@ -26,6 +26,8 @@ export async function createCollectionRows(
     name: string
     public: boolean
     privateSalt?: string
+    /** Until the first version's metadata replaces it. */
+    summary?: schema.CollectionSummary
   },
 ): Promise<typeof schema.collections.$inferSelect> {
   const id = crypto.randomUUID()
@@ -37,6 +39,7 @@ export async function createCollectionRows(
       name: c.name,
       public: c.public,
       privateSalt: c.privateSalt ?? newSalt(),
+      summary: c.summary ?? null,
     }),
     ports.db.insert(schema.placements).values({
       collectionId: id,

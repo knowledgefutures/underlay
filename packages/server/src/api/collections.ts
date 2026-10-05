@@ -18,6 +18,7 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 import { jsonError, requireCollection } from './access.js'
+import { collectionArk } from './ark.js'
 
 type VersionRow = typeof schema.versions.$inferSelect
 
@@ -36,7 +37,11 @@ async function memberOrgIds(
 }
 
 /** A version as a caller sees it in lists and the collection detail. */
-export function versionSummary(v: VersionRow, owner: boolean) {
+export function versionSummary(
+  v: VersionRow,
+  owner: boolean,
+  ark: ((semver: string) => string) | null = null,
+) {
   return {
     semver: v.semver,
     major: v.major,
@@ -52,7 +57,7 @@ export function versionSummary(v: VersionRow, owner: boolean) {
     totalBytes: owner ? v.totalBytes : v.publicTotalBytes,
     typeCounts: owner ? v.typeCounts : v.publicTypeCounts,
     createdAt: v.createdAt,
-    ark: null as string | null,
+    ark: ark ? ark(v.semver) : null,
   }
 }
 
@@ -242,6 +247,7 @@ export function collectionRoutes() {
     if (access instanceof Response) return access
     const { db } = c.var.ports
     const col = access.collection
+    const ark = await collectionArk(db, col.id, access.owner)
     const [versionCount] = await db
       .select({ n: count() })
       .from(schema.versions)
@@ -256,7 +262,7 @@ export function collectionRoutes() {
       if (v) {
         const repo = await c.var.ports.stores.forCollection(col.id)
         const root = await repo.root(v.hash)
-        const s = versionSummary(v, access.isMember)
+        const s = versionSummary(v, access.isMember, ark)
         latestVersion = {
           ...s,
           metadata: root.metadata,
@@ -274,7 +280,7 @@ export function collectionRoutes() {
       createdAt: col.createdAt,
       updatedAt: col.updatedAt,
       description: col.summary?.description ?? null,
-      ark: null,
+      ark: ark ? ark() : null,
       versionCount: versionCount?.n ?? 0,
       latestVersion,
     })

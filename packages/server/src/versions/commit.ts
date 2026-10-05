@@ -222,7 +222,10 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     fence,
     version: versionRow,
     baseVersionId: base?.id ?? null,
-    collectionUpdate: { publicFilesRoot, summary: summarize(input.metadata) },
+    collectionUpdate: {
+      publicFilesRoot,
+      summary: base ? summarize(input.metadata) : firstSummary(input.metadata, collection.summary),
+    },
     schemaHashes: [...new Set(input.types.map((t) => t.schemaHash))],
     usage,
   })
@@ -272,6 +275,19 @@ export function summarize(
       .map((t) => t.slice(0, 50))
   }
   return out
+}
+
+/**
+ * The first version's summary. A description given when the collection was
+ * made stays unless the first version's metadata has one.
+ */
+export function firstSummary(
+  metadata: Record<string, unknown> | null,
+  made: schema.CollectionSummary | null,
+): schema.CollectionSummary | null {
+  const out = summarize(metadata)
+  if (!made?.description || out?.description) return out
+  return { ...out, description: made.description }
 }
 
 export async function mergeCumulativeFiles(

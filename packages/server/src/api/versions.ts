@@ -42,6 +42,7 @@ import {
   type VersionView,
 } from '../versions/view.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
+import { collectionArk } from './ark.js'
 import { versionSummary } from './collections.js'
 
 const encodeCursor = (t: string, k: string) =>
@@ -158,7 +159,8 @@ export function versionRoutes() {
       .orderBy(desc(schema.versions.seq))
       .limit(limit)
       .offset(offset)
-    return c.json(rows.map((v) => versionSummary(v, access.isMember)))
+    const ark = await collectionArk(c.var.ports.db, access.collection.id, access.owner)
+    return c.json(rows.map((v) => versionSummary(v, access.isMember, ark)))
   })
 
   app.get('/:owner/:slug/versions/:n', async (c) => {
@@ -196,7 +198,11 @@ export function versionRoutes() {
       }
     }
     return c.json({
-      ...versionSummary(view.version, view.owner),
+      ...versionSummary(
+        view.version,
+        view.owner,
+        await collectionArk(c.var.ports.db, access.collection.id, access.owner),
+      ),
       metadata: view.root.metadata,
       typeCounts: Object.fromEntries(view.types.map((t) => [t.slug, t.count])),
       schemas,

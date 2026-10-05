@@ -78,6 +78,26 @@ export async function ensureCollectionArk(
     .onConflictDoNothing()
 }
 
+/**
+ * The collection's ARK URL builder (a version's with a semver), or null when the
+ * collection has no enabled ARK.
+ */
+export async function collectionArk(
+  db: Db,
+  collectionId: string,
+  owner: { id: string; arkNaan: string | null },
+): Promise<((semver?: string) => string) | null> {
+  const [row] = await db
+    .select()
+    .from(schema.arkCollections)
+    .where(eq(schema.arkCollections.collectionId, collectionId))
+    .limit(1)
+  if (!row?.enabled) return null
+  const shoulder = await orgShoulder(db, owner.id)
+  if (!shoulder) return null
+  return (semver) => buildArkUrl(owner.arkNaan ?? DEFAULT_NAAN, shoulder, row.arkId, semver)
+}
+
 // --- Resolution ---
 
 export type ArkResolution =
