@@ -77,12 +77,18 @@ if (env.V1_S3_BUCKET) {
     secretAccessKey: env.V1_S3_SECRET_KEY ?? '',
     region: 'auto',
   })
-  const files = await copyFiles(source, ports, {
-    onFile: (_, done, total) => {
-      if (done % 100 === 0 || done === total) console.error(`[files] ${done}/${total}`)
-    },
-  })
-  report = { ...report, files }
+  try {
+    const files = await copyFiles(source, ports, {
+      onFile: (_, done, total) => {
+        if (done % 100 === 0 || done === total) console.error(`[files] ${done}/${total}`)
+      },
+    })
+    report = { ...report, files }
+  } catch (err) {
+    // Keep the conversion's report: the copy is re-runnable (FILES_ONLY=1), the conversion isn't.
+    console.log(JSON.stringify({ ...report, filesError: String(err) }, null, 2))
+    throw err
+  }
 }
 console.log(
   JSON.stringify({ ...report, seconds: Math.round((Date.now() - started) / 1000) }, null, 2),
