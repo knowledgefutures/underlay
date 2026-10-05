@@ -7,7 +7,7 @@ import { useAppContext } from '~/lib/app-context'
 import { slugify } from '~/lib/format'
 
 export default function NewCollection() {
-  const { currentUser } = useAppContext()
+  const { currentUser, siteHost = 'underlay.org' } = useAppContext()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -85,12 +85,12 @@ export default function NewCollection() {
           </Field>
 
           <Field
-            label="Collection name"
+            label="URL slug"
             hint={
               <>
                 Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
                 <span className="font-mono">
-                  {owner}/{slug || '...'}
+                  {siteHost}/{owner}/{slug || '...'}
                 </span>
               </>
             }

@@ -120,6 +120,8 @@ export function collectionRoutes() {
       currentUser,
       kfAccountUrl: c.var.config.kfAccountUrl ?? '',
       kfAuthUrl: c.var.config.kfAuthUrl ?? '',
+      // The deployment's host, for "this becomes the URL" hints.
+      siteHost: new URL(c.var.config.appUrl).host,
     })
   })
 

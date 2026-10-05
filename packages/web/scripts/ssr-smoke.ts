@@ -382,7 +382,7 @@ try {
     {
       path: '/org/settings',
       status: 200,
-      has: [`src="${avatarUrl}"`, 'Upload logo', 'Remove', 'up to 1 MB'],
+      has: [`src="${avatarUrl}"`, 'Replace logo', 'Remove', 'up to 1 MB'],
       user: 'u1',
     },
     { path: '/org', status: 200, has: [avatarUrl] },

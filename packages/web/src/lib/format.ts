@@ -49,6 +49,23 @@ export function formatBytesFixed(bytes: number): string {
   return `${(bytes / 1e9).toFixed(1)} GB`
 }
 
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'for', 'in', 'of', 'on', 'or', 'the', 'to'])
+
+/**
+ * A tag for display. Tags are publishers' data: "Cultural Heritage" stays as
+ * written; a slug like "revive-and-restore" reads "Revive and Restore", and a
+ * short one like "ncbi" reads as the acronym it usually is ("NCBI").
+ */
+export function tagLabel(tag: string): string {
+  if (!/^[a-z0-9-_]+$/.test(tag)) return tag
+  if (/^[a-z]{2,4}$/.test(tag)) return tag.toUpperCase()
+  return tag
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w, i) => (i > 0 && SMALL_WORDS.has(w) ? w : w[0]!.toUpperCase() + w.slice(1)))
+    .join(' ')
+}
+
 /** A count, compact once it's large: 1,284 / 12.9K / 4.2M / 1.2B. One style everywhere. */
 export function formatCount(n: number): string {
   if (n < 10_000) return n.toLocaleString('en-US')

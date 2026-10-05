@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
-import { formatBytesFixed, formatCount, timeAgo } from '~/lib/format'
+import { formatBytesFixed, formatCount, tagLabel, timeAgo } from '~/lib/format'
 
 interface Collection {
   id: string
@@ -180,7 +180,7 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                           : 'text-ink-muted hover:bg-parchment-dark/50 hover:text-ink'
                       }`}
                     >
-                      {tag}
+                      {tagLabel(tag)}
                     </button>
                   </li>
                 ))}
@@ -327,7 +327,7 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                               key={tag}
                               className="bg-parchment-dark text-ink-muted rounded-control px-1.5 py-0.5 text-[10px] leading-none"
                             >
-                              {tag}
+                              {tagLabel(tag)}
                             </span>
                           ))}
                         </span>

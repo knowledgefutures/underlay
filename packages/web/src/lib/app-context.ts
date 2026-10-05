@@ -5,5 +5,7 @@ export function useAppContext() {
     currentUser: any // includes kfRole: string | null
     kfAccountUrl: string
     kfAuthUrl: string
+    /** This deployment's host, like underlay.org or staging.underlay.org. */
+    siteHost?: string
   }
 }

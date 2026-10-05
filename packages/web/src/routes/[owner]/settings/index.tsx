@@ -84,17 +84,12 @@ export default function OwnerSettings() {
     }
   }
 
-  async function handleUploadAvatar(e: FormEvent) {
-    e.preventDefault()
+  /** Uploads as soon as a file is picked: one button, no separate submit. */
+  async function handleUploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     clearMessages()
-
-    const form = e.target as HTMLFormElement
-    const fileInput = form.elements.namedItem('avatar') as HTMLInputElement
-    const file = fileInput?.files?.[0]
-    if (!file) {
-      setError('Please select an image file.')
-      return
-    }
+    const input = e.target
+    const file = input.files?.[0]
+    if (!file) return
 
     setSubmitting('avatar')
     try {
@@ -109,12 +104,12 @@ export default function OwnerSettings() {
         const data = await res.json()
         setSuccess('Logo updated.')
         setAvatarUrl(data.avatarUrl)
-        form.reset()
       } else {
         const body = await res.json().catch(() => ({}))
         setError(body.error ?? 'Upload failed.')
       }
     } finally {
+      input.value = ''
       setSubmitting('')
     }
   }
@@ -215,7 +210,7 @@ export default function OwnerSettings() {
           {avatarUrl ? (
             <img
               src={avatarUrl}
-              alt="Avatar"
+              alt="Organization logo"
               className="border-rule h-16 w-16 rounded-full border object-cover"
             />
           ) : (
@@ -226,21 +221,24 @@ export default function OwnerSettings() {
           <div className="min-w-0">
             <p className="text-sm font-medium">{initialOrgData.displayName}</p>
             <p className="text-ink-muted font-mono text-xs">@{owner}</p>
-            <form onSubmit={handleUploadAvatar} className="mt-2 flex flex-wrap items-center gap-2">
-              <input
-                type="file"
-                name="avatar"
-                accept="image/jpeg,image/png,image/gif,image/webp"
-                className="file:border-rule file:bg-parchment hover:file:bg-parchment-dark file:rounded-control text-xs file:mr-2 file:cursor-pointer file:border file:px-2.5 file:py-1 file:text-xs file:font-medium"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                variant="secondary"
-                disabled={submitting === 'avatar'}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label
+                className={`border-rule bg-parchment hover:bg-parchment-dark rounded-control inline-flex cursor-pointer items-center border px-2.5 py-1 text-xs font-medium transition-colors focus-within:outline-2 ${submitting === 'avatar' ? 'pointer-events-none opacity-60' : ''}`}
               >
-                {submitting === 'avatar' ? 'Uploading…' : 'Upload logo'}
-              </Button>
+                <input
+                  type="file"
+                  name="avatar"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  className="sr-only"
+                  onChange={handleUploadAvatar}
+                  disabled={submitting === 'avatar'}
+                />
+                {submitting === 'avatar'
+                  ? 'Uploading…'
+                  : avatarUrl
+                    ? 'Replace logo…'
+                    : 'Upload logo…'}
+              </label>
               {avatarUrl && (
                 <Button
                   type="button"
@@ -252,7 +250,7 @@ export default function OwnerSettings() {
                   Remove
                 </Button>
               )}
-            </form>
+            </div>
             <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 1 MB.</p>
           </div>
         </div>

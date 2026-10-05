@@ -14,12 +14,14 @@ interface KfAccount {
 }
 
 export default function NewOrg() {
-  const { currentUser } = useAppContext()
+  const { currentUser, siteHost = 'underlay.org' } = useAppContext()
   const navigate = useNavigate()
 
   const [kfAccounts, setKfAccounts] = useState<KfAccount[]>([])
   const [kfOrgId, setKfOrgId] = useState('')
   const [slug, setSlug] = useState('')
+  // The slug follows the display name until it's edited.
+  const [slugEdited, setSlugEdited] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -70,7 +72,7 @@ export default function NewOrg() {
         </p>
 
         {!loaded ? (
-          <p className="text-ink-muted text-sm">Loading...</p>
+          <p className="text-ink-muted text-sm">Loading…</p>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && <Alert variant="error">{error}</Alert>}
@@ -81,7 +83,10 @@ export default function NewOrg() {
                 required
                 placeholder="My Organization"
                 value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
+                onChange={(e) => {
+                  setDisplayName(e.target.value)
+                  if (!slugEdited) setSlug(slugify(e.target.value).replace(/^-+|-+$/g, ''))
+                }}
               />
             </Field>
 
@@ -90,7 +95,9 @@ export default function NewOrg() {
               hint={
                 <>
                   Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
-                  <span className="font-mono">underlay.org/{slug || '...'}</span>
+                  <span className="font-mono">
+                    {siteHost}/{slug || '...'}
+                  </span>
                 </>
               }
             >
@@ -101,7 +108,10 @@ export default function NewOrg() {
                 minLength={2}
                 placeholder="my-org"
                 value={slug}
-                onChange={(e) => setSlug(slugify(e.target.value))}
+                onChange={(e) => {
+                  setSlugEdited(true)
+                  setSlug(slugify(e.target.value))
+                }}
               />
             </Field>
 
