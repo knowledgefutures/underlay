@@ -63,8 +63,8 @@ export default function CollectionOverviewBody({
       <div className="min-w-0">
         {/* Version bar */}
         {version && (
-          <div className="border-rule bg-parchment-dark rounded-surface mb-6 flex items-center justify-between border px-4 py-2.5">
-            <div className="flex items-center gap-3 text-sm">
+          <div className="border-rule bg-parchment-dark rounded-surface mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <TokenLink
                 to={`${base}/v/${bareSemver(version.semver)}`}
                 className="text-link font-medium hover:underline"
@@ -83,14 +83,21 @@ export default function CollectionOverviewBody({
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">{formatBytes(version.totalBytes)}</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-ink-muted text-xs">{formatDate(version.createdAt)}</span>
+            <div className="flex shrink-0 items-center gap-3">
+              <span className="text-ink-muted text-xs whitespace-nowrap">
+                {formatDate(version.createdAt)}
+              </span>
               <TokenLink
                 to={`${base}/versions`}
                 className="text-ink-muted hover:text-ink flex items-center gap-1 text-xs transition-colors"
                 title="Version history"
               >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg
+                  className="h-4 w-4 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"

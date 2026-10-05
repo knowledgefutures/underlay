@@ -108,6 +108,7 @@ function VersionPicker({
  * - Tab row is content: Overview / Records / Schemas / Files / Versions, with
  *   the version picker on its right edge scoping the version-aware tabs
  *   (Overview, Records, Schemas, Files). Versions is the full history.
+ *   On a phone the tabs scroll sideways under the picker's own row.
  */
 export function CollectionNav({
   owner,
@@ -130,7 +131,8 @@ export function CollectionNav({
 }) {
   // No -mb-px here: inside a scroll container it would overflow vertically by
   // 1px and make the row scrollable. The wrapper carries the offset instead.
-  const linkClass = 'px-3 py-2 text-sm font-medium border-b-2 transition-colors'
+  const linkClass =
+    'shrink-0 whitespace-nowrap px-3 py-2 text-sm font-medium border-b-2 transition-colors'
   const activeClass = `${linkClass} border-ink text-ink`
   const inactiveClass = `${linkClass} border-transparent text-ink-muted hover:text-ink hover:border-rule`
   const shareToken = useShareToken()
@@ -161,17 +163,20 @@ export function CollectionNav({
 
   return (
     <>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <nav className="flex min-w-0 items-center gap-1.5 text-lg">
-          <Link to={`/${owner}`} className="text-link hover:underline">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <nav className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-base sm:text-lg">
+          <Link to={`/${owner}`} className="text-link whitespace-nowrap hover:underline">
             {owner}
           </Link>
           <span className="text-ink-muted">/</span>
-          <TokenLink to={base} className="min-w-0 truncate font-semibold hover:underline">
+          <TokenLink
+            to={base}
+            className="min-w-0 truncate font-semibold whitespace-nowrap hover:underline"
+          >
             {collection}
           </TokenLink>
           {isPublic !== undefined && (
-            <Badge className="ml-2">{isPublic ? 'public' : 'private'}</Badge>
+            <Badge className="sm:ml-2">{isPublic ? 'public' : 'private'}</Badge>
           )}
           {shareToken && !isOwner && (
             <Badge
@@ -182,17 +187,7 @@ export function CollectionNav({
             </Badge>
           )}
         </nav>
-        <div className="flex shrink-0 items-center gap-4 text-sm">
-          <TokenLink
-            to={`${base}/versions`}
-            className={
-              active === 'versions'
-                ? 'text-ink font-medium'
-                : 'text-ink-muted hover:text-ink transition-colors'
-            }
-          >
-            Versions
-          </TokenLink>
+        <div className="flex shrink-0 items-center gap-4 pt-1 text-sm">
           {isOwner && (
             <Link
               to={`${base}/settings`}
@@ -203,14 +198,14 @@ export function CollectionNav({
           )}
         </div>
       </div>
-      <div className="border-rule mb-6 flex items-center gap-3 border-b">
+      <div className="border-rule mb-6 flex flex-wrap items-center gap-x-3 border-b">
         {/* Only the tabs scroll. The picker sits outside the scroll container:
             an overflow value other than visible clips absolutely-positioned
             descendants, which would cut off its dropdown. */}
         {/* -mb-px lifts the whole strip so the active tab's border covers the
             row rule. overflow-y-hidden because overflow-x-auto alone makes the
             y axis compute to auto, which rubber-bands on trackpads. */}
-        <div className="-mb-px flex min-w-0 items-center gap-0 overflow-x-auto overflow-y-hidden">
+        <div className="order-2 -mb-px flex w-full min-w-0 items-center gap-0 overflow-x-auto overflow-y-hidden sm:order-none sm:w-auto">
           <TokenLink to={prefix} className={active === 'overview' ? activeClass : inactiveClass}>
             Overview
           </TokenLink>
@@ -236,9 +231,15 @@ export function CollectionNav({
               Files
             </TokenLink>
           )}
+          <TokenLink
+            to={`${base}/versions`}
+            className={active === 'versions' ? activeClass : inactiveClass}
+          >
+            Versions
+          </TokenLink>
         </div>
         {version && (
-          <div className="mb-1.5 ml-auto shrink-0">
+          <div className="order-1 mb-1.5 ml-auto shrink-0 sm:order-none">
             <VersionPicker
               owner={owner}
               collection={collection}

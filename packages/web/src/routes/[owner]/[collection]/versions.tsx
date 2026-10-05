@@ -51,7 +51,7 @@ export default function CollectionVersionsPage() {
             {versions.map((v: any, i: number) => (
               <div
                 key={v.semver}
-                className={`hover:bg-parchment-dark/50 flex items-center justify-between px-4 py-3 transition-colors ${
+                className={`hover:bg-parchment-dark/50 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4 py-3 transition-colors ${
                   i < versions.length - 1 ? 'border-rule border-b' : ''
                 }`}
               >
@@ -68,13 +68,15 @@ export default function CollectionVersionsPage() {
                     <span className="text-ink-muted truncate text-xs">{v.message}</span>
                   )}
                 </TokenLink>
-                <div className="text-ink-muted ml-4 flex shrink-0 items-center gap-5 text-xs">
+                <div className="text-ink-muted flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
                   <span>{v.recordCount.toLocaleString('en-US')} records</span>
-                  <span>{v.fileCount.toLocaleString('en-US')} files</span>
+                  <span className="hidden sm:inline">
+                    {v.fileCount.toLocaleString('en-US')} files
+                  </span>
                   <span>{formatBytes(v.totalBytes)}</span>
                   <span className="w-20 text-right">{formatDate(v.createdAt)}</span>
                   <code
-                    className="text-ink-muted w-24 text-right font-mono text-[11px]"
+                    className="text-ink-muted hidden w-24 text-right font-mono text-[11px] sm:inline"
                     title={prefixedHash(v.hash)}
                   >
                     {shortHash(v.hash, 6)}

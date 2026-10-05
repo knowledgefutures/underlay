@@ -20,7 +20,7 @@ export default function CreateMenu() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2.5 py-1 text-xs transition-colors"
+        className="border-rule bg-parchment-dark hover:bg-rule/30 rounded-control cursor-pointer border px-2.5 py-1 text-xs whitespace-nowrap transition-colors"
       >
         New +
       </button>
