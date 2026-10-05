@@ -17,7 +17,7 @@ import type { AppEnv } from '../app.js'
 import { meter } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
-import { presignDownload } from '../files/files.js'
+import { cleanHash, isHash, presignDownload } from '../files/files.js'
 import { deniedHashes, isDenied } from '../lib/limits.js'
 import { eventsFor, type Presence, presenceOf } from '../refs/log.js'
 import { fileSizes } from '../versions/file-refs.js'
@@ -284,11 +284,13 @@ export function recordRoutes() {
   })
 
   app.get('/api/collections/files/:hash', async (c) => {
-    const hash = c.req.param('hash').replace(/^sha256:/, '')
-    if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
+    const hash = cleanHash(c.req.param('hash'))
+    if (!isHash(hash)) return jsonError(c, 404, 'File not found')
     const items = await visiblePresence(c, hash, await memberOrgs(c))
     const found = items.find((i) => i.p.kind === 'f')
     if (!found) return jsonError(c, 404, 'File not found')
+    // After the access check: a 451 would confirm the file exists to anyone.
+    if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
     const url = await presignDownload(c.var.ports, hash)
     if (!url) return jsonError(c, 404, 'File not found')
     // Billed to the first collection the caller may read it from.

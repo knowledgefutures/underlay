@@ -28,10 +28,25 @@ export interface Principal {
  * The role a caller acts with: a key's scope caps its holder's role. Sessions
  * and admin keys keep the full role; read and write keys act as members, so
  * they can't change visibility, delete, or manage mirrors, webhooks or the org.
+ * A key confined to some collections acts as a member too, whatever its scope:
+ * it may write to them, never manage them (see keyCannotManage).
  */
 export function capRole(p: Principal, role: string | null): string | null {
   if (!role) return null
+  if (p.collectionIds) return 'member'
   return p.scope === 'session' || p.scope === 'admin' ? role : 'member'
+}
+
+/**
+ * 403 for a key confined to some collections, on a route that manages a
+ * collection (visibility, deletion, transfer, webhooks, placements); null for
+ * anyone else. capRole already keeps such a key from an admin's role; this
+ * says why.
+ */
+export function keyCannotManage(c: Context<AppEnv>): Response | null {
+  return c.var.principal?.collectionIds
+    ? jsonError(c, 403, 'This key cannot manage collections')
+    : null
 }
 
 export interface CollectionAccess {

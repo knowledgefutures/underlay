@@ -43,14 +43,15 @@ export function fileRoutes() {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return head ? c.body(null, 404) : access
     const hash = cleanHash(c.req.param('hash'))
-    if (await isDenied(c.var.ports.db, hash)) {
-      return head ? c.body(null, 451) : jsonError(c, 451, 'This file is unavailable')
-    }
+    // Access before the denylist: a 451 would confirm the file exists to anyone.
     if (
       !isHash(hash) ||
       !(await canReadFile(c.var.ports, access.collection, access.isMember, hash))
     ) {
       return head ? c.body(null, 404) : jsonError(c, 404, 'File not found')
+    }
+    if (await isDenied(c.var.ports.db, hash)) {
+      return head ? c.body(null, 451) : jsonError(c, 451, 'This file is unavailable')
     }
     const [f] = await c.var.ports.db
       .select()
@@ -164,10 +165,19 @@ export function fileRoutes() {
       )
       .limit(1)
     if (!u) return jsonError(c, 404, 'Upload not found')
-    const body = (await c.req.json().catch(() => ({}))) as {
-      parts?: { partNumber: number; etag: string }[]
+    const body = (await c.req.json().catch(() => ({}))) as { parts?: unknown } | null
+    const parts = body?.parts
+    if (u.multipartUploadId) {
+      const valid =
+        Array.isArray(parts) &&
+        parts.length > 0 &&
+        parts.every(
+          (p) =>
+            Number.isSafeInteger(p?.partNumber) && p.partNumber > 0 && typeof p.etag === 'string',
+        )
+      if (!valid) return jsonError(c, 400, 'parts is required for a multipart upload')
     }
-    await completeUpload(c.var.ports, u, body.parts)
+    await completeUpload(c.var.ports, u, parts as { partNumber: number; etag: string }[])
     return c.json({ id: u.id, status: 'verifying' }, 202)
   })
 

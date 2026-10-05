@@ -5,7 +5,7 @@
  *   GET    /api/schemas?label|slug|schema_hash|q&limit&offset
  *   GET    /api/schemas/:id                       id = schema hash
  *   POST   /api/schemas/:id/labels                {label}
- *   DELETE /api/schemas/:id/labels/:label         admin keys only
+ *   DELETE /api/schemas/:id/labels/:label         stewards only
  *
  * Visibility comes from schema_usage: a schema is visible when it is used in
  * the public set of a public collection, or by a collection in one of the
@@ -20,6 +20,7 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { findVersion, loadView } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
+import { stewardOnly } from './admin.js'
 
 const MAX_LABEL_LENGTH = 100
 
@@ -269,7 +270,10 @@ export function schemaRoutes() {
   })
 
   app.delete('/api/schemas/:id/labels/:label', async (c) => {
-    if (c.var.principal?.scope !== 'admin') return jsonError(c, 403, 'Admin access required')
+    // Labels are shared by every collection using the schema: removing one is a
+    // steward's call (a session, or an unscoped non-read key held by a steward).
+    const denied = await stewardOnly(c)
+    if (denied) return denied
     await c.var.ports.db
       .delete(schema.schemaLabels)
       .where(

@@ -55,6 +55,10 @@ describe('account routes', () => {
       call('/api/accounts/me', { method: 'DELETE', user: 'u1', json: { confirmSlug } })
 
     expect((await del('nope')).status).toBe(422)
+    // A write key can't delete the account; a session or an admin key can.
+    const byKey = (key: string) =>
+      call('/api/accounts/me', { method: 'DELETE', user: 'u1', key, json: { confirmSlug: 'u1' } })
+    expect((await byKey('write')).status).toBe(403)
     await db.insert(schema.collections).values({
       organizationId: 'p-u1',
       slug: 'keep',
@@ -155,6 +159,12 @@ describe('account routes', () => {
       call('/api/accounts/org', { method: 'PATCH', user: u, json })
 
     expect((await patch('u2', { displayName: 'X' })).status).toBe(403)
+    // An owner's write key acts as a member; an admin key keeps the role.
+    const asKey = (key: string, method: string, json?: unknown) =>
+      call('/api/accounts/org', { method, user: 'u1', key, ...(json ? { json } : {}) })
+    expect((await asKey('write', 'PATCH', { displayName: 'X' })).status).toBe(403)
+    expect((await asKey('write', 'DELETE')).status).toBe(403)
+    expect((await asKey('admin', 'PATCH', { bio: 'b' })).status).toBe(200)
     expect((await patch('u1', { kfOrgId: 'kf-other' })).status).toBe(403)
     expect((await patch('u1', { kfOrgId: 'kf-1', displayName: 'Org One' })).status).toBe(200)
     const [org] = await db
@@ -173,6 +183,7 @@ describe('account routes', () => {
     expect((await call('/api/accounts/org', { method: 'DELETE', user: 'u1' })).status).toBe(409)
     expect((await call('/api/accounts/u2', { method: 'DELETE', user: 'u2' })).status).toBe(409)
     await db.delete(schema.collections)
+    expect((await asKey('write', 'DELETE')).status).toBe(403)
     expect((await call('/api/accounts/org', { method: 'DELETE', user: 'u1' })).status).toBe(200)
     expect(
       await db.select().from(schema.member).where(eq(schema.member.organizationId, 'org1')),

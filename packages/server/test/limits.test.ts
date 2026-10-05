@@ -144,7 +144,10 @@ describe('denylist and abuse reports', () => {
     expect((await block({ hash: sha(bad), kind: 'file', reason: 'x' }, 'u2')).status).toBe(403)
     expect((await block({ hash: 'nope', kind: 'file', reason: 'x' })).status).toBe(400)
 
+    // The global route finds files through the reference log.
+    await h.drain()
     expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
+    expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(302)
     expect((await block({ hash: sha(bad), kind: 'file', reason: 'spam' })).status).toBe(201)
     expect((await block({ hash: spam.hash, kind: 'record', reason: 'spam' })).status).toBe(201)
 
@@ -164,6 +167,19 @@ describe('denylist and abuse reports', () => {
     ).json()
     expect(presigned[sha(bad)]).toBeNull()
     expect(presigned[sha(good)]).toEqual(expect.any(String))
+    // Only to those who may read it: anyone else gets the 404 an unknown file
+    // gets, so a 451 never confirms a file exists or is blocked.
+    await h.collection('empty')
+    await h.ports.db.update(schema.collections).set({ public: true })
+    expect((await call(`/api/collections/org/empty/files/${sha(bad)}`)).status).toBe(404)
+    expect(
+      (await call(`/api/collections/org/empty/files/${sha(bad)}`, { method: 'HEAD' })).status,
+    ).toBe(404)
+    expect((await call(`${base}/files/${sha(bad)}`, { method: 'HEAD' })).status).toBe(451)
+    expect((await block({ hash: sha('unheld'), kind: 'file', reason: 'x' })).status).toBe(201)
+    expect((await call(`${base}/files/${sha('unheld')}`)).status).toBe(404)
+    expect((await call(`/api/collections/files/${sha('unheld')}`)).status).toBe(404)
+    expect((await call('/api/collections/files/not-a-hash')).status).toBe(404)
     // Records: listings and NDJSON leave it out; the batch read returns nothing for it.
     expect((await listing()).map((r) => r.id)).toEqual(['b'])
     const ndjson = await (await call(`${base}/versions/latest/records.ndjson`)).text()
@@ -189,7 +205,7 @@ describe('denylist and abuse reports', () => {
     ).toBe(200)
     expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
     const entries = (await (await call('/api/admin/denylist', { user: 'u1' })).json()).entries
-    expect(entries.map((e: { kind: string }) => e.kind)).toEqual(['record'])
+    expect(entries.map((e: { kind: string }) => e.kind).sort()).toEqual(['file', 'record'])
   })
 
   it('lets stewards dismiss a report', async () => {

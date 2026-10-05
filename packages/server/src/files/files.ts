@@ -24,7 +24,7 @@ import { copyObject, fileTree, getEntry, RepoSource } from '@underlay/protocol'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 
 import { FenceError, fenced, fenceHolds, fenceMoved } from '../cleanup/fence.js'
-import { chunks } from '../db/chunks.js'
+import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import { deniedHashes } from '../lib/limits.js'
@@ -79,8 +79,10 @@ export const isHash = (h: string) => HEX64.test(h)
 
 /**
  * May this caller read this file through this collection? Non-members: the file
- * is in the collection's cumulative public files tree. Members: also the head's
- * file trees (both sets).
+ * is in the collection's cumulative public files tree. Members, who read every
+ * set: any file the collection holds, the same "held" a commit uses
+ * (versions/file-refs.ts collectionFileSizes): also the head's file trees (both
+ * sets), or bytes uploaded and verified under this collection.
  */
 export async function canReadFile(
   ports: Ports,
@@ -113,14 +115,63 @@ export async function readableFiles(
     }
   }
   const out = new Set<string>()
+  const rest: string[] = []
   for (const h of hashes) {
+    let found = false
     for (const r of roots) {
       if (r && (await getEntry(source, r, h))) {
-        out.add(h)
+        found = true
         break
       }
     }
+    if (found) out.add(h)
+    else rest.push(h)
   }
+  if (member)
+    for (const h of (await uploadedFiles(ports.db, collection.id, rest)).keys()) out.add(h)
+  return out
+}
+
+/**
+ * Of these hashes, the files whose bytes were uploaded and verified under this
+ * collection (a `file_uploads` row), with their sizes: a query per JSON_CHUNK.
+ * Together with the collection's file trees, what the collection holds.
+ */
+export async function uploadedFiles(
+  db: Db,
+  collectionId: string,
+  hashes: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  for (const part of chunks([...new Set(hashes)], JSON_CHUNK)) {
+    const rows = await db
+      .select({ hash: schema.files.hash, size: schema.files.size })
+      .from(schema.files)
+      .innerJoin(schema.fileUploads, eq(schema.fileUploads.hash, schema.files.hash))
+      .where(
+        and(
+          inJson(schema.files.hash, part),
+          eq(schema.fileUploads.collectionId, collectionId),
+          eq(schema.fileUploads.status, 'verified'),
+        ),
+      )
+    for (const r of rows) out.set(r.hash, r.size)
+  }
+  return out
+}
+
+/**
+ * A filesystem store's `/_blob/…` response (Node entry), made inert: those
+ * bytes come from the app's own origin, so an uploaded HTML or SVG file must
+ * neither render nor run there. Always an attachment, sandboxed, never sniffed.
+ */
+export function inertBlobResponse(res: Response): Response {
+  const out = new Response(res.body, res)
+  out.headers.set('content-security-policy', 'sandbox')
+  out.headers.set('x-content-type-options', 'nosniff')
+  const disposition = out.headers.get('content-disposition')
+  if (!disposition || !/^\s*attachment\b/i.test(disposition))
+    out.headers.set('content-disposition', 'attachment')
   return out
 }
 

@@ -8,6 +8,7 @@ import { type Context, type ExecutionContext, Hono } from 'hono'
 import type { Principal } from './api/access.js'
 import { accountRoutes } from './api/accounts.js'
 import { adminRoutes } from './api/admin.js'
+import { agentRoutes } from './api/agent.js'
 import { arkRoutes } from './api/ark.js'
 import { avatarRoutes } from './api/avatars.js'
 import { cleanupRoutes } from './api/cleanup.js'
@@ -250,6 +251,8 @@ export function createApp(setup: Setup) {
   )
 
   app.route('/', arkRoutes())
+  // Agent links (web's share panel): a page, budgeted as one above.
+  app.route('/', agentRoutes())
   // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
   app.route('/', recordRoutes())
   app.route('/api/collections', fileRoutes())

@@ -31,7 +31,13 @@ import {
 import { deniedHashes } from '../lib/limits.js'
 import type { Db, Ports } from '../ports.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
-import { type CollectionAccess, collectionAccess, jsonError, type Principal } from './access.js'
+import {
+  capRole,
+  type CollectionAccess,
+  collectionAccess,
+  jsonError,
+  type Principal,
+} from './access.js'
 
 // --- Shoulders and collection ARKs (also for wiring ARK fields into other routes) ---
 
@@ -544,7 +550,8 @@ export function arkRoutes() {
       .limit(1)
     if (!org) return jsonError(c, 404, 'Org not found')
 
-    // Owner or admin of the org, as in v1. Scoped and read-only keys can't.
+    // Owner or admin of the org, as in v1, acting with a session or an admin key
+    // (capRole). Scoped, read-only and write keys can't.
     const p = c.var.principal
     if (!p) return jsonError(c, 401, 'Authentication required')
     let role: string | null = null
@@ -558,6 +565,7 @@ export function arkRoutes() {
           .limit(1)
         role = m?.role ?? null
       }
+      role = capRole(p, role)
     }
     if (role !== 'owner' && role !== 'admin') return jsonError(c, 403, 'Forbidden')
 

@@ -28,6 +28,7 @@ export const RESERVED_ORG_SLUGS = new Set([
   'signup',
   'superadmin',
   // Server routes and redirects.
+  'agent',
   'api',
   'ark',
   'blog',

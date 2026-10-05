@@ -9,8 +9,8 @@
  *   DELETE /api/accounts/me/sessions/:id
  *   GET    /api/accounts/available-kf-orgs        KF orgs a new org may link to
  *   POST   /api/accounts/invitations/accept       {token}: an invitation id
- *   PATCH  /api/accounts/:slug                    org profile (owners)
- *   DELETE /api/accounts/:slug                    an org (owners)
+ *   PATCH  /api/accounts/:slug                    org profile (owners: session or admin key)
+ *   DELETE /api/accounts/:slug                    an org (owners: session or admin key)
  *
  * Sessions, invitation acceptance and the guards on deletion are new in v2;
  * the UI called the first two, but v1 never served them.
@@ -26,7 +26,7 @@ import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
 import { deleteOrgAvatars } from '../lib/avatars.js'
 import { validateOrgSlug } from '../lib/slug.js'
-import { jsonError } from './access.js'
+import { capRole, jsonError } from './access.js'
 
 /**
  * The calling user, for account routes: a session or an unscoped personal key
@@ -151,6 +151,9 @@ export function accountRoutes() {
   app.delete('/api/accounts/me', async (c) => {
     const userId = requireUser(c, true)
     if (userId instanceof Response) return userId
+    // Deleting the account takes a session or an admin key, as org deletion does (capRole).
+    if (c.var.principal?.scope === 'read' || c.var.principal?.scope === 'write')
+      return jsonError(c, 403, 'Deleting an account needs a session or an admin key')
     const body = (await c.req.json().catch(() => null)) as { confirmSlug?: unknown } | null
     const org = await personalOrg(c, userId)
     if (!org) return jsonError(c, 404, 'Account not found')
@@ -264,7 +267,8 @@ export function accountRoutes() {
     if (userId instanceof Response) return userId
     const org = await orgBySlug(c, c.req.param('slug'))
     if (!org) return jsonError(c, 404, 'Organization not found')
-    if ((await roleIn(c, org.id, userId)) !== 'owner') {
+    // An owner acting with a session or an admin key: a write key acts as a member.
+    if (capRole(c.var.principal!, await roleIn(c, org.id, userId)) !== 'owner') {
       return jsonError(c, 403, 'Must be an owner to update the organization')
     }
     const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
@@ -297,7 +301,8 @@ export function accountRoutes() {
     if (userId instanceof Response) return userId
     const org = await orgBySlug(c, c.req.param('slug'))
     if (!org) return jsonError(c, 404, 'Organization not found')
-    if ((await roleIn(c, org.id, userId)) !== 'owner') {
+    // An owner acting with a session or an admin key: a write key acts as a member.
+    if (capRole(c.var.principal!, await roleIn(c, org.id, userId)) !== 'owner') {
       return jsonError(c, 403, 'Must be an owner to delete the organization')
     }
     if (org.isDefault) return jsonError(c, 409, 'A personal account is deleted from its settings')

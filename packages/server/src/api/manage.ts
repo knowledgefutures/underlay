@@ -21,7 +21,7 @@ import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
-import { capRole, jsonError, requireCollection } from './access.js'
+import { capRole, jsonError, keyCannotManage, requireCollection } from './access.js'
 import { ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
@@ -102,6 +102,8 @@ export function manageRoutes() {
     if (typeof body.name === 'string' && body.name.trim()) set.name = body.name.trim().slice(0, 200)
     if (body.public !== undefined) {
       // Visibility is an admin decision (v1 rule): it changes who can read every version.
+      const refused = keyCannotManage(c)
+      if (refused) return refused
       if (!isAdmin(access.role))
         return jsonError(c, 403, 'Only org owners and admins can change visibility')
       set.public = body.public === true
@@ -134,6 +136,8 @@ export function manageRoutes() {
   app.delete('/api/collections/:owner/:slug', async (c) => {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
+    const refused = keyCannotManage(c)
+    if (refused) return refused
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Forbidden')
     // Rows go (cascading to versions, sessions, placements, webhooks). Repository
     // objects stay until garbage collection exists (edge-redesign.md, Storage layout).
@@ -175,6 +179,8 @@ export function manageRoutes() {
   app.post('/api/collections/:owner/:slug/transfer', async (c) => {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
+    const refused = keyCannotManage(c)
+    if (refused) return refused
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Forbidden')
     const body = (await c.req.json().catch(() => ({}))) as { targetOrgSlug?: unknown }
     if (typeof body.targetOrgSlug !== 'string')

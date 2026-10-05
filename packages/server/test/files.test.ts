@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
+import { inertBlobResponse } from '../src/files/files.js'
 import { cleanup, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -175,6 +176,95 @@ describe('files', () => {
     ).toBe(201)
     expect((await attempt(sha(elsewhere))).status).toBe(201)
     expect((await h.request(`${base}/files/${sha(elsewhere)}`)).status).toBe(302)
+  })
+
+  it('completes a multipart upload only with its parts', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('docs')
+    const base = '/api/collections/org/docs'
+    const ticket = await json(
+      await h.request(`${base}/files/uploads`, {
+        method: 'POST',
+        user,
+        json: { hash: sha('big'), size: 6 * 1024 ** 3 },
+      }),
+    )
+    expect(ticket.partCount).toBeGreaterThan(1)
+    const complete = (body: unknown) =>
+      h.request(`${base}/files/uploads/${ticket.id}/complete`, { method: 'POST', user, json: body })
+    for (const body of [{}, { parts: [] }, { parts: [{ partNumber: 'x', etag: 1 }] }]) {
+      const res = await complete(body)
+      expect(res.status).toBe(400)
+      expect((await json(res)).error).toBe('parts is required for a multipart upload')
+    }
+    expect(
+      (await json(await h.request(`${base}/files/uploads/${ticket.id}`, { user }))).status,
+    ).toBe('pending')
+  })
+
+  it('lets members read any file the collection holds, not only the head’s', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('docs')
+    await h.ports.db.update(schema.collections).set({ public: true })
+    const base = '/api/collections/org/docs'
+    const old = 'private bytes of an earlier version'
+    const staged = 'uploaded, not yet in any version'
+    for (const b of [old, staged]) {
+      await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })
+    }
+    const push = async (ndjson: unknown[], deletes?: unknown[]) => {
+      const sid = (
+        await json(
+          await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
+        )
+      ).session_id
+      if (ndjson.length)
+        await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson })
+      if (deletes)
+        await h.request(`${base}/push/${sid}/deletes`, { method: 'POST', user, ndjson: deletes })
+      return (await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status
+    }
+    expect(
+      await push([
+        { id: 'p', type: 'Doc', data: { pdf: { $file: `sha256:${sha(old)}` } }, private: true },
+        { id: 'q', type: 'Doc', data: { title: 'stays' } },
+      ]),
+    ).toBe(201)
+    // The next version drops the record: the file is no longer in the head.
+    expect(await push([], [{ type: 'Doc', id: 'p' }])).toBe(201)
+
+    for (const b of [old, staged]) {
+      expect((await h.request(`${base}/files/${sha(b)}`, { user })).status).toBe(302)
+      expect((await h.request(`${base}/files/${sha(b)}`)).status).toBe(404)
+    }
+    const presign = async (u?: string) =>
+      json(
+        await h.request(`${base}/files/presign`, {
+          method: 'POST',
+          ...(u ? { user: u } : {}),
+          json: { hashes: [sha(old), sha(staged)] },
+        }),
+      )
+    expect(Object.values(await presign(user)).every((u) => typeof u === 'string')).toBe(true)
+    expect(Object.values(await presign())).toEqual([null, null])
+  })
+
+  it('serves filesystem blobs as inert attachments', async () => {
+    const html = new Response('<script>alert(1)</script>', {
+      headers: { 'content-type': 'text/html', 'content-disposition': 'inline' },
+    })
+    const res = inertBlobResponse(html)
+    expect(res.headers.get('content-security-policy')).toBe('sandbox')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('content-disposition')).toBe('attachment')
+    const named = inertBlobResponse(
+      new Response('x', { headers: { 'content-disposition': 'attachment; filename="abc"' } }),
+    )
+    expect(named.headers.get('content-disposition')).toBe('attachment; filename="abc"')
+    expect(await named.text()).toBe('x')
+    expect(inertBlobResponse(new Response('Forbidden', { status: 403 })).status).toBe(403)
   })
 
   it('serves files by redirect only to those who may read them', async () => {

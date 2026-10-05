@@ -41,6 +41,7 @@ import { createKf } from '../auth/kf.js'
 import { bufferedUsageSink } from '../billing/usage.js'
 import { MemoryCache } from '../cache.js'
 import { openNodeDb } from '../db/node.js'
+import { inertBlobResponse } from '../files/files.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import { memoryRateLimiter } from '../lib/limits.js'
 import { requestInit } from '../locations/locations.js'
@@ -203,7 +204,9 @@ serve({
   port,
   fetch: (req) => {
     const path = new URL(req.url).pathname
-    if (fsBlobs && path.startsWith('/_blob/')) return serveSignedBlob(fsBlobs, req)
+    // Bytes served from the app's origin: never rendered here (files/files.ts).
+    if (fsBlobs && path.startsWith('/_blob/'))
+      return serveSignedBlob(fsBlobs, req).then(inertBlobResponse)
     if (!path.startsWith('/api/') && /\.[a-z0-9]+$/i.test(path)) return staticOrApp(req)
     return app.fetch(req)
   },

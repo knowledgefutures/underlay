@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { setup } from './kf-app.js'
 
 afterAll(cleanup)
 
@@ -67,5 +68,35 @@ describe('schemas', () => {
     const labelled = await json(await h.request(`${base}/schemas`))
     expect(labelled.schemas[0].schema['x-underlay-labels']).toEqual(['person'])
     expect((await json(await h.request('/api/schemas?q=Auth'))).length).toBe(1)
+  })
+
+  it('lets only stewards remove a label, with a session or a non-read key', async () => {
+    const { call, db, user } = await setup()
+    await user('u1') // a steward in the fake KF Auth
+    await user('u2')
+    const hash = hashSchema(Author)
+    await db.insert(schema.schemas).values({ hash })
+    await db.insert(schema.schemaLabels).values({ schemaHash: hash, label: 'person' })
+    const remove = (u?: string, key?: string) =>
+      call(`/api/schemas/${hash}/labels/person`, {
+        method: 'DELETE',
+        ...(u ? { user: u } : {}),
+        ...(key ? { key } : {}),
+      })
+    const labels = async () => (await db.select().from(schema.schemaLabels)).length
+
+    expect((await remove()).status).toBe(401)
+    // Anyone can mint an admin key: it doesn't make them a steward.
+    expect((await remove('u2', 'admin')).status).toBe(403)
+    expect((await remove('u2')).status).toBe(403)
+    // A steward's read key, or a key confined to a collection or owned by an org, isn't enough.
+    expect((await remove('u1', 'read')).status).toBe(401)
+    expect((await remove('u1', 'scoped')).status).toBe(401)
+    expect(await labels()).toBe(1)
+    expect((await remove('u1', 'write')).status).toBe(200)
+    expect(await labels()).toBe(0)
+    await db.insert(schema.schemaLabels).values({ schemaHash: hash, label: 'person' })
+    expect((await remove('u1')).status).toBe(200)
+    expect(await labels()).toBe(0)
   })
 })

@@ -27,7 +27,11 @@ function arkApp(h: Harness) {
     c.set('ports', h.ports)
     c.set('config', { appUrl: 'https://ul.test', deployment: 'test' })
     const user = c.req.header('x-test-user')
-    const scope = (c.req.header('x-test-scope') ?? 'session') as 'session' | 'read' | 'write'
+    const scope = (c.req.header('x-test-scope') ?? 'session') as
+      | 'session'
+      | 'read'
+      | 'write'
+      | 'admin'
     c.set('principal', user ? { userId: user, scope, collectionIds: null } : null)
     await next()
   })
@@ -424,6 +428,8 @@ describe('organization NAAN', () => {
     expect((await patch({ naan: '99999' })).status).toBe(401)
     expect((await patch({ naan: '99999' }, 'stranger')).status).toBe(403)
     expect((await patch({ naan: '99999' }, t.user, 'read')).status).toBe(403)
+    // An owner's write key acts as a member: only a session or an admin key may.
+    expect((await patch({ naan: '99999' }, t.user, 'write')).status).toBe(403)
     expect((await patch({ naan: 'abc' }, t.user)).status).toBe(400)
     expect((await patch({ naan: '12345' }, t.user)).status).toBe(409)
     expect(
@@ -436,6 +442,7 @@ describe('organization NAAN', () => {
       ).status,
     ).toBe(404)
 
+    expect((await patch({ naan: '99999' }, t.user, 'admin')).status).toBe(200)
     expect((await patch({ naan: '99999' }, t.user)).status).toBe(200)
     try {
       const settings = await body(await t.req(`${base}/ark`, { user: t.user }))

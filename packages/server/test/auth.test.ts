@@ -80,8 +80,12 @@ describe('better-auth on SQLite', () => {
       (await call('/api/collections/org/other/push', scoped.key, { schemas: { Author } })).status,
     ).toBe(404)
 
-    // A key acts with at most its scope: write keys as members, admin keys with the role.
+    // A key acts with at most its scope: write keys as members, admin keys with the role,
+    // unless confined to collections: such a key writes to them but never manages them.
     const admin = await auth.api.createApiKey({
+      body: { userId: user, metadata: { scope: 'admin' } },
+    })
+    const scopedAdmin = await auth.api.createApiKey({
       body: { userId: user, metadata: { scope: 'admin', collectionIds: [c.id] } },
     })
     const send = (method: string, path: string, key: string, body?: unknown) =>
@@ -92,7 +96,7 @@ describe('better-auth on SQLite', () => {
           ...(body ? { body: JSON.stringify(body) } : {}),
         }),
       )
-    for (const k of [write.key, scoped.key]) {
+    for (const k of [write.key, scoped.key, scopedAdmin.key]) {
       expect(
         (await send('PATCH', '/api/collections/org/authors', k, { public: true })).status,
       ).toBe(403)
@@ -296,5 +300,117 @@ describe('KF org links on organizations', () => {
       )
       expect(res.status).toBe(404)
     }
+  })
+})
+
+describe('agent links', () => {
+  it('serve push instructions for an agent key, and a 404 page for anything else', async () => {
+    const h = await harness()
+    const user = await h.member('u1')
+    const c = await h.collection('notes')
+    const other = await h.collection('other')
+    await h.ports.db
+      .update(schema.collections)
+      .set({ name: '<script>alert("x")</script>' })
+      .where(eq(schema.collections.id, c.id))
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+    )
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+      renderPage: async () => new Response('page'),
+    }))
+    const key = (metadata: Record<string, unknown>, userId = user) =>
+      auth.api.createApiKey({ body: { userId, metadata } })
+    // As the share panel makes them (web's share-panel.tsx).
+    const agent = (await key({ scope: 'write', collectionIds: [c.id], agentShare: true })).key
+    const page = (token: string) => app.fetch(new Request(`https://ul.example/agent/${token}`))
+
+    let res = await page(agent)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('content-security-policy')).toContain("default-src 'none'")
+    let html = await res.text()
+    expect(html).toContain('https://ul.example/api/collections/org/notes/push')
+    expect(html).toContain('https://ul.example/llms.txt')
+    expect(html).toContain('no types yet')
+    expect(html).toContain('&quot;base&quot;: null')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;')
+
+    // The page's steps work with the page's key.
+    const call = (method: string, path: string, body?: string, type = 'application/json') =>
+      app.fetch(
+        new Request(`http://test/api/collections/org/notes${path}`, {
+          method,
+          headers: { authorization: `Bearer ${agent}`, 'content-type': type },
+          ...(body !== undefined ? { body } : {}),
+        }),
+      )
+    const update = {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        summary: { type: 'string' },
+        key_points: { type: 'array', items: { type: 'string' } },
+        source: { type: 'string' },
+        timestamp: { type: 'string' },
+      },
+      required: ['title', 'summary'],
+      additionalProperties: false,
+    }
+    const open = await call('POST', '/push', JSON.stringify({ base: null, schemas: { update } }))
+    expect(open.status).toBe(200)
+    const sid = ((await open.json()) as { session_id: string }).session_id
+    const line = { id: 'u-1', type: 'update', data: { title: 'T', summary: 'S' } }
+    expect(
+      (await call('POST', `/push/${sid}/records`, JSON.stringify(line), 'application/x-ndjson'))
+        .status,
+    ).toBe(200)
+    expect((await call('POST', `/push/${sid}/commit`)).status).toBe(201)
+    html = await (await page(agent)).text()
+    expect(html).toContain('<code>v1.0.0</code>')
+    expect(html).toContain('Type <code>update</code>')
+    expect(html).toContain('&quot;u-1&quot;')
+    expect(html).not.toContain('no types yet')
+
+    // Not an agent key, not confined to one collection, read-only, expired, or held by
+    // someone who can't write there: the same 404 page.
+    await h.ports.db.insert(schema.user).values({ id: 'u2', name: 'u2', email: 'u2@example.org' })
+    const expired = await key({ scope: 'write', collectionIds: [c.id], agentShare: true })
+    await h.ports.db
+      .update(schema.apikey)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(schema.apikey.id, expired.id))
+    const refused = [
+      (await key({ scope: 'write', collectionIds: [c.id] })).key,
+      (await key({ scope: 'write', collectionIds: [c.id, other.id], agentShare: true })).key,
+      (await key({ scope: 'read', collectionIds: [c.id], agentShare: true })).key,
+      (await key({ scope: 'write', collectionIds: [c.id], agentShare: true }, 'u2')).key,
+      expired.key,
+      'ul_doesnotexistatall',
+      'ul_%3Cbad%3E',
+    ]
+    for (const token of refused) {
+      res = await page(token)
+      expect(res.status, token).toBe(404)
+      expect(await res.text()).toContain('Invalid or expired agent link')
+    }
+    // A path that isn't a key is a UI page (an org named "agent" keeps its collections).
+    expect(await (await page('notes')).text()).toBe('page')
   })
 })

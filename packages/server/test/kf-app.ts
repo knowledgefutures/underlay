@@ -24,8 +24,8 @@ export const fakeKf: Kf = {
 
 /**
  * The harness's ports behind an app that knows sessions and keys:
- * `x-test-user` signs in (session `s-<user>`), `x-test-key: read|scoped|org`
- * makes the caller an API key of that kind.
+ * `x-test-user` signs in (session `s-<user>`), `x-test-key: read|write|admin|scoped|org`
+ * (or `scoped-write:<id>`, `scoped-admin:<id>`) makes the caller an API key of that kind.
  */
 export async function setup() {
   const h = await harness()
@@ -38,7 +38,17 @@ export async function setup() {
       if (!user) return null
       const key = req.headers.get('x-test-key')
       if (key === 'read') return { userId: user, scope: 'read', collectionIds: null }
+      if (key === 'write' || key === 'admin')
+        return { userId: user, scope: key, collectionIds: null }
       if (key === 'scoped') return { userId: user, scope: 'write', collectionIds: ['x'] }
+      // `scoped-write:<collection id>`, `scoped-admin:<collection id>`: confined to it.
+      const confined = key && /^scoped-(write|admin):(.+)$/.exec(key)
+      if (confined)
+        return {
+          userId: user,
+          scope: confined[1] as 'write' | 'admin',
+          collectionIds: [confined[2]!],
+        }
       if (key === 'org')
         return { userId: 'org1', scope: 'write', collectionIds: null, orgId: 'org1' }
       return { userId: user, scope: 'session', collectionIds: null, sessionId: `s-${user}` }

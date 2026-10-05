@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { setup } from './kf-app.js'
 
 afterAll(cleanup)
 
@@ -288,5 +289,42 @@ describe('collection management', () => {
     // A disabled ARK isn't shown.
     await h.request(`${base}/ark`, { method: 'PATCH', user, json: { enabled: false } })
     expect((await json(await h.request(base))).ark).toBeNull()
+  })
+
+  it('lets a key confined to a collection write to it but never manage it', async () => {
+    const { h, call } = await setup()
+    const owner = await h.member('u1')
+    const c = await h.collection('c')
+    const base = '/api/collections/org/c'
+    for (const key of [`scoped-admin:${c.id}`, `scoped-write:${c.id}`]) {
+      const as = (method: string, path: string, json?: unknown) =>
+        call(path, { method, user: owner, key, ...(json !== undefined ? { json } : {}) })
+      for (const res of [
+        await as('PATCH', base, { public: true }),
+        await as('DELETE', base),
+        await as('POST', `${base}/transfer`, { targetOrgSlug: 'org' }),
+      ]) {
+        expect(res.status).toBe(403)
+        expect((await json(res)).error).toBe('This key cannot manage collections')
+      }
+      // Webhooks and mirrors are an owner's or admin's, which the key never is.
+      expect((await as('GET', `${base}/webhooks`)).status).toBe(403)
+      expect((await as('POST', `${base}/webhooks`, { url: 'https://example.org/h' })).status).toBe(
+        403,
+      )
+      expect((await as('POST', `${base}/placements`, { locationId: 'x' })).status).toBe(403)
+      // Name, slug and metadata are a writer's.
+      expect((await as('PATCH', base, { name: 'Renamed' })).status).toBe(200)
+      expect((await as('POST', `${base}/metadata`, { description: 'd' })).status).toBe(422)
+    }
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, c.id))
+    expect(row).toMatchObject({ public: false, name: 'Renamed', deletedAt: null })
+    // The owner's session still manages it.
+    expect(
+      (await call(base, { method: 'PATCH', user: owner, json: { public: true } })).status,
+    ).toBe(200)
   })
 })
