@@ -348,9 +348,9 @@ export default function DocsApiSyncAndIntegrations() {
         <p>
           The archive streams as it is built, with no limit on the number of records; for very large
           collections, <code>format=tar</code> is quicker to produce. Entries are stamped with the
-          time of the export, so two exports of the same version have the same contents but not the
-          same bytes. If something fails partway, the response is cut off rather than completed, so
-          treat an archive that doesn&rsquo;t end cleanly as failed.
+          time the version was created, so exporting the same version again, with the same access,
+          gives a byte-identical archive. If something fails partway, the response is cut off rather
+          than completed, so treat an archive that doesn&rsquo;t end cleanly as failed.
         </p>
       </Endpoint>
 
@@ -360,7 +360,8 @@ export default function DocsApiSyncAndIntegrations() {
       <p>
         A webhook sends a signed <code>POST</code> to your URL each time a version of the collection
         is published. Managing webhooks takes an owner or admin of the owning organization, signed
-        in or with an admin API key; write and read keys get <code>403</code>.
+        in or with an admin API key; write and read keys, and keys confined to specific collections
+        whatever their scope, get <code>403</code>.
       </p>
 
       <Endpoint route="GET …/:owner/:slug/webhooks" scope="Auth: org owner or admin">
@@ -505,11 +506,15 @@ export default function DocsApiSyncAndIntegrations() {
         </p>
       </Endpoint>
 
-      <Endpoint route="PATCH /api/accounts/:slug/ark" scope="Auth: org owner or admin">
+      <Endpoint
+        route="PATCH /api/accounts/:slug/ark"
+        scope="Auth: org owner or admin, signed in or with an admin key"
+      >
         <p>
           Set the NAAN the organization&rsquo;s ARKs are minted under:{' '}
           <code>{'{"naan": "…"}'}</code> (digits, at most 16), or <code>null</code> for the default.
-          A NAAN another organization already uses is a <code>409</code>.
+          A NAAN another organization already uses is a <code>409</code>. Read and write keys, and
+          keys confined to specific collections, get <code>403</code>.
         </p>
       </Endpoint>
 
@@ -521,7 +526,8 @@ export default function DocsApiSyncAndIntegrations() {
         <strong>mirror</strong> collections to them: Underlay keeps a copy of each version&rsquo;s
         repository there. The credentials must be able to both write and read the bucket. Managing
         locations and mirrors takes an owner or admin of the organization, signed in or with an
-        admin API key. Removing a location or mirror never deletes what was copied to the bucket.
+        admin API key not confined to specific collections. Removing a location or mirror never
+        deletes what was copied to the bucket.
       </p>
 
       <Endpoint route="GET | POST /api/orgs/:org/locations" scope="Auth: org owner or admin">

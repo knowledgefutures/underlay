@@ -122,8 +122,11 @@ export default function ProtocolPushPull() {
         </li>
         <li>
           <code>…/deletes</code> takes NDJSON <code>{'{"type", "id"}'}</code> lines and answers{' '}
-          <code>{'{"received": n}'}</code>. The type MUST be in the session&rsquo;s type set.
-          Deleting a pair the base does not hold is not an error. A request with no lines is a 400.
+          <code>{'{"received": n}'}</code>. Each line MUST satisfy the input rules for syntax,
+          duplicate keys, unsafe integers and lone surrogates, and its <code>id</code> and{' '}
+          <code>type</code> the record id and type slug rules; the type MUST be in the
+          session&rsquo;s type set. Deleting a pair the base does not hold is not an error. A
+          request with no lines is a 400.
         </li>
         <li>
           Within a session, the later upload of a (type, id) supersedes an earlier one, record or
@@ -186,8 +189,9 @@ export default function ProtocolPushPull() {
           belongs to another user.
         </li>
         <li>
-          <code>400</code>: a malformed body, a <code>metadata</code> that is neither an object nor{' '}
-          <code>null</code>, or a request with no lines.
+          <code>400</code>: a malformed body, a <code>metadata_patch</code> that is not an object, a{' '}
+          <code>metadata</code> that is neither an object nor <code>null</code>, or a request with
+          no lines.
         </li>
         <li>
           <code>409</code>: <code>base</code> is not the head (with <code>currentVersion</code>);

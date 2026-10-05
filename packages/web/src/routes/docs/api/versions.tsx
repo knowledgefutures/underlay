@@ -163,7 +163,7 @@ Content-Type: application/x-ndjson
 X-Underlay-Record-Count: 3110000
 
 {"id":"pub-001","type":"Publication","data":{"title":"..."},"hash":"def456..."}
-{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"789abc..."}
+{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"789abc...","private":true}
 {"id":"pub-003","type":"Publication","data":{"title":"..."},"hash":"a1b2c3..."}`
 
 const manifestRes = `{
@@ -190,7 +190,9 @@ const manifestDeltaRes = `{
   "delta": {
     "added":   [{"id": "pub-003", "type": "Publication", "hash": "def456..."}],
     "updated": [{"id": "pub-001", "type": "Publication", "hash": "def456...",
-                 "previousHash": "abc123..."}],
+                 "previousHash": "abc123..."},
+                {"id": "pub-002", "type": "Publication", "hash": "789abc...",
+                 "previousHash": "789abc...", "private": true, "previousPrivate": false}],
     "removed": [{"id": "pub-old", "type": "Publication", "hash": "def456..."}]
   },
   "files": ["a1b2c3..."],
@@ -210,7 +212,7 @@ const diffRes = `{
   "updated": [
     {"id": "pub-001", "type": "Publication", "data": {...}}
   ],
-  "removed": ["pub-old"],
+  "removed": [{"id": "pub-old", "type": "Publication"}],
   "pagination": {
     "limit": 500,
     "hasMore": false,
@@ -298,7 +300,11 @@ export default function DocsApiVersions() {
               <td>
                 The full type set, <code>{'{"TypeName": schema}'}</code>. It replaces the
                 base&rsquo;s: a type left out is removed with its records. Absent keeps the
-                base&rsquo;s types.
+                base&rsquo;s types. Every schema of the resulting type set, kept ones included, is
+                checked in full when the session opens (the draft-07 meta-schema, patterns,{' '}
+                <code>$ref</code>s that resolve, and the{' '}
+                <a href="/docs/protocol/records#schemas">schema rules</a>); one that fails is{' '}
+                <code>422</code>.
               </td>
             </tr>
             <tr>
@@ -308,8 +314,9 @@ export default function DocsApiVersions() {
               <td>
                 <code>metadata</code> replaces the version metadata (<code>description</code>,{' '}
                 <code>readme</code>, <code>license</code>, …) and must be an object or{' '}
-                <code>null</code>; <code>metadata_patch</code> merges its top-level members into the
-                base&rsquo;s. With neither, the metadata is kept.
+                <code>null</code>; <code>metadata_patch</code>, an object, merges its top-level
+                members into the base&rsquo;s. Anything else is <code>400</code>. With neither, the
+                metadata is kept.
               </td>
             </tr>
             <tr>
@@ -348,11 +355,11 @@ export default function DocsApiVersions() {
           <code>{openRes}</code>
         </pre>
         <p>
-          <code>needed_files</code> are the declared files this collection doesn&rsquo;t hold yet:
-          upload them before you commit. <code>limits</code> are this node&rsquo;s; size your
-          batches by them. The session expires after <code>session_idle_seconds</code> without an
-          upload. Each records or deletes batch pushes <code>expires_at</code> back; file uploads
-          don&rsquo;t.
+          <code>needed_files</code> are the declared files this collection doesn&rsquo;t hold yet
+          (files already uploaded and verified for it are held): upload them before you commit.{' '}
+          <code>limits</code> are this node&rsquo;s; size your batches by them. The session expires
+          after <code>session_idle_seconds</code> without an upload. Each records or deletes batch
+          pushes <code>expires_at</code> back; file uploads don&rsquo;t.
         </p>
 
         <h3>POST .../push/:sid/records</h3>
@@ -399,11 +406,12 @@ export default function DocsApiVersions() {
           <code>{deletesReq}</code>
         </pre>
         <p>
-          A line that isn&rsquo;t <code>{'{"type", "id"}'}</code>, or names a type not in the
-          session&rsquo;s type set, fails the batch: <code>422</code>, with the first 100 failing
-          lines under <code>errors</code> (not <code>validationErrors</code>), and nothing from the
-          batch is stored. An empty batch is <code>400</code>; a session that is no longer open is{' '}
-          <code>409</code>.
+          Each line passes the input rules, as a record line does, and its <code>id</code> and{' '}
+          <code>type</code> the same checks. A line that fails them, isn&rsquo;t{' '}
+          <code>{'{"type", "id"}'}</code>, or names a type not in the session&rsquo;s type set fails
+          the batch: <code>422</code>, with <code>validationErrors</code> (the first 100 failing
+          lines) and <code>totalErrors</code> as for records, and nothing from the batch is stored.
+          An empty batch is <code>400</code>; a session that is no longer open is <code>409</code>.
         </p>
 
         <h3>PUT .../files/:hash</h3>
@@ -468,9 +476,9 @@ export default function DocsApiVersions() {
         <p>A commit can be refused:</p>
         <ul>
           <li>
-            <code>409</code> <code>{'{"error": "Version conflict"}'}</code>: the head moved after
-            the session opened. There is no <code>currentVersion</code> here (only the{' '}
-            <code>409</code> at open has it); read the head and push again.
+            <code>409</code> <code>{'{"error": "Version conflict", "currentVersion"}'}</code>: the
+            head moved after the session opened; <code>currentVersion</code> is the head now. Read
+            it and push again.
           </li>
           <li>
             <code>409</code> <code>"No changes detected"</code>, with the head&rsquo;s{' '}
@@ -478,7 +486,7 @@ export default function DocsApiVersions() {
           </li>
           <li>
             <code>422</code> <code>"Missing files"</code>: <code>filesNeeded</code> lists up to 100
-            files not uploaded, as <code>sha256:&lt;hex&gt;</code>.
+            files not uploaded, as bare hex.
           </li>
           <li>
             <code>422</code> <code>"Schema validation failed"</code>, with{' '}
@@ -529,8 +537,8 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 A body that isn&rsquo;t a JSON object, <code>metadata</code> that isn&rsquo;t an
-                object or <code>null</code>, an empty records or deletes batch, or file bytes that
-                don&rsquo;t match their hash.
+                object or <code>null</code>, <code>metadata_patch</code> that isn&rsquo;t an object,
+                an empty records or deletes batch, or file bytes that don&rsquo;t match their hash.
               </td>
             </tr>
             <tr>
@@ -559,9 +567,9 @@ export default function DocsApiVersions() {
                 <code>409</code>
               </td>
               <td>
-                <code>base</code> isn&rsquo;t the head (<code>currentVersion</code> says what is),
-                the head moved before the commit (no <code>currentVersion</code>), the session
-                isn&rsquo;t open, or the push changes nothing (<code>"No changes detected"</code>).
+                <code>base</code> isn&rsquo;t the head, or the head moved before the commit (both
+                with <code>currentVersion</code>, the head now); the session isn&rsquo;t open; or
+                the push changes nothing (<code>"No changes detected"</code>).
               </td>
             </tr>
             <tr>
@@ -578,11 +586,10 @@ export default function DocsApiVersions() {
                 <code>422</code>
               </td>
               <td>
-                Records that fail (<code>validationErrors</code>), deletes that fail (
-                <code>errors</code>), a line whose type isn&rsquo;t in the session&rsquo;s type set,
-                a schema that is refused, a commit with files not uploaded (<code>filesNeeded</code>
-                ), or a schema change that base records fail (
-                <code>"Schema validation failed"</code>).
+                Records or deletes that fail (<code>validationErrors</code>), a line whose type
+                isn&rsquo;t in the session&rsquo;s type set, a schema that is refused (at open), a
+                commit with files not uploaded (<code>filesNeeded</code>), or a schema change that
+                base records fail (<code>"Schema validation failed"</code>).
               </td>
             </tr>
             <tr>
@@ -898,8 +905,8 @@ export default function DocsApiVersions() {
         </p>
         <p>
           Lines come in the same order as <code>/records</code>: types in slug order, then ids. A
-          member gets private records too, with no marker on the line; anyone else gets public
-          records only.
+          member gets private records too, each line ending <code>"private":true</code>; anyone else
+          gets public records only.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -915,8 +922,19 @@ export default function DocsApiVersions() {
                 <code>after</code>
               </td>
               <td>
-                With <code>type</code> only: emit records with ids strictly after this one. Without{' '}
-                <code>type</code> it is ignored.
+                Resume after the record with this id. With <code>after_type</code>, the stream
+                continues after (<code>after_type</code>, <code>after</code>) through the later
+                types; with <code>type</code>, it stays within that type. With neither, it is{' '}
+                <code>400</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>after_type</code>
+              </td>
+              <td>
+                The type of the <code>after</code> record. Without <code>after</code> it is{' '}
+                <code>400</code>.
               </td>
             </tr>
           </tbody>
@@ -935,14 +953,15 @@ export default function DocsApiVersions() {
           it: the <code>200</code> and headers were sent before anything went wrong.{' '}
           <code>X-Underlay-Record-Count</code> tells you how many lines to expect: the count for{' '}
           <em>this</em> request, for the sets you may read and within <code>?type=</code> if you
-          passed one. It can exceed the lines sent only by records withheld from serving.
-          (Don&rsquo;t compare against the version&rsquo;s <code>recordCount</code>: it covers every
-          type.)
+          passed one, and after the resume point if you gave one. It can exceed the lines sent only
+          by records withheld from serving. (Don&rsquo;t compare against the version&rsquo;s{' '}
+          <code>recordCount</code>: it covers every type.)
         </p>
         <p>
-          If you receive fewer, resume rather than start over: request{' '}
-          <code>?type=&lt;last type&gt;&amp;after=&lt;last id&gt;</code>, using the last complete
-          line you parsed, then each remaining type with <code>?type=</code>.
+          If you receive fewer, resume rather than start over: take the <code>type</code> and{' '}
+          <code>id</code> of the last complete line you parsed and request{' '}
+          <code>?after_type=&lt;type&gt;&amp;after=&lt;id&gt;</code>. The stream picks up after that
+          record and runs to the end of the version.
         </p>
       </div>
 
@@ -1034,10 +1053,14 @@ export default function DocsApiVersions() {
           <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false.
         </p>
         <p>
-          Delta entries carry no <code>private</code> flag, and for a member a record that only
-          moved between public and private isn&rsquo;t listed. Read the full manifest to see privacy
-          changes. <code>files</code> in a delta is the full file list of <code>:n</code> that the
-          caller may read (first page only), not a file delta.
+          For a member, an entry in the private set carries <code>"private": true</code> (for a
+          removal, the set it left). A record that moved between the sets is listed under{' '}
+          <code>updated</code>, with <code>previousPrivate</code> naming its former set;{' '}
+          <code>previousPrivate</code> is present only when the set changed, and a move that kept
+          the record&rsquo;s hash has <code>previousHash</code> equal to <code>hash</code>. A
+          non-member sees the public set only: a record made private reads as removed, and one made
+          public as added. <code>files</code> in a delta is the full file list of <code>:n</code>{' '}
+          that the caller may read (first page only), not a file delta.
         </p>
       </div>
 
@@ -1049,9 +1072,11 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Diff two versions, with full record bodies. Always pass <code>from</code>: without it the
-          diff is against an empty version, so every record is <code>added</code>, <code>from</code>{' '}
-          is <code>null</code> and <code>schemaChanged</code> is true. It costs 5 rate units.
+          Diff two versions, with full record bodies. Without <code>from</code>, the diff is against
+          the version before <code>:n</code>, which the response&rsquo;s <code>from</code> names.
+          The first version has none before it, so its diff is against an empty version: every
+          record is <code>added</code>, <code>from</code> is <code>null</code> and{' '}
+          <code>schemaChanged</code> is true. It costs 5 rate units.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -1061,8 +1086,8 @@ export default function DocsApiVersions() {
                 <code>from</code>
               </td>
               <td>
-                Semver or version hash to diff from (e.g. <code>v1.0.0</code>). Default: an empty
-                version.
+                Semver or version hash to diff from (e.g. <code>v1.0.0</code>). Default: the version
+                before <code>:n</code>.
               </td>
             </tr>
             <tr>
@@ -1090,8 +1115,9 @@ export default function DocsApiVersions() {
           <code>{diffRes}</code>
         </pre>
         <p>
-          <code>removed</code> is bare ids, without their type. <code>filesAdded</code> and{' '}
-          <code>filesRemoved</code> are computed on the first page only; later pages report 0.
+          <code>removed</code> entries are <code>{'{"id", "type"}'}</code>, without bodies.{' '}
+          <code>filesAdded</code> and <code>filesRemoved</code> are computed on the first page only;
+          later pages report 0.
         </p>
       </div>
 

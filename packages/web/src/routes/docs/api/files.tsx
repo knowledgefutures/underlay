@@ -92,7 +92,7 @@ const fileRefExample = `{
 
 const missingFilesRes = `{
   "error": "Missing files",
-  "filesNeeded": ["sha256:a1b2c3d4e5f6..."],
+  "filesNeeded": ["a1b2c3d4e5f6..."],
   "statusCode": 422
 }`
 
@@ -142,11 +142,11 @@ export default function DocsApiFiles() {
         <p className="scope">Access follows the collection&rsquo;s visibility</p>
         <p>
           Check whether you can read a file through this collection. Returns headers only, no body.
-          A file is readable here when it is in a published version of this collection that you may
-          read: any public version&rsquo;s files for everyone, and for members also the private
-          files of the latest version. A file that has been uploaded but not yet committed in a
-          version returns <code>404</code>; to learn what to upload, use <code>needed_files</code>{' '}
-          from opening a push session.
+          For everyone, a file is readable here when it was in a public set of a published version.
+          Members can also read every file the collection holds: the latest version&rsquo;s private
+          files, and any file uploaded to this collection and verified, which covers earlier
+          versions&rsquo; private files and uploads not yet committed. To learn what to upload, use{' '}
+          <code>needed_files</code> from opening a push session.
         </p>
         <h3>Parameters</h3>
         <table>
@@ -178,15 +178,15 @@ export default function DocsApiFiles() {
                 <code>404</code>
               </td>
               <td>
-                Not found, not readable by you, not yet in a published version, or the collection is
-                private.
+                Not found, not readable by you, or the collection is private. A file you can&rsquo;t
+                read is <code>404</code> even when it has been withheld.
               </td>
             </tr>
             <tr>
               <td>
                 <code>451</code>
               </td>
-              <td>The file has been withheld.</td>
+              <td>The file is readable by you but has been withheld.</td>
             </tr>
           </tbody>
         </table>
@@ -209,8 +209,8 @@ export default function DocsApiFiles() {
           redirect (e.g. <code>curl -L</code>) to fetch the bytes. The same files are readable as
           for <code>HEAD</code>: public-version files anonymously, and for members (a session, a
           key, or a share/agent token sent as a <code>Bearer</code> header or <code>?token=</code>)
-          also the private files of the latest version. Inaccessible files return <code>404</code>;
-          withheld files return <code>451</code>.
+          every file the collection holds. Inaccessible files return <code>404</code>, withheld or
+          not; a readable file that has been withheld returns <code>451</code>.
         </p>
         <p>
           The presigned URL lasts 300 seconds and downloads the file as an attachment. The redirect
@@ -235,7 +235,8 @@ export default function DocsApiFiles() {
           Download a file by hash alone. Redirects (<code>302</code>) to a presigned URL, like the
           download above, when the file is readable through any collection you can read: a public
           collection&rsquo;s public files, or any file of a collection in an organization you belong
-          to. Otherwise <code>404</code>; withheld files return <code>451</code>.
+          to. Otherwise <code>404</code>, withheld or not; a readable file that has been withheld
+          returns <code>451</code>.
         </p>
       </div>
 
@@ -382,7 +383,8 @@ export default function DocsApiFiles() {
         <p className="scope">Auth: write access</p>
         <p>
           Finish an upload. A multipart upload sends every part&rsquo;s number and ETag; a single
-          PUT upload sends no body. The server then hashes the bytes in the background; poll{' '}
+          PUT upload sends no body. A multipart upload without a non-empty <code>parts</code> list
+          is <code>400</code>. The server then hashes the bytes in the background; poll{' '}
           <code>GET .../files/uploads/:id</code> until <code>status</code> is <code>verified</code>{' '}
           (or <code>failed</code>, with an <code>error</code>).
         </p>

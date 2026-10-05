@@ -228,8 +228,8 @@ export default function DocsApiRecords() {
           >
             per-collection download
           </Link>{' '}
-          does. Returns <code>404</code> when no readable collection has it, and <code>451</code>{' '}
-          when the file has been blocked.
+          does. Returns <code>404</code> when no readable collection has it, blocked or not, and{' '}
+          <code>451</code> when a readable file has been blocked.
         </p>
       </div>
 
@@ -418,11 +418,13 @@ export default function DocsApiRecords() {
 
       <div className="endpoint">
         <h2 id="delete-api-schemas-id-labels-label">DELETE /api/schemas/:id/labels/:label</h2>
-        <p className="scope">Auth: admin API key</p>
+        <p className="scope">Auth: Underlay stewards only (session, or a write or admin key)</p>
         <p>
-          Remove a label from a schema. Only an API key with the <code>admin</code> scope can; a
-          browser session gets <code>403</code>. Returns <code>{'{"ok": true}'}</code>, also when
-          the schema didn&rsquo;t have the label.
+          Remove a label from a schema. A label is shared by every collection that uses the schema,
+          so only Underlay&rsquo;s stewards (Knowledge Futures administrators) can remove one,
+          signed in or with a personal write or admin key. Anyone else is <code>403</code>; a read
+          key, or a key confined to collections or held by an organization, is <code>401</code>.
+          Returns <code>{'{"ok": true}'}</code>, also when the schema didn&rsquo;t have the label.
         </p>
       </div>
     </DocsLayout>

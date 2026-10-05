@@ -593,7 +593,7 @@ type's schema (Section 5.1), and its type MUST be in the session's type set.
   their number.
 
 **Deletes.** `POST …/deletes` takes NDJSON lines `{"type", "id"}` and answers 200 with
-`{"received": n}`. The type MUST be in the session's type set. Deleting a (type, id) the base does
+`{"received": n}`. Each line MUST satisfy the syntax, duplicate key, unsafe integer and lone surrogate rules, and its `id` and `type` the record id and type slug rules (Section 3); the type MUST be in the session's type set. Deleting a (type, id) the base does
 not hold is not an error.
 
 A records or deletes request with no lines is answered with 400.
@@ -632,7 +632,7 @@ Section 11.3.
 
 - 403: the caller may read the collection but not publish to it, or the session belongs to
   another user.
-- 400: a malformed body, a `metadata` that is neither an object nor `null`, or a request with no
+- 400: a malformed body, a `metadata` that is neither an object nor `null`, a `metadata_patch` that is not an object, or a request with no
   lines.
 - 409: `base` is not the head (with `currentVersion`); the head changed before the commit; the
   session is not open; or the publication changes nothing (with the head's `hash`).
@@ -773,4 +773,4 @@ Clarifications that change no hash, tree or accepted input:
     to subschemas whose names are also data keywords (Section 5); a receiver checks the shape of
     the root and PrivateSetObject (Section 11.2). The test vectors add `syntax`, `bad_type`,
     depth-boundary and code-order cases, `inputRuleRecipes` (`record_too_large`) and
-    `schemaRules` (Sections 5, 5.1); existing vectors are unchanged.
+    `schemaRules` (Sections 5, 5.1); existing vectors are unchanged. Delete lines are subject to the input rules, and a non-object `metadata_patch` is a 400 (Section 11.4).

@@ -90,8 +90,9 @@ curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.1.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const diffCode = `curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
-# → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],"removed":["book-2"],
-#    "pagination":{...},"meta":{...}}`
+# → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],
+#    "removed":[{"id":"book-2","type":"Book"}],"pagination":{...},"meta":{...}}
+# Without ?from=, the diff is against the version before (here v1.0.0).`
 
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)

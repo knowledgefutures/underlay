@@ -174,7 +174,11 @@ export default function DocsIntegration() {
         Keys are scoped <code>read</code>, <code>write</code> or <code>admin</code>; use{' '}
         <code>write</code> for pushing data. A key never exceeds its holder&rsquo;s role: a{' '}
         <code>write</code> key acts as a member, and only an owner&rsquo;s or admin&rsquo;s{' '}
-        <code>admin</code> key can change visibility, delete or manage webhooks.
+        <code>admin</code> key can change visibility, delete or manage webhooks. A key confined to
+        specific collections acts as a member whatever its scope. To let an AI agent push to one
+        collection, create an <strong>agent link</strong> from the collection&rsquo;s Share panel:
+        an instructions page at <code>https://www.underlay.org/agent/&lt;key&gt;</code> carrying a
+        write key for that collection only, which expires after an hour.
       </p>
 
       <h2>The Push Flow</h2>
@@ -490,19 +494,18 @@ export default function DocsIntegration() {
       <h2>Error Handling</h2>
       <ul>
         <li>
-          <code>409 Conflict</code>: Another version was published since your <code>base</code>{' '}
-          (opening the session names <code>currentVersion</code>; at commit, re-read{' '}
-          <code>versions/latest</code>), or the push changes nothing. Diff against the new head and
-          push again.
+          <code>409 Conflict</code>: Another version was published since your <code>base</code> (the
+          answer names <code>currentVersion</code>, at open or at commit), or the push changes
+          nothing. Diff against the new head and push again.
         </li>
         <li>
           <code>413 Payload Too Large</code>: A batch or file is over the session&rsquo;s{' '}
           <code>limits</code>. Split it.
         </li>
         <li>
-          <code>422 Unprocessable</code>: Records fail the input rules or their schema (
-          <code>validationErrors</code>, by line), a schema is refused, or the commit references
-          files that haven&rsquo;t been uploaded (<code>filesNeeded</code>).
+          <code>422 Unprocessable</code>: Records or deletes fail the input rules or their schema (
+          <code>validationErrors</code>, by line), a schema is refused when the session opens, or
+          the commit references files that haven&rsquo;t been uploaded (<code>filesNeeded</code>).
         </li>
         <li>
           <code>429 Too Many Requests</code>: Too many push sessions open at once (

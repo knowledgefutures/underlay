@@ -147,7 +147,8 @@ export default function DocsConcepts() {
         has the scope <code>read</code>, <code>write</code> or <code>admin</code>, and never exceeds
         its holder&rsquo;s role: <code>read</code> and <code>write</code> keys act as a member, and
         an <code>admin</code> key keeps an owner&rsquo;s or admin&rsquo;s powers. A
-        collection-scoped key is refused on account and organization endpoints.
+        collection-scoped key acts as a member of its collections whatever its scope, and is refused
+        on account and organization endpoints.
       </p>
 
       <h2>Privacy &amp; Visibility</h2>

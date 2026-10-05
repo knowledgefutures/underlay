@@ -137,8 +137,12 @@ export default function DocsApiAccounts() {
         in the overview. The account endpoints below act for a user, so they take a session or an
         unscoped personal key: a key scoped to specific collections, or a key owned by an
         organization, gets <code>403</code>. Endpoints that change something also refuse{' '}
-        <code>read</code> keys. The <code>/api/auth/*</code> endpoints (organizations and API keys)
-        need a signed-in session.
+        <code>read</code> keys. Changing or deleting an organization, setting its NAAN (
+        <code>PATCH /api/accounts/:slug/ark</code>) and deleting your own account (
+        <code>DELETE /api/accounts/me</code>, from your settings) take a session or an{' '}
+        <code>admin</code> key: a <code>write</code> key gets <code>403</code>, even when its holder
+        is an owner. The <code>/api/auth/*</code> endpoints (organizations and API keys) need a
+        signed-in session.
       </p>
 
       <hr className="border-rule my-6" />
@@ -201,8 +205,7 @@ export default function DocsApiAccounts() {
       <div className="endpoint">
         <h2 id="patch-api-accounts-slug">PATCH /api/accounts/:slug</h2>
         <p className="scope">
-          Auth: an owner of the account, by session or an unscoped personal key with{' '}
-          <code>write</code> or <code>admin</code> scope
+          Auth: an owner of the account, by session or an unscoped personal <code>admin</code> key
         </p>
         <p>
           Update an organization&rsquo;s profile. Pass only the fields to change: <code>slug</code>,{' '}
@@ -228,7 +231,8 @@ export default function DocsApiAccounts() {
                 <code>403</code>
               </td>
               <td>
-                Not an owner of the account, or a <code>kfOrgId</code> you don&rsquo;t belong to.
+                Not an owner of the account, a <code>write</code> key, or a <code>kfOrgId</code> you
+                don&rsquo;t belong to.
               </td>
             </tr>
             <tr>
@@ -258,8 +262,8 @@ export default function DocsApiAccounts() {
       <div className="endpoint">
         <h2 id="delete-api-accounts-slug">DELETE /api/accounts/:slug</h2>
         <p className="scope">
-          Auth: an owner of the organization, by session or an unscoped personal key with{' '}
-          <code>write</code> or <code>admin</code> scope
+          Auth: an owner of the organization, by session or an unscoped personal <code>admin</code>{' '}
+          key
         </p>
         <p>
           Delete an organization, with its memberships, invitations and API keys. An organization

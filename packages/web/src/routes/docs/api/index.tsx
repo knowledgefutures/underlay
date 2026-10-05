@@ -72,12 +72,22 @@ export default function DocsApi() {
         <code>write</code> keys act as a plain member even when the holder is an owner. Owner and
         admin actions on a collection (deleting it, changing whether it is public, transferring it,
         managing its webhooks, storage and mirrors) need a signed-in session or an{' '}
-        <code>admin</code> key held by an owner or admin of the owning organization.
+        <code>admin</code> key held by an owner or admin of the owning organization. So do changing
+        or deleting an organization, setting its NAAN, and deleting your account.
       </p>
       <p>
         A key scoped to specific collections (this is how share and agent links work) is confined to
         them: it is rejected with <code>403</code> on account and organization endpoints, cannot
-        enumerate other collections, and is treated as anonymous outside its scope.
+        enumerate other collections, and is treated as anonymous outside its scope. Within its
+        collections it acts as a member, whatever its scope: it may push and upload, but changing
+        visibility, deleting, transferring, and managing webhooks or mirrors get <code>403</code>.
+      </p>
+      <p>
+        An <strong>agent link</strong>, created from a collection&rsquo;s Share panel, is{' '}
+        <code>https://www.underlay.org/agent/&lt;key&gt;</code>: a write key confined to that one
+        collection, expiring after an hour. <code>GET /agent/:key</code> is an HTML page of
+        instructions an AI agent can follow to push to the collection with that key. An expired or
+        revoked key&rsquo;s page is <code>404</code>.
       </p>
       <p>
         Create keys in your{' '}
@@ -239,7 +249,8 @@ export default function DocsApi() {
           <code>Retry-After</code> and retry
         </li>
         <li>
-          <code>451</code>: The file has been withheld and is not served
+          <code>451</code>: The file has been withheld and is not served (only for a file you could
+          otherwise read; any other file is <code>404</code>)
         </li>
         <li>
           <code>503</code>: Storage is briefly busy while cleanup runs; retry after{' '}

@@ -219,15 +219,24 @@ typeCounts, baseSemver, pushedBy`.
 - **`/api/context`**: no `mirrorConfig`; adds `siteHost`. Server-rendered pages call the API
   in-process on both runtimes.
 - **Records**: no per-record `ark`; members' private records carry `private: true`.
-- **records.ndjson**: no server-side gzip; `after` applies only with `?type=`.
+- **records.ndjson**: no server-side gzip. `?after_type=T&after=id` resumes after (T, id)
+  through the later types; `?type=T&after=id` stays within T; `after` with neither, or
+  `after_type` without `after`, is a 400. `X-Underlay-Record-Count` counts what the request
+  returns, after the resume point. Members' private lines end `"private":true`.
   `records.ndjson.gz?type=` is new (one type's public records as stored).
 - **Manifest**: the default limit is 10,000 and the maximum 25,000; no `truncated` field; delta
-  `removed` entries are `{id, type, hash}`.
+  `removed` entries are `{id, type, hash}`. For members, delta entries in the private set carry
+  `private: true`, and a move between sets is under `updated` with `previousPrivate` (with
+  `previousHash` equal to `hash` when the record didn't change).
+- **Diff**: without `from`, the diff is against the version before (the first version's is
+  against nothing); `removed` entries are `{id, type}`, not bare ids.
 - **Provenance**: covers the caller's own organizations' collections as well as public ones,
   adds `recordHash`, and is capped at 300 presences and 100 versions per collection.
 - **`POST /api/records/batch`**: 1 to 100 hashes.
 - **Export**: `?format=tar|tar.gz`; `manifest.json` adds `files_withheld`, and `README.md` is
-  included when the metadata has a readme.
+  included when the metadata has a readme. Tar entries carry the version's creation time, so a
+  version exports to the same bytes every time.
 - **Health**: `{ok: true, version: 2, deployment, time}`.
-- **Agent links** (`/agent/<key>`) aren't ported: no route serves them, though the share panel
-  still builds the URL.
+- **Agent links**: `GET /agent/<key>` is ported. It serves the HTML instructions page for the
+  share panel's 1-hour, one-collection write key, now describing delta push; a key that isn't
+  such a live key gets a 404 page.

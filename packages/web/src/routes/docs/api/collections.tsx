@@ -299,7 +299,7 @@ export default function DocsApiCollections() {
         <p className="scope">
           Auth: write access (a member, by session or a <code>write</code> or <code>admin</code>{' '}
           key); changing <code>public</code> also needs the owner or admin role, by session or an{' '}
-          <code>admin</code> key
+          <code>admin</code> key not scoped to specific collections
         </p>
         <p>
           Update a collection&rsquo;s <code>name</code>, <code>slug</code> or <code>public</code>.
@@ -324,7 +324,8 @@ export default function DocsApiCollections() {
                 <code>403</code>
               </td>
               <td>
-                No write access, or a change to <code>public</code> without the owner or admin role.
+                No write access, or a change to <code>public</code> without the owner or admin role
+                (a key scoped to specific collections never has it).
               </td>
             </tr>
             <tr>
@@ -349,7 +350,8 @@ export default function DocsApiCollections() {
         <h2 id="delete-api-collections-owner-slug">DELETE /api/collections/:owner/:slug</h2>
         <p className="scope">
           Auth: owner or admin of the owning organization, by session or an <code>admin</code> key
-          (a <code>write</code> key acts as a member and gets <code>403</code>)
+          (a <code>write</code> key, or any key scoped to specific collections, acts as a member and
+          gets <code>403</code>)
         </p>
         <p>
           Delete a collection with its versions, push sessions and webhooks. Stored records and
@@ -483,7 +485,7 @@ export default function DocsApiCollections() {
         </h2>
         <p className="scope">
           Auth: owner or admin of both the current and the target organization, by session or an{' '}
-          <code>admin</code> key
+          <code>admin</code> key not scoped to specific collections
         </p>
         <p>
           Move a collection to another organization. Its slug stays the same, so the target must not

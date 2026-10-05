@@ -31,9 +31,17 @@ What a key may do:
 - read: read what its holder may read.
 - write: also publish (push, files, metadata, fork). Acts as a plain member of the org.
 - admin: keeps its holder's full role (owners and admins may then change visibility, delete,
-  transfer, manage webhooks and ARK settings). A member's admin key is still a member's.
+  transfer, manage webhooks, mirrors and ARK settings). A member's admin key is still a member's.
+  Changing or deleting an organization, setting its NAAN and deleting your account also need a
+  session or an admin key: an owner's write key gets 403.
 - A key confined to collections (metadata.collectionIds) works only on those collections, and is
-  refused on account and organization endpoints and on fork.
+  refused on account and organization endpoints and on fork. On its collections it acts as a
+  member whatever its scope: it may push, but visibility, deletion, transfer, webhooks and
+  mirrors are 403.
+
+Agent links: a collection's Share panel can create https://www.underlay.org/agent/ul_<key>, a
+write key confined to that collection that expires after 1 hour. GET /agent/:key is an HTML page
+telling an AI agent how to push to the collection with that key (404 once expired or revoked).
 
 ## Rate Limits
 
@@ -146,35 +154,40 @@ GET .../versions/:n/manifest
        files: [fileHash, ...],              (first page only; at most 25,000, then filesTruncated: true)
        pagination: {limit, hasMore, nextCursor}}
 GET .../versions/:n/manifest?since=v1.0.0  → only the changes since that version (a semver or hash):
-    {..., since, delta: {added: [{id, type, hash}], updated: [{id, type, hash, previousHash}],
-     removed: [{id, type, hash}]}, pagination}
+    {..., since, delta: {added: [{id, type, hash, private?}],
+     updated: [{id, type, hash, previousHash, private?, previousPrivate?}],
+     removed: [{id, type, hash, private?}]}, pagination}
     Each page holds the next `limit` changes in (type, id) order, divided into the three lists.
-    Delta entries carry no private flag, and a record that only moved between the public and
-    private sets is not listed: read the full manifest to see privacy changes.
+    Members: an entry in the private set has "private": true (a removal: the set it left). A
+    record that moved between the sets is under updated, with previousPrivate (present only when
+    the set changed); a move that kept the hash has previousHash equal to hash.
+    Non-members see the public set only: a record made private is removed, one made public added.
 
 Records come in (type, id) order. Cursors are opaque: pass back nextCursor unchanged until hasMore
 is false. Manifest entries are about 120 bytes each: the cheapest way to learn what a version holds.
 
 ### Diff
 GET .../versions/:n/diff?from=v1.0.0       → records added, updated and removed, with bodies
-    ?limit= (default 500, max 5000), cursor=; without from=, the diff is against an empty version
-    → {from, to, added: [{id, type, data}], updated: [{id, type, data}], removed: [id, ...],
+    ?limit= (default 500, max 5000), cursor=
+    → {from, to, added: [{id, type, data}], updated: [{id, type, data}], removed: [{id, type}],
        pagination: {limit, hasMore, nextCursor},
        meta: {schemaChanged, metadataChanged, filesAdded, filesRemoved}}
-    removed lists bare ids; when you need types or hashes, use manifest?since= instead.
-    Name from= explicitly: without it every record is reported as added.
+    Without from=, the diff is against the version before :n, which "from" names. The first
+    version diffs against an empty version: every record is added and "from" is null.
+    removed carries no hashes; when you need them, use manifest?since= instead.
 
 ### Files
 GET .../versions/:n/files                  → [{hash, size, mimeType, createdAt, referenceCount, references}]
                                              (at most 10,000)
 GET /api/collections/:owner/:slug/files/:hash
     → 302 to a presigned URL valid for 5 minutes (follow it, e.g. curl -L). A file that was ever
-      in a public set of a public collection is anonymous; members also get the private files of
-      the latest version (key or session). The API path is the durable
-      locator: never store the redirect target. 451 if the file is withheld.
-HEAD /api/collections/:owner/:slug/files/:hash   → 200 if the file is in a published version of this
-                                                   collection that you may read (a file uploaded but not
-                                                   yet committed is a 404)
+      in a public set of a public collection is anonymous; members (key or session) also get
+      every file the collection holds: the latest version's private files and any file uploaded
+      to it and verified (earlier versions' private files, uncommitted uploads). The API path is
+      the durable locator: never store the redirect target. A file you can't read is 404, even
+      if withheld; 451 if a file you can read is withheld.
+HEAD /api/collections/:owner/:slug/files/:hash   → 200 if you may read the file through this
+                                                   collection (the same rule), else 404 or 451
 POST /api/collections/:owner/:slug/files/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
 GET /api/collections/files/:hash           → 302 to the file from any collection you may read
@@ -204,8 +217,9 @@ manifest.json = {collection: {owner, slug, name, description},
                  schemas, files_missing, files_withheld}
 The archive streams as it is produced: pipe it to disk or into tar. files_missing lists files
 with no stored copy; files_withheld lists files that may not be served. A failure partway
-through cuts the response off, so an archive that unpacks without error is complete. For bulk
-record reads, records.ndjson is cheaper.
+through cuts the response off, so an archive that unpacks without error is complete. Entries
+are dated with the version's creation time, so the same version (read with the same access)
+exports to byte-identical archives. For bulk record reads, records.ndjson is cheaper.
 
 ### Fork
 POST /api/collections/:owner/:slug/fork    → {"targetOrg": "my-org", "slug": "optional-new-slug"}
@@ -275,10 +289,13 @@ Every field is optional:
 - base: the semver you diffed against. If it isn't the head: 409 with currentVersion. null or
   absent applies your changes to whatever the head is; use null for the first push.
 - schemas: the FULL type set, type → JSON Schema. It replaces the base's: a type you leave out
-  is removed with its records. Omit it to keep the base's types.
-- metadata: replaces the version metadata (description, readme, license, ...). An object or null.
-- metadata_patch: merges its top-level fields into the base's metadata. Ignored when metadata is
-  given. With neither, the metadata is kept.
+  is removed with its records. Omit it to keep the base's types. Every schema of the resulting
+  set (kept ones too) is checked in full here: draft-07 meta-schema, patterns, $refs that
+  resolve, and the rules under "Schemas" below. One that fails: 422.
+- metadata: replaces the version metadata (description, readme, license, ...). An object or
+  null; anything else is 400.
+- metadata_patch: an object (anything else is 400); merges its top-level fields into the base's
+  metadata. Ignored when metadata is given. With neither, the metadata is kept.
 - files: {"add": [hex, ...], "remove": [hex, ...]}: files to declare or drop beyond those your
   records reference. Bare 64-character lowercase hex; other strings are ignored. A declared file
   is in the private set (members only), whatever records reference it, and stays declared in
@@ -303,7 +320,8 @@ Response (200):
   }
 }
 
-- needed_files: declared files this collection doesn't hold yet. Upload them before the commit.
+- needed_files: declared files this collection doesn't hold yet (files already uploaded and
+  verified for it are held). Upload them before the commit.
 - limits: this server's limits. Size requests by them rather than hard-coding numbers:
   open_bytes (this request's body), batch_bytes and batch_lines (each records or deletes
   request), session_idle_seconds (each upload moves expires_at back), open_sessions (sessions
@@ -333,6 +351,8 @@ Content-Type: application/x-ndjson
   type must be in the session's type set. If ANY line fails: 422 with validationErrors (the
   first 100 failing lines, each with its 1-based "line"; totalErrors counts all), and nothing
   from that request is stored. Fix the lines and resend the request.
+- Every delete line passes the same input rules and id and type checks, and its type must be in
+  the session's type set; failures answer the same way (validationErrors, totalErrors).
 - Within a session, the later upload of a (type, id) wins, whether a record or a delete.
 - Deleting a pair the base doesn't hold is not an error.
 - You don't send hashes: the server canonicalizes and hashes what you upload.
@@ -352,6 +372,7 @@ POST .../files/uploads {"hash", "size", "mimeType"?}
   → above 5 GiB: {id, partBytes, partCount, parts: [{partNumber, url}], expiresIn}: PUT each part
 GET  .../files/uploads/:id/parts?from=<n>          → the next page of part URLs
 POST .../files/uploads/:id/complete {"parts"?: [{partNumber, etag}]}   → 202 {id, status: "verifying"}
+     (parts is required, and non-empty, for a multipart upload: 400 otherwise)
 GET  .../files/uploads/:id                         → {id, hash, size, status: pending|verifying|verified|failed, error}
 The server hashes the uploaded bytes; the file counts as held once status is "verified".
 
@@ -388,7 +409,8 @@ The version is invisible until committed, and the commit doesn't depend on your 
 ### Step 7: Handle errors
 
 Conflict at open (409): {"error": "Version conflict", "currentVersion": "v1.3.0"}
-Conflict at commit (409): {"error": "Version conflict"} (someone published after you opened)
+Conflict at commit (409): {"error": "Version conflict", "currentVersion": "v1.3.0"} (someone
+published after you opened)
 → Re-read the head (and the manifest, if you diff), then open a new session.
 
 No changes (409): {"error": "No changes detected", "hash": "ulv2:..."}
@@ -399,12 +421,14 @@ Session not open (409): {"error": "Session is committed"} (or expired, failed, .
 Invalid records (422):
 {"error": "Invalid records", "validationErrors": [{"line": 2, "recordId": "...", "type": "...", "errors": ["..."]}], "totalErrors": 1}
 → Fix those lines and resend, or open the session with "strip_unknown_fields": true if the
-  problem is fields not in the schema. Invalid deletes list their lines under "errors".
+  problem is fields not in the schema. Invalid deletes answer the same shape ("Invalid deletes").
+
+Refused schema (422 at open): {"error": "<why>"} → fix the schema and open again.
 
 Schema change invalidates existing records (422 at commit): {"error": "Schema validation failed",
 "validationErrors": [...], "totalErrors": n}
 
-Missing files (422 at commit): {"error": "Missing files", "filesNeeded": ["sha256:abc..."]}
+Missing files (422 at commit): {"error": "Missing files", "filesNeeded": ["abc..."]} (bare hex)
 → Upload the listed files, then commit again.
 
 Too large (413): a body over open_bytes or batch_bytes, a request over batch_lines, a file over
@@ -472,19 +496,22 @@ X-Underlay-Record-Count: 3113504     ← lines to expect
 
 Parameters:
 - type: one record type
-- after: with type, resume after this id
+- after_type + after: resume after the record (after_type, after) and continue through the
+  later types
+- type + after: resume after this id, within that type only
+- after with neither type nor after_type, or after_type without after: 400
 
 Guarantees:
 - Order: types in slug order; within a type, ids in UTF-8 byte order.
 - hash is the record's hash, as on the records endpoint.
-- Private records are included for members (without a "private" marker; use the records
-  endpoint or the manifest to tell them apart) and absent for everyone else.
-- X-Underlay-Record-Count counts the records of this request (your access, your ?type=).
+- Private records are included for members, each line ending "private":true, and absent for
+  everyone else.
+- X-Underlay-Record-Count counts the records of this request (your access, your ?type=, after
+  the resume point), withheld records included.
 
 A stream that dies halfway can't report an error: the 200 was already sent. Count the lines and
-compare with X-Underlay-Record-Count. To resume, take the type and id of the last complete line,
-request ?type=<that type>&after=<that id>, then request each later type with ?type=. (?after=
-without ?type= is ignored.)
+compare with X-Underlay-Record-Count. To resume, take the type and id of the last complete line
+and request ?after_type=<that type>&after=<that id>: the stream continues to the end.
 
 records.ndjson.gz is the public records as stored (?type= for one type): concatenated gzip members,
 no hash on each line, the cheapest bulk read. Some decoders stop after the first gzip member;
@@ -610,7 +637,8 @@ GET /api/schemas/:id                   → one schema with its labels and where 
 GET /api/collections/:owner/:slug/schemas    → the latest version's schemas
     (?version=v1.2.0; ?raw=true to skip label enrichment)
 POST /api/schemas/:id/labels           → add a label {"label": "schema.org/Person"} (write or admin key, or session)
-DELETE /api/schemas/:id/labels/:label  → remove a label (admin key only)
+DELETE /api/schemas/:id/labels/:label  → remove a label (Underlay stewards only: session or
+                                         non-read key)
 
 The collection schemas endpoint adds known labels to each schema as "x-underlay-labels" (opt out
 with ?raw=true).
@@ -663,8 +691,10 @@ POST   /api/auth/organization/create   → {"name", "slug"}
 GET    /api/auth/organization/list     → your organizations
 GET    /api/accounts/:slug             → an organization or user profile (public)
 GET    /api/accounts/:slug/members     → its members (public)
-PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?} (owners)
-DELETE /api/accounts/:slug             → (owners; 409 while it holds collections, or for a personal organization)
+PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?} (owners: session or admin key)
+DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections,
+                                          or for a personal organization)
+PATCH  /api/accounts/:slug/ark         → {"naan": "<digits>" | null} (owners and admins: session or admin key)
 GET    /api/accounts/me                → you and your memberships (session or unscoped personal key)
 Invitations and member roles are managed under /api/auth/organization/*; accept an invitation
 with POST /api/accounts/invitations/accept {"token"}.
@@ -716,7 +746,7 @@ Errors are JSON: {"error": "<message>", "statusCode": <status>, ...}.
 413 — a body, batch or file over the server's limits
 422 — records failing the input rules or schema, a refused schema, or missing files at commit
 429 — rate limited, or too many push sessions open (Retry-After)
-451 — a file or record withheld
+451 — a file or record withheld (a file you couldn't read anyway is 404)
 503 — storage busy; retry after Retry-After
 
 ---
