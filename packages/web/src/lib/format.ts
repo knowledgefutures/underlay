@@ -29,9 +29,10 @@ export function slugify(value: string) {
     .replace(/-{2,}/g, '-')
 }
 
+/** Byte sizes in decimal units, as labelled: 1 KB = 1,000 bytes, 1 MB = 1,000,000. */
 export function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return '0 B'
-  const k = 1024
+  const k = 1000
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
@@ -42,10 +43,10 @@ export function formatBytes(bytes: number): string {
  * explore and home listings. formatBytes trims the decimal ("1 KB").
  */
 export function formatBytesFixed(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (bytes < 1e3) return `${bytes} B`
+  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`
+  if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`
+  return `${(bytes / 1e9).toFixed(1)} GB`
 }
 
 /** A count, compact once it's large: 1,284 / 12.9K / 4.2M / 1.2B. One style everywhere. */

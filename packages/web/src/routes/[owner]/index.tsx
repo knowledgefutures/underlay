@@ -1,7 +1,7 @@
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { ButtonLink, EmptyState } from '~/components/ui'
+import { Breakable, ButtonLink, EmptyState } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { formatDate, timeAgo } from '~/lib/format'
 
@@ -186,14 +186,14 @@ export default function OwnerPage() {
               <div className="space-y-2">
                 <div>
                   <p className="text-ink-muted mb-0.5 text-[10px] font-medium">AT Protocol</p>
-                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-all">
-                    at://did:web:underlay.org:{owner}
+                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-words">
+                    <Breakable text={`at://did:web:underlay.org:${owner}`} />
                   </code>
                 </div>
                 <div>
                   <p className="text-ink-muted mb-0.5 text-[10px] font-medium">API</p>
-                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-all">
-                    GET /api/accounts/{owner}/collections
+                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-words">
+                    <Breakable text={`GET /api/accounts/${owner}/collections`} />
                   </code>
                 </div>
               </div>

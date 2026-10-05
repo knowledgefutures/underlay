@@ -25,6 +25,14 @@ export interface SettingsRailGroup {
   items: SettingsRailItem[]
 }
 
+/** The account settings pages' breadcrumb, like an org's `owner / settings`. */
+export const accountCrumb = (
+  <nav>
+    <span className="text-ink-muted">account</span> <span className="text-ink-muted">/</span>{' '}
+    <span className="text-ink-muted">settings</span>
+  </nav>
+)
+
 export const userSettingsRail: SettingsRailGroup[] = [
   {
     heading: 'Account',
@@ -157,7 +165,7 @@ export default function SettingsLayout({
 
   return (
     <BaseLayout>
-      <div className={`mx-auto ${wide ? 'max-w-6xl' : 'max-w-5xl'} px-4 py-8`}>
+      <div className="mx-auto max-w-5xl px-4 py-8">
         {crumb && <div className="mb-4 text-sm">{crumb}</div>}
         <div className="flex items-start gap-8">
           <nav className="sticky top-6 hidden w-44 shrink-0 md:block" aria-label={label}>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
+import SettingsLayout, { accountCrumb, userSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, SectionHeading } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { formatDate } from '~/lib/format'
@@ -55,6 +55,7 @@ export default function SettingsSessions() {
 
   return (
     <SettingsLayout
+      crumb={accountCrumb}
       title="Sessions"
       description="Devices currently logged into your account. Revoke any session you don't recognize."
       groups={userSettingsRail}

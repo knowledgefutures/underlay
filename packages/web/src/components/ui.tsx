@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { Link } from 'react-router'
 
 import { TokenLink } from '~/lib/share-token'
@@ -170,6 +171,26 @@ export function Field({ label, htmlFor, hint, error, className, children }: Fiel
         hint && <p className="text-ink-muted mt-1 text-xs">{hint}</p>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------- Breakable
+
+/**
+ * An identifier (URL, path, ARK) that may wrap after `/`, `:` and `.` rather
+ * than mid-word. Pair with `break-words` so a single long segment still fits.
+ */
+export function Breakable({ text }: { text: string }) {
+  const parts = text.split(/(?<=[/:.])/)
+  return (
+    <>
+      {parts.map((p, i) => (
+        <Fragment key={i}>
+          {i > 0 && <wbr />}
+          {p}
+        </Fragment>
+      ))}
+    </>
   )
 }
 

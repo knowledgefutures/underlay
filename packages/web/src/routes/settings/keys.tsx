@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import ApiKeysPanel from '~/components/ApiKeysPanel'
-import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
+import SettingsLayout, { accountCrumb, userSettingsRail } from '~/components/SettingsLayout'
 import { useAppContext } from '~/lib/app-context'
 
 export default function SettingsKeys() {
@@ -18,6 +18,7 @@ export default function SettingsKeys() {
 
   return (
     <SettingsLayout
+      crumb={accountCrumb}
       title="API keys"
       description="Keys for pushing and pulling data with the API or CLI."
       groups={userSettingsRail}

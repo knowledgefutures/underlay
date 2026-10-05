@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react'
 
-import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
+import SettingsLayout, { accountCrumb, userSettingsRail } from '~/components/SettingsLayout'
 import {
   Alert,
   Button,
@@ -119,6 +119,7 @@ export default function Settings() {
 
   return (
     <SettingsLayout
+      crumb={accountCrumb}
       title="Profile"
       description="Your public identity on Underlay."
       groups={userSettingsRail}

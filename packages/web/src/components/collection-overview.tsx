@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router'
 
+import { Breakable } from '~/components/ui'
 import { bareSemver, formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 import { TokenLink } from '~/lib/share-token'
@@ -355,14 +356,16 @@ export default function CollectionOverviewBody({
           <div className="space-y-2 text-xs">
             <div>
               <p className="mb-0.5 font-medium">AT Protocol</p>
-              <code className="text-ink-muted bg-parchment-dark rounded-control block px-2 py-1 text-[11px] break-all">
-                {`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}
+              <code className="text-ink-muted bg-parchment-dark rounded-control block px-2 py-1 text-[11px] break-words">
+                <Breakable
+                  text={`at://did:web:underlay.org:${owner}/org.underlay.collection.${collection}`}
+                />
               </code>
             </div>
             <div>
               <p className="mb-0.5 font-medium">API</p>
-              <code className="text-ink-muted bg-parchment-dark rounded-control block px-2 py-1 text-[11px] break-all">
-                {`GET /api/collections/${owner}/${collection}/versions`}
+              <code className="text-ink-muted bg-parchment-dark rounded-control block px-2 py-1 text-[11px] break-words">
+                <Breakable text={`GET /api/collections/${owner}/${collection}/versions`} />
               </code>
             </div>
             {version && (
@@ -388,9 +391,9 @@ export default function CollectionOverviewBody({
             </h3>
             <Link
               to={collectionArkPath}
-              className="text-link bg-parchment-dark rounded-control block px-2 py-1 font-mono text-[11px] break-all hover:underline"
+              className="text-link bg-parchment-dark rounded-control block px-2 py-1 font-mono text-[11px] break-words hover:underline"
             >
-              {collectionArkPath.slice(1)}
+              <Breakable text={collectionArkPath.slice(1)} />
             </Link>
           </div>
         )}
