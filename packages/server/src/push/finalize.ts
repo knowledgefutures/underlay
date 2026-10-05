@@ -39,7 +39,7 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
     return pendingOutcome(sessionId)
   }
   // The change streams are rebuilt from the session's runs on each attempt.
-  const outcome = await commitOutcome(sessionId, () =>
+  const outcome = await commitOutcome(ports, sessionId, () =>
     fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),
   )
   await settleSession(ports, sessionId, outcome)

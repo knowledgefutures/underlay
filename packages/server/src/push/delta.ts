@@ -8,12 +8,17 @@
  * them in the repository (changes.ts).
  */
 import {
+  checkRecordId,
+  checkTypeSlug,
   compileSchema,
   emptySet,
   InputRuleError,
   OUT_OF_LINE_BYTES,
   parseRecordLine,
+  parseStrict,
   recordCanonical,
+  SchemaError,
+  type SchemaValidator,
   sha256Hex,
   stripToSchema,
   utf8ByteLength,
@@ -22,13 +27,9 @@ import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import {
-  type BaseVersion,
-  commitVersion,
-  type CommitResult,
-  type TypeInput,
-} from '../versions/commit.js'
+import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
+import type { SessionCommitResult } from './outcome.js'
 import { planParallel } from './parallel.js'
 import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
@@ -36,6 +37,7 @@ import {
   nextRunSeq,
   recordRun,
   schemaHashes,
+  schemaSetError,
   type SessionInputs,
   sessionRuns,
   type SessionRow,
@@ -90,6 +92,22 @@ export async function prepareRecords(
   const entries: RunEntry[] = []
   const internal = ports.stores.internal
   const source = typeof input === 'string' ? lines(input) : input
+  // Compiled once per type per batch. A schema that doesn't compile (a session
+  // opened before the open-time check) fails its lines with a 422, not a 500.
+  const validators = new Map<string, SchemaValidator | string>()
+  const validatorFor = (type: string, s: Record<string, unknown>) => {
+    let v = validators.get(type)
+    if (v === undefined) {
+      try {
+        v = compileSchema(s)
+      } catch (err) {
+        if (!(err instanceof SchemaError)) throw err
+        v = `The schema for type "${type}" is refused: ${err.message}`
+      }
+      validators.set(type, v)
+    }
+    return v
+  }
   let i = -1
   for await (const line of source) {
     i++
@@ -133,7 +151,8 @@ export async function prepareRecords(
         canonical = recordCanonical(rec.id, rec.type, data)
       }
     }
-    const errs = compileSchema(typeSchema)(data)
+    const validate = validatorFor(rec.type, typeSchema)
+    const errs = typeof validate === 'string' ? [validate] : validate(data)
     if (errs.length > 0) {
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: errs })
       continue
@@ -187,6 +206,19 @@ export async function ingestRecords(
   return { ok: true, received: prepared.entries.length }
 }
 
+/** One delete line, `{"type", "id"}`, under the input rules. Throws InputRuleError. */
+function parseDeleteLine(line: string): { type: string; id: string } {
+  const v = parseStrict(line)
+  if (v === null || typeof v !== 'object' || Array.isArray(v))
+    throw new InputRuleError('bad_envelope', 'Each line is {"type": …, "id": …}')
+  const { type, id } = v as { type?: unknown; id?: unknown }
+  const idError = checkRecordId(id)
+  if (idError) throw new InputRuleError('bad_id', idError)
+  const typeError = checkTypeSlug(type)
+  if (typeError) throw new InputRuleError('bad_type', typeError)
+  return { type: type as string, id: id as string }
+}
+
 export async function ingestDeletes(
   ports: Ports,
   session: SessionRow,
@@ -195,33 +227,35 @@ export async function ingestDeletes(
   const inputs = await loadInputs(ports, session.id)
   const entries: RunEntry[] = []
   const errors: LineError[] = []
+  let total = 0
+  const fail = (e: LineError) => {
+    total++
+    if (errors.length < MAX_REPORTED) errors.push(e)
+  }
   const all = lines(text)
   if (all.length > MAX_BATCH_LINES)
     return { ok: false, status: 413, error: `At most ${MAX_BATCH_LINES} deletes per batch` }
   all.forEach((l, i) => {
-    let v: { type?: unknown; id?: unknown }
+    let d
     try {
-      v = JSON.parse(l) as typeof v
-    } catch {
-      errors.push({ line: i + 1, errors: ['Invalid JSON'] })
+      d = parseDeleteLine(l)
+    } catch (err) {
+      if (!(err instanceof InputRuleError)) throw err
+      fail({ line: i + 1, errors: [`${err.code}: ${err.message}`] })
       return
     }
-    if (typeof v.type !== 'string' || typeof v.id !== 'string') {
-      errors.push({ line: i + 1, errors: ['Each line is {"type": …, "id": …}'] })
-    } else if (!inputs.schemas[v.type]) {
-      errors.push({ line: i + 1, errors: [`No schema for type "${v.type}"`] })
+    if (!inputs.schemas[d.type]) {
+      fail({
+        line: i + 1,
+        recordId: d.id,
+        type: d.type,
+        errors: [`No schema for type "${d.type}"`],
+      })
     } else {
-      entries.push({ t: v.type, k: v.id, x: true })
+      entries.push({ t: d.type, k: d.id, x: true })
     }
   })
-  if (errors.length > 0)
-    return {
-      ok: false,
-      status: 422,
-      error: 'Invalid deletes',
-      details: errors.slice(0, MAX_REPORTED),
-      total: errors.length,
-    }
+  if (total > 0) return { ok: false, status: 422, error: 'Invalid deletes', details: errors, total }
   if (entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
   const seq = await nextRunSeq(ports, session.id)
   if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
@@ -296,14 +330,16 @@ export async function commitDeltaSession(
   ports: Ports,
   session: SessionRow,
   fence: number,
-): Promise<
-  CommitResult | { status: 'base_moved'; current: string | null } | { status: 'parallel' }
-> {
+): Promise<SessionCommitResult> {
   const base = await headBase(ports, session.collectionId)
   if ((base?.id ?? null) !== session.baseVersionId) {
     return { status: 'base_moved', current: base?.semver ?? null }
   }
   const inputs = await loadInputs(ports, session.id)
+  // Sessions opened before the open-time check may hold a schema that doesn't
+  // compile; none is ever published.
+  const schemaErr = schemaSetError(inputs.schemas)
+  if (schemaErr) return { status: 'schema_refused', error: schemaErr }
   const runs = await sessionRuns(ports, session.id)
   const repo = await ports.stores.forCollection(session.collectionId)
   const root = base ? await repo.root(base.hash) : null

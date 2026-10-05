@@ -5,7 +5,7 @@
  * sorted runs (runs.ts). SQLite holds only the session row, counters and the run
  * list.
  */
-import { hashSchema } from '@underlay/protocol'
+import { checkSchemaFull, hashSchema } from '@underlay/protocol'
 import { and, asc, count, eq, gt, or, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -163,6 +163,23 @@ export async function transition(
     .where(and(eq(schema.pushSessions.id, sessionId), eq(schema.pushSessions.status, from)))
     .returning({ id: schema.pushSessions.id })
   return rows.length === 1
+}
+
+/**
+ * Why a session's type set (slug → schema) can't be accepted, or null: every
+ * schema passes the full acceptance check (`checkSchemaFull`: the bounds and v2
+ * rules, the draft-07 meta-schema, `u`-flag patterns, `$ref`s that resolve).
+ */
+export function schemaSetError(schemas: unknown): string | null {
+  if (!schemas || typeof schemas !== 'object' || Array.isArray(schemas))
+    return '"schemas" must be an object of type → schema'
+  for (const [slug, body] of Object.entries(schemas)) {
+    if (!body || typeof body !== 'object' || Array.isArray(body))
+      return `Schema "${slug}" must be an object`
+    const err = checkSchemaFull(slug, body)
+    if (err) return err
+  }
+  return null
 }
 
 export const schemaHashes = (schemas: Record<string, unknown>) =>

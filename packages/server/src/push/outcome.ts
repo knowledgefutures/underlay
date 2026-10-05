@@ -5,8 +5,10 @@
  * assembly (parallel.ts).
  */
 import { MissingFilesError } from '@underlay/protocol'
+import { eq } from 'drizzle-orm'
 
 import { FenceError, StorageBusyError } from '../cleanup/fence.js'
+import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import type { CommitResult } from '../versions/commit.js'
 import { transition } from './session.js'
@@ -20,6 +22,7 @@ export interface Outcome {
 export type SessionCommitResult =
   | CommitResult
   | { status: 'base_moved'; current: string | null }
+  | { status: 'schema_refused'; error: string }
   | { status: 'parallel' }
 
 export const pendingOutcome = (sessionId: string): Outcome => ({
@@ -29,6 +32,7 @@ export const pendingOutcome = (sessionId: string): Outcome => ({
 
 /** Run a commit and map its result (or a missing-files rejection) to an outcome. */
 export async function commitOutcome(
+  ports: Ports,
   sessionId: string,
   run: () => Promise<SessionCommitResult>,
 ): Promise<Outcome> {
@@ -51,7 +55,7 @@ export async function commitOutcome(
       status: 422,
       body: {
         error: 'Missing files',
-        filesNeeded: err.hashes.slice(0, 100).map((h) => `sha256:${h}`),
+        filesNeeded: err.hashes.slice(0, 100),
         statusCode: 422,
       },
     }
@@ -80,7 +84,18 @@ export async function commitOutcome(
       }
     case 'conflict':
     case 'base_moved':
-      return { status: 409, body: { error: 'Version conflict', statusCode: 409 } }
+      // currentVersion, as the 409 at open has it.
+      return {
+        status: 409,
+        body: {
+          error: 'Version conflict',
+          currentVersion:
+            r.status === 'base_moved' ? r.current : await semverOf(ports, r.headVersionId),
+          statusCode: 409,
+        },
+      }
+    case 'schema_refused':
+      return { status: 422, body: { error: r.error, statusCode: 422 } }
     case 'invalid':
       return {
         status: 422,
@@ -94,6 +109,15 @@ export async function commitOutcome(
     case 'parallel':
       return pendingOutcome(sessionId)
   }
+}
+
+async function semverOf(ports: Ports, versionId: string | null): Promise<string | null> {
+  if (!versionId) return null
+  const [v] = await ports.db
+    .select({ semver: schema.versions.semver })
+    .from(schema.versions)
+    .where(eq(schema.versions.id, versionId))
+  return v?.semver ?? null
 }
 
 /** Record a final outcome on the session (committing → committed | failed). */

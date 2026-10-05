@@ -656,7 +656,7 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
 
     const inputs = await loadInputs(ports, sessionId)
     const hashes = schemaHashes(inputs.schemas)
-    const outcome = await commitOutcome(sessionId, () =>
+    const outcome = await commitOutcome(ports, sessionId, () =>
       commitVersion(ports, {
         collectionId: session.collectionId,
         // Plans written before the fence existed fail if any window has opened since.

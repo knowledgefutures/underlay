@@ -9,14 +9,7 @@
  *   GET    /:owner/:slug/push/:sid                 status (and result after an async commit)
  *   DELETE /:owner/:slug/push/:sid                 abandon
  */
-import {
-  checkSchema,
-  fileTree,
-  getEntry,
-  hashSchema,
-  parseSemver,
-  RepoSource,
-} from '@underlay/protocol'
+import { hashSchema, parseSemver } from '@underlay/protocol'
 import { and, eq, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
@@ -38,11 +31,13 @@ import {
   getSession,
   limits,
   loadInputs,
+  schemaSetError,
   SESSION_TTL_MS,
   type SessionInputs,
   type SessionRow,
   transition,
 } from '../push/session.js'
+import { collectionFileSizes } from '../versions/file-refs.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
 import { BodyTooLarge, readJson, readLines, readText } from './body.js'
 
@@ -82,18 +77,8 @@ async function readNdjson(c: Context<AppEnv>): Promise<string | Response> {
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null)
 
-/** Validate a full schema set. Returns an error message or null. */
-function checkSchemas(schemas: unknown): string | null {
-  if (!schemas || typeof schemas !== 'object' || Array.isArray(schemas))
-    return '"schemas" must be an object of type → schema'
-  for (const [slug, body] of Object.entries(schemas)) {
-    if (!body || typeof body !== 'object' || Array.isArray(body))
-      return `Schema "${slug}" must be an object`
-    const err = checkSchema(slug, body)
-    if (err) return err
-  }
-  return null
-}
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
 
 /** The session named in the URL, if it belongs to this collection and caller. */
 async function ownSession(
@@ -209,29 +194,22 @@ async function abandon(c: Context<AppEnv>, session: SessionRow) {
   return c.json({ ok: true })
 }
 
-/** Declared files the caller must upload: those the collection's base doesn't already hold. */
+/**
+ * Declared files the caller must upload: those not held for the collection, by
+ * the same test the commit applies (collectionFileSizes), so a file listed here
+ * is exactly one the commit would refuse without an upload.
+ */
 async function neededFiles(
   c: Context<AppEnv>,
   access: CollectionAccess,
   baseHash: string | null,
   files: string[],
 ): Promise<string[]> {
-  if (files.length === 0) return []
+  const wanted = [...new Set(files)]
+  if (wanted.length === 0) return []
   const repo = await c.var.ports.stores.forCollection(access.collection.id)
-  const roots: (string | null)[] = [access.collection.publicFilesRoot]
-  if (baseHash) {
-    const root = await repo.root(baseHash)
-    roots.push(root.public.files.root)
-    if (root.private) roots.push((await repo.privateSet(root.private)).files.root)
-  }
-  const source = new RepoSource(fileTree, repo)
-  const needed: string[] = []
-  for (const h of files) {
-    let have = false
-    for (const r of roots) if (r && (await getEntry(source, r, h))) have = true
-    if (!have) needed.push(h)
-  }
-  return needed
+  const held = await collectionFileSizes(c.var.ports.db, repo, access.collection, baseHash, wanted)
+  return wanted.filter((h) => !held.has(h))
 }
 
 export function pushRoutes() {
@@ -249,19 +227,17 @@ export function pushRoutes() {
     if (baseConflict(body.base, head))
       return jsonError(c, 409, 'Version conflict', { currentVersion: head?.semver ?? null })
 
-    const base = await baseInputs(c, access.collection.id, head?.hash ?? null)
-    if (body.schemas !== undefined) {
-      const err = checkSchemas(body.schemas)
-      if (err) return jsonError(c, 422, err)
-    }
-    if (
-      body.metadata !== undefined &&
-      body.metadata !== null &&
-      typeof body.metadata !== 'object'
-    ) {
+    if (body.metadata !== undefined && body.metadata !== null && !isPlainObject(body.metadata))
       return jsonError(c, 400, '"metadata" must be an object or null')
-    }
-    const patch = body.metadata_patch as Record<string, unknown> | undefined
+    if (body.metadata_patch !== undefined && !isPlainObject(body.metadata_patch))
+      return jsonError(c, 400, '"metadata_patch" must be an object')
+    const base = await baseInputs(c, access.collection.id, head?.hash ?? null)
+    // The whole new type set, including schemas kept from the base: a commit
+    // refuses any schema that isn't acceptable, so say so now.
+    const schemas = body.schemas !== undefined ? body.schemas : base.schemas
+    const schemaErr = schemaSetError(schemas)
+    if (schemaErr) return jsonError(c, 422, schemaErr)
+    const patch = body.metadata_patch
     const metadata =
       body.metadata !== undefined
         ? (body.metadata as Record<string, unknown> | null)
@@ -274,7 +250,7 @@ export function pushRoutes() {
         ? v.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h))
         : []
     const inputs: SessionInputs = {
-      schemas: (body.schemas as SessionInputs['schemas'] | undefined) ?? base.schemas,
+      schemas: schemas as SessionInputs['schemas'],
       metadata,
       files: { add: hexList(files.add), remove: hexList(files.remove) },
     }
@@ -335,7 +311,7 @@ export function pushRoutes() {
     const r = await ingestDeletes(c.var.ports, session, text)
     return r.ok
       ? c.json({ received: r.received })
-      : jsonError(c, r.status, r.error, { errors: r.details })
+      : jsonError(c, r.status, r.error, { validationErrors: r.details, totalErrors: r.total })
   })
 
   app.post('/:owner/:slug/push/:sid/commit', async (c) => {

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { getEntry, hashRecord, recordTree, RepoSource } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -22,6 +24,7 @@ const rec = (id: string, data: Record<string, unknown>, extra: Record<string, un
   ...extra,
 })
 const hashOf = (id: string, data: unknown) => hashRecord(id, 'Author', data).hash
+const sha = (b: string) => createHash('sha256').update(b).digest('hex')
 
 async function setup() {
   const h = await harness()
@@ -332,5 +335,175 @@ describe('delta push', () => {
     expect(
       (await h.request(`${base}/push`, { method: 'POST', user: 'stranger', json: {} })).status,
     ).toBe(403)
+  })
+
+  it('refuses a schema that does not compile at open, upload and commit', async () => {
+    const { h, user, c, base } = await setup()
+    const open = (json: object) => h.request(`${base}/push`, { method: 'POST', user, json })
+    // Not draft-07, a regex the u flag rejects, a $ref that doesn't resolve.
+    for (const Bad of [
+      { type: 'text' },
+      { type: 'object', properties: { s: { type: 'string', pattern: '\\-' } } },
+      { type: 'object', properties: { s: { $ref: '#/definitions/nope' } } },
+    ]) {
+      const res = await open({ schemas: { Author, Bad } })
+      expect(res.status).toBe(422)
+      expect((await json(res)).error).toMatch(/"Bad"/)
+    }
+
+    // A session opened before the check (its inputs written directly): uploads
+    // of the bad type fail by line with a 422, and the commit publishes nothing.
+    const sid = (await json(await open({ schemas: { Author } }))).session_id
+    await h.ports.stores.internal.put(
+      `sessions/${sid}/inputs.json`,
+      JSON.stringify({
+        schemas: { Author, Bad: { type: 'text' } },
+        metadata: null,
+        files: { add: [], remove: [] },
+      }),
+    )
+    let res = await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('a', { name: 'A' }), { id: 'b1', type: 'Bad', data: {} }],
+    })
+    expect(res.status).toBe(422)
+    const body = await json(res)
+    expect(body.totalErrors).toBe(1)
+    expect(body.validationErrors[0]).toMatchObject({ line: 2, type: 'Bad' })
+    expect(body.validationErrors[0].errors[0]).toMatch(/refused/)
+    res = await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('a', { name: 'A' })],
+    })
+    expect(res.status).toBe(200)
+    res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(422)
+    expect((await json(res)).error).toMatch(/"Bad"/)
+    expect(await head(h, c.id)).toBeNull()
+  })
+
+  it('takes metadata as an object or null, and metadata_patch as an object', async () => {
+    const { h, user, base } = await setup()
+    const open = (json: object) => h.request(`${base}/push`, { method: 'POST', user, json })
+    for (const metadata of [['a'], 'x', 3, true]) {
+      const res = await open({ schemas: { Author }, metadata })
+      expect(res.status).toBe(400)
+      expect((await json(res)).error).toBe('"metadata" must be an object or null')
+    }
+    for (const metadata_patch of [['a'], null, 'x', 3]) {
+      const res = await open({ schemas: { Author }, metadata_patch })
+      expect(res.status).toBe(400)
+      expect((await json(res)).error).toBe('"metadata_patch" must be an object')
+    }
+    expect((await open({ schemas: { Author }, metadata: null })).status).toBe(200)
+    expect((await open({ schemas: { Author }, metadata_patch: { a: 1 } })).status).toBe(200)
+  })
+
+  it('applies the input rules to deletes, and reports them like records', async () => {
+    const { h, user, base } = await setup()
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id
+    const send = (body: string) =>
+      h.request(`${base}/push/${sid}/deletes`, { method: 'POST', user, body })
+    let res = await send(
+      [
+        '{"type":"Author","id":"ok"}',
+        'not json',
+        '{"type":"Author","id":"a","id":"b"}',
+        '{"type":"Author","id":""}',
+        '{"type":"a/b","id":"x"}',
+        '["Author","x"]',
+        '{"type":"Other","id":"x"}',
+        '',
+        `{"type":"Author","id":"${'x'.repeat(1025)}"}`,
+      ].join('\n'),
+    )
+    expect(res.status).toBe(422)
+    let body = await json(res)
+    expect(body.error).toBe('Invalid deletes')
+    expect(body.errors).toBeUndefined()
+    expect(body.totalErrors).toBe(7)
+    // Lines count among the non-empty ones.
+    expect(body.validationErrors.map((e: { line: number }) => e.line)).toEqual([
+      2, 3, 4, 5, 6, 7, 8,
+    ])
+    const first = body.validationErrors.map((e: { errors: string[] }) => e.errors[0])
+    expect(first[0]).toMatch(/^syntax:/)
+    expect(first[1]).toMatch(/^duplicate_key:/)
+    expect(first[2]).toMatch(/^bad_id:/)
+    expect(first[3]).toMatch(/^bad_type:/)
+    expect(first[4]).toMatch(/^bad_envelope:/)
+    expect(first[5]).toBe('No schema for type "Other"')
+    expect(first[6]).toMatch(/^bad_id:/)
+
+    // At most the first 100 failures are listed; totalErrors counts them all.
+    res = await send(Array.from({ length: 150 }, () => 'nope').join('\n'))
+    body = await json(res)
+    expect(body.validationErrors).toHaveLength(100)
+    expect(body.totalErrors).toBe(150)
+
+    res = await send('{"type":"Author","id":"ok"}')
+    expect(await json(res)).toEqual({ received: 1 })
+  })
+
+  it('lists as needed only the files a commit would refuse, as bare hex', async () => {
+    const { h, user, base } = await setup()
+    const uploaded = 'uploaded to this collection'
+    const missing = 'never uploaded'
+    expect(
+      (await h.request(`${base}/files/${sha(uploaded)}`, { method: 'PUT', user, body: uploaded }))
+        .status,
+    ).toBe(201)
+    const open = async (add: string[]) =>
+      json(
+        await h.request(`${base}/push`, {
+          method: 'POST',
+          user,
+          json: { schemas: { Author }, files: { add } },
+        }),
+      )
+    let opened = await open([sha(uploaded), sha(missing), sha(missing)])
+    // The upload (a verified file_uploads row) counts, as it does at commit.
+    expect(opened.needed_files).toEqual([sha(missing)])
+    let res = await h.request(`${base}/push/${opened.session_id}/commit`, {
+      method: 'POST',
+      user,
+    })
+    expect(res.status).toBe(422)
+    expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(missing)] })
+
+    opened = await open([sha(uploaded)])
+    expect(opened.needed_files).toEqual([])
+    res = await h.request(`${base}/push/${opened.session_id}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(201)
+  })
+
+  it('answers a commit whose base moved with the current version', async () => {
+    const { h, user, base } = await setup()
+    const open = async () =>
+      (
+        await json(
+          await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+        )
+      ).session_id
+    const [first, second] = [await open(), await open()]
+    for (const sid of [first, second]) {
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [rec(sid, { name: 'N' })],
+      })
+    }
+    expect((await h.request(`${base}/push/${first}/commit`, { method: 'POST', user })).status).toBe(
+      201,
+    )
+    const res = await h.request(`${base}/push/${second}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(409)
+    expect(await json(res)).toMatchObject({ error: 'Version conflict', currentVersion: 'v1.0.0' })
   })
 })
