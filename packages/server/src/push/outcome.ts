@@ -11,7 +11,10 @@ import { FenceError, StorageBusyError } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import type { CommitResult } from '../versions/commit.js'
-import { transition } from './session.js'
+import { SESSION_TTL_MS, transition } from './session.js'
+
+/** The one refusal a client can fix within the session: the session reopens (settleSession). */
+export const MISSING_FILES = 'Missing files'
 
 export interface Outcome {
   /** 202: a parallel commit is still running. 503: storage cleanup got in the way; push again. */
@@ -54,7 +57,7 @@ export async function commitOutcome(
     return {
       status: 422,
       body: {
-        error: 'Missing files',
+        error: MISSING_FILES,
         filesNeeded: err.hashes.slice(0, 100),
         statusCode: 422,
       },
@@ -62,16 +65,7 @@ export async function commitOutcome(
   }
   switch (r.status) {
     case 'committed':
-      return {
-        status: 201,
-        body: {
-          semver: r.version.semver,
-          hash: r.version.hash,
-          recordCount: r.version.recordCount,
-          fileCount: r.version.fileCount,
-          changes: r.version.changes,
-        },
-      }
+      return { status: 201, body: committedBody(r.version) }
     case 'no_changes':
       return {
         status: 409,
@@ -83,7 +77,11 @@ export async function commitOutcome(
         },
       }
     case 'conflict':
-    case 'base_moved':
+    case 'base_moved': {
+      // The head moved, or another commit won it: if that commit was this
+      // session's own (a job that ran twice), the push is committed.
+      const own = await ownVersion(ports, sessionId)
+      if (own) return { status: 201, body: committedBody(own) }
       // currentVersion, as the 409 at open has it.
       return {
         status: 409,
@@ -94,6 +92,7 @@ export async function commitOutcome(
           statusCode: 409,
         },
       }
+    }
     case 'schema_refused':
       return { status: 422, body: { error: r.error, statusCode: 422 } }
     case 'invalid':
@@ -111,6 +110,29 @@ export async function commitOutcome(
   }
 }
 
+type VersionRow = typeof schema.versions.$inferSelect
+
+/** What a committed push returns, from its version row. */
+function committedBody(v: VersionRow): Record<string, unknown> {
+  return {
+    semver: v.semver,
+    hash: v.hash,
+    recordCount: v.recordCount,
+    fileCount: v.fileCount,
+    changes: v.changes,
+  }
+}
+
+/** The version this session committed, if it did. */
+async function ownVersion(ports: Ports, sessionId: string): Promise<VersionRow | null> {
+  const [v] = await ports.db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.pushSessionId, sessionId))
+    .limit(1)
+  return v ?? null
+}
+
 async function semverOf(ports: Ports, versionId: string | null): Promise<string | null> {
   if (!versionId) return null
   const [v] = await ports.db
@@ -120,15 +142,32 @@ async function semverOf(ports: Ports, versionId: string | null): Promise<string 
   return v?.semver ?? null
 }
 
-/** Record a final outcome on the session (committing → committed | failed). */
+/**
+ * Record an outcome on the session: committing → committed | failed, or back to
+ * open after a "Missing files" refusal, so the client can upload them and commit
+ * the same session again (the error stays on the session for a polling client).
+ * Only a committing session moves, so a settled one is never overwritten; false
+ * if this call didn't move it (another run settled it first).
+ */
 export async function settleSession(
   ports: Ports,
   sessionId: string,
   outcome: Outcome,
-): Promise<void> {
-  if (outcome.status === 202) return
+): Promise<boolean> {
+  if (outcome.status === 202) return true
+  if (outcome.status === 422 && outcome.body.error === MISSING_FILES) {
+    // A parallel plan is dropped: the next commit plans again, over any records
+    // uploaded meanwhile. The old plan's jobs stop at the plan id check.
+    return transition(ports, sessionId, 'committing', 'open', {
+      error: outcome.body as never,
+      finalizeStartedAt: null,
+      commitPlan: null,
+      assemblyLease: null,
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+    })
+  }
   const ok = outcome.status === 201
-  await transition(
+  return transition(
     ports,
     sessionId,
     'committing',

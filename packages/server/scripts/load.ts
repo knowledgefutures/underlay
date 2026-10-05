@@ -127,7 +127,8 @@ async function settle(kind: string, key: string, statusPath: string, t0: number)
   for (;;) {
     const s = await call(`${kind} poll`, key, 'GET', statusPath)
     const st = s.json.status
-    if (st === 'committed' || st === 'failed' || st === 'expired') {
+    // A commit refused for missing files reopens the session, with the error.
+    if (st === 'committed' || st === 'failed' || st === 'expired' || st === 'open') {
       note(`${kind} commit→${st}`, performance.now() - t0, 200)
       return st
     }

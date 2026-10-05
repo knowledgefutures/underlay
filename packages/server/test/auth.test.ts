@@ -106,6 +106,17 @@ describe('better-auth on SQLite', () => {
       (await send('PATCH', '/api/collections/org/authors', admin.key, { public: true })).status,
     ).toBe(200)
 
+    // The collection is public now. A Bearer header with no token is a key that
+    // doesn't verify, not an anonymous read (fetch trims `Bearer ` to `Bearer`).
+    const get = (headers: Record<string, string>) =>
+      app.fetch(new Request('http://test/api/collections/org/authors', { headers }))
+    expect((await get({})).status).toBe(200)
+    for (const authorization of ['Bearer', 'Bearer ', 'bearer \t ']) {
+      const res = await get({ authorization })
+      expect(res.status).toBe(401)
+      expect(await res.json()).toMatchObject({ error: 'Invalid or expired API key' })
+    }
+
     // Keys are checked against their row; last_request is written once, not per call.
     const rows = async () =>
       (await h.ports.db.select().from(schema.apikey)).find(

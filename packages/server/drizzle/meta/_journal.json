@@ -162,6 +162,13 @@
       "when": 1791147682002,
       "tag": "0022_collection_history",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1791231702996,
+      "tag": "0023_version_push_session",
+      "breakpoints": true
     }
   ]
 }

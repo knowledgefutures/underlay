@@ -279,6 +279,60 @@ describe('parallel commit', () => {
     expect(versions.map((v) => v.recordCount)).toEqual([batch.length])
   })
 
+  it('reopens a session refused for missing files, and plans again on the next commit', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const c = await h.collection('pm')
+    const path = '/api/collections/org/pm'
+    const open = await h.request(`${path}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author } },
+    })
+    const sid = ((await open.json()) as { session_id: string }).session_id
+    const batch = [...markIds('m', 4), ...Array.from({ length: 1000 }, (_, i) => `x${i}`)]
+    await h.request(`${path}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [...batch.map((k) => rec(k, k)), rec('withpic', 'P', { pic: 'portrait' })],
+    })
+    Object.assign(parallelConfig, { above: 0, unitEntries: 1, baseLevel: 0 })
+    const commit = async () => {
+      const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
+      expect(res.status).toBe(202)
+      await h.drain()
+      return (await (await h.request(`${path}/push/${sid}`, { user })).json()) as Record<
+        string,
+        any
+      >
+    }
+    let status = await commit()
+    expect(status).toMatchObject({
+      status: 'open',
+      error: { error: 'Missing files', filesNeeded: [sha('portrait')] },
+    })
+    const [s] = await h.ports.db
+      .select()
+      .from(schema.pushSessions)
+      .where(eq(schema.pushSessions.id, sid))
+    expect(s!.commitPlan).toBeNull()
+
+    // Upload the file, and one more record: the new plan covers it.
+    await h.request(`${path}/files/${sha('portrait')}`, { method: 'PUT', user, body: 'portrait' })
+    await h.request(`${path}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('late', 'L')],
+    })
+    status = await commit()
+    expect(status).toMatchObject({ status: 'committed', error: null })
+    const versions = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, c.id))
+    expect(versions.map((v) => [v.recordCount, v.fileCount])).toEqual([[batch.length + 2, 1]])
+  })
+
   it('stays serial when a type changes schema', async () => {
     const h = await harness()
     const user = await h.member()

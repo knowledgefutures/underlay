@@ -437,7 +437,8 @@ export default function DocsApiFiles() {
         Each referenced file must be held by this collection: uploaded to it (a <code>PUT</code> or
         a verified direct upload), or already in the version the push builds on (or, for public
         files, in any earlier version). A file that only another collection holds does not count. If
-        any are missing, the commit returns <code>422</code> listing up to 100 of them:
+        any are missing, the commit returns <code>422</code> listing up to 100 of them, and the
+        session stays open: upload them and commit it again.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{missingFilesRes}</code>

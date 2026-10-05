@@ -675,6 +675,7 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
         pushedBy: session.userId,
         appId: session.appId,
         actorId: session.actorId,
+        pushSessionId: session.id,
         prebuilt: { trees: built, refs, stats },
       }),
     )

@@ -151,6 +151,11 @@ export default function ProtocolPushPull() {
           <code>status</code> is <code>committed</code> (<code>result</code> holds the 201 body) or{' '}
           <code>failed</code> (<code>error</code> holds the failure).
         </li>
+        <li>
+          A commit refused because files are not held (422 with <code>filesNeeded</code>) leaves the
+          session open: the client uploads the files and commits the same session again. A polling
+          client sees <code>status</code> <code>open</code>, with the refusal in <code>error</code>.
+        </li>
         <li>Committing a session that has already committed answers 201 with the same body.</li>
         <li>
           A client that holds the base SHOULD compute the new version hash and compare it with the

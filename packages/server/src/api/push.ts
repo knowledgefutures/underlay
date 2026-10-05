@@ -124,7 +124,11 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
     session.recordsReceived > commitConfig.asyncAbove ||
     (await revalidates(ports, session)) > commitConfig.asyncAbove
   if (
-    !(await transition(ports, session.id, 'open', 'committing', { finalizeStartedAt: new Date() }))
+    // The error of a commit refused for missing files is cleared on the next try.
+    !(await transition(ports, session.id, 'open', 'committing', {
+      finalizeStartedAt: new Date(),
+      error: null,
+    }))
   ) {
     const now = await getSession(ports, session.id)
     if (now?.status === 'committed') return c.json(now.result ?? {}, 201)

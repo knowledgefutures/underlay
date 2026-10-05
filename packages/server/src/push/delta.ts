@@ -362,6 +362,7 @@ export async function commitDeltaSession(
     pushedBy: session.userId,
     appId: session.appId,
     actorId: session.actorId,
+    pushSessionId: session.id,
     validate: (s, data) => {
       const errs = compileSchema(s)(data)
       return errs.length > 0 ? errs : null

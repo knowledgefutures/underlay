@@ -618,6 +618,9 @@ already stores the file.
   client MAY request this with `?async=true`; a server MAY choose it for any commit. The client
   polls `GET …/push/<sid>` until `status` is `committed`, when `result` holds the 201 body, or
   `failed`, when `error` holds the failure body.
+- A commit refused because files are not held (422 with `filesNeeded`) leaves the session open:
+  the client uploads the files and commits the same session again. A polling client sees `status`
+  `open`, with the refusal in `error`.
 - Committing a session that has already committed answers 201 with the same body.
 - A client that holds the base SHOULD compute the new version's hash itself and compare it with
   `hash`.

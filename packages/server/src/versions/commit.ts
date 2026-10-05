@@ -82,6 +82,8 @@ export interface CommitInput {
   pushedBy?: string | null
   appId?: string | null
   actorId?: string | null
+  /** The push session this commit finishes; recorded on the version. */
+  pushSessionId?: string | null
   /**
    * Trees already merged by a parallel commit (push/parallel.ts), per type, with
    * the file reference deltas and change counts of the units that built them.
@@ -216,6 +218,7 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     publicRefsRoot: built.publicRefsRoot,
     privateRefsRoot: built.privateRefsRoot,
     changes: stats,
+    pushSessionId: input.pushSessionId ?? null,
     ...(input.migrated ? { createdAt: input.migrated.createdAt } : {}),
   }
   const published = await publishVersion(db, {

@@ -49,6 +49,8 @@ export interface NewVersionRow {
   publicRefsRoot: string | null
   privateRefsRoot: string | null
   changes: { added: number; removed: number; updated: number }
+  /** The push session committing it, if any. */
+  pushSessionId?: string | null
   /** Migration only: the v1 version's time. */
   createdAt?: Date
 }
@@ -140,6 +142,7 @@ export async function publishVersion(
           changes: lit<string>(JSON.stringify(v.changes)).as('changes'),
           createdAt: lit<number>(createdAt).as('created_at'),
           publishedAt: lit<number>(now).as('published_at'),
+          pushSessionId: lit<string | null>(v.pushSessionId ?? null).as('push_session_id'),
         })
         .from(schema.collections)
         .where(and(headIsBase, fenceHolds(p.fence))) as never,

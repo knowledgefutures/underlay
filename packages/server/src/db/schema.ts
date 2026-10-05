@@ -339,12 +339,18 @@ export const versions = sqliteTable(
      * versions published since its mark began; null on rows from before 0015.
      */
     publishedAt: ts('published_at'),
+    /**
+     * The push session that committed it (null for other commits). A commit
+     * that runs twice finds its own version by this (push/outcome.ts).
+     */
+    pushSessionId: text('push_session_id'),
   },
   (t) => [
     uniqueIndex('versions_collection_seq_uq').on(t.collectionId, t.seq),
     uniqueIndex('versions_collection_semver_uq').on(t.collectionId, t.semver),
     index('versions_hash_idx').on(t.hash),
     index('versions_published_idx').on(t.publishedAt),
+    index('versions_push_session_idx').on(t.pushSessionId),
   ],
 )
 

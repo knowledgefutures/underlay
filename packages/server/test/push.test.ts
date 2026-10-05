@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import { commitConfig } from '../src/api/push.js'
 import * as schema from '../src/db/schema.js'
+import { finalizeSession } from '../src/push/finalize.js'
 import { limits } from '../src/push/session.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
@@ -506,4 +507,135 @@ describe('delta push', () => {
     expect(res.status).toBe(409)
     expect(await json(res)).toMatchObject({ error: 'Version conflict', currentVersion: 'v1.0.0' })
   })
+})
+
+describe('push sessions settle once', () => {
+  /** A session with one record, moved to committing as the commit route does. */
+  async function committing(h: Harness, user: string, base: string) {
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id as string
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [rec('a', { name: 'A' })],
+    })
+    await h.ports.db
+      .update(schema.pushSessions)
+      .set({ status: 'committing' })
+      .where(eq(schema.pushSessions.id, sid))
+    return sid
+  }
+
+  async function settled(h: Harness, collectionId: string, sid: string) {
+    const versions = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, collectionId))
+    const [s] = await h.ports.db
+      .select()
+      .from(schema.pushSessions)
+      .where(eq(schema.pushSessions.id, sid))
+    return { versions, session: s! }
+  }
+
+  it('commits once when finalize runs twice in a row, even if the first never settled', async () => {
+    const { h, user, base, c } = await setup()
+    const sid = await committing(h, user, base)
+    const first = await finalizeSession(h.ports, sid)
+    expect(first.status).toBe(201)
+    // A job delivered again after the first settled.
+    expect(await finalizeSession(h.ports, sid)).toEqual(first)
+    // A first run that published but died before settling: the retry finds
+    // the head moved by its own version.
+    await h.ports.db
+      .update(schema.pushSessions)
+      .set({ status: 'committing', result: null })
+      .where(eq(schema.pushSessions.id, sid))
+    expect(await finalizeSession(h.ports, sid)).toEqual(first)
+    const { versions, session } = await settled(h, c.id, sid)
+    expect(versions).toHaveLength(1)
+    expect(versions[0]!.pushSessionId).toBe(sid)
+    expect(session).toMatchObject({ status: 'committed', error: null, result: first.body })
+    expect(first.body).toMatchObject({ semver: versions[0]!.semver, hash: versions[0]!.hash })
+  })
+
+  it('commits once when finalize runs twice at the same time', async () => {
+    const { h, user, base, c } = await setup()
+    const sid = await committing(h, user, base)
+    const [a, b] = await Promise.all([finalizeSession(h.ports, sid), finalizeSession(h.ports, sid)])
+    expect(a.status).toBe(201)
+    expect(b).toEqual(a)
+    const { versions, session } = await settled(h, c.id, sid)
+    expect(versions).toHaveLength(1)
+    expect(session).toMatchObject({ status: 'committed', error: null, result: a.body })
+  })
+
+  it('never commits a session that is open', async () => {
+    const { h, user, base, c } = await setup()
+    const sid = await committing(h, user, base)
+    await h.ports.db
+      .update(schema.pushSessions)
+      .set({ status: 'open' })
+      .where(eq(schema.pushSessions.id, sid))
+    expect((await finalizeSession(h.ports, sid)).status).toBe(409)
+    expect((await settled(h, c.id, sid)).versions).toHaveLength(0)
+  })
+
+  for (const mode of ['sync', 'async'] as const) {
+    it(`keeps a session refused for missing files open, to commit again (${mode})`, async () => {
+      const { h, user, base, c } = await setup()
+      const content = 'uploaded late'
+      const opened = await json(
+        await h.request(`${base}/push`, {
+          method: 'POST',
+          user,
+          json: { schemas: { Author }, files: { add: [sha(content)] } },
+        }),
+      )
+      const sid = opened.session_id as string
+      expect(opened.needed_files).toEqual([sha(content)])
+      const commit = async () => {
+        const res = await h.request(
+          `${base}/push/${sid}/commit${mode === 'async' ? '?async=true' : ''}`,
+          { method: 'POST', user },
+        )
+        if (mode === 'sync') return res
+        expect(res.status).toBe(202)
+        await h.drain()
+        return null
+      }
+      const status = async () => json(await h.request(`${base}/push/${sid}`, { user }))
+
+      const refused = await commit()
+      if (refused) {
+        expect(refused.status).toBe(422)
+        expect(await json(refused)).toMatchObject({ error: 'Missing files' })
+      }
+      // Open, with the error saying what to upload.
+      const s = await status()
+      expect(s).toMatchObject({
+        status: 'open',
+        error: { error: 'Missing files', filesNeeded: [sha(content)], statusCode: 422 },
+        result: null,
+        finalize_started_at: null,
+      })
+      expect(new Date(s.expires_at).getTime()).toBeGreaterThan(Date.now())
+
+      expect(
+        (await h.request(`${base}/files/${sha(content)}`, { method: 'PUT', user, body: content }))
+          .status,
+      ).toBe(201)
+      const done = await commit()
+      if (done) expect(done.status).toBe(201)
+      expect(await status()).toMatchObject({
+        status: 'committed',
+        error: null,
+        result: { semver: 'v1.0.0', fileCount: 1 },
+      })
+      expect((await settled(h, c.id, sid)).versions).toHaveLength(1)
+    })
+  }
 })

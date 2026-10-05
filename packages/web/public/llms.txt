@@ -391,7 +391,8 @@ background when the session uploaded more than 100,000 records, or when a schema
 revalidate more than 100,000 existing records.
 → 202 {"session_id": "uuid", "status": "committing", "poll": "GET /api/collections/:owner/:slug/push/uuid"}
 
-Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committed" or "failed":
+Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committed" or "failed"
+(or "open" again, with "error", after a "Missing files" refusal; see Step 7):
 {
   "session_id": "uuid",
   "status": "committed",
@@ -429,7 +430,8 @@ Schema change invalidates existing records (422 at commit): {"error": "Schema va
 "validationErrors": [...], "totalErrors": n}
 
 Missing files (422 at commit): {"error": "Missing files", "filesNeeded": ["abc..."]} (bare hex)
-→ Upload the listed files, then commit again.
+→ The session stays open: upload the listed files, then commit the same session again. After a
+  background commit, polling shows status "open" with this body in "error".
 
 Too large (413): a body over open_bytes or batch_bytes, a request over batch_lines, a file over
 file_bytes → split it, or use the presigned upload.
@@ -443,8 +445,9 @@ Storage busy (503): storage cleanup ran during the commit → push again.
 GET    /api/collections/:owner/:slug/push/:sessionId  → session status (and result after a commit)
 DELETE /api/collections/:owner/:slug/push/:sessionId  → abandon the session
 
-Status is one of: open (accepting uploads), committing, committed ("result" holds the version),
-failed ("error" says why), expired (idle too long, or abandoned).
+Status is one of: open (accepting uploads; "error" holds a "Missing files" refusal, if the last
+commit had one), committing, committed ("result" holds the version), failed ("error" says why),
+expired (idle too long, or abandoned).
 
 ### First push
 Set "base" to null, include schemas for all types, upload every record. The first version is

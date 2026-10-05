@@ -470,8 +470,9 @@ export default function DocsApiVersions() {
             <code>GET .../push/:sid</code>
           </a>{' '}
           until <code>status</code> is <code>committed</code> (<code>result</code> is the{' '}
-          <code>201</code> body) or <code>failed</code> (<code>error</code> is the rejection). The
-          version isn&rsquo;t visible to readers until it is committed.
+          <code>201</code> body) or <code>failed</code> (<code>error</code> is the rejection), or
+          back to <code>open</code> with <code>error</code> after a <code>"Missing files"</code>{' '}
+          refusal. The version isn&rsquo;t visible to readers until it is committed.
         </p>
         <p>A commit can be refused:</p>
         <ul>
@@ -486,7 +487,8 @@ export default function DocsApiVersions() {
           </li>
           <li>
             <code>422</code> <code>"Missing files"</code>: <code>filesNeeded</code> lists up to 100
-            files not uploaded, as bare hex.
+            files not uploaded, as bare hex. The session stays open: upload them and commit the same
+            session again.
           </li>
           <li>
             <code>422</code> <code>"Schema validation failed"</code>, with{' '}
@@ -634,8 +636,10 @@ export default function DocsApiVersions() {
                 <code>status</code>
               </td>
               <td>
-                <code>open</code> (taking uploads), <code>committing</code>, <code>committed</code>,{' '}
-                <code>failed</code>, or <code>expired</code> (abandoned, or idle too long).
+                <code>open</code> (taking uploads; <code>error</code> holds a{' '}
+                <code>"Missing files"</code> refusal, if the last commit had one),{' '}
+                <code>committing</code>, <code>committed</code>, <code>failed</code>, or{' '}
+                <code>expired</code> (abandoned, or idle too long).
               </td>
             </tr>
             <tr>
