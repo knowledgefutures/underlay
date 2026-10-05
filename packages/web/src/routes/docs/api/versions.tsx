@@ -86,6 +86,7 @@ const listRes = `[
     "appId": "pubpub-sync",
     "pushedBy": "user-42",
     "pushedByName": "Ada Lovelace",
+    "pushedBySlug": "ada",
     "actorId": "user-42",
     "recordCount": 150,
     "fileCount": 12,
@@ -493,8 +494,9 @@ export default function DocsApiVersions() {
           <code>{listRes}</code>
         </pre>
         <p>
-          <code>pushedBy</code>, <code>pushedByName</code> and <code>actorId</code> are for the
-          collection's members only. <code>ark</code> is null when the collection's ARK is off.
+          <code>pushedBy</code>, <code>pushedByName</code>, <code>pushedBySlug</code> (the
+          pusher&rsquo;s personal account) and <code>actorId</code> are for the collection's members
+          only. <code>ark</code> is null when the collection's ARK is off.
         </p>
       </div>
 

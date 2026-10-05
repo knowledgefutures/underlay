@@ -271,6 +271,14 @@ describe('collection management', () => {
     expect(col.latestVersion).not.toHaveProperty('pushedByName')
     const mine = await json(await h.request(base, { user }))
     expect(mine.latestVersion.pushedByName).toBe('u1')
+    await h.ports.db
+      .insert(schema.organization)
+      .values({ id: 'personal-u1', name: 'u1', slug: 'u1-home', isDefault: true })
+    await h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'personal-u1', userId: user, role: 'owner' })
+    const linked = await json(await h.request(base, { user }))
+    expect(linked.latestVersion.pushedBySlug).toBe('u1-home')
     const [mineListed] = await json(await h.request(`${base}/versions`, { user }))
     expect(mineListed.pushedByName).toBe('u1')
     const [listed] = await json(await h.request(`${base}/versions`))

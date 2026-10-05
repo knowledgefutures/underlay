@@ -319,7 +319,21 @@ export default function CollectionOverviewBody({
                 <div>
                   <dt className="text-ink-muted">Pushed</dt>
                   <dd className="text-ink">
-                    {version.pushedByName && <>by {version.pushedByName}</>}
+                    {version.pushedByName && (
+                      <>
+                        by{' '}
+                        {version.pushedBySlug ? (
+                          <Link
+                            to={`/${version.pushedBySlug}`}
+                            className="text-link hover:underline"
+                          >
+                            {version.pushedByName}
+                          </Link>
+                        ) : (
+                          version.pushedByName
+                        )}
+                      </>
+                    )}
                     {version.pushedByName && version.appId && ' · '}
                     {version.appId && (
                       <span className="font-mono text-[11px]">{version.appId}</span>

@@ -50,7 +50,17 @@ export function VersionInfoBar({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {version.pushedByName && (
             <span>
-              by <strong className="text-ink">{version.pushedByName}</strong>
+              by{' '}
+              {version.pushedBySlug ? (
+                <Link
+                  to={`/${version.pushedBySlug}`}
+                  className="text-link font-semibold hover:underline"
+                >
+                  {version.pushedByName}
+                </Link>
+              ) : (
+                <strong className="text-ink">{version.pushedByName}</strong>
+              )}
             </span>
           )}
           {version.appId && (

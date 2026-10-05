@@ -61,23 +61,39 @@ export function versionSummary(
   }
 }
 
-/** Versions with their pusher's name added, where the caller sees `pushedBy`. */
+/**
+ * Versions with their pusher's name and personal account slug (the account
+ * page at /<slug>) added, where the caller sees `pushedBy`.
+ */
 export async function withPusherNames<T extends { pushedBy?: string | null }>(
   db: Db,
   versions: T[],
-): Promise<(T & { pushedByName?: string | null })[]> {
+): Promise<(T & { pushedByName?: string | null; pushedBySlug?: string | null })[]> {
   const ids = [...new Set(versions.map((v) => v.pushedBy).filter((id): id is string => !!id))]
   if (ids.length === 0) return versions
   const names = new Map<string, string>()
+  const slugs = new Map<string, string>()
   for (const part of chunks(ids)) {
     const rows = await db
       .select({ id: schema.user.id, name: schema.user.name })
       .from(schema.user)
       .where(inArray(schema.user.id, part))
     for (const r of rows) names.set(r.id, r.name)
+    const own = await db
+      .select({ userId: schema.member.userId, slug: schema.organization.slug })
+      .from(schema.member)
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
+      .where(and(inArray(schema.member.userId, part), eq(schema.organization.isDefault, true)))
+    for (const r of own) slugs.set(r.userId, r.slug)
   }
   return versions.map((v) =>
-    v.pushedBy === undefined ? v : { ...v, pushedByName: names.get(v.pushedBy ?? '') ?? null },
+    v.pushedBy === undefined
+      ? v
+      : {
+          ...v,
+          pushedByName: names.get(v.pushedBy ?? '') ?? null,
+          pushedBySlug: slugs.get(v.pushedBy ?? '') ?? null,
+        },
   )
 }
 
