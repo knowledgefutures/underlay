@@ -84,11 +84,14 @@ const listRes = `[
     "hash": "ulv2:a1b2c3d4...",
     "message": "Add new publications",
     "appId": "pubpub-sync",
+    "pushedBy": "user-42",
+    "pushedByName": "Ada Lovelace",
     "actorId": "user-42",
     "recordCount": 150,
     "fileCount": 12,
     "totalBytes": 52428800,
-    "createdAt": "2026-04-01T00:00:00.000Z"
+    "createdAt": "2026-04-01T00:00:00.000Z",
+    "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v1.1.0"
   }
 ]`
 
@@ -484,6 +487,10 @@ export default function DocsApiVersions() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{listRes}</code>
         </pre>
+        <p>
+          <code>pushedBy</code>, <code>pushedByName</code> and <code>actorId</code> are for the
+          collection's members only. <code>ark</code> is null when the collection's ARK is off.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />

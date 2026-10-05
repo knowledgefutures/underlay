@@ -61,6 +61,26 @@ export function versionSummary(
   }
 }
 
+/** Versions with their pusher's name added, where the caller sees `pushedBy`. */
+export async function withPusherNames<T extends { pushedBy?: string | null }>(
+  db: Db,
+  versions: T[],
+): Promise<(T & { pushedByName?: string | null })[]> {
+  const ids = [...new Set(versions.map((v) => v.pushedBy).filter((id): id is string => !!id))]
+  if (ids.length === 0) return versions
+  const names = new Map<string, string>()
+  for (const part of chunks(ids)) {
+    const rows = await db
+      .select({ id: schema.user.id, name: schema.user.name })
+      .from(schema.user)
+      .where(inArray(schema.user.id, part))
+    for (const r of rows) names.set(r.id, r.name)
+  }
+  return versions.map((v) =>
+    v.pushedBy === undefined ? v : { ...v, pushedByName: names.get(v.pushedBy ?? '') ?? null },
+  )
+}
+
 export function collectionRoutes() {
   const app = new Hono<AppEnv>()
 
@@ -262,7 +282,7 @@ export function collectionRoutes() {
       if (v) {
         const repo = await c.var.ports.stores.forCollection(col.id)
         const root = await repo.root(v.hash)
-        const s = versionSummary(v, access.isMember, ark)
+        const s = (await withPusherNames(db, [versionSummary(v, access.isMember, ark)]))[0]!
         latestVersion = {
           ...s,
           metadata: root.metadata,

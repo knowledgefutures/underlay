@@ -244,7 +244,7 @@ describe('collection management', () => {
     expect((await json(await h.request(base))).description).toBe('From the push')
   })
 
-  it("returns the collection's ARK and each version's", async () => {
+  it("returns the collection's ARK and each version's, and members see who pushed", async () => {
     const h = await harness()
     const user = await h.member()
     await h.request('/api/accounts/org/collections', {
@@ -267,6 +267,12 @@ describe('collection management', () => {
     const col = await json(await h.request(base))
     expect(col.ark).toMatch(/\/ark:\d+\/ul\w+$/)
     expect(col.latestVersion.ark).toBe(`${col.ark}.v1.0.0`)
+    // Who pushed: a name for members, nothing for the public.
+    expect(col.latestVersion).not.toHaveProperty('pushedByName')
+    const mine = await json(await h.request(base, { user }))
+    expect(mine.latestVersion.pushedByName).toBe('u1')
+    const [mineListed] = await json(await h.request(`${base}/versions`, { user }))
+    expect(mineListed.pushedByName).toBe('u1')
     const [listed] = await json(await h.request(`${base}/versions`))
     expect(listed.ark).toBe(`${col.ark}.v1.0.0`)
     expect((await json(await h.request(`${base}/versions/1.0.0`))).ark).toBe(`${col.ark}.v1.0.0`)

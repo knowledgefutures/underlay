@@ -297,11 +297,15 @@ export default function CollectionOverviewBody({
                   </dd>
                 </div>
               )}
-              {(version.appId || version.pushedBy) && (
+              {(version.appId || version.pushedByName) && (
                 <div>
                   <dt className="text-ink-muted">Pushed</dt>
-                  <dd className="text-ink font-mono text-[11px]">
-                    {[version.appId, version.pushedBy].filter(Boolean).join(' · ')}
+                  <dd className="text-ink">
+                    {version.pushedByName && <>by {version.pushedByName}</>}
+                    {version.pushedByName && version.appId && ' · '}
+                    {version.appId && (
+                      <span className="font-mono text-[11px]">{version.appId}</span>
+                    )}
                   </dd>
                 </div>
               )}
