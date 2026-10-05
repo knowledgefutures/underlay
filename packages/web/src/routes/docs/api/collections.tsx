@@ -52,7 +52,7 @@ const getRes = `{
   "createdAt": "2026-01-15T00:00:00.000Z",
   "updatedAt": "2026-04-01T00:00:00.000Z",
   "description": "Full archive of PubPub publications",
-  "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0",
+  "ark": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0",
   "versionCount": 14,
   "latestVersion": {
     "semver": "v3.2.0",

@@ -6,7 +6,7 @@ Every piece of content — records, schemas, and files — is identified by its 
 
 Schemas are first-class objects: inspectable, comparable, and alignable across independently authored datasets. Two collections that independently publish an identical Author schema share its schema hash — alignment falls out of the data model automatically. The infrastructure doesn't need to solve interoperability. It provides enough structure that interoperability can be solved dynamically by the tools and models that consume the data.
 
-The protocol is simple: push records in, pull records out, trust the versions. The intelligence lives in the actors, not the store. The reference implementation runs at [underlay.org](https://underlay.org).
+The protocol is simple: push records in, pull records out, trust the versions. The intelligence lives in the actors, not the store. The reference implementation runs at [www.underlay.org](https://www.underlay.org).
 
 Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) public charity.
 

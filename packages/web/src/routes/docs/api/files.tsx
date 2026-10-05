@@ -2,14 +2,14 @@ import DocsLayout from '~/components/DocsLayout'
 
 const fileRefInline = '{"$file": "sha256:<hash>"}'
 
-const headExample = `curl -I https://underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...
+const headExample = `curl -I https://www.underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...
 # HTTP/2 200
 # Content-Length: 1048576
 # Content-Type: application/pdf`
 
 const getExample = `# -L follows the 302 redirect to the short-lived presigned URL
 curl -L -o paper.pdf \\
-  https://underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...`
+  https://www.underlay.org/api/collections/kf/archive/files/sha256:a1b2c3...`
 
 const presignReq = `{ "hashes": ["sha256:a1b2c3...", "sha256:f6e5d4..."] }`
 
@@ -23,7 +23,7 @@ HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
 # Upload
 curl -X PUT \\
-  "https://underlay.org/api/collections/kf/archive/files/sha256:$HASH" \\
+  "https://www.underlay.org/api/collections/kf/archive/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf`

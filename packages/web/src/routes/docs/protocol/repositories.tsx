@@ -131,8 +131,8 @@ export default function ProtocolRepositories() {
       <p>
         A server serves each collection under a <strong>collection URL</strong>, an absolute URL
         without a trailing slash whose form is the server&rsquo;s choice. On underlay.org it is{' '}
-        <code>https://underlay.org/api/collections/&lt;owner&gt;/&lt;slug&gt;</code>. A server MUST
-        provide these reads:
+        <code>https://www.underlay.org/api/collections/&lt;owner&gt;/&lt;slug&gt;</code>. A server
+        MUST provide these reads:
       </p>
       <CodeBlock>{reads}</CodeBlock>
       <ul>

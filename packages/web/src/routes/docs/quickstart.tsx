@@ -2,13 +2,13 @@ import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
 
-const loginNote = `# Sign in via KF Auth SSO at https://underlay.org/login
+const loginNote = `# Sign in via KF Auth SSO at https://www.underlay.org/login
 # Your account is created automatically on first sign-in.
-# Then create an API key at https://underlay.org/settings/keys`
+# Then create an API key at https://www.underlay.org/settings/keys`
 
 const createCollectionCode = `export KEY="ul_abc123..."
 
-curl -X POST https://underlay.org/api/accounts/yourname/collections \\
+curl -X POST https://www.underlay.org/api/accounts/yourname/collections \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -18,7 +18,7 @@ curl -X POST https://underlay.org/api/accounts/yourname/collections \\
   }'`
 
 const openCode = `# Open a push session. base is null for the first version.
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
+curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -44,7 +44,7 @@ curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
 # → {"session_id":"SESSION_ID","base":null,"needed_files":[],"expires_at":"...","limits":{...}}`
 
 const sendRecordsCode = `# Upload records as NDJSON, one per line
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/records \\
+curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/records \\
   -H "Content-Type: application/x-ndjson" \\
   -H "Authorization: Bearer $KEY" \\
   --data-binary @- << 'EOF'
@@ -53,22 +53,22 @@ curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push/SESSI
 EOF
 # → {"received":2}`
 
-const commitCode = `curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/commit \\
+const commitCode = `curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.0.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const readCode = `# Get collection info
-curl https://underlay.org/api/collections/yourname/my-dataset
+curl https://www.underlay.org/api/collections/yourname/my-dataset
 
 # Get the records of v1.0.0 (or /versions/latest/records)
-curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
+curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
 
 # Get the manifest (list of record hashes)
-curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
+curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
 
 const updateCode = `# Open a session against the current version. Schemas and metadata
 # you leave out are kept.
-curl -X POST https://underlay.org/api/collections/yourname/my-dataset/push \\
+curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{"base": "v1.0.0", "message": "Add a book, drop another"}'
@@ -89,7 +89,7 @@ curl -X POST .../push/SESSION_ID/deletes \\
 curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
 # → {"semver":"v1.1.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
-const diffCode = `curl https://underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
+const diffCode = `curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
 # → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],"removed":["book-2"],
 #    "pagination":{...},"meta":{...}}`
 
@@ -97,7 +97,7 @@ const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
 # Upload
-curl -X PUT "https://underlay.org/api/collections/yourname/my-dataset/files/sha256:$HASH" \\
+curl -X PUT "https://www.underlay.org/api/collections/yourname/my-dataset/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
@@ -152,8 +152,8 @@ export default function DocsQuickstart() {
       <h2>1. Sign in and create an API key</h2>
       <p>
         Sign in at{' '}
-        <a href="https://underlay.org/login" className="text-link hover:underline">
-          underlay.org/login
+        <a href="https://www.underlay.org/login" className="text-link hover:underline">
+          www.underlay.org/login
         </a>{' '}
         via KF Auth SSO. Your account is created automatically on first sign-in. Then go to{' '}
         <Link to="/settings/keys" className="text-link hover:underline">

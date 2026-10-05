@@ -107,7 +107,7 @@ const listRes = `[
     "totalBytes": 52428800,
     "typeCounts": {"Publication": 150},
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v1.1.0"
+    "ark": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v1.1.0"
   }
 ]`
 

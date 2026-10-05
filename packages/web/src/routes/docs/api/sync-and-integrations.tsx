@@ -51,13 +51,13 @@ const logRes = `{
 }`
 
 const packExample = `curl -o v3.2.0.tar \\
-  "https://underlay.org/api/collections/kf/archive/versions/v3.2.0/pack?base=v3.1.0"
+  "https://www.underlay.org/api/collections/kf/archive/versions/v3.2.0/pack?base=v3.1.0"
 # x-underlay-version: ulv2:e5f6...
 # x-underlay-base: ulv2:9a8b...
 # x-underlay-sets: public`
 
 const exportExample = `curl -o archive.tar.gz \\
-  "https://underlay.org/api/collections/kf/archive/export?version=v3.2.0"
+  "https://www.underlay.org/api/collections/kf/archive/export?version=v3.2.0"
 
 tar -tzf archive.tar.gz
 # manifest.json
@@ -87,7 +87,7 @@ const manifestRes = `{
   "files_withheld": []
 }`
 
-const webhookCreateReq = `curl -X POST https://underlay.org/api/collections/kf/archive/webhooks \\
+const webhookCreateReq = `curl -X POST https://www.underlay.org/api/collections/kf/archive/webhooks \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"url": "https://example.org/hooks/underlay", "bumpFilter": ["major", "minor"]}'`
@@ -157,11 +157,11 @@ function verifyUnderlaySignature(secret, rawBody, header) {
 // if (!verifyUnderlaySignature(SECRET, req.body, req.get('x-underlay-signature')))
 //   return res.sendStatus(401)`
 
-const arkShape = `https://underlay.org/ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
+const arkShape = `https://www.underlay.org/ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
 
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0                    the collection
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0             a version
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
+https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0                    the collection
+https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0             a version
+https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
 
 const resolveRes = `{
   "type": "redirect",
@@ -171,7 +171,7 @@ const resolveRes = `{
     "who": "Knowledge Futures",
     "what": "PubPub Archive v3.2.0",
     "when": "20260401",
-    "where": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
+    "where": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
     "naan": "12345",
     "collectionName": "PubPub Archive",
     "ownerName": "Knowledge Futures",
@@ -179,7 +179,7 @@ const resolveRes = `{
     "message": "April sync",
     "appId": null,
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "arkUrl": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0"
+    "arkUrl": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0"
   }
 }`
 

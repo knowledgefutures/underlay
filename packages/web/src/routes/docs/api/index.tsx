@@ -22,7 +22,7 @@ export default function DocsApi() {
 
       <h2 id="base-url">Base URL</h2>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-        <code>{'https://underlay.org/api'}</code>
+        <code>{'https://www.underlay.org/api'}</code>
       </pre>
 
       <hr className="border-rule my-6" />

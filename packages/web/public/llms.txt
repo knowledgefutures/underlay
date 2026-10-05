@@ -4,8 +4,8 @@ Underlay is a versioned, content-addressed registry for structured data. Apps pu
 their data as JSON records with JSON Schemas; Underlay keeps every version and serves it over an
 HTTPS API. Built by Knowledge Futures (501c3): https://www.knowledgefutures.org
 
-Base URL: https://underlay.org/api
-Protocol specification: https://underlay.org/docs/protocol
+Base URL: https://www.underlay.org/api
+Protocol specification: https://www.underlay.org/docs/protocol
 
 ---
 
@@ -15,12 +15,12 @@ Protocol specification: https://underlay.org/docs/protocol
    Header: Authorization: Bearer ul_<key>
    On GET and HEAD the key may instead be passed as ?token=ul_<key> (share links).
    Every key starts with "ul_" and belongs to the user who creates it. Create keys at
-   https://underlay.org/settings/keys, at https://underlay.org/:owner/settings/keys (which can
+   https://www.underlay.org/settings/keys, at https://www.underlay.org/:owner/settings/keys (which can
    confine a key to one of the organization's collections), or with the API (see "API Keys").
    A key has a scope, read, write or admin, and may be confined to some collections.
 
 2. Session cookie (browser use):
-   Sign in through KF Auth SSO at https://underlay.org/login. An account, with a personal
+   Sign in through KF Auth SSO at https://www.underlay.org/login. An account, with a personal
    organization, is created on first sign-in.
 
 Public data needs no authentication. Publishing, settings and private data need a key or a
@@ -82,20 +82,20 @@ The API paths below are for fetching data. To point a person at something in the
 these page URLs. A version is a path prefix, a view is a path segment, and no version prefix
 means "latest". Page URLs write semver without the "v" (/v/1.2.0); /v/v1.2.0 redirects there.
 
-https://underlay.org/:owner                                   → organization or user profile
-https://underlay.org/:owner/:slug                             → collection overview (latest)
-https://underlay.org/:owner/:slug/records                     → browse records (?type=TypeName)
-https://underlay.org/:owner/:slug/schemas                     → schemas (latest)
-https://underlay.org/:owner/:slug/files                       → files (latest)
-https://underlay.org/:owner/:slug/versions                    → version history
-https://underlay.org/:owner/:slug/versions/compare?from=v1.0.0&to=v1.1.0 → diff two versions
-https://underlay.org/:owner/:slug/v/1.2.0                     → overview at v1.2.0
-https://underlay.org/:owner/:slug/v/1.2.0/records             → records at v1.2.0 (?type=TypeName)
-https://underlay.org/:owner/:slug/v/1.2.0/records/:type/:id   → one record at v1.2.0
-https://underlay.org/:owner/:slug/v/1.2.0/schemas             → schemas at v1.2.0
-https://underlay.org/:owner/:slug/v/1.2.0/files               → files at v1.2.0
-https://underlay.org/records/:hash                            → a record by hash, with provenance
-https://underlay.org/schemas/:id                              → a schema and the collections using it
+https://www.underlay.org/:owner                                   → organization or user profile
+https://www.underlay.org/:owner/:slug                             → collection overview (latest)
+https://www.underlay.org/:owner/:slug/records                     → browse records (?type=TypeName)
+https://www.underlay.org/:owner/:slug/schemas                     → schemas (latest)
+https://www.underlay.org/:owner/:slug/files                       → files (latest)
+https://www.underlay.org/:owner/:slug/versions                    → version history
+https://www.underlay.org/:owner/:slug/versions/compare?from=v1.0.0&to=v1.1.0 → diff two versions
+https://www.underlay.org/:owner/:slug/v/1.2.0                     → overview at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/records             → records at v1.2.0 (?type=TypeName)
+https://www.underlay.org/:owner/:slug/v/1.2.0/records/:type/:id   → one record at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/schemas             → schemas at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/files               → files at v1.2.0
+https://www.underlay.org/records/:hash                            → a record by hash, with provenance
+https://www.underlay.org/schemas/:id                              → a schema and the collections using it
 
 Prefer a version-pinned URL when citing data: unpinned URLs follow the latest version. ARK
 identifiers (ark:NAAN/<id>.v1.2.0) also resolve to these pages and are the most durable option.
@@ -223,7 +223,7 @@ POST /api/collections/:owner/:slug/fork    → {"targetOrg": "my-org", "slug": "
 Every push is a DELTA PUSH: open a session against the version you started from, upload the
 records you add or change and the (type, id) pairs you delete, then commit. Work and upload are
 proportional to the change, not to the collection's size. Any Underlay server accepts the same
-exchange: https://underlay.org/docs/protocol/push-and-pull
+exchange: https://www.underlay.org/docs/protocol/push-and-pull
 
 ### Step 1: Get the current head
 GET /api/collections/:owner/:slug/versions/latest
@@ -514,7 +514,7 @@ GET /api/collections/:owner/:slug/versions/:n/pack?base=<n>&sets=public|all
 
 A client verifies the log's signatures and hash chain, then checks every object in the pack
 against its hash and rebuilds the trees. @underlay/protocol (and the underlay CLI) do this.
-Specification: https://underlay.org/docs/protocol/repositories
+Specification: https://www.underlay.org/docs/protocol/repositories
 
 ---
 
@@ -592,7 +592,7 @@ Every record line is checked on its source text. Refused (422, with a code):
 - bad_type: type missing, empty, over 128 UTF-8 bytes, starting with ".", or containing /, \ or
   control characters
 - record_too_large: canonical form over 8 MiB
-Strings are not Unicode-normalized. Full rules: https://underlay.org/docs/protocol/records
+Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/protocol/records
 
 ### Schemas
 A schema is JSON Schema draft-07 ($schema, if given, must name draft-07), at most 256 KiB
@@ -721,7 +721,7 @@ Errors are JSON: {"error": "<message>", "statusCode": <status>, ...}.
 
 ---
 
-Full documentation: https://underlay.org/docs
-Protocol specification: https://underlay.org/docs/protocol
-Integration guide: https://underlay.org/docs/integration
+Full documentation: https://www.underlay.org/docs
+Protocol specification: https://www.underlay.org/docs/protocol
+Integration guide: https://www.underlay.org/docs/integration
 Source code: https://github.com/knowledgefutures/underlay

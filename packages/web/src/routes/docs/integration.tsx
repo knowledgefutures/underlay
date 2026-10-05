@@ -43,7 +43,7 @@ const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- The record id is the primary key value.`
 
 const diffPush = `# 1. Open a session against the current version (its semver, e.g. "v1.2.0")
-curl -X POST https://underlay.org/api/collections/:owner/:slug/push \\
+curl -X POST https://www.underlay.org/api/collections/:owner/:slug/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -54,7 +54,7 @@ curl -X POST https://underlay.org/api/collections/:owner/:slug/push \\
 # → {"session_id":"...","base":"v1.2.0","needed_files":["9f86d0..."],"limits":{...},...}
 
 # 2. Upload the files the server doesn't have yet
-curl -X PUT "https://underlay.org/api/collections/:owner/:slug/files/sha256:9f86d0..." \\
+curl -X PUT "https://www.underlay.org/api/collections/:owner/:slug/files/sha256:9f86d0..." \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf

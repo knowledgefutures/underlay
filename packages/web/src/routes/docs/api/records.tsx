@@ -2,7 +2,7 @@ import { Link } from 'react-router'
 
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
-const batchExample = `curl -X POST https://underlay.org/api/records/batch \\
+const batchExample = `curl -X POST https://www.underlay.org/api/records/batch \\
   -H "Content-Type: application/json" \\
   -d '{"hashes": ["3f2a9c...", "sha256:9c1e4b..."]}'`
 
@@ -99,7 +99,7 @@ const collectionSchemasRes = `{
   ]
 }`
 
-const labelExample = `curl -X POST https://underlay.org/api/schemas/b41c07.../labels \\
+const labelExample = `curl -X POST https://www.underlay.org/api/schemas/b41c07.../labels \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"label": "scholarly-publication"}'`
