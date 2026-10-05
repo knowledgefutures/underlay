@@ -133,7 +133,7 @@ export default function CollectionOverviewBody({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+                      d="M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm-1 5h18M9 10v9"
                     />
                   </svg>
                   <span className="font-medium">{t.type}</span>
@@ -215,7 +215,8 @@ export default function CollectionOverviewBody({
                   />
                 </svg>
                 <span>
-                  <strong className="text-ink">{totalVersions}</strong> versions
+                  <strong className="text-ink">{totalVersions}</strong>{' '}
+                  {totalVersions === 1 ? 'version' : 'versions'}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -229,7 +230,7 @@ export default function CollectionOverviewBody({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
+                    d="M4 6h16M4 10h16M4 14h16M4 18h10"
                   />
                 </svg>
                 <span>
@@ -269,7 +270,7 @@ export default function CollectionOverviewBody({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V9c0-2-1-3-3-3h-4l-2-2H7c-2 0-3 1-3 3z"
+                    d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"
                   />
                 </svg>
                 <span>

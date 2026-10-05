@@ -4,7 +4,7 @@ import { useLoaderData, useRevalidator } from 'react-router'
 import { compact, StatGrid, StatTile } from '~/components/admin-stats'
 import AdminLayout from '~/components/AdminLayout'
 import { Alert, Badge, Button, Checkbox, SectionHeading, Table, Td, Th } from '~/components/ui'
-import { formatBytes } from '~/lib/format'
+import { formatBytes, plural } from '~/lib/format'
 
 type Step = 'internal' | 'mark' | 'sweep'
 
@@ -77,7 +77,8 @@ function when(ms: number | null): string {
 
 function duration(run: Run): string {
   // The cron's batches add to one row a day: its span isn't a duration.
-  if (!run.startedAt || (run.step === 'internal' && run.trigger === 'schedule')) return '—'
+  if (run.step === 'internal' && run.trigger === 'schedule') return 'batches'
+  if (!run.startedAt) return '—'
   const s = Math.round(((run.finishedAt ?? Date.now()) - run.startedAt) / 1000)
   if (s < 60) return `${s}s`
   if (s < 3600) return `${Math.round(s / 60)}m`
@@ -249,7 +250,7 @@ function Controls({ data }: { data: Cleanup }) {
         <p className="text-ink-muted mb-2 text-xs">
           Last mark:{' '}
           {data.lastMark
-            ? `${when(data.lastMark.finishedAt)}, ${compact(data.lastMark.marked)} objects in use`
+            ? `${when(data.lastMark.finishedAt)}, ${plural(data.lastMark.marked, 'object')} in use`
             : 'none yet'}
           .
         </p>
@@ -353,7 +354,7 @@ function Runs({ runs }: { runs: Run[] }) {
                   '—'
                 ) : (
                   <>
-                    {compact(t.objects)} {r.dryRun ? 'would go' : 'objects'}
+                    {r.dryRun ? `${compact(t.objects)} would go` : plural(t.objects, 'object')}
                     <span className="text-ink-muted block">{formatBytes(t.bytes)}</span>
                   </>
                 )}
@@ -371,15 +372,15 @@ function Details({ run }: { run: Run }) {
   const s = run.stats!
   const parts: string[] = []
   if (run.step === 'mark') {
-    parts.push(`${compact(s.marked)} objects in use`)
-    parts.push(`${compact(s.collections)} collections, ${compact(s.versions)} versions`)
+    parts.push(`${plural(s.marked, 'object')} in use`)
+    parts.push(`${plural(s.collections, 'collection')}, ${plural(s.versions, 'version')}`)
   } else {
     parts.push(`${compact(s.scanned)} ${run.step === 'sweep' ? 'listed' : 'looked at'}`)
     for (const [kind, c] of Object.entries(s.deleted))
       parts.push(`${kind}: ${compact(c.objects)} (${formatBytes(c.bytes)})`)
-    if (s.rows) parts.push(`${compact(s.rows)} rows`)
-    if (s.windows) parts.push(`${compact(s.windows)} windows`)
-    if (s.unknown) parts.push(`${compact(s.unknown)} unknown keys kept`)
+    if (s.rows) parts.push(plural(s.rows, 'row'))
+    if (s.windows) parts.push(plural(s.windows, 'window'))
+    if (s.unknown) parts.push(`${plural(s.unknown, 'unknown key')} kept`)
   }
   return (
     <div className="text-ink-muted">

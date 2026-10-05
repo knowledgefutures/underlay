@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import { Th } from '~/components/ui'
-import { formatBytes, formatDate } from '~/lib/format'
+import { formatBytes, formatCount, formatDate, plural } from '~/lib/format'
 
 export type Metric = 'api_calls' | 'response_bytes' | 'file_downloads' | 'file_bytes'
 export type Usage = Record<Metric, number>
@@ -23,17 +23,9 @@ const isBytes = (m: Metric) => m === 'response_bytes' || m === 'file_bytes'
 /** A whole number with thousands separators. */
 export const num = (n: number) => n.toLocaleString('en-US')
 
-/** "1 version", "3 versions". */
-export const plural = (n: number, one: string, many = `${one}s`) =>
-  `${compact(n)} ${n === 1 ? one : many}`
-
-/** Compact: 1,284 / 12.9K / 4.2M. */
-export function compact(n: number): string {
-  if (n < 10_000) return num(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}K`
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return `${(n / 1_000_000_000).toFixed(1)}B`
-}
+/** The one compact count style (lib/format). */
+export const compact = formatCount
+export { plural }
 
 export const metricValue = (m: Metric, n: number) => (isBytes(m) ? formatBytes(n) : compact(n))
 

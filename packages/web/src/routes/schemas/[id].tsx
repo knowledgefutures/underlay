@@ -3,7 +3,7 @@ import { Link, useLoaderData } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
 import { Badge } from '~/components/ui'
-import { formatDate } from '~/lib/format'
+import { formatDate, plural } from '~/lib/format'
 
 interface SchemaData {
   id: number
@@ -131,7 +131,7 @@ function SchemaDetail({ schema }: { schema: SchemaData }) {
             Used by {usageByCollection.length} collection
             {usageByCollection.length !== 1 ? 's' : ''}
             {usage.length > usageByCollection.length && (
-              <span className="font-normal normal-case"> · {usage.length} versions</span>
+              <span className="font-normal normal-case"> · {plural(usage.length, 'version')}</span>
             )}
           </h2>
           {usageByCollection.length === 0 ? (

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigation } from 'react-router'
+import { Link, useNavigation, useSearchParams } from 'react-router'
 
-import { formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
+import { formatBytes, formatCount, formatDate, prefixedHash, shortHash } from '~/lib/format'
 import { RECORDS_PAGE_SIZE, type RecordsPage } from '~/lib/records-page'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
@@ -34,16 +34,17 @@ export function VersionInfoBar({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>
             <strong className="text-ink">{version.recordCount.toLocaleString('en-US')}</strong>{' '}
-            records
+            {version.recordCount === 1 ? 'record' : 'records'}
           </span>
           <span>
-            <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong> files
+            <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
+            {version.fileCount === 1 ? 'file' : 'files'}
           </span>
           <span>
             <strong className="text-ink">{formatBytes(version.totalBytes)}</strong> total
           </span>
           <span>
-            <strong className="text-ink">{typeCount}</strong> types
+            <strong className="text-ink">{typeCount}</strong> {typeCount === 1 ? 'type' : 'types'}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -92,6 +93,7 @@ export function RecordsView({
 }) {
   const shareToken = useShareToken()
   const navigation = useNavigation()
+  const [searchParams] = useSearchParams()
   // Showing the previous page while the next one loads.
   const recordsLoading = navigation.state === 'loading' && navigation.location.pathname === basePath
 
@@ -113,11 +115,14 @@ export function RecordsView({
 
   const currentTypeFields: string[] = currentType
     ? schemasMap[currentType]?.properties
-      ? Object.keys(schemasMap[currentType].properties)
+      ? schemaColumns(schemasMap[currentType])
       : // No schema properties: derive columns from the whole page of records,
         // sorted, so column order doesn't change with whichever record is first.
         [...new Set(records.flatMap((r: any) => Object.keys(r.data ?? {})))].sort()
     : []
+  // ?type= naming a type this version doesn't have.
+  const askedType = searchParams.get('type')
+  const unknownType = !!askedType && !allTypes.includes(askedType)
 
   const hasArkColumn = records.some((r: any) => r.ark)
 
@@ -208,6 +213,13 @@ export function RecordsView({
               }`}
             >
               {t}
+              {version.typeCounts?.[t] !== undefined && (
+                <span
+                  className={`ml-2 text-xs ${t === currentType ? 'text-parchment/70' : 'text-ink-muted'}`}
+                >
+                  {formatCount(version.typeCounts[t])}
+                </span>
+              )}
             </TokenLink>
           ))}
         </div>
@@ -248,9 +260,14 @@ export function RecordsView({
                     <tr key={r.id} className="group hover:bg-parchment-dark transition-colors">
                       <td
                         className="text-ink-muted border-rule max-w-56 truncate border-b p-2 font-mono"
-                        title={r.id}
+                        title={r.private ? `${r.id} (private)` : r.id}
                       >
                         {r.id}
+                        {r.private && (
+                          <span className="border-rule text-ink-muted rounded-control ml-1.5 border px-1 py-px font-sans text-[10px]">
+                            private
+                          </span>
+                        )}
                       </td>
                       {currentTypeFields.map((f: string) => {
                         const val = r.data?.[f]
@@ -308,7 +325,7 @@ export function RecordsView({
                           )
                         }
                         const display =
-                          val === null || val === undefined
+                          val === null || val === undefined || val === ''
                             ? ''
                             : typeof val === 'object'
                               ? JSON.stringify(val)
@@ -319,7 +336,7 @@ export function RecordsView({
                             className="border-rule max-w-56 truncate border-b p-2"
                             title={display || undefined}
                           >
-                            {display}
+                            {display || <span className="text-ink-muted/60">—</span>}
                           </td>
                         )
                       })}
@@ -379,16 +396,32 @@ export function RecordsView({
           </div>
         ) : (
           <p className="text-ink-muted py-8 text-center text-sm">
-            {!currentType
-              ? 'Select a type to view records.'
-              : recordsLoading
-                ? 'Loading records…'
-                : 'No records of this type in this version.'}
+            {unknownType
+              ? `This version has no type named “${askedType}”.`
+              : !currentType
+                ? 'Select a type to view records.'
+                : recordsLoading
+                  ? 'Loading records…'
+                  : 'No records of this type in this version.'}
           </p>
         )}
       </div>
     </div>
   )
+}
+
+/**
+ * A schema's columns. Stored schemas are canonical JSON, so `properties` comes
+ * back alphabetical: an explicit `propertyOrder` list goes first, then the
+ * `required` list (arrays keep their order), then the rest alphabetically.
+ */
+function schemaColumns(schema: any): string[] {
+  const props = Object.keys(schema.properties ?? {})
+  const listed = [
+    ...(Array.isArray(schema.propertyOrder) ? schema.propertyOrder : []),
+    ...(Array.isArray(schema.required) ? schema.required : []),
+  ].filter((k): k is string => typeof k === 'string' && props.includes(k))
+  return [...new Set([...listed, ...props.sort()])]
 }
 
 export function FilesView({

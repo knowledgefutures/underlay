@@ -48,12 +48,17 @@ export function formatBytesFixed(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
-/** Compact count: 999, 1.2k, 12k, 1.2M. */
+/** A count, compact once it's large: 1,284 / 12.9K / 4.2M / 1.2B. One style everywhere. */
 export function formatCount(n: number): string {
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
-  return `${(n / 1_000_000).toFixed(1)}M`
+  if (n < 10_000) return n.toLocaleString('en-US')
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}K`
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  return `${(n / 1_000_000_000).toFixed(1)}B`
 }
+
+/** "1 version", "3 versions", "12.9K versions". */
+export const plural = (n: number, one: string, many = `${one}s`) =>
+  `${formatCount(n)} ${n === 1 ? one : many}`
 
 const DATE_PARTS = {
   day: { month: 'short', day: 'numeric', year: 'numeric' },

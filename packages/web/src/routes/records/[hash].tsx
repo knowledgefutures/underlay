@@ -3,7 +3,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { Badge } from '~/components/ui'
-import { formatDate } from '~/lib/format'
+import { formatDate, plural } from '~/lib/format'
 
 interface Reference {
   owner: string
@@ -79,7 +79,7 @@ function RecordDetail({ record }: { record: RecordData }) {
             <span>
               {collections.length} collection{collections.length !== 1 ? 's' : ''}
               {record.references.length > collections.length &&
-                ` · ${record.references.length} versions`}
+                ` · ${plural(record.references.length, 'version')}`}
             </span>
           </div>
         </div>
@@ -139,7 +139,7 @@ function RecordDetail({ record }: { record: RecordData }) {
             {record.references.length > collections.length && (
               <span className="font-normal normal-case">
                 {' '}
-                · {record.references.length} versions
+                · {plural(record.references.length, 'version')}
               </span>
             )}
           </h2>

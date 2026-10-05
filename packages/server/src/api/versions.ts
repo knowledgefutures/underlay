@@ -40,6 +40,7 @@ import {
   loadView,
   typeRecords,
   type VersionView,
+  type VisibleRecord,
 } from '../versions/view.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
 import { collectionArk } from './ark.js'
@@ -89,9 +90,16 @@ async function viewFor(
 /** Add the record hash to a canonical record line: `{"id",…,"data":…,"hash":"…"}`. */
 const withHash = (body: string, hash: string) => `${body.slice(0, -1)},"hash":"${hash}"}`
 
-function recordJson(e: RecordEntry & { type: string }) {
+/** A record as reads return it; members' private records say so, as a push line does. */
+function recordJson(e: RecordEntry & { type: string; set?: 'public' | 'private' }) {
   const r = JSON.parse(e.body!) as { id: string; type: string; data: unknown }
-  return { id: r.id, type: r.type, data: r.data, hash: e.hash }
+  return {
+    id: r.id,
+    type: r.type,
+    data: r.data,
+    hash: e.hash,
+    ...(e.set === 'private' ? { private: true } : {}),
+  }
 }
 
 /** Records across visible types from a (type, id) position, in (type, id) order. */
@@ -189,7 +197,7 @@ export function versionRoutes() {
     if (pageType !== undefined) {
       const limit = clamp(c.req.query('limit'), 100, 2000)
       const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
-      const records: (RecordEntry & { type: string })[] = []
+      const records: VisibleRecord[] = []
       if (t) {
         for await (const e of typeRecords(view, t, { offset, bodies: true })) {
           records.push(e)
@@ -228,7 +236,7 @@ export function versionRoutes() {
     const limit = clamp(c.req.query('limit'), 100, 2000)
     const cursor = decodeCursor(c.req.query('cursor') ?? c.req.query('after'), type)
     const offset = cursor ? 0 : Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
-    let source: AsyncIterable<RecordEntry & { type: string }>
+    let source: AsyncIterable<VisibleRecord>
     let total: number
     if (type) {
       const t = view.types.find((x) => x.slug === type)
@@ -246,7 +254,7 @@ export function versionRoutes() {
       total = view.types.reduce((n, t) => n + t.count, 0)
       source = allRecords(view, cursor, offset, true)
     }
-    const page: (RecordEntry & { type: string })[] = []
+    const page: VisibleRecord[] = []
     let hasMore = false
     for await (const e of source) {
       if (page.length === limit) {

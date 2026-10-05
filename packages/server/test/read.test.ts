@@ -159,6 +159,13 @@ describe('read API', () => {
     r = await json(await h.request(`${base}/versions/latest/records?offset=1081&limit=1`))
     expect(r.records[0]).toMatchObject({ type: 'Book', id: 'b1' })
     expect(r.records[0].hash).toMatch(/^[0-9a-f]{64}$/)
+
+    // Members' private records say so; public ones don't carry the field.
+    r = await json(await h.request(`${base}/versions/latest/records?type=Author&limit=2`, { user }))
+    expect(r.records.map((x: any) => [x.id, x.private])).toEqual([
+      ['a0000', true],
+      ['a0001', undefined],
+    ])
   })
 
   it('streams NDJSON, and serves manifests (full and delta) and diffs', async () => {
