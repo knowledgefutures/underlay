@@ -63,8 +63,33 @@ The same steps with `scripts/v1-prod-to-prod.sh`, `prod-env.sh`, database `under
 and `--env prod`. It reads production's Postgres (`underlay-prod_postgres`) for the whole
 run. Before the first load, check production for duplicate ids (the report lists the ones
 dropped) and for org slugs now reserved (`RESERVED_ORG_SLUGS` in
-`packages/server/src/lib/slug.ts`). A practice load can be replaced: empty D1, delete
-`repo/collections/` from `underlay-prod`, and load again at the DNS switch.
+`packages/server/src/lib/slug.ts`).
+
+Once loaded, keep the output folder: later runs bring the same database up to date
+instead of starting again (`SYNC=1`, the header of `src/convert.ts`). Each sync replays
+only versions newer than each collection's head, mirrors account rows (deletes too), and
+`d1-data.ts --since` writes just the rows that changed since the copy last loaded:
+
+```sh
+OUT=~/ul-prod-load
+# right after a load: keep a copy of what D1 now holds
+sqlite3 $OUT/migrated.sqlite ".backup $OUT/loaded.sqlite"
+# any time later, as often as needed
+SYNC=1 packages/migrate/scripts/v1-prod-to-prod.sh $OUT
+npx tsx packages/migrate/src/d1-data.ts $OUT/migrated.sqlite --since $OUT/loaded.sqlite > $OUT/delta.sql
+(cd packages/server && npx wrangler d1 execute underlay-prod --env prod --remote --file $OUT/delta.sql)
+sqlite3 $OUT/migrated.sqlite ".backup $OUT/loaded.sqlite"
+```
+
+- The bucket moves forward with `migrated.sqlite`: never convert from scratch into it
+  again, or delete its `repo/collections/`, without also emptying D1 and starting over.
+- If a sync fails partway, run it again: it resumes from each collection's head.
+  Don't put back an older `migrated.sqlite`; its heads would be behind the bucket's.
+- Nothing may push to next.underlay.org between syncs: its collection rows have to stay
+  as the last load left them. Sign-ins are fine (their rows aren't in either file).
+- Collections v1 deleted are listed in the report's `removedInV1` and left in place.
+- At the switch: freeze writes on www, sync once more, load the delta, then move DNS.
+  After the switch v1 is no longer the source, so don't sync again.
 
 ## Tests
 

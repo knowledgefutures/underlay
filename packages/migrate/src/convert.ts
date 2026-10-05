@@ -13,6 +13,13 @@
  *    the cost is O(changes) per version. Metadata-patch versions (shared record
  *    sets) produce no record changes. Versions keep their v1 semver and time.
  *
+ * Sync (`sync: true`, SYNC=1): run again into the same target database to pick up
+ * what changed in v1 since. Account and settings rows are upserted, and the ones
+ * v1 no longer has are deleted (files and instance settings are only added to); a
+ * collection already converted resumes after its v2 head, matched to v1 by semver,
+ * and only newer versions are replayed. Collections v1 deleted are reported, not
+ * deleted. d1-data.ts --since then writes the difference for D1.
+ *
  * Records, schemas and versions are re-hashed under v2, and their v1 hashes are
  * not kept: nothing outside the platform refers to them. Field-level privacy is gone in v2:
  * a type with private fields becomes a wholly private type, and the report says
@@ -40,7 +47,8 @@ import {
   type Ports,
   type TypeInput,
 } from '@underlay/server'
-import { eq, getTableColumns, inArray } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
+import { getTableConfig, type SQLiteColumn } from 'drizzle-orm/sqlite-core'
 
 /** Anything that runs a parameterized query against the v1 database. */
 export interface V1Db {
@@ -75,6 +83,10 @@ export interface MigrationReport {
    */
   duplicateIds: { collection: string; semver: string; type: string; id: string; hash: string }[]
   copied: Record<string, number>
+  /** Sync: rows deleted because v1 no longer has them, by table. */
+  deleted: Record<string, number>
+  /** Sync: collections already converted that v1 no longer has (left in place). */
+  removedInV1: string[]
 }
 
 export const newReport = (): MigrationReport => ({
@@ -85,9 +97,28 @@ export const newReport = (): MigrationReport => ({
   fieldPrivateTypes: [],
   duplicateIds: [],
   copied: {},
+  deleted: {},
+  removedInV1: [],
 })
 
 const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
+
+/**
+ * How a sync treats a table's existing rows: `add` keeps them (a first run, and
+ * files and settings on a sync), `update` overwrites them with v1's, `mirror` also
+ * deletes the rows v1 no longer has.
+ */
+type CopyMode = 'add' | 'update' | 'mirror'
+
+/** A table's primary key columns, by property name. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function primaryKey(v2: any): { prop: string; column: SQLiteColumn }[] {
+  const cfg = getTableConfig(v2)
+  const cols: SQLiteColumn[] = cfg.columns.filter((c) => c.primary)
+  const pk = cols.length ? cols : (cfg.primaryKeys[0]?.columns ?? [])
+  const props = Object.entries(getTableColumns(v2) as Record<string, SQLiteColumn>)
+  return pk.map((column) => ({ prop: props.find(([, c]) => c === column)![0], column }))
+}
 
 /** Copy a table whose v1 and v2 columns have the same names. Unknown columns are dropped. */
 // `any`: pnpm resolves drizzle-orm twice (different peers), so its table types don't unify.
@@ -98,45 +129,71 @@ async function copyTable(
   v1Table: string,
   v2: any,
   report: MigrationReport,
-  map?: (row: Record<string, unknown>) => Record<string, unknown> | null,
+  map?: ((row: Record<string, unknown>) => Record<string, unknown> | null) | null,
+  mode: CopyMode = 'add',
 ) {
-  const columns = new Set(Object.keys(getTableColumns(v2) as object))
+  const columns = getTableColumns(v2) as Record<string, SQLiteColumn>
+  const pk = primaryKey(v2)
+  const keyOf = (r: Record<string, unknown>) => JSON.stringify(pk.map((k) => String(r[k.prop])))
   const rows = await v1.query(`SELECT * FROM "${v1Table}"`)
+  const seen = new Set<string>()
   let n = 0
   for (let i = 0; i < rows.length; i += 50) {
     const values = rows
       .slice(i, i + 50)
       .map((r) => {
         const out: Record<string, unknown> = {}
-        for (const [k, v] of Object.entries(r)) if (columns.has(camel(k))) out[camel(k)] = v
+        for (const [k, v] of Object.entries(r)) if (columns[camel(k)]) out[camel(k)] = v
         return map ? map(out) : out
       })
       .filter((r): r is Record<string, unknown> => r !== null)
     if (values.length === 0) continue
-    await ports.db
-      .insert(v2)
-      .values(values as never)
-      .onConflictDoNothing()
+    for (const v of values) seen.add(keyOf(v))
+    const insert = ports.db.insert(v2).values(values as never)
+    if (mode === 'add') await insert.onConflictDoNothing()
+    else {
+      const set = Object.fromEntries(
+        Object.keys(values[0]!)
+          .filter((prop) => !pk.some((k) => k.prop === prop))
+          .map((prop) => [prop, sql.raw(`excluded."${columns[prop]!.name}"`)]),
+      )
+      await insert.onConflictDoUpdate({ target: pk.map((k) => k.column), set })
+    }
     n += values.length
   }
   report.copied[v1Table] = n
+  if (mode !== 'mirror') return
+  // `map` may drop rows that are out of scope; only rows it keeps are compared.
+  const existing = (await ports.db
+    .select(Object.fromEntries(pk.map((k) => [k.prop, k.column])))
+    .from(v2)) as Record<string, unknown>[]
+  const gone = existing.filter((r) => !seen.has(keyOf(r)) && (!map || map({ ...r }) !== null))
+  for (const r of gone) {
+    await ports.db.delete(v2).where(and(...pk.map((k) => eq(k.column, r[k.prop]))))
+  }
+  if (gone.length) report.deleted[v1Table] = gone.length
 }
 
 export async function migrateAccounts(
   v1: V1Db,
   ports: Ports,
   report: MigrationReport,
+  sync = false,
 ): Promise<void> {
+  const m: CopyMode = sync ? 'mirror' : 'add'
   // Order follows foreign keys.
-  await copyTable(v1, ports, 'user', schema.user, report)
-  await copyTable(v1, ports, 'organization', schema.organization, report)
-  await copyTable(v1, ports, 'member', schema.member, report)
-  await copyTable(v1, ports, 'account', schema.account, report)
-  await copyTable(v1, ports, 'session', schema.session, report)
-  await copyTable(v1, ports, 'verification', schema.verification, report)
-  await copyTable(v1, ports, 'invitation', schema.invitation, report)
-  await copyTable(v1, ports, 'apikey', schema.apikey, report)
-  await copyTable(v1, ports, 'instance_settings', schema.instanceSettings, report)
+  await copyTable(v1, ports, 'user', schema.user, report, null, m)
+  await copyTable(v1, ports, 'organization', schema.organization, report, null, m)
+  await copyTable(v1, ports, 'member', schema.member, report, null, m)
+  await copyTable(v1, ports, 'account', schema.account, report, null, m)
+  await copyTable(v1, ports, 'session', schema.session, report, null, m)
+  await copyTable(v1, ports, 'verification', schema.verification, report, null, m)
+  await copyTable(v1, ports, 'invitation', schema.invitation, report, null, m)
+  await copyTable(v1, ports, 'apikey', schema.apikey, report, null, m)
+  // v2 keeps settings of its own here (cleanup_paused), and file rows are
+  // repointed to v2 keys by copyFiles: both are only added to.
+  const settings: CopyMode = sync ? 'update' : 'add'
+  await copyTable(v1, ports, 'instance_settings', schema.instanceSettings, report, null, settings)
   await copyTable(v1, ports, 'files', schema.files, report, (r) => ({
     ...r,
     verifiedAt: r.createdAt,
@@ -155,7 +212,21 @@ export async function recordPossession(
   collectionId: string,
   hashes: Iterable<string>,
 ): Promise<number> {
-  const all = [...hashes]
+  // A sync records only files the collection didn't already hold.
+  const held = new Set(
+    (
+      await ports.db
+        .select({ hash: schema.fileUploads.hash })
+        .from(schema.fileUploads)
+        .where(
+          and(
+            eq(schema.fileUploads.collectionId, collectionId),
+            eq(schema.fileUploads.status, 'verified'),
+          ),
+        )
+    ).map((r) => r.hash),
+  )
+  const all = [...hashes].filter((h) => !held.has(h))
   let n = 0
   for (let i = 0; i < all.length; i += 50) {
     const rows = await ports.db
@@ -184,13 +255,17 @@ export async function migrateCollectionSettings(
   report: MigrationReport,
   /** Only these collections' rows (all when absent). */
   only?: Set<string>,
+  sync = false,
 ): Promise<void> {
   const ours = (r: Record<string, unknown>) =>
     !only || only.has(String(r.collectionId)) ? r : null
-  await copyTable(v1, ports, 'collection_webhooks', schema.collectionWebhooks, report, ours)
-  await copyTable(v1, ports, 'ark_shoulders', schema.arkShoulders, report)
-  await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report, ours)
-  await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report, ours)
+  const m: CopyMode = sync ? 'mirror' : 'add'
+  await copyTable(v1, ports, 'collection_webhooks', schema.collectionWebhooks, report, ours, m)
+  // Shoulders aren't per collection: a partial sync only adds and updates them.
+  const shoulders: CopyMode = sync ? (only ? 'update' : 'mirror') : 'add'
+  await copyTable(v1, ports, 'ark_shoulders', schema.arkShoulders, report, null, shoulders)
+  await copyTable(v1, ports, 'ark_collections', schema.arkCollections, report, ours, m)
+  await copyTable(v1, ports, 'ark_record_types', schema.arkRecordTypes, report, ours, m)
   // Labels move from v1 schema ids to v2 schema hashes.
   const labels = await v1.query<{ label: string; schema: unknown; created_at: Date }>(
     'SELECT l.label, s.schema, l.created_at FROM schema_labels l JOIN schemas s ON s.id = l.schema_id',
@@ -435,6 +510,7 @@ export async function migrateCollection(
   ports: Ports,
   collectionId: string,
   report: MigrationReport,
+  sync = false,
 ): Promise<void> {
   const [col] = await v1.query<{
     id: string
@@ -446,24 +522,39 @@ export async function migrateCollection(
     updated_at: Date
   }>('SELECT * FROM collections WHERE id = $1', [collectionId])
   if (!col) throw new Error(`v1 collection ${collectionId} not found`)
-  await ports.db.batch([
-    ports.db.insert(schema.collections).values({
-      id: col.id,
-      organizationId: col.organization_id,
-      slug: col.slug,
-      name: col.name,
-      public: col.public,
-      privateSalt: newSalt(),
-      createdAt: col.created_at,
-      updatedAt: col.updated_at,
-    }),
-    ports.db.insert(schema.placements).values({
-      collectionId: col.id,
-      locationId: schema.PLATFORM_LOCATION_ID,
-      role: 'primary',
-      sets: 'public+private',
-    }),
-  ])
+  const [existing] = sync
+    ? await ports.db.select().from(schema.collections).where(eq(schema.collections.id, col.id))
+    : []
+  if (existing) {
+    await ports.db
+      .update(schema.collections)
+      .set({
+        organizationId: col.organization_id,
+        slug: col.slug,
+        name: col.name,
+        public: col.public,
+      })
+      .where(eq(schema.collections.id, col.id))
+  } else {
+    await ports.db.batch([
+      ports.db.insert(schema.collections).values({
+        id: col.id,
+        organizationId: col.organization_id,
+        slug: col.slug,
+        name: col.name,
+        public: col.public,
+        privateSalt: newSalt(),
+        createdAt: col.created_at,
+        updatedAt: col.updated_at,
+      }),
+      ports.db.insert(schema.placements).values({
+        collectionId: col.id,
+        locationId: schema.PLATFORM_LOCATION_ID,
+        role: 'primary',
+        sets: 'public+private',
+      }),
+    ])
+  }
   report.collections++
   const repo = await ports.stores.forCollection(col.id)
 
@@ -479,8 +570,42 @@ export async function migrateCollection(
   let prevRecords: string | null = null
   let prevFiles = new Set<string>()
   const everFiles = new Set<string>()
+  let start = 0
 
-  for (const v of versions) {
+  // A sync resumes after the v2 head: the v1 version with its semver.
+  const [head] = existing
+    ? await ports.db
+        .select()
+        .from(schema.versions)
+        .where(eq(schema.versions.collectionId, col.id))
+        .orderBy(desc(schema.versions.seq))
+        .limit(1)
+    : []
+  if (head) {
+    const i = versions.findIndex((v) => v.semver === head.semver)
+    if (i < 0) throw new Error(`${col.slug}: v2 head ${head.semver} has no ready v1 version`)
+    const hv = versions[i]!
+    base = {
+      id: head.id,
+      seq: head.seq,
+      semver: head.semver,
+      hash: head.hash,
+      publicRefsRoot: head.publicRefsRoot,
+      privateRefsRoot: head.privateRefsRoot,
+    }
+    prevRecords = hv.records_from_version_id ?? hv.id
+    prevFiles = new Set(
+      (
+        await v1.query<{ file_hash: string }>(
+          'SELECT file_hash FROM version_files WHERE version_id = $1',
+          [hv.id],
+        )
+      ).map((f) => f.file_hash),
+    )
+    start = i + 1
+  }
+
+  for (const v of versions.slice(start)) {
     const recordsId = v.records_from_version_id ?? v.id
     const schemaRows = await v1.query<{ slug: string; schema: Record<string, unknown> }>(
       'SELECT vs.slug, s.schema FROM version_schemas vs JOIN schemas s ON s.id = vs.schema_id WHERE vs.version_id = $1',
@@ -602,10 +727,13 @@ export async function migrateAll(
     onCollection?: (slug: string) => void
     /** Convert only these collections, named by id or `owner/slug` (accounts are always copied). */
     collections?: string[]
+    /** Bring a database this converter filled up to date with v1 (the header says how). */
+    sync?: boolean
   } = {},
 ): Promise<MigrationReport> {
   const report = newReport()
-  await migrateAccounts(v1, ports, report)
+  const sync = opts.sync ?? false
+  await migrateAccounts(v1, ports, report, sync)
   const all = await v1.query<{ id: string; slug: string; owner: string }>(
     `SELECT c.id::text, c.slug, o.slug AS owner FROM collections c
      JOIN organization o ON o.id = c.organization_id ORDER BY c.created_at`,
@@ -620,13 +748,22 @@ export async function migrateAll(
   }
   for (const c of cols) {
     opts.onCollection?.(c.slug)
-    await migrateCollection(v1, ports, c.id, report)
+    await migrateCollection(v1, ports, c.id, report, sync)
   }
   await migrateCollectionSettings(
     v1,
     ports,
     report,
     wanted ? new Set(cols.map((c) => c.id)) : undefined,
+    sync,
   )
+  if (sync && !wanted) {
+    const inV1 = new Set(all.map((c) => c.id))
+    const ours = await ports.db
+      .select({ id: schema.collections.id, slug: schema.collections.slug })
+      .from(schema.collections)
+      .where(isNull(schema.collections.deletedAt))
+    report.removedInV1 = ours.filter((c) => !inV1.has(c.id)).map((c) => `${c.id} (${c.slug})`)
+  }
   return report
 }

@@ -4,6 +4,8 @@
 #
 #   packages/migrate/scripts/v1-prod-to-prod.sh [OUT]      from the repo root
 #   COLLECTIONS=owner/slug,… packages/migrate/scripts/v1-prod-to-prod.sh
+#   SYNC=1 packages/migrate/scripts/v1-prod-to-prod.sh OUT  bring an earlier OUT up to date
+#                                                          (README, "v1 production → prod")
 #
 # Writes repository objects to the underlay-prod bucket, and migrated.sqlite,
 # report.json and migrate.log to OUT (default: a new temp directory, outside

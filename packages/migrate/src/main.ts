@@ -17,6 +17,9 @@
  *   FILES_ONLY=1                            only copy files, into an existing TARGET_DB
  *   COLLECTIONS=owner/slug,…                convert only these collections (ids work too);
  *                                           accounts and files are still copied whole
+ *   SYNC=1                                  TARGET_DB is this converter's earlier output: bring
+ *                                           it up to date with v1 (convert.ts header); then
+ *                                           d1-data.ts --since writes what changed for D1
  *   npx tsx packages/migrate/src/main.ts > report.json
  *
  * Then load the SQLite file into D1 (wrangler d1 export/import, or `.dump` and
@@ -61,6 +64,7 @@ if (!filesOnly) {
   report = await migrateAll(v1, ports, {
     onCollection: (slug) => console.error(`[migrate] ${slug}`),
     ...(env.COLLECTIONS && { collections: env.COLLECTIONS.split(',').map((c) => c.trim()) }),
+    sync: env.SYNC === '1',
   })
   // Reference-log indexing and compaction run as jobs; finish them here.
   await drainSqliteJobs(ports)

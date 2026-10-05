@@ -249,3 +249,88 @@ describe('v1 → v2 migration', () => {
     },
   )
 })
+
+describe('v1 → v2 sync', () => {
+  it('replays only newer versions and mirrors account rows', async () => {
+    const { pg, db } = await v1Database(true)
+    const q = (s: string, p: unknown[] = []) => pg.query(s, p)
+    const COL = '22222222-2222-2222-2222-222222222222'
+    await q(`INSERT INTO "user" (id, name, email) VALUES ('u1', 'Ada', 'ada@example.org')`)
+    await q(`INSERT INTO "user" (id, name, email) VALUES ('u2', 'Bo', 'bo@example.org')`)
+    await q(`INSERT INTO organization (id, name, slug) VALUES ('o1', 'Org', 'org')`)
+    await q(
+      `INSERT INTO member (id, organization_id, user_id, role) VALUES ('m1', 'o1', 'u1', 'owner')`,
+    )
+    await q(
+      `INSERT INTO collections (id, organization_id, slug, name, public) VALUES ($1, 'o1', 'lib', 'Lib', true)`,
+      [COL],
+    )
+    const s = await q(`INSERT INTO schemas (schema, schema_hash) VALUES ($1, $2) RETURNING id`, [
+      Author,
+      hashSchema(Author),
+    ])
+    const schemaId = (s.rows[0] as { id: string }).id
+    const record = async (id: string, name: string) => {
+      const hash = sha256Hex(`v1:${id}:${name}`)
+      await q(
+        `INSERT INTO record_objects (hash, record_id, type, data, size) VALUES ($1, $2, 'Author', $3, 10)`,
+        [hash, id, { name }],
+      )
+      return { id, hash }
+    }
+    const version = async (semver: string, members: { id: string; hash: string }[], at: string) => {
+      const [maj, min, pat] = semver.slice(1).split('.').map(Number)
+      const v = await q(
+        `INSERT INTO versions (collection_id, semver, major, minor, patch, hash, public_hash, record_count, file_count, total_bytes, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 0, 'ready', $9) RETURNING id`,
+        [COL, semver, maj, min, pat, `private:${semver}`, `public:${semver}`, members.length, at],
+      )
+      const id = (v.rows[0] as { id: number }).id
+      await q(
+        `INSERT INTO version_schemas (version_id, slug, schema_id) VALUES ($1, 'Author', $2)`,
+        [id, schemaId],
+      )
+      for (const r of members) {
+        await q(
+          `INSERT INTO version_records (version_id, record_hash, record_id, type, private) VALUES ($1, $2, $3, 'Author', false)`,
+          [id, r.hash, r.id],
+        )
+      }
+    }
+    const a = await record('a', 'A')
+    await version('v1.0.0', [a], '2026-01-01T00:00:00Z')
+
+    const h = await harness()
+    const first = await migrateAll(db, h.ports)
+    await h.drain()
+    expect(first.versions).toBe(1)
+
+    // v1 moves on: a new version, a renamed collection, a deleted user.
+    const b = await record('b', 'B')
+    await version('v1.1.0', [a, b], '2026-02-01T00:00:00Z')
+    await q(`UPDATE collections SET name = 'Lib 2' WHERE id = $1`, [COL])
+    await q(`DELETE FROM "user" WHERE id = 'u2'`)
+
+    const second = await migrateAll(db, h.ports, { sync: true })
+    await h.drain()
+    expect(second).toMatchObject({ versions: 1, deleted: { user: 1 }, removedInV1: [] })
+    const users = await h.ports.db.select().from(dbSchema.user)
+    expect(users.map((u) => u.id)).toEqual(['u1'])
+    const [lib] = await h.ports.db.select().from(dbSchema.collections)
+    expect(lib!.name).toBe('Lib 2')
+    const versions = (await (
+      await h.request('/api/collections/org/lib/versions', { user: 'u1' })
+    ).json()) as { semver: string; recordCount: number }[]
+    expect(versions.map((v) => [v.semver, v.recordCount])).toEqual([
+      ['v1.1.0', 2],
+      ['v1.0.0', 1],
+    ])
+    const repo = await h.ports.stores.forCollection(COL)
+    const { entries } = await verifyLog(repo, COL, [h.signer.publicKey])
+    expect(entries.map((e) => e.semver)).toEqual(['v1.0.0', 'v1.1.0'])
+
+    // Nothing new: nothing replayed, nothing deleted.
+    const third = await migrateAll(db, h.ports, { sync: true })
+    expect(third).toMatchObject({ versions: 0, deleted: {} })
+  })
+})
