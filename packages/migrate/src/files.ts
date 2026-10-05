@@ -32,6 +32,8 @@ export interface FileCopyReport {
   tooLarge: string[]
 }
 
+export const retryConfig = { attempts: 6, baseMs: 2000 }
+
 export async function copyFiles(
   source: Store,
   ports: Ports,
@@ -59,36 +61,52 @@ export async function copyFiles(
   const repoint = (hash: string, storageKey: string) =>
     db.update(schema.files).set({ storageKey }).where(eq(schema.files.hash, hash))
 
+  /** A file that throws (a connect timeout to R2) is retried, backing off, before the copy fails. */
+  const retrying = async (run: () => Promise<void>) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await run()
+      } catch (err) {
+        if (attempt >= retryConfig.attempts) throw err
+        console.error(`[files] retry ${attempt}: ${String(err)}`)
+        await new Promise((r) => setTimeout(r, retryConfig.baseMs * 2 ** (attempt - 1)))
+      }
+    }
+  }
+
   let next = 0
   let done = 0
   const worker = async () => {
     while (next < rows.length) {
       const f = rows[next++]!
-      const key = stores.canonicalFileKey(f.hash)
-      const head = await target.head(key)
-      if (head && head.size === f.size) {
-        await repoint(f.hash, key)
-        report.present++
-      } else if (f.size > maxBytes) {
-        report.tooLarge.push(f.hash)
+      await retrying(() => copyOne(f))
+      opts.onFile?.(f.hash, ++done, rows.length)
+    }
+  }
+  const copyOne = async (f: (typeof rows)[number]) => {
+    const key = stores.canonicalFileKey(f.hash)
+    const head = await target.head(key)
+    if (head && head.size === f.size) {
+      await repoint(f.hash, key)
+      report.present++
+    } else if (f.size > maxBytes) {
+      report.tooLarge.push(f.hash)
+    } else {
+      const obj = await source.get(f.storageKey)
+      if (!obj) {
+        report.missing.push(f.hash)
       } else {
-        const obj = await source.get(f.storageKey)
-        if (!obj) {
-          report.missing.push(f.hash)
+        const bytes = await obj.bytes()
+        const hash = createHash('sha256').update(bytes).digest('hex')
+        if (hash !== f.hash || bytes.byteLength !== f.size) {
+          report.mismatched.push(f.hash)
         } else {
-          const bytes = await obj.bytes()
-          const hash = createHash('sha256').update(bytes).digest('hex')
-          if (hash !== f.hash || bytes.byteLength !== f.size) {
-            report.mismatched.push(f.hash)
-          } else {
-            await target.put(key, bytes, { contentType: f.mimeType, ifAbsent: true })
-            await repoint(f.hash, key)
-            report.copied++
-            report.bytes += f.size
-          }
+          await target.put(key, bytes, { contentType: f.mimeType, ifAbsent: true })
+          await repoint(f.hash, key)
+          report.copied++
+          report.bytes += f.size
         }
       }
-      opts.onFile?.(f.hash, ++done, rows.length)
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 8) }, worker))
