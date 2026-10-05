@@ -23,10 +23,10 @@ export default function OwnerSettingsKeys() {
         </nav>
       }
       title="API keys"
-      description="Keys for pushing and pulling this organization's collections."
+      description="Keys for pushing and pulling this organization's collections. Keys belong to you, not the organization."
       groups={orgSettingsRail(owner!)}
     >
-      <ApiKeysPanel owner={owner!} collections={collections} canManage={isAdmin} />
+      <ApiKeysPanel owner={owner!} collections={collections} canManage={isAdmin} org />
     </SettingsLayout>
   )
 }
