@@ -215,10 +215,15 @@ describe('read API', () => {
     expect(diff).toMatchObject({
       from: 'v1.0.0',
       to: 'v1.1.0',
-      removed: ['b1'],
+      removed: [{ id: 'b1', type: 'Book' }],
       meta: { schemaChanged: false },
     })
     expect(diff.updated[0]).toMatchObject({ id: 'b0', data: { title: 'Changed' } })
+    // Without ?from=, a version is compared with the one before it; the first with nothing.
+    expect(await json(await h.request(`${base}/versions/v1.1.0/diff`))).toEqual(diff)
+    const first = await json(await h.request(`${base}/versions/v1.0.0/diff?limit=5000`))
+    expect(first).toMatchObject({ from: null, to: 'v1.0.0', updated: [], removed: [] })
+    expect(first.added).toHaveLength(1380)
     // Diff paging resumes without skipping or repeating.
     const p1 = await json(await h.request(`${base}/versions/v1.1.0/diff?from=v1.0.0&limit=2`))
     const p2 = await json(
@@ -226,10 +231,99 @@ describe('read API', () => {
         `${base}/versions/v1.1.0/diff?from=v1.0.0&limit=2&cursor=${p1.pagination.nextCursor}`,
       ),
     )
-    const ids = [...p1.added, ...p1.updated, ...p2.added, ...p2.updated]
-      .map((x: any) => x.id)
-      .concat(p1.removed, p2.removed)
+    const ids = [
+      ...p1.added,
+      ...p1.updated,
+      ...p1.removed,
+      ...p2.added,
+      ...p2.updated,
+      ...p2.removed,
+    ].map((x: any) => x.id)
     expect(ids.sort()).toEqual(['b0', 'b1', 'b999'])
+  })
+
+  it('lists moves between sets in a manifest delta, by who may read which set', async () => {
+    const { h, user, base } = await setup()
+    // a0000 private → public, a0001 public → private, both unchanged; a0010 private, changed.
+    await pushDelta(h, user, base, { base: 'v1.0.0' }, [
+      { id: 'a0000', type: 'Author', data: { name: 'Author 0' } },
+      { id: 'a0001', type: 'Author', data: { name: 'Author 1' }, private: true },
+      { id: 'a0010', type: 'Author', data: { name: 'Renamed' }, private: true },
+    ])
+    const since = (as?: string) =>
+      h.request(`${base}/versions/v1.1.0/manifest?since=v1.0.0`, as ? { user: as } : {}).then(json)
+    const member = (await since(user)).delta
+    expect(member.added).toEqual([])
+    expect(member.removed).toEqual([])
+    const [a0, a1, a10] = member.updated
+    expect(a0).toMatchObject({ id: 'a0000', previousPrivate: true })
+    expect(a0.private).toBeUndefined()
+    expect(a0.hash).toBe(a0.previousHash)
+    expect(a1).toMatchObject({ id: 'a0001', private: true, previousPrivate: false })
+    expect(a1.hash).toBe(a1.previousHash)
+    expect(a10).toMatchObject({ id: 'a0010', private: true })
+    expect(a10.hash).not.toBe(a10.previousHash)
+    expect(a10.previousPrivate).toBeUndefined()
+    // A public reader sees only the public set: one appeared, one left.
+    const anon = (await since()).delta
+    expect(anon.added).toEqual([{ id: 'a0000', type: 'Author', hash: a0.hash }])
+    expect(anon.removed).toEqual([{ id: 'a0001', type: 'Author', hash: a1.hash }])
+    expect(anon.updated).toEqual([])
+  })
+
+  it('marks members’ private lines in NDJSON and resumes a stream after a (type, id)', async () => {
+    const { h, user, base } = await setup()
+    const stream = async (query: string, as?: string) => {
+      const res = await h.request(`${base}/versions/latest/records.ndjson${query}`, {
+        ...(as ? { user: as } : {}),
+      })
+      expect(res.status).toBe(200)
+      const text = await res.text()
+      const lines = text ? text.trim().split('\n') : []
+      // The count is exactly the lines sent.
+      expect(Number(res.headers.get('x-underlay-record-count'))).toBe(lines.length)
+      return lines
+    }
+    const all = await stream('', user)
+    expect(all).toHaveLength(1501)
+    const parsed = all.map((l) => JSON.parse(l))
+    expect(parsed.filter((r) => r.private).length).toBe(121)
+    expect(parsed[0]).toMatchObject({ id: 'a0000', type: 'Author', private: true })
+    expect(parsed[0].hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(all[0]!.endsWith(`,"hash":"${parsed[0].hash}","private":true}`)).toBe(true)
+    expect(parsed[1].private).toBeUndefined()
+    expect(parsed.at(-1)).toMatchObject({ id: 's1', type: 'Secret', private: true })
+    const anon = await stream('')
+    expect(anon).toHaveLength(1380)
+    expect(anon.some((l) => l.includes('"private"'))).toBe(false)
+
+    // Resuming after any line continues with the next one, through later types.
+    for (const [lines, as] of [
+      [all, user],
+      [anon, undefined],
+    ] as const) {
+      for (const i of [0, 1099, 1200, lines.length - 2, lines.length - 1]) {
+        const r = JSON.parse(lines[i]!)
+        const rest = await stream(`?after_type=${r.type}&after=${encodeURIComponent(r.id)}`, as)
+        expect(rest).toEqual(lines.slice(i + 1))
+      }
+    }
+    // An id that isn't there resumes at the next one after it.
+    expect(await stream('?after_type=Author&after=a1199z')).toEqual(
+      anon.filter((l) => JSON.parse(l).type === 'Book'),
+    )
+    // Within a type, as before.
+    const books = anon.filter((l) => JSON.parse(l).type === 'Book')
+    expect(await stream('?type=Book&after=b5')).toEqual(
+      books.filter((l) => JSON.parse(l).id > 'b5'),
+    )
+    // `after` alone is ambiguous across types.
+    const bad = await h.request(`${base}/versions/latest/records.ndjson?after=b5`)
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toMatch(/after_type/)
+    expect((await h.request(`${base}/versions/latest/records.ndjson?after_type=Book`)).status).toBe(
+      400,
+    )
   })
 
   it('hides private collections entirely', async () => {

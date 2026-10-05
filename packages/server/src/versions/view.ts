@@ -156,6 +156,22 @@ export async function* typeRecords(
   }
 }
 
+/**
+ * How many of a type's records this caller may read come after `after`, from
+ * the trees' counts: O(height) per set. Withheld records are counted, as in
+ * `count`.
+ */
+export async function countAfter(view: VersionView, type: TypeView, after: string) {
+  const source = new RepoSource(recordTree, view.repo)
+  // Keys ≤ after are the keys < after + "\0": nothing sorts between the two.
+  const upTo = after + '\0'
+  let n = 0
+  for (const tree of [type.public, view.owner ? type.private : null]) {
+    if (tree?.root) n += tree.count - (await rankOf(source, tree.root, upTo))
+  }
+  return n
+}
+
 /** The key just before global position `offset` across two trees. */
 async function keyBeforeOffset(
   source: RepoSource<RecordEntry>,

@@ -4,9 +4,9 @@
  *   GET /:owner/:slug/versions                       list (SQLite)
  *   GET /:owner/:slug/versions/:n                    detail (+ root metadata, visible schemas)
  *   GET /:owner/:slug/versions/:n/records            page by key or offset; O(height) seeks
- *   GET /:owner/:slug/versions/:n/records.ndjson     stream
+ *   GET /:owner/:slug/versions/:n/records.ndjson     stream; ?after_type=&after= resumes
  *   GET /:owner/:slug/versions/:n/manifest           ids and hashes from nodes; ?since= delta
- *   GET /:owner/:slug/versions/:n/diff               ?from=; O(changes)
+ *   GET /:owner/:slug/versions/:n/diff               ?from= (default: the version before); O(changes)
  *   GET /:owner/:slug/versions/:n/files              from the visible file trees
  *
  * Privacy is decided once: the view holds the sets the caller may read.
@@ -27,18 +27,21 @@ import {
   referenceCounts,
   RepoSource,
 } from '@underlay/protocol'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, lt } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
+import type { Db } from '../ports.js'
 import {
+  countAfter,
   findVersion,
   getRecord,
   loadView,
   typeRecords,
+  type VersionRow,
   type VersionView,
   type VisibleRecord,
 } from '../versions/view.js'
@@ -87,8 +90,12 @@ async function viewFor(
   return loadView(repo, v, access.isMember, await deniedHashes(c.var.ports.db))
 }
 
-/** Add the record hash to a canonical record line: `{"id",…,"data":…,"hash":"…"}`. */
-const withHash = (body: string, hash: string) => `${body.slice(0, -1)},"hash":"${hash}"}`
+/**
+ * Add the record hash to a canonical record line: `{"id",…,"data":…,"hash":"…"}`,
+ * and `"private":true` after it for a member's private record.
+ */
+const withHash = (body: string, hash: string, priv = false) =>
+  `${body.slice(0, -1)},"hash":"${hash}"${priv ? ',"private":true' : ''}}`
 
 /** A record as reads return it; members' private records say so, as a push line does. */
 function recordJson(e: RecordEntry & { type: string; set?: 'public' | 'private' }) {
@@ -405,18 +412,33 @@ export function versionRoutes() {
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const type = c.req.query('type')
+    // A resume names the last line read: ?after_type=T&after=id continues after
+    // (T, id) through the later types; ?type=T&after=id stays within T.
     const after = c.req.query('after')
-    const types = type ? view.types.filter((t) => t.slug === type) : view.types
-    const count = types.reduce((n, t) => n + t.count, 0)
+    const afterType = c.req.query('after_type')
+    if (afterType !== undefined && !after)
+      return jsonError(c, 400, 'after_type needs after: the id of the last record read')
+    if (after && !afterType && !type)
+      return jsonError(
+        c,
+        400,
+        'after needs after_type: pass ?after_type=<type>&after=<id> to resume after that record',
+      )
+    const from = after ? { t: (afterType || type)!, k: after } : null
+    const types = (type ? view.types.filter((t) => t.slug === type) : view.types).filter(
+      (t) => !from || compareUtf8(t.slug, from.t) >= 0,
+    )
+    let count = 0
+    for (const t of types) count += from?.t === t.slug ? await countAfter(view, t, from.k) : t.count
     const enc = new TextEncoder()
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
           for (const t of types) {
-            const opts = after && type ? { after, bodies: true } : { bodies: true }
+            const opts = from?.t === t.slug ? { after: from.k, bodies: true } : { bodies: true }
             let batch: string[] = []
             for await (const e of typeRecords(view, t, opts)) {
-              batch.push(withHash(e.body!, e.hash))
+              batch.push(withHash(e.body!, e.hash, e.set === 'private'))
               if (batch.length >= 512) {
                 controller.enqueue(enc.encode(batch.join('\n') + '\n'))
                 batch = []
@@ -461,7 +483,11 @@ export function versionRoutes() {
       let n = 0
       let next: string | null = null
       let last: { type: string; key: string } | null = null
-      for await (const d of diffAll(fromView, view, cursor)) {
+      // A member sees which set each record is in (a removal: the set it left),
+      // and a move between sets as an update even when the hash is kept. A
+      // public reader sees the public set only, where a move adds or removes.
+      const inSet = (set: 'public' | 'private') => (set === 'private' ? { private: true } : {})
+      for await (const d of diffAll(fromView, view, cursor, { moves: true })) {
         // Resuming skips up to and including the cursor: it names the last entry returned.
         if (n === limit) {
           next = encodeCursor(last!.type, last!.key)
@@ -469,14 +495,23 @@ export function versionRoutes() {
         }
         n++
         last = d
-        if (!d.before) delta.added.push({ id: d.key, type: d.type, hash: d.after!.hash })
-        else if (!d.after) delta.removed.push({ id: d.key, type: d.type, hash: d.before.hash })
+        if (!d.before)
+          delta.added.push({ id: d.key, type: d.type, hash: d.after!.hash, ...inSet(d.afterSet) })
+        else if (!d.after)
+          delta.removed.push({
+            id: d.key,
+            type: d.type,
+            hash: d.before.hash,
+            ...inSet(d.beforeSet),
+          })
         else
           delta.updated.push({
             id: d.key,
             type: d.type,
             hash: d.after.hash,
             previousHash: d.before.hash,
+            ...inSet(d.afterSet),
+            ...(d.beforeSet !== d.afterSet ? { previousPrivate: d.beforeSet === 'private' } : {}),
           })
       }
       return c.json({
@@ -527,15 +562,16 @@ export function versionRoutes() {
     if (view instanceof Response) return view
     const limit = clamp(c.req.query('limit'), 500, 5000)
     const cursor = decodeCursor(c.req.query('cursor'), undefined)
+    // Without ?from=, the version before this one; the first version diffs against nothing.
     const fromParam = c.req.query('from')
     const from = fromParam
       ? await findVersion(c.var.ports.db, access.collection.id, fromParam, null)
-      : null
+      : await previousVersion(c.var.ports.db, view.version)
     if (fromParam && !from) return jsonError(c, 404, `Version ${fromParam} not found`)
     const fromView = from ? await loadView(view.repo, from, view.owner, view.withheld) : null
     const added: object[] = []
     const updated: object[] = []
-    const removed: string[] = []
+    const removed: { id: string; type: string }[] = []
     let n = 0
     let next: string | null = null
     let last: { type: string; key: string } | null = null
@@ -560,7 +596,7 @@ export function versionRoutes() {
     )
     page.forEach((d, i) => {
       if (!d.before) added.push(bodies[i]!)
-      else if (!d.after) removed.push(d.key)
+      else if (!d.after) removed.push({ id: d.key, type: d.type })
       else updated.push(bodies[i]!)
     })
     const schemaChanged =
@@ -628,6 +664,17 @@ export function versionRoutes() {
   })
 
   return app
+}
+
+/** The version just before `v` in its collection, or null for the first. */
+async function previousVersion(db: Db, v: VersionRow): Promise<VersionRow | null> {
+  const [prev] = await db
+    .select()
+    .from(schema.versions)
+    .where(and(eq(schema.versions.collectionId, v.collectionId), lt(schema.versions.seq, v.seq)))
+    .orderBy(desc(schema.versions.seq))
+    .limit(1)
+  return prev ?? null
 }
 
 /** Most manifest records per page, and files in its list (underlay.org's caps; spec 11.3). */
@@ -724,17 +771,22 @@ type TypedDiff = {
   key: string
   before: RecordEntry | null
   after: RecordEntry | null
+  /** The set each side is in (meaningful where that side is not null). */
+  beforeSet: 'public' | 'private'
+  afterSet: 'public' | 'private'
 }
 
 /**
  * Differences between two views, by (type, id), resuming after a cursor. A
  * record moving between sets with the same hash isn't a change to a reader who
- * sees both; to a public reader it appears or disappears.
+ * sees both, unless `moves` asks for those; to a public reader it appears or
+ * disappears.
  */
 async function* diffAll(
   from: VersionView | null,
   to: VersionView,
   cursor: { t: string; k: string } | null,
+  { moves = false }: { moves?: boolean } = {},
 ): AsyncGenerator<TypedDiff> {
   const source = new RepoSource(recordTree, to.repo)
   // A change to a blocked record (the denylist) isn't served.
@@ -765,11 +817,25 @@ async function* diffAll(
       if (!p && !q) break
       const order = p && q ? compareUtf8(p.key, q.key) : p ? -1 : 1
       if (order < 0) {
-        const d = { type: slug, key: p!.key, before: p!.before, after: p!.after }
+        const d: TypedDiff = {
+          type: slug,
+          key: p!.key,
+          before: p!.before,
+          after: p!.after,
+          beforeSet: 'public',
+          afterSet: 'public',
+        }
         if (shown(d)) yield d
         x = await pub!.next()
       } else if (order > 0) {
-        const d = { type: slug, key: q!.key, before: q!.before, after: q!.after }
+        const d: TypedDiff = {
+          type: slug,
+          key: q!.key,
+          before: q!.before,
+          after: q!.after,
+          beforeSet: 'private',
+          afterSet: 'private',
+        }
         if (shown(d)) yield d
         y = await priv!.next()
       } else {
@@ -777,8 +843,16 @@ async function* diffAll(
         // that keeps its hash isn't a change to a reader of both sets.
         const before = p!.before ?? q!.before
         const after_ = p!.after ?? q!.after
-        const d = { type: slug, key: p!.key, before, after: after_ }
-        if (!(before && after_ && before.hash === after_.hash) && shown(d)) yield d
+        const d: TypedDiff = {
+          type: slug,
+          key: p!.key,
+          before,
+          after: after_,
+          beforeSet: p!.before ? 'public' : 'private',
+          afterSet: p!.after ? 'public' : 'private',
+        }
+        const kept = before && after_ && before.hash === after_.hash
+        if ((moves || !kept) && shown(d)) yield d
         x = await pub!.next()
         y = await priv!.next()
       }

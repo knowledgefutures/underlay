@@ -85,9 +85,6 @@ export default function CollectionDiffPage() {
     setSearchParams(params)
   }
 
-  const targetVersion = versions.find((v: any) => v.semver === toVer)
-  const baseVersion = versions.find((v: any) => v.semver === fromVer)
-
   const addedByType = diff ? groupByType(diff.added) : {}
   const updatedByType = diff ? groupByType(diff.updated) : {}
   const removedCount = diff?.removed?.length ?? 0
@@ -125,7 +122,7 @@ export default function CollectionDiffPage() {
               defaultValue={fromVer}
               className="border-rule bg-parchment focus:border-ink rounded-control cursor-pointer border px-2 py-1 font-mono text-xs focus:outline-none"
             >
-              <option value="">∅ (empty)</option>
+              <option value="">Previous version</option>
               {versions.map((v: any) => (
                 <option key={v.semver} value={v.semver}>
                   {v.semver}
@@ -163,7 +160,8 @@ export default function CollectionDiffPage() {
             {/* Summary bar */}
             <div className="border-rule bg-parchment-dark rounded-surface mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border px-4 py-2.5 text-sm">
               <span className="text-ink-muted">
-                {baseVersion ? baseVersion.semver : '∅'} → {targetVersion?.semver}
+                {/* The API names the base: without ?from= it's the version before, or none. */}
+                {diff.from ?? '∅'} → {diff.to}
               </span>
               <span className="text-ink-muted">·</span>
               <span>
@@ -353,18 +351,23 @@ export default function CollectionDiffPage() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-rule border-b bg-red-50">
+                        <th className="w-48 p-2 text-left font-medium">Type</th>
                         <th className="p-2 text-left font-medium">Record ID</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {diff.removed.slice(0, 100).map((id: string) => (
-                        <tr key={id} className="border-rule border-t hover:bg-red-50/50">
-                          <td className="text-ink-muted p-2 font-mono text-[11px]">{id}</td>
+                      {diff.removed.slice(0, 100).map((r: { id: string; type: string }) => (
+                        <tr
+                          key={`${r.type}/${r.id}`}
+                          className="border-rule border-t hover:bg-red-50/50"
+                        >
+                          <td className="text-ink-muted p-2 text-[11px]">{r.type}</td>
+                          <td className="text-ink-muted p-2 font-mono text-[11px]">{r.id}</td>
                         </tr>
                       ))}
                       {diff.removed.length > 100 && (
                         <tr className="border-rule border-t">
-                          <td className="text-ink-muted p-2 text-center">
+                          <td colSpan={2} className="text-ink-muted p-2 text-center">
                             … and {diff.removed.length - 100} more
                           </td>
                         </tr>

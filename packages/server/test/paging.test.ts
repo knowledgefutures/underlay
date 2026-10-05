@@ -79,14 +79,14 @@ describe('diff and manifest paging', () => {
     type DiffPage = {
       added: { id: string }[]
       updated: { id: string }[]
-      removed: string[]
+      removed: { id: string; type: string }[]
       pagination: { nextCursor: string | null }
     }
     const one = (await get(`${base}/diff?from=${v.semver}&limit=5000`)) as DiffPage
     const ids = (p: DiffPage) => ({
       added: p.added.map((x) => x.id),
       updated: p.updated.map((x) => x.id),
-      removed: p.removed,
+      removed: p.removed.map((x) => x.id),
     })
     expect(ids(one).added).toHaveLength(200)
     expect(ids(one).updated).toHaveLength(520)
@@ -108,8 +108,15 @@ describe('diff and manifest paging', () => {
     expect(pages).toBe(Math.ceil(820 / 97))
     expect(paged).toEqual(ids(one))
 
+    type Entry = {
+      id: string
+      hash: string
+      previousHash?: string
+      private?: true
+      previousPrivate?: boolean
+    }
     type Manifest = {
-      delta: { added: object[]; updated: object[]; removed: object[] }
+      delta: { added: Entry[]; updated: Entry[]; removed: Entry[] }
       files: string[]
       pagination: { nextCursor: string | null }
     }
@@ -126,7 +133,8 @@ describe('diff and manifest paging', () => {
       first = false
       cursor = p.pagination.nextCursor
     } while (cursor)
-    expect(lines).toHaveLength(820)
+    // The manifest also lists the 50 moves that kept their hash, as updates.
+    expect(lines).toHaveLength(870)
     expect(new Set(lines.map((l) => JSON.stringify(l)))).toEqual(
       new Set(
         [...whole.delta.added, ...whole.delta.updated, ...whole.delta.removed].map((l) =>
@@ -134,6 +142,21 @@ describe('diff and manifest paging', () => {
         ),
       ),
     )
+    expect(whole.delta.updated).toHaveLength(570)
+    const moves = whole.delta.updated.filter((e) => e.previousPrivate !== undefined)
+    expect(moves).toHaveLength(70)
+    expect(moves.every((e) => e.private && e.previousPrivate === false)).toBe(true)
+    expect(moves.filter((e) => e.hash === e.previousHash).map((e) => e.id)).toEqual(
+      Array.from({ length: 50 }, (_, i) => id(600 + i)),
+    )
+    // Private records say so; a public update carries neither flag.
+    expect(whole.delta.updated.find((e) => e.id === id(0))).toEqual({
+      id: id(0),
+      type: 'Doc',
+      hash: up(id(0), 1).entry!.hash,
+      previousHash: up(id(0), 0).entry!.hash,
+    })
+
     // A reader of the public set only sees the moves as removals.
     await h.ports.db.update(schema.collections).set({ public: true })
     const pubDiff = (await (
@@ -141,5 +164,12 @@ describe('diff and manifest paging', () => {
     ).json()) as DiffPage
     expect(ids(pubDiff).removed).toHaveLength(170)
     expect(ids(pubDiff).updated).toHaveLength(500)
+    const pubDelta = (await (
+      await h.request(`${base}/manifest?since=${v.semver}`)
+    ).json()) as Manifest
+    expect(pubDelta.delta.removed).toHaveLength(170)
+    expect(pubDelta.delta.updated).toHaveLength(500)
+    const all = [...pubDelta.delta.added, ...pubDelta.delta.updated, ...pubDelta.delta.removed]
+    expect(all.some((e) => e.private || e.previousPrivate !== undefined)).toBe(false)
   })
 })

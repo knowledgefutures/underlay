@@ -171,7 +171,10 @@ export function exportRoutes() {
       }
     }
 
-    let body = tarStream(entries())
+    // Entries are dated when the version was made, so a version exports to the
+    // same bytes every time (gzip's header carries no time: CompressionStream
+    // writes 0).
+    let body = tarStream(entries(), v.createdAt.getTime())
     if (gzip)
       body = body.pipeThrough(
         new CompressionStream('gzip') as unknown as TransformStream<Uint8Array, Uint8Array>,

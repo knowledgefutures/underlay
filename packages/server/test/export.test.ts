@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
@@ -82,5 +82,52 @@ describe('export', () => {
     expect(zip.status).toBe(400)
     expect(((await zip.json()) as { error: string }).error).toMatch(/tar or tar\.gz/)
     expect((await h.request(`${base}/export?format=tar.gz`)).status).toBe(200)
+  })
+
+  it('exports a version to the same bytes every time', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('lib')
+    const base = '/api/collections/org/lib'
+    const sid = (
+      await json(
+        await h.request(`${base}/push`, {
+          method: 'POST',
+          user,
+          json: { schemas: { Doc: { type: 'object' } }, metadata: { readme: '# Lib\n' } },
+        }),
+      )
+    ).session_id
+    await h.request(`${base}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: [
+        { id: 'd1', type: 'Doc', data: { n: 1 } },
+        { id: 'd2', type: 'Doc', data: { n: 2 }, private: true },
+      ],
+    })
+    expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+      201,
+    )
+    const [v] = await h.ports.db.select().from(schema.versions)
+    const bytes = async (format: string) =>
+      new Uint8Array(
+        await (
+          await h.request(`${base}/export?version=v1.0.0&format=${format}`, { user })
+        ).arrayBuffer(),
+      )
+    for (const format of ['tar', 'tar.gz']) {
+      const first = await bytes(format)
+      // A later export, an hour on, is the same archive.
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 3_600_000)
+      const second = await bytes(format)
+      clock.mockRestore()
+      expect(second).toEqual(first)
+    }
+    // Entries carry the version's time (the tar header's mtime, octal seconds).
+    const tar = await bytes('tar')
+    const mtime = new TextDecoder().decode(tar.subarray(136, 147))
+    expect(parseInt(mtime, 8)).toBe(Math.floor(v!.createdAt.getTime() / 1000))
   })
 })
