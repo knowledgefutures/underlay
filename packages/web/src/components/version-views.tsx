@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigation } from 'react-router'
 
-import { formatBytes, prefixedHash, shortHash } from '~/lib/format'
+import { formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
 import { RECORDS_PAGE_SIZE, type RecordsPage } from '~/lib/records-page'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
@@ -33,10 +33,11 @@ export function VersionInfoBar({
       <div className="text-ink-muted border-rule bg-parchment-dark rounded-surface mb-6 flex flex-wrap items-center justify-between gap-y-1 border px-4 py-2.5 text-xs">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>
-            <strong className="text-ink">{version.recordCount.toLocaleString()}</strong> records
+            <strong className="text-ink">{version.recordCount.toLocaleString('en-US')}</strong>{' '}
+            records
           </span>
           <span>
-            <strong className="text-ink">{version.fileCount.toLocaleString()}</strong> files
+            <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong> files
           </span>
           <span>
             <strong className="text-ink">{formatBytes(version.totalBytes)}</strong> total
@@ -56,13 +57,7 @@ export function VersionInfoBar({
               via <strong className="text-ink">{version.appId}</strong>
             </span>
           )}
-          <span>
-            {new Date(version.createdAt).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
-            })}
-          </span>
+          <span>{formatDate(version.createdAt)}</span>
           <code className="text-ink-muted font-mono text-[11px]" title={prefixedHash(version.hash)}>
             {shortHash(version.hash, 12)}
           </code>
@@ -324,7 +319,7 @@ export function RecordsView({
               <nav className="flex items-center justify-between py-3 text-xs">
                 <span className="text-ink-muted">
                   Showing {offset + 1}–{Math.min(offset + pageSize, totalRecords)} of{' '}
-                  {totalRecords.toLocaleString()}
+                  {totalRecords.toLocaleString('en-US')}
                 </span>
                 <div className="flex items-center gap-1">
                   {page > 1 && (

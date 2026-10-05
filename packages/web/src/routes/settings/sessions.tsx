@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import SettingsLayout, { userSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, SectionHeading } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
+import { formatDate } from '~/lib/format'
 
 interface Session {
   id: string
@@ -91,8 +92,8 @@ export default function SettingsSessions() {
                 </div>
                 <div className="text-ink-muted mt-0.5 flex items-center gap-2 text-xs">
                   {s.ipAddress && <span>{s.ipAddress}</span>}
-                  <span>Created {new Date(s.createdAt).toLocaleDateString()}</span>
-                  <span>· Expires {new Date(s.expiresAt).toLocaleDateString()}</span>
+                  <span>Created {formatDate(s.createdAt)}</span>
+                  <span>· Expires {formatDate(s.expiresAt)}</span>
                 </div>
               </div>
               {!s.current && (

@@ -167,16 +167,20 @@ export default function CollectionDiffPage() {
               </span>
               <span className="text-ink-muted">·</span>
               <span>
-                <strong className="text-ink">{totalChanges.toLocaleString()}</strong> changes
+                <strong className="text-ink">{totalChanges.toLocaleString('en-US')}</strong> changes
               </span>
               {totalAdded > 0 && (
-                <span className="text-green-700">+{totalAdded.toLocaleString()} added</span>
+                <span className="text-green-700">+{totalAdded.toLocaleString('en-US')} added</span>
               )}
               {totalUpdated > 0 && (
-                <span className="text-amber-700">~{totalUpdated.toLocaleString()} updated</span>
+                <span className="text-amber-700">
+                  ~{totalUpdated.toLocaleString('en-US')} updated
+                </span>
               )}
               {totalRemoved > 0 && (
-                <span className="text-red-700">-{totalRemoved.toLocaleString()} removed</span>
+                <span className="text-red-700">
+                  -{totalRemoved.toLocaleString('en-US')} removed
+                </span>
               )}
               {meta.schemaChanged && <span className="text-purple-700">schema</span>}
               {meta.readmeChanged && <span className="text-blue-700">readme</span>}
@@ -247,7 +251,7 @@ export default function CollectionDiffPage() {
               <div className="mb-8">
                 <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <span className="h-2 w-2 rounded-full bg-green-600"></span>
-                  Added ({totalAdded.toLocaleString()})
+                  Added ({totalAdded.toLocaleString('en-US')})
                 </h3>
                 {Object.entries(addedByType).map(([type, records]: [string, any[]]) => (
                   <div key={type} className="mb-4">
@@ -295,7 +299,7 @@ export default function CollectionDiffPage() {
               <div className="mb-8">
                 <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-                  Updated ({totalUpdated.toLocaleString()})
+                  Updated ({totalUpdated.toLocaleString('en-US')})
                 </h3>
                 {Object.entries(updatedByType).map(([type, records]: [string, any[]]) => (
                   <div key={type} className="mb-4">
@@ -343,7 +347,7 @@ export default function CollectionDiffPage() {
               <div className="mb-8">
                 <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
                   <span className="h-2 w-2 rounded-full bg-red-600"></span>
-                  Removed ({totalRemoved.toLocaleString()})
+                  Removed ({totalRemoved.toLocaleString('en-US')})
                 </h3>
                 <div className="border-rule rounded-surface overflow-x-auto border">
                   <table className="w-full text-xs">

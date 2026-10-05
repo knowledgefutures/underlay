@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import { Th } from '~/components/ui'
-import { formatBytes } from '~/lib/format'
+import { formatBytes, formatDate } from '~/lib/format'
 
 export type Metric = 'api_calls' | 'response_bytes' | 'file_downloads' | 'file_bytes'
 export type Usage = Record<Metric, number>
@@ -40,12 +40,7 @@ export const metricValue = (m: Metric, n: number) => (isBytes(m) ? formatBytes(n
 /** A date as "Oct 4, 2026", in UTC so server and browser agree. */
 export function day(ms: number | string | null): string {
   if (ms == null) return '—'
-  return new Date(ms).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  })
+  return formatDate(ms)
 }
 
 export function StatTile({

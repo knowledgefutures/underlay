@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { Button, Input } from '~/components/ui'
+import { formatDate } from '~/lib/format'
 
 interface Label {
   label: string
@@ -89,10 +90,7 @@ export default function SchemaLabelManager({ schemaId, initialLabels }: Props) {
             >
               <span className="text-ink">{l.label}</span>
               <span className="text-ink-muted text-[11px]">
-                {new Date(l.createdAt).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                })}
+                {formatDate(l.createdAt, 'monthDay')}
               </span>
               <Button
                 variant="ghost"

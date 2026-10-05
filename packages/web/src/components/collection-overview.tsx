@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router'
 
-import { bareSemver, formatBytes, prefixedHash, shortHash } from '~/lib/format'
+import { bareSemver, formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 import { TokenLink } from '~/lib/share-token'
 
@@ -73,21 +73,18 @@ export default function CollectionOverviewBody({
               </TokenLink>
               {isLatest && <span className="text-ink-muted text-xs">latest</span>}
               <span className="text-ink-muted">·</span>
-              <span className="text-ink-muted">{version.recordCount.toLocaleString()} records</span>
+              <span className="text-ink-muted">
+                {version.recordCount.toLocaleString('en-US')} records
+              </span>
               <span className="text-ink-muted">·</span>
-              <span className="text-ink-muted">{version.fileCount.toLocaleString()} files</span>
+              <span className="text-ink-muted">
+                {version.fileCount.toLocaleString('en-US')} files
+              </span>
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">{formatBytes(version.totalBytes)}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-ink-muted text-xs">
-                {new Date(version.createdAt).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                  timeZone: 'UTC',
-                })}
-              </span>
+              <span className="text-ink-muted text-xs">{formatDate(version.createdAt)}</span>
               <TokenLink
                 to={`${base}/versions`}
                 className="text-ink-muted hover:text-ink flex items-center gap-1 text-xs transition-colors"
@@ -134,7 +131,9 @@ export default function CollectionOverviewBody({
                   </svg>
                   <span className="font-medium">{t.type}</span>
                 </div>
-                <span className="text-ink-muted text-xs">{t.count.toLocaleString()} records</span>
+                <span className="text-ink-muted text-xs">
+                  {t.count.toLocaleString('en-US')} records
+                </span>
               </TokenLink>
             ))}
           </div>
@@ -227,7 +226,9 @@ export default function CollectionOverviewBody({
                   />
                 </svg>
                 <span>
-                  <strong className="text-ink">{version.recordCount.toLocaleString()}</strong>{' '}
+                  <strong className="text-ink">
+                    {version.recordCount.toLocaleString('en-US')}
+                  </strong>{' '}
                   records
                 </span>
               </div>
@@ -246,7 +247,8 @@ export default function CollectionOverviewBody({
                   />
                 </svg>
                 <span>
-                  <strong className="text-ink">{version.fileCount.toLocaleString()}</strong> files
+                  <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
+                  files
                 </span>
               </div>
               <div className="flex items-center gap-2">

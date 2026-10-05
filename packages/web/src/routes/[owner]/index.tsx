@@ -3,7 +3,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { ButtonLink, EmptyState } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
-import { timeAgo } from '~/lib/format'
+import { formatDate, timeAgo } from '~/lib/format'
 
 export default function OwnerPage() {
   const { owner } = useParams()
@@ -66,13 +66,7 @@ export default function OwnerPage() {
                   {account.website.replace(/^https?:\/\//, '')}
                 </a>
               )}
-              <span>
-                Joined{' '}
-                {new Date(account.createdAt).toLocaleDateString('en-US', {
-                  month: 'short',
-                  year: 'numeric',
-                })}
-              </span>
+              <span>Joined {formatDate(account.createdAt, 'month')}</span>
               <span>
                 <strong className="text-ink">{collections.length}</strong> collection
                 {collections.length !== 1 ? 's' : ''}

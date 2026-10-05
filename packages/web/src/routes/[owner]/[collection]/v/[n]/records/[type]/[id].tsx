@@ -3,6 +3,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { CollectionNav } from '~/components/collection-nav'
 import { Badge, SectionHeading } from '~/components/ui'
+import { formatDate } from '~/lib/format'
 import { useIsOwner } from '~/lib/use-is-owner'
 
 interface Change {
@@ -81,9 +82,7 @@ export default function RecordPage() {
                     {x.semver}
                   </Link>
                 )}
-                <span className="text-ink-muted text-xs">
-                  {new Date(x.createdAt).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                </span>
+                <span className="text-ink-muted text-xs">{formatDate(x.createdAt)}</span>
                 {x.hash === record.hash && (
                   <span className="text-ink-muted text-xs">this version</span>
                 )}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Badge } from '~/components/ui'
+import { formatDate } from '~/lib/format'
 
 interface SchemaResult {
   id: string
@@ -120,13 +121,7 @@ export default function SchemaBrowser() {
                     </code>
                     {isPrivate && <Badge>private</Badge>}
                   </div>
-                  <span className="text-ink-muted text-[11px]">
-                    {new Date(s.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </span>
+                  <span className="text-ink-muted text-[11px]">{formatDate(s.createdAt)}</span>
                 </div>
 
                 {/* Field summary */}

@@ -13,7 +13,7 @@ import {
 } from '~/components/admin-stats'
 import AdminLayout from '~/components/AdminLayout'
 import { Badge, SectionHeading } from '~/components/ui'
-import { formatBytes } from '~/lib/format'
+import { formatBytes, formatDate } from '~/lib/format'
 
 interface Corpus {
   totals: {
@@ -40,12 +40,7 @@ interface Corpus {
 
 type GrowthMetric = 'added' | 'versions'
 
-const monthLabel = (month: string) =>
-  new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', {
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  })
+const monthLabel = (month: string) => formatDate(`${month}-01T00:00:00Z`, 'month')
 
 export default function AdminCorpus() {
   const data = useLoaderData() as Corpus | null

@@ -3,6 +3,7 @@ import { Link, useLoaderData } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import SchemaLabelManager from '~/components/SchemaLabelManager'
 import { Badge } from '~/components/ui'
+import { formatDate } from '~/lib/format'
 
 interface SchemaData {
   id: number
@@ -49,14 +50,7 @@ function SchemaDetail({ schema }: { schema: SchemaData }) {
             {isPrivate && <Badge>private type</Badge>}
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
-            <span>
-              Created{' '}
-              {new Date(schema.createdAt).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-              })}
-            </span>
+            <span>Created {formatDate(schema.createdAt)}</span>
             <span>
               {fields.length} field{fields.length !== 1 ? 's' : ''}
             </span>

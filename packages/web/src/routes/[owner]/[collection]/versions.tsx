@@ -3,7 +3,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { CollectionNav } from '~/components/collection-nav'
 import { EmptyState } from '~/components/ui'
-import { bareSemver, formatBytes, prefixedHash, shortHash } from '~/lib/format'
+import { bareSemver, formatBytes, formatDate, prefixedHash, shortHash } from '~/lib/format'
 import { TokenLink } from '~/lib/share-token'
 import { useIsOwner } from '~/lib/use-is-owner'
 
@@ -28,7 +28,7 @@ export default function CollectionVersionsPage() {
 
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-ink-muted text-sm font-semibold">
-            {(data.versionCount ?? versions.length).toLocaleString()} version
+            {(data.versionCount ?? versions.length).toLocaleString('en-US')} version
             {(data.versionCount ?? versions.length) !== 1 ? 's' : ''}
             {data.versionCount > versions.length && (
               <span className="ml-1 font-normal">(showing latest {versions.length})</span>
@@ -69,16 +69,10 @@ export default function CollectionVersionsPage() {
                   )}
                 </TokenLink>
                 <div className="text-ink-muted ml-4 flex shrink-0 items-center gap-5 text-xs">
-                  <span>{v.recordCount.toLocaleString()} records</span>
-                  <span>{v.fileCount.toLocaleString()} files</span>
+                  <span>{v.recordCount.toLocaleString('en-US')} records</span>
+                  <span>{v.fileCount.toLocaleString('en-US')} files</span>
                   <span>{formatBytes(v.totalBytes)}</span>
-                  <span className="w-20 text-right">
-                    {new Date(v.createdAt).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </span>
+                  <span className="w-20 text-right">{formatDate(v.createdAt)}</span>
                   <code
                     className="text-ink-muted w-24 text-right font-mono text-[11px]"
                     title={prefixedHash(v.hash)}

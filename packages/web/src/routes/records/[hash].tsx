@@ -3,6 +3,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { Badge } from '~/components/ui'
+import { formatDate } from '~/lib/format'
 
 interface Reference {
   owner: string
@@ -24,11 +25,7 @@ interface RecordData {
 }
 
 function shortDate(d: string): string {
-  return new Date(d).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+  return formatDate(d)
 }
 
 export default function RecordDetailPage() {
@@ -77,15 +74,8 @@ function RecordDetail({ record }: { record: RecordData }) {
             <span>
               ID: <code className="font-mono">{record.recordId}</code>
             </span>
-            <span>{record.size.toLocaleString()} bytes</span>
-            <span>
-              First seen{' '}
-              {new Date(record.firstSeen).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-              })}
-            </span>
+            <span>{record.size.toLocaleString('en-US')} bytes</span>
+            <span>First seen {formatDate(record.firstSeen)}</span>
             <span>
               {collections.length} collection{collections.length !== 1 ? 's' : ''}
               {record.references.length > collections.length &&

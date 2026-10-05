@@ -5,6 +5,7 @@ import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Badge, Button, Input } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { formatDate } from '~/lib/format'
 
 export default function OwnerSettingsMembers() {
   const { owner } = useParams()
@@ -258,7 +259,7 @@ export default function OwnerSettingsMembers() {
                   <Badge>{inv.role}</Badge>
                   {inv.expiresAt && (
                     <span className="text-ink-muted text-xs">
-                      Expires {new Date(inv.expiresAt).toLocaleDateString()}
+                      Expires {formatDate(inv.expiresAt)}
                     </span>
                   )}
                 </div>

@@ -5,6 +5,7 @@ import { ApiPlayground } from '~/components/ApiPlayground'
 import { Alert, Badge, Button, SectionHeading } from '~/components/ui'
 import { getScope, isExpired, isExpiringSoon } from '~/lib/api-keys'
 import { authClient } from '~/lib/auth-client'
+import { formatDate } from '~/lib/format'
 
 interface Key {
   id: string
@@ -223,12 +224,12 @@ export default function ApiKeysPanel({
                         .join(', ')}
                     </Badge>
                   )}
-                  <span>Created {new Date(k.createdAt).toLocaleDateString()}</span>
+                  <span>Created {formatDate(k.createdAt)}</span>
                   {k.expiresAt && !isExpired(k.expiresAt) && (
                     <span
                       className={isExpiringSoon(k.expiresAt) ? 'font-medium text-yellow-700' : ''}
                     >
-                      · Expires {new Date(k.expiresAt).toLocaleDateString()}
+                      · Expires {formatDate(k.expiresAt)}
                     </span>
                   )}
                   {isExpired(k.expiresAt ?? null) && (

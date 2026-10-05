@@ -207,8 +207,8 @@ export default function Dashboard() {
                     <span className="text-ink-muted ml-auto shrink-0 font-mono text-[11px]">
                       {c.latestVersion ? (
                         <>
-                          v{bareSemver(c.latestVersion)} · {(c.recordCount ?? 0).toLocaleString()}{' '}
-                          records
+                          v{bareSemver(c.latestVersion)} ·{' '}
+                          {(c.recordCount ?? 0).toLocaleString('en-US')} records
                           {c.totalBytes ? ` · ${formatBytes(c.totalBytes)}` : ''}
                           {c.lastPushAt ? ` · pushed ${timeAgo(c.lastPushAt)}` : ''}
                         </>

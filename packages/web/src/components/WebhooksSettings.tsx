@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react'
 
 import { Alert, Badge, Button, Checkbox, Input, Table, Td, Th } from '~/components/ui'
+import { formatDateTime } from '~/lib/format'
 
 const BUMP_TYPES = ['major', 'minor', 'patch'] as const
 type BumpType = (typeof BUMP_TYPES)[number]
@@ -239,7 +240,7 @@ export default function WebhooksSettings({
                     ))}
                     {!hook.enabled && <span className="text-amber-700">· disabled</span>}
                     {hook.lastDeliveryAt && (
-                      <span>· last fired {new Date(hook.lastDeliveryAt).toLocaleString()}</span>
+                      <span>· last fired {formatDateTime(hook.lastDeliveryAt)}</span>
                     )}
                   </div>
                 </div>
@@ -289,7 +290,7 @@ export default function WebhooksSettings({
                         {deliveries[hook.id]!.map((d) => (
                           <tr key={d.id} className="align-top">
                             <Td className="text-ink-muted whitespace-nowrap">
-                              {new Date(d.createdAt).toLocaleString()}
+                              {formatDateTime(d.createdAt)}
                             </Td>
                             <Td>
                               {d.event}

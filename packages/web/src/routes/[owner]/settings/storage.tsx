@@ -4,6 +4,7 @@ import { Link, useLoaderData, useParams } from 'react-router'
 import { SETS_LABELS } from '~/components/MirrorsSettings'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Badge, Button, Field, Input, SectionHeading, Select } from '~/components/ui'
+import { formatDateTime } from '~/lib/format'
 
 /**
  * An org's storage locations (S3-compatible buckets it controls) and its
@@ -276,9 +277,7 @@ export default function OwnerSettingsStorage() {
                         </p>
                         <div className="text-ink-muted mt-1 flex flex-wrap items-center gap-2 text-xs">
                           {loc.region && <Badge>{loc.region}</Badge>}
-                          {loc.verifiedAt && (
-                            <span>checked {new Date(loc.verifiedAt).toLocaleString()}</span>
-                          )}
+                          {loc.verifiedAt && <span>checked {formatDateTime(loc.verifiedAt)}</span>}
                         </div>
                         {loc.lastError && (
                           <p className="mt-1 text-xs break-words text-red-700">{loc.lastError}</p>

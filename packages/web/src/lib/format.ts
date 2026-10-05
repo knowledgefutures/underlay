@@ -55,6 +55,34 @@ export function formatCount(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`
 }
 
+const DATE_PARTS = {
+  day: { month: 'short', day: 'numeric', year: 'numeric' },
+  monthDay: { month: 'short', day: 'numeric' },
+  month: { month: 'short', year: 'numeric' },
+} as const
+
+/**
+ * A date as "Oct 4, 2026", in UTC with a fixed locale, so the server's render
+ * and the browser's agree (a local time zone would change the day).
+ */
+export function formatDate(
+  value: string | number | Date,
+  parts: keyof typeof DATE_PARTS = 'day',
+): string {
+  return new Date(value).toLocaleDateString('en-US', { ...DATE_PARTS[parts], timeZone: 'UTC' })
+}
+
+/** A date and time as "Oct 4, 2026, 14:05 UTC". */
+export function formatDateTime(value: string | number | Date): string {
+  return `${new Date(value).toLocaleString('en-US', {
+    ...DATE_PARTS.day,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  })} UTC`
+}
+
 export function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
   if (seconds < 60) return 'just now'
