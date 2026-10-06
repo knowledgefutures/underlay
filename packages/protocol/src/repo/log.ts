@@ -47,20 +47,16 @@ export interface Head {
 /**
  * collection.json (spec 11.1): what a repository says about a collection without
  * a server. Neither hashed nor signed; rewritten whenever a member changes.
- * Repositories written before 2026-10-05 hold `owner` as a string (the owner's
- * handle) and lack `description`, `visibility` and `ark`: read `owner` through
- * collectionOwner, and visibility through isPublicCollection.
  */
 export interface CollectionInfo {
   id: string
-  owner: CollectionOwner | string
+  owner: CollectionOwner
   slug: string
   name: string
-  description?: string | null
-  /** Absent in older repositories, which a reader must not take as public. */
-  visibility?: Visibility
+  description: string | null
+  visibility: Visibility
   /** `ark:<NAAN>/<name>`, or null. */
-  ark?: string | null
+  ark: string | null
   /** Public keys that sign this collection's log. */
   keys: PublicKeyInfo[]
   [k: string]: unknown
@@ -68,8 +64,8 @@ export interface CollectionInfo {
 
 /** The organization that owns a collection. */
 export interface CollectionOwner {
-  /** Its identifier at the server that wrote collection.json (null when only a handle is known). */
-  id: string | null
+  /** Its identifier at the server that wrote collection.json. */
+  id: string
   did: string | null
   handle: string | null
   /** Display name. */
@@ -77,16 +73,6 @@ export interface CollectionOwner {
 }
 
 export type Visibility = 'public' | 'private'
-
-/** A collection.json's owner, in the current form whichever form the file holds. */
-export function collectionOwner(info: CollectionInfo): CollectionOwner {
-  return typeof info.owner === 'string'
-    ? { id: null, did: null, handle: info.owner, name: info.owner }
-    : info.owner
-}
-
-/** Whether collection.json says the collection is public (absent visibility is not). */
-export const isPublicCollection = (info: CollectionInfo) => info.visibility === 'public'
 
 export interface PublicKeyInfo {
   id: string

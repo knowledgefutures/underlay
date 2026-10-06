@@ -94,8 +94,7 @@ export default function ProtocolRepositories() {
           the log. It is neither hashed nor signed; readers MUST NOT depend on its serialization and
           MUST ignore members they don&rsquo;t know. A writer rewrites it whenever a member changes,
           with or without a version, so a repository says on its own who owns a collection and
-          whether it is public. Files written before 2026-10-05 hold <code>owner</code> as a string
-          and no <code>visibility</code>, which a reader MUST NOT take as public.
+          whether it is public.
         </li>
         <li>A verifier MUST use a key only under the id derived from it.</li>
       </ul>

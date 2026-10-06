@@ -45,6 +45,7 @@ import {
   commitVersion,
   dbSchema as schema,
   type Ports,
+  publishCollectionInfo,
   type TypeInput,
 } from '@underlay/server'
 import { and, desc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
@@ -757,6 +758,11 @@ export async function migrateAll(
     wanted ? new Set(cols.map((c) => c.id)) : undefined,
     sync,
   )
+  // collection.json last: a commit writes it before the collection's settings (its
+  // ARK) are copied, and a sync changes names and visibility without a version.
+  for (const c of cols) {
+    await publishCollectionInfo(ports, await ports.stores.forCollection(c.id), c.id)
+  }
   if (sync && !wanted) {
     const inV1 = new Set(all.map((c) => c.id))
     const ours = await ports.db

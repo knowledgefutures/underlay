@@ -562,8 +562,7 @@ GET /api/collections/:owner/:slug/versions/:n/pack?base=<n>&sets=public|all
 collection.json = {id, owner: {id, did, handle, name}, slug, name, description,
     visibility: public|private, ark: "ark:NAAN/name" | null, keys: [{id, alg, publicKey}]}.
 It is stored with the collection's data, so any copy says who owns the collection and whether it
-is public. It is rewritten whenever one of these changes. Copies written before 2026-10-05 have
-owner as a string and no visibility.
+is public. It is rewritten whenever one of these changes.
 
 A client verifies the log's signatures and hash chain, then checks every object in the pack
 against its hash and rebuilds the trees. @underlay/protocol (and the underlay CLI) do this.

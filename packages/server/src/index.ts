@@ -5,6 +5,7 @@ export * as dbSchema from './db/schema.js'
 export { drainSqliteJobs, SqliteJobs } from './jobs.js'
 export type { Ports } from './ports.js'
 export { createStores } from './stores.js'
+export { publishCollectionInfo } from './versions/collection-info.js'
 export {
   appendVersionLog,
   type BaseVersion,

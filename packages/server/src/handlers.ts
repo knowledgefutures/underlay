@@ -60,7 +60,7 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await recheckLocations(ports)
   // Yesterday's usage rollups, rebuilt once from the log (a retried batch counts once).
   await rebuildYesterday(ports)
-  // collection.json in the 2026-10-05 form (owner ids, visibility), once.
+  // Rewrite collection.json files earlier code wrote into the current form, once.
   await queueInfoBackfill(ports)
   // Mirrors that fell behind (a failed copy, a missed job) catch up.
   const lagging = await laggingPlacements(ports)

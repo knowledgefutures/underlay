@@ -440,9 +440,6 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
   member changes, whether or not a version is published. A copy of a repository (a mirror)
   SHOULD carry each rewrite. The file is how a repository records, without a server, who owns a
   collection and whether it is public.
-- Repositories written before this revision (Appendix B, item 16) hold `owner` as a string (the
-  owner's handle) and have no `description`, `visibility` or `ark`. A reader MUST accept that
-  form. A reader MUST NOT treat a collection whose `visibility` is absent as public.
 
 A verifier MUST use a key only under the id derived from it: a key listed under any other id MUST
 be ignored.

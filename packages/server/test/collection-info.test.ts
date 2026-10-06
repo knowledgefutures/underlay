@@ -1,15 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import {
-  type CollectionInfo,
-  collectionOwner,
-  isPublicCollection,
-  openRepo,
-  PrefixedStore,
-  readCollectionInfo,
-  s3Store,
-  writeCollectionInfo,
-} from '@underlay/protocol'
+import { keys, openRepo, PrefixedStore, readCollectionInfo, s3Store } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -164,33 +155,27 @@ describe('collection.json', () => {
     expect((await readCollectionInfo(mirror, c.id))!.visibility).toBe('public')
   })
 
-  it('the backfill rewrites files in the earlier form, once', async () => {
+  it('the backfill rewrites files earlier code wrote, once', async () => {
     const { h, c, repo } = await setup()
-    const legacy: CollectionInfo = {
+    // What the code before 2026-10-05 wrote: the owner by slug, no visibility.
+    const earlier = JSON.stringify({
       id: c.id,
       owner: 'org',
       slug: 'books',
       name: 'books',
       keys: (await readCollectionInfo(repo, c.id))!.keys,
-    }
-    await writeCollectionInfo(repo, legacy)
-    const read = (await readCollectionInfo(repo, c.id))!
-    // Readers take the earlier form: the owner by handle, and not public.
-    expect(collectionOwner(read)).toEqual({ id: null, did: null, handle: 'org', name: 'org' })
-    expect(isPublicCollection(read)).toBe(false)
-
+    })
+    await repo.blobs.put(keys.collection(c.id), earlier)
     await queueInfoBackfill(h.ports)
     await h.drain()
     expect(await readCollectionInfo(repo, c.id)).toMatchObject({
-      owner: { id: 'org1', handle: 'org' },
+      owner: { id: 'org1', did: null, handle: 'org', name: 'Org' },
       visibility: 'private',
     })
     expect(await h.ports.stores.internal.head(INFO_BACKFILL_MARKER)).toBeTruthy()
     // Once: a second call queues nothing.
-    await writeCollectionInfo(repo, legacy)
     await queueInfoBackfill(h.ports)
     expect(await h.drain()).toBe(0)
-    expect((await readCollectionInfo(repo, c.id))!.owner).toBe('org')
   })
 })
 

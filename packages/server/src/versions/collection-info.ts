@@ -8,8 +8,8 @@
  *
  *   collection.info            rewrite one collection's collection.json, then its mirrors'
  *   collection.info.org        queue collection.info for each of an organization's collections
- *   collection.info.backfill   queue collection.info for every collection, once: files
- *                              written before 2026-10-05 lack owner ids and visibility
+ *   collection.info.backfill   queue collection.info for every collection, once, to rewrite
+ *                              files earlier code wrote (staging, next.underlay.org's load)
  */
 import {
   type CollectionInfo,
