@@ -47,6 +47,8 @@ Sections and paragraphs marked _informative_, and all examples and notes, are no
 - **Server**: an HTTP service that implements Section 11.3 and, if it accepts publications,
   Section 11.4. Also called an _Underlay node_.
 - **Client**: any party that reads from or publishes to a server.
+- **Organization**: the party a collection belongs to, named by `owner` in its `collection.json`
+  (Section 11.1).
 - **Owner**: a party permitted to read a collection's private set. Who is an owner is determined
   by the server.
 
@@ -297,8 +299,9 @@ Each version has two access sets, `public` and `private`.
   a publication (`files.add`, Section 11.4) also belongs to the private set, whether or not records
   reference it, and remains declared in later versions until a publication removes the declaration
   (`files.remove`).
-- **Readers.** Owners MAY read both sets. Any other reader MAY read the public set only. Whether a
-  collection is visible to non-owners at all is collection state outside the version.
+- **Readers.** Owners MAY read both sets. Any other reader MAY read the public set only, and only
+  of a collection whose visibility is `"public"`. Visibility is collection state outside the
+  version, recorded in `collection.json` (Section 11.1); changing it changes no version.
 
 ## 10. Versions
 
@@ -412,10 +415,34 @@ entry = {"actorId","appId","baseSemver","collectionId","createdAt","keyId","mess
 - `prev` is the entry hash of entry `seq − 1`, or `null` when `seq` is 1.
 - `head.json` is JCS(`{"entryHash","seq","versionHash"}`) of the latest entry. It is overwritten
   after each new entry is written.
-- `collection.json` is a JSON object with the collection's `id`, `owner`, `slug` and `name`, and
-  `keys`: an array of `{"id", "alg": "Ed25519", "publicKey"}`, where `publicKey` is the raw
-  public key in base64url. It is neither hashed nor signed. Readers MUST parse it as JSON and MUST
-  NOT depend on its serialization.
+- `collection.json` describes the collection (below).
+
+**Collection description.** `collection.json` is a JSON object:
+
+```
+{"id", "owner": {"id", "did", "handle", "name"}, "slug", "name", "description", "visibility", "ark", "keys"}
+```
+
+| Member        | Value                                                                                                                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | The collection id                                                                                                                                                                                       |
+| `owner`       | The organization that owns the collection. `id` is its identifier at the server that wrote the file; `did` its DID, or `null`; `handle` its handle (Section 11.3.1), or `null`; `name` its display name |
+| `slug`        | The collection's slug, unique among its owner's collections                                                                                                                                             |
+| `name`        | The collection's display name                                                                                                                                                                           |
+| `description` | A string, or `null`                                                                                                                                                                                     |
+| `visibility`  | `"public"` or `"private"`. A private collection's versions, public sets included, are readable by owners only (Section 9)                                                                               |
+| `ark`         | The collection's ARK (`ark:<NAAN>/<name>`), or `null`                                                                                                                                                   |
+| `keys`        | An array of `{"id", "alg": "Ed25519", "publicKey"}`, where `publicKey` is the raw public key in base64url: every key that has signed an entry of the log                                                |
+
+- It is neither hashed nor signed. Readers MUST parse it as JSON, MUST NOT depend on its
+  serialization, and MUST ignore members they do not recognize.
+- A writer MUST write it before the collection's first log entry, and MUST rewrite it whenever a
+  member changes, whether or not a version is published. A copy of a repository (a mirror)
+  SHOULD carry each rewrite. The file is how a repository records, without a server, who owns a
+  collection and whether it is public.
+- Repositories written before this revision (Appendix B, item 16) hold `owner` as a string (the
+  owner's handle) and have no `description`, `visibility` or `ark`. A reader MUST accept that
+  form. A reader MUST NOT treat a collection whose `visibility` is absent as public.
 
 A verifier MUST use a key only under the id derived from it: a key listed under any other id MUST
 be ignored.
@@ -461,62 +488,91 @@ a pack that fails any check.
 
 A server serves each collection under a **collection URL**: an absolute URL without a trailing
 slash, relative to which the paths below are resolved. The form of collection URLs is the
-server's choice.
+server's choice; Section 11.3.1 gives the RECOMMENDED form.
 
-```
-GET  <collection>/log?after=<seq>&limit=<n>
-GET  <collection>/versions/<v>/pack?base=<v>&sets=public|all
-GET  <collection>/versions/<v>/manifest?cursor=<c>&limit=<n>
-GET  <collection>/files/<fileHash>
-HEAD <collection>/files/<fileHash>
-```
+| Route                                               | Serves                              | Section | Required |
+| --------------------------------------------------- | ----------------------------------- | ------- | -------- |
+| `GET <collection>`                                  | the collection                      | 11.3.3  | MUST     |
+| `GET <collection>/versions`                         | its versions, newest first          | 11.3.3  | MUST     |
+| `GET <collection>/versions/<v>`                     | one version                         | 11.3.3  | MUST     |
+| `GET <collection>/versions/<v>/records`             | a page of records                   | 11.3.4  | MUST     |
+| `GET <collection>/versions/<v>/records/<type>/<id>` | one record                          | 11.3.4  | MUST     |
+| `GET <collection>/versions/<v>/records.ndjson`      | every record, streamed              | 11.3.4  | MUST     |
+| `GET <collection>/versions/<v>/records.ndjson.gz`   | the public set's records, as stored | 11.3.4  | SHOULD   |
+| `GET <collection>/records/<type>/<id>/history`      | one record across versions          | 11.3.4  | SHOULD   |
+| `GET <collection>/schemas`                          | a version's type set                | 11.3.5  | MUST     |
+| `GET <collection>/versions/<v>/diff`                | the records two versions differ by  | 11.3.5  | MUST     |
+| `GET <collection>/versions/<v>/files`               | a version's files                   | 11.3.5  | MUST     |
+| `GET`, `HEAD <collection>/files/<fileHash>`         | one file's bytes                    | 11.3.5  | MUST     |
+| `GET <collection>/export`                           | a version as a tar archive          | 11.3.5  | SHOULD   |
+| `GET <collection>/log`                              | the version log                     | 11.3.6  | MUST     |
+| `GET <collection>/versions/<v>/pack`                | a version's objects                 | 11.3.6  | MUST     |
+| `GET <collection>/versions/<v>/manifest`            | a version's record ids and hashes   | 11.3.6  | MUST     |
 
-**Version selectors.** `<v>` is a semver (the leading `v` is optional), a version hash
-(`ulv2:<hex>`), or `latest`. A version hash that names several versions of the collection (a
-reverted change repeats a hash) selects the latest of them. A `base` MUST name a version of the
-same collection.
+Publishing (Section 11.4) adds routes under the same collection URL.
 
-**Log.** The response is 200 with a JSON object `{"collection", "head", "entries"}`:
+#### 11.3.1 Collection URLs
 
-- `collection` is the collection's `collection.json` (Section 11.1) and `head` its `head.json`;
-  either MAY be `null` before the first version;
-- `entries` are the log entries with `seq` greater than `after` (default 0), in ascending `seq`
-  order, at most `limit` of them. A server MAY cap `limit` and MAY return fewer entries than
-  requested. A client
-  obtains the remainder by repeating the request with `after` set to the last `seq` received, until
-  it reaches `head.seq`.
+The RECOMMENDED form of a collection URL is `<base>/<owner>/<slug>`, where `<base>` is the
+server's API base URL, `<slug>` the collection's slug and `<owner>` one of:
 
-**Pack.** The response is 200 with the pack (Section 11.2) of version `<v>` against `base`, with
-content type `application/x-tar`. Without `base`, the pack holds every object the version
-reaches. `sets` defaults to `public`; `all` includes the private set. The response carries the
-headers `x-underlay-version` (the version hash), `x-underlay-base` (the base's version hash, or
-empty) and `x-underlay-sets` (the sets sent).
+- a **hosted handle**: an organization's slug at the server, matching
+  `^[a-z0-9]+(-[a-z0-9]+)*$`;
+- a **domain handle**: a domain name the organization has shown it controls, such as
+  `press.mit.edu`;
+- a **DID**: the organization's DID, beginning `did:`.
 
-**Manifest.** The response is 200 with the version's records as the caller may read them, without
-bodies:
+A slug contains neither `.` nor `:`, so the three forms are distinguished by their text. The
+**collection id form** `<base>/_/<collectionId>` names a collection by its id; `_` is not a
+handle.
 
-```
-{"semver", "hash", "schemas": {slug: schemaHash}, "records": [{"id", "type", "hash", "private"?}],
- "pagination": {"limit", "hasMore", "nextCursor"}}
-```
+- A server that offers this form MUST resolve each owner form it supports, and the id form, to
+  the same collection, and MUST serve it at each URL rather than redirect. An owner form the
+  server does not support is a 404.
+- Every response to a request under a collection URL that names a collection the caller may read
+  MUST carry the header `x-underlay-collection` with the collection id.
+- A handle can change, and a handle given up can later name another organization. A client that
+  keeps a reference to a collection SHOULD keep the id form, or the DID form where the owner has
+  a DID, and not a handle.
 
-- Records are in order of type, then id, each in key order (Section 7). A record of the private
-  set carries `"private": true`. A caller who cannot read the private set receives the public set
-  only.
-- A page holds at most `limit` records; a server MAY cap `limit`. While `hasMore` is true, a client
-  obtains the next page by repeating the request with `cursor` set to `nextCursor`. Cursors are
-  opaque.
+Informative: underlay.org's `<base>` is `https://underlay.org/api/collections`, and its hosted
+handles are its organization slugs. It does not yet resolve DIDs or domain handles.
 
-**Files.** The response is the file's bytes, or a redirect to them. A `HEAD` response carries
-`content-length`. `<fileHash>` is 64 hexadecimal characters, optionally prefixed with `sha256:`. A
-server MUST serve a file only to a caller who may read a set that holds it (Section 9).
+#### 11.3.2 Conventions
+
+- **Version selectors.** `<v>` is a semver (the leading `v` is optional), a version hash
+  (`ulv2:<hex>`), or `latest`. A version hash that names several versions of the collection (a
+  reverted change repeats a hash) selects the latest of them. Wherever a query parameter names a
+  version (`base`, `from`, `since`, `version`), it takes the same forms and MUST name a version of
+  the same collection.
+- **Responses** are JSON (`application/json`) unless stated otherwise. Timestamps are ISO 8601
+  strings in UTC. A server MAY add members to any object in a response; a client MUST ignore
+  members it does not recognize. The members listed in this section are the standard ones.
+- **Records** in responses are Record objects:
+
+  ```
+  Record = {"id", "type", "data", "hash", "private"?}
+  ```
+
+  `hash` is the record hash (Section 4). `"private": true` marks a record of the private set, and
+  appears only in responses to owners.
+
+- **Pagination.** A paged response carries `pagination: {"limit", "hasMore", "nextCursor"}`. While
+  `hasMore` is true, a client obtains the next page by repeating the request with `cursor` set to
+  `nextCursor`. Cursors are opaque. A server MAY cap `limit` and MAY return fewer items than
+  requested.
+- **Access.** A caller who is an owner reads both sets of every version. Any other caller reads
+  the public sets of a collection whose visibility is `"public"`, and nothing of a private one.
+  Counts and totals in a response are of what the caller may read.
+- **Withheld content.** A server MAY withhold a record or file for legal reasons. Counts and
+  totals MAY still include withheld records.
 
 **Errors.** Error responses carry a JSON body `{"error": <message>}`.
 
-- 404: the collection, version, base or file does not exist or the caller may not read it. A
-  server MUST NOT distinguish these cases.
+- 404: the collection, version, base, record or file does not exist or the caller may not read
+  it. A server MUST NOT distinguish these cases.
 - 403: `sets=all` was requested by a caller who may read the public set but not the private set.
-- 400: `sets` is neither `public` nor `all`.
+- 400: a malformed parameter, such as a `sets` that is neither `public` nor `all`.
 - 451: the server may not serve a file the caller could otherwise read, for legal reasons. A
   server MUST answer 404 rather than 451 for a file the caller may not read.
 - Other statuses carry their HTTP meanings, including 401 for invalid credentials and 429, with
@@ -525,11 +581,184 @@ server MUST serve a file only to a caller who may read a set that holds it (Sect
 **Authentication** is the server's choice. A server without access control MUST serve public sets
 only and MUST answer `sets=all` with 403.
 
-**Verification.** A client MUST NOT trust a server's responses: it verifies the log under
-Section 11.1, receives packs under Section 11.2, and verifies file bytes against their hash. A
-copy obtained from any server, including a mirror operated by a third party, then carries the same
-guarantees as one obtained from the origin. The manifest is not verifiable on its own; a client
-that requires proof of content reads packs.
+#### 11.3.3 Collections and versions
+
+**Collection.** `GET <collection>` returns:
+
+```
+{"id", "owner", "slug", "name", "description", "visibility", "ark", "createdAt", "updatedAt",
+ "versionCount", "head"}
+```
+
+- `id`, `owner`, `slug`, `name`, `description`, `visibility` and `ark` are as in
+  `collection.json` (Section 11.1).
+- `head` is `{"semver", "hash"}` of the latest version, or `null` before the first.
+
+**Version summary.**
+
+```
+VersionSummary = {"semver", "hash", "baseSemver", "message", "appId", "createdAt",
+                  "recordCount", "fileCount", "totalBytes", "typeCounts", "ark"}
+```
+
+- `semver`, `hash`, `baseSemver`, `message` and `appId` are as in the version's log entry
+  (Section 11.1); `createdAt` is when it was published.
+- `recordCount`, `fileCount` and `totalBytes` total the sets the caller may read; `totalBytes`
+  is the sum of their record and file sizes. `typeCounts` maps each type slug to its number of
+  records in those sets.
+- `ark` is the version's ARK, or `null`.
+
+**Versions.** `GET <collection>/versions?limit=<n>&offset=<n>` returns a JSON array of
+VersionSummary, newest first, at most `limit` of them after skipping `offset`.
+
+**Version.** `GET <collection>/versions/<v>` returns the VersionSummary with two more members:
+`metadata`, the root's metadata (Section 10); and `schemas`, mapping each type slug the caller
+may read to its schema.
+
+#### 11.3.4 Records
+
+Records are ordered by type slug, then by id, each in key order (Section 7).
+
+**Records.** `GET <collection>/versions/<v>/records?type=<slug>&limit=<n>&cursor=<c>` returns a
+page:
+
+```
+{"records": [Record, ...], "pagination": {"limit", "hasMore", "nextCursor", "total"}}
+```
+
+- With `type`, the page holds that type's records; without it, every type's.
+- `total` is the number of records the request selects, across all pages.
+- `offset=<n>`, without a cursor, skips the first n records.
+
+**Record.** `GET <collection>/versions/<v>/records/<type>/<id>` returns the Record with
+`semver`, the version's semver. `<type>` and `<id>` are percent-encoded path segments.
+
+**Records as NDJSON.** `GET <collection>/versions/<v>/records.ndjson` streams every record the
+caller may read, one Record per line, with content type `application/x-ndjson`.
+
+- `type=<slug>` limits the stream to one type.
+- `after_type=<slug>&after=<id>` resumes after that record, through the types that follow;
+  `type=<slug>&after=<id>` resumes within the type. `after` without `after_type` or `type` is a 400.
+- The header `x-underlay-record-count` gives the number of lines.
+
+**Public records as stored.** `GET <collection>/versions/<v>/records.ndjson.gz?type=<slug>` returns
+the public set's records, or one type's, as gzip (`application/gzip`). Each line is the
+canonical form of a record (Section 4), without `hash`. The body MAY consist of several gzip
+members (RFC 1952 §2.2), so that a server can send stored leaf bodies unchanged. With `type`, a
+type with no public records is a 404.
+
+**History.** `GET <collection>/records/<type>/<id>/history` returns the versions in which a record
+was added, changed or removed, oldest first, as the caller may read them:
+
+```
+{"type", "id", "changes": [{"seq", "semver", "createdAt", "change", "hash"}, ...], "truncated"}
+```
+
+- `change` is `"added"`, `"updated"` or `"removed"`; `hash` is the record hash after the change,
+  or `null` for a removal.
+- A server MAY consider only its latest versions; `truncated` is then true.
+- A record never present is a 404.
+
+#### 11.3.5 Schemas, differences and files
+
+**Schemas.** `GET <collection>/schemas?version=<v>&raw=<bool>` returns the type set of a version
+(default `latest`):
+
+```
+{"semver", "schemas": [{"slug", "schemaHash", "schema"}, ...]}
+```
+
+A server MAY annotate `schema` with members whose names begin with `x-`. With `raw=true` it MUST
+NOT: `schema` is then the schema as published, and JCS(`schema`) hashes to `schemaHash`.
+
+**Differences.** `GET <collection>/versions/<v>/diff?from=<v>&limit=<n>&cursor=<c>` returns the
+records that differ between version `from` and version `<v>`, one page at a time:
+
+```
+{"from", "to", "added": [{"id", "type", "data"}, ...], "updated": [{"id", "type", "data"}, ...],
+ "removed": [{"id", "type"}, ...], "pagination": {"limit", "hasMore", "nextCursor"},
+ "meta": {"schemaChanged", "metadataChanged", "filesAdded", "filesRemoved"}}
+```
+
+- `from` defaults to the version before `<v>`. For the first version it is `null`, and every
+  record is added.
+- `added` and `updated` carry the records' data in `<v>`.
+- To an owner, a record that moved between sets with an unchanged hash has not changed. To a
+  reader of the public set, a record that left it is removed, and one that joined it is added.
+- `meta` compares the versions' type sets and metadata. `filesAdded` and `filesRemoved` count the
+  files the caller may read that were added and removed; they are given on the first page and are
+  0 on later pages.
+
+**File list.** `GET <collection>/versions/<v>/files` returns a JSON array of the version's files
+that the caller may read, in key order:
+
+```
+[{"hash", "size", "mimeType", "referenceCount"}, ...]
+```
+
+`referenceCount` is the number of records the caller may read that reference the file. A server
+MAY cap the length of the list; the manifest (Section 11.3.6) pages through every file.
+
+**Files.** `GET <collection>/files/<fileHash>` returns the file's bytes, or a redirect to them. A
+`HEAD` response carries `content-length`. `<fileHash>` is 64 hexadecimal characters, optionally
+prefixed with `sha256:`. A server MUST serve a file only to a caller who may read a set that holds
+it (Section 9).
+
+**Export.** `GET <collection>/export?version=<v>&format=tar|tar.gz` returns a version (default
+`latest`) as a tar archive, gzipped by default, of what the caller may read:
+
+```
+manifest.json            {"collection", "version", "schemas", "files_missing", "files_withheld"}
+README.md                the version's metadata.readme, when it has one
+records/<type>.ndjson    one Record per line
+files/<fileHash>         file bytes
+```
+
+`files_missing` lists files the server does not hold, and `files_withheld` files it may not serve.
+
+#### 11.3.6 Replication
+
+These routes let a client or another server copy a collection and verify it (Section 11.3.7).
+
+**Log.** `GET <collection>/log?after=<seq>&limit=<n>` returns `{"collection", "head", "entries"}`:
+
+- `collection` is the collection's `collection.json` (Section 11.1) and `head` its `head.json`;
+  either MAY be `null` before the first version;
+- `entries` are the log entries with `seq` greater than `after` (default 0), in ascending `seq`
+  order, at most `limit` of them. A server MAY cap `limit` and MAY return fewer entries than
+  requested. A client obtains the remainder by repeating the request with `after` set to the last
+  `seq` received, until it reaches `head.seq`.
+
+**Pack.** `GET <collection>/versions/<v>/pack?base=<v>&sets=public|all` returns the pack (Section
+11.2) of version `<v>` against `base`, with content type `application/x-tar`. Without `base`, the
+pack holds every object the version reaches. `sets` defaults to `public`; `all` includes the
+private set. The response carries the headers `x-underlay-version` (the version hash),
+`x-underlay-base` (the base's version hash, or empty) and `x-underlay-sets` (the sets sent).
+
+**Manifest.** `GET <collection>/versions/<v>/manifest?cursor=<c>&limit=<n>` returns the version's
+records as the caller may read them, without bodies:
+
+```
+{"semver", "hash", "schemas": {slug: schemaHash}, "records": [{"id", "type", "hash", "private"?}, ...],
+ "files": [fileHash, ...], "pagination": {"limit", "hasMore", "nextCursor"}}
+```
+
+- Records are in order of type, then id. A record of the private set carries `"private": true`.
+  A caller who cannot read the private set receives the public set only.
+- `files` lists the hashes of the files the caller may read, on the first page only (an empty
+  array on later pages). A server MAY cap the list; `filesTruncated: true` then says so.
+- `since=<v>` returns the changes since that version instead of `records`:
+  `delta: {"added", "updated", "removed"}`, each an array of `{"id", "type", "hash"}`, an update
+  with `previousHash`, and `since`, that version's semver. To an owner, each carries `"private":
+true` for the private set, and a move between sets is an update, with `previousPrivate`.
+
+#### 11.3.7 Verification
+
+A client MUST NOT trust a server's responses: it verifies the log under Section 11.1, receives
+packs under Section 11.2, and verifies file bytes against their hash. A copy obtained from any
+server, including a mirror operated by a third party, then carries the same guarantees as one
+obtained from the origin. The other routes are not verifiable on their own; a client that requires
+proof of content reads packs, or checks each Record's `hash` against a verified tree.
 
 ### 11.4 Publishing
 
@@ -626,12 +855,12 @@ already stores the file.
   `hash`.
 
 **Clients without a copy** (informative). A client that keeps no copy of the collection reads the
-base's manifest (Section 11.3), compares each of its records with the manifest by (type, id),
+base's manifest (Section 11.3.6), compares each of its records with the manifest by (type, id),
 hash and set, uploads the records that are new, changed or moved between sets, and deletes the
 (type, id) pairs it no longer has. The upload is then proportional to the changes.
 
 **Errors.** Errors carry a JSON body `{"error": <message>}`. Authentication and 404 follow
-Section 11.3.
+Section 11.3.2.
 
 - 403: the caller may read the collection but not publish to it, or the session belongs to
   another user.
@@ -676,7 +905,7 @@ session uploaded more than 100,000 records or a schema change revalidates more t
 ## 13. Security considerations
 
 - **Existence.** A server answers 404, not 403, for content a caller may not read (Section
-  11.3), so that a response does not confirm the content exists.
+  11.3.2), so that a response does not confirm the content exists.
 - **Content by hash.** A server MUST NOT serve a tree node or body by hash alone, and MUST serve a
   record, schema or file located by hash only where it occurs in a set the caller may read.
   Otherwise a small private object with guessable content could be confirmed by computing its
@@ -696,6 +925,12 @@ session uploaded more than 100,000 records or a schema change revalidates more t
   served by an untrusted server can be presented with a forged history on first contact. The
   reference client trusts the keys of the `collection.json` it is served and anchors on the last
   entry it has verified.
+- **Visibility in copies.** `collection.json` records whether a collection is public, but a
+  repository enforces nothing: whoever can read a storage location can read everything in it. A
+  server that serves a repository MUST apply `visibility` and the sets (Section 9) itself, and a
+  location that holds a private collection or a private set MUST NOT be publicly readable.
+- **Handles.** A handle names an organization only while the organization holds it
+  (Section 11.3.1). References meant to last name a collection by its id, or its owner by DID.
 - **File serving.** File bytes SHOULD be served from an origin separate from the server's own
   pages, and with `Content-Disposition: attachment`, so that an uploaded HTML or SVG file cannot
   run in the server's origin.
@@ -777,3 +1012,11 @@ Clarifications that change no hash, tree or accepted input:
     the root and PrivateSetObject (Section 11.2). The test vectors add `syntax`, `bad_type`,
     depth-boundary and code-order cases, `inputRuleRecipes` (`record_too_large`) and
     `schemaRules` (Sections 5, 5.1); existing vectors are unchanged. Delete lines are subject to the input rules, and a non-object `metadata_patch` is a 400 (Section 11.4).
+16. 2026-10-05: `collection.json` gains `description` (which item 14 had noted as absent),
+    `visibility` and `ark`; `owner` becomes an object carrying the organization's id, DID, handle
+    and name; and a writer rewrites the file whenever a member changes (Section 11.1). Section 11.3
+    specifies the read API servers already served (the collection, versions, records, record
+    history, schemas, differences, file list and export) with the recommended collection URL
+    form, owner handles and DIDs, the collection id form `_/<collectionId>`, and the
+    `x-underlay-collection` header; the manifest's `files` and `since` are documented. No hash,
+    tree or accepted input changes.
