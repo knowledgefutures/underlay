@@ -115,11 +115,9 @@
     },
     "prod": {
       "name": "underlay-prod",
-      // www keeps its proxied DNS record (v1's origin): the route sends its requests to
-      // this Worker instead. Removing the route and deploying again hands www back to v1.
       // underlay.org redirects to www in a Cloudflare rule, paths kept (ARK links).
       "routes": [
-        { "pattern": "www.underlay.org/*", "zone_name": "underlay.org" },
+        { "pattern": "www.underlay.org", "custom_domain": true },
         { "pattern": "next.underlay.org", "custom_domain": true },
       ],
       "vars": {
