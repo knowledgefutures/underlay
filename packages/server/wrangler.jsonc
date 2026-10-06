@@ -4,7 +4,7 @@
 // they outlive both: prod serves next.underlay.org until it takes over www.
 //
 //   wrangler deploy --env staging     → staging.underlay.org
-//   wrangler deploy --env prod        → next.underlay.org (www after the DNS switch)
+//   wrangler deploy --env prod        → www.underlay.org (and next.underlay.org)
 //
 // Secrets (wrangler secret put <NAME> --env <env>):
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   bucket-scoped R2 S3 credentials
@@ -115,9 +115,16 @@
     },
     "prod": {
       "name": "underlay-prod",
-      "routes": [{ "pattern": "next.underlay.org", "custom_domain": true }],
+      // www keeps its proxied DNS record (v1's origin): the route sends its requests to
+      // this Worker instead. Removing the route and deploying again hands www back to v1.
+      // underlay.org redirects to www in a Cloudflare rule, paths kept (ARK links).
+      "routes": [
+        { "pattern": "www.underlay.org/*", "zone_name": "underlay.org" },
+        { "pattern": "next.underlay.org", "custom_domain": true },
+      ],
       "vars": {
-        "APP_URL": "https://next.underlay.org",
+        // Sign-in callbacks and absolute links: www's, also when reached through next.
+        "APP_URL": "https://www.underlay.org",
         "DEPLOYMENT": "prod",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-prod",
