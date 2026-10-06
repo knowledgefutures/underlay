@@ -3,7 +3,131 @@
   "rules": {
     "no-unused-vars": "error",
     "no-console": "off",
-    "eqeqeq": ["error", "always", { "null": "ignore" }]
+    "eqeqeq": [
+      "error",
+      "always",
+      {
+        "null": "ignore"
+      }
+    ]
   },
-  "ignorePatterns": ["node_modules", "dist"]
+  "ignorePatterns": ["node_modules", "dist"],
+  "overrides": [
+    {
+      "files": ["packages/protocol/src/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "@libsql/*",
+                  "libsql",
+                  "hono",
+                  "hono/*",
+                  "better-auth",
+                  "better-auth/*",
+                  "@better-auth/*",
+                  "react",
+                  "react-dom",
+                  "react-router",
+                  "@underlay/server",
+                  "@underlay/server/*",
+                  "@underlay/web",
+                  "@underlay/web/*",
+                  "@underlay/cli",
+                  "@underlay/cli/*"
+                ],
+                "message": "@underlay/protocol loads in Node, Workers and browsers with no app around it: no database, server, auth or UI imports (plan decision 18)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/protocol/src/repo/**/*.ts",
+        "packages/protocol/src/stores/{memory,r2,s3}.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "@libsql/*",
+                  "libsql",
+                  "hono",
+                  "hono/*",
+                  "better-auth",
+                  "better-auth/*",
+                  "@better-auth/*",
+                  "react",
+                  "react-dom",
+                  "react-router",
+                  "@underlay/server",
+                  "@underlay/server/*",
+                  "@underlay/web",
+                  "@underlay/web/*",
+                  "@underlay/cli",
+                  "@underlay/cli/*",
+                  "**/stores/**",
+                  "node:*"
+                ],
+                "message": "Repositories work over any Store, and stores other than fileStore run on every platform: no node: imports, and repo/ doesn't import a store (plan decision 18)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/protocol/src/{constants,file-refs,format,hash,input-rules,jcs,root,semver,sha256,utf8,validate}.ts",
+        "packages/protocol/src/tree/**/*.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "drizzle-orm",
+                  "drizzle-orm/*",
+                  "@libsql/*",
+                  "libsql",
+                  "hono",
+                  "hono/*",
+                  "better-auth",
+                  "better-auth/*",
+                  "@better-auth/*",
+                  "react",
+                  "react-dom",
+                  "react-router",
+                  "@underlay/server",
+                  "@underlay/server/*",
+                  "@underlay/web",
+                  "@underlay/web/*",
+                  "@underlay/cli",
+                  "@underlay/cli/*",
+                  "**/repo/**",
+                  "**/stores/**",
+                  "node:*"
+                ],
+                "message": "The format half of @underlay/protocol is pure: no stores, repositories, I/O or platform (plan decision 18)."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

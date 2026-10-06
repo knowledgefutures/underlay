@@ -1,0 +1,108 @@
+import type { Cache, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
+import type { LibSQLDatabase } from 'drizzle-orm/libsql'
+
+/**
+ * The ports the server is written against. Cloudflare and Node each supply
+ * adapters; nothing outside the adapters knows which runtime it's on.
+ *
+ *   Stores     repositories resolved per collection from its placement (never a global
+ *              bucket), plus the platform's internal area (sessions, uploads, reference log)
+ *   Db         Drizzle sqlite-core over D1 or libsql — async, batches only (no interactive transactions)
+ *   Jobs       Cloudflare Queues, or a SQLite jobs table polled by the Node process
+ *   Cache      Cache API on Workers, in-memory LRU on Node
+ */
+import type { UsageSink } from './billing/usage.js'
+import type * as schema from './db/schema.js'
+
+export type { Cache, PresigningStore, Store } from '@underlay/protocol'
+
+/**
+ * Drizzle over SQLite. Both adapters are async and support `db.batch([...])`,
+ * which runs statements atomically. Don't use `db.transaction`: D1 doesn't have
+ * interactive transactions, so code that works on Node would break on Workers.
+ */
+export type Db = LibSQLDatabase<typeof schema>
+
+/** Messages carry ids only (Queues caps messages at 128 KB); data is in SQLite and blobs. */
+export interface JobMessage {
+  type: string
+  [k: string]: string | number | boolean | null
+}
+
+export interface Jobs {
+  enqueue(job: JobMessage, opts?: { delaySeconds?: number }): Promise<void>
+  enqueueBatch(jobs: JobMessage[]): Promise<void>
+}
+
+/**
+ * Where repositories live. A collection's objects are read and written through
+ * the repository of its primary placement; mirrors are written by sync jobs.
+ */
+export interface Stores {
+  /** The repository of a collection's primary placement. */
+  forCollection(collectionId: string): Promise<Repo>
+  /** The repository at a storage location. */
+  forLocation(locationId: string): Promise<Repo>
+  /**
+   * Platform-internal objects that never leave the platform and are never
+   * mirrored: push sessions, staging uploads, the reference log.
+   */
+  internal: Store
+  /** File bytes, by the `files.storage_key` (v1 keys are relative to the bucket root). */
+  fileBytes: PresigningStore
+  /** The canonical key of a verified file in the platform repository (relative to fileBytes). */
+  canonicalFileKey(hash: string): string
+  /** Where a direct upload is staged before verification (relative to fileBytes; expires by lifecycle rule). */
+  stagingKey(uploadId: string): string
+}
+
+/**
+ * A world-readable bucket for assets that are public by nature (org logos),
+ * served directly at `baseUrl`. Never the platform bucket, which stays private.
+ */
+export interface PublicAssets {
+  store: Store
+  /** Public URL of the bucket root, no trailing slash, e.g. https://assets.underlay.org */
+  baseUrl: string
+}
+
+export interface Ports {
+  stores: Stores
+  db: Db
+  jobs: Jobs
+  cache: Cache
+  /** Signs version log entries (the deployment's Ed25519 key, imported once per isolate). */
+  signer(): Promise<Signer>
+  /**
+   * fetch for user-supplied URLs (webhooks). Workers have no private network to
+   * reach; on Node this resolves the host and refuses private addresses.
+   */
+  outboundFetch(url: string, init: RequestInit): Promise<Response>
+  /**
+   * Key that encrypts storage location credentials (32 bytes, base64url;
+   * LOCATION_KEY). Without it, customer locations can't be added.
+   */
+  locationKey?: string
+  /**
+   * fetch for customer storage endpoints (user-supplied URLs): on Node it must
+   * refuse private addresses, as outboundFetch does.
+   */
+  locationFetch?: (req: Request) => Promise<Response>
+  /** The deployment's public assets bucket; absent when it has none (avatar routes answer 503). */
+  publicAssets?: PublicAssets
+  /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
+  waitUntil(p: Promise<unknown>): void
+  /**
+   * Request budgets for /api/* (lib/limits.ts). Workers: the rate-limit binding;
+   * Node: in memory. Absent: no limit (tests).
+   */
+  rateLimit?: RateLimiter
+  /** Where requests' usage events go (billing/usage.ts). Absent: not metered. */
+  usage?: UsageSink
+}
+
+/** Whether one more request under `key` fits its budget ('anon': per IP; 'user': per user). */
+export interface RateLimiter {
+  /** Spend `cost` (default 1) of the key's budget; false when it's spent. */
+  check(kind: 'anon' | 'user' | 'page', key: string, cost?: number): Promise<boolean>
+}

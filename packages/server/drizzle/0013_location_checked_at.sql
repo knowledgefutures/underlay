@@ -1,0 +1,1 @@
+ALTER TABLE `storage_locations` ADD `checked_at` integer;

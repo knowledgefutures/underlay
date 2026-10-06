@@ -9,9 +9,9 @@ run-name: >-
 
 on:
   push:
-    branches: [main]
+    branches: [main, v2-edge]
   pull_request:
-    branches: [main]
+    branches: [main, v2-edge]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,7 +21,7 @@ jobs:
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -52,3 +52,12 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Browser bundle
+        run: pnpm --filter @underlay/protocol check-browser
+
+      - name: CLI build
+        run: pnpm --filter @underlay/cli build && node packages/cli/dist/cli.js --help
+
+      - name: Web build and SSR smoke
+        run: pnpm --filter @underlay/web build && pnpm --filter @underlay/web smoke

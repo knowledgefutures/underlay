@@ -1,0 +1,782 @@
+# Underlay - AI Integration Guide
+
+Underlay is a versioned, content-addressed registry for structured data. Apps publish versions of
+their data as JSON records with JSON Schemas; Underlay keeps every version and serves it over an
+HTTPS API. Built by Knowledge Futures (501c3): https://www.knowledgefutures.org
+
+Base URL: https://www.underlay.org/api
+Protocol specification: https://www.underlay.org/docs/protocol
+
+---
+
+## Authentication
+
+1. API key (programmatic access):
+   Header: Authorization: Bearer ul_<key>
+   On GET and HEAD the key may instead be passed as ?token=ul_<key> (share links).
+   Every key starts with "ul_" and belongs to the user who creates it. Create keys at
+   https://www.underlay.org/settings/keys, at https://www.underlay.org/:owner/settings/keys (which can
+   confine a key to one of the organization's collections), or with the API (see "API Keys").
+   A key has a scope, read, write or admin, and may be confined to some collections.
+
+2. Session cookie (browser use):
+   Sign in through KF Auth SSO at https://www.underlay.org/login. An account, with a personal
+   organization, is created on first sign-in.
+
+Public data needs no authentication. Publishing, settings and private data need a key or a
+session. A Bearer key that doesn't verify is refused with 401 {"error": "Invalid or expired API
+key"}; it is never treated as anonymous.
+
+What a key may do:
+- read: read what its holder may read.
+- write: also publish (push, files, metadata, fork). Acts as a plain member of the org.
+- admin: keeps its holder's full role (owners and admins may then change visibility, delete,
+  transfer, manage webhooks, mirrors and ARK settings). A member's admin key is still a member's.
+  Changing or deleting an organization, setting its NAAN and deleting your account also need a
+  session or an admin key: an owner's write key gets 403.
+- A key confined to collections (metadata.collectionIds) works only on those collections, and is
+  refused on account and organization endpoints and on fork. On its collections it acts as a
+  member whatever its scope: it may push, but visibility, deletion, transfer, webhooks and
+  mirrors are 403.
+
+Agent links: a collection's Share panel can create https://www.underlay.org/agent/ul_<key>, a
+write key confined to that collection that expires after 1 hour. GET /agent/:key is an HTML page
+telling an AI agent how to push to the collection with that key (404 once expired or revoked).
+
+## Rate Limits
+
+Requests spend units from a per-minute budget:
+
+| Caller                                        | Budget                |
+|-----------------------------------------------|-----------------------|
+| Anonymous, /api/*                             | 60 units/min per IP   |
+| Anonymous, web pages (and ARK, /api/auth/*)   | 600 units/min per IP  |
+| Authenticated (per user; per org for org keys)| 5,000 units/min       |
+
+Most requests cost 1 unit. Expensive ones cost more:
+- export: 20
+- .../versions/:n/records.ndjson(.gz) and .../versions/:n/pack: 10
+- POST /api/records/batch, /api/records/:hash/provenance, .../diff, .../history: 5
+
+Over budget: 429 {"error": "Rate limit exceeded"} with Retry-After: 60. There are no
+X-RateLimit-* headers. Authenticate for any automated access. On Cloudflare the limit is counted
+per data center and is approximate.
+
+---
+
+## Core Concepts
+
+- Organization: owns collections. Every user has a personal organization. Identified by :owner
+  (its slug).
+- Collection: a named, versioned body of data owned by an organization. Identified by
+  :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). Public or private.
+- Version: an immutable state of a collection: schemas, records, files and metadata. Identified
+  by semver ("v1.2.0"), by version hash ("ulv2:<hex>"), or as "latest".
+- Record: {id, type, data}. Its hash is the SHA-256 of its canonical form (see "Record Hashing").
+  Within a version, (type, id) identifies one record; the same id may appear under two types.
+- Type: a class of records with one JSON Schema (draft-07).
+- File: bytes identified by their SHA-256, referenced from record data as
+  {"$file": "sha256:<hex>"}.
+- Access sets: each version has a public set and a private set. Members of the owning
+  organization read both; everyone else reads the public set.
+- Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
+  cross-collection discovery.
+
+---
+
+## Web URLs (for linking humans to a view)
+
+The API paths below are for fetching data. To point a person at something in the browser, use
+these page URLs. A version is a path prefix, a view is a path segment, and no version prefix
+means "latest". Page URLs write semver without the "v" (/v/1.2.0); /v/v1.2.0 redirects there.
+
+https://www.underlay.org/:owner                                   → organization or user profile
+https://www.underlay.org/:owner/:slug                             → collection overview (latest)
+https://www.underlay.org/:owner/:slug/records                     → browse records (?type=TypeName)
+https://www.underlay.org/:owner/:slug/schemas                     → schemas (latest)
+https://www.underlay.org/:owner/:slug/files                       → files (latest)
+https://www.underlay.org/:owner/:slug/versions                    → version history
+https://www.underlay.org/:owner/:slug/versions/compare?from=v1.0.0&to=v1.1.0 → diff two versions
+https://www.underlay.org/:owner/:slug/v/1.2.0                     → overview at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/records             → records at v1.2.0 (?type=TypeName)
+https://www.underlay.org/:owner/:slug/v/1.2.0/records/:type/:id   → one record at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/schemas             → schemas at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/files               → files at v1.2.0
+https://www.underlay.org/records/:hash                            → a record by hash, with provenance
+https://www.underlay.org/schemas/:id                              → a schema and the collections using it
+
+Prefer a version-pinned URL when citing data: unpinned URLs follow the latest version. ARK
+identifiers (ark:NAAN/<id>.v1.2.0) also resolve to these pages and are the most durable option.
+
+---
+
+## Collection URLs
+
+Every collection route below is relative to a collection URL, /api/collections/:owner/:slug.
+- :owner is the organization's slug (its handle).
+- /api/collections/_/:collectionId names the same collection by its id, which never changes;
+  every route works under it (/api/collections/_/:collectionId/versions/latest/records, ...).
+- Every response about a collection you may read carries the header x-underlay-collection: <id>.
+- Slugs change, and a released slug can later name another organization. Integrations that store
+  a reference should store the collection id and use the _/ form.
+- Owners named by DID (did:...) or a domain are part of the protocol but not yet resolved here
+  (404).
+These routes are the protocol's read API: https://www.underlay.org/docs/protocol
+
+---
+
+## Reading Data
+
+Versions are immutable, so a response for a version named by semver or hash may be cached
+(anonymous: 10 minutes; members: private). "latest" is not cached.
+
+### Collections
+GET /api/collections                       → public collections
+    ?q= (name contains), owner=, tag=, sort=name|records (default: recently updated),
+    limit= (default 50, max 100), offset=, mine=true (your organizations' collections; session)
+    → {collections: [...], facets: {owners, tags}, featuredTags, featuredCollections}
+GET /api/collections/:owner/:slug          → {id, owner: {id, did, handle, name}, slug, name,
+    description, visibility: public|private, ark, createdAt, updatedAt, versionCount,
+    head: {semver, hash} | null}, plus public, ownerSlug, ownerName and latestVersion (a summary)
+GET /api/accounts/:owner/collections       → an organization's collections (members also see
+                                             private ones): [{id, slug, name, public, createdAt, updatedAt}]
+
+### Versions
+GET /api/collections/:owner/:slug/versions          → [version summary], newest first
+    (?limit= default 50, max 100; &offset=)
+GET /api/collections/:owner/:slug/versions/latest   → latest version
+GET /api/collections/:owner/:slug/versions/:n       → one version (:n = v1.2.0, 1.2.0, ulv2:<hex>)
+    → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, fileCount,
+       totalBytes, typeCounts, createdAt, ark, metadata, schemas: {type: schema}}
+    Counts are those of the sets you may read.
+
+### Records
+GET .../versions/:n/records                → a page of records
+    ?type= (one type), limit= (default 100, max 2000), cursor= (or after=), offset=
+    → {records: [{id, type, data, hash, private?}], pagination: {limit, hasMore, nextCursor, total}}
+GET .../versions/:n/records/:type/:id      → one record: {id, type, data, hash, private?, semver}
+GET .../versions/:n/records.ndjson         → every record, streamed (see "Bulk Read")
+GET .../versions/:n/records.ndjson.gz      → the public records as gzip, as stored (?type= for one type)
+GET /api/collections/:owner/:slug/records/:type/:id/history
+    → {type, id, changes: [{seq, semver, createdAt, change: added|updated|removed, hash}], truncated}
+      the versions where this record changed (the newest 500 versions are examined)
+
+"private": true marks a record of the private set; only members see those.
+
+### Manifest (ids and hashes, no bodies)
+GET .../versions/:n/manifest
+    ?limit= (default 10000, max 25000), cursor=
+    → {semver, hash, schemas: {type: schemaHash},
+       records: [{id, type, hash, private?}],
+       files: [fileHash, ...],              (first page only; at most 25,000, then filesTruncated: true)
+       pagination: {limit, hasMore, nextCursor}}
+GET .../versions/:n/manifest?since=v1.0.0  → only the changes since that version (a semver or hash):
+    {..., since, delta: {added: [{id, type, hash, private?}],
+     updated: [{id, type, hash, previousHash, private?, previousPrivate?}],
+     removed: [{id, type, hash, private?}]}, pagination}
+    Each page holds the next `limit` changes in (type, id) order, divided into the three lists.
+    Members: an entry in the private set has "private": true (a removal: the set it left). A
+    record that moved between the sets is under updated, with previousPrivate (present only when
+    the set changed); a move that kept the hash has previousHash equal to hash.
+    Non-members see the public set only: a record made private is removed, one made public added.
+
+Records come in (type, id) order. Cursors are opaque: pass back nextCursor unchanged until hasMore
+is false. Manifest entries are about 120 bytes each: the cheapest way to learn what a version holds.
+
+### Diff
+GET .../versions/:n/diff?from=v1.0.0       → records added, updated and removed, with bodies
+    ?limit= (default 500, max 5000), cursor=
+    → {from, to, added: [{id, type, data}], updated: [{id, type, data}], removed: [{id, type}],
+       pagination: {limit, hasMore, nextCursor},
+       meta: {schemaChanged, metadataChanged, filesAdded, filesRemoved}}
+    Without from=, the diff is against the version before :n, which "from" names. The first
+    version diffs against an empty version: every record is added and "from" is null.
+    removed carries no hashes; when you need them, use manifest?since= instead.
+
+### Files
+GET .../versions/:n/files                  → [{hash, size, mimeType, createdAt, referenceCount, references}]
+                                             (at most 10,000)
+GET /api/collections/:owner/:slug/files/:hash
+    → 302 to a presigned URL valid for 5 minutes (follow it, e.g. curl -L). A file that was ever
+      in a public set of a public collection is anonymous; members (key or session) also get
+      every file the collection holds: the latest version's private files and any file uploaded
+      to it and verified (earlier versions' private files, uncommitted uploads). The API path is
+      the durable locator: never store the redirect target. A file you can't read is 404, even
+      if withheld; 451 if a file you can read is withheld.
+HEAD /api/collections/:owner/:slug/files/:hash   → 200 if you may read the file through this
+                                                   collection (the same rule), else 404 or 451
+POST /api/collections/:owner/:slug/files/presign → {"hashes": [...]} (up to 500)
+                                                   → {hash: presignedUrl | null}
+GET /api/collections/files/:hash           → 302 to the file from any collection you may read
+
+:hash is 64 hex characters; a "sha256:" prefix is accepted.
+
+### Records by hash (across collections)
+POST /api/records/batch                    → {"hashes": [...]} (1 to 100) → NDJSON
+                                             {id, type, data, hash}; hashes not found or not
+                                             readable are omitted
+GET /api/records/:hash/provenance          → the collections and versions that hold a record:
+    {hash, recordId, type, data, size, firstSeen, createdAt,
+     references: [{owner, collection, collectionName, semver, versionCreatedAt}]}
+GET /api/records/:hash/first               → where a record or file hash first appeared:
+    {hash, kind: record|file, owner, collection, semver, createdAt, type?, id?}
+Provenance is indexed shortly after each commit, so a just-published version can take a few
+seconds to appear.
+
+### Export
+GET /api/collections/:owner/:slug/export   → an archive of the latest version
+    ?version=v2.0.0 (a specific version), format=tar.gz|tar (default tar.gz)
+
+Archive entries: manifest.json first, README.md if the metadata has a readme,
+records/<Type>.ndjson (one per type), files/<hash>.
+manifest.json = {collection: {id, owner, slug, name, description},
+                 version: {semver, hash, message, recordCount, fileCount, totalBytes, createdAt},
+                 schemas, files_missing, files_withheld}
+The archive streams as it is produced: pipe it to disk or into tar. files_missing lists files
+with no stored copy; files_withheld lists files that may not be served. A failure partway
+through cuts the response off, so an archive that unpacks without error is complete. Entries
+are dated with the version's creation time, so the same version (read with the same access)
+exports to byte-identical archives. For bulk record reads, records.ndjson is cheaper.
+
+### Fork
+POST /api/collections/:owner/:slug/fork    → {"targetOrg": "my-org", "slug": "optional-new-slug"}
+    Creates a private collection in targetOrg (you must be a member) whose v1.0.0 is the
+    source's latest version. A member of the source's organization gets both sets; anyone
+    else gets the public set only. Nothing is copied: the fork shares the source's storage.
+    → 201 {id, owner, slug, name, forkedFrom: {owner, slug, version}, version: {semver, recordCount}}
+    Needs a write or admin key or a session; read keys and collection-confined keys get 403.
+    409 if the slug is taken; 422 if the source has no versions.
+
+---
+
+## Writing Data: The Push Flow
+
+Every push is a DELTA PUSH: open a session against the version you started from, upload the
+records you add or change and the (type, id) pairs you delete, then commit. Work and upload are
+proportional to the change, not to the collection's size. Any Underlay server accepts the same
+exchange: https://www.underlay.org/docs/protocol/push-and-pull
+
+### Step 1: Get the current head
+GET /api/collections/:owner/:slug/versions/latest
+→ {semver, hash, recordCount, fileCount, ...}
+404 means no versions yet: the first push uses "base": null.
+
+### Step 2: Work out what changed
+If your app tracks its own changes, you already have the upserts and deletes: go to step 3.
+
+If your app keeps no copy (it exports its whole dataset each time), page through the manifest
+(see "Manifest") and compare by (type, id):
+- in your data, not in the manifest                    → upsert
+- in both, different hash (see "Record Hashing")       → upsert
+- in both, same hash, different private flag           → upsert with the new flag
+- in the manifest, not in your data                    → delete
+Use the manifest's "semver" as the push's "base".
+
+### Step 3: Open a session
+POST /api/collections/:owner/:slug/push
+Content-Type: application/json
+Authorization: Bearer ul_<key>
+
+{
+  "base": "v1.2.0",
+  "message": "Daily archive 2026-04-27",
+  "app_id": "my-app",
+  "actor_id": "my-app:cron-job",
+  "schemas": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "body": {"type": "string"},
+        "publishedAt": {"type": "string", "format": "date-time"},
+        "authorId": {"type": "string"},
+        "pdf": {"type": "object"}
+      }
+    },
+    "Author": {
+      "type": "object",
+      "properties": {"name": {"type": "string"}, "email": {"type": "string"}}
+    }
+  },
+  "metadata_patch": {"description": "Daily archive of publications"},
+  "files": {"add": ["7a8b9c..."]}
+}
+
+Every field is optional:
+- base: the semver you diffed against. If it isn't the head: 409 with currentVersion. null or
+  absent applies your changes to whatever the head is; use null for the first push.
+- schemas: the FULL type set, type → JSON Schema. It replaces the base's: a type you leave out
+  is removed with its records. Omit it to keep the base's types. Every schema of the resulting
+  set (kept ones too) is checked in full here: draft-07 meta-schema, patterns, $refs that
+  resolve, and the rules under "Schemas" below. One that fails: 422.
+- metadata: replaces the version metadata (description, readme, license, ...). An object or
+  null; anything else is 400.
+- metadata_patch: an object (anything else is 400); merges its top-level fields into the base's
+  metadata. Ignored when metadata is given. With neither, the metadata is kept.
+- files: {"add": [hex, ...], "remove": [hex, ...]}: files to declare or drop beyond those your
+  records reference. Bare 64-character lowercase hex; other strings are ignored. A declared file
+  is in the private set (members only), whatever records reference it, and stays declared in
+  later versions until you remove it. Files your records reference need no declaring.
+- message, app_id, actor_id: strings recorded with the version. actor_id is shown to members only.
+- strip_unknown_fields: true drops top-level data fields the type's schema doesn't list in
+  "properties" before hashing. Default false: such records are refused (422).
+
+Response (200):
+{
+  "session_id": "uuid",
+  "base": "v1.2.0",
+  "needed_files": ["7a8b9c..."],
+  "expires_at": "2026-04-27T13:00:00.000Z",
+  "limits": {
+    "open_bytes": 8388608,
+    "batch_bytes": 16777216,
+    "batch_lines": 10000,
+    "session_idle_seconds": 3600,
+    "open_sessions": 20,
+    "file_bytes": 33554432
+  }
+}
+
+- needed_files: declared files this collection doesn't hold yet (files already uploaded and
+  verified for it are held). Upload them before the commit.
+- limits: this server's limits. Size requests by them rather than hard-coding numbers:
+  open_bytes (this request's body), batch_bytes and batch_lines (each records or deletes
+  request), session_idle_seconds (each upload moves expires_at back), open_sessions (sessions
+  you may have open or committing at once), file_bytes (largest PUT .../files/:hash).
+
+### Step 4: Upload records and deletes
+POST /api/collections/:owner/:slug/push/:sessionId/records
+Content-Type: application/x-ndjson
+Authorization: Bearer ul_<key>
+
+{"id":"article-42","type":"Article","data":{"title":"New","body":"..."}}
+{"id":"article-10","type":"Article","data":{"title":"Updated Title","body":"..."}}
+{"id":"article-11","type":"Article","data":{"title":"Draft"},"private":true}
+
+→ {"received": 3}
+
+POST /api/collections/:owner/:slug/push/:sessionId/deletes
+Content-Type: application/x-ndjson
+
+{"type":"Article","id":"article-3"}
+
+→ {"received": 1}
+
+- Send as many requests as you need, each within batch_lines and batch_bytes. An empty body is
+  a 400.
+- Every record line passes the input rules (see "Record Hashing") and its type's schema, and its
+  type must be in the session's type set. If ANY line fails: 422 with validationErrors (the
+  first 100 failing lines, each with its 1-based "line"; totalErrors counts all), and nothing
+  from that request is stored. Fix the lines and resend the request.
+- Every delete line passes the same input rules and id and type checks, and its type must be in
+  the session's type set; failures answer the same way (validationErrors, totalErrors).
+- Within a session, the later upload of a (type, id) wins, whether a record or a delete.
+- Deleting a pair the base doesn't hold is not an error.
+- You don't send hashes: the server canonicalizes and hashes what you upload.
+
+### Step 5: Upload new files (if any)
+PUT /api/collections/:owner/:slug/files/:hash
+Content-Type: application/octet-stream
+Authorization: Bearer ul_<key>
+Body: raw file bytes (or multipart/form-data with a "file" field)
+
+→ 201 {"hash", "status": "stored", "size"}; 400 if the bytes don't hash to :hash; 413 over
+limits.file_bytes.
+
+Larger files (up to 5 TiB) go straight to storage:
+POST .../files/uploads {"hash", "size", "mimeType"?}
+  → 201 {id, url, expiresIn}: PUT the bytes to url
+  → above 5 GiB: {id, partBytes, partCount, parts: [{partNumber, url}], expiresIn}: PUT each part
+GET  .../files/uploads/:id/parts?from=<n>          → the next page of part URLs
+POST .../files/uploads/:id/complete {"parts"?: [{partNumber, etag}]}   → 202 {id, status: "verifying"}
+     (parts is required, and non-empty, for a multipart upload: 400 otherwise)
+GET  .../files/uploads/:id                         → {id, hash, size, status: pending|verifying|verified|failed, error}
+The server hashes the uploaded bytes; the file counts as held once status is "verified".
+
+Every file a new record references, and every declared file, must be held for the collection
+before the commit.
+
+### Step 6: Commit
+POST /api/collections/:owner/:slug/push/:sessionId/commit
+Authorization: Bearer ul_<key>
+
+→ 201 {"semver": "v1.3.0", "hash": "ulv2:def456...", "recordCount": 1203, "fileCount": 1,
+       "changes": {"added": 2, "removed": 1, "updated": 1}}
+
+Background commit: add ?async=true (or the body {"async": true}). The server also commits in the
+background when the session uploaded more than 100,000 records, or when a schema change makes it
+revalidate more than 100,000 existing records.
+→ 202 {"session_id": "uuid", "status": "committing", "poll": "GET /api/collections/:owner/:slug/push/uuid"}
+
+Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committed" or "failed"
+(or "open" again, with "error", after a "Missing files" refusal; see Step 7):
+{
+  "session_id": "uuid",
+  "status": "committed",
+  "records_received": 3110000,
+  "expires_at": "...",
+  "created_at": "...",
+  "finalize_started_at": "...",
+  "result": {"semver": "v1.3.0", "hash": "ulv2:def456...", "recordCount": 3110000, "fileCount": 0, "changes": {...}},
+  "error": null
+}
+
+On success "result" is exactly the synchronous 201 body; on failure "error" holds the error body.
+The version is invisible until committed, and the commit doesn't depend on your connection.
+
+### Step 7: Handle errors
+
+Conflict at open (409): {"error": "Version conflict", "currentVersion": "v1.3.0"}
+Conflict at commit (409): {"error": "Version conflict", "currentVersion": "v1.3.0"} (someone
+published after you opened)
+→ Re-read the head (and the manifest, if you diff), then open a new session.
+
+No changes (409): {"error": "No changes detected", "hash": "ulv2:..."}
+→ Nothing to do.
+
+Session not open (409): {"error": "Session is committed"} (or expired, failed, ...)
+
+Invalid records (422):
+{"error": "Invalid records", "validationErrors": [{"line": 2, "recordId": "...", "type": "...", "errors": ["..."]}], "totalErrors": 1}
+→ Fix those lines and resend, or open the session with "strip_unknown_fields": true if the
+  problem is fields not in the schema. Invalid deletes answer the same shape ("Invalid deletes").
+
+Refused schema (422 at open): {"error": "<why>"} → fix the schema and open again.
+
+Schema change invalidates existing records (422 at commit): {"error": "Schema validation failed",
+"validationErrors": [...], "totalErrors": n}
+
+Missing files (422 at commit): {"error": "Missing files", "filesNeeded": ["abc..."]} (bare hex)
+→ The session stays open: upload the listed files, then commit the same session again. After a
+  background commit, polling shows status "open" with this body in "error".
+
+Too large (413): a body over open_bytes or batch_bytes, a request over batch_lines, a file over
+file_bytes → split it, or use the presigned upload.
+
+Too many sessions (429): you have open_sessions sessions open or committing → commit or abandon
+one (DELETE .../push/:sessionId), or let it expire.
+
+Storage busy (503): storage cleanup ran during the commit → push again.
+
+### Session management
+GET    /api/collections/:owner/:slug/push/:sessionId  → session status (and result after a commit)
+DELETE /api/collections/:owner/:slug/push/:sessionId  → abandon the session
+
+Status is one of: open (accepting uploads; "error" holds a "Missing files" refusal, if the last
+commit had one), committing, committed ("result" holds the version), failed ("error" says why),
+expired (idle too long, or abandoned).
+
+### First push
+Set "base" to null, include schemas for all types, upload every record. The first version is
+v1.0.0.
+
+### Semver
+The server assigns it from what changed against the base:
+- major: a type added or removed, or a schema changed (including making a type private or public)
+- minor: otherwise, any record added, removed or changed (moving between public and private counts)
+- patch: otherwise (metadata or files only)
+A push that changes nothing makes no version (409 "No changes detected").
+
+### Metadata only
+POST /api/collections/:owner/:slug/metadata {"description": ..., "readme": ..., "license": ...}
+merges the fields into the latest version's metadata (null clears one) and publishes a patch
+version: 201 {semver, hash, status: "completed"}, or 200 {semver, unchanged: true}. 422 if the
+collection has no versions.
+
+---
+
+## Pagination (Records Endpoint)
+
+GET .../versions/:n/records?limit=2000&cursor=<pagination.nextCursor>
+
+- limit: default 100, max 2000.
+- cursor (alias after): opaque; pass pagination.nextCursor back unchanged. With ?type=, a bare
+  record id also works (records after that id).
+- offset: works at any depth (a tree seek, not a scan), but a cursor is stable while you walk.
+- type: one record type.
+- Order: (type, id), with ids in UTF-8 byte order within a type and types in slug order.
+- pagination.total: the number of records you may read (with ?type=, of that type).
+
+To read a whole version, don't page: use records.ndjson. Paging costs one request per page,
+1 unit each; the stream is one request at 10 units.
+
+---
+
+## Bulk Read (the fast way to get a whole version)
+
+GET .../versions/:n/records.ndjson
+
+Streams every record you may read as NDJSON in one response, from the version's record trees.
+Memory is constant on both ends: process each line as it arrives.
+
+Content-Type: application/x-ndjson
+X-Underlay-Record-Count: 3113504     ← lines to expect
+
+{"id":"arxiv:0704.0001","type":"Preprint","data":{...},"hash":"abc123..."}
+
+Parameters:
+- type: one record type
+- after_type + after: resume after the record (after_type, after) and continue through the
+  later types
+- type + after: resume after this id, within that type only
+- after with neither type nor after_type, or after_type without after: 400
+
+Guarantees:
+- Order: types in slug order; within a type, ids in UTF-8 byte order.
+- hash is the record's hash, as on the records endpoint.
+- Private records are included for members, each line ending "private":true, and absent for
+  everyone else.
+- X-Underlay-Record-Count counts the records of this request (your access, your ?type=, after
+  the resume point), withheld records included.
+
+A stream that dies halfway can't report an error: the 200 was already sent. Count the lines and
+compare with X-Underlay-Record-Count. To resume, take the type and id of the last complete line
+and request ?after_type=<that type>&after=<that id>: the stream continues to the end.
+
+records.ndjson.gz is the public records as stored (?type= for one type): concatenated gzip members,
+no hash on each line, the cheapest bulk read. Some decoders stop after the first gzip member;
+use one that reads them all (gunzip, zlib with multi-member support).
+
+### When to use which
+
+- Whole version, one pass               → records.ndjson
+- A page, or browsing                   → records?limit=2000&cursor=
+- One record                            → records/:type/:id
+- Only ids, types and hashes            → manifest
+- What changed since a version          → manifest?since=
+- Records you know the hashes of        → POST /api/records/batch (up to 100 per call)
+- An archive to keep                    → export
+- A verifiable copy                     → log + pack (see "Sync")
+
+---
+
+## Sync (verifiable copies)
+
+GET /api/collections/:owner/:slug/log?after=<seq>&limit=<n>  (max 1000)
+    → {collection: collection.json, head: {entryHash, seq, versionHash},
+       entries: [signed version log entries]}
+GET /api/collections/:owner/:slug/versions/:n/pack?base=<n>&sets=public|all
+    → application/x-tar of the objects version :n has that base doesn't (sets=all needs
+      membership; 403 otherwise)
+
+collection.json = {id, owner: {id, did, handle, name}, slug, name, description,
+    visibility: public|private, ark: "ark:NAAN/name" | null, keys: [{id, alg, publicKey}]}.
+It is stored with the collection's data, so any copy says who owns the collection and whether it
+is public. It is rewritten whenever one of these changes.
+
+A client verifies the log's signatures and hash chain, then checks every object in the pack
+against its hash and rebuilds the trees. @underlay/protocol (and the underlay CLI) do this.
+Specification: https://www.underlay.org/docs/protocol/repositories
+
+---
+
+## Record Format
+
+{
+  "id": "unique-stable-id",
+  "type": "TypeName",
+  "data": {
+    "title": "Some value",
+    "authorId": "author-123",
+    "attachment": {"$file": "sha256:abc123def456..."}
+  }
+}
+
+- id: a stable string, unique per type within the collection. Use your app's primary key.
+- type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
+- data: any JSON value its schema allows. Refer to other records by id; refer to files with
+  {"$file": "sha256:<hex>"}.
+
+Keep relationships as ids (no joins); readers resolve them with the schema and records together.
+
+---
+
+## Record Hashing
+
+The server hashes what you upload, so you only need to hash records yourself to diff against a
+manifest or to check a record you read. Compute them exactly as below, or every record will look
+changed.
+
+1. Canonicalize `data` with RFC 8785 (JCS): no whitespace, object keys sorted by their UTF-16
+   code units, strings and numbers written as JSON.stringify writes them.
+2. Build the canonical form as a string, with a fixed envelope:
+   '{"id":' + JSON.stringify(id) + ',"type":' + JSON.stringify(type) + ',"data":' + JCS(data) + '}'
+   The private flag is NOT part of the record or its hash.
+3. SHA-256 over the UTF-8 bytes of that string, as 64 lowercase hex characters.
+
+Do NOT build a sorted object and pass it to JSON.stringify: JavaScript lists integer-like keys
+("9", "10") first whatever order they were added in, which gives a different hash whenever some
+object in data has such a key.
+
+```javascript
+function jcs(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(jcs).join(',') + ']';
+  const keys = Object.keys(value).sort();
+  return '{' + keys.map((k) => JSON.stringify(k) + ':' + jcs(value[k])).join(',') + '}';
+}
+
+function canonicalRecord(record) {
+  return '{"id":' + JSON.stringify(record.id) + ',"type":' + JSON.stringify(record.type) +
+    ',"data":' + jcs(record.data) + '}';
+  // Node.js:  createHash('sha256').update(canonical).digest('hex')
+  // Browser:  crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical))
+}
+```
+
+(The reference implementation, @underlay/protocol in the Underlay repository, has
+hashRecord(id, type, data) → {hash, canonical}; it is not published to npm.)
+
+Example:
+  {"id": "article-1", "type": "Article", "data": {"title": "Hello", "body": "World"}}
+  canonical form: {"id":"article-1","type":"Article","data":{"body":"World","title":"Hello"}}
+  The data keys are sorted, so any input key order gives the same hash.
+
+### Input rules
+Every record line is checked on its source text. Refused (422, with a code):
+- syntax: not JSON
+- duplicate_key: an object with a repeated key
+- unsafe_integer: an integer literal beyond ±(2^53 - 1) (put large ids in strings)
+- lone_surrogate: an unpaired UTF-16 surrogate in a string or key
+- too_deep: data nested more than 64 levels
+- bad_envelope: not an object, no data, or a non-boolean private
+- bad_id: id missing, not a string, empty, or over 1,024 UTF-8 bytes
+- bad_type: type missing, empty, over 128 UTF-8 bytes, starting with ".", or containing /, \ or
+  control characters
+- record_too_large: canonical form over 8 MiB
+Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/protocol/records
+
+### Schemas
+A schema is JSON Schema draft-07 ($schema, if given, must name draft-07), at most 256 KiB
+canonical, with each pattern at most 256 characters. Its hash is SHA-256 of JCS(schema).
+"private": true is allowed only at a schema's root (a private type).
+
+---
+
+## Schema Discovery
+
+GET /api/schemas                       → search schemas (an array)
+    ?q= (labels and type names), slug=TypeName, label=uri, schema_hash=<bare hex>,
+    limit= (default 50, max 100), offset=
+GET /api/schemas/:id                   → one schema with its labels and where it is used
+GET /api/collections/:owner/:slug/schemas    → the latest version's schemas
+    (?version=v1.2.0; ?raw=true to skip label enrichment)
+POST /api/schemas/:id/labels           → add a label {"label": "schema.org/Person"} (write or admin key, or session)
+DELETE /api/schemas/:id/labels/:label  → remove a label (Underlay stewards only: session or
+                                         non-read key)
+
+The collection schemas endpoint adds known labels to each schema as "x-underlay-labels" (opt out
+with ?raw=true).
+
+---
+
+## Privacy & Visibility
+
+A reader sees content only if it passes every level:
+  1. Collection: a private collection is a 404 to non-members.
+  2. Type: "private": true at the root of the type's schema makes every record of the type private.
+  3. Record: "private": true on the uploaded line makes that record private.
+Private content is in each version's private set, readable by members of the owning
+organization only. There is NO field-level privacy: "private": true on a property is refused.
+Put private fields in a private type, or push the whole record as private.
+
+Private type:
+"schemas": {
+  "Article": {"type": "object", "properties": {"title": {"type": "string"}}},
+  "InternalNote": {"type": "object", "private": true,
+                   "properties": {"note": {"type": "string"}, "articleId": {"type": "string"}}}
+}
+Public readers see only Article; InternalNote is absent from every read, schemas included.
+
+Private record:
+{"id":"article-1","type":"Article","data":{"title":"Public"}}
+{"id":"article-2","type":"Article","data":{"title":"Members only"},"private":true}
+
+Rules to design around:
+1. PRIVACY IS PER VERSION. A record you don't upload keeps its set from the base. A record you DO
+   upload is public unless its line says "private": true, so re-uploading a private record
+   without the flag publishes it. Read the current flags from the manifest ("private": true,
+   members only).
+2. REDACTION IS FORWARD-ONLY. Making a record private in a new version hides it there. Earlier
+   versions are immutable and still serve it, and a file that was in any public set stays
+   downloadable.
+3. Making a collection private stops anonymous reads within about 11 minutes (cached responses
+   expire); making it public takes effect at once.
+
+How it works: a version root lists the public set (types, record trees, files) in full and the
+private set only as a salted commitment. Version hash = "ulv2:" + SHA-256 of the root, so public
+readers can verify it and everything public, and learn only whether a private set exists.
+
+---
+
+## Organization and Collection Management
+
+Organizations:
+POST   /api/auth/organization/create   → {"name", "slug"}
+GET    /api/auth/organization/list     → your organizations
+GET    /api/accounts/:slug             → an organization or user profile (public)
+GET    /api/accounts/:slug/members     → its members (public)
+PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?} (owners: session or admin key)
+DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections,
+                                          or for a personal organization)
+PATCH  /api/accounts/:slug/ark         → {"naan": "<digits>" | null} (owners and admins: session or admin key)
+GET    /api/accounts/me                → you and your memberships (session or unscoped personal key)
+Invitations and member roles are managed under /api/auth/organization/*; accept an invitation
+with POST /api/accounts/invitations/accept {"token"}.
+
+Collections:
+POST   /api/accounts/:owner/collections   → {"slug", "name", "description"?, "public"? (default false)}
+                                            → 201 {id, owner, slug, name}
+PATCH  /api/collections/:owner/:slug      → {"name"?, "slug"?, "public"?} (public: owners and admins)
+DELETE /api/collections/:owner/:slug      → (owners and admins: a session or an admin key)
+POST   /api/collections/:owner/:slug/transfer  → {"targetOrgSlug"} (owners and admins)
+
+Reporting abuse: POST /api/abuse-reports {"hash"? | "url"?, "reason", "contact"?} (no auth needed).
+
+Webhooks (owners and admins), under /api/collections/:owner/:slug/webhooks:
+GET, POST {url, bumpFilter?: ["major","minor","patch"], enabled?} (the secret is returned once),
+PATCH/DELETE /:id, POST /:id/test, GET /:id/deliveries, POST /:id/deliveries/:did/retry.
+Each delivery is a POST with headers x-underlay-event, x-underlay-delivery and
+x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
+{event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
+patch, recordCount, fileCount}, bumpType}.
+
+ARK identifiers:
+GET /ark:<NAAN>/<id>[.v1.2.0][/Type/id]   → 302 to the page; ?info or ?? for metadata, ?json for JSON
+GET /api/ark/resolve?path=<ark path>     → {type: "redirect", url, metadata} or 404
+
+---
+
+## API Keys
+
+POST /api/auth/api-key/create  → {"name": "my-app", "metadata": {"scope": "write", "collectionIds"?: ["<collection id>"]}, "expiresIn"?: <seconds>}
+                                  The key is returned once: {"key": "ul_...", "id": "..."}
+GET  /api/auth/api-key/list    → {apiKeys: [{id, name, start, permissions, metadata, createdAt, expiresAt}], total}
+POST /api/auth/api-key/delete  → revoke {"keyId": "..."} → {"success": true}
+These routes need a signed-in session (a key can't manage keys), and create keys owned by you.
+scope is read (the default), write or admin; see
+"Authentication" for what each allows.
+
+---
+
+## Error Codes
+
+Errors are JSON: {"error": "<message>", "statusCode": <status>, ...}.
+
+400 — a malformed request (bad body, an empty batch, an invalid parameter)
+401 — authentication required, or an invalid or expired key
+403 — the key's scope or role doesn't allow it, or another user's push session
+404 — not found, or not readable by you (private content is never a 403)
+409 — version conflict, no changes, or a session that isn't open
+413 — a body, batch or file over the server's limits
+422 — records failing the input rules or schema, a refused schema, or missing files at commit
+429 — rate limited, or too many push sessions open (Retry-After)
+451 — a file or record withheld (a file you couldn't read anyway is 404)
+503 — storage busy; retry after Retry-After
+
+---
+
+Full documentation: https://www.underlay.org/docs
+Protocol specification: https://www.underlay.org/docs/protocol
+Integration guide: https://www.underlay.org/docs/integration
+Source code: https://github.com/knowledgefutures/underlay

@@ -8,9 +8,6 @@ package-lock.json
 .DS_Store
 coverage
 data/
-*.db
-*.db-journal
-*.db-wal
 planning/
 .claude/
 
@@ -27,5 +24,7 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# pnpm store cache (created by in-container installs)
-.pnpm-store/
+
+# Cloudflare local state and dev secrets (v2)
+.wrangler/
+.dev.vars*

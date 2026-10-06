@@ -1,0 +1,4 @@
+# Cloudflare static assets: response headers by path. Plain-text files need an
+# explicit charset, or browsers read UTF-8 as Windows-1252 (an arrow shows as â†’).
+/*.txt
+  Content-Type: text/plain; charset=utf-8

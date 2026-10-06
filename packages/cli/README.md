@@ -1,36 +1,40 @@
 # @underlay/cli
 
-Source lives in `src/cli`; this package just bundles it (`pnpm --filter @underlay/cli build`).
+The Underlay v2 command line. Source is in `src/`; `pnpm --filter @underlay/cli build` bundles it
+to `dist/cli.js`. Unpublished.
 
-Currently **unpublished and not built** — runnable only from the repo via `pnpm cli`.
+A working directory holds a local repository in `.underlay/`: a repository in the protocol layout
+(`repo/`), local versions, staging and remotes (`src/local.ts`). Versions are built with
+`buildVersion` from `@underlay/protocol`, the registry's own commit engine, so pushing a version
+gives the registry the same trees.
 
-## ⚠️ Review record privacy before publishing this for the first time
+```
+underlay init [dir] | clone <url> <owner/slug> [dir] [--token]
+underlay schema-set <file>        stage the type set ({type: schema})
+underlay add <file> [--strip-unknown-fields]
+                                  stage records (NDJSON {id, type, data, private?})
+underlay rm <type> <ids…>         stage deletes
+underlay meta-set <file> | --clear
+underlay file add <paths…>        store files records reference ({"$file":"sha256:…"})
+underlay commit -m <message>
+underlay status | log | diff <from> <to>
+underlay fsck [--files]           verify the local repository
+underlay remote add <name> <url> -c <owner/slug> [-t <token>] | remove | list
+underlay pull [remote] [--force]  remote defaults to origin
+underlay push [remote]
+```
 
-The CLI predates per-version record privacy (`version_records.private`, added 2026-08) and
-**cannot express it**. Publishing as-is would put a privacy-blind client in users' hands.
+- **pull** verifies the registry's signed log after what was last seen, then receives the newest
+  version as a pack against the last synced one; every tree is re-derived before it's accepted.
+  With a token it asks for the private sets too (`sets=all`), and falls back to the public sets
+  if the token can't read them.
+- **push** sends the local changes since the last sync as a delta push (upserts with their set,
+  and deletes), uploads the files they need, and then requires the registry's new version to be
+  the local one: the same hash, or, when the registry's private salt differs from a new local
+  repository's, the same records, files and metadata, checked by pulling it back. It refuses
+  while the registry has versions not yet pulled.
+- **Privacy** is carried: `private: true` on a record puts it in the private set locally and on
+  the registry, and private types (`"private": true` in the schema) are private throughout.
 
-Two concrete gaps, both must be closed first:
-
-1. **`src/cli/commands/push.ts` — manifest entries omit `private`.** The manifest is built as
-   `{ id, type, hash }`. The server takes each push's manifest as the authoritative statement of
-   which records are private, so a push that omits the flag marks every record public. Re-pushing
-   a collection that has private records would **silently publish them** in the new version.
-2. **`src/cli/commands/add.ts` — `private` is dropped at ingest.** It parses only
-   `{ id, type, data }` and stores the canonical hashed object, which by design excludes privacy
-   (privacy is contextual, not part of the content hash). So the flag is lost before `push` could
-   ever send it. The local store needs somewhere to carry it — e.g. a per-record privacy set in
-   the version manifest (`src/cli/lib/store.ts`, `VersionManifest`), kept outside the hash.
-
-Also settle the server-side semantics this depends on before shipping: a manifest entry's
-`private` is `z.boolean().optional()`, but ingest currently collapses it (`r.private ?? false`),
-so **omitted means public**. If that becomes "omitted means inherit from the base version", the
-CLI's obligations change. See `planning/reference-privacy-model.md`.
-
-## Also check before publishing
-
-- **The npm name `@underlay/cli` is already taken** by a 2023 package from the earlier Underlay
-  project ("CLI utility for downloading datasets specified in underlay.yaml", maintainers
-  `octref`, `joelg@mit.edu`, author "Knowledge Futures Group"). Publishing needs that account, a
-  version above `0.0.1`, or a different name.
-- The CLI is several releases stale against the API — verify it against the current negotiate
-  protocol (chunked manifest, async commit) before shipping.
+Before publishing: the npm name `@underlay/cli` belongs to a 2023 package from the earlier
+Underlay project, so publishing needs that account or another name.
