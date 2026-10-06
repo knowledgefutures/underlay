@@ -69,7 +69,7 @@ per data center and is approximate.
 - Organization: owns collections. Every user has a personal organization. Identified by :owner
   (its slug).
 - Collection: a named, versioned body of data owned by an organization. Identified by
-  :owner/:slug. Public or private.
+  :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). Public or private.
 - Version: an immutable state of a collection: schemas, records, files and metadata. Identified
   by semver ("v1.2.0"), by version hash ("ulv2:<hex>"), or as "latest".
 - Record: {id, type, data}. Its hash is the SHA-256 of its canonical form (see "Record Hashing").
@@ -110,6 +110,21 @@ identifiers (ark:NAAN/<id>.v1.2.0) also resolve to these pages and are the most 
 
 ---
 
+## Collection URLs
+
+Every collection route below is relative to a collection URL, /api/collections/:owner/:slug.
+- :owner is the organization's slug (its handle).
+- /api/collections/_/:collectionId names the same collection by its id, which never changes;
+  every route works under it (/api/collections/_/:collectionId/versions/latest/records, ...).
+- Every response about a collection you may read carries the header x-underlay-collection: <id>.
+- Slugs change, and a released slug can later name another organization. Integrations that store
+  a reference should store the collection id and use the _/ form.
+- Owners named by DID (did:...) or a domain are part of the protocol but not yet resolved here
+  (404).
+These routes are the protocol's read API: https://www.underlay.org/docs/protocol
+
+---
+
 ## Reading Data
 
 Versions are immutable, so a response for a version named by semver or hash may be cached
@@ -120,7 +135,9 @@ GET /api/collections                       → public collections
     ?q= (name contains), owner=, tag=, sort=name|records (default: recently updated),
     limit= (default 50, max 100), offset=, mine=true (your organizations' collections; session)
     → {collections: [...], facets: {owners, tags}, featuredTags, featuredCollections}
-GET /api/collections/:owner/:slug          → collection metadata and latest version summary
+GET /api/collections/:owner/:slug          → {id, owner: {id, did, handle, name}, slug, name,
+    description, visibility: public|private, ark, createdAt, updatedAt, versionCount,
+    head: {semver, hash} | null}, plus public, ownerSlug, ownerName and latestVersion (a summary)
 GET /api/accounts/:owner/collections       → an organization's collections (members also see
                                              private ones): [{id, slug, name, public, createdAt, updatedAt}]
 
@@ -212,7 +229,7 @@ GET /api/collections/:owner/:slug/export   → an archive of the latest version
 
 Archive entries: manifest.json first, README.md if the metadata has a readme,
 records/<Type>.ndjson (one per type), files/<hash>.
-manifest.json = {collection: {owner, slug, name, description},
+manifest.json = {collection: {id, owner, slug, name, description},
                  version: {semver, hash, message, recordCount, fileCount, totalBytes, createdAt},
                  schemas, files_missing, files_withheld}
 The archive streams as it is produced: pipe it to disk or into tar. files_missing lists files
@@ -536,11 +553,17 @@ use one that reads them all (gunzip, zlib with multi-member support).
 ## Sync (verifiable copies)
 
 GET /api/collections/:owner/:slug/log?after=<seq>&limit=<n>  (max 1000)
-    → {collection: {id, owner, slug, name, description, keys}, head: {entryHash, seq, versionHash},
+    → {collection: collection.json, head: {entryHash, seq, versionHash},
        entries: [signed version log entries]}
 GET /api/collections/:owner/:slug/versions/:n/pack?base=<n>&sets=public|all
     → application/x-tar of the objects version :n has that base doesn't (sets=all needs
       membership; 403 otherwise)
+
+collection.json = {id, owner: {id, did, handle, name}, slug, name, description,
+    visibility: public|private, ark: "ark:NAAN/name" | null, keys: [{id, alg, publicKey}]}.
+It is stored with the collection's data, so any copy says who owns the collection and whether it
+is public. It is rewritten whenever one of these changes. Copies written before 2026-10-05 have
+owner as a string and no visibility.
 
 A client verifies the log's signatures and hash chain, then checks every object in the pack
 against its hash and rebuilds the trees. @underlay/protocol (and the underlay CLI) do this.

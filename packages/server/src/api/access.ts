@@ -65,17 +65,34 @@ export interface CollectionAccess {
   sets: ('public' | 'private')[]
 }
 
+/** The id form of a collection URL, `<base>/_/<collectionId>` (spec 11.3.1); `_` is never a slug. */
+export const ID_OWNER = '_'
+
+/**
+ * Which collection `<owner>/<slug>` names (spec 11.3.1): `_` and a collection id,
+ * or an owner handle and the collection's slug. Owners are named here by their
+ * hosted handle, the org slug. A DID (`did:…`) or a domain handle (a dot) names
+ * no org yet: no org has one, so either is a 404.
+ */
+function collectionWhere(owner: string, slug: string) {
+  if (owner === ID_OWNER) return eq(schema.collections.id, slug)
+  if (owner.startsWith('did:') || owner.includes('.')) return null
+  return and(eq(schema.organization.slug, owner), eq(schema.collections.slug, slug))
+}
+
 export async function collectionAccess(
   db: Db,
   principal: Principal | null,
-  ownerSlug: string,
+  owner: string,
   slug: string,
 ): Promise<CollectionAccess | null> {
+  const where = collectionWhere(owner, slug)
+  if (!where) return null
   const [row] = await db
     .select({ collection: schema.collections, owner: schema.organization })
     .from(schema.collections)
     .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
-    .where(and(eq(schema.organization.slug, ownerSlug), eq(schema.collections.slug, slug)))
+    .where(where)
     .limit(1)
   if (!row || row.collection.deletedAt) return null
 
@@ -123,8 +140,9 @@ export const jsonError = (
 ) => c.json({ error, statusCode: status, ...extra }, status)
 
 /**
- * Resolve `:owner/:slug` for a request. A collection the caller can't read is a
- * 404, so private collections don't leak their existence.
+ * Resolve `:owner/:slug` for a request: an owner handle and slug, or `_` and a
+ * collection id. A collection the caller can't read is a 404, so private
+ * collections don't leak their existence.
  */
 export async function requireCollection(
   c: Context<AppEnv>,

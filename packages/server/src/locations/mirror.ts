@@ -17,6 +17,7 @@
  * Deletes don't propagate.
  */
 import {
+  type CollectionInfo,
   diffTrees,
   entryHash,
   type FileEntry,
@@ -300,6 +301,37 @@ export async function mirrorStep(ports: Ports, placementId: string): Promise<boo
       })
       .where(eq(schema.placements.id, p.id))
     throw err
+  }
+}
+
+/**
+ * Copy a rewritten collection.json to every mirror that already holds a version
+ * of the collection (spec 11.1: a mirror carries each rewrite). A mirror that
+ * holds none gets the file with its first version. A failure is logged and left:
+ * the next version's copy writes the current file anyway.
+ */
+export async function mirrorCollectionInfo(
+  ports: Ports,
+  collectionId: string,
+  info: CollectionInfo,
+): Promise<void> {
+  const mirrors = (await collectionMirrors(ports, collectionId)).filter(
+    (p) => p.syncedSeq > 0 && p.state !== 'paused',
+  )
+  for (const p of mirrors) {
+    const [loc] = await ports.db
+      .select()
+      .from(schema.storageLocations)
+      .where(eq(schema.storageLocations.id, p.locationId))
+    if (!loc || loc.status === 'disabled') continue
+    try {
+      const dest = await locationStore(ports, loc)
+      await dest.put(keys.collection(collectionId), JSON.stringify(info, null, 1), {
+        contentType: 'application/json',
+      })
+    } catch (err) {
+      console.error(`[mirror] collection.json for ${collectionId} to placement ${p.id} failed`, err)
+    }
   }
 }
 

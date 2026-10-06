@@ -3,7 +3,7 @@
  *
  *   GET /api/context
  *   GET /api/collections                       list and explore
- *   GET /api/collections/:owner/:slug          detail
+ *   GET /api/collections/:owner/:slug          detail (spec 11.3.3, plus v1's members)
  *   GET /api/accounts/:owner/collections
  *   GET /api/accounts/:slug, /api/accounts/:slug/members
  *
@@ -291,6 +291,7 @@ export function collectionRoutes() {
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, col.id))
     let latestVersion = null
+    let head: { semver: string; hash: string } | null = null
     if (col.headVersionId) {
       const [v] = await db
         .select()
@@ -298,6 +299,7 @@ export function collectionRoutes() {
         .where(eq(schema.versions.id, col.headVersionId))
         .limit(1)
       if (v) {
+        head = { semver: v.semver, hash: v.hash }
         const repo = await c.var.ports.stores.forCollection(col.id)
         const root = await repo.root(v.hash)
         const s = (await withPusherNames(db, [versionSummary(v, access.isMember, ark)]))[0]!
@@ -308,18 +310,28 @@ export function collectionRoutes() {
         }
       }
     }
+    // The standard members (spec 11.3.3) mirror collection.json; `public`,
+    // `ownerSlug`, `ownerName` and `latestVersion` are v1's, which the UI reads.
     return c.json({
       id: col.id,
+      owner: {
+        id: access.owner.id,
+        did: null,
+        handle: access.owner.slug,
+        name: access.owner.name,
+      },
       slug: col.slug,
       name: col.name,
+      description: col.summary?.description ?? null,
+      visibility: col.public ? 'public' : 'private',
+      ark: ark ? ark() : null,
+      createdAt: col.createdAt,
+      updatedAt: col.updatedAt,
+      versionCount: versionCount?.n ?? 0,
+      head,
       public: col.public,
       ownerSlug: access.owner.slug,
       ownerName: access.owner.name,
-      createdAt: col.createdAt,
-      updatedAt: col.updatedAt,
-      description: col.summary?.description ?? null,
-      ark: ark ? ark() : null,
-      versionCount: versionCount?.n ?? 0,
       latestVersion,
     })
   })

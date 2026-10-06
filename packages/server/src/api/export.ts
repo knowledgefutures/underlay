@@ -91,6 +91,7 @@ export function exportRoutes() {
       JSON.stringify(
         {
           collection: {
+            id: access.collection.id,
             owner: access.owner.slug,
             slug: access.collection.slug,
             name: access.collection.name,

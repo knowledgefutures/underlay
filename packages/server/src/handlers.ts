@@ -12,6 +12,8 @@
  *                       queued after each publish, and by the sweep for laggards
  *   maintenance.sweep   the cron's housekeeping (every 10 minutes), storage cleanup included
  *   cleanup.*           storage cleanup runs (cleanup/runs.ts)
+ *   collection.info*    rewrite collection.json after a change outside a version
+ *                       (versions/collection-info.ts)
  */
 import {
   type BumpType,
@@ -35,6 +37,7 @@ import { recheckLocations } from './locations/locations.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
+import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
@@ -57,6 +60,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await recheckLocations(ports)
   // Yesterday's usage rollups, rebuilt once from the log (a retried batch counts once).
   await rebuildYesterday(ports)
+  // collection.json in the 2026-10-05 form (owner ids, visibility), once.
+  await queueInfoBackfill(ports)
   // Mirrors that fell behind (a failed copy, a missed job) catch up.
   const lagging = await laggingPlacements(ports)
   await ports.jobs.enqueueBatch(

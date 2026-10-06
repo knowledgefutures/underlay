@@ -129,6 +129,11 @@ export function manageRoutes() {
         .update(schema.collections)
         .set({ ...set, updatedAt: new Date() })
         .where(eq(schema.collections.id, access.collection.id))
+      // collection.json carries the name, slug and visibility (spec 11.1).
+      await c.var.ports.jobs.enqueue({
+        type: 'collection.info',
+        collectionId: access.collection.id,
+      })
     }
     return c.json({ ok: true, slug: set.slug ?? access.collection.slug })
   })
@@ -204,6 +209,7 @@ export function manageRoutes() {
       .update(schema.collections)
       .set({ organizationId: target.org.id, updatedAt: new Date() })
       .where(eq(schema.collections.id, access.collection.id))
+    await c.var.ports.jobs.enqueue({ type: 'collection.info', collectionId: access.collection.id })
     return c.json({ ok: true, newOwner: target.org.slug })
   })
 

@@ -25,6 +25,26 @@ export default function DocsApi() {
         <code>{'https://www.underlay.org/api'}</code>
       </pre>
 
+      <h2 id="collection-urls">Collection URLs</h2>
+      <p>
+        Every collection route is relative to a collection URL,{' '}
+        <code>/api/collections/:owner/:slug</code>, where <code>:owner</code> is the
+        organization&rsquo;s slug. The same collection is also at{' '}
+        <code>/api/collections/_/:collectionId</code>, by its id, which never changes; every route
+        works under either. Each response about a collection you may read carries its id in the{' '}
+        <code>x-underlay-collection</code> header.
+      </p>
+      <p>
+        Slugs can change, and a slug an organization gives up can later name another one. An
+        integration that keeps a reference to a collection should keep its id and use the{' '}
+        <code>_/</code> form. These routes are the protocol&rsquo;s read API, which any Underlay
+        server serves (
+        <Link to="/docs/protocol" className="text-link underline">
+          protocol
+        </Link>
+        ).
+      </p>
+
       <hr className="border-rule my-6" />
 
       <h2 id="authentication">Authentication</h2>

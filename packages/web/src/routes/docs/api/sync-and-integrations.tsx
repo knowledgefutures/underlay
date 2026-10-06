@@ -26,9 +26,12 @@ function Endpoint({
 const logRes = `{
   "collection": {
     "id": "uuid",
-    "owner": "kf",
+    "owner": { "id": "uuid", "did": null, "handle": "kf", "name": "Knowledge Futures" },
     "slug": "archive",
     "name": "PubPub Archive",
+    "description": null,
+    "visibility": "public",
+    "ark": "ark:12345/ulb9bq4n5gmv3k0",
     "keys": [{ "id": "k1", "alg": "Ed25519", "publicKey": "base64url..." }]
   },
   "head": { "seq": 12, "entryHash": "a1b2...", "versionHash": "ulv2:e5f6..." },

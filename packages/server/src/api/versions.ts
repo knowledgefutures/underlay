@@ -604,8 +604,7 @@ export function versionRoutes() {
       JSON.stringify(fromView.types.map((t) => [t.slug, t.schemaHash])) !==
         JSON.stringify(view.types.map((t) => [t.slug, t.schemaHash]))
     // File counts re-diff both file trees: on the first page only, not every page.
-    const fileDelta =
-      fromView && !cursor ? await fileCounts(fromView, view) : { added: 0, removed: 0 }
+    const fileDelta = cursor ? { added: 0, removed: 0 } : await fileCounts(fromView, view)
     return c.json({
       from: from?.semver ?? null,
       to: view.version.semver,
@@ -750,13 +749,14 @@ async function visibleFiles(view: VersionView, max: number): Promise<string[]> {
   return [...out].sort()
 }
 
-async function fileCounts(a: VersionView, b: VersionView) {
+/** Files added and removed from `a` to `b`; with no `a` (a first version), all of b's are added. */
+async function fileCounts(a: VersionView | null, b: VersionView) {
   const source = new RepoSource(fileTree, b.repo)
   let added = 0
   let removed = 0
   for (const [x, y] of [
-    [a.public.files.root, b.public.files.root],
-    [a.private?.files.root ?? null, b.private?.files.root ?? null],
+    [a?.public.files.root ?? null, b.public.files.root],
+    [a?.private?.files.root ?? null, b.private?.files.root ?? null],
   ] as const) {
     for await (const d of diffTrees(source, x, y)) {
       if (!d.before) added++

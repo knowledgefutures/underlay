@@ -25,30 +25,26 @@ import {
   type BuildTypeInput,
   buildVersion,
   bumpType,
-  type CollectionInfo,
   compareUtf8,
   deriveSemver,
   FileRefDelta,
   fileTree,
-  jcs,
   mergeTree,
   parseSemver,
-  readCollectionInfo,
   readHead,
   type Repo,
   RepoSink,
   RepoSource,
   setRecordTotals,
   signEntry,
-  type Signer,
   type TreeSummary,
-  writeCollectionInfo,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import { FenceError, writeFence } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { publishCollectionInfo } from './collection-info.js'
 import { collectionFileSizes, fileSizes } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
 
@@ -344,35 +340,4 @@ export async function appendVersionLog(
     prev: head?.entryHash ?? null,
   })
   await appendLog(repo, collectionId, entry)
-}
-
-/**
- * Keep `collection.json` current: the collection's names and every key that has
- * signed its log (a rotated key stays listed, so old entries still verify).
- * Written only when it changes.
- */
-export async function publishCollectionInfo(
-  ports: Ports,
-  repo: Repo,
-  collectionId: string,
-  signer: Signer,
-): Promise<void> {
-  const [row] = await ports.db
-    .select({ c: schema.collections, owner: schema.organization.slug })
-    .from(schema.collections)
-    .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
-    .where(eq(schema.collections.id, collectionId))
-    .limit(1)
-  if (!row) throw new Error(`Collection ${collectionId} not found`)
-  const existing = await readCollectionInfo(repo, collectionId)
-  const keys = [...(existing?.keys ?? []).filter((k) => k.id !== signer.keyId), signer.publicKey]
-  const info: CollectionInfo = {
-    id: collectionId,
-    owner: row.owner,
-    slug: row.c.slug,
-    name: row.c.name,
-    keys,
-  }
-  if (existing && jcs(existing) === jcs(info)) return
-  await writeCollectionInfo(repo, info)
 }

@@ -489,6 +489,8 @@ export function arkRoutes() {
           .set(updates)
           .where(eq(schema.arkCollections.collectionId, coll.id))
     }
+    // collection.json carries the collection's ARK (spec 11.1).
+    await c.var.ports.jobs.enqueue({ type: 'collection.info', collectionId: coll.id })
     return c.json({ ok: true })
   })
 
@@ -584,6 +586,7 @@ export function arkRoutes() {
       .update(schema.organization)
       .set({ arkNaan: naan })
       .where(eq(schema.organization.id, org.id))
+    await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
     return c.json({ ok: true })
   })
 

@@ -224,6 +224,21 @@ export function createApp(setup: Setup) {
     c.res = new Response(counted, c.res)
   })
 
+  // A response about a collection names its id (spec 11.3.1), whichever URL form
+  // reached it: requireCollection records the collection once the caller may read it.
+  app.use('/api/collections/*', async (c, next) => {
+    await next()
+    const id = c.var.meter?.collection?.id
+    if (!id) return
+    try {
+      c.res.headers.set('x-underlay-collection', id)
+    } catch {
+      // A response with immutable headers (one fetched from elsewhere): copy it.
+      c.res = new Response(c.res.body, c.res)
+      c.res.headers.set('x-underlay-collection', id)
+    }
+  })
+
   // Request budgets (lib/limits.ts): API calls, pages and ARK alike. The page
   // renderer's in-process API calls are part of the page view that made them,
   // so they don't count again.

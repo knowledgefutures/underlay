@@ -144,6 +144,9 @@ export function accountRoutes() {
         .update(schema.organization)
         .set(set)
         .where(eq(schema.organization.id, org.id))
+      // Each collection.json names its owner by slug and name (spec 11.1).
+      if (set.slug !== undefined || set.name !== undefined)
+        await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
     }
     return c.json({ ok: true, slug: set.slug ?? org.slug })
   })
@@ -292,6 +295,9 @@ export function accountRoutes() {
         .update(schema.organization)
         .set(set)
         .where(eq(schema.organization.id, org.id))
+      // Each collection.json names its owner by slug and name (spec 11.1).
+      if (set.slug !== undefined || set.name !== undefined)
+        await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
     }
     return c.json({ ok: true, slug: set.slug ?? org.slug })
   })

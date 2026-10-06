@@ -529,8 +529,8 @@ handle.
 - A server that offers this form MUST resolve each owner form it supports, and the id form, to
   the same collection, and MUST serve it at each URL rather than redirect. An owner form the
   server does not support is a 404.
-- Every response to a request under a collection URL that names a collection the caller may read
-  MUST carry the header `x-underlay-collection` with the collection id.
+- Every response from a route of this section or Section 11.4 for a collection the caller may
+  read MUST carry the header `x-underlay-collection` with the collection id.
 - A handle can change, and a handle given up can later name another organization. A client that
   keeps a reference to a collection SHOULD keep the id form, or the DID form where the owner has
   a DID, and not a handle.
@@ -590,8 +590,10 @@ only and MUST answer `sets=all` with 403.
  "versionCount", "head"}
 ```
 
-- `id`, `owner`, `slug`, `name`, `description`, `visibility` and `ark` are as in
-  `collection.json` (Section 11.1).
+- `id`, `owner`, `slug`, `name`, `description` and `visibility` are as in `collection.json`
+  (Section 11.1).
+- `ark` is the collection's ARK as a URL that resolves it, ending in `ark:<NAAN>/<name>`, or
+  `null`.
 - `head` is `{"semver", "hash"}` of the latest version, or `null` before the first.
 
 **Version summary.**
@@ -606,7 +608,7 @@ VersionSummary = {"semver", "hash", "baseSemver", "message", "appId", "createdAt
 - `recordCount`, `fileCount` and `totalBytes` total the sets the caller may read; `totalBytes`
   is the sum of their record and file sizes. `typeCounts` maps each type slug to its number of
   records in those sets.
-- `ark` is the version's ARK, or `null`.
+- `ark` is the version's ARK as a URL that resolves it, or `null`.
 
 **Versions.** `GET <collection>/versions?limit=<n>&offset=<n>` returns a JSON array of
 VersionSummary, newest first, at most `limit` of them after skipping `offset`.

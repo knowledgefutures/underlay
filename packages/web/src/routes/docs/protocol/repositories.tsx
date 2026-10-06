@@ -84,10 +84,18 @@ export default function ProtocolRepositories() {
           write <code>actorId</code> as <code>null</code>.
         </li>
         <li>
-          <code>collection.json</code> holds the collection&rsquo;s <code>id</code>,{' '}
-          <code>owner</code>, <code>slug</code>, <code>name</code> and <code>keys</code>, an array
-          of <code>{'{"id", "alg": "Ed25519", "publicKey"}'}</code>. It is neither hashed nor
-          signed; readers MUST NOT depend on its serialization.
+          <code>collection.json</code> describes the collection: its <code>id</code>; its{' '}
+          <code>owner</code>, the organization, as <code>{'{"id", "did", "handle", "name"}'}</code>;
+          its <code>slug</code>, <code>name</code> and <code>description</code>; its{' '}
+          <code>visibility</code>, <code>&quot;public&quot;</code> or{' '}
+          <code>&quot;private&quot;</code>; its <code>ark</code> (<code>ark:NAAN/name</code>, or{' '}
+          <code>null</code>); and <code>keys</code>, an array of{' '}
+          <code>{'{"id", "alg": "Ed25519", "publicKey"}'}</code> listing every key that has signed
+          the log. It is neither hashed nor signed; readers MUST NOT depend on its serialization and
+          MUST ignore members they don&rsquo;t know. A writer rewrites it whenever a member changes,
+          with or without a version, so a repository says on its own who owns a collection and
+          whether it is public. Files written before 2026-10-05 hold <code>owner</code> as a string
+          and no <code>visibility</code>, which a reader MUST NOT take as public.
         </li>
         <li>A verifier MUST use a key only under the id derived from it.</li>
       </ul>
