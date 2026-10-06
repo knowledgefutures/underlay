@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Convert production's v1 data for prod, next.underlay.org (edge-redesign-build.md,
+# Convert production's v1 data for prod, www.underlay.org (edge-redesign-build.md,
 # "Deployment targets").
 #
 #   packages/migrate/scripts/v1-prod-to-prod.sh [OUT]      from the repo root

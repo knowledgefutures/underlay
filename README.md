@@ -57,8 +57,7 @@ Other checks CI runs: `pnpm --filter @underlay/protocol check-browser` (the brow
 ## Deployment
 
 Each deployment is a wrangler env in `packages/server/wrangler.jsonc` with its own Worker, D1
-database, bucket and queues: `staging` (staging.underlay.org) and `prod` (next.underlay.org, not
-yet provisioned: its D1 id is a placeholder):
+database, bucket and queues: `staging` (staging.underlay.org) and `prod` (www.underlay.org):
 
 ```bash
 pnpm --filter @underlay/web build

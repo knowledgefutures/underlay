@@ -1,4 +1,4 @@
-# Environment for converting production's v1 data into prod (next.underlay.org), or
+# Environment for converting production's v1 data into prod (www.underlay.org), or
 # repairing it (edge-redesign-build.md, "Deployment targets"). Source it from the repo root:
 #
 #   . packages/migrate/scripts/prod-env.sh

@@ -1,10 +1,10 @@
 // Underlay on Cloudflare Workers: one Worker per deployment, each with its own
 // D1 database, R2 bucket and queues (edge-redesign-build.md, "Deployment targets").
 // Resources are named for the deployment's role, not the app version or host, so
-// they outlive both: prod serves next.underlay.org until it takes over www.
+// they outlive both.
 //
 //   wrangler deploy --env staging     → staging.underlay.org
-//   wrangler deploy --env prod        → www.underlay.org (and next.underlay.org)
+//   wrangler deploy --env prod        → www.underlay.org
 //
 // Secrets (wrangler secret put <NAME> --env <env>):
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   bucket-scoped R2 S3 credentials
@@ -116,12 +116,8 @@
     "prod": {
       "name": "underlay-prod",
       // underlay.org redirects to www in a Cloudflare rule, paths kept (ARK links).
-      "routes": [
-        { "pattern": "www.underlay.org", "custom_domain": true },
-        { "pattern": "next.underlay.org", "custom_domain": true },
-      ],
+      "routes": [{ "pattern": "www.underlay.org", "custom_domain": true }],
       "vars": {
-        // Sign-in callbacks and absolute links: www's, also when reached through next.
         "APP_URL": "https://www.underlay.org",
         "DEPLOYMENT": "prod",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",

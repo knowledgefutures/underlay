@@ -17,7 +17,7 @@ v2 deployment. Background, decisions and run history: the meta repo's
 | `src/repair.ts`              | Brings an already-loaded deployment up to the current format without converting again: rewrites version logs, records file possession, rebuilds head count trees (`STEPS`).             |
 | `scripts/staging-env.sh`     | Environment for dev → staging (decrypts secrets into the shell only).                                                                                                                   |
 | `scripts/dev-to-staging.sh`  | Runs the converter for dev → staging.                                                                                                                                                   |
-| `scripts/prod-env.sh`        | Environment for v1 production → prod (next.underlay.org).                                                                                                                               |
+| `scripts/prod-env.sh`        | Environment for v1 production → prod (www.underlay.org).                                                                                                                                |
 | `scripts/v1-prod-to-prod.sh` | Runs the converter for v1 production → prod.                                                                                                                                            |
 
 ## dev → staging
@@ -85,7 +85,7 @@ sqlite3 $OUT/migrated.sqlite ".backup $OUT/loaded.sqlite"
   again, or delete its `repo/collections/`, without also emptying D1 and starting over.
 - If a sync fails partway, run it again: it resumes from each collection's head.
   Don't put back an older `migrated.sqlite`; its heads would be behind the bucket's.
-- Nothing may push to next.underlay.org between syncs: its collection rows have to stay
+- Nothing may push to the prod deployment between syncs: its collection rows have to stay
   as the last load left them. Sign-ins are fine (their rows aren't in either file).
 - Collections v1 deleted are listed in the report's `removedInV1` and left in place.
 - At the switch: freeze writes on www, sync once more, load the delta, then move DNS.
