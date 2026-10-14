@@ -12,7 +12,7 @@
 //   LOCATION_KEY                             32 bytes base64url; encrypts storage credentials
 //   SESSION_SECRET                           better-auth secret
 //   OIDC_CLIENT_SECRET                       kf_underlay secret of that env's KF Auth instance
-//                                            (staging: dev's, as v1 dev; next: prod's)
+//                                            (staging: dev-auth's, which staging-auth kept)
 //   AUTH_INTERNAL_API_KEY                    optional: KF Auth's internal API key (as v1). Without
 //                                            it new orgs can't link a KF org and
 //                                            /api/kf/summary answers 401.
@@ -51,9 +51,10 @@
         "DEPLOYMENT": "staging",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-staging",
-        // staging replaces dev.underlay.org: dev's data, dev's KF Auth.
-        "OIDC_ISSUER_URL": "https://dev-auth.knowledgefutures.org",
-        "OIDC_ACCOUNT_URL": "https://dev-account.knowledgefutures.org",
+        // staging replaces dev.underlay.org: dev's data, and staging KF Auth (kf-console),
+        // which carries dev-auth's users and clients. Its account pages live on the auth host.
+        "OIDC_ISSUER_URL": "https://staging-auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://staging-auth.knowledgefutures.org",
         "OIDC_CLIENT_ID": "kf_underlay",
         // underlay-staging-public's custom domain.
         "ASSETS_BASE_URL": "https://assets-staging.underlay.org",
