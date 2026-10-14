@@ -314,7 +314,13 @@ try {
     { path: '/org/settings', status: 200, has: ['Settings — org', 'Smoke Org'], user: 'u1' },
     { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
     { path: '/new-org', status: 200, user: 'u1' },
-    { path: '/invitations/accept?token=x', status: 200, has: ['Organization Invitation'] },
+    { path: '/invitations/accept?invitation=x', status: 200, has: ['Organization Invitation'] },
+    // Links copied before ?token= became ?invitation= (?token= is an API key).
+    {
+      path: '/invitations/accept?token=x',
+      status: 302,
+      location: '/invitations/accept?invitation=x',
+    },
     { path: '/report', status: 200, has: ['Report content', 'What is wrong'] },
     // Steward pages: a rail of sections for stewards; everyone else is told no.
     { path: '/admin/abuse', status: 200, has: ['only available to admins'], user: 'u1' },
