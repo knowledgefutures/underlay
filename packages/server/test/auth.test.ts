@@ -424,4 +424,39 @@ describe('agent links', () => {
     // A path that isn't a key is a UI page (an org named "agent" keeps its collections).
     expect(await (await page('notes')).text()).toBe('page')
   })
+
+  it('serves invitation links without reading their id as an API key', async () => {
+    const h = await harness()
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+    )
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+      renderPage: async () => new Response('page'),
+    }))
+    const get = (path: string) => app.fetch(new Request(`http://test${path}`))
+
+    const res = await get('/invitations/accept?invitation=inv%201')
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('page')
+    // Links copied before the rename.
+    const old = await get('/invitations/accept?token=inv%201')
+    expect(old.status).toBe(302)
+    expect(old.headers.get('location')).toBe('/invitations/accept?invitation=inv%201')
+    // Elsewhere ?token= is still a key.
+    expect((await get('/dashboard?token=inv1')).status).toBe(401)
+  })
 })

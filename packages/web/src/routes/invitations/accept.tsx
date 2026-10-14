@@ -9,9 +9,10 @@ export default function InvitationsAccept() {
   const { currentUser } = useAppContext()
 
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
-  const token = params.get('token') ?? ''
+  // Not ?token=, which the server reads as an API key.
+  const token = params.get('invitation') ?? ''
   // KF Auth handles both sign-in and new accounts; /login returns here afterwards.
-  const signIn = `/login?return_to=${encodeURIComponent(`/invitations/accept?token=${token}`)}`
+  const signIn = `/login?return_to=${encodeURIComponent(`/invitations/accept?invitation=${encodeURIComponent(token)}`)}`
 
   const [success, setSuccess] = useState(false)
   const [orgSlug, setOrgSlug] = useState('')

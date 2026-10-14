@@ -166,6 +166,14 @@ export function createApp(setup: Setup) {
     return redirect
   })
 
+  // Invitation links once carried ?token=, which every request reads as an API key,
+  // so they answered 401. Links already sent move to ?invitation= before that check.
+  app.get('/invitations/accept', (c, next) => {
+    const token = c.req.query('token')
+    if (!token || c.req.query('invitation') !== undefined) return next()
+    return c.redirect(`/invitations/accept?invitation=${encodeURIComponent(token)}`)
+  })
+
   app.use('*', async (c, next) => {
     const { ports, config, authenticate, kf } = setup(c)
     c.set('ports', ports)

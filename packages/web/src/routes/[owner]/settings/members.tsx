@@ -128,7 +128,7 @@ export default function OwnerSettingsMembers() {
   }
 
   async function copyInviteLink(invitationId: string) {
-    const link = `${window.location.origin}/invitations/accept?token=${encodeURIComponent(invitationId)}`
+    const link = `${window.location.origin}/invitations/accept?invitation=${encodeURIComponent(invitationId)}`
     await navigator.clipboard.writeText(link)
     setCopied(invitationId)
   }
