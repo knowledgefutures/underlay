@@ -853,6 +853,16 @@ already stores the file.
 - A client that holds the base SHOULD compute the new version's hash itself and compare it with
   `hash`.
 
+**One version from any number of uploads** (informative). A session has no size limit beyond the
+server's storage: a client can upload a whole corpus into one session over many requests, and
+days, and commit it as one version. A server keeps the uploads in storage rather than memory, and
+a background commit's status MAY carry `progress` (underlay.org: `runs`, `run_bytes`,
+`runs_compacting`, `phase` of `compacting`, `planning`, `units` or `assembling`, `units` done of
+`total`, and `progress_at`). An open session expires only after `session_idle_seconds` without an
+upload, so a client that stops can pick the same session up again by its id. Each version rewrites
+the leaves its changes land in, so one large version costs far less than the same records in many
+small ones.
+
 **Clients without a copy** (informative). A client that keeps no copy of the collection reads the
 base's manifest (Section 11.3.6), compares each of its records with the manifest by (type, id),
 hash and set, uploads the records that are new, changed or moved between sets, and deletes the
@@ -896,10 +906,13 @@ The reference implementation defines these in `packages/protocol/src/constants.t
 test vectors repeat them.
 
 Server limits (Section 11.4) are not protocol constants. Informative: underlay.org advertises
-`open_bytes` 8 MiB, `batch_bytes` 16 MiB, `batch_lines` 10,000, `session_idle_seconds` 3,600,
-`open_sessions` 20 and `file_bytes` 32 MiB; caps log pages at 1,000 entries and manifest pages at
-25,000 records; stores records over 64 KiB out of line; and commits in the background when a
-session uploaded more than 100,000 records or a schema change revalidates more than 100,000.
+`open_bytes` 8 MiB, `batch_bytes` 8 MiB, `batch_lines` 10,000, `session_idle_seconds` 43,200,
+`open_sessions` 20 and `file_bytes` 32 MiB; caps log pages at 1,000 entries, manifest pages at
+25,000 records and diff pages at 5,000 records or 4 MiB of records; stores records over 64 KiB
+out of line; and commits in the background when a session uploaded more than 100,000 records or a
+schema change revalidates more than 100,000. It refuses a commit that changes a type's schema or
+privacy (or removes a type) together with more than about 2 GiB of changes: the schema change goes
+in a version of its own first.
 
 ## 13. Security considerations
 
