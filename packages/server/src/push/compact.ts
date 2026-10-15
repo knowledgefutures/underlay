@@ -148,15 +148,22 @@ export async function compactForCommit(
   ports: Ports,
   session: SessionRow,
 ): Promise<'ready' | 'waiting'> {
-  const rows = await ports.db
-    .select()
-    .from(schema.pushRuns)
-    .where(eq(schema.pushRuns.sessionId, session.id))
+  const runList = () =>
+    ports.db.select().from(schema.pushRuns).where(eq(schema.pushRuns.sessionId, session.id))
+  let rows = await runList()
+  let phase = session.commitPhase
+  if (rows.length > compactConfig.commitRuns && phase !== 'compacting') {
+    // Set the phase first, then read the runs again. A compaction that finished
+    // before the phase was set didn't queue the commit (finishCompaction), so
+    // the second read sees its run; one finishing after queues the commit itself.
+    await setPhase(ports, session.id, 'compacting')
+    phase = 'compacting'
+    rows = await runList()
+  }
   if (rows.length <= compactConfig.commitRuns) {
-    if (session.commitPhase !== null) await setPhase(ports, session.id, null)
+    if (phase !== null) await setPhase(ports, session.id, null)
     return 'ready'
   }
-  if (session.commitPhase !== 'compacting') await setPhase(ports, session.id, 'compacting')
   const inFlight = new Set(rows.filter((r) => r.mergingInto !== null).map((r) => r.mergingInto))
   const free = rows.filter((r) => r.mergingInto === null).sort((a, b) => a.bytes - b.bytes)
   // What the run list comes to once every claimed compaction is done.
@@ -218,8 +225,9 @@ async function claimedInputs(ports: Ports, sessionId: string, seq: number) {
 }
 
 /**
- * The compaction is still moving: date its claim afresh. The sweep (recover.ts)
- * queues a compaction again when its claim is older than the stall window, so
+ * The compaction is still moving: date its claim afresh, as a merge or piece
+ * starts and as a piece finishes. The sweep (recover.ts) queues a session's
+ * compactions again once none of its claims has moved for the window, so
  * without this a compaction of many pieces, hours long, would have every
  * unfinished piece queued again each sweep from the window on.
  */
@@ -296,6 +304,7 @@ export async function compactPiece(
   if ((await claimedInputs(ports, sessionId, seq)).length === 0) return // joined already
   if (!active(await getSession(ports, sessionId))) return
   if (!(await store.head(pieceKey(sessionId, seq, piece)))) {
+    await refreshClaim(ports, sessionId, seq)
     const range = pieceRange(plan.cuts, piece)
     const slices = await Promise.all(
       plan.inputs.map(async (s) => sliceRun(await readRunIndex(store, sessionId, s), range)),
