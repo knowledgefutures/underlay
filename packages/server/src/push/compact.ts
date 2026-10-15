@@ -209,6 +209,20 @@ async function claimedInputs(ports: Ports, sessionId: string, seq: number) {
     .orderBy(asc(runs.seq))
 }
 
+/**
+ * The compaction is still moving: date its claim afresh. The sweep (recover.ts)
+ * queues a compaction again when its claim is older than the stall window, so
+ * without this a compaction of many pieces, hours long, would have every
+ * unfinished piece queued again each sweep from the window on.
+ */
+async function refreshClaim(ports: Ports, sessionId: string, seq: number) {
+  const runs = schema.pushRuns
+  await ports.db
+    .update(runs)
+    .set({ claimedAt: new Date() })
+    .where(and(eq(runs.sessionId, sessionId), eq(runs.mergingInto, seq)))
+}
+
 /** Write the compacted run `seq` from the runs claimed for it, or queue its pieces. Idempotent. */
 export async function compactClaimed(ports: Ports, sessionId: string, seq: number): Promise<void> {
   const inputs = await claimedInputs(ports, sessionId, seq)
@@ -219,6 +233,7 @@ export async function compactClaimed(ports: Ports, sessionId: string, seq: numbe
   const tier = Math.max(...inputs.map((r) => r.tier)) + 1
   const total = indexes.reduce((n, ix) => n + runBytes(ix), 0)
   if (total <= compactConfig.pieceBytes) {
+    await refreshClaim(ports, sessionId, seq)
     const index = await compactRuns(store, sessionId, indexes, seq, tier)
     await finishCompaction(ports, sessionId, seq, index)
     return
@@ -288,6 +303,7 @@ export async function compactPiece(
     await store.put(pieceKey(sessionId, seq, piece), JSON.stringify(out.parts), {
       contentType: 'application/json',
     })
+    await refreshClaim(ports, sessionId, seq)
     await touch(ports, sessionId)
   }
   const done = await piecesDone(ports, sessionId, seq)

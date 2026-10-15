@@ -280,8 +280,9 @@ export class RunWriter {
   /** Bounded memory: callers writing large runs await this between entries. */
   async drain(): Promise<void> {
     if (this.#queued >= 4) await this.#chain
-    // One part being stored while the next fills: two parts in memory at most.
-    if (this.#puts.length >= 1) await Promise.all(this.#puts.splice(0))
+    // One part being stored while the next fills: when a second part is
+    // flushed, wait for the first's put. Two parts in memory at most.
+    if (this.#puts.length >= 2) await this.#puts.shift()
   }
 
   async finish(): Promise<RunIndex> {

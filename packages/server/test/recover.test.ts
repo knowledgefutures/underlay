@@ -9,7 +9,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { committing } from '../src/cleanup/sweep.js'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs } from '../src/jobs.js'
-import { compactConfig } from '../src/push/compact.js'
+import { compactConfig, compactPiece } from '../src/push/compact.js'
 import { parallelConfig, unitLimits } from '../src/push/parallel.js'
 import { recoverCommits, recoverConfig } from '../src/push/recover.js'
 import { isMark, MERGE_FAN_IN } from '../src/push/runs.js'
@@ -217,5 +217,48 @@ describe('recovering stalled commits', () => {
     Object.assign(compactConfig, { commitRuns: 1 })
     const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
     expect(res.status).toBe(201)
+  })
+
+  it('leaves a long compaction alone while its pieces keep finishing', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('pieces')
+    const path = '/api/collections/org/pieces'
+    // Every compaction splits into pieces, one per input part.
+    Object.assign(compactConfig, { pieceBytes: 1 })
+    const all = ids(MERGE_FAN_IN * 5)
+    const batches = Array.from({ length: MERGE_FAN_IN }, (_, i) =>
+      all.slice(i * 5, i * 5 + 5).map(rec),
+    )
+    const sid = await upload(h, user, path, batches)
+    const jobs = (type: string) =>
+      h.ports.db.select().from(schema.jobs).where(eq(schema.jobs.type, type))
+    // Run the compaction job alone: it plans the pieces and queues them.
+    while ((await jobs('push.compactPiece')).length === 0)
+      expect(await drainSqliteJobs(h.ports, { max: 1 })).toBe(1)
+    const runs = () =>
+      h.ports.db.select().from(schema.pushRuns).where(eq(schema.pushRuns.sessionId, sid))
+    const seq = (await runs())[0]!.mergingInto!
+    // The claim is older than the stall window, but a piece has just finished.
+    const old = new Date(Date.now() - 2 * recoverConfig.stallMs)
+    await h.ports.db
+      .update(schema.pushRuns)
+      .set({ claimedAt: old })
+      .where(eq(schema.pushRuns.sessionId, sid))
+    await compactPiece(h.ports, sid, seq, 0)
+    expect((await runs()).every((r) => r.claimedAt! > old)).toBe(true)
+    await dropJobs(h, 'push.compact')
+    await recoverCommits(h.ports)
+    expect(await jobs('push.compact')).toEqual([])
+    // Once nothing has finished within the window, it is queued again, and completes.
+    await h.ports.db
+      .update(schema.pushRuns)
+      .set({ claimedAt: old })
+      .where(eq(schema.pushRuns.sessionId, sid))
+    await dropJobs(h, 'push.compactPiece')
+    await recoverCommits(h.ports)
+    expect((await jobs('push.compact')).length).toBe(1)
+    await h.drain()
+    expect((await runs()).map((r) => [r.tier, r.mergingInto])).toEqual([[1, null]])
   })
 })
