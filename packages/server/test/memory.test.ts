@@ -1,6 +1,6 @@
 /**
  * Every push job's memory stays bounded on large records: scripts/memory.ts
- * pushes about 40 MB of Crossref-sized records (and updates spread over them)
+ * pushes about 40 MB of records of several KB each (and updates spread over them)
  * through uploads, compaction in pieces, a parallel commit and indexing, and
  * reports each job's peak live memory. A job that held its records (rather than
  * streaming them) would show tens of MB of JS heap here.

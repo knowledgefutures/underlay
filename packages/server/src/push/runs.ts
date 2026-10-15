@@ -129,7 +129,7 @@ export const runConfig = {
   /**
    * Compressed bytes a merge holds, split across its runs. Each cursor holds its
    * current span and the next one, so a span gets half of a run's share. With
-   * Crossref-sized records, 8 MB a span left a two-run commit unit holding 16 MB
+   * records of several KB, 8 MB a span left a two-run commit unit holding 16 MB
    * of spans alone (2026-10-15).
    */
   prefetchBudget: 4 * 1024 * 1024,

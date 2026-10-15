@@ -1,7 +1,7 @@
 /**
  * Memory of every push job on large records: uploads, compactions, the commit's
  * planning, units and assembly, and indexing, run in this process on records
- * shaped like Crossref works (about 6.5 KB, non-ASCII text, long reference
+ * shaped like bibliographic metadata (several KB, non-ASCII text, long reference
  * lists). Prints, per job type, how many ran and the most live memory one held
  * above where it started: JS heap plus array buffers, after a forced GC, sampled
  * every few storage operations. Stored objects are on disk (a file store), and
@@ -129,7 +129,7 @@ async function measure(label: string, fn: () => Promise<unknown>) {
   stats.set(label, s)
 }
 
-// --- Records shaped like Crossref works ------------------------------------------------
+// --- Records shaped like bibliographic metadata ---------------------------------------
 
 // mulberry32: small, seedable, and good enough that ids don't collide.
 let seed = 1
