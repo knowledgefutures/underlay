@@ -90,6 +90,9 @@ describe('diff and manifest paging', () => {
       removed: p.removed.map((x) => x.id),
     })
     expect(ids(one).added).toHaveLength(200)
+    // Items are the stored records passed through: exactly id, type and data.
+    expect(one.added[0]).toStrictEqual({ id: id(3000), type: 'Doc', data: { n: 0 } })
+    expect(one.updated[0]).toStrictEqual({ id: id(0), type: 'Doc', data: { n: 1 } })
     expect(ids(one).updated).toHaveLength(520)
     expect(ids(one).removed).toHaveLength(100)
     const paged = { added: [] as string[], updated: [] as string[], removed: [] as string[] }

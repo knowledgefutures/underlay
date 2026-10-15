@@ -570,8 +570,11 @@ export function versionRoutes() {
       : await previousVersion(c.var.ports.db, view.version)
     if (fromParam && !from) return jsonError(c, 404, `Version ${fromParam} not found`)
     const fromView = from ? await loadView(view.repo, from, view.owner, view.withheld) : null
-    const added: object[] = []
-    const updated: object[] = []
+    // Added and updated records as their stored lines: a stored record is
+    // `{"id":…,"type":…,"data":…}`, which is the page's item as it is, so it's
+    // passed through as text rather than parsed and written out again.
+    const added: string[] = []
+    const updated: string[] = []
     const removed: { id: string; type: string }[] = []
     let n = 0
     let next: string | null = null
@@ -599,7 +602,7 @@ export function versionRoutes() {
     const body = (d: TypedDiff) => {
       const b = found.get(`${d.type}\u0000${d.key}`)
       if (b === undefined) throw new Error(`Record ${d.type}/${d.key} missing from its version`)
-      return { id: d.key, type: d.type, data: (JSON.parse(b) as { data: unknown }).data }
+      return b
     }
     for (const d of page) {
       if (!d.before) added.push(body(d))
@@ -612,11 +615,7 @@ export function versionRoutes() {
         JSON.stringify(view.types.map((t) => [t.slug, t.schemaHash]))
     // File counts re-diff both file trees: on the first page only, not every page.
     const fileDelta = cursor ? { added: 0, removed: 0 } : await fileCounts(fromView, view)
-    return c.json({
-      from: from?.semver ?? null,
-      to: view.version.semver,
-      added,
-      updated,
+    const rest = JSON.stringify({
       removed,
       pagination: { limit, hasMore: next !== null, nextCursor: next },
       meta: {
@@ -627,6 +626,12 @@ export function versionRoutes() {
         filesRemoved: fileDelta.removed,
       },
     })
+    const head = JSON.stringify({ from: from?.semver ?? null, to: view.version.semver })
+    return c.body(
+      `${head.slice(0, -1)},"added":[${added.join(',')}],"updated":[${updated.join(',')}],${rest.slice(1)}`,
+      200,
+      { 'content-type': 'application/json' },
+    )
   })
 
   app.get('/:owner/:slug/versions/:n/files', async (c) => {
