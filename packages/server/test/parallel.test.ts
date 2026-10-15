@@ -79,8 +79,8 @@ async function push(
   Object.assign(
     parallelConfig,
     parallel
-      ? { above: 0, unitEntries: 400, baseLevel: 0, ...(parallel === true ? {} : parallel) }
-      : { above: Infinity },
+      ? { aboveBytes: 0, unitBytes: 64_000, baseLevel: 0, ...(parallel === true ? {} : parallel) }
+      : { aboveBytes: Infinity },
   )
   const commit = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
   expect(commit.status).toBe(parallel ? 202 : 201)
@@ -124,7 +124,7 @@ describe('parallel commit', () => {
     const path = '/api/collections/org/win'
     const m = markIds('w', 12)
     Object.assign(unitLimits, { perSession: 3, perAccount: 3 })
-    Object.assign(parallelConfig, { above: 0, unitEntries: 1 })
+    Object.assign(parallelConfig, { aboveBytes: 0, unitBytes: 1 })
     const res = await h.request(`${path}/push`, {
       method: 'POST',
       user,
@@ -146,13 +146,14 @@ describe('parallel commit', () => {
       (await h.ports.db.select().from(schema.jobs)).filter(
         (j) => j.type === 'commit.unit' && j.status !== 'failed',
       ).length
-    const planned = await h.ports.db.select().from(schema.commitUnits)
-    expect(planned.filter((u) => !u.gap).length).toBeGreaterThan(3)
     let most = 0
     for (;;) {
       most = Math.max(most, await queuedUnits())
       if ((await drainSqliteJobs(h.ports, { max: 1 })) === 0) break
     }
+    // Rows are written by the plan's chunk jobs, so they're counted after.
+    const planned = await h.ports.db.select().from(schema.commitUnits)
+    expect(planned.filter((u) => !u.gap).length).toBeGreaterThan(3)
     expect(most).toBeLessThanOrEqual(3)
     const status = (await (await h.request(`${path}/push/${sid}`, { user })).json()) as {
       status: string
@@ -211,7 +212,7 @@ describe('parallel commit', () => {
     ]
     const deletes = [Array.from({ length: 40 }, (_, i) => id(10_500 + i * 13)), [m[3]!, m[6]!]]
     // One interval per unit, so every deleted candidate is some unit's `through`.
-    const pa = await push(h, user, pathA, {}, second, deletes, { unitEntries: 1 })
+    const pa = await push(h, user, pathA, {}, second, deletes, { unitBytes: 1 })
     const pb = await push(h, user, pathB, {}, second, deletes, false)
     expect(pa.result.changes).toEqual(pb.result.changes)
 
@@ -258,7 +259,7 @@ describe('parallel commit', () => {
       user,
       ndjson: batch.map((k) => rec(k, k)),
     })
-    Object.assign(parallelConfig, { above: 0, unitEntries: 1, baseLevel: 0 })
+    Object.assign(parallelConfig, { aboveBytes: 0, unitBytes: 1, baseLevel: 0 })
     expect((await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
       202,
     )
@@ -296,7 +297,7 @@ describe('parallel commit', () => {
       user,
       ndjson: [...batch.map((k) => rec(k, k)), rec('withpic', 'P', { pic: 'portrait' })],
     })
-    Object.assign(parallelConfig, { above: 0, unitEntries: 1, baseLevel: 0 })
+    Object.assign(parallelConfig, { aboveBytes: 0, unitBytes: 1, baseLevel: 0 })
     const commit = async () => {
       const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
       expect(res.status).toBe(202)
@@ -344,7 +345,7 @@ describe('parallel commit', () => {
       ...Author,
       properties: { name: { type: 'string' }, born: { type: 'integer' } },
     }
-    Object.assign(parallelConfig, { above: 0 })
+    Object.assign(parallelConfig, { aboveBytes: 0 })
     const res = await h.request(`${path}/push`, {
       method: 'POST',
       user,

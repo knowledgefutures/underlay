@@ -25,6 +25,7 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'commit.unit',
   'commit.assemble',
   'push.compact',
+  'push.compactPiece',
   'refs.index',
   'refs.indexUnit',
   'refs.compact',

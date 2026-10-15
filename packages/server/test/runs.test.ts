@@ -8,6 +8,7 @@ import {
   isMark,
   mergeRuns,
   readRun,
+  runConfig,
   type RunEntry,
   type RunIndex,
   runMarks,
@@ -48,9 +49,16 @@ describe('sorted runs', () => {
         k: `id${i}`,
         b: Array.from({ length: 16 }, (_, j) => sha256Hex(`${i}.${j}`)).join(''),
       })
-    const ix = await writeRun(store, 's', 1, entries)
-    expect(ix.blocks.length).toBeGreaterThan(50)
-    expect(new Set(ix.blocks.map((b) => b.part)).size).toBeGreaterThan(1)
+    const partBytes = runConfig.partBytes
+    runConfig.partBytes = 1024 * 1024
+    const ix = await writeRun(store, 's', 1, entries).finally(() => {
+      runConfig.partBytes = partBytes
+    })
+    expect(ix.parts.length).toBeGreaterThan(3)
+    expect(ix.parts.reduce((n, p) => n + p.count, 0)).toBe(12_000)
+    // The summary carries no blocks; each part's are a page of their own.
+    expect(ix.parts.every((p) => p.blocks === undefined)).toBe(true)
+    expect(await store.get('sessions/s/runs/1/0.blocks.json')).not.toBeNull()
     const all = await collect(readRun(store, 's', ix))
     expect(all.length).toBe(12_000)
     expect(all.slice(0, 6000).every((e) => e.t === 'A')).toBe(true)
@@ -70,7 +78,7 @@ describe('sorted runs', () => {
     const ids = Array.from({ length: 40_000 }, (_, i) => `r${String(i).padStart(6, '0')}`)
     const entries = ids.map((k) => ({ t: 'T', k, h: sha256Hex(k) }))
     const ix = await writeRun(store, 's', 1, entries)
-    const total = ix.blocks.reduce((n, b) => n + b.length, 0)
+    const total = ix.parts.reduce((n, p) => n + p.length, 0)
     const range = { type: 'T', after: ids[20_000]!, through: ids[20_999]! }
     store.gets = 0
     store.bytes = 0

@@ -7,25 +7,27 @@
  * into part objects of a few MB, in the platform's internal area:
  *
  *   sessions/<sessionId>/runs/<seq>/<part>.ndjson.gz
- *   sessions/<sessionId>/runs/<seq>/index.json      {seq, tier, blocks: [...]}
+ *   sessions/<sessionId>/runs/<seq>/<part>.blocks.json   the part's blocks
+ *   sessions/<sessionId>/runs/<seq>/index.json           {v: 2, seq, tier, parts: [...]}
  *
- * The index gives each block's first and last key, entry count, byte range in
- * its part, and its natural-boundary marks (below). A reader fetches only the
- * blocks overlapping a key range, by range GET, so a commit unit reads its
- * slice of every run without reading the rest.
+ * The index is a summary: per part, its first and last key, entry count, raw
+ * and compressed size, and its natural-boundary marks (below). Each part's
+ * blocks (first and last key, entry count, byte range in the part) are a page
+ * of their own, read only by a cursor that reaches the part. So a planner reads
+ * O(parts) for any size of push, and a reader fetches only the blocks
+ * overlapping its key range, by range GET. Indexes written before pages
+ * (`{seq, tier, blocks}`) still read: their blocks become inline pages.
  *
  * Precedence: an entry's precedence is the seq of the upload it came from
  * (`q`, or the run's seq for an upload run). On equal keys the highest
  * precedence wins: later uploads replace earlier ones. Because precedence is
- * carried per entry, any group of runs can be compacted into one.
+ * carried per entry, any group of runs can be compacted into one, and a
+ * compaction can be split by key range into pieces that run as separate jobs
+ * (compact.ts): the pieces' parts, in key order, are the merged run.
  *
- * Compaction happens during upload (compact.ts): when MERGE_FAN_IN runs of one
- * tier accumulate they're merged into one run of the next tier, up to
- * MAX_TIER. Upload batches hold at most 10,000 entries, so a top-tier run holds
- * at most about 2.5M, and a compaction always fits in one job.
- *
- * Memory: a reader holds one block's lines and a bounded prefetch of compressed
- * bytes, so a k-way merge over hundreds of runs stays within a Worker.
+ * Memory: a reader holds one part's block page, one block's lines and a
+ * bounded prefetch of compressed bytes, so a k-way merge stays within a Worker
+ * for any run size. The number of runs a merge reads is bounded by compaction.
  */
 import {
   boundaryBytes,
@@ -65,22 +67,41 @@ export interface RunBlock {
   part: number
   offset: number
   length: number
+  /** Split-key candidates (indexes written before pages kept them per block). */
+  marks?: string[]
+  p?: true
+}
+
+export interface RunPart {
+  /** Part object number: a name, not a position (a compaction piece numbers its own). */
+  part: number
+  /** First and last run keys. */
+  first: string
+  last: string
+  count: number
+  /** Raw NDJSON size, about (string length), for byte budgets. */
+  bytes: number
+  /** Size of the part object (compressed). */
+  length: number
   /**
-   * Natural-boundary marks: run keys of the block's upserts whose id has at
+   * Natural-boundary marks: run keys of the part's upserts whose id has at
    * least MARK_BITS trailing zeros in its boundary hash. They're the split-key
    * candidates for parallel commit units, about one per 8k entries, so the
    * planner reads no data.
    */
   marks?: string[]
-  /** Some upsert in the block was pushed as private. */
+  /** Some upsert in the part was pushed as private. */
   p?: true
+  /** The part's blocks, inline: indexes written before pages. Otherwise `<part>.blocks.json`. */
+  blocks?: RunBlock[]
 }
 
 export interface RunIndex {
   seq: number
-  /** 0 for an upload, n for a run compacted from runs of tier n − 1. */
+  /** 0 for an upload, n for a run compacted from runs of tier ≤ n − 1. */
   tier?: number
-  blocks: RunBlock[]
+  /** In key order; disjoint. A planner's slice of a run lists only the parts it needs. */
+  parts: RunPart[]
 }
 
 /** A slice of one type: ids in `(after, through]`; null is unbounded. */
@@ -90,21 +111,29 @@ export interface RunRange {
   through?: string | null
 }
 
+/** A range of run keys `(after, through]` across types (a compaction piece); null is unbounded. */
+export interface KeyRange {
+  after: string | null
+  through: string | null
+}
+
 export const BLOCK_BYTES = 64 * 1024
-export const PART_BYTES = 4 * 1024 * 1024
 /** Runs per compaction. */
 export const MERGE_FAN_IN = 16
-/** Runs of this tier are never compacted again. */
-export const MAX_TIER = 2
 /** 2^13 = 8,192: about one mark per eight leaves. */
 export const MARK_BITS = 13
-/**
- * Compressed bytes a merge holds, split across its runs. Each cursor holds its
- * current span and the next one, so a span gets half of a run's share. With
- * Crossref-sized records, 8 MB a span left a two-run commit unit holding 16 MB
- * of spans alone (2026-10-15).
- */
-const PREFETCH_BUDGET = 4 * 1024 * 1024
+
+export const runConfig = {
+  /** Compressed bytes per part object. A writer holds one open part and two being stored. */
+  partBytes: 8 * 1024 * 1024,
+  /**
+   * Compressed bytes a merge holds, split across its runs. Each cursor holds its
+   * current span and the next one, so a span gets half of a run's share. With
+   * Crossref-sized records, 8 MB a span left a two-run commit unit holding 16 MB
+   * of spans alone (2026-10-15).
+   */
+  prefetchBudget: 4 * 1024 * 1024,
+}
 
 /** Sort key: type, then id, by UTF-8 bytes. A NUL separator keeps types apart. */
 export const runKey = (e: { t: string; k: string }) => `${e.t}\u0000${e.k}`
@@ -114,13 +143,21 @@ export const compareRunKeys = (a: RunEntry, b: RunEntry) =>
 const runPrefix = (sessionId: string, seq: number) => `sessions/${sessionId}/runs/${seq}`
 const partKey = (sessionId: string, seq: number, part: number) =>
   `${runPrefix(sessionId, seq)}/${part}.ndjson.gz`
+const pageKey = (sessionId: string, seq: number, part: number) =>
+  `${runPrefix(sessionId, seq)}/${part}.blocks.json`
+export const indexKey = (sessionId: string, seq: number) =>
+  `${runPrefix(sessionId, seq)}/index.json`
 
 /** Is this id a split-key candidate? */
 export const isMark = (id: string) => trailingZeros(boundaryBytes(id)) >= MARK_BITS
 
+/** Entries in a run, and its raw size. */
+export const runCount = (ix: RunIndex) => ix.parts.reduce((n, p) => n + p.count, 0)
+export const runBytes = (ix: RunIndex) => ix.parts.reduce((n, p) => n + p.bytes, 0)
+
 /** Writes one run block by block. Entries must arrive sorted. */
 export class RunWriter {
-  readonly #blocks: RunBlock[] = []
+  readonly #parts: RunPart[] = []
   #lines: string[] = []
   #marks: string[] = []
   #private = false
@@ -130,17 +167,29 @@ export class RunWriter {
   // Blocks are compressed in order on one chain, then appended to the open part.
   #chain: Promise<void> = Promise.resolve()
   #queued = 0
-  #part = 0
+  #part: number
   #partChunks: Uint8Array[] = []
   #partBytes = 0
+  #partBlocks: RunBlock[] = []
+  #partMarks: string[] = []
+  #partPrivate = false
+  #partRaw = 0
   readonly #puts: Promise<void>[] = []
 
+  /**
+   * `partBase` numbers this writer's parts (a compaction piece writes into a
+   * run other pieces write too); `writeIndex: false` leaves the index to whoever
+   * joins the pieces.
+   */
   constructor(
     readonly store: Store,
     readonly sessionId: string,
     readonly seq: number,
     readonly tier = 0,
-  ) {}
+    readonly opts: { partBase?: number; writeIndex?: boolean } = {},
+  ) {
+    this.#part = opts.partBase ?? 0
+  }
 
   add(e: RunEntry): void {
     const key = runKey(e)
@@ -153,20 +202,17 @@ export class RunWriter {
     this.#lines.push(line)
     if (!e.x && isMark(e.k)) this.#marks.push(key)
     if (e.p) this.#private = true
-    this.#bytes += line.length
+    this.#bytes += line.length + 1
     if (this.#bytes >= BLOCK_BYTES) this.#flushBlock()
   }
 
   #flushBlock() {
     if (this.#lines.length === 0) return
     const text = this.#lines.join('\n') + '\n'
-    const block = {
-      first: this.#first!,
-      last: this.#last!,
-      count: this.#lines.length,
-      ...(this.#marks.length > 0 ? { marks: this.#marks } : {}),
-      ...(this.#private ? { p: true as const } : {}),
-    }
+    const block = { first: this.#first!, last: this.#last!, count: this.#lines.length }
+    const marks = this.#marks
+    const priv = this.#private
+    const raw = this.#bytes
     this.#lines = []
     this.#marks = []
     this.#private = false
@@ -175,11 +221,19 @@ export class RunWriter {
     this.#queued++
     this.#chain = this.#chain.then(async () => {
       const gz = await gzip(text)
-      this.#blocks.push({ ...block, part: this.#part, offset: this.#partBytes, length: gz.length })
+      this.#partBlocks.push({
+        ...block,
+        part: this.#part,
+        offset: this.#partBytes,
+        length: gz.length,
+      })
+      this.#partMarks.push(...marks)
+      if (priv) this.#partPrivate = true
+      this.#partRaw += raw
       this.#partChunks.push(gz)
       this.#partBytes += gz.length
       this.#queued--
-      if (this.#partBytes >= PART_BYTES) this.#flushPart()
+      if (this.#partBytes >= runConfig.partBytes) this.#flushPart()
     })
   }
 
@@ -191,11 +245,36 @@ export class RunWriter {
       body.set(c, at)
       at += c.length
     }
-    const key = partKey(this.sessionId, this.seq, this.#part)
-    this.#puts.push(this.store.put(key, body, { contentType: 'application/gzip' }))
+    const blocks = this.#partBlocks
+    const part = this.#part
+    this.#parts.push({
+      part,
+      first: blocks[0]!.first,
+      last: blocks[blocks.length - 1]!.last,
+      count: blocks.reduce((n, b) => n + b.count, 0),
+      bytes: this.#partRaw,
+      length: this.#partBytes,
+      ...(this.#partMarks.length > 0 ? { marks: this.#partMarks } : {}),
+      ...(this.#partPrivate ? { p: true as const } : {}),
+    })
+    const store = this.store
+    this.#puts.push(
+      Promise.all([
+        store.put(partKey(this.sessionId, this.seq, part), body, {
+          contentType: 'application/gzip',
+        }),
+        store.put(pageKey(this.sessionId, this.seq, part), JSON.stringify(blocks), {
+          contentType: 'application/json',
+        }),
+      ]).then(() => {}),
+    )
     this.#part++
     this.#partChunks = []
     this.#partBytes = 0
+    this.#partBlocks = []
+    this.#partMarks = []
+    this.#partPrivate = false
+    this.#partRaw = 0
   }
 
   /** Bounded memory: callers writing large runs await this between entries. */
@@ -209,16 +288,16 @@ export class RunWriter {
     await this.#chain
     this.#flushPart()
     await Promise.all(this.#puts.splice(0))
-    const index: RunIndex = { seq: this.seq, tier: this.tier, blocks: this.#blocks }
-    await this.store.put(
-      `${runPrefix(this.sessionId, this.seq)}/index.json`,
-      JSON.stringify(index),
-      {
-        contentType: 'application/json',
-      },
-    )
+    const index: RunIndex = { seq: this.seq, tier: this.tier, parts: this.#parts }
+    if (this.opts.writeIndex !== false) await writeRunIndex(this.store, this.sessionId, index)
     return index
   }
+}
+
+export async function writeRunIndex(store: Store, sessionId: string, index: RunIndex) {
+  await store.put(indexKey(sessionId, index.seq), JSON.stringify({ v: 2, ...index }), {
+    contentType: 'application/json',
+  })
 }
 
 /** Write an in-memory batch (one upload request) as a run. */
@@ -234,71 +313,132 @@ export async function writeRun(store: Store, sessionId: string, seq: number, ent
   return w.finish()
 }
 
+/**
+ * A run index (or a slice of one) as stored, in the current form. An index from
+ * before pages lists blocks: each part becomes a part with its blocks inline,
+ * its raw size estimated from the compressed one.
+ */
+export function normalizeIndex(raw: {
+  seq: number
+  tier?: number
+  parts?: RunPart[]
+  blocks?: RunBlock[]
+}): RunIndex {
+  if (raw.parts) return { seq: raw.seq, tier: raw.tier ?? 0, parts: raw.parts }
+  const parts: RunPart[] = []
+  for (const b of raw.blocks ?? []) {
+    let p = parts[parts.length - 1]
+    if (!p || p.part !== b.part) {
+      p = { part: b.part, first: b.first, last: b.last, count: 0, bytes: 0, length: 0, blocks: [] }
+      parts.push(p)
+    }
+    p.last = b.last
+    p.count += b.count
+    p.length += b.length
+    p.bytes += b.length * 4
+    p.blocks!.push(b)
+    if (b.marks) p.marks = [...(p.marks ?? []), ...b.marks]
+    if (b.p) p.p = true
+  }
+  return { seq: raw.seq, tier: raw.tier ?? 0, parts }
+}
+
 export async function readRunIndex(
   store: Store,
   sessionId: string,
   seq: number,
 ): Promise<RunIndex> {
-  const obj = await store.get(`${runPrefix(sessionId, seq)}/index.json`)
+  const obj = await store.get(indexKey(sessionId, seq))
   if (!obj) throw new Error(`Run ${seq} of session ${sessionId} is missing`)
-  return JSON.parse(await obj.text()) as RunIndex
+  return normalizeIndex(JSON.parse(await obj.text()))
 }
 
-const normalize = (range?: RunRange | string): RunRange | undefined =>
-  typeof range === 'string' ? { type: range } : range
+// --- Ranges -------------------------------------------------------------------------
+
+/** Run-key bounds: keys k with lo < k, and k ≤ hi (k < hi when `hiOpen`). Null is unbounded. */
+interface Bounds {
+  lo: string | null
+  hi: string | null
+  hiOpen: boolean
+}
+
+function boundsOf(range: RunRange | KeyRange | string): Bounds {
+  if (typeof range === 'string') range = { type: range }
+  if (!('type' in range)) return { lo: range.after, hi: range.through, hiOpen: false }
+  // Every key of the type sorts after `type\0` and before `type\u0001`.
+  return {
+    lo: `${range.type}\u0000${range.after ?? ''}`,
+    hi: range.through == null ? `${range.type}\u0001` : `${range.type}\u0000${range.through}`,
+    hiOpen: range.through == null,
+  }
+}
+
+const inBounds = (b: Bounds, key: string) =>
+  (b.lo === null || compareUtf8(key, b.lo) > 0) &&
+  (b.hi === null || (b.hiOpen ? compareUtf8(key, b.hi) < 0 : compareUtf8(key, b.hi) <= 0))
 
 /** Is the entry inside the range? */
-export function inRunRange(range: RunRange, e: { t: string; k: string }): boolean {
-  return (
-    e.t === range.type &&
-    (range.after == null || compareUtf8(e.k, range.after) > 0) &&
-    (range.through == null || compareUtf8(e.k, range.through) <= 0)
-  )
+export function inRunRange(range: RunRange | KeyRange, e: { t: string; k: string }): boolean {
+  return inBounds(boundsOf(range), runKey(e))
 }
 
 /**
- * The blocks of a run that can hold entries in the range: a contiguous span,
- * found by binary search (blocks are sorted and disjoint).
+ * The items (parts, or a part's blocks) that can hold keys in the bounds: a
+ * contiguous span, found by binary search (items are sorted and disjoint).
  */
-export function blocksInRange(index: RunIndex, range?: RunRange): RunBlock[] {
-  if (!range) return index.blocks
-  // Every key of the type sorts after `type\0` and before `type\u0001`.
-  const lo = `${range.type}\u0000${range.after ?? ''}`
-  const hi = range.through == null ? `${range.type}\u0001` : `${range.type}\u0000${range.through}`
-  const hiInclusive = range.through != null
-  const blocks = index.blocks
-  // The first block whose last key is past `lo`, and the first block starting past `hi`.
-  const search = (pred: (b: RunBlock) => boolean) => {
+function overlapping<T extends { first: string; last: string }>(items: T[], b: Bounds): T[] {
+  const search = (pred: (x: T) => boolean) => {
     let a = 0
-    let z = blocks.length
+    let z = items.length
     while (a < z) {
       const m = (a + z) >> 1
-      if (pred(blocks[m]!)) z = m
+      if (pred(items[m]!)) z = m
       else a = m + 1
     }
     return a
   }
-  const start = search((b) => compareUtf8(b.last, lo) > 0)
-  const end = search((b) =>
-    hiInclusive ? compareUtf8(b.first, hi) > 0 : compareUtf8(b.first, hi) >= 0,
-  )
-  return blocks.slice(start, Math.max(start, end))
+  const start = b.lo === null ? 0 : search((x) => compareUtf8(x.last, b.lo!) > 0)
+  const end =
+    b.hi === null
+      ? items.length
+      : search((x) =>
+          b.hiOpen ? compareUtf8(x.first, b.hi!) >= 0 : compareUtf8(x.first, b.hi!) > 0,
+        )
+  return items.slice(start, Math.max(start, end))
 }
 
+/** The parts of a run that can hold entries in the range. */
+export function partsInRange(index: RunIndex, range?: RunRange | KeyRange | string): RunPart[] {
+  return range === undefined ? index.parts : overlapping(index.parts, boundsOf(range))
+}
+
+/** A run cut down to the parts a range needs (a commit unit's or a compaction piece's slice). */
+export const sliceRun = (index: RunIndex, range: RunRange | KeyRange): RunIndex => ({
+  seq: index.seq,
+  tier: index.tier ?? 0,
+  parts: partsInRange(index, range),
+})
+
+// --- Reading ---------------------------------------------------------------------------
+
 /**
- * Reads one run's entries in order, optionally limited to a range. Neighbouring
- * blocks of a part are fetched together, up to `spanBytes` compressed, and the
- * next span is prefetched while the current one is consumed. Only the current
- * block is decompressed, and lines are parsed one at a time.
+ * Reads one run's entries in order, optionally limited to a range. Part by
+ * part: the part's block page is read, then neighbouring blocks are fetched
+ * together, up to `spanBytes` compressed, the next span prefetched while the
+ * current one is consumed. Only the current block is decompressed, and lines
+ * are parsed one at a time.
  */
 export class RunCursor {
-  readonly #spans: RunBlock[][] = []
+  readonly #parts: RunPart[]
+  #part = 0
+  #page: Promise<RunBlock[]> | null = null
+  #spans: RunBlock[][] = []
   #span = 0
   #fetch: Promise<Uint8Array[]> | null = null
   #blocks: Uint8Array[] = []
   #lines: string[] = []
   #line = 0
-  readonly #range: RunRange | undefined
+  readonly #bounds: Bounds | undefined
   /** The current entry, or undefined once the run is exhausted. */
   head: RunEntry | undefined
 
@@ -306,28 +446,46 @@ export class RunCursor {
     readonly store: Store,
     readonly sessionId: string,
     readonly index: RunIndex,
-    range?: RunRange | string,
-    spanBytes = 1024 * 1024,
+    range?: RunRange | KeyRange | string,
+    readonly spanBytes = 1024 * 1024,
   ) {
-    this.#range = normalize(range)
+    this.#bounds = range === undefined ? undefined : boundsOf(range)
+    this.#parts = this.#bounds ? overlapping(index.parts, this.#bounds) : index.parts
+  }
+
+  #loadPage(i: number): Promise<RunBlock[]> {
+    const part = this.#parts[i]!
+    if (part.blocks) return Promise.resolve(part.blocks)
+    const key = pageKey(this.sessionId, this.index.seq, part.part)
+    const p = this.store.get(key).then(async (obj) => {
+      if (!obj) throw new Error(`Run page ${key} is missing`)
+      return JSON.parse(await obj.text()) as RunBlock[]
+    })
+    p.catch(() => {})
+    return p
+  }
+
+  /** Spans of the part's blocks in range. */
+  #plan(blocks: RunBlock[]) {
+    const spans: RunBlock[][] = []
     let cur: RunBlock[] = []
     let bytes = 0
-    for (const b of blocksInRange(index, this.#range)) {
+    for (const b of this.#bounds ? overlapping(blocks, this.#bounds) : blocks) {
       const prev = cur[cur.length - 1]
-      const contiguous = prev && prev.part === b.part && prev.offset + prev.length === b.offset
-      if (prev && (!contiguous || bytes + b.length > spanBytes)) {
-        this.#spans.push(cur)
+      const contiguous = prev && prev.offset + prev.length === b.offset
+      if (prev && (!contiguous || bytes + b.length > this.spanBytes)) {
+        spans.push(cur)
         cur = []
         bytes = 0
       }
       cur.push(b)
       bytes += b.length
     }
-    if (cur.length > 0) this.#spans.push(cur)
+    if (cur.length > 0) spans.push(cur)
+    return spans
   }
 
-  #load(i: number): Promise<Uint8Array[]> {
-    const span = this.#spans[i]!
+  #load(span: RunBlock[]): Promise<Uint8Array[]> {
     const start = span[0]!.offset
     const length = span.reduce((n, b) => n + b.length, 0)
     const key = partKey(this.sessionId, this.index.seq, span[0]!.part)
@@ -349,19 +507,33 @@ export class RunCursor {
   async next(): Promise<RunEntry | undefined> {
     for (;;) {
       while (this.#line < this.#lines.length) {
-        const e = JSON.parse(this.#lines[this.#line++]!) as RunEntry
-        if (!this.#range || inRunRange(this.#range, e)) return (this.head = e)
+        const line = this.#lines[this.#line++]!
+        const e = JSON.parse(line) as RunEntry
+        if (!this.#bounds || inBounds(this.#bounds, runKey(e))) return (this.head = e)
       }
+      this.#lines = []
       if (this.#blocks.length > 0) {
         this.#lines = splitLines(await gunzipText(this.#blocks.shift()!))
         this.#line = 0
         continue
       }
-      if (this.#span >= this.#spans.length) return (this.head = undefined)
-      const current = this.#fetch ?? this.#load(this.#span)
-      this.#span++
-      this.#fetch = this.#span < this.#spans.length ? this.#load(this.#span) : null
-      this.#blocks = await current
+      if (this.#span < this.#spans.length) {
+        const current = this.#fetch ?? this.#load(this.#spans[this.#span]!)
+        this.#span++
+        this.#fetch = this.#span < this.#spans.length ? this.#load(this.#spans[this.#span]!) : null
+        // The next part's page is read while the last span of this one is used.
+        if (!this.#fetch && this.#part < this.#parts.length)
+          this.#page ??= this.#loadPage(this.#part)
+        this.#blocks = await current
+        continue
+      }
+      if (this.#part >= this.#parts.length) return (this.head = undefined)
+      const page = this.#page ?? this.#loadPage(this.#part)
+      this.#page = null
+      this.#part++
+      this.#spans = this.#plan(await page)
+      this.#span = 0
+      this.#fetch = null
     }
   }
 }
@@ -371,7 +543,7 @@ export async function* readRun(
   store: Store,
   sessionId: string,
   index: RunIndex,
-  range?: RunRange | string,
+  range?: RunRange | KeyRange | string,
 ): AsyncGenerator<RunEntry> {
   const c = new RunCursor(store, sessionId, index, range)
   for (let e = await c.next(); e; e = await c.next()) yield e
@@ -430,11 +602,11 @@ export async function* mergeRuns(
   store: Store,
   sessionId: string,
   indexes: RunIndex[],
-  range?: RunRange | string,
+  range?: RunRange | KeyRange | string,
 ): AsyncGenerator<RunEntry> {
   const spanBytes = Math.max(
     BLOCK_BYTES,
-    Math.floor(PREFETCH_BUDGET / (2 * Math.max(1, indexes.length))),
+    Math.floor(runConfig.prefetchBudget / (2 * Math.max(1, indexes.length))),
   )
   const heap = new CursorHeap()
   await Promise.all(
@@ -457,16 +629,27 @@ export async function* mergeRuns(
   }
 }
 
-/** Merge runs into one new run of the given tier (a compaction). */
+/**
+ * Merge runs into one new run of the given tier (a compaction), or, with
+ * `range`, one key-range piece of it: its parts numbered from `partBase`, no
+ * index written (compact.ts joins the pieces).
+ */
 export async function compactRuns(
   store: Store,
   sessionId: string,
   indexes: RunIndex[],
   seq: number,
   tier: number,
+  piece?: { range: KeyRange; partBase: number },
 ): Promise<RunIndex> {
-  const w = new RunWriter(store, sessionId, seq, tier)
-  for await (const e of mergeRuns(store, sessionId, indexes)) {
+  const w = new RunWriter(
+    store,
+    sessionId,
+    seq,
+    tier,
+    piece ? { partBase: piece.partBase, writeIndex: false } : {},
+  )
+  for await (const e of mergeRuns(store, sessionId, indexes, piece?.range)) {
     w.add(e)
     await w.drain()
   }
@@ -476,12 +659,10 @@ export async function compactRuns(
 /** The marks of runs, within a range, sorted and unique: split-key candidates. */
 export function runMarks(indexes: RunIndex[], range?: RunRange): string[] {
   const out = new Set<string>()
+  const b = range ? boundsOf(range) : undefined
   for (const ix of indexes) {
-    for (const b of blocksInRange(ix, range)) {
-      for (const m of b.marks ?? []) {
-        const sep = m.indexOf('\u0000')
-        if (!range || inRunRange(range, { t: m.slice(0, sep), k: m.slice(sep + 1) })) out.add(m)
-      }
+    for (const p of b ? overlapping(ix.parts, b) : ix.parts) {
+      for (const m of p.marks ?? []) if (!b || inBounds(b, m)) out.add(m)
     }
   }
   return [...out].sort(compareUtf8)
