@@ -7,8 +7,12 @@
  * every step is idempotent. A commit that can't finish fails with an error
  * that says why, rather than holding one of the user's session slots forever.
  *
- *   - compaction claims older than `stallMs` are queued again (open sessions
- *     too: a lost compaction leaves its runs claimed);
+ *   - a session's compaction claims are queued again once none of them has been
+ *     refreshed for `compactionStaleMs` (open sessions too: a lost compaction
+ *     leaves its runs claimed). A claim is refreshed as its merge or a piece
+ *     starts and as a piece finishes (compact.ts). One quiet claim isn't lost
+ *     while others move: its pieces may be waiting behind theirs in a backed-up
+ *     queue, and queueing them again would only add to the queue;
  *   - a commit unit queued `unitLimits.maxAttempts` times fails its commit,
  *     naming the unit's type and range;
  *   - a commit waiting for room in the user's unit windows isn't stalled;
@@ -16,7 +20,7 @@
  *     resumes it from wherever it is), and after `maxStalls` nudges in a row
  *     without progress it fails.
  */
-import { and, count, eq, isNotNull, isNull, lt, or } from 'drizzle-orm'
+import { and, count, eq, gte, isNotNull, isNull, lt, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
@@ -24,8 +28,14 @@ import { topUpUnits, unitLimits } from './parallel.js'
 import { transition } from './session.js'
 
 export const recoverConfig = {
-  /** A commit step, or a compaction claim, with no progress for this long is stale. */
+  /** A commit step with no progress for this long is stale. */
   stallMs: 30 * 60 * 1000,
+  /**
+   * A session none of whose compaction claims has been refreshed for this long
+   * has lost them. Shorter than `stallMs`: a stalled commit waited 30 to 40
+   * minutes on compactions that had quit (staging, 2026-10-15).
+   */
+  compactionStaleMs: 15 * 60 * 1000,
   /** Nudges in a row without progress before the commit fails. */
   maxStalls: 3,
 }
@@ -41,8 +51,11 @@ async function fail(ports: Ports, sessionId: string, error: string) {
 export async function recoverCommits(ports: Ports): Promise<void> {
   const { db } = ports
   const staleBefore = new Date(Date.now() - recoverConfig.stallMs)
+  const claimStaleBefore = new Date(Date.now() - recoverConfig.compactionStaleMs)
 
-  // Compaction claims that never finished, in sessions still compacting: queue them again.
+  // Compaction claims that never finished, in sessions that still want them
+  // (open, or committing and not yet planned; compact.ts `active`) and where no
+  // claim has moved within the window: queue them again.
   const runs = schema.pushRuns
   const s = schema.pushSessions
   const lost = await db
@@ -52,12 +65,28 @@ export async function recoverCommits(ports: Ports): Promise<void> {
     .where(
       and(
         isNotNull(runs.mergingInto),
-        lt(runs.claimedAt, staleBefore),
-        or(eq(s.status, 'open'), and(eq(s.status, 'committing'), eq(s.commitPhase, 'compacting'))),
+        lt(runs.claimedAt, claimStaleBefore),
+        or(eq(s.status, 'open'), and(eq(s.status, 'committing'), isNull(s.commitPlan))),
       ),
     )
     .limit(100)
+  const moving = new Set<string>()
+  for (const id of new Set(lost.map((c) => c.sessionId))) {
+    const [fresh] = await db
+      .select({ seq: runs.seq })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.sessionId, id),
+          isNotNull(runs.mergingInto),
+          gte(runs.claimedAt, claimStaleBefore),
+        ),
+      )
+      .limit(1)
+    if (fresh) moving.add(id)
+  }
   for (const c of lost) {
+    if (moving.has(c.sessionId)) continue
     await db
       .update(runs)
       .set({ claimedAt: new Date() })
