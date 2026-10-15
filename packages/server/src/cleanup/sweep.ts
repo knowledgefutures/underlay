@@ -289,17 +289,23 @@ function counted(stats: schema.CleanupStats, c: Candidate) {
   sample(stats, c.kind, c.kind === 'collections' ? `collections/${c.owner}/` : c.key)
 }
 
-/** Pushes committing now (recently started), which a deletion window would fail. */
-async function committing(ports: Ports): Promise<boolean> {
+/**
+ * Pushes committing now, which a deletion window would fail: started recently,
+ * or still making progress (a parallel commit of a large push can run for many
+ * hours; its jobs record progress, and the stalled-commit sweep fails one that
+ * stops, so a commit that has moved lately is alive).
+ */
+export async function committing(ports: Ports): Promise<boolean> {
+  const since = new Date(Date.now() - cleanupConfig.committingHoldMs)
   const [row] = await ports.db
     .select({ id: schema.pushSessions.id })
     .from(schema.pushSessions)
     .where(
       and(
         eq(schema.pushSessions.status, 'committing'),
-        gt(
-          schema.pushSessions.finalizeStartedAt,
-          new Date(Date.now() - cleanupConfig.committingHoldMs),
+        or(
+          gt(schema.pushSessions.finalizeStartedAt, since),
+          gt(schema.pushSessions.progressAt, since),
         ),
       ),
     )

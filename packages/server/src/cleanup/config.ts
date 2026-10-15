@@ -48,7 +48,10 @@ export const cleanupConfig = {
   windowMs: 30_000,
   windowObjects: 400,
   deleteConcurrency: 16,
-  /** A push committing for less than this holds up a deletion window (it would fail otherwise). */
+  /**
+   * A push that started committing, or made progress, less than this ago holds up
+   * a deletion window (it would fail otherwise).
+   */
   committingHoldMs: 6 * HOUR,
   /** How long a sweep waits for pushes to finish before it tries again. */
   waitSeconds: 120,

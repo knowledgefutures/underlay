@@ -169,6 +169,13 @@
       "when": 1791231702996,
       "tag": "0023_version_push_session",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792066046645,
+      "tag": "0024_stream_push",
+      "breakpoints": true
     }
   ]
 }

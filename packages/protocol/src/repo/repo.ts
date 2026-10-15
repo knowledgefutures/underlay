@@ -41,7 +41,7 @@ import {
   versionDigest,
   versionHash,
 } from '../format.js'
-import { gunzipText, gzip, splitLines } from './gzip.js'
+import { chunkLines, gunzipChunks, gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
 import { type Store, type Cache, noCache } from './types.js'
 
@@ -144,8 +144,23 @@ export class Repo {
     return `${this.scope}/${key}`
   }
 
+  /** Reads in progress, by what they read: a second caller waits for the first. */
+  readonly #pending = new Map<string, Promise<unknown>>()
+
+  #shared<T>(key: string, read: () => Promise<T>): Promise<T> {
+    const running = this.#pending.get(key)
+    if (running) return running as Promise<T>
+    const p = read().finally(() => this.#pending.delete(key))
+    this.#pending.set(key, p)
+    return p
+  }
+
   /** An immutable object's bytes: shared cache, then the bucket. `verify` runs before caching. */
-  async #immutable(
+  #immutable(key: string, verify?: (bytes: Uint8Array) => Promise<void>) {
+    return this.#shared(`bytes:${key}`, () => this.#fetch(key, verify))
+  }
+
+  async #fetch(
     key: string,
     verify?: (bytes: Uint8Array) => Promise<void>,
   ): Promise<Uint8Array | null> {
@@ -165,6 +180,10 @@ export class Repo {
     const key = keys.node(hash)
     const hit = this.lru.get(this.#ck(key))
     if (typeof hit === 'string') return hit
+    return this.#shared(`node:${key}`, () => this.#nodeJson(hash, key))
+  }
+
+  async #nodeJson(hash: string, key: string): Promise<string> {
     const bytes = await this.#immutable(key, async (b) => {
       if (sha256Hex(await gunzipText(b)) !== hash)
         throw new IntegrityError(`Node ${hash} fails its hash`)
@@ -203,6 +222,14 @@ export class Repo {
     const key = keys.body(leaf.hash)
     const hit = this.lru.get(this.#ck(key))
     if (hit) return (hit as { lines: string[] }).lines
+    // Two readers of one leaf at once decompress it once.
+    return this.#shared(`lines:${key}`, () => this.#bodyLines(leaf, key))
+  }
+
+  async #bodyLines(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    key: string,
+  ): Promise<string[]> {
     const check = async (b: Uint8Array) => {
       const lines = await this.#resolve(splitLines(await gunzipText(b)))
       if (lines.length !== leaf.entries.length)
@@ -226,6 +253,36 @@ export class Repo {
     }
     this.lru.set(this.#ck(key), { lines, approxBytes: lines.reduce((n, l) => n + l.length * 2, 0) })
     return lines
+  }
+
+  /**
+   * A leaf's body lines one at a time, out-of-line records resolved, without
+   * holding the body decompressed: for rewriting leaves, where one leaf of large
+   * records can be tens of MB. Nothing is put in the memory cache. Untrusted
+   * locations read through bodyLines, which checks every line before use.
+   */
+  async *bodyLineStream(leaf: {
+    hash: string
+    entries: readonly RecordEntry[]
+  }): AsyncGenerator<string> {
+    const key = keys.body(leaf.hash)
+    const hit = this.lru.get(this.#ck(key))
+    if (hit || !this.trusted) {
+      yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
+      return
+    }
+    const bytes = await this.#immutable(key)
+    if (!bytes) throw new Error(`Missing body for leaf ${leaf.hash}`)
+    let n = 0
+    for await (const line of chunkLines(gunzipChunks(bytes))) {
+      if (++n > leaf.entries.length) break
+      yield line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
+    }
+    if (n !== leaf.entries.length) {
+      throw new IntegrityError(
+        `Body of ${leaf.hash} has ${n} lines for ${leaf.entries.length} entries`,
+      )
+    }
   }
 
   /**
@@ -369,6 +426,21 @@ export class RepoSource<E> implements NodeSource<E> {
     const entries = node.entries as RecordEntry[]
     const lines = await this.repo.bodyLines({ hash, entries })
     return entries.map((e, i) => ({ ...e, body: lines[i]! })) as E[]
+  }
+
+  /** A leaf's entries with bodies, one at a time (Repo.bodyLineStream). */
+  async *leafStream(hash: string): AsyncGenerator<E> {
+    const node = await this.node(hash)
+    if (node.kind !== 'leaf') throw new Error(`Node ${hash} is not a leaf`)
+    if (this.spec !== (recordTree as TreeSpec<unknown>)) {
+      yield* node.entries
+      return
+    }
+    const entries = node.entries as RecordEntry[]
+    let i = 0
+    for await (const body of this.repo.bodyLineStream({ hash, entries })) {
+      yield { ...entries[i++]!, body } as E
+    }
   }
 }
 

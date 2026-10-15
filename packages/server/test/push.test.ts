@@ -128,9 +128,18 @@ describe('delta push', () => {
     try {
       // One record, the same schema: in the request.
       expect((await push({}, [rec('f', { name: 'f' })])).status).toBe(201)
-      // One record, but the schema changes for a type of six: a job.
+      // One record, and a schema change that only drops a required field: nothing
+      // to revalidate, so in the request.
       const looser = { ...Author, required: [] }
-      const res = await push({ schemas: { Author: looser } }, [rec('g', { name: 'g' })])
+      expect((await push({ schemas: { Author: looser } }, [rec('g', { name: 'g' })])).status).toBe(
+        201,
+      )
+      // One record, but a schema change that can reject records, for a type of seven: a job.
+      const stricter = {
+        ...looser,
+        properties: { name: { type: 'string' }, born: { type: 'string' } },
+      }
+      const res = await push({ schemas: { Author: stricter } }, [rec('h', { name: 'h' })])
       expect(res.status).toBe(202)
       await h.drain()
     } finally {
@@ -182,9 +191,9 @@ describe('delta push', () => {
     // The node advertises its limits (protocol section 11.4).
     expect(opened.limits).toEqual({
       open_bytes: 8 * 1024 * 1024,
-      batch_bytes: 16 * 1024 * 1024,
+      batch_bytes: 8 * 1024 * 1024,
       batch_lines: 10_000,
-      session_idle_seconds: 3600,
+      session_idle_seconds: 43_200,
       open_sessions: 20,
       file_bytes: 32 * 1024 * 1024,
     })

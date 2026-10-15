@@ -12,6 +12,7 @@ import { and, eq, lt } from 'drizzle-orm'
 import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { compactForCommit } from './compact.js'
 import { commitDeltaSession } from './delta.js'
 import {
   commitOutcome,
@@ -36,6 +37,9 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
     await resumeParallel(ports, session)
     return pendingOutcome(sessionId)
   }
+  // Too many runs for one commit to read: compact them first. The last
+  // compaction queues this job again.
+  if ((await compactForCommit(ports, session)) === 'waiting') return pendingOutcome(sessionId)
   // The change streams are rebuilt from the session's runs on each attempt.
   const outcome = await commitOutcome(ports, sessionId, () =>
     fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),

@@ -27,6 +27,8 @@ import type { JobMessage, Ports, PublicAssets } from './ports.js'
 import { createStores } from './stores.js'
 
 export interface Env {
+  /** 'bulk' in the bulk job Worker (wrangler.bulk.jsonc). */
+  ROLE?: string
   DB: D1Database
   JOBS: Queue
   /** Bulk jobs (jobs.ts BULK_JOBS); without it, everything goes to JOBS. */
@@ -133,6 +135,8 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
       files: s3,
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+      // The bulk Worker's isolates run jobs, whose reads rarely repeat.
+      ...(env.ROLE === 'bulk' ? { memoryBytes: 8 * 1024 * 1024 } : {}),
     }),
     cache,
     signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),

@@ -15,7 +15,17 @@ export {
   type FsckStepOptions,
 } from './repo/fsck.js'
 export * from './repo/log.js'
-export { gunzip, gunzipMembers, gunzipText, gzip, isGzip, splitLines } from './repo/gzip.js'
+export { schemaRelaxes } from './schema-relax.js'
+export {
+  chunkLines,
+  gunzip,
+  gunzipChunks,
+  gunzipMembers,
+  gunzipText,
+  gzip,
+  isGzip,
+  splitLines,
+} from './repo/gzip.js'
 export { Lru } from './repo/lru.js'
 export {
   type BuildInput,

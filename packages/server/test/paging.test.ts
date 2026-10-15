@@ -8,6 +8,7 @@ import {
 } from '@underlay/protocol'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import { diffLimits } from '../src/api/versions.js'
 import * as schema from '../src/db/schema.js'
 import { commitVersion, type TypeInput } from '../src/versions/commit.js'
 import { cleanup, harness } from './harness.js'
@@ -89,6 +90,9 @@ describe('diff and manifest paging', () => {
       removed: p.removed.map((x) => x.id),
     })
     expect(ids(one).added).toHaveLength(200)
+    // Items are the stored records passed through: exactly id, type and data.
+    expect(one.added[0]).toStrictEqual({ id: id(3000), type: 'Doc', data: { n: 0 } })
+    expect(one.updated[0]).toStrictEqual({ id: id(0), type: 'Doc', data: { n: 1 } })
     expect(ids(one).updated).toHaveLength(520)
     expect(ids(one).removed).toHaveLength(100)
     const paged = { added: [] as string[], updated: [] as string[], removed: [] as string[] }
@@ -107,6 +111,29 @@ describe('diff and manifest paging', () => {
     } while (cursor)
     expect(pages).toBe(Math.ceil(820 / 97))
     expect(paged).toEqual(ids(one))
+
+    // Pages are capped by their records' bytes too, past the first record.
+    const pageBytes = diffLimits.pageBytes
+    diffLimits.pageBytes = 2000
+    try {
+      const small = { added: [] as string[], updated: [] as string[], removed: [] as string[] }
+      let pagesByBytes = 0
+      do {
+        const p = (await get(
+          `${base}/diff?from=${v.semver}&limit=5000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        )) as DiffPage
+        const x = ids(p)
+        small.added.push(...x.added)
+        small.updated.push(...x.updated)
+        small.removed.push(...x.removed)
+        cursor = p.pagination.nextCursor
+        pagesByBytes++
+      } while (cursor)
+      expect(pagesByBytes).toBeGreaterThan(10)
+      expect(small).toEqual(ids(one))
+    } finally {
+      diffLimits.pageBytes = pageBytes
+    }
 
     type Entry = {
       id: string

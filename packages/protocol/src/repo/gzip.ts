@@ -27,6 +27,8 @@ export const gzip = (data: Uint8Array | string) =>
 
 interface Zlib {
   gunzip(bytes: Uint8Array, done: (err: Error | null, out: Uint8Array) => void): void
+  /** A streaming gunzip (a Node Transform): written once, read as it decompresses. */
+  createGunzip?(): { end(chunk: Uint8Array): void } & AsyncIterable<Uint8Array>
 }
 const zlib = (
   globalThis as { process?: { getBuiltinModule?: (id: 'node:zlib') => Zlib | undefined } }
@@ -85,6 +87,38 @@ export async function gunzipMembers(
 }
 
 export const gunzipText = async (bytes: Uint8Array) => dec.decode(await gunzip(bytes))
+
+/**
+ * A gzip object's decompressed bytes (any number of members) a chunk at a time,
+ * as zlib produces them, so a large body never sits whole in memory. Runtimes
+ * without a streaming zlib get it in one chunk.
+ */
+export async function* gunzipChunks(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  const stream = zlib?.createGunzip?.()
+  if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+    yield await gunzip(bytes)
+    return
+  }
+  stream.end(bytes)
+  for await (const chunk of stream) yield chunk
+}
+
+/** NDJSON lines from chunks of UTF-8 bytes (a trailing newline ends the last line). */
+export async function* chunkLines(chunks: AsyncIterable<Uint8Array>): AsyncGenerator<string> {
+  const decoder = new TextDecoder()
+  let rest = ''
+  for await (const chunk of chunks) {
+    const text = rest + decoder.decode(chunk, { stream: true })
+    let start = 0
+    for (let nl = text.indexOf('\n'); nl !== -1; nl = text.indexOf('\n', start)) {
+      yield text.slice(start, nl)
+      start = nl + 1
+    }
+    rest = text.slice(start)
+  }
+  rest += decoder.decode()
+  if (rest.length > 0) yield rest
+}
 
 export const isGzip = (bytes: Uint8Array) =>
   bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b

@@ -229,8 +229,57 @@ async function bodyOf(source: RepoSource<RecordEntry>, root: string, key: string
   let hash = root
   for (;;) {
     const node = await source.node(hash)
-    if (node.kind === 'leaf')
-      return (await source.leafEntries(hash)).find((e) => e.key === key)!.body!
+    if (node.kind === 'leaf') {
+      // Streamed, stopping at the record: a leaf of large records is never held whole.
+      for await (const e of source.leafStream(hash)) if (e.key === key) return e.body!
+      throw new Error(`Record ${key} is not in leaf ${hash}`)
+    }
     hash = node.children.find((c) => compareUtf8(key, c.lastKey) <= 0)!.hash
   }
+}
+
+/**
+ * Bodies of records by (type, id, set), each leaf read once and streamed: a page
+ * of records from one leaf decompresses it once, not once a record. Keys are
+ * `type\u0000id`; a record not in the view is left out. `concurrency` leaves at
+ * a time.
+ */
+export async function recordBodies(
+  view: VersionView,
+  wanted: { type: string; key: string; set: 'public' | 'private' }[],
+  concurrency = 4,
+): Promise<Map<string, string>> {
+  const source = new RepoSource(recordTree, view.repo)
+  const byLeaf = new Map<string, Set<string>>()
+  for (const w of wanted) {
+    const t = view.types.find((x) => x.slug === w.type)
+    let hash = (w.set === 'public' ? t?.public : t?.private)?.root ?? null
+    while (hash) {
+      const node = await source.node(hash)
+      if (node.kind === 'leaf') break
+      hash = node.children.find((c) => compareUtf8(w.key, c.lastKey) <= 0)?.hash ?? null
+    }
+    if (!hash) continue
+    const keys = byLeaf.get(hash) ?? new Set<string>()
+    keys.add(`${w.type}\u0000${w.key}`)
+    byLeaf.set(hash, keys)
+  }
+  const out = new Map<string, string>()
+  const leaves = [...byLeaf]
+  let next = 0
+  const worker = async () => {
+    while (next < leaves.length) {
+      const [hash, keys] = leaves[next++]!
+      const type = [...keys][0]!.split('\u0000')[0]!
+      let left = keys.size
+      for await (const e of source.leafStream(hash)) {
+        const k = `${type}\u0000${e.key}`
+        if (!keys.has(k) || view.withheld.has(e.hash)) continue
+        out.set(k, e.body!)
+        if (--left === 0) break
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, leaves.length) }, worker))
+  return out
 }

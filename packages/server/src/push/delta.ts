@@ -30,7 +30,7 @@ import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
 import type { SessionCommitResult } from './outcome.js'
-import { planParallel } from './parallel.js'
+import { planParallel, SerialTooLargeError } from './parallel.js'
 import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
   loadInputs,
@@ -44,7 +44,8 @@ import {
   transition,
 } from './session.js'
 
-export const MAX_BATCH_BYTES = 16 * 1024 * 1024
+/** 8 MB: an upload request holds its batch several times over (text, records, run lines). */
+export const MAX_BATCH_BYTES = 8 * 1024 * 1024
 export const MAX_BATCH_LINES = 10_000
 const MAX_REPORTED = 100
 
@@ -345,8 +346,13 @@ export async function commitDeltaSession(
   const root = base ? await repo.root(base.hash) : null
   const priv = root?.private ? await repo.privateSet(root.private) : null
   const sets = { pub: root?.public ?? emptySet(), priv: priv ?? emptySet() }
-  if (await planParallel(ports, session, { inputs, runs, base, repo, fence, ...sets })) {
-    return { status: 'parallel' }
+  try {
+    if (await planParallel(ports, session, { inputs, runs, base, repo, fence, ...sets })) {
+      return { status: 'parallel' }
+    }
+  } catch (err) {
+    if (err instanceof SerialTooLargeError) return { status: 'schema_refused', error: err.message }
+    throw err
   }
   return commitVersion(ports, {
     collectionId: session.collectionId,

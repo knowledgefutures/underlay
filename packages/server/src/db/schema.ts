@@ -600,6 +600,15 @@ export const pushSessions = sqliteTable(
     finalizeStartedAt: ts('finalize_started_at'),
     /** When storage cleanup deleted the session's objects (sessions/<id>/) and run rows. */
     cleanedAt: ts('cleaned_at'),
+    /**
+     * Where a committing session is: 'compacting' while its runs are merged down
+     * to what one commit reads (push/compact.ts), then null.
+     */
+    commitPhase: text('commit_phase'),
+    /** Last step a commit's jobs finished; the sweep nudges a session that stops moving. */
+    progressAt: ts('progress_at'),
+    /** Nudges since the last progress; past a few the commit fails (push/recover.ts). */
+    stalls: integer('stalls').notNull().default(0),
     /** A parallel commit's plan (push/parallel.ts): set once, when its units are queued. */
     commitPlan: text('commit_plan'),
     /** Held by the `commit.assemble` job while it runs (one assembler at a time). */
@@ -625,6 +634,8 @@ export const pushRuns = sqliteTable(
     kind: text('kind', { enum: ['records', 'deletes'] }).notNull(),
     objectKey: text('object_key').notNull(),
     count: integer('count').notNull(),
+    /** Raw NDJSON size, about: compaction and commits are sized by it. */
+    bytes: integer('bytes').notNull().default(0),
     /** Run key range, `type\u0000id`, for planning commit units. */
     firstKey: text('first_key').notNull(),
     lastKey: text('last_key').notNull(),
@@ -632,6 +643,8 @@ export const pushRuns = sqliteTable(
     tier: integer('tier').notNull().default(0),
     /** Claimed by the compaction writing run `mergingInto`; null while free. */
     mergingInto: integer('merging_into'),
+    /** When the compaction claimed it: a claim that never finishes is queued again. */
+    claimedAt: ts('claimed_at'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -671,6 +684,8 @@ export const commitUnits = sqliteTable(
     outputKey: text('output_key'),
     /** When the unit was put on the queue; null while it waits for room (push/parallel.ts). */
     queuedAt: ts('queued_at'),
+    /** Times the unit was put on the queue; past a few the commit fails (push/recover.ts). */
+    attempts: integer('attempts').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [

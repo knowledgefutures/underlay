@@ -13,7 +13,20 @@ export interface NodeSource<E> {
    * Sources whose entries carry no payload return the node's entries.
    */
   leafEntries(hash: string): Promise<E[]>
+  /**
+   * The same entries one at a time, where the source can stream them: a leaf of
+   * large records is never held whole. Readers fall back to `leafEntries`.
+   */
+  leafStream?(hash: string): AsyncIterable<E>
 }
+
+/** A leaf's entries with payloads: streamed where the source can. */
+export const leafEntryStream = <E>(source: NodeSource<E>, hash: string): AsyncIterable<E> =>
+  source.leafStream
+    ? source.leafStream(hash)
+    : (async function* () {
+        yield* await source.leafEntries(hash)
+      })()
 
 /** A source over node JSON held in memory, keyed by hash. */
 export class MapSource<E> implements NodeSource<E> {
