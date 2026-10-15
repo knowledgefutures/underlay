@@ -202,6 +202,37 @@ describe('one version from many uploads', () => {
     expect((await headTree(h, a.id)).count).toBe(2400)
   }, 60_000)
 
+  it('says where a session is: its runs, then the commit’s phase and units', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('st')
+    const path = '/api/collections/org/st'
+    const sid = (
+      await json(
+        await h.request(`${path}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+      )
+    ).session_id as string
+    for (let j = 0; j < 6; j++)
+      await h.request(`${path}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: Array.from({ length: 10 }, (_, i) => rec(`k${j}-${i}`, body(i))),
+      })
+    const status = async () => json(await h.request(`${path}/push/${sid}`, { user }))
+    expect((await status()).progress).toMatchObject({ runs: 6, phase: null, units: null })
+    expect((await status()).progress.run_bytes).toBeGreaterThan(6 * 10 * 512)
+    Object.assign(compactConfig, { commitRuns: 2 })
+    const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
+    // Too many runs for one commit: it compacts first, and answers 202.
+    expect(res.status).toBe(202)
+    expect((await status()).progress).toMatchObject({ phase: 'compacting' })
+    expect((await status()).progress.runs_compacting).toBeGreaterThan(0)
+    await h.drain()
+    const done = await status()
+    expect(done.status).toBe('committed')
+    expect(done.progress).toBeUndefined()
+  })
+
   it('refuses a schema change too large for the serial commit, saying what to do', async () => {
     const h = await harness()
     const user = await h.member()

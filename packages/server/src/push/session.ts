@@ -13,8 +13,12 @@ import type { Ports } from '../ports.js'
 import { maybeCompact } from './compact.js'
 import { readRunIndex, runBytes, runCount, type RunIndex } from './runs.js'
 
-/** Idle timeout: pushed back by every upload. Runs live in storage, so this can be generous. */
-export const SESSION_TTL_MS = 60 * 60 * 1000
+/**
+ * Idle timeout: pushed back by every upload. Runs live in storage, so this can
+ * be generous: a client loading a corpus into one session over days can stop
+ * and pick the same session up again (GET …/push/:sid says where it is).
+ */
+export const SESSION_TTL_MS = 12 * 60 * 60 * 1000
 
 /** Sessions one user may have open or committing at once (v2-scale-review.md S3). */
 export const limits = { openSessions: 20 }

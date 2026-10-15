@@ -10,7 +10,7 @@
  *   DELETE /:owner/:slug/push/:sid                 abandon
  */
 import { hashSchema, parseSemver } from '@underlay/protocol'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, count, eq, isNotNull, isNull, sum } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -26,6 +26,7 @@ import {
   MAX_BATCH_LINES,
 } from '../push/delta.js'
 import { finalizeSession } from '../push/finalize.js'
+import { unitProgress } from '../push/recover.js'
 import {
   createSession,
   getSession,
@@ -180,8 +181,13 @@ async function revalidates(ports: Ports, session: SessionRow): Promise<number> {
   return n
 }
 
-function statusBody(s: SessionRow) {
-  return {
+/**
+ * A session's status. While it takes uploads or commits, `progress` says where
+ * it is: its runs (and compactions running), then the commit's phase
+ * (compacting, planning, units, assembling) and its units done.
+ */
+async function statusBody(ports: Ports, s: SessionRow) {
+  const body = {
     session_id: s.id,
     status: s.status,
     records_received: s.recordsReceived,
@@ -190,6 +196,33 @@ function statusBody(s: SessionRow) {
     finalize_started_at: s.finalizeStartedAt,
     result: s.result ?? null,
     error: s.error ?? null,
+  }
+  if (s.status !== 'open' && s.status !== 'committing') return body
+  const r = schema.pushRuns
+  const [runs] = await ports.db
+    .select({ n: count(), bytes: sum(r.bytes) })
+    .from(r)
+    .where(eq(r.sessionId, s.id))
+  const [compacting] = await ports.db
+    .select({ n: count() })
+    .from(r)
+    .where(and(eq(r.sessionId, s.id), isNotNull(r.mergingInto)))
+  const units = s.commitPlan ? await unitProgress(ports, s.commitPlan) : null
+  const phase =
+    s.status === 'open'
+      ? null
+      : (s.commitPhase ??
+        (!units ? 'committing' : units.done < units.total ? 'units' : 'assembling'))
+  return {
+    ...body,
+    progress: {
+      runs: runs?.n ?? 0,
+      run_bytes: Number(runs?.bytes ?? 0),
+      runs_compacting: compacting?.n ?? 0,
+      phase,
+      units,
+      progress_at: s.progressAt,
+    },
   }
 }
 
@@ -331,7 +364,7 @@ export function pushRoutes() {
     if (access instanceof Response) return access
     const session = await ownSession(c, access)
     if (session instanceof Response) return session
-    return c.json(statusBody(session))
+    return c.json(await statusBody(c.var.ports, session))
   })
 
   app.delete('/:owner/:slug/push/:sid', async (c) => {

@@ -184,7 +184,7 @@ describe('delta push', () => {
       open_bytes: 8 * 1024 * 1024,
       batch_bytes: 16 * 1024 * 1024,
       batch_lines: 10_000,
-      session_idle_seconds: 3600,
+      session_idle_seconds: 43_200,
       open_sessions: 20,
       file_bytes: 32 * 1024 * 1024,
     })
