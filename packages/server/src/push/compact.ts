@@ -68,9 +68,17 @@ interface CompactionPlan {
   cuts: string[]
 }
 
-/** Compactions run while the session takes uploads, or while its commit waits for them. */
+/**
+ * Compactions run while the session takes uploads, and while it commits until
+ * the commit has planned. Not only in phase 'compacting': a commit request moves
+ * the session to 'committing' at once, but the phase is set later, by the
+ * push.commit job, and a compaction that ran in between and quit left its runs
+ * claimed until the sweep found them 30 minutes later (staging, 2026-10-15). A
+ * compaction that finishes while a serial commit reads the runs is harmless:
+ * the commit read the run list once, and every input stays in storage.
+ */
 const active = (s: SessionRow | null) =>
-  s?.status === 'open' || (s?.status === 'committing' && s.commitPhase === 'compacting')
+  s?.status === 'open' || (s?.status === 'committing' && s.commitPlan === null)
 
 /** A run number for a compaction's output, while compaction may run. */
 async function compactionSeq(ports: Ports, sessionId: string): Promise<number | null> {

@@ -145,6 +145,54 @@ describe('recovering stalled commits', () => {
     expect((await json(res)).error).toMatch(/new session/)
   })
 
+  it('keeps compacting when a commit is requested before the compaction job runs', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('race')
+    const path = '/api/collections/org/race'
+    const all = ids(MERGE_FAN_IN * 5)
+    const batches = Array.from({ length: MERGE_FAN_IN }, (_, i) =>
+      all.slice(i * 5, i * 5 + 5).map(rec),
+    )
+    // The 16th upload claims a compaction and queues it; the commit is asked
+    // for before that job runs, so the session is committing, not yet compacting.
+    const sid = await upload(h, user, path, batches)
+    const commit = await h.request(`${path}/push/${sid}/commit?async=true`, {
+      method: 'POST',
+      user,
+    })
+    expect(commit.status).toBe(202)
+    expect((await session(h, sid)).commitPhase).toBeNull()
+    // The compaction job runs first, and does its work.
+    expect((await drainSqliteJobs(h.ports, { max: 1 })) === 1).toBe(true)
+    const runs = await h.ports.db
+      .select()
+      .from(schema.pushRuns)
+      .where(eq(schema.pushRuns.sessionId, sid))
+    expect(runs.map((r) => [r.tier, r.mergingInto])).toEqual([[1, null]])
+    await h.drain()
+    expect((await session(h, sid)).status).toBe('committed')
+  })
+
+  it('re-queues a lost compaction of a session committing but not yet planned', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('lostcommit')
+    const path = '/api/collections/org/lostcommit'
+    const all = ids(MERGE_FAN_IN * 5)
+    const batches = Array.from({ length: MERGE_FAN_IN }, (_, i) =>
+      all.slice(i * 5, i * 5 + 5).map(rec),
+    )
+    const sid = await upload(h, user, path, batches)
+    await dropJobs(h, 'push.compact')
+    await h.request(`${path}/push/${sid}/commit?async=true`, { method: 'POST', user })
+    await dropJobs(h, 'push.commit')
+    Object.assign(recoverConfig, { stallMs: -1 })
+    await recoverCommits(h.ports)
+    const queued = (await h.ports.db.select().from(schema.jobs)).map((j) => j.type)
+    expect(queued).toContain('push.compact')
+  })
+
   it('holds storage cleanup for a long commit while it makes progress', async () => {
     const h = await harness()
     const user = await h.member()

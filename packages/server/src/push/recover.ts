@@ -42,7 +42,8 @@ export async function recoverCommits(ports: Ports): Promise<void> {
   const { db } = ports
   const staleBefore = new Date(Date.now() - recoverConfig.stallMs)
 
-  // Compaction claims that never finished, in sessions still compacting: queue them again.
+  // Compaction claims that never finished, in sessions that still want them
+  // (open, or committing and not yet planned; compact.ts `active`): queue them again.
   const runs = schema.pushRuns
   const s = schema.pushSessions
   const lost = await db
@@ -53,7 +54,7 @@ export async function recoverCommits(ports: Ports): Promise<void> {
       and(
         isNotNull(runs.mergingInto),
         lt(runs.claimedAt, staleBefore),
-        or(eq(s.status, 'open'), and(eq(s.status, 'committing'), eq(s.commitPhase, 'compacting'))),
+        or(eq(s.status, 'open'), and(eq(s.status, 'committing'), isNull(s.commitPlan))),
       ),
     )
     .limit(100)
