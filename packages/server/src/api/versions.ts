@@ -432,25 +432,39 @@ export function versionRoutes() {
     let count = 0
     for (const t of types) count += from?.t === t.slug ? await countAfter(view, t, from.k) : t.count
     const enc = new TextEncoder()
+    // Bodies are read a leaf at a time as a stream (a leaf of large records is
+    // tens of MB), and lines are made only as the client reads them: a stream
+    // that ran ahead of a slow reader would hold the version in the isolate.
+    async function* lines() {
+      for (const t of types) {
+        const opts =
+          from?.t === t.slug
+            ? { after: from.k, bodies: true, stream: true }
+            : { bodies: true, stream: true }
+        for await (const e of typeRecords(view, t, opts))
+          yield withHash(e.body!, e.hash, e.set === 'private')
+      }
+    }
+    const it = lines()
     const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
+      async pull(controller) {
         try {
-          for (const t of types) {
-            const opts = from?.t === t.slug ? { after: from.k, bodies: true } : { bodies: true }
-            let batch: string[] = []
-            for await (const e of typeRecords(view, t, opts)) {
-              batch.push(withHash(e.body!, e.hash, e.set === 'private'))
-              if (batch.length >= 512) {
-                controller.enqueue(enc.encode(batch.join('\n') + '\n'))
-                batch = []
-              }
-            }
-            if (batch.length) controller.enqueue(enc.encode(batch.join('\n') + '\n'))
+          const batch: string[] = []
+          let bytes = 0
+          while (batch.length < 512 && bytes < 1 << 20) {
+            const r = await it.next()
+            if (r.done) break
+            batch.push(r.value)
+            bytes += r.value.length
           }
-          controller.close()
+          if (batch.length) controller.enqueue(enc.encode(batch.join('\n') + '\n'))
+          else controller.close()
         } catch (err) {
           controller.error(err)
         }
+      },
+      async cancel() {
+        await it.return(undefined)
       },
     })
     return new Response(stream, {

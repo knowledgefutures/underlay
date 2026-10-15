@@ -647,6 +647,29 @@ describe('read', () => {
           const fromKey = await collect(iterate(source, root, { after }))
           expect(fromKey.map((e) => e.key)).toEqual(es.slice(offset).map((e) => e.key))
         }
+        // Streaming bodies a leaf at a time reads the same entries, by offset
+        // or key, through leafStream where the source has one.
+        const streaming: NodeSource<RecordEntry> = {
+          spec: source.spec,
+          node: (h) => source.node(h),
+          leafEntries: (h) => source.leafEntries(h),
+          async *leafStream(h) {
+            yield* await source.leafEntries(h)
+          },
+        }
+        for (const src of [source, streaming]) {
+          const streamed = await collect(
+            iterate(src, root, { offset, payloads: true, stream: true }),
+          )
+          expect(streamed.map((e) => e.key)).toEqual(es.slice(offset).map((e) => e.key))
+          if (offset > 0) {
+            const after = es[offset - 1]!.key
+            const fromKey = await collect(
+              iterate(src, root, { after, payloads: true, stream: true }),
+            )
+            expect(fromKey.map((e) => e.key)).toEqual(es.slice(offset).map((e) => e.key))
+          }
+        }
         // Diff against an edited copy reports exactly the edits.
         const changes: Change<RecordEntry>[] = []
         es.forEach((e, i) => {
