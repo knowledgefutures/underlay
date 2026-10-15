@@ -119,7 +119,8 @@ export type BuildResult =
     }
 
 const MAX_REPORTED_ERRORS = 100
-const SPILL_BYTES = 4 * 1024 * 1024
+/** Body bytes a leaf holds before they go to a compressed member (each compresses with its raw text in memory). */
+const SPILL_BYTES = 1024 * 1024
 
 const summaryOf = (t: {
   root: { hash: string; count: number; bytes: number } | null

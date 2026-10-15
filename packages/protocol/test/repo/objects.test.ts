@@ -132,6 +132,39 @@ describe('record trees in a repository', () => {
     expect(rows.every((r) => JSON.parse(r.body!).id === r.key)).toBe(true)
   })
 
+  it('holds back drain while the bodies in flight pass the byte bound', async () => {
+    const blobs = memoryStore()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    // Body writes wait on the gate; everything else goes straight through.
+    const gated = new Proxy(blobs, {
+      get(t, p) {
+        if (p === 'put')
+          return async (...a: Parameters<typeof blobs.put>) => {
+            if (a[0].startsWith('bodies/')) await gate
+            return t.put(...a)
+          }
+        const v = Reflect.get(t, p) as unknown
+        return typeof v === 'function' ? v.bind(t) : v
+      },
+    })
+    const repo = new Repo(gated, {
+      scope: 'test',
+      trusted: true,
+      lru: new Lru(8 << 20, () => 1024),
+    })
+    const sink = new RepoSink(repo, { bodyOf: bodyOfRecord, pendingBytes: 1 })
+    const b = new TreeBuilder(recordTree, sink)
+    for (const id of ids(3000)) b.addEntry(record(id))
+    b.finish()
+    const drained = sink.drain().then(() => 'drained')
+    const tick = new Promise((r) => setTimeout(() => r('waiting'), 50))
+    expect(await Promise.race([drained, tick])).toBe('waiting')
+    release()
+    expect(await drained).toBe('drained')
+    await sink.flush()
+  })
+
   it('resolves out-of-line records', async () => {
     const { repo } = freshRepo()
     const big = hashRecord('big', 'T', { blob: 'y'.repeat(OUT_OF_LINE_BYTES + 10) })
