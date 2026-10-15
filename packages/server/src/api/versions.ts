@@ -39,6 +39,7 @@ import {
   countAfter,
   findVersion,
   getRecord,
+  recordBodies,
   loadView,
   typeRecords,
   type VersionRow,
@@ -575,30 +576,36 @@ export function versionRoutes() {
     let n = 0
     let next: string | null = null
     let last: { type: string; key: string } | null = null
-    const body = async (side: VersionView, d: { type: string; key: string }) => {
-      const t = side.types.find((x) => x.slug === d.type)!
-      const r = await getRecord(side, t, d.key)
-      return { id: d.key, type: d.type, data: (JSON.parse(r!.body!) as { data: unknown }).data }
-    }
+    // A page is capped by its records' bytes as well as their count: 5,000
+    // records of several KB each don't fit a Worker as one JSON page.
     const page: TypedDiff[] = []
+    let bytes = 0
     for await (const d of diffAll(fromView, view, cursor)) {
-      if (n === limit) {
+      const size = d.after?.size ?? 0
+      if (n === limit || (n > 0 && bytes + size > diffLimits.pageBytes)) {
         next = encodeCursor(last!.type, last!.key)
         break
       }
       n++
       last = d
+      bytes += size
       page.push(d)
     }
-    // A page's bodies are read BODY_READS at a time, not one after another.
-    const bodies = await mapConcurrent(page, BODY_READS, (d) =>
-      d.after ? body(view, d) : Promise.resolve(null),
+    // Bodies: each leaf the page touches is read once, streamed.
+    const found = await recordBodies(
+      view,
+      page.filter((d) => d.after).map((d) => ({ type: d.type, key: d.key, set: d.afterSet })),
     )
-    page.forEach((d, i) => {
-      if (!d.before) added.push(bodies[i]!)
+    const body = (d: TypedDiff) => {
+      const b = found.get(`${d.type}\u0000${d.key}`)
+      if (b === undefined) throw new Error(`Record ${d.type}/${d.key} missing from its version`)
+      return { id: d.key, type: d.type, data: (JSON.parse(b) as { data: unknown }).data }
+    }
+    for (const d of page) {
+      if (!d.before) added.push(body(d))
       else if (!d.after) removed.push({ id: d.key, type: d.type })
-      else updated.push(bodies[i]!)
-    })
+      else updated.push(body(d))
+    }
     const schemaChanged =
       !fromView ||
       JSON.stringify(fromView.types.map((t) => [t.slug, t.schemaHash])) !==
@@ -714,26 +721,8 @@ async function lookupShared(
 /** Versions a record history looks back over. */
 const MAX_HISTORY = 500
 
-/** Concurrent body reads per diff page. */
-const BODY_READS = 16
-
-/** `f` over `items`, at most `limit` at a time, results in order. */
-async function mapConcurrent<T, R>(
-  items: T[],
-  limit: number,
-  f: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length)
-  let next = 0
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++
-      out[i] = await f(items[i]!)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
-  return out
-}
+/** Record bytes per diff page, at most (past its first record). */
+export const diffLimits = { pageBytes: 4 * 1024 * 1024 }
 
 /** File hashes in the sets this view may read (deduplicated, sorted). */
 async function visibleFiles(view: VersionView, max: number): Promise<string[]> {
