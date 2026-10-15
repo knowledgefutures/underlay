@@ -850,6 +850,9 @@ already stores the file.
   the client uploads the files and commits the same session again. A polling client sees `status`
   `open`, with the refusal in `error`.
 - Committing a session that has already committed answers 201 with the same body.
+- A server MAY let a session whose commit failed on the server's side (`error.statusCode` 500 or 503) be committed again from the same uploads; underlay.org does until shortly before it
+  deletes the session's uploads, about a day after it would have expired. A failure the client can
+  fix only by pushing again (422, 409) answers 409.
 - A client that holds the base SHOULD compute the new version's hash itself and compare it with
   `hash`.
 

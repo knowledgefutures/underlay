@@ -14,6 +14,7 @@ import { and, count, eq, isNotNull, isNull, sum } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { cleanupConfig } from '../cleanup/config.js'
 import * as schema from '../db/schema.js'
 import { SMALL_UPLOAD_BYTES } from '../files/files.js'
 import { registerJob } from '../jobs.js'
@@ -124,15 +125,34 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
     body.async === true ||
     session.recordsReceived > commitConfig.asyncAbove ||
     (await revalidates(ports, session)) > commitConfig.asyncAbove
-  if (
-    // The error of a commit refused for missing files is cleared on the next try.
-    !(await transition(ports, session.id, 'open', 'committing', {
-      finalizeStartedAt: new Date(),
-      error: null,
-    }))
-  ) {
+  const started = retryable(session)
+    ? // A commit that failed on the server's side goes again, from the session's
+      // uploads (still in storage) and a fresh plan.
+      await transition(ports, session.id, 'failed', 'committing', {
+        finalizeStartedAt: new Date(),
+        error: null,
+        commitPlan: null,
+        commitPhase: null,
+        assemblyLease: null,
+        stalls: 0,
+        progressAt: new Date(),
+        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+      })
+    : // The error of a commit refused for missing files is cleared on the next try.
+      await transition(ports, session.id, 'open', 'committing', {
+        finalizeStartedAt: new Date(),
+        error: null,
+      })
+  if (!started) {
     const now = await getSession(ports, session.id)
     if (now?.status === 'committed') return c.json(now.result ?? {}, 201)
+    if (now?.status === 'failed')
+      return jsonError(
+        c,
+        409,
+        'Session failed, and not in a way committing again can fix; push again in a new session',
+        { cause: now.error ?? null },
+      )
     return jsonError(c, 409, `Session is ${now?.status ?? 'gone'}`)
   }
   if (wantsAsync) {
@@ -148,6 +168,23 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
   }
   const outcome = await finalizeSession(ports, session.id)
   return c.json(outcome.body, outcome.status)
+}
+
+/**
+ * Can a failed session be committed again? When the failure was the server's
+ * (500: a commit step kept failing or stopped moving; 503: storage cleanup got
+ * in the way), and its uploads are still in storage with time to spare before
+ * cleanup deletes them. A refusal (422, 409: invalid records, a moved base) is
+ * the same the next time.
+ */
+function retryable(s: SessionRow): boolean {
+  const code = s.error?.statusCode
+  return (
+    s.status === 'failed' &&
+    s.cleanedAt === null &&
+    (code === 500 || code === 503) &&
+    s.expiresAt.getTime() > Date.now() - cleanupConfig.sessionGraceMs + 60 * 60 * 1000
+  )
 }
 
 /**

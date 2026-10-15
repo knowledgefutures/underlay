@@ -6,6 +6,7 @@
 import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
+import { committing } from '../src/cleanup/sweep.js'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs } from '../src/jobs.js'
 import { compactConfig } from '../src/push/compact.js'
@@ -119,6 +120,44 @@ describe('recovering stalled commits', () => {
     expect(s.error?.error).toMatch(/commit unit failed 4 times \(type Author/)
     const status = await json(await h.request(`${path}/push/${sid}`, { user }))
     expect(status.status).toBe('failed')
+
+    // The failure was the server's: the same session commits again, from its uploads.
+    const again = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
+    expect(again.status).toBe(202)
+    await h.drain()
+    const retried = await json(await h.request(`${path}/push/${sid}`, { user }))
+    expect(retried).toMatchObject({ status: 'committed', error: null })
+    expect(retried.result.recordCount).toBe(400)
+  })
+
+  it('refuses to commit again a session that failed for a reason the client must fix', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('refused')
+    const path = '/api/collections/org/refused'
+    const sid = await upload(h, user, path, [ids(5).map(rec)])
+    await h.ports.db
+      .update(schema.pushSessions)
+      .set({ status: 'failed', error: { statusCode: 422, error: 'Schema validation failed' } })
+      .where(eq(schema.pushSessions.id, sid))
+    const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
+    expect(res.status).toBe(409)
+    expect((await json(res)).error).toMatch(/new session/)
+  })
+
+  it('holds storage cleanup for a long commit while it makes progress', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('long')
+    const path = '/api/collections/org/long'
+    const sid = await upload(h, user, path, [ids(5).map(rec)])
+    const hours = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000)
+    const set = (v: Partial<typeof schema.pushSessions.$inferInsert>) =>
+      h.ports.db.update(schema.pushSessions).set(v).where(eq(schema.pushSessions.id, sid))
+    await set({ status: 'committing', finalizeStartedAt: hours(30), progressAt: hours(0.2) })
+    expect(await committing(h.ports)).toBe(true)
+    await set({ progressAt: hours(7) })
+    expect(await committing(h.ports)).toBe(false)
   })
 
   it('nudges a lost commit job, and fails one that never moves', async () => {
