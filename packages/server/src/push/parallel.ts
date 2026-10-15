@@ -639,8 +639,8 @@ export async function writePlanChunk(
  * one queued `maxAttempts` times fails its commit (recover.ts).
  */
 export const unitLimits = {
-  perSession: 32,
-  perAccount: 64,
+  perSession: 64,
+  perAccount: 96,
   staleMs: 30 * 60 * 1000,
   maxAttempts: 4,
 }
