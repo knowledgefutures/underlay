@@ -15,6 +15,7 @@ export {
   type FsckStepOptions,
 } from './repo/fsck.js'
 export * from './repo/log.js'
+export { schemaRelaxes } from './schema-relax.js'
 export {
   chunkLines,
   gunzip,

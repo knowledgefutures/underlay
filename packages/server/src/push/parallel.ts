@@ -36,6 +36,7 @@
 import {
   assembleTree,
   bodyOfRecord,
+  compileSchema,
   boundaryBytes,
   compareUtf8,
   dropRecordBody,
@@ -53,7 +54,9 @@ import {
   type Segment,
   type SetName,
   type SetObject,
+  schemaRelaxes,
   sha256Hex,
+  tracksTypes,
   trailingZeros,
   type TreeSummary,
 } from '@underlay/protocol'
@@ -130,8 +133,23 @@ interface CommitPlan {
    */
   fence?: number
   base: BaseVersion | null
-  /** Per type: its base trees, which the units merge into. */
-  types: Record<string, { privateType: boolean; public: TreeSummary; private: TreeSummary }>
+  /**
+   * Per type: its base trees (`public`, `private`: which sets the base has,
+   * for the change streams), the trees its units merge into (`bases`: the
+   * moved tree for a privacy change; plans before moves: the base trees), a
+   * privacy move, and whether its new trees are revalidated in jobs.
+   */
+  types: Record<
+    string,
+    {
+      privateType: boolean
+      public: TreeSummary
+      private: TreeSummary
+      bases?: { public: TreeSummary; private: TreeSummary }
+      move?: 'toPrivate' | 'toPublic'
+      validate?: boolean
+    }
+  >
   /** The runs the units read (their summaries are sliced per unit). Plans before chunks: absent. */
   runs?: number[]
   units?: UnitSpec[]
@@ -331,12 +349,89 @@ function estimatedWork(runs: RunIndex[], trees: Map<string, TreeSummary[]>): num
   return total
 }
 
+/** How a type's trees get from the base to the new version (decided per type by the planner). */
+interface TypeMode {
+  /** The type's whole tree moves to the other set (a privacy change), as the serial build moves it. */
+  move?: 'toPrivate' | 'toPublic'
+  /** Its schema changed in a way that can reject records: the new trees are revalidated in jobs. */
+  validate: boolean
+  /** Only the serial build handles it; the bytes it would read or rewrite there. */
+  serialOnly?: number
+}
+
+/**
+ * Decide each type's mode. A privacy change goes parallel when the serial build
+ * would move the type's tree as it is and the base counts file references per
+ * type (so moving them is O(files)): public → private with nothing in the
+ * private set yet, and private → public with no private upsert of the type in
+ * this push. Anything else that changes privacy, and a type removed from a base
+ * without per-type counts, stays serial at the cost of the type.
+ */
+async function typeModes(
+  repo: Repo,
+  inputs: SessionInputs,
+  runs: RunIndex[],
+  base: BaseVersion | null,
+  pub: SetObject,
+  priv: SetObject,
+) {
+  const tracked = {
+    public: await tracksTypes(repo, base?.publicRefsRoot ?? null),
+    private: await tracksTypes(repo, base?.privateRefsRoot ?? null),
+  }
+  const hashes = schemaHashes(inputs.schemas)
+  const modes: Record<string, TypeMode> = {}
+  for (const [slug, s] of Object.entries(inputs.schemas)) {
+    const pubBase = pub.types[slug]
+    const privBase = priv.types[slug]
+    const prior = pubBase ?? privBase
+    const bytes = (pubBase?.bytes ?? 0) + (privBase?.bytes ?? 0)
+    const changed = !!prior && prior.schema !== hashes[slug]
+    const mode: TypeMode = {
+      validate: changed && !schemaRelaxes(await repo.schema(prior.schema), s),
+    }
+    const pubRoot = pubBase?.root ?? null
+    const privRoot = privBase?.root ?? null
+    if (isPrivateSchema(s) && pubRoot) {
+      if (!privRoot && tracked.public) mode.move = 'toPrivate'
+      else mode.serialOnly = bytes
+    } else if (!isPrivateSchema(s) && !pubBase && privBase) {
+      const privateUpserts = runs.some((ix) => partsInRange(ix, { type: slug }).some((p) => p.p))
+      if (tracked.private && !privateUpserts) mode.move = 'toPublic'
+      else mode.serialOnly = bytes
+    }
+    modes[slug] = mode
+  }
+  // Removed types release their file references: O(files) with per-type counts, else O(type).
+  let removedSerial = 0
+  for (const [set, types] of [
+    ['public', pub.types],
+    ['private', priv.types],
+  ] as const) {
+    for (const [slug, t] of Object.entries(types)) {
+      if (!inputs.schemas[slug] && !tracked[set]) removedSerial += t.bytes
+    }
+  }
+  return { modes, removedSerial }
+}
+
+/** The trees a type's units merge into: its base trees, or the moved tree. */
+function mergeBases(mode: TypeMode, pubBase: TreeSummary, privBase: TreeSummary) {
+  if (mode.move === 'toPrivate') return { public: emptyTree, private: pubBase }
+  if (mode.move === 'toPublic') return { public: privBase, private: emptyTree }
+  return { public: pubBase, private: privBase }
+}
+
 /**
  * Plan a parallel commit for a delta session, or return false when it should
- * commit serially (small, or not every type is plain). On true the plan's
- * chunks are queued and the assembly job settles the session. Throws
- * SerialTooLargeError for a commit only the serial path can take that's too
- * big for it.
+ * commit serially (small, or a change only the serial build handles). On true
+ * the plan's chunks are queued and the assembly job settles the session.
+ * Throws SerialTooLargeError for a commit only the serial build can take that
+ * is too big for it.
+ *
+ * Work counts the changes, the base leaves they rewrite, the records a changed
+ * schema revalidates, and whatever only the serial build can do, so a small
+ * push that revalidates a large type goes parallel too.
  */
 export async function planParallel(
   ports: Ports,
@@ -355,23 +450,18 @@ export async function planParallel(
   const trees = new Map<string, TreeSummary[]>()
   for (const slug of Object.keys(inputs.schemas))
     trees.set(slug, [summaryOf(pub.types[slug]), summaryOf(priv.types[slug])])
-  const work = estimatedWork(runs, trees)
-  if (work <= parallelConfig.aboveBytes) return false
-  const hashes = schemaHashes(inputs.schemas)
-  const plain = () => {
-    for (const [slug, s] of Object.entries(inputs.schemas)) {
-      const pubBase = pub.types[slug]
-      const privBase = priv.types[slug]
-      const prior = pubBase ?? privBase
-      if (prior && prior.schema !== hashes[slug]) return false
-      if (isPrivateSchema(s) ? !!pubBase : !pubBase && !!privBase) return false
-    }
-    for (const slug of [...Object.keys(pub.types), ...Object.keys(priv.types)]) {
-      if (!inputs.schemas[slug]) return false
-    }
-    return true
+  const { modes, removedSerial } = await typeModes(ctx.repo, inputs, runs, ctx.base, pub, priv)
+  let serialOnly = removedSerial
+  let revalidate = 0
+  for (const [slug, m] of Object.entries(modes)) {
+    serialOnly += m.serialOnly ?? 0
+    if (m.validate) for (const t of trees.get(slug)!) revalidate += t.bytes
   }
-  if (!plain()) {
+  const anySerialOnly =
+    removedSerial > 0 || Object.values(modes).some((m) => m.serialOnly !== undefined)
+  const work = estimatedWork(runs, trees) + revalidate + serialOnly
+  if (work <= parallelConfig.aboveBytes) return false
+  if (anySerialOnly) {
     if (work > parallelConfig.serialMaxBytes) throw new SerialTooLargeError()
     return false
   }
@@ -388,17 +478,21 @@ export async function planParallel(
   }
   for (const [slug, s] of Object.entries(inputs.schemas)) {
     const privateType = isPrivateSchema(s)
+    const mode = modes[slug]!
+    const original = { public: summaryOf(pub.types[slug]), private: summaryOf(priv.types[slug]) }
     plan.types[slug] = {
       privateType,
-      public: summaryOf(pub.types[slug]),
-      private: summaryOf(priv.types[slug]),
+      ...original,
+      bases: mergeBases(mode, original.public, original.private),
+      ...(mode.move ? { move: mode.move } : {}),
+      ...(mode.validate ? { validate: true } : {}),
     }
     const parts = runs.flatMap((ix) => partsInRange(ix, { type: slug }))
     if (parts.length === 0) continue
     const anyPrivate = parts.some((p) => p.p)
     const marks = runMarks(runs, { type: slug }).map((m) => m.slice(m.indexOf('\u0000') + 1))
     for (const set of (privateType ? ['private'] : ['public', 'private']) as SetName[]) {
-      const tree = plan.types[slug]![set]
+      const tree = plan.types[slug]!.bases![set]
       // Nothing can reach a private tree that doesn't exist without a private upsert.
       if (set === 'private' && !privateType && !tree.root && !anyPrivate) continue
       const nodes = await baseNodes(ctx.repo, tree.root, baseLevelFor(tree.count))
@@ -433,11 +527,11 @@ export async function planParallel(
   return true
 }
 
-/** A commit only the serial path can take (a schema or privacy change), too large for it. */
+/** A commit only the serial build can take, too large for it. */
 export class SerialTooLargeError extends Error {
   constructor() {
     super(
-      'This push changes a type’s schema or privacy, or removes a type, and is too large to commit with that change. Commit the schema change on its own first (a push with the new schemas and no records), then push the records.',
+      'This push changes a type’s privacy in a way that needs the whole type rewritten (records already in both sets, or private records pushed as the type turns public), or removes a type from a collection that predates per-type file counts, and is too large to commit that way. Split the change off: push the privacy change or the removal on its own, with no records.',
     )
     this.name = 'SerialTooLargeError'
   }
@@ -652,6 +746,14 @@ export async function resumeParallel(ports: Ports, session: SessionRow): Promise
     await queueChunks(ports, session.id, session.commitPlan, plan.chunks ?? 1)
     return
   }
+  if (session.commitPhase === 'validating') {
+    const { tasks } = await getJson<{ tasks: ValidationTask[] }>(
+      ports,
+      `${validationDir(session.id, session.commitPlan)}.json`,
+    )
+    await queueValidation(ports, session.id, session.commitPlan, tasks.length)
+    return
+  }
   await queueWork(ports, session.id, session.commitPlan)
 }
 
@@ -691,7 +793,9 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   )
   const leaves: NodeDesc[] = []
   const refs = new FileRefDelta()
-  const merged = await mergeTree(new RepoSource(recordTree, repo), sink, t[set].root, changes, {
+  // A privacy change merges into the moved tree (`bases`).
+  const into = (t.bases ?? t)[set].root
+  const merged = await mergeTree(new RepoSource(recordTree, repo), sink, into, changes, {
     ...builderOpts,
     range,
     leafOutput: (d) => leaves.push(d),
@@ -802,8 +906,9 @@ async function mergeFailed(ports: Ports, sessionId: string, planId: string, rows
 export async function assembleParallel(ports: Ports, sessionId: string): Promise<void> {
   const session = await getSession(ports, sessionId)
   if (session?.status !== 'committing' || !session.commitPlan) return
-  // The last plan chunk queues the assembly once every unit's row is written.
-  if (session.commitPhase === 'planning') return
+  // The last plan chunk queues the assembly once every unit's row is written;
+  // once assembled, a commit that revalidates is in its validation jobs.
+  if (session.commitPhase === 'planning' || session.commitPhase === 'validating') return
   const planId = session.commitPlan
   const now = Date.now()
   const lease = await ports.db
@@ -852,12 +957,14 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     const source = new RepoSource(recordTree, repo)
     const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
     const built: Record<string, { public: TreeSummary; private: TreeSummary }> = {}
-    for (const [slug, t] of Object.entries(plan.types))
-      built[slug] = { public: t.public, private: t.private }
+    for (const [slug, t] of Object.entries(plan.types)) built[slug] = { ...(t.bases ?? t) }
     const refs = new FileRefDelta()
     const stats = { added: 0, removed: 0, updated: 0 }
     for (const group of trees(rows)) {
       const { set, type } = group[0]! as { set: SetName; type: string }
+      // A type made public counts every record of its new public tree as added
+      // (the build does that), not its public changes.
+      const countStats = !(plan.types[type]!.move === 'toPublic' && set === 'public')
       // Each segment's output is read once, when assembly reaches it.
       const segments: Segment[] = group
         .filter((u) => !u.gap)
@@ -866,15 +973,17 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
           through: u.through,
           leaves: async () => {
             const out = await getJson<UnitOutput>(ports, u.outputKey!)
-            stats.added += out.stats.added
-            stats.removed += out.stats.removed
-            stats.updated += out.stats.updated
+            if (countStats) {
+              stats.added += out.stats.added
+              stats.removed += out.stats.removed
+              stats.updated += out.stats.updated
+            }
             // A unit covers one type, so its deltas are that type's too.
             for (const [h, n] of out.refs) refs.add(set, type, h, n)
             return out.leaves
           },
         }))
-      const result = await assembleTree(source, sink, plan.types[type]![set].root, segments)
+      const result = await assembleTree(source, sink, built[type]![set].root, segments)
       built[type]![set] = summaryOf(
         result.root
           ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
@@ -884,35 +993,289 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     }
     await sink.flush()
 
-    const inputs = await loadInputs(ports, sessionId)
-    const hashes = schemaHashes(inputs.schemas)
-    const outcome = await commitOutcome(ports, sessionId, () =>
-      commitVersion(ports, {
-        collectionId: session.collectionId,
-        // Plans written before the fence existed fail if any window has opened since.
-        fence: plan.fence ?? 0,
-        base: plan.base,
-        types: Object.entries(inputs.schemas).map(([slug, s]) => ({
-          slug,
-          schema: s,
-          schemaHash: hashes[slug]!,
-          public: null,
-          private: null,
-        })),
-        metadata: inputs.metadata,
-        declaredFiles: inputs.files,
-        message: session.message,
-        pushedBy: session.userId,
-        appId: session.appId,
-        actorId: session.actorId,
-        pushSessionId: session.id,
-        prebuilt: { trees: built, refs, stats },
-      }),
-    )
-    await settleSession(ports, sessionId, outcome)
+    const assembled: Assembled = { built, refs: refsOut(refs), stats }
+    if (Object.values(plan.types).some((t) => t.validate)) {
+      // A changed schema: the new trees are revalidated in jobs, then published.
+      await putJson(ports, `${planDir(sessionId, planId)}/assembled.json`, assembled)
+      await startValidation(ports, session, plan, built)
+      await release()
+      return
+    }
+    await publish(ports, session, plan, assembled)
   } catch (err) {
     await release()
     throw err
+  }
+}
+
+/** What assembly built, kept for the publish job when a schema is revalidated first. */
+interface Assembled {
+  built: Record<string, { public: TreeSummary; private: TreeSummary }>
+  /** File reference deltas: [set, type, file hash, delta]. */
+  refs: [SetName, string, string, number][]
+  stats: { added: number; removed: number; updated: number }
+}
+
+const refsOut = (refs: FileRefDelta): Assembled['refs'] =>
+  (['public', 'private'] as const).flatMap((set) =>
+    [...refs.typed[set]].map(([k, n]) => {
+      const slash = k.lastIndexOf('/')
+      return [set, k.slice(0, slash), k.slice(slash + 1), n] as [SetName, string, string, number]
+    }),
+  )
+
+function refsIn(rows: Assembled['refs']): FileRefDelta {
+  const refs = new FileRefDelta()
+  for (const [set, type, h, n] of rows) refs.add(set, type, h, n)
+  return refs
+}
+
+/** Commit the assembled trees as the new version and settle the session. */
+async function publish(ports: Ports, session: SessionRow, plan: CommitPlan, a: Assembled) {
+  const inputs = await loadInputs(ports, session.id)
+  const hashes = schemaHashes(inputs.schemas)
+  const moves: Record<string, 'toPrivate' | 'toPublic'> = {}
+  for (const [slug, t] of Object.entries(plan.types)) if (t.move) moves[slug] = t.move
+  const outcome = await commitOutcome(ports, session.id, () =>
+    commitVersion(ports, {
+      collectionId: session.collectionId,
+      // Plans written before the fence existed fail if any window has opened since.
+      fence: plan.fence ?? 0,
+      base: plan.base,
+      types: Object.entries(inputs.schemas).map(([slug, s]) => ({
+        slug,
+        schema: s,
+        schemaHash: hashes[slug]!,
+        public: null,
+        private: null,
+      })),
+      metadata: inputs.metadata,
+      declaredFiles: inputs.files,
+      message: session.message,
+      pushedBy: session.userId,
+      appId: session.appId,
+      actorId: session.actorId,
+      pushSessionId: session.id,
+      prebuilt: { trees: a.built, refs: refsIn(a.refs), stats: a.stats, moves },
+    }),
+  )
+  await settleSession(ports, session.id, outcome)
+}
+
+// --- Revalidating a changed schema ------------------------------------------------------
+
+export const validateConfig = {
+  /** Record bytes one validation job reads, about. */
+  taskBytes: 256 * 1024 * 1024,
+}
+
+/** One validation job: one key range `(after, through]` of one new tree. */
+interface ValidationTask {
+  type: string
+  set: SetName
+  root: string
+  after: string | null
+  through: string | null
+}
+
+interface ValidationResult {
+  total: number
+  errors: { recordId: string; type: string; errors: string[] }[]
+}
+
+const MAX_REPORTED = 100
+const validationDir = (sessionId: string, planId: string) =>
+  `${planDir(sessionId, planId)}/validate`
+
+/**
+ * Split the new trees of every type to revalidate into key ranges of about
+ * `taskBytes` (at node boundaries of the level the planner reads), and queue a
+ * job for each. The session goes to phase 'validating'; the job that finds
+ * every range done queues the publish.
+ */
+async function startValidation(
+  ports: Ports,
+  session: SessionRow,
+  plan: CommitPlan,
+  built: Assembled['built'],
+) {
+  const repo = await ports.stores.forCollection(session.collectionId)
+  const tasks: ValidationTask[] = []
+  for (const [type, t] of Object.entries(plan.types)) {
+    if (!t.validate) continue
+    for (const set of ['public', 'private'] as SetName[]) {
+      const tree = built[type]![set]
+      if (!tree.root) continue
+      const nodes = await baseNodes(repo, tree.root, baseLevelFor(tree.count))
+      let after: string | null = null
+      let acc = 0
+      for (const [i, n] of nodes.entries()) {
+        acc += n.bytes
+        const last = i === nodes.length - 1
+        if (acc >= validateConfig.taskBytes || last) {
+          tasks.push({ type, set, root: tree.root, after, through: last ? null : n.lastKey })
+          after = n.lastKey
+          acc = 0
+        }
+      }
+    }
+  }
+  await putJson(ports, `${validationDir(session.id, plan.id)}.json`, { tasks })
+  await ports.db
+    .update(schema.pushSessions)
+    .set({ commitPhase: 'validating', progressAt: new Date(), stalls: 0 })
+    .where(and(eq(schema.pushSessions.id, session.id), eq(schema.pushSessions.commitPlan, plan.id)))
+  await queueValidation(ports, session.id, plan.id, tasks.length)
+}
+
+/** Validation results written so far. */
+async function validationsDone(ports: Ports, sessionId: string, planId: string) {
+  const prefix = `${validationDir(sessionId, planId)}/`
+  const done = new Set<number>()
+  let cursor: string | undefined
+  do {
+    const page = await ports.stores.internal.list(prefix, cursor)
+    for (const key of page.keys) done.add(Number(key.slice(prefix.length, -'.json'.length)))
+    cursor = page.cursor
+  } while (cursor)
+  return done
+}
+
+/** Queue the validation jobs not done yet, or the publish when all are. */
+async function queueValidation(ports: Ports, sessionId: string, planId: string, count: number) {
+  const done = await validationsDone(ports, sessionId, planId)
+  const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !done.has(i))
+  if (todo.length === 0) {
+    await ports.jobs.enqueue({ type: 'commit.publish', sessionId })
+    return
+  }
+  await ports.jobs.enqueueBatch(
+    todo.map((task) => ({ type: 'commit.validate', sessionId, planId, task })),
+  )
+}
+
+/** A tree's entries with bodies in `(after, through]`, leaf by leaf, each streamed. */
+async function* entriesInRange(
+  source: RepoSource<RecordEntry>,
+  root: string,
+  after: string | null,
+  through: string | null,
+): AsyncGenerator<RecordEntry> {
+  const inRange = (k: string) =>
+    (after === null || compareUtf8(k, after) > 0) &&
+    (through === null || compareUtf8(k, through) <= 0)
+  async function* visit(desc: NodeDesc, low: string | null): AsyncGenerator<RecordEntry> {
+    if (after !== null && compareUtf8(desc.lastKey, after) <= 0) return
+    if (through !== null && low !== null && compareUtf8(low, through) >= 0) return
+    if (desc.level === 0) {
+      for await (const e of source.leafStream(desc.hash)) if (inRange(e.key)) yield e
+      return
+    }
+    const node = await source.node(desc.hash)
+    if (node.kind !== 'node') return
+    for (const [i, c] of node.children.entries())
+      yield* visit(c, i === 0 ? low : node.children[i - 1]!.lastKey)
+  }
+  yield* visit(await rootDesc(source, root), null)
+}
+
+/** One validation job. Idempotent: a range already checked is skipped. */
+export async function runValidation(
+  ports: Ports,
+  sessionId: string,
+  planId: string,
+  task: number,
+): Promise<void> {
+  const session = await getSession(ports, sessionId)
+  if (
+    session?.status !== 'committing' ||
+    session.commitPlan !== planId ||
+    session.commitPhase !== 'validating'
+  )
+    return
+  const { tasks } = await getJson<{ tasks: ValidationTask[] }>(
+    ports,
+    `${validationDir(sessionId, planId)}.json`,
+  )
+  const key = `${validationDir(sessionId, planId)}/${task}.json`
+  if (!(await ports.stores.internal.head(key))) {
+    const t = tasks[task]!
+    const inputs = await loadInputs(ports, sessionId)
+    const validate = compileSchema(inputs.schemas[t.type]!)
+    const repo = await ports.stores.forCollection(session.collectionId)
+    const source = new RepoSource(recordTree, repo)
+    const result: ValidationResult = { total: 0, errors: [] }
+    for await (const e of entriesInRange(source, t.root, t.after, t.through)) {
+      const errs = validate((JSON.parse(e.body!) as { data: unknown }).data)
+      if (errs.length === 0) continue
+      result.total++
+      if (result.errors.length < MAX_REPORTED)
+        result.errors.push({ recordId: e.key, type: t.type, errors: errs })
+    }
+    await putJson(ports, key, result)
+    await touch(ports, sessionId)
+  }
+  const done = await validationsDone(ports, sessionId, planId)
+  if (done.size === tasks.length) await ports.jobs.enqueue({ type: 'commit.publish', sessionId })
+}
+
+/** After validation: publish the assembled version, or fail with the records that don't fit. */
+export async function publishValidated(ports: Ports, sessionId: string): Promise<void> {
+  const session = await getSession(ports, sessionId)
+  if (
+    session?.status !== 'committing' ||
+    !session.commitPlan ||
+    session.commitPhase !== 'validating'
+  )
+    return
+  const planId = session.commitPlan
+  const dir = validationDir(sessionId, planId)
+  const { tasks } = await getJson<{ tasks: ValidationTask[] }>(ports, `${dir}.json`)
+  if ((await validationsDone(ports, sessionId, planId)).size < tasks.length) return
+  const now = Date.now()
+  const lease = await ports.db
+    .update(schema.pushSessions)
+    .set({ assemblyLease: new Date(now) })
+    .where(
+      and(
+        eq(schema.pushSessions.id, sessionId),
+        eq(schema.pushSessions.commitPlan, planId),
+        or(
+          isNull(schema.pushSessions.assemblyLease),
+          lt(schema.pushSessions.assemblyLease, new Date(now - LEASE_MS)),
+        ),
+      ),
+    )
+    .returning({ id: schema.pushSessions.id })
+  if (lease.length === 0) return
+  try {
+    let total = 0
+    const errors: ValidationResult['errors'] = []
+    for (let i = 0; i < tasks.length; i++) {
+      const r = await getJson<ValidationResult>(ports, `${dir}/${i}.json`)
+      total += r.total
+      errors.push(...r.errors.slice(0, MAX_REPORTED - errors.length))
+    }
+    if (total > 0) {
+      const outcome = await commitOutcome(ports, sessionId, async () => ({
+        status: 'invalid' as const,
+        errors,
+        total,
+      }))
+      await settleSession(ports, sessionId, outcome)
+      return
+    }
+    const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
+    const assembled = await getJson<Assembled>(
+      ports,
+      `${planDir(sessionId, planId)}/assembled.json`,
+    )
+    await publish(ports, session, plan, assembled)
+  } finally {
+    await ports.db
+      .update(schema.pushSessions)
+      .set({ assemblyLease: null })
+      .where(eq(schema.pushSessions.id, sessionId))
   }
 }
 
@@ -921,3 +1284,7 @@ registerJob('commit.plan', async (job, ports) =>
 )
 registerJob('commit.unit', async (job, ports) => runCommitUnit(ports, String(job.unitId)))
 registerJob('commit.assemble', async (job, ports) => assembleParallel(ports, String(job.sessionId)))
+registerJob('commit.validate', async (job, ports) =>
+  runValidation(ports, String(job.sessionId), String(job.planId), Number(job.task)),
+)
+registerJob('commit.publish', async (job, ports) => publishValidated(ports, String(job.sessionId)))

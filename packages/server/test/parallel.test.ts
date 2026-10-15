@@ -333,29 +333,6 @@ describe('parallel commit', () => {
       .where(eq(schema.versions.collectionId, c.id))
     expect(versions.map((v) => [v.recordCount, v.fileCount])).toEqual([[batch.length + 2, 1]])
   })
-
-  it('stays serial when a type changes schema', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('pc')
-    const path = '/api/collections/org/pc'
-    const batch = [Array.from({ length: 50 }, (_, i) => rec(`x${i}`, `n${i}`))]
-    await push(h, user, path, { schemas: { Author } }, batch, [], false)
-    const Author2 = {
-      ...Author,
-      properties: { name: { type: 'string' }, born: { type: 'integer' } },
-    }
-    Object.assign(parallelConfig, { aboveBytes: 0 })
-    const res = await h.request(`${path}/push`, {
-      method: 'POST',
-      user,
-      json: { schemas: { Author: Author2 } },
-    })
-    const sid = ((await res.json()) as { session_id: string }).session_id
-    await h.request(`${path}/push/${sid}/records`, { method: 'POST', user, ndjson: batch[0]! })
-    const commit = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
-    expect(commit.status).toBe(201)
-  })
 })
 
 // Keep the helper honest: marks are natural leaf boundaries.

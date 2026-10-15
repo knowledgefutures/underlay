@@ -82,14 +82,16 @@ export interface CommitInput {
   pushSessionId?: string | null
   /**
    * Trees already merged by a parallel commit (push/parallel.ts), per type, with
-   * the file reference deltas and change counts of the units that built them.
-   * The types' change sources are then ignored. Only for commits where no type
-   * changes privacy or schema and none is removed.
+   * the file reference deltas and change counts of the units that built them,
+   * and the types that moved their tree to the other set (protocol BuildInput).
+   * The types' change sources are then ignored, and the parallel commit has
+   * revalidated any changed schema itself.
    */
   prebuilt?: {
     trees: Record<string, { public: TreeSummary; private: TreeSummary }>
     refs: FileRefDelta
     stats: { added: number; removed: number; updated: number }
+    moves?: Record<string, 'toPrivate' | 'toPublic'>
   }
   /** Validate a record's data against its type's schema; errors or null. Used when a schema changes. */
   validate?: (schema: Record<string, unknown>, data: unknown) => string[] | null

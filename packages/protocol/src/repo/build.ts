@@ -12,7 +12,8 @@
  * Moving a type between sets, or removing one, moves or drops its file
  * references by their per-type counts (file-sets.ts): O(files it references).
  * On a base whose count trees predate those counts, it reads the type's bodies.
- *   3. types whose schema changed are revalidated (O(type size));
+ *   3. types whose schema changed are revalidated (O(type size)), unless the
+ *      change can't make a valid record invalid (schemaRelaxes);
  *   4. file sets from reference-count deltas (file-sets.ts);
  *   5. the private set object and the root.
  *
@@ -36,6 +37,7 @@ import {
   type TreeSummary,
   type VersionRoot,
 } from '../format.js'
+import { schemaRelaxes } from '../schema-relax.js'
 import {
   applyFileSet,
   FileRefDelta,
@@ -82,13 +84,18 @@ export interface BuildInput {
   /**
    * Trees already merged elsewhere (a parallel commit), per type, with the file
    * reference deltas and change counts that built them. The types' change
-   * sources are then ignored. Only when no type changes privacy or schema and
-   * none is removed.
+   * sources are then ignored, and so is `validate`: a parallel commit
+   * revalidates in its own jobs. A type in `moves` changed privacy by moving its
+   * whole tree to the other set (the serial build's plain moves); its trees
+   * were merged into the moved tree, and its file references move here. For a
+   * type made public, `stats` leave out its public changes: every record of the
+   * new public tree counts as added, as in the serial build.
    */
   prebuilt?: {
     trees: Record<string, { public: TreeSummary; private: TreeSummary }>
     refs: FileRefDelta
     stats: { added: number; removed: number; updated: number }
+    moves?: Record<string, 'toPrivate' | 'toPublic'>
   }
 }
 
@@ -258,6 +265,15 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     const prebuilt = input.prebuilt?.trees[t.slug]
     if (input.prebuilt) {
       if (!prebuilt) throw new Error(`Parallel commit has no trees for type ${t.slug}`)
+      const move = input.prebuilt.moves?.[t.slug]
+      if (move === 'toPrivate') {
+        await moveRefs('public', 'private', t.slug, pubBase?.root ?? null)
+        recordsChanged = true
+      } else if (move === 'toPublic') {
+        await moveRefs('private', 'public', t.slug, privBase?.root ?? null)
+        stats.added += prebuilt.public.count
+        recordsChanged = true
+      }
       if (isPrivateSchema(t.schema)) {
         newPrivate.types[t.slug] = { schema: t.schemaHash, ...prebuilt.private }
       } else {
@@ -376,10 +392,11 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
   // against the old schema). O(type size), inherent to a schema change.
   const errors: { recordId: string; type: string; errors: string[] }[] = []
   let errorCount = 0
-  if (input.validate) {
+  if (input.validate && !input.prebuilt) {
     for (const t of input.types) {
       const before = basePublic.types[t.slug] ?? basePrivate.types[t.slug]
       if (!before || before.schema === t.schemaHash) continue
+      if (schemaRelaxes(await repo.schema(before.schema), t.schema)) continue
       for (const tree of [newPublic.types[t.slug], newPrivate.types[t.slug]]) {
         for await (const e of iterate(source, tree?.root ?? null, { payloads: true })) {
           const errs = input.validate(t.schema, (JSON.parse(e.body!) as { data: unknown }).data)

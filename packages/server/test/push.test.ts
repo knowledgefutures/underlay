@@ -128,9 +128,18 @@ describe('delta push', () => {
     try {
       // One record, the same schema: in the request.
       expect((await push({}, [rec('f', { name: 'f' })])).status).toBe(201)
-      // One record, but the schema changes for a type of six: a job.
+      // One record, and a schema change that only drops a required field: nothing
+      // to revalidate, so in the request.
       const looser = { ...Author, required: [] }
-      const res = await push({ schemas: { Author: looser } }, [rec('g', { name: 'g' })])
+      expect((await push({ schemas: { Author: looser } }, [rec('g', { name: 'g' })])).status).toBe(
+        201,
+      )
+      // One record, but a schema change that can reject records, for a type of seven: a job.
+      const stricter = {
+        ...looser,
+        properties: { name: { type: 'string' }, born: { type: 'string' } },
+      }
+      const res = await push({ schemas: { Author: stricter } }, [rec('h', { name: 'h' })])
       expect(res.status).toBe(202)
       await h.drain()
     } finally {

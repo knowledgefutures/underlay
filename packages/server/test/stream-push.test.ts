@@ -232,17 +232,4 @@ describe('one version from many uploads', () => {
     expect(done.status).toBe('committed')
     expect(done.progress).toBeUndefined()
   })
-
-  it('refuses a schema change too large for the serial commit, saying what to do', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('sc')
-    const path = '/api/collections/org/sc'
-    await push(h, user, path, [[rec('a', 'A')]])
-    Object.assign(parallelConfig, { aboveBytes: 0, serialMaxBytes: 1 })
-    const Author2 = { ...Author, properties: { ...Author.properties, born: { type: 'integer' } } }
-    const r = await push(h, user, path, [[rec('b', 'B')]], { schemas: { Author: Author2 } })
-    expect(r.status.status).toBe('failed')
-    expect(r.status.error.error).toMatch(/schema change on its own/)
-  })
 })

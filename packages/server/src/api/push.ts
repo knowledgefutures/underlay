@@ -9,7 +9,7 @@
  *   GET    /:owner/:slug/push/:sid                 status (and result after an async commit)
  *   DELETE /:owner/:slug/push/:sid                 abandon
  */
-import { hashSchema, parseSemver } from '@underlay/protocol'
+import { hashSchema, parseSemver, schemaRelaxes } from '@underlay/protocol'
 import { and, count, eq, isNotNull, isNull, sum } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
@@ -176,7 +176,11 @@ async function revalidates(ports: Ports, session: SessionRow): Promise<number> {
   let n = 0
   for (const [slug, body] of Object.entries(inputs.schemas)) {
     const before = was.get(slug)
-    if (before && before !== hashSchema(body)) n += base.typeCounts[slug] ?? 0
+    if (!before || before === hashSchema(body)) continue
+    // A change that can't reject a record isn't revalidated.
+    const repo = await ports.stores.forCollection(session.collectionId)
+    if (schemaRelaxes(await repo.schema(before), body)) continue
+    n += base.typeCounts[slug] ?? 0
   }
   return n
 }
@@ -184,7 +188,7 @@ async function revalidates(ports: Ports, session: SessionRow): Promise<number> {
 /**
  * A session's status. While it takes uploads or commits, `progress` says where
  * it is: its runs (and compactions running), then the commit's phase
- * (compacting, planning, units, assembling) and its units done.
+ * (compacting, planning, units, assembling, validating) and its units done.
  */
 async function statusBody(ports: Ports, s: SessionRow) {
   const body = {

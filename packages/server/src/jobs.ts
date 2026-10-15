@@ -22,8 +22,11 @@ export type JobHandler = (job: JobMessage, ports: Ports) => Promise<void>
 /** Job types that go to the bulk queue. Everything else is interactive. */
 export const BULK_JOBS: ReadonlySet<string> = new Set([
   'push.commit', // async commits: 100k records and up
+  'commit.plan',
   'commit.unit',
   'commit.assemble',
+  'commit.validate',
+  'commit.publish',
   'push.compact',
   'push.compactPiece',
   'refs.index',

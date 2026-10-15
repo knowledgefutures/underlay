@@ -111,9 +111,11 @@ export async function recoverCommits(ports: Ports): Promise<void> {
           ? 'compacting its uploads'
           : session.commitPhase === 'planning'
             ? 'planning'
-            : session.commitPlan
-              ? 'committing in parallel'
-              : 'committing'
+            : session.commitPhase === 'validating'
+              ? 'revalidating records against the new schema'
+              : session.commitPlan
+                ? 'committing in parallel'
+                : 'committing'
       await fail(
         ports,
         session.id,

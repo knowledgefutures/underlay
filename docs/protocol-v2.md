@@ -910,9 +910,11 @@ Server limits (Section 11.4) are not protocol constants. Informative: underlay.o
 `open_sessions` 20 and `file_bytes` 32 MiB; caps log pages at 1,000 entries, manifest pages at
 25,000 records and diff pages at 5,000 records or 4 MiB of records; stores records over 64 KiB
 out of line; and commits in the background when a session uploaded more than 100,000 records or a
-schema change revalidates more than 100,000. It refuses a commit that changes a type's schema or
-privacy (or removes a type) together with more than about 2 GiB of changes: the schema change goes
-in a version of its own first.
+schema change revalidates more than 100,000. A schema change that can't reject a record (dropping
+`required` names, editing annotations) isn't revalidated; any other is revalidated in parallel
+jobs, so a type of any size can change its schema. A privacy change that would rewrite the whole
+type (records already in both sets, or private records pushed as the type turns public) is refused
+past about 2 GiB: push it on its own first.
 
 ## 13. Security considerations
 
