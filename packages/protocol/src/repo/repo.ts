@@ -382,31 +382,56 @@ export class RepoSource<E> implements NodeSource<E> {
  * A body is written once its leaf ends (its key is the leaf hash). Until then,
  * spilled entries are held as compressed gzip members, so a large leaf costs its
  * compressed size in memory rather than its raw size.
+ *
+ * `drain()` bounds the writes in flight by count and by the raw size of the
+ * bodies they carry: sixteen leaves of large records (Crossref works, ~6.5 KB
+ * each) are tens of MB, a large share of a Worker's 128 MB.
  */
 export class RepoSink<E> implements TreeSink<E> {
   readonly #pending = new Set<Promise<void>>()
   #error: unknown = null
   #members: Promise<Uint8Array>[] = []
+  /** Raw body bytes of the members not yet in a leaf's write. */
+  #memberBytes = 0
+  /** Members still compressing: each holds its raw text until it's done. */
+  readonly #compressing = new Set<Promise<unknown>>()
+  /** Raw body bytes of the writes in flight. */
+  #pendingBytes = 0
   readonly written: string[] = []
 
   constructor(
     readonly repo: Repo,
-    readonly opts: { bodyOf?: (e: E) => string; concurrency?: number } = {},
+    readonly opts: {
+      bodyOf?: (e: E) => string
+      concurrency?: number
+      /** Raw body bytes in flight before `drain()` waits (default 16 MB). */
+      pendingBytes?: number
+    } = {},
   ) {}
 
-  #run(key: string, work: () => Promise<void>) {
+  #run(key: string, work: () => Promise<void>, bytes = 0) {
+    this.#pendingBytes += bytes
     const p = work()
       .catch((err) => {
         this.#error ??= err
       })
-      .finally(() => this.#pending.delete(p))
+      .finally(() => {
+        this.#pending.delete(p)
+        this.#pendingBytes -= bytes
+      })
     this.#pending.add(p)
     this.written.push(key)
   }
 
   #member(entries: readonly E[]): Promise<Uint8Array> {
-    const p = gzip(entries.map(this.opts.bodyOf!).join('\n') + '\n')
-    p.catch(() => {}) // surfaced when the body is written
+    const text = entries.map(this.opts.bodyOf!).join('\n') + '\n'
+    this.#memberBytes += text.length
+    const p = gzip(text)
+    const settled: Promise<unknown> = p.then(
+      () => this.#compressing.delete(settled),
+      () => this.#compressing.delete(settled), // surfaced when the body is written
+    )
+    this.#compressing.add(settled)
     return p
   }
 
@@ -419,9 +444,13 @@ export class RepoSink<E> implements TreeSink<E> {
     if (!this.opts.bodyOf) return
     const tail = entries.slice(spilled)
     const members = [...this.#members, ...(tail.length > 0 ? [this.#member(tail)] : [])]
+    const bytes = this.#memberBytes
     this.#members = []
-    this.#run(keys.body(desc.hash), async () =>
-      this.repo.putBody(desc.hash, await Promise.all(members)),
+    this.#memberBytes = 0
+    this.#run(
+      keys.body(desc.hash),
+      async () => this.repo.putBody(desc.hash, await Promise.all(members)),
+      bytes,
     )
   }
 
@@ -431,7 +460,11 @@ export class RepoSink<E> implements TreeSink<E> {
 
   async drain(): Promise<void> {
     const limit = this.opts.concurrency ?? 16
-    while (this.#pending.size >= limit) await Promise.race(this.#pending)
+    const bytes = this.opts.pendingBytes ?? 16 * 1024 * 1024
+    while (this.#pending.size >= limit || (this.#pending.size > 0 && this.#pendingBytes > bytes)) {
+      await Promise.race(this.#pending)
+    }
+    while (this.#compressing.size > 1) await Promise.race(this.#compressing)
     if (this.#error) throw this.#error
   }
 

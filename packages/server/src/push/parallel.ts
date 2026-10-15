@@ -75,7 +75,8 @@ export const parallelConfig = {
 
 /** How long an assembler holds the session before another may take over. */
 const LEASE_MS = 15 * 60 * 1000
-const SPILL_BYTES = 4 * 1024 * 1024
+/** Body bytes a leaf holds before they go to a compressed member (each compresses with its raw text in memory). */
+const SPILL_BYTES = 1024 * 1024
 const builderOpts = {
   payloadBytes: recordPayloadBytes,
   dropPayload: dropRecordBody,

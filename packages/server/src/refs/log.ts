@@ -45,7 +45,13 @@ import {
 } from './segments.js'
 
 export const FAN_IN = 8
-const SPILL_EVENTS = 100_000
+/**
+ * Event JSON bytes held before they spill to a sorted run. Held events cost
+ * several times their JSON as arrays of strings, and a spill copies them once
+ * more: 100,000 events (the old count limit) peaked at about 100 MB indexing a
+ * version of 100k Crossref works, near a Worker's 128 MB (measured 2026-10-15).
+ */
+const SPILL_BYTES = 4 * 1024 * 1024
 
 export const indexConfig = {
   /** Events one indexing job writes, about: a larger version is split into units. */
@@ -142,7 +148,7 @@ export function estimatedEvents(version: typeof schema.versions.$inferSelect): n
   return ch ? ch.added + ch.removed + 2 * ch.updated : 0
 }
 
-/** Sort events by hash, spilling to sorted runs past SPILL_EVENTS (bounded memory). */
+/** Sort events by hash, spilling to sorted runs past SPILL_BYTES (bounded memory). */
 async function* sortedEvents(
   ports: Ports,
   scratch: string,
@@ -150,6 +156,7 @@ async function* sortedEvents(
   events: AsyncIterable<RefEvent>,
 ): AsyncGenerator<RefEvent> {
   let buf: RefEvent[] = []
+  let bytes = 0
   const runs: RunIndex[] = []
   const spill = async () => {
     const entries = buf.map((e) => ({
@@ -161,10 +168,12 @@ async function* sortedEvents(
     const n = unit * 1_000_000 + runs.length + 1
     runs.push(await writeRun(ports.stores.internal, scratch, n, entries))
     buf = []
+    bytes = 0
   }
   for await (const e of events) {
     buf.push(e)
-    if (buf.length >= SPILL_EVENTS) await spill()
+    bytes += eventBytes(e)
+    if (bytes >= SPILL_BYTES) await spill()
   }
   if (runs.length === 0) {
     yield* buf.sort(compareEvents)

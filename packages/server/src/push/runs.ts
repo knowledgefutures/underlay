@@ -98,8 +98,13 @@ export const MERGE_FAN_IN = 16
 export const MAX_TIER = 2
 /** 2^13 = 8,192: about one mark per eight leaves. */
 export const MARK_BITS = 13
-/** Compressed bytes a merge prefetches, split across its runs. */
-const PREFETCH_BUDGET = 8 * 1024 * 1024
+/**
+ * Compressed bytes a merge holds, split across its runs. Each cursor holds its
+ * current span and the next one, so a span gets half of a run's share. With
+ * Crossref-sized records, 8 MB a span left a two-run commit unit holding 16 MB
+ * of spans alone (2026-10-15).
+ */
+const PREFETCH_BUDGET = 4 * 1024 * 1024
 
 /** Sort key: type, then id, by UTF-8 bytes. A NUL separator keeps types apart. */
 export const runKey = (e: { t: string; k: string }) => `${e.t}\u0000${e.k}`
@@ -427,7 +432,10 @@ export async function* mergeRuns(
   indexes: RunIndex[],
   range?: RunRange | string,
 ): AsyncGenerator<RunEntry> {
-  const spanBytes = Math.max(BLOCK_BYTES, Math.floor(PREFETCH_BUDGET / Math.max(1, indexes.length)))
+  const spanBytes = Math.max(
+    BLOCK_BYTES,
+    Math.floor(PREFETCH_BUDGET / (2 * Math.max(1, indexes.length))),
+  )
   const heap = new CursorHeap()
   await Promise.all(
     indexes.map(async (ix) => {
