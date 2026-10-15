@@ -37,6 +37,7 @@ import { recheckLocations } from './locations/locations.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
+import { recoverCommits } from './push/recover.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
@@ -53,6 +54,8 @@ registerJob('version.published', async (job, ports) => {
 
 registerJob('maintenance.sweep', async (_job, ports) => {
   await expireSessions(ports)
+  // Commits and compactions that stopped moving: queued again, or failed with a reason.
+  await recoverCommits(ports)
   await purgeOldDeliveries(ports)
   // Weekly counter reconciliation, a few collections at a time.
   await reconcileDue(ports)
