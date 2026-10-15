@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { gunzipMembers, gunzipText, gzip } from '../../src/repo/gzip.js'
+import { chunkLines, gunzipChunks, gunzipMembers, gunzipText, gzip } from '../../src/repo/gzip.js'
 
 describe('gunzip', () => {
   // A large leaf body is several gzip members in one object. workerd's
@@ -43,5 +43,31 @@ describe('gunzip where the decoder reads one member (browsers)', () => {
     expect(new TextDecoder().decode(await gunzipMembers(parts[0]!, oneMember))).toBe(texts[0])
     // Garbage still fails.
     await expect(gunzipMembers(new Uint8Array([1, 2, 3]), oneMember)).rejects.toThrow()
+  })
+})
+
+describe('streaming gunzip', () => {
+  it('reads every member, and splits lines across chunk and character boundaries', async () => {
+    const lines = Array.from(
+      { length: 5000 },
+      (_, i) => `{"n":${i},"t":"é😀${'x'.repeat(i % 97)}"}`,
+    )
+    const text = lines.join('\n') + '\n'
+    const half = text.length >> 1
+    const body = new Uint8Array([
+      ...(await gzip(text.slice(0, half))),
+      ...(await gzip(text.slice(half))),
+    ])
+    const got: string[] = []
+    for await (const l of chunkLines(gunzipChunks(body))) got.push(l)
+    expect(got).toEqual(lines)
+    // Chunks that cut a multi-byte character in two.
+    const bytes = new TextEncoder().encode('ab😀c\nd')
+    async function* oneByte() {
+      for (const b of bytes) yield new Uint8Array([b])
+    }
+    const split: string[] = []
+    for await (const l of chunkLines(oneByte())) split.push(l)
+    expect(split).toEqual(['ab😀c', 'd'])
   })
 })

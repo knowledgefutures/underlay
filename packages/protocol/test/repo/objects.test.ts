@@ -132,6 +132,35 @@ describe('record trees in a repository', () => {
     expect(rows.every((r) => JSON.parse(r.body!).id === r.key)).toBe(true)
   })
 
+  it('streams a leaf one entry at a time, as bodyLines reads it whole', async () => {
+    const { repo } = freshRepo()
+    const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
+    const b = new TreeBuilder(recordTree, sink, {
+      payloadBytes: recordPayloadBytes,
+      dropPayload: dropRecordBody,
+      spillBytes: 20_000, // several members
+    })
+    const big = (id: string) => {
+      const { hash, canonical } = hashRecord(id, 'T', { id, t: 'é😀'.repeat(OUT_OF_LINE_BYTES) })
+      return { key: id, hash, size: utf8ByteLength(canonical), body: canonical }
+    }
+    const all = ids(2000)
+    for (const id of all) {
+      const e = id === all[7] ? big(id) : record(id)
+      if (e.size > OUT_OF_LINE_BYTES) e.body = await repo.putOutOfLine(e.hash, e.body)
+      b.addEntry(e)
+    }
+    const root = b.finish().root!
+    await sink.flush()
+    const source = new RepoSource(recordTree, repo)
+    const node = await source.node(root.hash)
+    const leaf = node.kind === 'leaf' ? root.hash : (node.children[0]!.hash as string)
+    const whole = await source.leafEntries(leaf)
+    const streamed = await collect(source.leafStream(leaf))
+    expect(streamed).toEqual(whole)
+    expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
+  })
+
   it('holds back drain while the bodies in flight pass the byte bound', async () => {
     const blobs = memoryStore()
     let release!: () => void

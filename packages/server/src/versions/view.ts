@@ -229,8 +229,11 @@ async function bodyOf(source: RepoSource<RecordEntry>, root: string, key: string
   let hash = root
   for (;;) {
     const node = await source.node(hash)
-    if (node.kind === 'leaf')
-      return (await source.leafEntries(hash)).find((e) => e.key === key)!.body!
+    if (node.kind === 'leaf') {
+      // Streamed, stopping at the record: a leaf of large records is never held whole.
+      for await (const e of source.leafStream(hash)) if (e.key === key) return e.body!
+      throw new Error(`Record ${key} is not in leaf ${hash}`)
+    }
     hash = node.children.find((c) => compareUtf8(key, c.lastKey) <= 0)!.hash
   }
 }

@@ -23,7 +23,7 @@
 import { compareUtf8 } from '../utf8.js'
 import { type BuilderOptions, TreeBuilder, type TreeSink } from './builder.js'
 import type { NodeDesc } from './node.js'
-import { type NodeSource, resolveRoot, rootDesc } from './source.js'
+import { leafEntryStream, type NodeSource, resolveRoot, rootDesc } from './source.js'
 
 /** Upsert (`entry`) or delete (`entry: null`) of one key. */
 export interface Change<E> {
@@ -162,8 +162,7 @@ export async function mergeTree<E>(
 
   const rewriteLeaf = async (desc: NodeDesc) => {
     stats.readNodes++
-    const entries = await source.leafEntries(desc.hash)
-    for (const old of entries) {
+    for await (const old of leafEntryStream(source, desc.hash)) {
       const oldKey = spec.key(old)
       // A leaf straddling a unit's range edge: keep only the range's entries.
       if (range && !inRange(range, oldKey)) continue

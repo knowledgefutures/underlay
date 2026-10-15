@@ -41,7 +41,7 @@ import {
   versionDigest,
   versionHash,
 } from '../format.js'
-import { gunzipText, gzip, splitLines } from './gzip.js'
+import { chunkLines, gunzipChunks, gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
 import { type Store, type Cache, noCache } from './types.js'
 
@@ -229,6 +229,36 @@ export class Repo {
   }
 
   /**
+   * A leaf's body lines one at a time, out-of-line records resolved, without
+   * holding the body decompressed: for rewriting leaves, where one leaf of large
+   * records can be tens of MB. Nothing is put in the memory cache. Untrusted
+   * locations read through bodyLines, which checks every line before use.
+   */
+  async *bodyLineStream(leaf: {
+    hash: string
+    entries: readonly RecordEntry[]
+  }): AsyncGenerator<string> {
+    const key = keys.body(leaf.hash)
+    const hit = this.lru.get(this.#ck(key))
+    if (hit || !this.trusted) {
+      yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
+      return
+    }
+    const bytes = await this.#immutable(key)
+    if (!bytes) throw new Error(`Missing body for leaf ${leaf.hash}`)
+    let n = 0
+    for await (const line of chunkLines(gunzipChunks(bytes))) {
+      if (++n > leaf.entries.length) break
+      yield line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
+    }
+    if (n !== leaf.entries.length) {
+      throw new IntegrityError(
+        `Body of ${leaf.hash} has ${n} lines for ${leaf.entries.length} entries`,
+      )
+    }
+  }
+
+  /**
    * A leaf body's stored bytes (gzip members), as written: for serving a run of
    * leaves without decoding them. Pointer lines (out-of-line records) stay
    * pointers; callers that need full records use bodyLines.
@@ -369,6 +399,21 @@ export class RepoSource<E> implements NodeSource<E> {
     const entries = node.entries as RecordEntry[]
     const lines = await this.repo.bodyLines({ hash, entries })
     return entries.map((e, i) => ({ ...e, body: lines[i]! })) as E[]
+  }
+
+  /** A leaf's entries with bodies, one at a time (Repo.bodyLineStream). */
+  async *leafStream(hash: string): AsyncGenerator<E> {
+    const node = await this.node(hash)
+    if (node.kind !== 'leaf') throw new Error(`Node ${hash} is not a leaf`)
+    if (this.spec !== (recordTree as TreeSpec<unknown>)) {
+      yield* node.entries
+      return
+    }
+    const entries = node.entries as RecordEntry[]
+    let i = 0
+    for await (const body of this.repo.bodyLineStream({ hash, entries })) {
+      yield { ...entries[i++]!, body } as E
+    }
   }
 }
 

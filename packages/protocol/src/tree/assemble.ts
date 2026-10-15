@@ -25,7 +25,7 @@ import { compareUtf8 } from '../utf8.js'
 import { type BuilderOptions, TreeBuilder, type TreeSink } from './builder.js'
 import { emptyStats, type KeyRange, type MergeResult } from './merge.js'
 import type { NodeDesc } from './node.js'
-import { type NodeSource, resolveRoot, rootDesc } from './source.js'
+import { leafEntryStream, type NodeSource, resolveRoot, rootDesc } from './source.js'
 
 /**
  * One unit's output: its range and the leaves it produced, in key order. The
@@ -95,16 +95,21 @@ export async function assembleTree<E>(
     }
     stats.readNodes++
     if (desc.level === 0) {
-      const entries = await source.leafEntries(desc.hash)
-      let i = 0
+      // Read one entry at a time: a leaf of large records is never held whole.
+      const it = leafEntryStream(source, desc.hash)[Symbol.asyncIterator]()
+      const nextEntry = async () => {
+        const r = await it.next()
+        return r.done ? undefined : r.value
+      }
+      let cur = await nextEntry()
       while (overlaps(desc.lastKey)) {
         const seg = segments[head]!
         // Under the rules a segment never starts inside a base leaf with
         // uncovered entries before it: an unchanged `after` ends its base leaf,
         // and an inserted one was covered by the previous segment.
         if (seg.after !== null) {
-          for (; i < entries.length && compareUtf8(spec.key(entries[i]!), seg.after) <= 0; i++) {
-            if (!isCovered(spec.key(entries[i]!))) {
+          for (; cur && compareUtf8(spec.key(cur), seg.after) <= 0; cur = await nextEntry()) {
+            if (!isCovered(spec.key(cur))) {
               throw new Error(
                 `assembleTree: segment after ${JSON.stringify(seg.after)} starts inside a base leaf`,
               )
@@ -112,10 +117,13 @@ export async function assembleTree<E>(
           }
         }
         await emit(seg)
-        if (all) return
+        if (all) {
+          await it.return?.()
+          return
+        }
       }
       // The tail of a base leaf straddling an inserted `through`.
-      for (const e of entries) if (!isCovered(spec.key(e))) builder.addEntry(e)
+      for (; cur; cur = await nextEntry()) if (!isCovered(spec.key(cur))) builder.addEntry(cur)
       await sink.drain?.()
       return
     }
