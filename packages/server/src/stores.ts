@@ -32,6 +32,8 @@ export interface PlatformStorage {
   repoPrefix: string
   /** Key prefix for platform-internal objects. */
   internalPrefix: string
+  /** The isolate's memory cache for repository objects (default 32 MB; the bulk Worker's is smaller). */
+  memoryBytes?: number
 }
 
 /** Primary placements change rarely; remember them briefly per isolate. */
@@ -59,7 +61,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       cache,
       scope: `loc:${locationId}`,
       trusted: true,
-      lru: sharedLru(),
+      lru: sharedLru(platform.memoryBytes),
     })
     repos.set(locationId, repo)
     return repo

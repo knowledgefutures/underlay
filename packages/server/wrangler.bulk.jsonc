@@ -1,0 +1,117 @@
+// The bulk job Worker: the same code as wrangler.jsonc's Worker, deployed as a
+// second Worker that consumes only the bulk queue (jobs.ts BULK_JOBS: commits,
+// compactions, indexing, mirrors, cleanup). It serves no routes.
+//
+// Why a second Worker: Workers memory is 128 MB per isolate, and an isolate
+// runs several invocations at once. Bulk jobs are sized to share an isolate
+// with each other; they aren't sized to share one with 16 MB upload batches and
+// page renders, which is what happened while they ran in the main Worker. Its
+// isolates also keep a smaller memory cache (ROLE=bulk, stores.ts), since job
+// reads rarely repeat.
+//
+//   wrangler deploy --env staging                              (main Worker first: it gives up the bulk queue)
+//   wrangler deploy -c wrangler.bulk.jsonc --env staging       → underlay-staging-bulk
+//
+// A queue has one consumer, so the main Worker's deploy, which no longer lists
+// the bulk queue, has to come first; bulk jobs wait on the queue until this
+// Worker is up. Secrets (wrangler secret put <NAME> -c wrangler.bulk.jsonc --env <env>),
+// the same values as the main Worker's:
+//   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, SIGNING_KEY, LOCATION_KEY
+//
+// Keep bindings and vars in step with wrangler.jsonc.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "underlay-bulk",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 300000, "subrequests": 100000 },
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "env": {
+    "staging": {
+      "name": "underlay-staging-bulk",
+      "vars": {
+        "ROLE": "bulk",
+        "APP_URL": "https://staging.underlay.org",
+        "DEPLOYMENT": "staging",
+        "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
+        "R2_BUCKET": "underlay-staging",
+        "OIDC_ISSUER_URL": "https://staging-auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://staging-auth.knowledgefutures.org",
+        "OIDC_CLIENT_ID": "kf_underlay",
+        "ASSETS_BASE_URL": "https://assets-staging.underlay.org",
+      },
+      "r2_buckets": [
+        { "binding": "BUCKET", "bucket_name": "underlay-staging" },
+        { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "underlay-staging",
+          "database_id": "884ed8bb-14e8-4ea4-bdc4-81d433e5b551",
+          "migrations_dir": "drizzle",
+        },
+      ],
+      "queues": {
+        "producers": [
+          { "binding": "JOBS", "queue": "underlay-staging-jobs" },
+          { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
+          { "binding": "USAGE", "queue": "underlay-staging-usage" },
+        ],
+        "consumers": [
+          {
+            "queue": "underlay-staging-bulk",
+            "max_batch_size": 1,
+            "max_concurrency": 20,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-staging-dead",
+          },
+        ],
+      },
+    },
+    "prod": {
+      "name": "underlay-prod-bulk",
+      "vars": {
+        "ROLE": "bulk",
+        "APP_URL": "https://www.underlay.org",
+        "DEPLOYMENT": "prod",
+        "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
+        "R2_BUCKET": "underlay-prod",
+        "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://account.knowledgefutures.org",
+        "OIDC_CLIENT_ID": "kf_underlay",
+        "ASSETS_BASE_URL": "https://assets.underlay.org",
+      },
+      "r2_buckets": [
+        { "binding": "BUCKET", "bucket_name": "underlay-prod" },
+        { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "underlay-prod",
+          "database_id": "12e03c06-7ba6-42af-baf5-7ce5a0be0ee8",
+          "migrations_dir": "drizzle",
+        },
+      ],
+      "queues": {
+        "producers": [
+          { "binding": "JOBS", "queue": "underlay-prod-jobs" },
+          { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
+          { "binding": "USAGE", "queue": "underlay-prod-usage" },
+        ],
+        "consumers": [
+          {
+            "queue": "underlay-prod-bulk",
+            "max_batch_size": 1,
+            "max_concurrency": 20,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-prod-dead",
+          },
+        ],
+      },
+    },
+  },
+}

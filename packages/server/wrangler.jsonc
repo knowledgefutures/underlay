@@ -6,6 +6,9 @@
 //   wrangler deploy --env staging     → staging.underlay.org
 //   wrangler deploy --env prod        → www.underlay.org
 //
+// Bulk jobs run in a second Worker from the same code, which consumes the bulk
+// queue: deploy it after this one (wrangler.bulk.jsonc says how, and why).
+//
 // Secrets (wrangler secret put <NAME> --env <env>):
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   bucket-scoped R2 S3 credentials
 //   SIGNING_KEY                              Ed25519 seed for version logs (one per deployment)
@@ -80,7 +83,7 @@
         { "name": "RL_USER", "namespace_id": "1002", "simple": { "limit": 5000, "period": 60 } },
         { "name": "RL_PAGE", "namespace_id": "1003", "simple": { "limit": 600, "period": 60 } },
       ],
-      // Interactive jobs, and bulk ones (one per invocation): jobs.ts BULK_JOBS.
+      // Interactive jobs here; bulk ones (jobs.ts BULK_JOBS) in the bulk Worker.
       "queues": {
         "producers": [
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
@@ -95,13 +98,7 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
-          {
-            "queue": "underlay-staging-bulk",
-            "max_batch_size": 1,
-            "max_concurrency": 20,
-            "max_retries": 10,
-            "dead_letter_queue": "underlay-staging-dead",
-          },
+          // The bulk queue's consumer is the bulk Worker (wrangler.bulk.jsonc).
           // Usage events (billing/usage.ts): up to 100 requests' events per log object.
           {
             "queue": "underlay-staging-usage",
@@ -151,7 +148,7 @@
         { "name": "RL_USER", "namespace_id": "2002", "simple": { "limit": 5000, "period": 60 } },
         { "name": "RL_PAGE", "namespace_id": "2003", "simple": { "limit": 600, "period": 60 } },
       ],
-      // Interactive jobs, and bulk ones (one per invocation): jobs.ts BULK_JOBS.
+      // Interactive jobs here; bulk ones (jobs.ts BULK_JOBS) in the bulk Worker.
       "queues": {
         "producers": [
           { "binding": "JOBS", "queue": "underlay-prod-jobs" },
@@ -166,13 +163,7 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-prod-dead",
           },
-          {
-            "queue": "underlay-prod-bulk",
-            "max_batch_size": 1,
-            "max_concurrency": 20,
-            "max_retries": 10,
-            "dead_letter_queue": "underlay-prod-dead",
-          },
+          // The bulk queue's consumer is the bulk Worker (wrangler.bulk.jsonc).
           // Usage events (billing/usage.ts): up to 100 requests' events per log object.
           {
             "queue": "underlay-prod-usage",
