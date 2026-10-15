@@ -42,12 +42,20 @@ export async function recoverCommits(ports: Ports): Promise<void> {
   const { db } = ports
   const staleBefore = new Date(Date.now() - recoverConfig.stallMs)
 
-  // Compaction claims that never finished: queue them again.
+  // Compaction claims that never finished, in sessions still compacting: queue them again.
   const runs = schema.pushRuns
+  const s = schema.pushSessions
   const lost = await db
     .selectDistinct({ sessionId: runs.sessionId, seq: runs.mergingInto })
     .from(runs)
-    .where(and(isNotNull(runs.mergingInto), lt(runs.claimedAt, staleBefore)))
+    .innerJoin(s, eq(s.id, runs.sessionId))
+    .where(
+      and(
+        isNotNull(runs.mergingInto),
+        lt(runs.claimedAt, staleBefore),
+        or(eq(s.status, 'open'), and(eq(s.status, 'committing'), eq(s.commitPhase, 'compacting'))),
+      ),
+    )
     .limit(100)
   for (const c of lost) {
     await db
@@ -57,7 +65,6 @@ export async function recoverCommits(ports: Ports): Promise<void> {
     await ports.jobs.enqueue({ type: 'push.compact', sessionId: c.sessionId, seq: c.seq })
   }
 
-  const s = schema.pushSessions
   const stuck = await db
     .select()
     .from(s)

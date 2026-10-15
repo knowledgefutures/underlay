@@ -162,6 +162,8 @@ export async function settleSession(
       error: outcome.body as never,
       finalizeStartedAt: null,
       commitPlan: null,
+      commitPhase: null,
+      stalls: 0,
       assemblyLease: null,
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     })
