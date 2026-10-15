@@ -161,6 +161,27 @@ describe('record trees in a repository', () => {
     expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
   })
 
+  it('shares a read in progress: simultaneous readers of one leaf fetch it once', async () => {
+    const { blobs, repo } = freshRepo()
+    const { root } = await buildRecords(repo, 500)
+    const source = new RepoSource(recordTree, repo)
+    const node = await source.node(root.hash)
+    const leaf = node.kind === 'leaf' ? root.hash : (node.children[0]!.hash as string)
+    const leafNode = await source.node(leaf)
+    if (leafNode.kind !== 'leaf') throw new Error('not a leaf')
+    const entries = leafNode.entries
+    let gets = 0
+    const get = blobs.get.bind(blobs)
+    blobs.get = async (key, range) => {
+      if (key === keys.body(leaf)) gets++
+      return get(key, range)
+    }
+    const reads = await Promise.all([1, 2, 3].map(() => repo.bodyLines({ hash: leaf, entries })))
+    expect(gets).toBe(1)
+    expect(reads[1]).toEqual(reads[0])
+    expect(reads[0]!.length).toBe(entries.length)
+  })
+
   it('holds back drain while the bodies in flight pass the byte bound', async () => {
     const blobs = memoryStore()
     let release!: () => void

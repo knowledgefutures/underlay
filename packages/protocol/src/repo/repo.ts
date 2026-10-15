@@ -144,8 +144,23 @@ export class Repo {
     return `${this.scope}/${key}`
   }
 
+  /** Reads in progress, by what they read: a second caller waits for the first. */
+  readonly #pending = new Map<string, Promise<unknown>>()
+
+  #shared<T>(key: string, read: () => Promise<T>): Promise<T> {
+    const running = this.#pending.get(key)
+    if (running) return running as Promise<T>
+    const p = read().finally(() => this.#pending.delete(key))
+    this.#pending.set(key, p)
+    return p
+  }
+
   /** An immutable object's bytes: shared cache, then the bucket. `verify` runs before caching. */
-  async #immutable(
+  #immutable(key: string, verify?: (bytes: Uint8Array) => Promise<void>) {
+    return this.#shared(`bytes:${key}`, () => this.#fetch(key, verify))
+  }
+
+  async #fetch(
     key: string,
     verify?: (bytes: Uint8Array) => Promise<void>,
   ): Promise<Uint8Array | null> {
@@ -165,6 +180,10 @@ export class Repo {
     const key = keys.node(hash)
     const hit = this.lru.get(this.#ck(key))
     if (typeof hit === 'string') return hit
+    return this.#shared(`node:${key}`, () => this.#nodeJson(hash, key))
+  }
+
+  async #nodeJson(hash: string, key: string): Promise<string> {
     const bytes = await this.#immutable(key, async (b) => {
       if (sha256Hex(await gunzipText(b)) !== hash)
         throw new IntegrityError(`Node ${hash} fails its hash`)
@@ -203,6 +222,14 @@ export class Repo {
     const key = keys.body(leaf.hash)
     const hit = this.lru.get(this.#ck(key))
     if (hit) return (hit as { lines: string[] }).lines
+    // Two readers of one leaf at once decompress it once.
+    return this.#shared(`lines:${key}`, () => this.#bodyLines(leaf, key))
+  }
+
+  async #bodyLines(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    key: string,
+  ): Promise<string[]> {
     const check = async (b: Uint8Array) => {
       const lines = await this.#resolve(splitLines(await gunzipText(b)))
       if (lines.length !== leaf.entries.length)
