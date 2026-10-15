@@ -44,7 +44,8 @@ import {
   transition,
 } from './session.js'
 
-export const MAX_BATCH_BYTES = 16 * 1024 * 1024
+/** 8 MB: an upload request holds its batch several times over (text, records, run lines). */
+export const MAX_BATCH_BYTES = 8 * 1024 * 1024
 export const MAX_BATCH_LINES = 10_000
 const MAX_REPORTED = 100
 

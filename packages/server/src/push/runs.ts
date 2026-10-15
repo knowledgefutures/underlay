@@ -124,8 +124,8 @@ export const MERGE_FAN_IN = 16
 export const MARK_BITS = 13
 
 export const runConfig = {
-  /** Compressed bytes per part object. A writer holds one open part and two being stored. */
-  partBytes: 8 * 1024 * 1024,
+  /** Compressed bytes per part object. A writer holds one open part and one being stored. */
+  partBytes: 4 * 1024 * 1024,
   /**
    * Compressed bytes a merge holds, split across its runs. Each cursor holds its
    * current span and the next one, so a span gets half of a run's share. With
@@ -280,7 +280,8 @@ export class RunWriter {
   /** Bounded memory: callers writing large runs await this between entries. */
   async drain(): Promise<void> {
     if (this.#queued >= 4) await this.#chain
-    if (this.#puts.length >= 2) await Promise.all(this.#puts.splice(0))
+    // One part being stored while the next fills: two parts in memory at most.
+    if (this.#puts.length >= 1) await Promise.all(this.#puts.splice(0))
   }
 
   async finish(): Promise<RunIndex> {

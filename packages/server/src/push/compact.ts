@@ -48,7 +48,7 @@ import { getSession, type SessionRow } from './session.js'
 
 export const compactConfig = {
   /** Raw bytes one compaction job merges, about; a larger compaction is split into pieces. */
-  pieceBytes: 1024 * 1024 * 1024,
+  pieceBytes: 512 * 1024 * 1024,
   /** Runs one commit reads, at most: a session with more is compacted first. */
   commitRuns: 32,
 }
