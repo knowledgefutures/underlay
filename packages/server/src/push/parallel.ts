@@ -103,6 +103,8 @@ export const parallelConfig = {
 const LEASE_MS = 15 * 60 * 1000
 /** Body bytes a leaf holds before they go to a compressed member (each compresses with its raw text in memory). */
 const SPILL_BYTES = 1024 * 1024
+/** A unit's repository writes in flight: leaf bodies (compressed) and their raw bytes. */
+const unitSink = { concurrency: 8, pendingBytes: 8 * 1024 * 1024 }
 const builderOpts = {
   payloadBytes: recordPayloadBytes,
   dropPayload: dropRecordBody,
@@ -673,7 +675,8 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const t = plan.types[unit.type]!
   const set = unit.set as SetName
   const repo = await ports.stores.forCollection(session.collectionId)
-  const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
+  // Writes in flight hold compressed leaves; halved from the default so two units fit an isolate.
+  const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, ...unitSink })
   const range = { after: unit.after, through: unit.through }
   const changes = deltaChanges(
     ports.stores.internal,

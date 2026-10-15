@@ -147,7 +147,7 @@ describe('record trees in a repository', () => {
     const all = ids(2000)
     for (const id of all) {
       const e = id === all[7] ? big(id) : record(id)
-      if (e.size > OUT_OF_LINE_BYTES) e.body = await repo.putOutOfLine(e.hash, e.body)
+      if (e.size > OUT_OF_LINE_BYTES) e.body = await repo.putOutOfLine(e.hash, e.body!)
       b.addEntry(e)
     }
     const root = b.finish().root!
