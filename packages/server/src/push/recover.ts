@@ -7,8 +7,10 @@
  * every step is idempotent. A commit that can't finish fails with an error
  * that says why, rather than holding one of the user's session slots forever.
  *
- *   - compaction claims older than `stallMs` are queued again (open sessions
- *     too: a lost compaction leaves its runs claimed);
+ *   - compaction claims not refreshed for `compactionStaleMs` are queued again
+ *     (open sessions too: a lost compaction leaves its runs claimed). A claim is
+ *     refreshed when its merge starts and after each piece (compact.ts), and a
+ *     piece takes minutes, so a quiet claim is a lost one;
  *   - a commit unit queued `unitLimits.maxAttempts` times fails its commit,
  *     naming the unit's type and range;
  *   - a commit waiting for room in the user's unit windows isn't stalled;
@@ -24,8 +26,14 @@ import { topUpUnits, unitLimits } from './parallel.js'
 import { transition } from './session.js'
 
 export const recoverConfig = {
-  /** A commit step, or a compaction claim, with no progress for this long is stale. */
+  /** A commit step with no progress for this long is stale. */
   stallMs: 30 * 60 * 1000,
+  /**
+   * A compaction claim not refreshed for this long is lost. Shorter than
+   * `stallMs`: a stalled commit waited 30 to 40 minutes on compactions that had
+   * quit (staging, 2026-10-15).
+   */
+  compactionStaleMs: 15 * 60 * 1000,
   /** Nudges in a row without progress before the commit fails. */
   maxStalls: 3,
 }
@@ -41,6 +49,7 @@ async function fail(ports: Ports, sessionId: string, error: string) {
 export async function recoverCommits(ports: Ports): Promise<void> {
   const { db } = ports
   const staleBefore = new Date(Date.now() - recoverConfig.stallMs)
+  const claimStaleBefore = new Date(Date.now() - recoverConfig.compactionStaleMs)
 
   // Compaction claims that never finished, in sessions that still want them
   // (open, or committing and not yet planned; compact.ts `active`): queue them again.
@@ -53,7 +62,7 @@ export async function recoverCommits(ports: Ports): Promise<void> {
     .where(
       and(
         isNotNull(runs.mergingInto),
-        lt(runs.claimedAt, staleBefore),
+        lt(runs.claimedAt, claimStaleBefore),
         or(eq(s.status, 'open'), and(eq(s.status, 'committing'), isNull(s.commitPlan))),
       ),
     )

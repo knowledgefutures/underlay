@@ -88,7 +88,7 @@ describe('recovering stalled commits', () => {
     await drainLosing(h, 'commit.unit')
     expect((await session(h, sid)).status).toBe('committing')
 
-    Object.assign(recoverConfig, { stallMs: -1 })
+    Object.assign(recoverConfig, { stallMs: -1, compactionStaleMs: -1 })
     Object.assign(unitLimits, { staleMs: -1 })
     await recoverCommits(h.ports)
     await h.drain()
@@ -113,7 +113,7 @@ describe('recovering stalled commits', () => {
       .update(schema.commitUnits)
       .set({ attempts: unitLimits.maxAttempts, queuedAt: new Date(0) })
       .where(eq(schema.commitUnits.id, unit!.id))
-    Object.assign(recoverConfig, { stallMs: -1 })
+    Object.assign(recoverConfig, { stallMs: -1, compactionStaleMs: -1 })
     await recoverCommits(h.ports)
     const s = await session(h, sid)
     expect(s.status).toBe('failed')
@@ -187,10 +187,36 @@ describe('recovering stalled commits', () => {
     await dropJobs(h, 'push.compact')
     await h.request(`${path}/push/${sid}/commit?async=true`, { method: 'POST', user })
     await dropJobs(h, 'push.commit')
-    Object.assign(recoverConfig, { stallMs: -1 })
+    Object.assign(recoverConfig, { stallMs: -1, compactionStaleMs: -1 })
     await recoverCommits(h.ports)
     const queued = (await h.ports.db.select().from(schema.jobs)).map((j) => j.type)
     expect(queued).toContain('push.compact')
+  })
+
+  it('re-queues a compaction claim that has been quiet for 15 minutes, not sooner', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('quiet')
+    const path = '/api/collections/org/quiet'
+    const all = ids(MERGE_FAN_IN * 5)
+    const batches = Array.from({ length: MERGE_FAN_IN }, (_, i) =>
+      all.slice(i * 5, i * 5 + 5).map(rec),
+    )
+    const sid = await upload(h, user, path, batches)
+    await dropJobs(h, 'push.compact')
+    const claimedAt = (minutes: number) =>
+      h.ports.db
+        .update(schema.pushRuns)
+        .set({ claimedAt: new Date(Date.now() - minutes * 60 * 1000) })
+        .where(eq(schema.pushRuns.sessionId, sid))
+    const queued = async () =>
+      (await h.ports.db.select().from(schema.jobs)).filter((j) => j.type === 'push.compact').length
+    await claimedAt(10)
+    await recoverCommits(h.ports)
+    expect(await queued()).toBe(0)
+    await claimedAt(16)
+    await recoverCommits(h.ports)
+    expect(await queued()).toBe(1)
   })
 
   it('holds storage cleanup for a long commit while it makes progress', async () => {
@@ -220,7 +246,7 @@ describe('recovering stalled commits', () => {
     })
     expect(commit.status).toBe(202)
     await dropJobs(h, 'push.commit')
-    Object.assign(recoverConfig, { stallMs: -1 })
+    Object.assign(recoverConfig, { stallMs: -1, compactionStaleMs: -1 })
     // Nudged up to maxStalls times: each queues push.commit again; lose those too.
     for (let i = 0; i < recoverConfig.maxStalls; i++) {
       await recoverCommits(h.ports)
@@ -256,7 +282,7 @@ describe('recovering stalled commits', () => {
     const claimed = () =>
       h.ports.db.select().from(schema.pushRuns).where(eq(schema.pushRuns.sessionId, sid))
     expect((await claimed()).every((r) => r.mergingInto !== null)).toBe(true)
-    Object.assign(recoverConfig, { stallMs: -1 })
+    Object.assign(recoverConfig, { stallMs: -1, compactionStaleMs: -1 })
     await recoverCommits(h.ports)
     await h.drain()
     const runs = await claimed()
