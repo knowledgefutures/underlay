@@ -673,6 +673,8 @@ export const unitLimits = {
   perIsolate: 2,
   /** How long a unit waits for a slot in its isolate before it is queued again. */
   slotWaitMs: 60_000,
+  /** A unit running longer gives up its slot and fails (under a queue invocation's 15 minutes). */
+  runMs: 12 * 60 * 1000,
 }
 
 /** Queue a plan's pending units (within the windows), or the assembly when none is left. Idempotent. */
@@ -866,9 +868,22 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     await ports.jobs.enqueue({ type: 'commit.unit', unitId }, { delaySeconds: 15 })
     return
   }
+  // A unit that hangs would hold its slot for good: the runtime cancels an
+  // invocation without running its `finally`. Past `runMs` it gives the slot back
+  // and fails, and goes again as any failed job does.
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    await runUnit(ports, unit, session)
+    await Promise.race([
+      runUnit(ports, unit, session),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Unit ${unit.id} ran over ${unitLimits.runMs / 1000} s`)),
+          unitLimits.runMs,
+        )
+      }),
+    ])
   } finally {
+    clearTimeout(timer)
     releaseUnitSlot()
   }
 }

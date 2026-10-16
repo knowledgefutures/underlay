@@ -162,16 +162,16 @@ describe('record trees in a repository', () => {
     expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
   })
 
-  it('streams a large stored body from the store, never reading it whole or caching it', async () => {
+  it('reads a large stored body in ranges as it streams, never whole, and never caches it', async () => {
     const blobs = memoryStore()
     const whole: string[] = []
+    const ranged: string[] = []
     const reads = new Proxy(blobs, {
       get(t, p) {
         if (p === 'get')
           return async (...a: Parameters<typeof blobs.get>) => {
-            const obj = await t.get(...a)
-            if (!obj || !a[0].startsWith('bodies/')) return obj
-            return { ...obj, body: obj.body, bytes: () => (whole.push(a[0]), obj.bytes()) }
+            if (a[0].startsWith('bodies/')) (a[1] ? ranged : whole).push(a[0])
+            return t.get(...a)
           }
         const v = Reflect.get(t, p) as unknown
         return typeof v === 'function' ? v.bind(t) : v
@@ -215,6 +215,7 @@ describe('record trees in a repository', () => {
       written.slice(first, first + streamed.length).map((e) => e.body),
     )
     expect(whole).toEqual([])
+    expect(ranged.length).toBeGreaterThan(1)
     expect(cached).toEqual([])
     // A reader that stops early ends the read.
     for await (const _ of source.leafStream(big.hash)) break

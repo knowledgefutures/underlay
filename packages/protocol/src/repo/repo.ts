@@ -55,6 +55,8 @@ export const BODY_MEMBER_BYTES = 4 * 1024 * 1024
  * hundreds of MB of records (Crossref, 2026-10-16), tens of MB compressed.
  */
 export const STREAM_BODY_BYTES = 4 * 1024 * 1024
+/** Bytes per ranged read of such a body. */
+const BODY_RANGE_BYTES = 2 * 1024 * 1024
 
 export const keys = {
   node: (h: string) => `nodes/${h}`,
@@ -180,16 +182,33 @@ export class Repo {
     return bytes
   }
 
-  /** A stored body's decompressed chunks: read whole and cached when small, streamed when large. */
+  /**
+   * A stored body's decompressed chunks: read whole and cached when small, read
+   * in ranges as they're decompressed when large. Each range is read to its end,
+   * so a reader that stops partway leaves no connection open: a Worker has only
+   * a few, and a body stream left open made every later read wait (staging,
+   * 2026-10-16).
+   */
   async #bodyChunks(key: string, leafHash: string): Promise<AsyncIterable<Uint8Array>> {
     const cached = await this.cache.get(this.#ck(key))
     if (cached) return gunzipChunks(cached)
-    const obj = await this.blobs.get(key)
-    if (!obj) throw new Error(`Missing body for leaf ${leafHash}`)
-    if (obj.size > STREAM_BODY_BYTES) return gunzipStream(obj.body)
-    const bytes = await obj.bytes()
-    await this.cache.put(this.#ck(key), bytes)
+    const head = await this.blobs.head(key)
+    if (!head) throw new Error(`Missing body for leaf ${leafHash}`)
+    if (head.size > STREAM_BODY_BYTES) return gunzipStream(this.#ranges(key, head.size))
+    const bytes = await this.#fetch(key)
+    if (!bytes) throw new Error(`Missing body for leaf ${leafHash}`)
     return gunzipChunks(bytes)
+  }
+
+  async *#ranges(key: string, size: number): AsyncGenerator<Uint8Array> {
+    for (let offset = 0; offset < size; offset += BODY_RANGE_BYTES) {
+      const part = await this.blobs.get(key, {
+        offset,
+        length: Math.min(BODY_RANGE_BYTES, size - offset),
+      })
+      if (!part) throw new Error(`Missing ${key} at ${offset}`)
+      yield await part.bytes()
+    }
   }
 
   // --- Nodes ---
