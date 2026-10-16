@@ -37,6 +37,7 @@ import {
   assembleTree,
   bodyOfRecord,
   type Change,
+  type DecodedNode,
   compileSchema,
   boundaryBytes,
   compareUtf8,
@@ -103,6 +104,13 @@ export const parallelConfig = {
   baseNodes: 50_000,
   /** A fixed base level (tests); null picks one by `baseNodes`. */
   baseLevel: null as number | null,
+  /**
+   * A level-1 base node over `unitBytes` whose mean leaf is over this many times
+   * the tree's is read, and its leaves become split candidates (heavy ranges).
+   */
+  expandRatio: 1.5,
+  /** Level-1 nodes read that way per tree, heaviest first. */
+  expandReads: 2_000,
   /** Units per `commit.plan` chunk (D1: about 1,000 queries an invocation). */
   chunkUnits: 1_000,
   /** A commit the serial path can't take over this (a schema or privacy change) is refused. */
@@ -207,11 +215,16 @@ const FANOUT_MEAN = 64
 /** Raw bytes of the base leaf a change lands in, about: a leaf's mean entries at the tree's mean size. */
 const leafBytesOf = (t: TreeSummary) => (t.count > 0 ? (t.bytes / t.count) * LEAF_MEAN : 0)
 
-/** The base level whose nodes the planner reads: the lowest with at most `baseNodes` of them. */
-function baseLevelFor(count: number): number {
+/**
+ * The base level whose nodes the planner reads: the lowest (above the leaves)
+ * with at most `baseNodes` of them. Level L has about count / (LEAF_MEAN ×
+ * FANOUT_MEAN^L) nodes; this counted level L − 1's until 2026-10-16, so a
+ * Crossref type read 26 nodes of ~4,096 leaves instead of 1,678 of ~64.
+ */
+export function baseLevelFor(count: number): number {
   if (parallelConfig.baseLevel !== null) return parallelConfig.baseLevel
   let level = 1
-  while (count / (LEAF_MEAN * FANOUT_MEAN ** (level - 1)) > parallelConfig.baseNodes) level++
+  while (count / (LEAF_MEAN * FANOUT_MEAN ** level) > parallelConfig.baseNodes) level++
   return level
 }
 
@@ -232,6 +245,36 @@ async function baseNodes(repo: Repo, root: string | null, level: number): Promis
   }
   await visit(top)
   return out
+}
+
+/**
+ * Replace heavy level-1 base nodes by their leaves. Units can't be cut finer
+ * than split candidates (run marks, 1 in ~8 leaves; base node ends), so over
+ * leaves of large records (Crossref, 2026-10-16: up to 216 MB of records each) a
+ * unit was one interval of up to ~50 leaves and GBs of base. A node over
+ * `unitBytes` whose mean leaf is over `expandRatio` times the tree's is read,
+ * heaviest first, at most `expandReads` per tree; its leaves' last keys become
+ * candidates and their bytes exact. Order is kept.
+ */
+export async function expandHeavyNodes(
+  source: { node(hash: string): Promise<DecodedNode<RecordEntry>> },
+  nodes: NodeDesc[],
+  treeLeafBytes: number,
+): Promise<NodeDesc[]> {
+  const { unitBytes, expandRatio, expandReads } = parallelConfig
+  const meanLeaf = (d: NodeDesc) => (d.bytes / d.count) * LEAF_MEAN
+  const heavy = nodes
+    .filter(
+      (d) => d.level === 1 && d.bytes > unitBytes && meanLeaf(d) > expandRatio * treeLeafBytes,
+    )
+    .sort((a, b) => meanLeaf(b) - meanLeaf(a))
+    .slice(0, expandReads)
+  const children = new Map<string, NodeDesc[]>()
+  await pool(heavy, 6, async (d) => {
+    const node = await source.node(d.hash)
+    if (node.kind === 'node') children.set(d.hash, node.children)
+  })
+  return nodes.flatMap((d) => children.get(d.hash) ?? [d])
 }
 
 interface Range {
@@ -515,7 +558,11 @@ export async function planParallel(
       const tree = plan.types[slug]!.bases![set]
       // Nothing can reach a private tree that doesn't exist without a private upsert.
       if (set === 'private' && !privateType && !tree.root && !anyPrivate) continue
-      const nodes = await baseNodes(ctx.repo, tree.root, baseLevelFor(tree.count))
+      const nodes = await expandHeavyNodes(
+        new RepoSource(recordTree, ctx.repo),
+        await baseNodes(ctx.repo, tree.root, baseLevelFor(tree.count)),
+        leafBytesOf(tree),
+      )
       const fromBase = nodes.map((d) => d.lastKey)
       const candidates = [...new Set([...marks, ...fromBase])].filter(isNatural).sort(compareUtf8)
       const ranges = planRanges(
