@@ -285,7 +285,11 @@ export class PrefixedStore implements Store {
     parts: AsyncIterable<Uint8Array>,
     opts?: PutPartsOptions,
   ) => Promise<void>
-  readonly putPieces?: (key: string, pieces: readonly Uint8Array[], opts?: PutOptions) => Promise<void>
+  readonly putPieces?: (
+    key: string,
+    pieces: readonly Uint8Array[],
+    opts?: PutOptions,
+  ) => Promise<void>
   constructor(
     readonly inner: Store,
     prefix: string,

@@ -82,7 +82,11 @@ const headOf = (o: R2ObjectLike): BlobHead => ({
 })
 
 class R2Store implements Store {
-  readonly putPieces?: (key: string, pieces: readonly Uint8Array[], opts?: PutOptions) => Promise<void>
+  readonly putPieces?: (
+    key: string,
+    pieces: readonly Uint8Array[],
+    opts?: PutOptions,
+  ) => Promise<void>
 
   constructor(readonly bucket: R2BucketLike) {
     if (FixedLengthStream) {

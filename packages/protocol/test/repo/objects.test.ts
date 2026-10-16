@@ -110,7 +110,7 @@ describe('record trees in a repository', () => {
     expect(JSON.parse(changed[0]!.body!).data.v).toBe(1)
   })
 
-  it('keeps at most a few members compressing while a merge rewrites leaves', async () => {
+  it('bounds the raw text compressing while a merge rewrites leaves', async () => {
     const { repo } = freshRepo()
     const { root: base } = await buildRecords(repo, 5000)
     const source = new RepoSource(recordTree, repo)
@@ -118,10 +118,11 @@ describe('record trees in a repository', () => {
     class Counting extends RepoSink<RecordEntry> {
       override spill(entries: readonly RecordEntry[]) {
         super.spill(entries)
-        most = Math.max(most, this.compressingCount)
+        most = Math.max(most, this.compressingBytes)
       }
     }
-    const sink = new Counting(repo, { bodyOf: bodyOfRecord })
+    // A bound of a few members, as 2 MB is for a unit's 1 MB members.
+    const sink = new Counting(repo, { bodyOf: bodyOfRecord, compressingBytes: 6_000 })
     // One change per 100 records: every leaf is rewritten, in members of ~10 records.
     const changes = ids(5000)
       .filter((_, i) => i % 100 === 0)
@@ -133,7 +134,8 @@ describe('record trees in a repository', () => {
     })
     await sink.flush()
     expect(merged.stats.updated).toBe(50)
-    expect(most).toBeLessThanOrEqual(3)
+    // The bound, plus the member that passed it.
+    expect(most).toBeLessThanOrEqual(6_000 + 3_000)
     const rows = await collect(iterate(source, merged.root!.hash, { payloads: true }))
     expect(rows.length).toBe(5000)
     expect(JSON.parse(rows[100]!.body!).data.v).toBe(1)

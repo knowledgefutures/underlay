@@ -45,6 +45,7 @@ import {
   LEAF_BOUNDARY_BITS,
   mergeTree,
   type NodeDesc,
+  type BodyRead,
   type RecordEntry,
   recordPayloadBytes,
   recordTree,
@@ -66,6 +67,7 @@ import { and, asc, count, eq, gte, inArray, isNotNull, isNull, lt, or, sql } fro
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
+import { isolateTag, isolate } from '../lib/isolate.js'
 import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema } from './changes.js'
@@ -784,15 +786,16 @@ async function unitRuns(ports: Ports, slicesKey: string): Promise<RunIndex[]> {
   return runs.map(normalizeIndex)
 }
 
-/** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
 /** Leaves and records this large are logged as a unit meets them. */
 const BIG_LEAF_BYTES = 16 * 1024 * 1024
 const BIG_RECORD_BYTES = 1024 * 1024
+/** Base bodies this large (stored) are logged as a unit reads them. */
+const BIG_BODY_BYTES = 1024 * 1024
 const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`
 
 /** A unit's changes, passed through, logging large records and every 20,000th change. */
 async function* watchChanges(
-  tag: string,
+  log: (msg: string) => void,
   changes: AsyncIterable<Change<RecordEntry>>,
 ): AsyncGenerator<Change<RecordEntry>> {
   let n = 0
@@ -801,13 +804,14 @@ async function* watchChanges(
     n++
     const size = c.entry?.size ?? 0
     if (size > largest) largest = size
-    if (size >= BIG_RECORD_BYTES) console.log(`${tag}: change ${c.key} is ${mb(size)}`)
-    if (n % 20_000 === 0) console.log(`${tag}: ${n} changes, at ${c.key}, largest ${mb(largest)}`)
+    if (size >= BIG_RECORD_BYTES) log(`change ${c.key} is ${mb(size)}`)
+    if (n % 20_000 === 0) log(`${n} changes, at ${c.key}, largest ${mb(largest)}`)
     yield c
   }
-  console.log(`${tag}: ${n} changes in all, largest ${mb(largest)}`)
+  log(`${n} changes in all, largest ${mb(largest)}`)
 }
 
+/** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
 export async function runCommitUnit(ports: Ports, unitId: string): Promise<void> {
   const [unit] = await ports.db
     .select()
@@ -816,6 +820,16 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   if (!unit || unit.status !== 'pending') return
   const session = await getSession(ports, unit.sessionId)
   if (session?.status !== 'committing' || session.commitPlan !== unit.planId) return
+  isolate.unitsStarted++
+  try {
+    await runPendingUnit(ports, unit, session)
+  } finally {
+    isolate.unitsEnded++
+  }
+}
+
+async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow): Promise<void> {
+  const started = Date.now()
   const plan = await getJson<CommitPlan>(ports, `${planDir(session.id, unit.planId)}/plan.json`)
   const runs = await unitRuns(ports, unit.slicesKey!)
   const t = plan.types[unit.type]!
@@ -825,11 +839,12 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, ...unitSink })
   const range = { after: unit.after, through: unit.through }
   // Progress in the Worker's log, so a unit that dies (out of memory, say) shows
-  // how far it got and the largest things it met.
-  const tag = `[unit] ${unit.id} ${unit.type}/${set} (${unit.after ?? 'start'}, ${unit.through ?? 'end'}]`
-  console.log(`${tag}: start, attempt ${unit.attempts}, ${runs.length} runs`)
+  // how far it got, the largest things it met, and what else its isolate ran.
+  const tag = `${unit.id} ${unit.type}/${set} (${unit.after ?? 'start'}, ${unit.through ?? 'end'}]`
+  const log = (msg: string) => console.log(`[unit] ${isolateTag()} ${tag}: ${msg}`)
+  log(`start, attempt ${unit.attempts}, ${runs.length} runs`)
   const changes = watchChanges(
-    tag,
+    log,
     deltaChanges(
       ports.stores.internal,
       repo,
@@ -846,19 +861,42 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const refs = new FileRefDelta()
   // A privacy change merges into the moved tree (`bases`).
   const into = (t.bases ?? t)[set].root
-  const merged = await mergeTree(new RepoSource(recordTree, repo), sink, into, changes, {
-    ...builderOpts,
-    range,
-    leafOutput: (d) => {
-      leaves.push(d)
-      if (d.bytes >= BIG_LEAF_BYTES || leaves.length % 100 === 0)
-        console.log(
-          `${tag}: leaf ${leaves.length} through ${d.lastKey}, ${d.count} entries, ${mb(d.bytes)}`,
-        )
+  // Base bodies by how they were read, and their stored bytes where known.
+  const reads = { memory: 0, cache: 0, whole: 0, stream: 0, storedBytes: 0 }
+  const onBodyRead = (r: BodyRead) => {
+    reads[r.from]++
+    reads.storedBytes += r.storedBytes ?? 0
+    if ((r.storedBytes ?? 0) >= BIG_BODY_BYTES)
+      log(`base body ${r.leaf.slice(0, 12)} from ${r.from}, ${mb(r.storedBytes ?? 0)} stored`)
+  }
+  // The most members compressing at a leaf's end: what a leaf's write holds raw.
+  let mostCompressing = 0
+  const merged = await mergeTree(
+    new RepoSource(recordTree, repo, { onBodyRead }),
+    sink,
+    into,
+    changes,
+    {
+      ...builderOpts,
+      range,
+      leafOutput: (d) => {
+        leaves.push(d)
+        mostCompressing = Math.max(mostCompressing, sink.compressingCount)
+        if (d.bytes >= BIG_LEAF_BYTES || leaves.length % 100 === 0)
+          log(
+            `leaf ${leaves.length} through ${d.lastKey}, ${d.count} entries, ${mb(d.bytes)}; ` +
+              `sink: ${sink.compressingCount} compressing (${mb(sink.compressingBytes)}), ` +
+              `${sink.writeCount} writes of ${mb(sink.writeBytes)}`,
+          )
+      },
+      onChange: (before, after) => refs.record(set, before, after, unit.type),
     },
-    onChange: (before, after) => refs.record(set, before, after, unit.type),
-  })
-  console.log(`${tag}: merged, ${leaves.length} leaves, ${JSON.stringify(merged.stats)}`)
+  )
+  log(
+    `merged, ${leaves.length} leaves, ${JSON.stringify(merged.stats)}; ` +
+      `base bodies ${JSON.stringify({ ...reads, storedBytes: mb(reads.storedBytes) })}; ` +
+      `most compressing ${mostCompressing}`,
+  )
   await sink.flush()
   await refs.resolve(repo)
   const survived = unit.through === null || merged.lastKey === unit.through
@@ -884,6 +922,7 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     )
     .limit(1)
   if (!left) await ports.jobs.enqueue({ type: 'commit.assemble', sessionId: session.id })
+  log(`done in ${Math.round((Date.now() - started) / 1000)}s`)
   // A slot is free: refill this user's windows, this session's or the next one's.
   await topUpUnits(ports, session.userId)
 }

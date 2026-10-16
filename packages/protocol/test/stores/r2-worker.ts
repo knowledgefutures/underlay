@@ -38,7 +38,14 @@ const settle = (p: Promise<unknown>) =>
   ])
 
 export default {
-  async fetch(_req: Request, env: { B: R2BucketLike & { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> } }) {
+  async fetch(
+    _req: Request,
+    env: {
+      B: R2BucketLike & {
+        get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>
+      }
+    },
+  ) {
     const store = new PrefixedStore(r2Store(env.B), 'p')
     const read = async (key: string) => new Uint8Array(await (await env.B.get(key))!.arrayBuffer())
 

@@ -26,7 +26,10 @@ function fakeCaches() {
         } as unknown as Response
       },
       async put(req: Request, res: Response) {
-        entries.set(req.url, { bytes: new Uint8Array(await res.arrayBuffer()), headers: res.headers })
+        entries.set(req.url, {
+          bytes: new Uint8Array(await res.arrayBuffer()),
+          headers: res.headers,
+        })
       },
     },
   }
