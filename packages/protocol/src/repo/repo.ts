@@ -43,16 +43,19 @@ import {
 } from '../format.js'
 import { chunkLines, gunzipChunks, gunzipStream, gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
-import { type Store, type Cache, noCache } from './types.js'
+import { type Store, type Cache, noCache, putJoined } from './types.js'
 
 /** Records over this size are stored once under records/ (writer policy, not protocol). */
 export const OUT_OF_LINE_BYTES = 64 * 1024
 /** Raw bytes per gzip member when a leaf body is written in pieces (writer policy). */
 export const BODY_MEMBER_BYTES = 4 * 1024 * 1024
 /**
- * Stored (compressed) bodies over this size are streamed from the store when
- * read a line at a time, and not cached: a leaf of large records can hold
- * hundreds of MB of records (Crossref, 2026-10-16), tens of MB compressed.
+ * Stored objects over this size are never put in the shared cache, and a body
+ * over it is streamed from the store when read a line at a time, never taken
+ * whole from the cache: a leaf of large records can hold hundreds of MB of
+ * records (Crossref, 2026-10-16), tens of MB compressed. On Workers a whole
+ * cached body also let every compression of the rewritten leaf pile up at once
+ * (scripts/memory.ts, PR #47).
  */
 export const STREAM_BODY_BYTES = 4 * 1024 * 1024
 
@@ -176,18 +179,29 @@ export class Repo {
     if (!obj) return null
     const bytes = await obj.bytes()
     if (verify && !this.trusted) await verify(bytes)
-    await this.cache.put(this.#ck(key), bytes)
+    if (bytes.byteLength <= STREAM_BODY_BYTES) await this.cache.put(this.#ck(key), bytes)
     return bytes
   }
 
   /** A stored body's decompressed chunks: read whole and cached when small, streamed when large. */
-  async #bodyChunks(key: string, leafHash: string): Promise<AsyncIterable<Uint8Array>> {
-    const cached = await this.cache.get(this.#ck(key))
-    if (cached) return gunzipChunks(cached)
+  async #bodyChunks(
+    key: string,
+    leafHash: string,
+    onRead?: (r: BodyRead) => void,
+  ): Promise<AsyncIterable<Uint8Array>> {
+    const cached = await this.cache.get(this.#ck(key), { maxBytes: STREAM_BODY_BYTES })
+    if (cached) {
+      onRead?.({ leaf: leafHash, from: 'cache', storedBytes: cached.byteLength })
+      return gunzipChunks(cached)
+    }
     const obj = await this.blobs.get(key)
     if (!obj) throw new Error(`Missing body for leaf ${leafHash}`)
-    if (obj.size > STREAM_BODY_BYTES) return gunzipStream(obj.body)
+    if (obj.size > STREAM_BODY_BYTES) {
+      onRead?.({ leaf: leafHash, from: 'stream', storedBytes: obj.size })
+      return gunzipStream(obj.body)
+    }
     const bytes = await obj.bytes()
+    onRead?.({ leaf: leafHash, from: 'whole', storedBytes: bytes.byteLength })
     await this.cache.put(this.#ck(key), bytes)
     return gunzipChunks(bytes)
   }
@@ -280,18 +294,22 @@ export class Repo {
    * body over STREAM_BODY_BYTES is streamed from the store, not held or cached.
    * Untrusted locations read through bodyLines, which checks every line before use.
    */
-  async *bodyLineStream(leaf: {
-    hash: string
-    entries: readonly RecordEntry[]
-  }): AsyncGenerator<string> {
+  async *bodyLineStream(
+    leaf: {
+      hash: string
+      entries: readonly RecordEntry[]
+    },
+    onRead?: (r: BodyRead) => void,
+  ): AsyncGenerator<string> {
     const key = keys.body(leaf.hash)
     const hit = this.lru.get(this.#ck(key))
     if (hit || !this.trusted) {
+      onRead?.({ leaf: leaf.hash, from: hit ? 'memory' : 'whole', storedBytes: null })
       yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
       return
     }
     let n = 0
-    for await (const line of chunkLines(await this.#bodyChunks(key, leaf.hash))) {
+    for await (const line of chunkLines(await this.#bodyChunks(key, leaf.hash, onRead))) {
       if (++n > leaf.entries.length) break
       yield line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
     }
@@ -335,14 +353,8 @@ export class Repo {
 
   /** Write a body from its gzip members (already compressed, in order). */
   async putBody(leafHash: string, members: readonly Uint8Array[]): Promise<void> {
-    const total = members.reduce((n, m) => n + m.byteLength, 0)
-    const bytes = new Uint8Array(total)
-    let off = 0
-    for (const m of members) {
-      bytes.set(m, off)
-      off += m.byteLength
-    }
-    await this.blobs.put(keys.body(leafHash), bytes, {
+    // Unjoined where the store can: a joined copy doubled a big leaf's write (PR #47).
+    await putJoined(this.blobs, keys.body(leafHash), members, {
       contentType: 'application/gzip',
       ifAbsent: true,
     })
@@ -425,11 +437,23 @@ export class Repo {
   }
 }
 
+/**
+ * How a leaf body was read, for logs: from this isolate's memory, the shared
+ * cache, the store whole, or streamed from the store. `storedBytes` is its
+ * compressed size, where the read knows it.
+ */
+export interface BodyRead {
+  leaf: string
+  from: 'memory' | 'cache' | 'whole' | 'stream'
+  storedBytes: number | null
+}
+
 /** NodeSource over a repository. Record trees get bodies through `leafEntries`. */
 export class RepoSource<E> implements NodeSource<E> {
   constructor(
     readonly spec: TreeSpec<E>,
     readonly repo: Repo,
+    readonly opts: { onBodyRead?: (r: BodyRead) => void } = {},
   ) {}
 
   node(hash: string): Promise<DecodedNode<E>> {
@@ -455,7 +479,7 @@ export class RepoSource<E> implements NodeSource<E> {
     }
     const entries = node.entries as RecordEntry[]
     let i = 0
-    for await (const body of this.repo.bodyLineStream({ hash, entries })) {
+    for await (const body of this.repo.bodyLineStream({ hash, entries }, this.opts.onBodyRead)) {
       yield { ...entries[i++]!, body } as E
     }
   }
@@ -484,6 +508,8 @@ export class RepoSink<E> implements TreeSink<E> {
   #memberBytes = 0
   /** Members still compressing: each holds its raw text until it's done. */
   readonly #compressing = new Set<Promise<unknown>>()
+  /** Their raw text length. */
+  #compressingBytes = 0
   /** Raw body bytes of the writes in flight. */
   #pendingBytes = 0
   readonly written: string[] = []
@@ -495,6 +521,8 @@ export class RepoSink<E> implements TreeSink<E> {
       concurrency?: number
       /** Raw body bytes in flight before `drain()` waits (default 16 MB). */
       pendingBytes?: number
+      /** Raw text of members compressing before `settle()` waits (default 2 MB). */
+      compressingBytes?: number
     } = {},
   ) {}
 
@@ -515,11 +543,13 @@ export class RepoSink<E> implements TreeSink<E> {
   #member(entries: readonly E[]): Promise<Uint8Array> {
     const text = entries.map(this.opts.bodyOf!).join('\n') + '\n'
     this.#memberBytes += text.length
+    this.#compressingBytes += text.length
     const p = gzip(text)
-    const settled: Promise<unknown> = p.then(
-      () => this.#compressing.delete(settled),
-      () => this.#compressing.delete(settled), // surfaced when the body is written
-    )
+    const done = () => {
+      this.#compressing.delete(settled)
+      this.#compressingBytes -= text.length
+    }
+    const settled: Promise<unknown> = p.then(done, done) // a failure surfaces when the body is written
     this.#compressing.add(settled)
     return p
   }
@@ -557,9 +587,52 @@ export class RepoSink<E> implements TreeSink<E> {
     if (this.#error) throw this.#error
   }
 
+  /**
+   * At most `compressingBytes` of raw text compressing: two members of a large
+   * leaf (1 MB each in a commit unit). In workerd a compression only runs while
+   * the isolate waits on I/O, so a leaf read with nothing to wait on (a cached or
+   * small base body) otherwise held every member's raw text until the leaf was
+   * written: 180 in flight on a 200 MB leaf (PR #47). Bounded by bytes, not
+   * count, so the small members of small leaves don't wait in turn.
+   */
+  settle(): Promise<void> | undefined {
+    const limit = this.opts.compressingBytes ?? 2 * 1024 * 1024
+    if (this.#compressingBytes <= limit) return undefined
+    return (async () => {
+      while (this.#compressingBytes > limit) await Promise.race(this.#compressing)
+    })()
+  }
+
   async flush(): Promise<void> {
     while (this.#pending.size > 0) await Promise.race(this.#pending)
     if (this.#error) throw this.#error
+  }
+
+  // Read-only, for measuring what a sink holds (scripts/memory.ts).
+
+  /** Gzip members of the current leaf not yet in a write (compressing or done). */
+  get memberCount(): number {
+    return this.#members.length
+  }
+  /** Their raw text length. */
+  get memberBytes(): number {
+    return this.#memberBytes
+  }
+  /** Members still compressing, this leaf's or a written leaf's. */
+  get compressingCount(): number {
+    return this.#compressing.size
+  }
+  /** Their raw text length. */
+  get compressingBytes(): number {
+    return this.#compressingBytes
+  }
+  /** Writes in flight (nodes and bodies). */
+  get writeCount(): number {
+    return this.#pending.size
+  }
+  /** Raw body bytes of the writes in flight. */
+  get writeBytes(): number {
+    return this.#pendingBytes
   }
 }
 

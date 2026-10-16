@@ -42,6 +42,12 @@ export interface TreeSink<E> {
    * await it between leaves so pending writes stay bounded.
    */
   drain?(): Promise<void>
+  /**
+   * Called after each entry: a promise to await when the sink holds too many
+   * spilled parts still being processed, else undefined. Unlike `drain` it never
+   * waits on writes, so a leaf read isn't held up by the previous leaf's write.
+   */
+  settle?(): Promise<void> | undefined
 }
 
 export interface BuilderOptions<E> {

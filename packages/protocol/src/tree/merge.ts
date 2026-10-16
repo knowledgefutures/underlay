@@ -149,12 +149,19 @@ export async function mergeTree<E>(
     return c
   }
 
+  /** Add an entry, then wait while the sink holds too many parts in progress. */
+  const add = async (e: E) => {
+    builder.addEntry(e)
+    const settled = sink.settle?.()
+    if (settled) await settled
+  }
+
   /** Apply one change that has no base entry. */
-  const insert = (c: Change<E>) => {
+  const insert = async (c: Change<E>) => {
     if (c.entry) {
       stats.added++
       opts.onChange?.(null, c.entry)
-      builder.addEntry(c.entry)
+      await add(c.entry)
     } else {
       stats.missingDeletes++
     }
@@ -170,7 +177,7 @@ export async function mergeTree<E>(
       for (;;) {
         const c = await pending.peek()
         if (!c || compareUtf8(c.key, oldKey) >= 0) break
-        insert((await nextChange())!)
+        await insert((await nextChange())!)
         // A run of inserts inside one base leaf's range can be arbitrarily long.
         if (stats.added % 1024 === 0) await sink.drain?.()
       }
@@ -182,14 +189,14 @@ export async function mergeTree<E>(
           opts.onChange?.(old, null)
         } else if (spec.same(old, c.entry)) {
           stats.unchanged++
-          builder.addEntry(old)
+          await add(old)
         } else {
           stats.updated++
           opts.onChange?.(old, c.entry)
-          builder.addEntry(c.entry)
+          await add(c.entry)
         }
       } else {
-        builder.addEntry(old)
+        await add(old)
       }
     }
     // Changes between this leaf's last entry and its last key can't exist (the
@@ -251,7 +258,7 @@ export async function mergeTree<E>(
   }
   let appended = 0
   for (let c = await nextChange(); c; c = await nextChange()) {
-    insert(c)
+    await insert(c)
     if (++appended % 1024 === 0) await sink.drain?.()
   }
 
