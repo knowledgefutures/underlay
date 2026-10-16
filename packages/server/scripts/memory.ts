@@ -64,6 +64,9 @@ if (!gc) {
   console.error('Run with node --expose-gc --import tsx scripts/memory.ts')
   process.exit(2)
 }
+// Jobs log their progress with console.log; stdout carries the report alone.
+const report = (s: string) => process.stdout.write(`${s}\n`)
+console.log = console.error
 const MB = 1024 * 1024
 let parts = { heap: 0, buffers: 0 }
 const live = () => {
@@ -340,7 +343,7 @@ const c2 = await push(second(), undefined)
 console.error(`push 2 committed (commit ${(c2 / 1000).toFixed(0)} s)`)
 
 const rows = [...stats].sort((a, b) => b[1].peak - a[1].peak)
-console.log(
+report(
   JSON.stringify(
     {
       records: RECORDS,
