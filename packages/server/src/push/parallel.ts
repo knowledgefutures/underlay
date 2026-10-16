@@ -664,6 +664,15 @@ export const unitLimits = {
   perAccount: 96,
   staleMs: 30 * 60 * 1000,
   maxAttempts: 4,
+  /**
+   * Units running at once in one isolate. A Worker's 128 MB is shared by the
+   * invocations it runs at once, and units mostly wait on storage, so the
+   * runtime packs many into one isolate; a unit over a leaf of large records
+   * holds tens of MB (staging, 2026-10-16: every unit in such an isolate died).
+   */
+  perIsolate: 2,
+  /** How long a unit waits for a slot in its isolate before it is queued again. */
+  slotWaitMs: 60_000,
 }
 
 /** Queue a plan's pending units (within the windows), or the assembly when none is left. Idempotent. */
@@ -784,7 +793,6 @@ async function unitRuns(ports: Ports, slicesKey: string): Promise<RunIndex[]> {
   return runs.map(normalizeIndex)
 }
 
-/** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
 /** Leaves and records this large are logged as a unit meets them. */
 const BIG_LEAF_BYTES = 16 * 1024 * 1024
 const BIG_RECORD_BYTES = 1024 * 1024
@@ -808,6 +816,36 @@ async function* watchChanges(
   console.log(`${tag}: ${n} changes in all, largest ${mb(largest)}`)
 }
 
+/** Units running in this isolate, and the ones waiting for a slot (unitLimits.perIsolate). */
+let unitsHere = 0
+const unitWaiters: (() => void)[] = []
+
+/** Take one of this isolate's unit slots, waiting up to `slotWaitMs`; false if none came free. */
+function unitSlot(): Promise<boolean> {
+  if (unitsHere < unitLimits.perIsolate) {
+    unitsHere++
+    return Promise.resolve(true)
+  }
+  return new Promise((resolve) => {
+    const wake = () => {
+      clearTimeout(timer)
+      unitsHere++
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      unitWaiters.splice(unitWaiters.indexOf(wake), 1)
+      resolve(false)
+    }, unitLimits.slotWaitMs)
+    unitWaiters.push(wake)
+  })
+}
+
+function releaseUnitSlot() {
+  unitsHere--
+  unitWaiters.shift()?.()
+}
+
+/** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
 export async function runCommitUnit(ports: Ports, unitId: string): Promise<void> {
   const [unit] = await ports.db
     .select()
@@ -816,6 +854,20 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   if (!unit || unit.status !== 'pending') return
   const session = await getSession(ports, unit.sessionId)
   if (session?.status !== 'committing' || session.commitPlan !== unit.planId) return
+  if (!(await unitSlot())) {
+    // This isolate is full: go again shortly, likely in another one. Not an attempt.
+    console.log(`[unit] ${unit.id}: no slot in this isolate, queued again`)
+    await ports.jobs.enqueue({ type: 'commit.unit', unitId }, { delaySeconds: 15 })
+    return
+  }
+  try {
+    await runUnit(ports, unit, session)
+  } finally {
+    releaseUnitSlot()
+  }
+}
+
+async function runUnit(ports: Ports, unit: UnitRow, session: SessionRow): Promise<void> {
   const plan = await getJson<CommitPlan>(ports, `${planDir(session.id, unit.planId)}/plan.json`)
   const runs = await unitRuns(ports, unit.slicesKey!)
   const t = plan.types[unit.type]!

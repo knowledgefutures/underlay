@@ -21,6 +21,7 @@ export {
   gunzip,
   gunzipChunks,
   gunzipMembers,
+  gunzipStream,
   gunzipText,
   gzip,
   isGzip,

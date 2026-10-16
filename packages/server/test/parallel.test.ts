@@ -7,11 +7,11 @@ import {
   trailingZeros,
   verifyTree,
 } from '@underlay/protocol'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
-import { drainSqliteJobs } from '../src/jobs.js'
+import { drainSqliteJobs, runJob } from '../src/jobs.js'
 import { assembleParallel, parallelConfig, unitLimits } from '../src/push/parallel.js'
 import { isMark } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
@@ -278,6 +278,71 @@ describe('parallel commit', () => {
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, c.id))
     expect(versions.map((v) => v.recordCount)).toEqual([batch.length])
+  })
+
+  it('runs at most perIsolate units at once in an isolate; the rest wait, or go back on the queue', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('iso')
+    const path = '/api/collections/org/iso'
+    const open = await h.request(`${path}/push`, {
+      method: 'POST',
+      user,
+      json: { schemas: { Author } },
+    })
+    const sid = ((await open.json()) as { session_id: string }).session_id
+    const batch = [...markIds('i', 6), ...Array.from({ length: 3000 }, (_, i) => `y${i}`)]
+    await h.request(`${path}/push/${sid}/records`, {
+      method: 'POST',
+      user,
+      ndjson: batch.map((k) => rec(k, k)),
+    })
+    Object.assign(parallelConfig, { aboveBytes: 0, unitBytes: 1, baseLevel: 0 })
+    expect((await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+      202,
+    )
+    const unitJobs = () =>
+      h.ports.db
+        .select()
+        .from(schema.jobs)
+        .where(and(eq(schema.jobs.type, 'commit.unit'), eq(schema.jobs.status, 'queued')))
+    // Plan until units are queued.
+    while ((await unitJobs()).length < 3) expect(await drainSqliteJobs(h.ports, { max: 1 })).toBe(1)
+    /** Every queued unit job at once, as an isolate running many invocations would. */
+    const runAll = async () => {
+      const jobs = await unitJobs()
+      await h.ports.db.delete(schema.jobs).where(eq(schema.jobs.type, 'commit.unit'))
+      await Promise.all(jobs.map((j) => runJob(j.payload as never, h.ports)))
+      return jobs.length
+    }
+    const units = () =>
+      h.ports.db.select().from(schema.commitUnits).where(eq(schema.commitUnits.sessionId, sid))
+    const attempts = async () => (await units()).map((u) => u.attempts).reduce((a, b) => a + b, 0)
+
+    // No wait: one unit runs, the others go back on the queue, later, without an attempt.
+    Object.assign(unitLimits, { perIsolate: 1, slotWaitMs: 0 })
+    const before = await attempts()
+    const ran = await runAll()
+    expect(ran).toBeGreaterThanOrEqual(3)
+    const requeued = await unitJobs()
+    expect((await units()).filter((u) => u.status === 'done').length).toBe(1)
+    expect(requeued.length).toBeGreaterThanOrEqual(ran - 1)
+    expect(requeued.every((j) => j.runAt.getTime() > Date.now())).toBe(true)
+    expect(await attempts()).toBe(before)
+
+    // A long enough wait: they take turns, and none goes back.
+    Object.assign(unitLimits, { perIsolate: 1, slotWaitMs: 60_000 })
+    await h.ports.db.update(schema.jobs).set({ runAt: new Date(0) })
+    const second = await runAll()
+    expect((await units()).filter((u) => u.status === 'done').length).toBe(1 + second)
+    expect((await unitJobs()).length).toBe(0)
+
+    await h.drain()
+    const [session] = await h.ports.db
+      .select()
+      .from(schema.pushSessions)
+      .where(eq(schema.pushSessions.id, sid))
+    expect(session!.status).toBe('committed')
   })
 
   it('reopens a session refused for missing files, and plans again on the next commit', async () => {

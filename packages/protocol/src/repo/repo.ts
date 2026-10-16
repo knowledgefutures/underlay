@@ -41,7 +41,7 @@ import {
   versionDigest,
   versionHash,
 } from '../format.js'
-import { chunkLines, gunzipChunks, gunzipText, gzip, splitLines } from './gzip.js'
+import { chunkLines, gunzipChunks, gunzipStream, gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
 import { type Store, type Cache, noCache } from './types.js'
 
@@ -49,6 +49,12 @@ import { type Store, type Cache, noCache } from './types.js'
 export const OUT_OF_LINE_BYTES = 64 * 1024
 /** Raw bytes per gzip member when a leaf body is written in pieces (writer policy). */
 export const BODY_MEMBER_BYTES = 4 * 1024 * 1024
+/**
+ * Stored (compressed) bodies over this size are streamed from the store when
+ * read a line at a time, and not cached: a leaf of large records can hold
+ * hundreds of MB of records (Crossref, 2026-10-16), tens of MB compressed.
+ */
+export const STREAM_BODY_BYTES = 4 * 1024 * 1024
 
 export const keys = {
   node: (h: string) => `nodes/${h}`,
@@ -174,6 +180,18 @@ export class Repo {
     return bytes
   }
 
+  /** A stored body's decompressed chunks: read whole and cached when small, streamed when large. */
+  async #bodyChunks(key: string, leafHash: string): Promise<AsyncIterable<Uint8Array>> {
+    const cached = await this.cache.get(this.#ck(key))
+    if (cached) return gunzipChunks(cached)
+    const obj = await this.blobs.get(key)
+    if (!obj) throw new Error(`Missing body for leaf ${leafHash}`)
+    if (obj.size > STREAM_BODY_BYTES) return gunzipStream(obj.body)
+    const bytes = await obj.bytes()
+    await this.cache.put(this.#ck(key), bytes)
+    return gunzipChunks(bytes)
+  }
+
   // --- Nodes ---
 
   async nodeJson(hash: string): Promise<string> {
@@ -258,8 +276,9 @@ export class Repo {
   /**
    * A leaf's body lines one at a time, out-of-line records resolved, without
    * holding the body decompressed: for rewriting leaves, where one leaf of large
-   * records can be tens of MB. Nothing is put in the memory cache. Untrusted
-   * locations read through bodyLines, which checks every line before use.
+   * records can be tens of MB. Nothing is put in the memory cache, and a stored
+   * body over STREAM_BODY_BYTES is streamed from the store, not held or cached.
+   * Untrusted locations read through bodyLines, which checks every line before use.
    */
   async *bodyLineStream(leaf: {
     hash: string
@@ -271,10 +290,8 @@ export class Repo {
       yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
       return
     }
-    const bytes = await this.#immutable(key)
-    if (!bytes) throw new Error(`Missing body for leaf ${leaf.hash}`)
     let n = 0
-    for await (const line of chunkLines(gunzipChunks(bytes))) {
+    for await (const line of chunkLines(await this.#bodyChunks(key, leaf.hash))) {
       if (++n > leaf.entries.length) break
       yield line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
     }
