@@ -561,6 +561,29 @@ export class RepoSink<E> implements TreeSink<E> {
     while (this.#pending.size > 0) await Promise.race(this.#pending)
     if (this.#error) throw this.#error
   }
+
+  // Read-only, for measuring what a sink holds (scripts/memory.ts).
+
+  /** Gzip members of the current leaf not yet in a write (compressing or done). */
+  get memberCount(): number {
+    return this.#members.length
+  }
+  /** Their raw text length. */
+  get memberBytes(): number {
+    return this.#memberBytes
+  }
+  /** Members still compressing, this leaf's or a written leaf's. */
+  get compressingCount(): number {
+    return this.#compressing.size
+  }
+  /** Writes in flight (nodes and bodies). */
+  get writeCount(): number {
+    return this.#pending.size
+  }
+  /** Raw body bytes of the writes in flight. */
+  get writeBytes(): number {
+    return this.#pendingBytes
+  }
 }
 
 export const bodyOfRecord = (e: RecordEntry): string => {
