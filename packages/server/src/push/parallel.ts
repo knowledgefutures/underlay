@@ -92,6 +92,12 @@ export const parallelConfig = {
   aboveBytes: 256 * 1024 * 1024,
   /** Work per unit, about: changes' raw bytes plus the base leaves they rewrite. */
   unitBytes: 256 * 1024 * 1024,
+  /**
+   * Entries per unit, about: changes plus the base entries they rewrite. Bytes
+   * alone let a range of tiny records (Crossref's OED chapters, 2026-10-16) hold
+   * ten times the usual entries, and its unit ran out of time on every attempt.
+   */
+  unitEntries: 100_000,
   /** Base nodes per tree the planner may read split keys from: it picks the lowest level under this. */
   baseNodes: 50_000,
   /** A fixed base level (tests); null picks one by `baseNodes`. */
@@ -242,7 +248,8 @@ interface Range {
  * An interval's work is its changes' raw bytes (a part's spread evenly over the
  * intervals it spans), plus, when touched, the base bytes it may rewrite: at
  * most its base nodes' bytes (spread the same way), and at most a leaf for each
- * change.
+ * change. A unit closes at `unitBytes` of work, or at `unitEntries` entries
+ * counted the same way.
  */
 export function planRanges(
   slug: string,
@@ -250,6 +257,7 @@ export function planRanges(
   parts: RunPart[],
   base: { nodes: NodeDesc[]; leafBytes: number },
   unitBytes: number,
+  unitEntries = Infinity,
 ): Range[] {
   const n = candidates.length + 1
   // Interval i is (candidates[i − 1], candidates[i]]; a key belongs to the first
@@ -278,6 +286,7 @@ export function planRanges(
   const bytes = new Float64Array(n + 1)
   const entries = new Float64Array(n + 1)
   const baseBytes = new Float64Array(n + 1)
+  const baseCount = new Float64Array(n + 1)
   const spread = (arr: Float64Array, i0: number, i1: number, v: number) => {
     arr[i0]! += v / (i1 - i0 + 1)
     arr[i1 + 1]! -= v / (i1 - i0 + 1)
@@ -295,21 +304,28 @@ export function planRanges(
     // The node holds base keys in (low, lastKey].
     const i0 = low === null ? 0 : Math.min(n - 1, firstAtLeast(low, true))
     const i1 = intervalOf(node.lastKey)
-    if (i1 >= i0) spread(baseBytes, i0, i1, node.bytes)
+    if (i1 >= i0) {
+      spread(baseBytes, i0, i1, node.bytes)
+      spread(baseCount, i0, i1, node.count)
+    }
     low = node.lastKey
   }
+  const leafEntries = 2 ** LEAF_BOUNDARY_BITS
   const out: Range[] = []
   let unit: Range | null = null
   let acc = 0
+  let accEntries = 0
   let touched = 0
   let b = 0
   let e = 0
   let bb = 0
+  let bc = 0
   for (let i = 0; i < n; i++) {
     touched += touch[i]!
     b += bytes[i]!
     e += entries[i]!
     bb += baseBytes[i]!
+    bc += baseCount[i]!
     const after = i === 0 ? null : candidates[i - 1]!
     const through = i === n - 1 ? null : candidates[i]!
     if (touched === 0) {
@@ -321,16 +337,19 @@ export function planRanges(
       continue
     }
     const work = Math.max(0, b) + Math.max(0, Math.min(bb, e * base.leafBytes))
-    if (unit && acc > 0 && acc + work > unitBytes) {
+    const count = Math.max(0, e) + Math.max(0, Math.min(bc, e * leafEntries))
+    if (unit && acc > 0 && (acc + work > unitBytes || accEntries + count > unitEntries)) {
       out.push(unit)
       unit = null
     }
     if (!unit) {
       unit = { after, through, gap: false }
       acc = 0
+      accEntries = 0
     }
     unit.through = through
     acc += work
+    accEntries += count
   }
   if (unit) out.push(unit)
   return out
@@ -504,6 +523,7 @@ export async function planParallel(
         parts,
         { nodes, leafBytes: leafBytesOf(tree) },
         parallelConfig.unitBytes,
+        parallelConfig.unitEntries,
       )
       for (const [ord, r] of ranges.entries()) plan.units!.push({ set, type: slug, ord, ...r })
     }
