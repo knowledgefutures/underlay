@@ -64,7 +64,7 @@
           {
             "queue": "underlay-staging-bulk",
             "max_batch_size": 1,
-            "max_concurrency": 100,
+            "max_concurrency": 16,
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },

@@ -27,8 +27,15 @@ export const gzip = (data: Uint8Array | string) =>
 
 interface Zlib {
   gunzip(bytes: Uint8Array, done: (err: Error | null, out: Uint8Array) => void): void
-  /** A streaming gunzip (a Node Transform): written once, read as it decompresses. */
-  createGunzip?(): { end(chunk: Uint8Array): void } & AsyncIterable<Uint8Array>
+  /** A streaming gunzip (a Node Transform): written to, read as it decompresses. */
+  createGunzip?(): Gunzip
+}
+interface Gunzip extends AsyncIterable<Uint8Array> {
+  write(chunk: Uint8Array): boolean
+  end(chunk?: Uint8Array): void
+  destroy(err?: Error): void
+  once(event: 'drain' | 'close', listener: () => void): void
+  readonly destroyed: boolean
 }
 const zlib = (
   globalThis as { process?: { getBuiltinModule?: (id: 'node:zlib') => Zlib | undefined } }
@@ -101,6 +108,54 @@ export async function* gunzipChunks(bytes: Uint8Array): AsyncGenerator<Uint8Arra
   }
   stream.end(bytes)
   for await (const chunk of stream) yield chunk
+}
+
+/**
+ * gunzipChunks over compressed bytes that arrive in chunks (a stored object's
+ * body), so neither the compressed nor the decompressed object sits whole in
+ * memory. Input is written as the output is read: zlib's backpressure holds the
+ * rest. Runtimes without a streaming zlib read the input whole first.
+ */
+export async function* gunzipStream(input: AsyncIterable<Uint8Array>): AsyncGenerator<Uint8Array> {
+  const stream = zlib?.createGunzip?.()
+  if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+    const parts: Uint8Array[] = []
+    for await (const c of input) parts.push(c)
+    yield* gunzipChunks(concat(parts))
+    return
+  }
+  const feed = (async () => {
+    try {
+      for await (const c of input) {
+        if (stream.destroyed) return
+        if (!stream.write(c))
+          await new Promise<void>((resolve) => {
+            stream.once('drain', resolve)
+            stream.once('close', resolve)
+          })
+      }
+      stream.end()
+    } catch (err) {
+      stream.destroy(err as Error)
+    }
+  })()
+  try {
+    for await (const chunk of stream) yield chunk
+  } finally {
+    // A reader that stops early (or a failed read) closes the stream, which ends the feed.
+    if (!stream.destroyed) stream.destroy()
+    await feed
+  }
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0))
+  let off = 0
+  for (const p of parts) {
+    out.set(p, off)
+    off += p.byteLength
+  }
+  return out
 }
 
 /** NDJSON lines from chunks of UTF-8 bytes (a trailing newline ends the last line). */

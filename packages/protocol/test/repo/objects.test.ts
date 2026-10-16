@@ -32,6 +32,7 @@ import {
   Repo,
   RepoSink,
   RepoSource,
+  STREAM_BODY_BYTES,
 } from '../../src/repo/repo.js'
 import { PrefixedStore } from '../../src/repo/types.js'
 import { memoryStore } from '../../src/stores/memory.js'
@@ -159,6 +160,64 @@ describe('record trees in a repository', () => {
     const streamed = await collect(source.leafStream(leaf))
     expect(streamed).toEqual(whole)
     expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
+  })
+
+  it('streams a large stored body from the store, never reading it whole or caching it', async () => {
+    const blobs = memoryStore()
+    const whole: string[] = []
+    const reads = new Proxy(blobs, {
+      get(t, p) {
+        if (p === 'get')
+          return async (...a: Parameters<typeof blobs.get>) => {
+            const obj = await t.get(...a)
+            if (!obj || !a[0].startsWith('bodies/')) return obj
+            return { ...obj, body: obj.body, bytes: () => (whole.push(a[0]), obj.bytes()) }
+          }
+        const v = Reflect.get(t, p) as unknown
+        return typeof v === 'function' ? v.bind(t) : v
+      },
+    })
+    const cached: string[] = []
+    const cache = {
+      get: async () => null,
+      put: async (k: string) => void (k.includes('/bodies/') && cached.push(k)),
+    }
+    const repo = new Repo(reads, {
+      scope: 'test',
+      trusted: true,
+      cache,
+      lru: new Lru(8 << 20, () => 1024),
+    })
+    const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
+    const b = new TreeBuilder(recordTree, sink, {
+      payloadBytes: recordPayloadBytes,
+      dropPayload: dropRecordBody,
+      spillBytes: 1 << 20,
+    })
+    // Incompressible records under the out-of-line size: the leaf's body is over STREAM_BODY_BYTES.
+    const noisy = (id: string) => {
+      const pad = Buffer.from(crypto.getRandomValues(new Uint8Array(30_000))).toString('base64')
+      const { hash, canonical } = hashRecord(id, 'T', { id, pad })
+      return { key: id, hash, size: utf8ByteLength(canonical), body: canonical }
+    }
+    const written = ids(300).map(noisy)
+    for (const e of written) b.addEntry({ ...e })
+    const root = b.finish().root!
+    await sink.flush()
+    const source = new RepoSource(recordTree, repo)
+    const node = await source.node(root.hash)
+    const leaves = node.kind === 'leaf' ? [root] : node.children
+    const big = [...leaves].sort((x, y) => y.bytes - x.bytes)[0]!
+    expect((await blobs.head(keys.body(big.hash)))!.size).toBeGreaterThan(STREAM_BODY_BYTES)
+    const streamed = await collect(source.leafStream(big.hash))
+    const first = written.findIndex((e) => e.key === streamed[0]!.key)
+    expect(streamed.map((e) => e.body)).toEqual(
+      written.slice(first, first + streamed.length).map((e) => e.body),
+    )
+    expect(whole).toEqual([])
+    expect(cached).toEqual([])
+    // A reader that stops early ends the read.
+    for await (const _ of source.leafStream(big.hash)) break
   })
 
   it('shares a read in progress: simultaneous readers of one leaf fetch it once', async () => {
