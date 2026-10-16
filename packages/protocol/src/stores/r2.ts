@@ -39,7 +39,7 @@ export interface R2BucketLike {
   head(key: string): Promise<R2ObjectLike | null>
   put(
     key: string,
-    value: Uint8Array | string,
+    value: Uint8Array | string | ReadableStream<Uint8Array>,
     options?: {
       httpMetadata?: { contentType?: string; cacheControl?: string }
       onlyIf?: Headers
@@ -62,6 +62,14 @@ export interface R2BucketLike {
   }>
 }
 
+/**
+ * Workers' FixedLengthStream: a stream the R2 binding can take as a put body,
+ * since it knows its length. Absent outside workerd (Node, Miniflare's proxy).
+ */
+type FixedLengthStreamCtor = new (length: number) => TransformStream<Uint8Array, Uint8Array>
+const FixedLengthStream = (globalThis as { FixedLengthStream?: FixedLengthStreamCtor })
+  .FixedLengthStream
+
 /** A store over an R2 binding. */
 export function r2Store(bucket: R2BucketLike): Store {
   return new R2Store(bucket)
@@ -74,7 +82,14 @@ const headOf = (o: R2ObjectLike): BlobHead => ({
 })
 
 class R2Store implements Store {
-  constructor(readonly bucket: R2BucketLike) {}
+  readonly putPieces?: (key: string, pieces: readonly Uint8Array[], opts?: PutOptions) => Promise<void>
+
+  constructor(readonly bucket: R2BucketLike) {
+    if (FixedLengthStream) {
+      const Fixed = FixedLengthStream
+      this.putPieces = (key, pieces, opts) => this.#putStream(Fixed, key, pieces, opts)
+    }
+  }
 
   async get(key: string, range?: { offset: number; length?: number }): Promise<BlobObject | null> {
     if (range) {
@@ -106,16 +121,55 @@ class R2Store implements Store {
   }
 
   async put(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<void> {
+    await this.#put(key, body, opts)
+  }
+
+  #put(key: string, body: Uint8Array | string | ReadableStream<Uint8Array>, opts: PutOptions) {
     // A failed `If-None-Match: *` precondition returns null: the key exists, which
     // for immutable keys is success.
     const httpMetadata = {
       ...(opts.contentType ? { contentType: opts.contentType } : {}),
       ...(opts.cacheControl ? { cacheControl: opts.cacheControl } : {}),
     }
-    await this.bucket.put(key, body, {
+    return this.bucket.put(key, body, {
       ...(Object.keys(httpMetadata).length ? { httpMetadata } : {}),
       ...(opts.ifAbsent ? { onlyIf: new Headers({ 'if-none-match': '*' }) } : {}),
     })
+  }
+
+  /**
+   * The pieces written one after another into a stream of their total length,
+   * so the binding never gets (and copies) one joined buffer.
+   */
+  async #putStream(
+    Fixed: FixedLengthStreamCtor,
+    key: string,
+    pieces: readonly Uint8Array[],
+    opts: PutOptions = {},
+  ): Promise<void> {
+    const { readable, writable } = new Fixed(pieces.reduce((n, p) => n + p.byteLength, 0))
+    const writer = writable.getWriter()
+    const put = this.#put(key, readable, opts)
+    const written = (async () => {
+      for (const p of pieces) await writer.write(p)
+      await writer.close()
+    })()
+    let stored
+    try {
+      stored = await put
+    } catch (err) {
+      // Unblocks a write waiting on a reader that is gone.
+      await writer.abort(err).catch(() => {})
+      await written.catch(() => {})
+      throw err
+    }
+    if (stored === null) {
+      // The key exists (ifAbsent): the body may never be read, so stop writing it.
+      await writer.abort().catch(() => {})
+      await written.catch(() => {})
+      return
+    }
+    await written
   }
 
   async putParts(

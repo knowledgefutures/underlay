@@ -77,6 +77,12 @@ export interface Store {
    */
   putParts?(key: string, parts: AsyncIterable<Uint8Array>, opts?: PutPartsOptions): Promise<void>
   /**
+   * Write an object given as consecutive pieces without joining them into one
+   * buffer first, where the store can (R2 on Workers). `putJoined` falls back to
+   * joining them and `put`.
+   */
+  putPieces?(key: string, pieces: readonly Uint8Array[], opts?: PutOptions): Promise<void>
+  /**
    * Server-side copy, where the store has one; `copyObject` falls back to get and
    * put. Given the size, a store may copy a large object in parts (S3: over 5 GiB).
    */
@@ -101,6 +107,23 @@ export interface Presigner {
 
 /** A store that can presign. */
 export type PresigningStore = Store & { readonly presigner: Presigner }
+
+/** Write consecutive pieces as one object: unjoined where the store can, else joined. */
+export async function putJoined(
+  store: Store,
+  key: string,
+  pieces: readonly Uint8Array[],
+  opts?: PutOptions,
+): Promise<void> {
+  if (store.putPieces) return store.putPieces(key, pieces, opts)
+  const bytes = new Uint8Array(pieces.reduce((n, p) => n + p.byteLength, 0))
+  let off = 0
+  for (const p of pieces) {
+    bytes.set(p, off)
+    off += p.byteLength
+  }
+  return store.put(key, bytes, opts)
+}
 
 /** Copy an object within a store: natively when it can, else by reading and writing it. */
 export async function copyObject(
@@ -262,6 +285,7 @@ export class PrefixedStore implements Store {
     parts: AsyncIterable<Uint8Array>,
     opts?: PutPartsOptions,
   ) => Promise<void>
+  readonly putPieces?: (key: string, pieces: readonly Uint8Array[], opts?: PutOptions) => Promise<void>
   constructor(
     readonly inner: Store,
     prefix: string,
@@ -287,6 +311,10 @@ export class PrefixedStore implements Store {
     if (inner.putParts) {
       const putParts = inner.putParts.bind(inner)
       this.putParts = (key, parts, opts) => putParts(k(key), parts, opts)
+    }
+    if (inner.putPieces) {
+      const putPieces = inner.putPieces.bind(inner)
+      this.putPieces = (key, pieces, opts) => putPieces(k(key), pieces, opts)
     }
   }
   #k = (key: string) => this.#p + key

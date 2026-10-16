@@ -43,7 +43,7 @@ import {
 } from '../format.js'
 import { chunkLines, gunzipChunks, gunzipStream, gunzipText, gzip, splitLines } from './gzip.js'
 import { Lru } from './lru.js'
-import { type Store, type Cache, noCache } from './types.js'
+import { type Store, type Cache, noCache, putJoined } from './types.js'
 
 /** Records over this size are stored once under records/ (writer policy, not protocol). */
 export const OUT_OF_LINE_BYTES = 64 * 1024
@@ -338,14 +338,8 @@ export class Repo {
 
   /** Write a body from its gzip members (already compressed, in order). */
   async putBody(leafHash: string, members: readonly Uint8Array[]): Promise<void> {
-    const total = members.reduce((n, m) => n + m.byteLength, 0)
-    const bytes = new Uint8Array(total)
-    let off = 0
-    for (const m of members) {
-      bytes.set(m, off)
-      off += m.byteLength
-    }
-    await this.blobs.put(keys.body(leafHash), bytes, {
+    // Unjoined where the store can: a joined copy doubled a big leaf's write (PR #47).
+    await putJoined(this.blobs, keys.body(leafHash), members, {
       contentType: 'application/gzip',
       ifAbsent: true,
     })
