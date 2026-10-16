@@ -242,6 +242,62 @@ describe('parallel commit', () => {
     expect(units.some((u) => u.status === 'superseded')).toBe(true)
   }, 30_000)
 
+  it('builds the same trees as the serial commit when units split at base leaves', async () => {
+    // Skewed record sizes, base level 1, and every level-1 node read for its leaves
+    // (expandRatio 0), so units end at leaf boundaries that aren't run marks.
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('la')
+    const b = await h.collection('lb')
+    const pathA = '/api/collections/org/la'
+    const pathB = '/api/collections/org/lb'
+    const id = (i: number) => `r${String(i).padStart(5, '0')}`
+    const name = (i: number, v: string) => (i >= 4000 && i < 7000 ? v.repeat(400) : v)
+    const first = [
+      Array.from({ length: 6000 }, (_, i) => rec(id(i), name(i, `n${i}`))),
+      Array.from({ length: 6000 }, (_, i) => rec(id(6000 + i), name(6000 + i, `n${6000 + i}`))),
+    ]
+    await push(h, user, pathA, { schemas: { Author } }, first, [], true)
+    await push(h, user, pathB, { schemas: { Author } }, first, [], false)
+
+    // Push 2: every 7th record updated, a few made private, scattered deletes.
+    const second = [
+      Array.from({ length: 12_000 / 7 }, (_, k) => {
+        const i = k * 7
+        return rec(id(i), name(i, `u${i}`), i % 700 === 0 ? { private: true } : {})
+      }),
+    ]
+    const deletes = [Array.from({ length: 30 }, (_, k) => id(k * 397 + 3))]
+    const pa = await push(h, user, pathA, {}, second, deletes, {
+      unitBytes: 1,
+      baseLevel: 1,
+      expandRatio: 0,
+    })
+    const pb = await push(h, user, pathB, {}, second, deletes, false)
+    expect(pa.result.changes).toEqual(pb.result.changes)
+
+    const ta = await trees(h, a.id)
+    const tb = await trees(h, b.id)
+    expect(ta.public).toEqual(tb.public)
+    expect(ta.private).toEqual(tb.private)
+    expect(ta.version).toEqual(tb.version)
+    expect(ta.files).toEqual(tb.files)
+    const v = await verifyTree(new RepoSource(recordTree, ta.repo), ta.public.root!)
+    expect(v.errors).toEqual([])
+
+    // Some unit ended at a base leaf's last key that is no run mark.
+    const units = await h.ports.db
+      .select()
+      .from(schema.commitUnits)
+      .where(eq(schema.commitUnits.sessionId, pa.sid))
+    const leafOnly = (k: string | null) => {
+      if (k === null) return false
+      const z = trailingZeros(boundaryBytes(k))
+      return z >= 10 && z < 13
+    }
+    expect(units.some((u) => !u.gap && leafOnly(u.through))).toBe(true)
+  }, 60_000)
+
   it('survives duplicate and early jobs', async () => {
     const h = await harness()
     const user = await h.member()
