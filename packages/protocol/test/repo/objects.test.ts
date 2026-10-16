@@ -110,6 +110,35 @@ describe('record trees in a repository', () => {
     expect(JSON.parse(changed[0]!.body!).data.v).toBe(1)
   })
 
+  it('keeps at most a few members compressing while a merge rewrites leaves', async () => {
+    const { repo } = freshRepo()
+    const { root: base } = await buildRecords(repo, 5000)
+    const source = new RepoSource(recordTree, repo)
+    let most = 0
+    class Counting extends RepoSink<RecordEntry> {
+      override spill(entries: readonly RecordEntry[]) {
+        super.spill(entries)
+        most = Math.max(most, this.compressingCount)
+      }
+    }
+    const sink = new Counting(repo, { bodyOf: bodyOfRecord })
+    // One change per 100 records: every leaf is rewritten, in members of ~10 records.
+    const changes = ids(5000)
+      .filter((_, i) => i % 100 === 0)
+      .map((id) => ({ key: id, entry: record(id, 1) }))
+    const merged = await mergeTree(source, sink, base.hash, changes, {
+      payloadBytes: recordPayloadBytes,
+      dropPayload: dropRecordBody,
+      spillBytes: 2_000,
+    })
+    await sink.flush()
+    expect(merged.stats.updated).toBe(50)
+    expect(most).toBeLessThanOrEqual(3)
+    const rows = await collect(iterate(source, merged.root!.hash, { payloads: true }))
+    expect(rows.length).toBe(5000)
+    expect(JSON.parse(rows[100]!.body!).data.v).toBe(1)
+  })
+
   it('writes a large leaf body as several gzip members in one object', async () => {
     const { blobs, repo } = freshRepo()
     const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
@@ -162,7 +191,7 @@ describe('record trees in a repository', () => {
     expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
   })
 
-  it('streams a large stored body from the store, never reading it whole or caching it', async () => {
+  it('streams a large stored body from the store, never reading it whole or caching it, nor taking a cached copy', async () => {
     const blobs = memoryStore()
     const whole: string[] = []
     const reads = new Proxy(blobs, {
@@ -178,8 +207,16 @@ describe('record trees in a repository', () => {
       },
     })
     const cached: string[] = []
+    // A cache that honours maxBytes, seeded later with a body put there by older code.
+    const held = new Map<string, Uint8Array>()
+    const servedWhole: string[] = []
     const cache = {
-      get: async () => null,
+      get: async (k: string, opts?: { maxBytes?: number }) => {
+        const v = held.get(k) ?? null
+        if (!v || (opts?.maxBytes !== undefined && v.byteLength > opts.maxBytes)) return null
+        if (k.includes('/bodies/')) servedWhole.push(k)
+        return v
+      },
       put: async (k: string) => void (k.includes('/bodies/') && cached.push(k)),
     }
     const repo = new Repo(reads, {
@@ -209,6 +246,11 @@ describe('record trees in a repository', () => {
     const leaves = node.kind === 'leaf' ? [root] : node.children
     const big = [...leaves].sort((x, y) => y.bytes - x.bytes)[0]!
     expect((await blobs.head(keys.body(big.hash)))!.size).toBeGreaterThan(STREAM_BODY_BYTES)
+    // A whole read (downloads) doesn't cache it either.
+    const raw = await repo.rawBody(big.hash)
+    expect(cached).toEqual([])
+    whole.length = 0
+    held.set(`test/${keys.body(big.hash)}`, raw)
     const streamed = await collect(source.leafStream(big.hash))
     const first = written.findIndex((e) => e.key === streamed[0]!.key)
     expect(streamed.map((e) => e.body)).toEqual(
@@ -216,6 +258,7 @@ describe('record trees in a repository', () => {
     )
     expect(whole).toEqual([])
     expect(cached).toEqual([])
+    expect(servedWhole).toEqual([])
     // A reader that stops early ends the read.
     for await (const _ of source.leafStream(big.hash)) break
   })

@@ -50,9 +50,12 @@ export const OUT_OF_LINE_BYTES = 64 * 1024
 /** Raw bytes per gzip member when a leaf body is written in pieces (writer policy). */
 export const BODY_MEMBER_BYTES = 4 * 1024 * 1024
 /**
- * Stored (compressed) bodies over this size are streamed from the store when
- * read a line at a time, and not cached: a leaf of large records can hold
- * hundreds of MB of records (Crossref, 2026-10-16), tens of MB compressed.
+ * Stored objects over this size are never put in the shared cache, and a body
+ * over it is streamed from the store when read a line at a time, never taken
+ * whole from the cache: a leaf of large records can hold hundreds of MB of
+ * records (Crossref, 2026-10-16), tens of MB compressed. On Workers a whole
+ * cached body also let every compression of the rewritten leaf pile up at once
+ * (scripts/memory.ts, PR #47).
  */
 export const STREAM_BODY_BYTES = 4 * 1024 * 1024
 
@@ -176,13 +179,13 @@ export class Repo {
     if (!obj) return null
     const bytes = await obj.bytes()
     if (verify && !this.trusted) await verify(bytes)
-    await this.cache.put(this.#ck(key), bytes)
+    if (bytes.byteLength <= STREAM_BODY_BYTES) await this.cache.put(this.#ck(key), bytes)
     return bytes
   }
 
   /** A stored body's decompressed chunks: read whole and cached when small, streamed when large. */
   async #bodyChunks(key: string, leafHash: string): Promise<AsyncIterable<Uint8Array>> {
-    const cached = await this.cache.get(this.#ck(key))
+    const cached = await this.cache.get(this.#ck(key), { maxBytes: STREAM_BODY_BYTES })
     if (cached) return gunzipChunks(cached)
     const obj = await this.blobs.get(key)
     if (!obj) throw new Error(`Missing body for leaf ${leafHash}`)
@@ -555,6 +558,19 @@ export class RepoSink<E> implements TreeSink<E> {
     }
     while (this.#compressing.size > 1) await Promise.race(this.#compressing)
     if (this.#error) throw this.#error
+  }
+
+  /**
+   * At most 2 members compressing. In workerd a compression only runs while the
+   * isolate waits on I/O, so a leaf read with nothing to wait on (a cached or
+   * small base body) otherwise held every member's raw text until the leaf was
+   * written: 180 in flight on a 200 MB leaf (PR #47).
+   */
+  settle(): Promise<void> | undefined {
+    if (this.#compressing.size <= 2) return undefined
+    return (async () => {
+      while (this.#compressing.size > 2) await Promise.race(this.#compressing)
+    })()
   }
 
   async flush(): Promise<void> {

@@ -232,7 +232,12 @@ export async function* listAll(store: Store, prefix: string): AsyncGenerator<str
 
 /** A shared cache for immutable, hash-keyed bytes (nodes, roots, schemas, bodies). */
 export interface Cache {
-  get(key: string): Promise<Uint8Array | null>
+  /**
+   * The cached bytes, or null. With `maxBytes`, an entry larger than that (or of
+   * unknown size) is a miss, and its body is never read: a whole large body is
+   * what a streamed read exists to avoid.
+   */
+  get(key: string, opts?: { maxBytes?: number }): Promise<Uint8Array | null>
   put(key: string, value: Uint8Array, opts?: { ttlSeconds?: number }): Promise<void>
 }
 
