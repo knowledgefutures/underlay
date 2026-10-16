@@ -855,8 +855,14 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const session = await getSession(ports, unit.sessionId)
   if (session?.status !== 'committing' || session.commitPlan !== unit.planId) return
   if (!(await unitSlot())) {
-    // This isolate is full: go again shortly, likely in another one. Not an attempt.
+    // This isolate is full: go again shortly, likely in another one. Not an attempt,
+    // and not lost: the claim is renewed, or after `staleMs` a top-up would count
+    // the unit as lost and claim it again, spending an attempt with no failure.
     console.log(`[unit] ${unit.id}: no slot in this isolate, queued again`)
+    await ports.db
+      .update(schema.commitUnits)
+      .set({ queuedAt: new Date() })
+      .where(and(eq(schema.commitUnits.id, unit.id), eq(schema.commitUnits.status, 'pending')))
     await ports.jobs.enqueue({ type: 'commit.unit', unitId }, { delaySeconds: 15 })
     return
   }

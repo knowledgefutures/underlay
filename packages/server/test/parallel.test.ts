@@ -319,9 +319,11 @@ describe('parallel commit', () => {
       h.ports.db.select().from(schema.commitUnits).where(eq(schema.commitUnits.sessionId, sid))
     const attempts = async () => (await units()).map((u) => u.attempts).reduce((a, b) => a + b, 0)
 
-    // No wait: one unit runs, the others go back on the queue, later, without an attempt.
+    // No wait: one unit runs, the others go back on the queue, later, without an attempt,
+    // and with their claim renewed, so a top-up doesn't count them as lost.
     Object.assign(unitLimits, { perIsolate: 1, slotWaitMs: 0 })
     const before = await attempts()
+    await h.ports.db.update(schema.commitUnits).set({ queuedAt: new Date(0) })
     const ran = await runAll()
     expect(ran).toBeGreaterThanOrEqual(3)
     const requeued = await unitJobs()
@@ -329,6 +331,9 @@ describe('parallel commit', () => {
     expect(requeued.length).toBeGreaterThanOrEqual(ran - 1)
     expect(requeued.every((j) => j.runAt.getTime() > Date.now())).toBe(true)
     expect(await attempts()).toBe(before)
+    const pending = (await units()).filter((u) => u.status === 'pending' && !u.gap)
+    expect(pending.length).toBeGreaterThan(0)
+    expect(pending.every((u) => u.queuedAt!.getTime() > Date.now() - 60_000)).toBe(true)
 
     // A long enough wait: they take turns, and none goes back.
     Object.assign(unitLimits, { perIsolate: 1, slotWaitMs: 60_000 })
