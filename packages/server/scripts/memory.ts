@@ -35,6 +35,8 @@
  *                      the repository, as commit reads cached every body before #45 and
  *                      a version download (rawBody, bodyLines) still does.
  *   --timer-ms N       also sample every N ms
+ *   --pieces           the bucket writes a body's members one after another, never joined,
+ *                      as the R2 store does on Workers (Store.putPieces)
  *   --no-gc            unit samples never force a GC: times undisturbed, peaks only upper bounds
  *   --units            a report per commit unit (implied by --record-kb and --leaf-mb):
  *                      base leaves read and leaves written with their sizes and times, and
@@ -60,7 +62,7 @@
  * Budgets not named here are the production ones (parallelConfig, runConfig).
  * A Worker has 128 MB per isolate, shared by the invocations it runs at once.
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type EventLoopUtilization, performance } from 'node:perf_hooks'
@@ -82,6 +84,7 @@ import {
   Repo,
   RepoSink,
   sha256Hex,
+  type PutOptions,
   type Store,
   trailingZeros,
 } from '@underlay/protocol'
@@ -117,6 +120,7 @@ const REPUSH = args.includes('--repush')
 const PUSHES = opt('pushes', 2)
 const CACHE = str('cache', 'none')
 const TIMER_MS = opt('timer-ms', 0)
+const PIECES = args.includes('--pieces')
 const NO_GC = args.includes('--no-gc')
 const UNITS = args.includes('--units') || RECORD_KB > 0 || LEAF_MB.length > 0
 compactConfig.commitRuns = opt('commit-runs', 4)
@@ -169,6 +173,19 @@ function sampled(store: Store): Store {
   return new Proxy(store, {
     get(target, prop, receiver) {
       const v = Reflect.get(target, prop, receiver)
+      if (prop === 'putPieces' && PIECES && target.putParts)
+        return async (key: string, pieces: readonly Uint8Array[], opts?: PutOptions) => {
+          sample()
+          unitPut(key, pieces)
+          await target.putParts!(
+            key,
+            (async function* () {
+              yield* pieces
+            })(),
+            opts,
+          )
+          sample()
+        }
       if (
         typeof v !== 'function' ||
         !['get', 'put', 'head', 'list', 'delete'].includes(String(prop))
@@ -415,6 +432,8 @@ function unitPut(key: string, body: unknown) {
   if (!u || !isBody(key)) return
   const w = u.writes.find((x) => x.hash === leafOfKey(key))
   if (w && body instanceof Uint8Array) w.storedMB = body.byteLength / MB
+  if (w && Array.isArray(body))
+    w.storedMB = (body as Uint8Array[]).reduce((n, b) => n + b.byteLength, 0) / MB
   unitSample('body-put')
 }
 
@@ -527,7 +546,12 @@ class DiskCache implements Cache {
   #file(key: string) {
     return join(this.dir, sha256Hex(key))
   }
-  async get(key: string): Promise<Uint8Array | null> {
+  async get(key: string, opts?: { maxBytes?: number }): Promise<Uint8Array | null> {
+    // Like CfCache: an entry over the cap is a miss, and isn't read.
+    if (opts?.maxBytes !== undefined) {
+      const size = (await stat(this.#file(key)).catch(() => null))?.size
+      if (size === undefined || size > opts.maxBytes) return null
+    }
     const b = await readFile(this.#file(key)).catch(() => null)
     if (!b) return null
     if (cur && key.includes('/bodies/')) {
