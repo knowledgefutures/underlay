@@ -36,6 +36,7 @@
 import {
   assembleTree,
   bodyOfRecord,
+  type Change,
   compileSchema,
   boundaryBytes,
   compareUtf8,
@@ -784,6 +785,29 @@ async function unitRuns(ports: Ports, slicesKey: string): Promise<RunIndex[]> {
 }
 
 /** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
+/** Leaves and records this large are logged as a unit meets them. */
+const BIG_LEAF_BYTES = 16 * 1024 * 1024
+const BIG_RECORD_BYTES = 1024 * 1024
+const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`
+
+/** A unit's changes, passed through, logging large records and every 20,000th change. */
+async function* watchChanges(
+  tag: string,
+  changes: AsyncIterable<Change<RecordEntry>>,
+): AsyncGenerator<Change<RecordEntry>> {
+  let n = 0
+  let largest = 0
+  for await (const c of changes) {
+    n++
+    const size = c.entry?.size ?? 0
+    if (size > largest) largest = size
+    if (size >= BIG_RECORD_BYTES) console.log(`${tag}: change ${c.key} is ${mb(size)}`)
+    if (n % 20_000 === 0) console.log(`${tag}: ${n} changes, at ${c.key}, largest ${mb(largest)}`)
+    yield c
+  }
+  console.log(`${tag}: ${n} changes in all, largest ${mb(largest)}`)
+}
+
 export async function runCommitUnit(ports: Ports, unitId: string): Promise<void> {
   const [unit] = await ports.db
     .select()
@@ -800,16 +824,23 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   // Writes in flight hold compressed leaves; halved from the default so two units fit an isolate.
   const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, ...unitSink })
   const range = { after: unit.after, through: unit.through }
-  const changes = deltaChanges(
-    ports.stores.internal,
-    repo,
-    session.id,
-    runs,
-    unit.type,
-    set,
-    t.privateType,
-    { pub: !!t.public.root, priv: !!t.private.root },
-    range,
+  // Progress in the Worker's log, so a unit that dies (out of memory, say) shows
+  // how far it got and the largest things it met.
+  const tag = `[unit] ${unit.id} ${unit.type}/${set} (${unit.after ?? 'start'}, ${unit.through ?? 'end'}]`
+  console.log(`${tag}: start, attempt ${unit.attempts}, ${runs.length} runs`)
+  const changes = watchChanges(
+    tag,
+    deltaChanges(
+      ports.stores.internal,
+      repo,
+      session.id,
+      runs,
+      unit.type,
+      set,
+      t.privateType,
+      { pub: !!t.public.root, priv: !!t.private.root },
+      range,
+    ),
   )
   const leaves: NodeDesc[] = []
   const refs = new FileRefDelta()
@@ -818,9 +849,16 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   const merged = await mergeTree(new RepoSource(recordTree, repo), sink, into, changes, {
     ...builderOpts,
     range,
-    leafOutput: (d) => leaves.push(d),
+    leafOutput: (d) => {
+      leaves.push(d)
+      if (d.bytes >= BIG_LEAF_BYTES || leaves.length % 100 === 0)
+        console.log(
+          `${tag}: leaf ${leaves.length} through ${d.lastKey}, ${d.count} entries, ${mb(d.bytes)}`,
+        )
+    },
     onChange: (before, after) => refs.record(set, before, after, unit.type),
   })
+  console.log(`${tag}: merged, ${leaves.length} leaves, ${JSON.stringify(merged.stats)}`)
   await sink.flush()
   await refs.resolve(repo)
   const survived = unit.through === null || merged.lastKey === unit.through
