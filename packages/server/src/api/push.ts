@@ -125,6 +125,15 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
     body.async === true ||
     session.recordsReceived > commitConfig.asyncAbove ||
     (await revalidates(ports, session)) > commitConfig.asyncAbove
+  if (body.rebase !== undefined && typeof body.rebase !== 'boolean')
+    return jsonError(c, 400, '"rebase" must be a boolean')
+  // `rebase`: commit on the head as it is now, not the base the session opened
+  // on. The session's records and deletes apply on top of whatever landed since,
+  // and its schemas and metadata replace the head's. For a writer that knows its
+  // changes don't depend on the base (a bulk load of upserts).
+  const head = body.rebase === true ? await headBase(ports, session.collectionId) : undefined
+  const rebased =
+    head === undefined ? {} : { baseVersionId: head?.id ?? null, baseSemver: head?.semver ?? null }
   const started = retryable(session)
     ? // A commit that failed on the server's side goes again, from the session's
       // uploads (still in storage) and a fresh plan.
@@ -137,11 +146,13 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
         stalls: 0,
         progressAt: new Date(),
         expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+        ...rebased,
       })
     : // The error of a commit refused for missing files is cleared on the next try.
       await transition(ports, session.id, 'open', 'committing', {
         finalizeStartedAt: new Date(),
         error: null,
+        ...rebased,
       })
   if (!started) {
     const now = await getSession(ports, session.id)
