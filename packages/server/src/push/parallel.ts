@@ -1098,7 +1098,8 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
 
     const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
     const repo = await ports.stores.forCollection(session.collectionId)
-    const source = new RepoSource(recordTree, repo)
+    // Base leaves keep large records as pointers, as in units (runPendingUnit).
+    const source = new RepoSource(recordTree, repo, { pointers: true })
     const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
     const built: Record<string, { public: TreeSummary; private: TreeSummary }> = {}
     for (const [slug, t] of Object.entries(plan.types)) built[slug] = { ...(t.bases ?? t) }
@@ -1127,7 +1128,12 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
             return out.leaves
           },
         }))
+      const treeStarted = Date.now()
       const result = await assembleTree(source, sink, built[type]![set].root, segments)
+      console.log(
+        `[assemble] ${isolateTag()} ${sessionId} ${type}/${set}: ${segments.length} segments ` +
+          `in ${Math.round((Date.now() - treeStarted) / 1000)}s, ${JSON.stringify(result.stats)}`,
+      )
       built[type]![set] = summaryOf(
         result.root
           ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
