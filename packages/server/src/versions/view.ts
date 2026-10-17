@@ -135,7 +135,7 @@ async function* mergeById(
 export async function* typeRecords(
   view: VersionView,
   type: TypeView,
-  opts: { after?: string; offset?: number; bodies?: boolean } = {},
+  opts: { after?: string; offset?: number; bodies?: boolean; stream?: boolean } = {},
 ): AsyncGenerator<VisibleRecord> {
   const source = new RepoSource(recordTree, view.repo)
   const pubRoot = type.public?.root ?? null
@@ -148,6 +148,7 @@ export async function* typeRecords(
   const it = (root: string | null) =>
     iterate(source, root, {
       payloads: opts.bodies ?? false,
+      stream: opts.stream ?? false,
       ...(after !== undefined ? { after } : {}),
     })
   for await (const { e, set } of mergeById(it(pubRoot), it(privRoot))) {
