@@ -105,7 +105,8 @@ export async function* deltaChanges(
 ): AsyncGenerator<Change<RecordEntry>> {
   const inBase = set === 'public' ? base.pub : base.priv
   // Changes in key order. A large record's has `taken` until its take settles.
-  const ahead: { change: Change<RecordEntry>; taken?: Promise<void>; bytes: number }[] = []
+  const ahead: { change: Change<RecordEntry>; taken?: Promise<void> | undefined; bytes: number }[] =
+    []
   let takingBytes = 0
   const next = async () => {
     const a = ahead.shift()!

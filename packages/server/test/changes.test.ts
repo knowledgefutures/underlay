@@ -46,7 +46,7 @@ describe('delta changes', () => {
     const seen: string[] = []
     for await (const c of changes()) {
       // A large record is in the repository before its change reaches the merge.
-      const hash = outOfLineHash(c.entry!.body)
+      const hash = outOfLineHash(c.entry!.body!)
       if (hash) expect(await repo.blobs.head(keys.record(hash))).not.toBeNull()
       seen.push(c.key)
     }
