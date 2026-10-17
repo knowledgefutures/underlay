@@ -47,6 +47,9 @@ const DECLARED = 'd:'
 const TYPED = 't:'
 const MARKER = 'm:types'
 
+/** Out-of-line records `FileRefDelta.resolve` reads at once. */
+const resolveReads = 16
+
 /** A per-type key's suffix: type slugs can't contain "/" (input rules). */
 const typedKey = (type: string, hash: string) => `${type}/${hash}`
 
@@ -99,13 +102,22 @@ export class FileRefDelta {
     if (after) this.#body(set, type, after.body, +1)
   }
 
-  /** Count the file references of out-of-line records seen as pointers. */
+  /**
+   * Count the file references of out-of-line records seen as pointers. Records
+   * are read `resolveReads` at a time: one by one, a commit unit over a range of
+   * large records spent minutes here.
+   */
   async resolve(repo: Repo): Promise<void> {
     for (const set of ['public', 'private'] as const) {
-      for (const [k, n] of this.#pointers[set]) {
-        if (n === 0) continue
-        const slash = k.lastIndexOf('/')
-        this.#refsOf(set, k.slice(0, slash), await repo.outOfLineRecord(k.slice(slash + 1)), n)
+      const pending = [...this.#pointers[set]].filter(([, n]) => n !== 0)
+      for (let i = 0; i < pending.length; i += resolveReads) {
+        const chunk = pending.slice(i, i + resolveReads)
+        const bodies = await Promise.all(
+          chunk.map(([k]) => repo.outOfLineRecord(k.slice(k.lastIndexOf('/') + 1))),
+        )
+        chunk.forEach(([k, n], j) =>
+          this.#refsOf(set, k.slice(0, k.lastIndexOf('/')), bodies[j]!, n),
+        )
       }
       this.#pointers[set].clear()
     }
