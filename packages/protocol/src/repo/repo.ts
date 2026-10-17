@@ -293,6 +293,10 @@ export class Repo {
    * records can be tens of MB. Nothing is put in the memory cache, and a stored
    * body over STREAM_BODY_BYTES is streamed from the store, not held or cached.
    * Untrusted locations read through bodyLines, which checks every line before use.
+   *
+   * With `pointers`, out-of-line records stay the pointer lines they're stored
+   * as (trusted locations only): a rewrite stores them as pointers again, so
+   * resolving each was a read for nothing, and it wrote the record inline.
    */
   async *bodyLineStream(
     leaf: {
@@ -300,9 +304,11 @@ export class Repo {
       entries: readonly RecordEntry[]
     },
     onRead?: (r: BodyRead) => void,
+    opts: { pointers?: boolean } = {},
   ): AsyncGenerator<string> {
     const key = keys.body(leaf.hash)
-    const hit = this.lru.get(this.#ck(key))
+    // The memory cache holds lines resolved.
+    const hit = opts.pointers && this.trusted ? undefined : this.lru.get(this.#ck(key))
     if (hit || !this.trusted) {
       onRead?.({ leaf: leaf.hash, from: hit ? 'memory' : 'whole', storedBytes: null })
       yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
@@ -311,7 +317,7 @@ export class Repo {
     let n = 0
     for await (const line of chunkLines(await this.#bodyChunks(key, leaf.hash, onRead))) {
       if (++n > leaf.entries.length) break
-      yield line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
+      yield !opts.pointers && line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
     }
     if (n !== leaf.entries.length) {
       throw new IntegrityError(
@@ -453,7 +459,11 @@ export class RepoSource<E> implements NodeSource<E> {
   constructor(
     readonly spec: TreeSpec<E>,
     readonly repo: Repo,
-    readonly opts: { onBodyRead?: (r: BodyRead) => void } = {},
+    readonly opts: {
+      onBodyRead?: (r: BodyRead) => void
+      /** `leafStream` keeps out-of-line records as pointers (Repo.bodyLineStream). */
+      pointers?: boolean
+    } = {},
   ) {}
 
   node(hash: string): Promise<DecodedNode<E>> {
@@ -479,7 +489,9 @@ export class RepoSource<E> implements NodeSource<E> {
     }
     const entries = node.entries as RecordEntry[]
     let i = 0
-    for await (const body of this.repo.bodyLineStream({ hash, entries }, this.opts.onBodyRead)) {
+    for await (const body of this.repo.bodyLineStream({ hash, entries }, this.opts.onBodyRead, {
+      pointers: this.opts.pointers ?? false,
+    })) {
       yield { ...entries[i++]!, body } as E
     }
   }
