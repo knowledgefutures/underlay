@@ -494,11 +494,26 @@ describe('parallel commit', () => {
       })
       segments.push({ ...range, leaves })
     }
-    const assembled = await assembleTree(source, sink, root.hash, segments)
+    // Leaf entries assembly reads, streamed the way a repository streams them.
+    let entriesRead = 0
+    const counting: NodeSource<RecordEntry> = {
+      spec: source.spec,
+      node: (h) => source.node(h),
+      leafEntries: (h) => source.leafEntries(h),
+      async *leafStream(h) {
+        for (const e of await source.leafEntries(h)) {
+          entriesRead++
+          yield e
+        }
+      },
+    }
+    const assembled = await assembleTree(counting, sink, root.hash, segments)
     const serial = await mergeTree(source, sink, root.hash, changes)
     expect(assembled.root?.hash).toBe(serial.root?.hash)
     // A path per segment, plus the root.
     expect(assembled.stats.readNodes).toBeLessThanOrEqual(3 * (root.level + 2) + 1)
+    // The first entry of the leaf each segment starts in, not the whole leaf.
+    expect(entriesRead).toBeLessThanOrEqual(3 * 2)
   })
 })
 
