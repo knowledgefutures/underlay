@@ -121,6 +121,15 @@ export const parallelConfig = {
 
 /** How long an assembler holds the session before another may take over. */
 const LEASE_MS = 15 * 60 * 1000
+
+/**
+ * An assembly starts no new tree after `budgetMs`: it queues itself again and
+ * stops, well inside a queue job's 15 minutes of wall clock, and the next
+ * attempt takes the trees already built as they are. One tree still has to fit
+ * in one invocation, with what's left of the 15 minutes after the budget (Crossref's
+ * journal-article, 1,274 units: 516 s on staging).
+ */
+export const assemblyLimits = { budgetMs: 3 * 60 * 1000 }
 /** Body bytes a leaf holds before they go to a compressed member (each compresses with its raw text in memory). */
 const SPILL_BYTES = 1024 * 1024
 /** A unit's repository writes in flight: leaf bodies (compressed) and their raw bytes. */
@@ -189,9 +198,14 @@ async function putJson(ports: Ports, key: string, value: unknown) {
 }
 
 async function getJson<T>(ports: Ports, key: string): Promise<T> {
+  const obj = await getJsonIfAny<T>(ports, key)
+  if (obj === null) throw new Error(`Parallel commit object ${key} is missing`)
+  return obj
+}
+
+async function getJsonIfAny<T>(ports: Ports, key: string): Promise<T | null> {
   const obj = await ports.stores.internal.get(key)
-  if (!obj) throw new Error(`Parallel commit object ${key} is missing`)
-  return JSON.parse(await obj.text()) as T
+  return obj ? (JSON.parse(await obj.text()) as T) : null
 }
 
 /** Run `fn` over items, at most `n` at a time. */
@@ -1105,40 +1119,76 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     for (const [slug, t] of Object.entries(plan.types)) built[slug] = { ...(t.bases ?? t) }
     const refs = new FileRefDelta()
     const stats = { added: 0, removed: 0, updated: 0 }
+    const take = (tree: AssembledTree) => {
+      built[tree.type]![tree.set] = tree.summary
+      stats.added += tree.stats.added
+      stats.removed += tree.stats.removed
+      stats.updated += tree.stats.updated
+      for (const [h, n] of tree.refs) refs.add(tree.set, tree.type, h, n)
+    }
+    // Trees built by this invocation: it always builds one before it may stop.
+    let builtHere = 0
     for (const group of trees(rows)) {
       const { set, type } = group[0]! as { set: SetName; type: string }
+      const units = group.filter((u) => !u.gap)
+      // A tree an earlier attempt finished is kept, so an attempt that stops
+      // (its time budget, or the wall clock) carries on at the next tree.
+      const treeKey = `${planDir(sessionId, planId)}/trees/${set}.${encodeURIComponent(type)}.json`
+      const saved = await getJsonIfAny<AssembledTree>(ports, treeKey)
+      if (saved && saved.units.join() === units.map((u) => u.id).join()) {
+        take(saved)
+        continue
+      }
+      if (builtHere > 0 && Date.now() - now > assemblyLimits.budgetMs) {
+        // Out of time for another tree: hand the rest to a fresh invocation.
+        await release()
+        await ports.jobs.enqueue({ type: 'commit.assemble', sessionId })
+        return
+      }
       // A type made public counts every record of its new public tree as added
       // (the build does that), not its public changes.
       const countStats = !(plan.types[type]!.move === 'toPublic' && set === 'public')
+      const treeStats = { added: 0, removed: 0, updated: 0 }
+      const treeRefs = new Map<string, number>()
       // Each segment's output is read once, when assembly reaches it.
-      const segments: Segment[] = group
-        .filter((u) => !u.gap)
-        .map((u) => ({
-          after: u.after,
-          through: u.through,
-          leaves: async () => {
-            const out = await getJson<UnitOutput>(ports, u.outputKey!)
-            if (countStats) {
-              stats.added += out.stats.added
-              stats.removed += out.stats.removed
-              stats.updated += out.stats.updated
-            }
-            // A unit covers one type, so its deltas are that type's too.
-            for (const [h, n] of out.refs) refs.add(set, type, h, n)
-            return out.leaves
-          },
-        }))
+      const segments: Segment[] = units.map((u) => ({
+        after: u.after,
+        through: u.through,
+        leaves: async () => {
+          const out = await getJson<UnitOutput>(ports, u.outputKey!)
+          if (countStats) {
+            treeStats.added += out.stats.added
+            treeStats.removed += out.stats.removed
+            treeStats.updated += out.stats.updated
+          }
+          // A unit covers one type, so its deltas are that type's too.
+          for (const [h, n] of out.refs) treeRefs.set(h, (treeRefs.get(h) ?? 0) + n)
+          return out.leaves
+        },
+      }))
       const treeStarted = Date.now()
       const result = await assembleTree(source, sink, built[type]![set].root, segments)
       console.log(
         `[assemble] ${isolateTag()} ${sessionId} ${type}/${set}: ${segments.length} segments ` +
           `in ${Math.round((Date.now() - treeStarted) / 1000)}s, ${JSON.stringify(result.stats)}`,
       )
-      built[type]![set] = summaryOf(
-        result.root
-          ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
-          : undefined,
-      )
+      const tree: AssembledTree = {
+        set,
+        type,
+        units: units.map((u) => u.id),
+        summary: summaryOf(
+          result.root
+            ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
+            : undefined,
+        ),
+        stats: treeStats,
+        refs: [...treeRefs],
+      }
+      // The tree's nodes are written before it counts as done.
+      await sink.flush()
+      await putJson(ports, treeKey, tree)
+      take(tree)
+      builtHere++
       await touch(ports, sessionId)
     }
     await sink.flush()
@@ -1156,6 +1206,18 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     await release()
     throw err
   }
+}
+
+/** One tree assembly finished, kept so a later attempt doesn't build it again. */
+interface AssembledTree {
+  set: SetName
+  type: string
+  /** The units it was built from: a saved tree counts only for the same ones. */
+  units: string[]
+  summary: TreeSummary
+  stats: { added: number; removed: number; updated: number }
+  /** File reference deltas: [file hash, delta]. */
+  refs: [string, number][]
 }
 
 /** What assembly built, kept for the publish job when a schema is revalidated first. */
