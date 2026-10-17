@@ -919,7 +919,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   // The most members compressing at a leaf's end: what a leaf's write holds raw.
   let mostCompressing = 0
   const merged = await mergeTree(
-    new RepoSource(recordTree, repo, { onBodyRead }),
+    new RepoSource(recordTree, repo, { onBodyRead, pointers: true }),
     sink,
     into,
     changes,

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 
 import {
   boundaryBytes,
@@ -296,6 +297,68 @@ describe('parallel commit', () => {
       return z >= 10 && z < 13
     }
     expect(units.some((u) => !u.gap && leafOnly(u.through))).toBe(true)
+  }, 60_000)
+
+  it('keeps large base records as pointers when units rewrite their leaves', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('ka')
+    const b = await h.collection('kb')
+    const pathA = '/api/collections/org/ka'
+    const pathB = '/api/collections/org/kb'
+    for (const path of [pathA, pathB]) {
+      const r = await h.request(`${path}/files/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
+      expect(r.status).toBe(201)
+    }
+    const id = (i: number) => `r${String(i).padStart(5, '0')}`
+    // Every 20th record is over OUT_OF_LINE_BYTES; every 40th of those references f1.
+    const name = (i: number, v: string) => (i % 20 === 0 ? `${v}`.padEnd(70_000, 'x') : v)
+    const record = (i: number, v: string) =>
+      rec(id(i), name(i, v), i % 800 === 0 ? { pic: 'f1' } : {})
+    // Batches of 200, under the records endpoint's body limit.
+    const first = Array.from({ length: 15 }, (_, j) =>
+      Array.from({ length: 200 }, (_, i) => record(j * 200 + i, `n${j * 200 + i}`)),
+    )
+    await push(h, user, pathA, { schemas: { Author } }, first, [], true)
+    await push(h, user, pathB, { schemas: { Author } }, first, [], false)
+
+    // Push 2 touches every leaf: small records updated, large ones deleted
+    // (two of them referenced f1), and one large record updated.
+    const second = [
+      [...Array.from({ length: 60 }, (_, k) => record(k * 50 + 1, `u${k}`)), record(40, 'big!')],
+    ]
+    const deletes = [[id(0), id(800), id(1620)]]
+    const parallel = { unitBytes: 1, baseLevel: 1, expandRatio: 0 }
+    const pa = await push(h, user, pathA, {}, second, deletes, parallel)
+    const pb = await push(h, user, pathB, {}, second, deletes, false)
+    expect(pa.result.changes).toEqual(pb.result.changes)
+
+    const ta = await trees(h, a.id)
+    const tb = await trees(h, b.id)
+    expect(ta.public).toEqual(tb.public)
+    expect(ta.version).toEqual(tb.version)
+    expect(ta.files).toEqual(tb.files)
+    expect(ta.files.public.count).toBe(1) // id(1600) and id(2400) still reference f1
+    const v = await verifyTree(new RepoSource(recordTree, ta.repo), ta.public.root!)
+    expect(v.errors).toEqual([])
+
+    // The longest line in any leaf body: units keep large base records as
+    // pointers (they used to read each one and write it inline). Bodies are
+    // shared by leaf hash and written once, so the serial commit, which still
+    // resolves them, finds these already written: only the units' are checked.
+    const longestLine = async (t: Awaited<ReturnType<typeof trees>>) => {
+      let longest = 0
+      const walk = async (hash: string): Promise<void> => {
+        const node = await t.repo.decoded(recordTree, hash)
+        if (node.kind === 'leaf') {
+          const text = gunzipSync(await t.repo.rawBody(hash)).toString()
+          for (const line of text.split('\n')) longest = Math.max(longest, line.length)
+        } else for (const c of node.children) await walk(c.hash)
+      }
+      await walk(t.public.root!)
+      return longest
+    }
+    expect(await longestLine(ta)).toBeLessThan(1000)
   }, 60_000)
 
   it('survives duplicate and early jobs', async () => {
