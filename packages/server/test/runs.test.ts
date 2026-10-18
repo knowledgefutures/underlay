@@ -91,6 +91,74 @@ describe('sorted runs', () => {
     expect(store.gets).toBe(0)
   })
 
+  it('stores a compacted run uncompressed, and reads it beside gzipped uploads', async () => {
+    const store = new CountingStore()
+    const ids = Array.from({ length: 40_000 }, (_, i) => `r${String(i).padStart(6, '0')}`)
+    const entries = ids.map((k) => ({ t: 'T', k, h: sha256Hex(k) }))
+    const a = await writeRun(
+      store,
+      's',
+      1,
+      entries.filter((_, i) => i % 2 === 0),
+    )
+    const b = await writeRun(
+      store,
+      's',
+      2,
+      entries.filter((_, i) => i % 2 === 1),
+    )
+    expect([...a.parts, ...b.parts].some((p) => p.raw)).toBe(false)
+    const partBytes = runConfig.partBytes
+    runConfig.partBytes = 1024 * 1024
+    const merged = await compactRuns(store, 's', [a, b], 3, 1).finally(() => {
+      runConfig.partBytes = partBytes
+    })
+    expect(merged.parts.length).toBeGreaterThan(1)
+    expect(merged.parts.every((p) => p.raw && p.length === p.bytes)).toBe(true)
+    const first = await store.get(`sessions/s/runs/3/${merged.parts[0]!.part}.ndjson`)
+    expect(JSON.parse((await first!.text()).split('\n')[0]!)).toMatchObject({ t: 'T', k: ids[0] })
+    expect(await store.get(`sessions/s/runs/3/${merged.parts[0]!.part}.ndjson.gz`)).toBeNull()
+    // A later gzipped upload wins over the uncompressed run.
+    const c = await writeRun(store, 's', 4, [{ t: 'T', k: ids[5]!, h: 'new' }])
+    const all = await collect(mergeRuns(store, 's', [merged, c]))
+    expect(all.map((e) => e.k)).toEqual(ids)
+    expect(all[5]!.h).toBe('new')
+    // A range fetches only the blocks it needs.
+    const total = merged.parts.reduce((n, p) => n + p.length, 0)
+    const range = { type: 'T', after: ids[20_000]!, through: ids[20_999]! }
+    store.bytes = 0
+    const got = await collect(readRun(store, 's', merged, range))
+    expect(got.map((e) => e.k)).toEqual(ids.slice(20_001, 21_000))
+    expect(store.bytes).toBeLessThan(total / 10)
+  })
+
+  it('reads a run whose parts are partly gzipped and partly raw', async () => {
+    // What joinPieces writes when a deploy lands between a compaction's pieces.
+    const store = memoryStore()
+    const ids = Array.from({ length: 20_000 }, (_, i) => `r${String(i).padStart(6, '0')}`)
+    const write = async (keys: string[], opts: { partBase: number; raw?: boolean }) => {
+      const w = new RunWriter(store, 's', 5, 1, { ...opts, writeIndex: false })
+      for (const k of keys) w.add({ t: 'T', k, h: sha256Hex(k) })
+      return w.finish()
+    }
+    const partBytes = runConfig.partBytes
+    runConfig.partBytes = 256 * 1024
+    const [gz, raw] = await Promise.all([
+      write(ids.slice(0, 10_000), { partBase: 0 }),
+      write(ids.slice(10_000), { partBase: 1_000_000, raw: true }),
+    ]).finally(() => {
+      runConfig.partBytes = partBytes
+    })
+    expect(gz.parts.length).toBeGreaterThan(1)
+    expect(raw.parts.length).toBeGreaterThan(1)
+    const ix: RunIndex = { seq: 5, tier: 1, parts: [...gz.parts, ...raw.parts] }
+    expect((await collect(readRun(store, 's', ix))).map((e) => e.k)).toEqual(ids)
+    const range = { type: 'T', after: ids[9_000]!, through: ids[11_000]! }
+    expect((await collect(readRun(store, 's', ix, range))).map((e) => e.k)).toEqual(
+      ids.slice(9_001, 11_001),
+    )
+  })
+
   it('marks exactly the upserts whose id is a split-key candidate', async () => {
     const store = memoryStore()
     const entries: RunEntry[] = Array.from({ length: 60_000 }, (_, i) => ({
