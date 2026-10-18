@@ -144,9 +144,79 @@ export const runConfig = {
   prefetchBudget: 4 * 1024 * 1024,
 }
 
+/**
+ * A run line with only what a compaction needs read from it: it moves lines
+ * without parsing them. `JSON.parse` and `JSON.stringify` of every entry were
+ * half of a merge's CPU once runs were stored uncompressed (2026-10-18).
+ */
+export interface RunLine {
+  t: string
+  k: string
+  q?: number
+  x?: true
+  p?: true
+  line: string
+  /** The precedence written in the line, if any. */
+  lineQ?: number
+}
+
+const LINE_START = '{"t":"'
+const LINE_ID = '","k":"'
+const LINE_DELETE = ',"x":true'
+const LINE_PRIVATE = ',"p":true'
+const LINE_Q = ',"q":'
+/** `,"q":` and up to 16 digits and `}`: the precedence ends a line. */
+const LINE_Q_TAIL = 24
+
+/** An entry as a run line, its fields in the order readRunLine reads: type, id, delete, the rest, precedence. */
+export function runLine(e: RunEntry): string {
+  const { t, k, x, q, ...rest } = e
+  return JSON.stringify({ t, k, ...(x ? { x } : {}), ...rest, ...(q === undefined ? {} : { q }) })
+}
+
+/**
+ * A run line, read without parsing it. RunWriter writes every entry as
+ * `{"t":…,"k":…` then `"x":true` for a delete, the other fields, and `"q":n`
+ * last, so the type and id are read from the start and the precedence from the
+ * end. A type or id with an escape, or any other shape, is parsed in full.
+ *
+ * A field can't be mistaken for text inside a string: every quote in a JSON
+ * string is escaped, so `,"p":` only ever starts a field. Only a part marked
+ * private (`maybePrivate`) is searched for it.
+ */
+export function readRunLine(line: string, maybePrivate = true): RunLine {
+  if (line.startsWith(LINE_START) && line.endsWith('}')) {
+    const te = line.indexOf('"', LINE_START.length)
+    const ke = te < 0 || !line.startsWith(LINE_ID, te) ? -1 : line.indexOf('"', te + LINE_ID.length)
+    const t = line.slice(LINE_START.length, te)
+    const k = line.slice(te + LINE_ID.length, ke)
+    if (ke > 0 && !t.includes('\\') && !k.includes('\\')) {
+      const e: RunLine = { t, k, line }
+      if (line.startsWith(LINE_DELETE, ke + 1)) e.x = true
+      else if (maybePrivate && line.includes(LINE_PRIVATE)) e.p = true
+      const qi = line.indexOf(LINE_Q, Math.max(0, line.length - LINE_Q_TAIL))
+      if (qi < 0) return e
+      const q = line.slice(qi + LINE_Q.length, -1)
+      if (/^\d+$/.test(q)) {
+        e.q = e.lineQ = Number(q)
+        return e
+      }
+    }
+  }
+  const { t, k, q, x, p } = JSON.parse(line) as RunEntry
+  return {
+    t,
+    k,
+    line,
+    ...(q === undefined ? {} : { q, lineQ: q }),
+    ...(x ? { x: true as const } : {}),
+    ...(p ? { p: true as const } : {}),
+  }
+}
+
 /** Sort key: type, then id, by UTF-8 bytes. A NUL separator keeps types apart. */
 export const runKey = (e: { t: string; k: string }) => `${e.t}\u0000${e.k}`
-export const compareRunKeys = (a: RunEntry, b: RunEntry) =>
+export const compareRunKeys = (a: { t: string; k: string }, b: { t: string; k: string }) =>
   compareUtf8(a.t, b.t) || compareUtf8(a.k, b.k)
 
 const runPrefix = (sessionId: string, seq: number) => `sessions/${sessionId}/runs/${seq}`
@@ -204,16 +274,30 @@ export class RunWriter {
   }
 
   add(e: RunEntry): void {
-    const key = runKey(e)
+    this.#add(e.k, runKey(e), runLine(e), e.x === true, e.p === true)
+  }
+
+  /** A line read by readRunLine, with the precedence it now has written in. */
+  addLine(e: RunLine): void {
+    let line = e.line
+    if (e.q !== e.lineQ) {
+      line =
+        e.lineQ === undefined
+          ? `${line.slice(0, -1)}${LINE_Q}${e.q}}`
+          : JSON.stringify({ ...(JSON.parse(line) as RunEntry), q: e.q })
+    }
+    this.#add(e.k, runKey(e), line, e.x === true, e.p === true)
+  }
+
+  #add(id: string, key: string, line: string, del: boolean, priv: boolean) {
     if (this.#last !== null && compareUtf8(this.#last, key) >= 0) {
       throw new Error(`Run entries out of order at ${JSON.stringify(key)}`)
     }
-    const line = JSON.stringify(e)
     this.#first ??= key
     this.#last = key
     this.#lines.push(line)
-    if (!e.x && isMark(e.k)) this.#marks.push(key)
-    if (e.p) this.#private = true
+    if (!del && isMark(id)) this.#marks.push(key)
+    if (priv) this.#private = true
     this.#bytes += line.length + 1
     if (this.#bytes >= BLOCK_BYTES) this.#flushBlock()
   }
@@ -443,7 +527,7 @@ export const sliceRun = (index: RunIndex, range: RunRange | KeyRange): RunIndex 
  * current one is consumed. Only the current block is decompressed, and lines
  * are parsed one at a time.
  */
-export class RunCursor {
+export class RunCursor<E extends { t: string; k: string; q?: number } = RunEntry> {
   readonly #parts: RunPart[]
   #part = 0
   #page: Promise<RunBlock[]> | null = null
@@ -453,11 +537,13 @@ export class RunCursor {
   #blocks: Uint8Array[] = []
   /** The current part is stored uncompressed. */
   #raw = false
+  /** The current part holds a private upsert. */
+  #private = false
   #lines: string[] = []
   #line = 0
   readonly #bounds: Bounds | undefined
   /** The current entry, or undefined once the run is exhausted. */
-  head: RunEntry | undefined
+  head: E | undefined
 
   constructor(
     readonly store: Store,
@@ -465,6 +551,8 @@ export class RunCursor {
     readonly index: RunIndex,
     range?: RunRange | KeyRange | string,
     readonly spanBytes = 1024 * 1024,
+    /** Reads a line; `maybePrivate` is its part's `p`. */
+    readonly parse: (line: string, maybePrivate: boolean) => E = (line) => JSON.parse(line) as E,
   ) {
     this.#bounds = range === undefined ? undefined : boundsOf(range)
     this.#parts = this.#bounds ? overlapping(index.parts, this.#bounds) : index.parts
@@ -521,11 +609,11 @@ export class RunCursor {
   }
 
   /** Move to the next entry in range; returns it (undefined at the end). */
-  async next(): Promise<RunEntry | undefined> {
+  async next(): Promise<E | undefined> {
     for (;;) {
       while (this.#line < this.#lines.length) {
         const line = this.#lines[this.#line++]!
-        const e = JSON.parse(line) as RunEntry
+        const e = this.parse(line, this.#private)
         if (!this.#bounds || inBounds(this.#bounds, runKey(e))) return (this.head = e)
       }
       this.#lines = []
@@ -549,6 +637,7 @@ export class RunCursor {
       const page = this.#page ?? this.#loadPage(this.#part)
       this.#page = null
       this.#raw = this.#parts[this.#part]!.raw === true
+      this.#private = this.#parts[this.#part]!.p === true
       this.#part++
       this.#spans = this.#plan(await page)
       this.#span = 0
@@ -568,20 +657,22 @@ export async function* readRun(
   for (let e = await c.next(); e; e = await c.next()) yield e
 }
 
+type Keyed = { t: string; k: string; q?: number }
+
 /** Cursor order: run key, then the higher precedence first. */
-const before = (a: RunCursor, b: RunCursor) =>
+const before = (a: RunCursor<Keyed>, b: RunCursor<Keyed>) =>
   compareRunKeys(a.head!, b.head!) || b.precedence - a.precedence
 
 /** A binary min-heap of cursors. */
-class CursorHeap {
-  readonly items: RunCursor[] = []
+class CursorHeap<E extends Keyed> {
+  readonly items: RunCursor<E>[] = []
   get size() {
     return this.items.length
   }
-  peek(): RunCursor | undefined {
+  peek(): RunCursor<E> | undefined {
     return this.items[0]
   }
-  push(c: RunCursor) {
+  push(c: RunCursor<E>) {
     const a = this.items
     a.push(c)
     for (let i = a.length - 1; i > 0;) {
@@ -591,7 +682,7 @@ class CursorHeap {
       i = p
     }
   }
-  pop(): RunCursor | undefined {
+  pop(): RunCursor<E> | undefined {
     const a = this.items
     const top = a[0]
     const last = a.pop()
@@ -617,20 +708,40 @@ class CursorHeap {
  * the entry with the highest precedence wins, and its precedence is set as `q`
  * so a compacted run keeps it.
  */
-export async function* mergeRuns(
+export function mergeRuns(
   store: Store,
   sessionId: string,
   indexes: RunIndex[],
   range?: RunRange | KeyRange | string,
 ): AsyncGenerator<RunEntry> {
+  return merge(store, sessionId, indexes, range, (line) => JSON.parse(line) as RunEntry)
+}
+
+/** mergeRuns, as lines with only their keys read (readRunLine): for a compaction. */
+export function mergeRunLines(
+  store: Store,
+  sessionId: string,
+  indexes: RunIndex[],
+  range?: RunRange | KeyRange | string,
+): AsyncGenerator<RunLine> {
+  return merge(store, sessionId, indexes, range, readRunLine)
+}
+
+async function* merge<E extends Keyed>(
+  store: Store,
+  sessionId: string,
+  indexes: RunIndex[],
+  range: RunRange | KeyRange | string | undefined,
+  parse: (line: string, maybePrivate: boolean) => E,
+): AsyncGenerator<E> {
   const spanBytes = Math.max(
     BLOCK_BYTES,
     Math.floor(runConfig.prefetchBudget / (2 * Math.max(1, indexes.length))),
   )
-  const heap = new CursorHeap()
+  const heap = new CursorHeap<E>()
   await Promise.all(
     indexes.map(async (ix) => {
-      const c = new RunCursor(store, sessionId, ix, range, spanBytes)
+      const c = new RunCursor(store, sessionId, ix, range, spanBytes, parse)
       if (await c.next()) heap.push(c)
     }),
   )
@@ -665,8 +776,8 @@ export async function compactRuns(
     raw: true,
     ...(piece ? { partBase: piece.partBase, writeIndex: false } : {}),
   })
-  for await (const e of mergeRuns(store, sessionId, indexes, piece?.range)) {
-    w.add(e)
+  for await (const e of mergeRunLines(store, sessionId, indexes, piece?.range)) {
+    w.addLine(e)
     await w.drain()
   }
   return w.finish()

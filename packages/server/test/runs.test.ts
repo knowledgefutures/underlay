@@ -8,9 +8,11 @@ import {
   isMark,
   mergeRuns,
   readRun,
+  readRunLine,
   runConfig,
   type RunEntry,
   type RunIndex,
+  runLine,
   runMarks,
   RunWriter,
   writeRun,
@@ -159,6 +161,51 @@ describe('sorted runs', () => {
     )
   })
 
+  it('reads a run line without parsing it, as parsing would (property)', () => {
+    // Text that looks like the fields the reader looks for, inside strings.
+    const tricky = fc.oneof(
+      fc.string({ unit: 'binary' }),
+      fc.constantFrom(',"q":5}', ',"p":true', ',"x":true', '","k":"', '\\', '"q":1}'),
+    )
+    const entry = fc.oneof(
+      fc.record(
+        { t: tricky, k: tricky, x: fc.constant(true as const), q: fc.nat() },
+        { requiredKeys: ['t', 'k', 'x'] },
+      ),
+      fc.record(
+        {
+          t: tricky,
+          k: tricky,
+          h: fc.string(),
+          s: fc.nat(),
+          b: tricky,
+          p: fc.constant(true as const),
+          q: fc.nat(),
+        },
+        { requiredKeys: ['t', 'k', 'h', 's', 'b'] },
+      ),
+    )
+    fc.assert(
+      fc.property(entry, (e: RunEntry) => {
+        // As written now, and in an entry's own field order, as before.
+        for (const line of [runLine(e), JSON.stringify(e)]) {
+          const got = readRunLine(line)
+          expect({ t: got.t, k: got.k, q: got.q, x: got.x, p: got.p }).toEqual({
+            t: e.t,
+            k: e.k,
+            q: e.q,
+            x: e.x,
+            p: e.p,
+          })
+          expect(got.lineQ).toBe(e.q)
+          expect(got.line).toBe(line)
+        }
+        expect(JSON.parse(runLine(e))).toEqual(e)
+      }),
+      { numRuns: 2000 },
+    )
+  })
+
   it('marks exactly the upserts whose id is a split-key candidate', async () => {
     const store = memoryStore()
     const entries: RunEntry[] = Array.from({ length: 60_000 }, (_, i) => ({
@@ -173,6 +220,22 @@ describe('sorted runs', () => {
       .sort(compareUtf8)
     expect(want.length).toBeGreaterThan(0)
     expect(runMarks([ix])).toEqual(want)
+    // A compaction marks the same keys.
+    const halves = await Promise.all([
+      writeRun(
+        store,
+        's',
+        2,
+        entries.filter((_, i) => i % 2 === 0),
+      ),
+      writeRun(
+        store,
+        's',
+        3,
+        entries.filter((_, i) => i % 2 === 1),
+      ),
+    ])
+    expect(runMarks([await compactRuns(store, 's', halves, 4, 1)])).toEqual(want)
     const after = want[0]!.split('\u0000')[1]!
     expect(runMarks([ix], { type: 'T', after })).toEqual(want.slice(1))
   })
@@ -181,20 +244,30 @@ describe('sorted runs', () => {
     await fc.assert(
       fc.asyncProperty(
         fc.array(
-          fc.array(fc.tuple(fc.constantFrom('A', 'B', 'C'), fc.integer({ min: 0, max: 60 })), {
-            maxLength: 30,
-          }),
+          fc.array(
+            fc.tuple(
+              fc.constantFrom('A', 'B', 'C'),
+              fc.integer({ min: 0, max: 60 }),
+              // An upsert, a delete, or a private upsert.
+              fc.constantFrom(0, 1, 2),
+            ),
+            { maxLength: 30 },
+          ),
           { minLength: 1, maxLength: 40, size: 'max' },
         ),
         fc.array(fc.integer({ min: 0, max: 1000 }), { minLength: 1, maxLength: 20 }),
         fc.tuple(fc.integer({ min: -1, max: 61 }), fc.integer({ min: -1, max: 61 })),
         async (batches, picks, [a, b]) => {
           const store = memoryStore()
-          const want = new Map<string, number>()
+          const want = new Map<string, RunEntry>()
           let runs: RunIndex[] = []
           for (let seq = 1; seq <= batches.length; seq++) {
-            const entries = batches[seq - 1]!.map(([t, k]) => ({ t, k: `k${k}`, s: seq }))
-            for (const e of entries) want.set(key(e), seq)
+            const entries: RunEntry[] = batches[seq - 1]!.map(([t, k, f]) =>
+              f === 1
+                ? { t, k: `k${k}`, x: true }
+                : { t, k: `k${k}`, s: seq, ...(f === 2 ? { p: true } : {}) },
+            )
+            for (const e of entries) want.set(key(e), e)
             runs.push(await writeRun(store, 's', seq, entries))
           }
           // Compact arbitrary, non-adjacent groups of runs, repeatedly.
@@ -207,8 +280,14 @@ describe('sorted runs', () => {
             runs = [...runs.filter((r) => !group.includes(r)), merged]
           }
           const merged = await collect(mergeRuns(store, 's', runs))
-          const got = new Map(merged.map((e) => [key(e), e.s]))
+          const got = new Map(merged.map(({ q: _, ...e }) => [key(e), e]))
           expect(got).toEqual(want)
+          // A part is marked private exactly when it holds a private upsert.
+          for (const run of runs)
+            for (const part of run.parts) {
+              const inPart = await collect(readRun(store, 's', { ...run, parts: [part] }))
+              expect(part.p === true).toBe(inPart.some((e) => e.p))
+            }
           const keys = merged.map(key)
           expect(keys).toEqual([...keys].sort(compareUtf8))
           // A range read of the merge agrees with filtering the whole merge.
