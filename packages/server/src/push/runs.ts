@@ -10,6 +10,13 @@
  *   sessions/<sessionId>/runs/<seq>/<part>.blocks.json   the part's blocks
  *   sessions/<sessionId>/runs/<seq>/index.json           {v: 2, seq, tier, parts: [...]}
  *
+ * A compacted run's parts are stored uncompressed (`<part>.ndjson`, `raw` in
+ * the index). Gzip was three quarters of a merge's CPU, and a session's
+ * compactions share one isolate's thread: a 30M-record Crossref session spent
+ * 12 hours compacting (staging, 2026-10-18). A run is read a few times and
+ * deleted with its session, so the bytes saved weren't worth it. Upload runs
+ * stay gzipped.
+ *
  * The index is a summary: per part, its first and last key, entry count, raw
  * and compressed size, and its natural-boundary marks (below). Each part's
  * blocks (first and last key, entry count, byte range in the part) are a page
@@ -81,8 +88,10 @@ export interface RunPart {
   count: number
   /** Raw NDJSON size, about (string length), for byte budgets. */
   bytes: number
-  /** Size of the part object (compressed). */
+  /** Size of the part object (compressed, unless `raw`). */
   length: number
+  /** Stored uncompressed, as `<part>.ndjson` (a compacted run). */
+  raw?: true
   /**
    * Natural-boundary marks: run keys of the part's upserts whose id has at
    * least MARK_BITS trailing zeros in its boundary hash. They're the split-key
@@ -141,8 +150,8 @@ export const compareRunKeys = (a: RunEntry, b: RunEntry) =>
   compareUtf8(a.t, b.t) || compareUtf8(a.k, b.k)
 
 const runPrefix = (sessionId: string, seq: number) => `sessions/${sessionId}/runs/${seq}`
-const partKey = (sessionId: string, seq: number, part: number) =>
-  `${runPrefix(sessionId, seq)}/${part}.ndjson.gz`
+const partKey = (sessionId: string, seq: number, part: number, raw?: boolean) =>
+  `${runPrefix(sessionId, seq)}/${part}.ndjson${raw ? '' : '.gz'}`
 const pageKey = (sessionId: string, seq: number, part: number) =>
   `${runPrefix(sessionId, seq)}/${part}.blocks.json`
 export const indexKey = (sessionId: string, seq: number) =>
@@ -154,6 +163,9 @@ export const isMark = (id: string) => trailingZeros(boundaryBytes(id)) >= MARK_B
 /** Entries in a run, and its raw size. */
 export const runCount = (ix: RunIndex) => ix.parts.reduce((n, p) => n + p.count, 0)
 export const runBytes = (ix: RunIndex) => ix.parts.reduce((n, p) => n + p.bytes, 0)
+
+const enc = new TextEncoder()
+const dec = new TextDecoder()
 
 /** Writes one run block by block. Entries must arrive sorted. */
 export class RunWriter {
@@ -179,14 +191,14 @@ export class RunWriter {
   /**
    * `partBase` numbers this writer's parts (a compaction piece writes into a
    * run other pieces write too); `writeIndex: false` leaves the index to whoever
-   * joins the pieces.
+   * joins the pieces; `raw` stores the parts uncompressed.
    */
   constructor(
     readonly store: Store,
     readonly sessionId: string,
     readonly seq: number,
     readonly tier = 0,
-    readonly opts: { partBase?: number; writeIndex?: boolean } = {},
+    readonly opts: { partBase?: number; writeIndex?: boolean; raw?: boolean } = {},
   ) {
     this.#part = opts.partBase ?? 0
   }
@@ -220,18 +232,18 @@ export class RunWriter {
     this.#first = null
     this.#queued++
     this.#chain = this.#chain.then(async () => {
-      const gz = await gzip(text)
+      const stored = this.opts.raw ? enc.encode(text) : await gzip(text)
       this.#partBlocks.push({
         ...block,
         part: this.#part,
         offset: this.#partBytes,
-        length: gz.length,
+        length: stored.length,
       })
       this.#partMarks.push(...marks)
       if (priv) this.#partPrivate = true
       this.#partRaw += raw
-      this.#partChunks.push(gz)
-      this.#partBytes += gz.length
+      this.#partChunks.push(stored)
+      this.#partBytes += stored.length
       this.#queued--
       if (this.#partBytes >= runConfig.partBytes) this.#flushPart()
     })
@@ -256,12 +268,13 @@ export class RunWriter {
       length: this.#partBytes,
       ...(this.#partMarks.length > 0 ? { marks: this.#partMarks } : {}),
       ...(this.#partPrivate ? { p: true as const } : {}),
+      ...(this.opts.raw ? { raw: true as const } : {}),
     })
     const store = this.store
     this.#puts.push(
       Promise.all([
-        store.put(partKey(this.sessionId, this.seq, part), body, {
-          contentType: 'application/gzip',
+        store.put(partKey(this.sessionId, this.seq, part, this.opts.raw), body, {
+          contentType: this.opts.raw ? 'application/x-ndjson' : 'application/gzip',
         }),
         store.put(pageKey(this.sessionId, this.seq, part), JSON.stringify(blocks), {
           contentType: 'application/json',
@@ -438,6 +451,8 @@ export class RunCursor {
   #span = 0
   #fetch: Promise<Uint8Array[]> | null = null
   #blocks: Uint8Array[] = []
+  /** The current part is stored uncompressed. */
+  #raw = false
   #lines: string[] = []
   #line = 0
   readonly #bounds: Bounds | undefined
@@ -490,7 +505,7 @@ export class RunCursor {
   #load(span: RunBlock[]): Promise<Uint8Array[]> {
     const start = span[0]!.offset
     const length = span.reduce((n, b) => n + b.length, 0)
-    const key = partKey(this.sessionId, this.index.seq, span[0]!.part)
+    const key = partKey(this.sessionId, this.index.seq, span[0]!.part, this.#raw)
     const p = this.store.get(key, { offset: start, length }).then(async (obj) => {
       if (!obj) throw new Error(`Run part ${key} is missing`)
       const bytes = await obj.bytes()
@@ -515,7 +530,8 @@ export class RunCursor {
       }
       this.#lines = []
       if (this.#blocks.length > 0) {
-        this.#lines = splitLines(await gunzipText(this.#blocks.shift()!))
+        const block = this.#blocks.shift()!
+        this.#lines = splitLines(this.#raw ? dec.decode(block) : await gunzipText(block))
         this.#line = 0
         continue
       }
@@ -532,6 +548,7 @@ export class RunCursor {
       if (this.#part >= this.#parts.length) return (this.head = undefined)
       const page = this.#page ?? this.#loadPage(this.#part)
       this.#page = null
+      this.#raw = this.#parts[this.#part]!.raw === true
       this.#part++
       this.#spans = this.#plan(await page)
       this.#span = 0
@@ -644,13 +661,10 @@ export async function compactRuns(
   tier: number,
   piece?: { range: KeyRange; partBase: number },
 ): Promise<RunIndex> {
-  const w = new RunWriter(
-    store,
-    sessionId,
-    seq,
-    tier,
-    piece ? { partBase: piece.partBase, writeIndex: false } : {},
-  )
+  const w = new RunWriter(store, sessionId, seq, tier, {
+    raw: true,
+    ...(piece ? { partBase: piece.partBase, writeIndex: false } : {}),
+  })
   for await (const e of mergeRuns(store, sessionId, indexes, piece?.range)) {
     w.add(e)
     await w.drain()
