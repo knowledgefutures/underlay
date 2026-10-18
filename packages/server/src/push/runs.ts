@@ -47,7 +47,12 @@ import {
 
 import type { Store } from '../ports.js'
 
-/** One entry of a run. `k` is the record id, `t` the type. */
+/**
+ * One entry of a run. `k` is the record id, `t` the type. Its line's field
+ * order is load-bearing: compaction reads `t` and `k` from the start, `x` right
+ * after `k`, and `q` from the end without parsing (readRunLine), so lines are
+ * written with runLine.
+ */
 export interface RunEntry {
   t: string
   k: string
