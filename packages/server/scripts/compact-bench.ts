@@ -1,9 +1,9 @@
 /**
- * CPU of one compaction on Crossref works: 16 runs of real works (find-doi's
- * sample chunks, copied under new DOIs to reach --mb), merged into one, in an
+ * CPU of one compaction on Crossref works: 16 runs of real works (NDJSON files
+ * of Crossref API works in --src, copied under new DOIs to reach --mb), merged into one, in an
  * in-memory store. Prints wall and process CPU (zlib's thread pool included).
  *
- *   node --import tsx scripts/compact-bench.ts [--mb 160] [--runs 16] [--src DIR] [--raw]
+ *   node --import tsx scripts/compact-bench.ts --src DIR [--mb 160] [--runs 16] [--raw]
  *
  * --raw writes the input runs uncompressed, as a compaction writes them.
  *   node --cpu-prof --import tsx scripts/compact-bench.ts   (main-thread profile)
@@ -21,7 +21,8 @@ const opt = (name: string, def: string) => {
 }
 const MB = Number(opt('mb', '160'))
 const RUNS = Number(opt('runs', '16'))
-const SRC = opt('src', '/Users/thomas/Projects/kf/find-doi/data/sample-chunks')
+const SRC = opt('src', '')
+if (!SRC) throw new Error('--src DIR: a directory of Crossref works as NDJSON')
 const RAW = args.includes('--raw')
 
 const works: Record<string, unknown>[] = []

@@ -33,7 +33,7 @@
  * (compact.ts): the pieces' parts, in key order, are the merged run.
  *
  * Memory: a reader holds one part's block page, one block's lines and a
- * bounded prefetch of compressed bytes, so a k-way merge stays within a Worker
+ * bounded prefetch of stored bytes, so a k-way merge stays within a Worker
  * for any run size. The number of runs a merge reads is bounded by compaction.
  */
 import {
@@ -133,10 +133,10 @@ export const MERGE_FAN_IN = 16
 export const MARK_BITS = 13
 
 export const runConfig = {
-  /** Compressed bytes per part object. A writer holds one open part and one being stored. */
+  /** Stored bytes per part object. A writer holds one open part and one being stored. */
   partBytes: 4 * 1024 * 1024,
   /**
-   * Compressed bytes a merge holds, split across its runs. Each cursor holds its
+   * Stored bytes a merge holds, split across its runs. Each cursor holds its
    * current span and the next one, so a span gets half of a run's share. With
    * records of several KB, 8 MB a span left a two-run commit unit holding 16 MB
    * of spans alone (2026-10-15).
