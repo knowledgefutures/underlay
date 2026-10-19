@@ -34,6 +34,8 @@ export interface Env {
   JOBS: Queue
   /** Bulk jobs (jobs.ts BULK_JOBS); without it, everything goes to JOBS. */
   JOBS_BULK?: Queue
+  /** Run compactions (jobs.ts COMPACT_JOBS); without it, they go with the other bulk jobs. */
+  JOBS_COMPACT?: Queue
   /** Usage events (billing/usage.ts), a request's to a message; without it, nothing is metered. */
   USAGE?: Queue
   APP_URL: string
@@ -141,7 +143,11 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
     }),
     cache,
     signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),
-    jobs: new QueueJobs(env.JOBS as never, (env.JOBS_BULK ?? env.JOBS) as never),
+    jobs: new QueueJobs(
+      env.JOBS as never,
+      (env.JOBS_BULK ?? env.JOBS) as never,
+      (env.JOBS_COMPACT ?? env.JOBS_BULK ?? env.JOBS) as never,
+    ),
     waitUntil: (p) => ctx.waitUntil(p),
     outboundFetch: (url, init) => fetch(url, init),
     locationFetch: (req) => fetch(req),
@@ -258,7 +264,7 @@ export default {
         msg.retry({ delaySeconds: Math.min(3600, 2 ** msg.attempts) })
       }
     }
-    // The bulk queue delivers one job per invocation (wrangler.jsonc); an
+    // The bulk and compaction queues deliver one job per invocation (wrangler.bulk.jsonc); an
     // interactive batch's small jobs run a few at a time, sharing its CPU.
     const queue = [...batch.messages]
     const lanes = batch.messages.some((m) => isBulk(m.body.type)) ? 1 : INTERACTIVE_LANES
