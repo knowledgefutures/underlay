@@ -58,6 +58,13 @@ export const BODY_MEMBER_BYTES = 4 * 1024 * 1024
  * (scripts/memory.ts, PR #47).
  */
 export const STREAM_BODY_BYTES = 4 * 1024 * 1024
+/**
+ * Out-of-line records a streamed body resolves ahead of its reader: each is a
+ * read, and one at a time a leaf of large records waits on the store's latency
+ * per record. At most `entries` lines wait behind one being resolved, and no more
+ * are started once `bytes` of records (their size) are being resolved.
+ */
+export const resolveAheadConfig = { entries: 16, bytes: 4 * 1024 * 1024 }
 
 export const keys = {
   node: (h: string) => `nodes/${h}`,
@@ -315,10 +322,29 @@ export class Repo {
       return
     }
     let n = 0
+    // Lines in order, an out-of-line record's while it resolves.
+    const ahead: { line: string | Promise<string>; bytes: number }[] = []
+    let resolving = 0
+    const next = async () => {
+      const a = ahead.shift()!
+      resolving -= a.bytes
+      return a.line
+    }
     for await (const line of chunkLines(await this.#bodyChunks(key, leaf.hash, onRead))) {
       if (++n > leaf.entries.length) break
-      yield !opts.pointers && line.startsWith(REF_PREFIX) ? await this.#outOfLine(line) : line
+      if (opts.pointers || !line.startsWith(REF_PREFIX)) ahead.push({ line, bytes: 0 })
+      else {
+        const bytes = leaf.entries[n - 1]!.size
+        while (ahead.length > 0 && resolving + bytes > resolveAheadConfig.bytes) yield await next()
+        const resolved = this.#outOfLine(line)
+        // Awaited in order below; this only keeps an early failure from going unhandled.
+        resolved.catch(() => {})
+        ahead.push({ line: resolved, bytes })
+        resolving += bytes
+      }
+      while (ahead.length > resolveAheadConfig.entries) yield await next()
     }
+    while (ahead.length > 0) yield await next()
     if (n !== leaf.entries.length) {
       throw new IntegrityError(
         `Body of ${leaf.hash} has ${n} lines for ${leaf.entries.length} entries`,

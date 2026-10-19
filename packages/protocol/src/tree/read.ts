@@ -5,7 +5,7 @@
  */
 import { compareUtf8 } from '../utf8.js'
 import type { NodeDesc } from './node.js'
-import { type NodeSource, rootDesc } from './source.js'
+import { leafEntryStream, type NodeSource, rootDesc } from './source.js'
 
 /** Look up one key. One node read per level. */
 export async function getEntry<E>(
@@ -92,8 +92,13 @@ export interface IterateOptions {
   offset?: number
   /** Leaves to fetch ahead in parallel. Default 4. */
   prefetch?: number
-  /** Read leaves with payloads (record bodies) through `leafEntries`. */
-  payloads?: boolean
+  /**
+   * Read leaves with payloads (record bodies) through `leafEntries`. With
+   * 'stream', one leaf at a time through `leafEntryStream`, nothing fetched
+   * ahead: a leaf of large records (tens of MB) is never held whole, where
+   * `true` holds `prefetch` of them at once.
+   */
+  payloads?: boolean | 'stream'
 }
 
 /**
@@ -158,6 +163,29 @@ export async function* iterate<E>(
   if (opts.after !== undefined && opts.offset)
     throw new Error('iterate: pass after or offset, not both')
   const spec = source.spec
+  if (opts.payloads === 'stream') {
+    for await (const { leaf, skip, after } of leavesFrom(
+      source,
+      await rootDesc(source, root),
+      opts.after,
+      opts.offset ?? 0,
+    )) {
+      let past = after === undefined
+      let skipping = skip
+      for await (const e of leafEntryStream(source, leaf.hash)) {
+        if (!past) {
+          if (compareUtf8(spec.key(e), after!) <= 0) continue
+          past = true
+        }
+        if (skipping > 0) {
+          skipping--
+          continue
+        }
+        yield e
+      }
+    }
+    return
+  }
   const load = (h: string) =>
     opts.payloads
       ? source.leafEntries(h)

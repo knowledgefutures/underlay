@@ -32,6 +32,7 @@ import {
   Repo,
   RepoSink,
   RepoSource,
+  resolveAheadConfig,
   STREAM_BODY_BYTES,
 } from '../../src/repo/repo.js'
 import { PrefixedStore } from '../../src/repo/types.js'
@@ -191,6 +192,107 @@ describe('record trees in a repository', () => {
     const streamed = await collect(source.leafStream(leaf))
     expect(streamed).toEqual(whole)
     expect(streamed.some((e) => e.body!.includes('😀'))).toBe(true)
+  })
+
+  it("iterates with bodies streamed one leaf at a time ('stream') as with leaves read whole", async () => {
+    for (const trusted of [true, false]) {
+      const { repo } = freshRepo({ trusted })
+      const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
+      const b = new TreeBuilder(recordTree, sink, {
+        payloadBytes: recordPayloadBytes,
+        dropPayload: dropRecordBody,
+        spillBytes: 20_000, // several members per leaf
+      })
+      // A few records stored out of line, which both reads resolve to the record.
+      const big = (id: string) => {
+        const { hash, canonical } = hashRecord(id, 'T', {
+          id,
+          t: 'é😀'.repeat(OUT_OF_LINE_BYTES / 4),
+        })
+        return { key: id, hash, size: utf8ByteLength(canonical), body: canonical }
+      }
+      const all = ids(5000)
+      for (const [i, id] of all.entries()) {
+        const e = i % 997 === 3 ? big(id) : record(id)
+        if (e.size > OUT_OF_LINE_BYTES) e.body = await repo.putOutOfLine(e.hash, e.body!)
+        b.addEntry(e)
+      }
+      const root = b.finish().root!
+      await sink.flush()
+      expect(root.level).toBeGreaterThan(0)
+      const source = new RepoSource(recordTree, repo)
+      const read = (opts: { after?: string; offset?: number; payloads: true | 'stream' }) =>
+        collect(iterate(source, root.hash, opts))
+      const starts = [
+        {},
+        { offset: 1 },
+        { offset: 1023 },
+        { offset: 2500 },
+        { offset: 4999 },
+        { offset: 5000 },
+        { after: '' },
+        { after: all[0]! },
+        { after: all[3]! },
+        { after: all[2047]! },
+        { after: `${all[2047]!}x` },
+        { after: all.at(-1)! },
+        { after: 'zzz' },
+      ]
+      for (const at of starts) {
+        const streamed = await read({ ...at, payloads: 'stream' })
+        expect(streamed).toEqual(await read({ ...at, payloads: true }))
+      }
+      const everything = await read({ payloads: 'stream' })
+      expect(everything.map((e) => e.key)).toEqual(all)
+      expect(everything.filter((e) => e.body!.includes('😀')).length).toBe(6)
+    }
+  })
+
+  it('resolves out-of-line records ahead of a streamed body, a bounded number at once', async () => {
+    const blobs = memoryStore()
+    let reading = 0
+    let most = 0
+    const slow = new Proxy(blobs, {
+      get(t, p) {
+        if (p === 'get')
+          return async (...a: Parameters<typeof blobs.get>) => {
+            if (!a[0].startsWith('records/')) return t.get(...a)
+            most = Math.max(most, ++reading)
+            await new Promise((r) => setTimeout(r, 5))
+            reading--
+            return t.get(...a)
+          }
+        const v = Reflect.get(t, p) as unknown
+        return typeof v === 'function' ? v.bind(t) : v
+      },
+    })
+    const repo = new Repo(slow, { scope: 'test', trusted: true, lru: new Lru(8 << 20, () => 1024) })
+    const sink = new RepoSink(repo, { bodyOf: bodyOfRecord })
+    const b = new TreeBuilder(recordTree, sink)
+    const big = (id: string) => {
+      const { hash, canonical } = hashRecord(id, 'T', { id, t: 'x'.repeat(OUT_OF_LINE_BYTES) })
+      return { key: id, hash, size: utf8ByteLength(canonical), body: canonical }
+    }
+    const all = ids(200)
+    const written = all.map((id, i) => (i % 3 === 0 ? record(id) : big(id)))
+    for (const e of written) {
+      const stored = { ...e }
+      if (e.size > OUT_OF_LINE_BYTES) stored.body = await repo.putOutOfLine(e.hash, e.body!)
+      b.addEntry(stored)
+    }
+    const root = b.finish().root!
+    await sink.flush()
+    const source = new RepoSource(recordTree, repo)
+    const streamed = await collect(iterate(source, root.hash, { payloads: 'stream' }))
+    expect(streamed.map((e) => e.body)).toEqual(written.map((e) => e.body))
+    // Several at once, never more than the entries or the bytes allow.
+    expect(most).toBeGreaterThan(4)
+    expect(most).toBeLessThanOrEqual(
+      Math.min(
+        resolveAheadConfig.entries + 1,
+        Math.floor(resolveAheadConfig.bytes / written[1]!.size) + 1,
+      ),
+    )
   })
 
   it('streams a large stored body from the store, never reading it whole or caching it, nor taking a cached copy', async () => {
