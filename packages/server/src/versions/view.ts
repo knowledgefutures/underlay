@@ -115,22 +115,31 @@ async function* mergeById(
 ): AsyncGenerator<{ e: RecordEntry; set: 'public' | 'private' }> {
   const ai = a[Symbol.asyncIterator]()
   const bi = b[Symbol.asyncIterator]()
-  let x = await ai.next()
-  let y = await bi.next()
-  while (!x.done || !y.done) {
-    if (y.done || (!x.done && compareUtf8(x.value.key, y.value.key) < 0)) {
-      yield { e: x.value, set: 'public' }
-      x = await ai.next()
-    } else {
-      yield { e: y.value, set: 'private' }
-      y = await bi.next()
+  try {
+    let x = await ai.next()
+    let y = await bi.next()
+    while (!x.done || !y.done) {
+      if (y.done || (!x.done && compareUtf8(x.value.key, y.value.key) < 0)) {
+        yield { e: x.value, set: 'public' }
+        x = await ai.next()
+      } else {
+        yield { e: y.value, set: 'private' }
+        y = await bi.next()
+      }
     }
+  } finally {
+    // A reader that stops early (a page) closes the leaf bodies both sets are
+    // streaming; settled, so a failing close can't replace the reader's error.
+    await Promise.allSettled([ai.return?.(), bi.return?.()])
   }
 }
 
 /**
  * Records of one type, in id order, from a position. `offset` seeks in
- * O(height × log n) even across two sets, by binary search on ranks.
+ * O(height × log n) even across two sets, by binary search on ranks. With
+ * `bodies`, each set's leaves are read one at a time and their bodies streamed
+ * (`iterate`'s `stream`): a Crossref leaf holds 20–90 MB of records, and
+ * several of those held at once don't fit a 128 MB isolate.
  */
 export async function* typeRecords(
   view: VersionView,
@@ -148,6 +157,7 @@ export async function* typeRecords(
   const it = (root: string | null) =>
     iterate(source, root, {
       payloads: opts.bodies ?? false,
+      stream: true,
       ...(after !== undefined ? { after } : {}),
     })
   for await (const { e, set } of mergeById(it(pubRoot), it(privRoot))) {

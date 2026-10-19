@@ -34,6 +34,7 @@ import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
+import { pullStream } from '../lib/streams.js'
 import type { Db } from '../ports.js'
 import {
   countAfter,
@@ -357,8 +358,9 @@ export function versionRoutes() {
    * Lines are canonical records, `{"id":…,"type":…,"data":…}`, without the
    * `hash` records.ndjson adds (it's the SHA-256 of the line). Only the public
    * set: a member's private records interleave by id, so they need records.ndjson.
-   * A leaf holding out-of-line or blocked records is re-encoded. Some gzip readers
-   * (browsers' DecompressionStream) stop after the first member.
+   * A leaf holding out-of-line or blocked records is re-encoded, streamed. Some
+   * gzip readers (browsers' DecompressionStream) stop after the first member. A
+   * copied leaf's stored body is held whole while it is sent (tens of MB at most).
    */
   app.get('/:owner/:slug/versions/:n/records.ndjson.gz', async (c) => {
     const access = await requireCollection(c, 'read')
@@ -369,37 +371,40 @@ export function versionRoutes() {
     const types = view.types.filter((t) => t.public?.root && (!want || t.slug === want))
     if (want && types.length === 0) return jsonError(c, 404, `No public records of type ${want}`)
     const source = new RepoSource(recordTree, view.repo)
-    const body = new ReadableStream<Uint8Array>({
-      async start(ctl) {
-        try {
-          for (const t of types) {
-            for await (const leaf of leaves(source, t.public!.root)) {
-              const node = await source.node(leaf.hash)
-              const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
-              const plain = entries.every(
-                (e) => e.size <= OUT_OF_LINE_BYTES && !view.withheld.has(e.hash),
-              )
-              // Billed as the NDJSON it decompresses to: a line and a newline per record.
-              c.var.meter.logicalBytes =
-                (c.var.meter.logicalBytes ?? 0) +
-                entries.reduce((n, e) => (view.withheld.has(e.hash) ? n : n + e.size + 1), 0)
-              if (plain) {
-                ctl.enqueue(await view.repo.rawBody(leaf.hash))
-                continue
-              }
-              const lines = (await view.repo.bodyLines({ hash: leaf.hash, entries })).filter(
-                (_, i) => !view.withheld.has(entries[i]!.hash),
-              )
-              if (lines.length) ctl.enqueue(await gzip(lines.join('\n') + '\n'))
+    const members = async function* () {
+      for (const t of types) {
+        for await (const leaf of leaves(source, t.public!.root)) {
+          const node = await source.node(leaf.hash)
+          const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
+          const plain = entries.every(
+            (e) => e.size <= OUT_OF_LINE_BYTES && !view.withheld.has(e.hash),
+          )
+          // Billed as the NDJSON it decompresses to: a line and a newline per record.
+          c.var.meter.logicalBytes =
+            (c.var.meter.logicalBytes ?? 0) +
+            entries.reduce((n, e) => (view.withheld.has(e.hash) ? n : n + e.size + 1), 0)
+          if (plain) {
+            yield await view.repo.rawBody(leaf.hash)
+            continue
+          }
+          // Re-encoded a member of about 1 MB at a time: never the leaf whole.
+          let lines: string[] = []
+          let bytes = 0
+          for await (const e of source.leafStream(leaf.hash)) {
+            if (view.withheld.has(e.hash)) continue
+            lines.push(e.body!)
+            bytes += e.size
+            if (bytes >= 1 << 20) {
+              yield await gzip(lines.join('\n') + '\n')
+              lines = []
+              bytes = 0
             }
           }
-          ctl.close()
-        } catch (err) {
-          ctl.error(err)
+          if (lines.length) yield await gzip(lines.join('\n') + '\n')
         }
-      },
-    })
-    return new Response(body, {
+      }
+    }
+    return new Response(pullStream(members()), {
       headers: {
         'content-type': 'application/gzip',
         'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${view.version.semver}${want ? `-${want}` : ''}.ndjson.gz"`,
@@ -432,28 +437,25 @@ export function versionRoutes() {
     let count = 0
     for (const t of types) count += from?.t === t.slug ? await countAfter(view, t, from.k) : t.count
     const enc = new TextEncoder()
-    const stream = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        try {
-          for (const t of types) {
-            const opts = from?.t === t.slug ? { after: from.k, bodies: true } : { bodies: true }
-            let batch: string[] = []
-            for await (const e of typeRecords(view, t, opts)) {
-              batch.push(withHash(e.body!, e.hash, e.set === 'private'))
-              if (batch.length >= 512) {
-                controller.enqueue(enc.encode(batch.join('\n') + '\n'))
-                batch = []
-              }
-            }
-            if (batch.length) controller.enqueue(enc.encode(batch.join('\n') + '\n'))
+    const lines = async function* () {
+      for (const t of types) {
+        const opts = from?.t === t.slug ? { after: from.k, bodies: true } : { bodies: true }
+        let batch: string[] = []
+        let bytes = 0
+        for await (const e of typeRecords(view, t, opts)) {
+          batch.push(withHash(e.body!, e.hash, e.set === 'private'))
+          bytes += e.size
+          // A chunk is what the stream holds ahead of the client: 512 lines, or 1 MB.
+          if (batch.length >= 512 || bytes >= 1 << 20) {
+            yield enc.encode(batch.join('\n') + '\n')
+            batch = []
+            bytes = 0
           }
-          controller.close()
-        } catch (err) {
-          controller.error(err)
         }
-      },
-    })
-    return new Response(stream, {
+        if (batch.length) yield enc.encode(batch.join('\n') + '\n')
+      }
+    }
+    return new Response(pullStream(lines()), {
       headers: { 'content-type': 'application/x-ndjson', 'x-underlay-record-count': String(count) },
     })
   })

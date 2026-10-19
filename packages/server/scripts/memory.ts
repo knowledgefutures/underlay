@@ -43,6 +43,9 @@
  *                      the unit's peak, where it was (which base leaf, how far in), and
  *                      what its sink held then
  *   --seed N           data seed (default 1)
+ *   --read-ms N        then read the last version whole through records.ndjson and
+ *                      records.ndjson.gz, as a client taking a chunk every N ms (find-doi
+ *                      over a range, 2026-10-18), sampling at every chunk (default 0: no read)
  *
  * Unit peaks are sampled at every spill, leaf end and body write, on the timer, and
  * at storage operations; a sample forces a GC only when the reading without one
@@ -120,6 +123,7 @@ const REPUSH = args.includes('--repush')
 const PUSHES = opt('pushes', 2)
 const CACHE = str('cache', 'none')
 const TIMER_MS = opt('timer-ms', 0)
+const READ_MS = opt('read-ms', 0)
 const PIECES = args.includes('--pieces')
 const NO_GC = args.includes('--no-gc')
 const UNITS = args.includes('--units') || RECORD_KB > 0 || LEAF_MB.length > 0
@@ -945,6 +949,24 @@ for (pushNo = 2; pushNo <= PUSHES; pushNo++) {
   const c = await push(later(), undefined)
   console.error(`push ${pushNo} committed (commit ${(c / 1000).toFixed(0)} s)`)
   pushes.push({ push: pushNo, commitSeconds: Math.round(c / 1000), units: units.length - before })
+}
+// The version read whole by a client slower than the server: what a read holds
+// is what it has fetched and not yet sent.
+if (READ_MS > 0) {
+  for (const route of ['records.ndjson', 'records.ndjson.gz']) {
+    await measure(`${route} (read)`, async () => {
+      const res = await request(`${path}/versions/latest/${route}`)
+      if (res.status !== 200) throw new Error(`${route}: ${res.status} ${await res.text()}`)
+      const reader = res.body!.getReader()
+      for (;;) {
+        const { done } = await reader.read()
+        ops = SAMPLE - 1 // sample at every chunk
+        sample()
+        if (done) return
+        await new Promise((r) => setTimeout(r, READ_MS))
+      }
+    })
+  }
 }
 if (timer) clearInterval(timer)
 
