@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 
 import {
   boundaryBytes,
@@ -8,20 +9,27 @@ import {
   verifyTree,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs } from '../src/jobs.js'
-import { assembleParallel, parallelConfig, unitLimits } from '../src/push/parallel.js'
+import {
+  assemblyLimits,
+  assembleParallel,
+  parallelConfig,
+  unitLimits,
+} from '../src/push/parallel.js'
 import { isMark } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 afterAll(cleanup)
 const defaults = { ...parallelConfig }
 const unitDefaults = { ...unitLimits }
+const assemblyDefaults = { ...assemblyLimits }
 afterEach(() => {
   Object.assign(parallelConfig, defaults)
   Object.assign(unitLimits, unitDefaults)
+  Object.assign(assemblyLimits, assemblyDefaults)
 })
 
 const Author = {
@@ -240,6 +248,196 @@ describe('parallel commit', () => {
     ).toBe(true)
     expect(units.filter((u) => !u.gap && u.status === 'done').length).toBeGreaterThan(3)
     expect(units.some((u) => u.status === 'superseded')).toBe(true)
+  }, 30_000)
+
+  it('builds the same trees as the serial commit when units split at base leaves', async () => {
+    // Skewed record sizes, base level 1, and every level-1 node read for its leaves
+    // (expandRatio 0), so units end at leaf boundaries that aren't run marks.
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('la')
+    const b = await h.collection('lb')
+    const pathA = '/api/collections/org/la'
+    const pathB = '/api/collections/org/lb'
+    const id = (i: number) => `r${String(i).padStart(5, '0')}`
+    const name = (i: number, v: string) => (i >= 4000 && i < 7000 ? v.repeat(400) : v)
+    const first = [
+      Array.from({ length: 6000 }, (_, i) => rec(id(i), name(i, `n${i}`))),
+      Array.from({ length: 6000 }, (_, i) => rec(id(6000 + i), name(6000 + i, `n${6000 + i}`))),
+    ]
+    await push(h, user, pathA, { schemas: { Author } }, first, [], true)
+    await push(h, user, pathB, { schemas: { Author } }, first, [], false)
+
+    // Push 2: every 7th record updated, a few made private, scattered deletes.
+    const second = [
+      Array.from({ length: 12_000 / 7 }, (_, k) => {
+        const i = k * 7
+        return rec(id(i), name(i, `u${i}`), i % 700 === 0 ? { private: true } : {})
+      }),
+    ]
+    const deletes = [Array.from({ length: 30 }, (_, k) => id(k * 397 + 3))]
+    const pa = await push(h, user, pathA, {}, second, deletes, {
+      unitBytes: 1,
+      baseLevel: 1,
+      expandRatio: 0,
+    })
+    const pb = await push(h, user, pathB, {}, second, deletes, false)
+    expect(pa.result.changes).toEqual(pb.result.changes)
+
+    const ta = await trees(h, a.id)
+    const tb = await trees(h, b.id)
+    expect(ta.public).toEqual(tb.public)
+    expect(ta.private).toEqual(tb.private)
+    expect(ta.version).toEqual(tb.version)
+    expect(ta.files).toEqual(tb.files)
+    const v = await verifyTree(new RepoSource(recordTree, ta.repo), ta.public.root!)
+    expect(v.errors).toEqual([])
+
+    // Some unit ended at a base leaf's last key that is no run mark.
+    const units = await h.ports.db
+      .select()
+      .from(schema.commitUnits)
+      .where(eq(schema.commitUnits.sessionId, pa.sid))
+    const leafOnly = (k: string | null) => {
+      if (k === null) return false
+      const z = trailingZeros(boundaryBytes(k))
+      return z >= 10 && z < 13
+    }
+    expect(units.some((u) => !u.gap && leafOnly(u.through))).toBe(true)
+  }, 60_000)
+
+  it('keeps large base records as pointers when units rewrite their leaves', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('ka')
+    const b = await h.collection('kb')
+    const pathA = '/api/collections/org/ka'
+    const pathB = '/api/collections/org/kb'
+    for (const path of [pathA, pathB]) {
+      const r = await h.request(`${path}/files/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
+      expect(r.status).toBe(201)
+    }
+    const id = (i: number) => `r${String(i).padStart(5, '0')}`
+    // Every 20th record is over OUT_OF_LINE_BYTES; every 40th of those references f1.
+    const name = (i: number, v: string) => (i % 20 === 0 ? `${v}`.padEnd(70_000, 'x') : v)
+    const record = (i: number, v: string) =>
+      rec(id(i), name(i, v), i % 800 === 0 ? { pic: 'f1' } : {})
+    // Batches of 200, under the records endpoint's body limit.
+    const first = Array.from({ length: 15 }, (_, j) =>
+      Array.from({ length: 200 }, (_, i) => record(j * 200 + i, `n${j * 200 + i}`)),
+    )
+    await push(h, user, pathA, { schemas: { Author } }, first, [], true)
+    await push(h, user, pathB, { schemas: { Author } }, first, [], false)
+
+    // Push 2 touches every leaf: small records updated, large ones deleted
+    // (two of them referenced f1), and one large record updated.
+    const second = [
+      [...Array.from({ length: 60 }, (_, k) => record(k * 50 + 1, `u${k}`)), record(40, 'big!')],
+    ]
+    const deletes = [[id(0), id(800), id(1620)]]
+    const parallel = { unitBytes: 1, baseLevel: 1, expandRatio: 0 }
+    const pa = await push(h, user, pathA, {}, second, deletes, parallel)
+    const pb = await push(h, user, pathB, {}, second, deletes, false)
+    expect(pa.result.changes).toEqual(pb.result.changes)
+
+    const ta = await trees(h, a.id)
+    const tb = await trees(h, b.id)
+    expect(ta.public).toEqual(tb.public)
+    expect(ta.version).toEqual(tb.version)
+    expect(ta.files).toEqual(tb.files)
+    expect(ta.files.public.count).toBe(1) // id(1600) and id(2400) still reference f1
+    const v = await verifyTree(new RepoSource(recordTree, ta.repo), ta.public.root!)
+    expect(v.errors).toEqual([])
+
+    // The longest line in any leaf body: units keep large base records as
+    // pointers (they used to read each one and write it inline). Bodies are
+    // shared by leaf hash and written once, so the serial commit, which still
+    // resolves them, finds these already written: only the units' are checked.
+    const longestLine = async (t: Awaited<ReturnType<typeof trees>>) => {
+      let longest = 0
+      const walk = async (hash: string): Promise<void> => {
+        const node = await t.repo.decoded(recordTree, hash)
+        if (node.kind === 'leaf') {
+          const text = gunzipSync(await t.repo.rawBody(hash)).toString()
+          for (const line of text.split('\n')) longest = Math.max(longest, line.length)
+        } else for (const c of node.children) await walk(c.hash)
+      }
+      await walk(t.public.root!)
+      return longest
+    }
+    expect(await longestLine(ta)).toBeLessThan(1000)
+  }, 60_000)
+
+  it('assembles one tree per invocation when out of time, and keeps the trees built', async () => {
+    const h = await harness()
+    const user = await h.member()
+    const a = await h.collection('ra')
+    const b = await h.collection('rb')
+    const pathA = '/api/collections/org/ra'
+    const pathB = '/api/collections/org/rb'
+    for (const path of [pathA, pathB]) {
+      const r = await h.request(`${path}/files/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
+      expect(r.status).toBe(201)
+    }
+    const Paper = { type: 'object', properties: { title: { type: 'string' } } }
+    const paper = (i: number) => ({ id: `p${i}`, type: 'Paper', data: { title: `t${i}` } })
+    const batch = (from: number, n: number, v: string) => [
+      ...Array.from({ length: n }, (_, i) =>
+        rec(`a${from + i}`, `${v}${i}`, i % 100 === 0 ? { pic: 'f1' } : {}),
+      ),
+      ...Array.from({ length: n }, (_, i) => paper(from + i)),
+      ...Array.from({ length: 20 }, (_, i) => rec(`q${from + i}`, v, { private: true })),
+    ]
+    await push(h, user, pathA, { schemas: { Author, Paper } }, [batch(0, 1000, 'n')], [], true)
+    await push(h, user, pathB, { schemas: { Author, Paper } }, [batch(0, 1000, 'n')], [], false)
+
+    // Every tree past the first is out of time: each assembly builds one tree,
+    // then queues the next attempt, which takes the trees already built.
+    assemblyLimits.budgetMs = -1
+    const enqueue = vi.spyOn(h.ports.jobs, 'enqueue')
+    const log = vi.spyOn(console, 'log')
+    const pa = await push(h, user, pathA, {}, [batch(500, 1000, 'u')], [], { unitBytes: 1 })
+    const built = log.mock.calls.filter((c) => String(c[0]).startsWith('[assemble]'))
+    const assemblies = enqueue.mock.calls.filter((c) => c[0].type === 'commit.assemble')
+    log.mockRestore()
+    enqueue.mockRestore()
+    const pb = await push(h, user, pathB, {}, [batch(500, 1000, 'u')], [], false)
+    expect(pa.result.changes).toEqual(pb.result.changes)
+
+    const heads = async (collectionId: string) => {
+      const [c] = await h.ports.db
+        .select()
+        .from(schema.collections)
+        .where(eq(schema.collections.id, collectionId))
+      const [v] = await h.ports.db
+        .select()
+        .from(schema.versions)
+        .where(eq(schema.versions.id, c!.headVersionId!))
+      const repo = await h.ports.stores.forCollection(collectionId)
+      const root = await repo.root(v!.hash)
+      const priv = root.private ? await repo.privateSet(root.private) : null
+      return {
+        version: { recordCount: v!.recordCount, changes: v!.changes, fileCount: v!.fileCount },
+        public: root.public,
+        // The private set's salt is per collection; its trees and files aren't.
+        private: priv ? { types: priv.types, files: priv.files } : null,
+      }
+    }
+    const ha = await heads(a.id)
+    expect(ha).toEqual(await heads(b.id))
+    expect(Object.keys(ha.public.types).sort()).toEqual(['Author', 'Paper'])
+    expect(ha.private?.types.Author?.count).toBe(40)
+
+    // Four trees (each type, public and private), each built once, one per
+    // assembly: the last unit's assembly and the three it and its successors queued.
+    const names = built.map((c) => / (\w+\/\w+): /.exec(String(c[0]))![1])
+    expect(names.sort()).toEqual([
+      'Author/private',
+      'Author/public',
+      'Paper/private',
+      'Paper/public',
+    ])
+    expect(assemblies.length).toBeGreaterThanOrEqual(4)
   }, 30_000)
 
   it('survives duplicate and early jobs', async () => {

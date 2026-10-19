@@ -122,8 +122,11 @@ export async function assembleTree<E>(
           return
         }
       }
-      // The tail of a base leaf straddling an inserted `through`.
-      for (; cur; cur = await nextEntry()) if (!isCovered(spec.key(cur))) builder.addEntry(cur)
+      // The tail of a base leaf straddling an inserted `through`. A leaf covered
+      // to its end has none: reading it through was a read of every large record
+      // in it, for each segment (staging, 2026-10-17).
+      if (isCovered(desc.lastKey)) await it.return?.()
+      else for (; cur; cur = await nextEntry()) if (!isCovered(spec.key(cur))) builder.addEntry(cur)
       await sink.drain?.()
       return
     }

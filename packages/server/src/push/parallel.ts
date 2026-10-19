@@ -36,6 +36,8 @@
 import {
   assembleTree,
   bodyOfRecord,
+  type Change,
+  type DecodedNode,
   compileSchema,
   boundaryBytes,
   compareUtf8,
@@ -44,6 +46,7 @@ import {
   LEAF_BOUNDARY_BITS,
   mergeTree,
   type NodeDesc,
+  type BodyRead,
   type RecordEntry,
   recordPayloadBytes,
   recordTree,
@@ -65,6 +68,7 @@ import { and, asc, count, eq, gte, inArray, isNotNull, isNull, lt, or, sql } fro
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
+import { isolateTag, isolate } from '../lib/isolate.js'
 import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema } from './changes.js'
@@ -92,10 +96,23 @@ export const parallelConfig = {
   aboveBytes: 256 * 1024 * 1024,
   /** Work per unit, about: changes' raw bytes plus the base leaves they rewrite. */
   unitBytes: 256 * 1024 * 1024,
+  /**
+   * Entries per unit, about: changes plus the base entries they rewrite. Bytes
+   * alone let a range of tiny records (Crossref's OED chapters, 2026-10-16) hold
+   * ten times the usual entries, and its unit ran out of time on every attempt.
+   */
+  unitEntries: 100_000,
   /** Base nodes per tree the planner may read split keys from: it picks the lowest level under this. */
   baseNodes: 50_000,
   /** A fixed base level (tests); null picks one by `baseNodes`. */
   baseLevel: null as number | null,
+  /**
+   * A level-1 base node over `unitBytes` whose mean leaf is over this many times
+   * the tree's is read, and its leaves become split candidates (heavy ranges).
+   */
+  expandRatio: 1.5,
+  /** Level-1 nodes read that way per tree, heaviest first. */
+  expandReads: 2_000,
   /** Units per `commit.plan` chunk (D1: about 1,000 queries an invocation). */
   chunkUnits: 1_000,
   /** A commit the serial path can't take over this (a schema or privacy change) is refused. */
@@ -104,6 +121,15 @@ export const parallelConfig = {
 
 /** How long an assembler holds the session before another may take over. */
 const LEASE_MS = 15 * 60 * 1000
+
+/**
+ * An assembly starts no new tree after `budgetMs`: it queues itself again and
+ * stops, well inside a queue job's 15 minutes of wall clock, and the next
+ * attempt takes the trees already built as they are. One tree still has to fit
+ * in one invocation, with what's left of the 15 minutes after the budget (Crossref's
+ * journal-article, 1,274 units: 516 s on staging).
+ */
+export const assemblyLimits = { budgetMs: 3 * 60 * 1000 }
 /** Body bytes a leaf holds before they go to a compressed member (each compresses with its raw text in memory). */
 const SPILL_BYTES = 1024 * 1024
 /** A unit's repository writes in flight: leaf bodies (compressed) and their raw bytes. */
@@ -172,9 +198,14 @@ async function putJson(ports: Ports, key: string, value: unknown) {
 }
 
 async function getJson<T>(ports: Ports, key: string): Promise<T> {
+  const obj = await getJsonIfAny<T>(ports, key)
+  if (obj === null) throw new Error(`Parallel commit object ${key} is missing`)
+  return obj
+}
+
+async function getJsonIfAny<T>(ports: Ports, key: string): Promise<T | null> {
   const obj = await ports.stores.internal.get(key)
-  if (!obj) throw new Error(`Parallel commit object ${key} is missing`)
-  return JSON.parse(await obj.text()) as T
+  return obj ? (JSON.parse(await obj.text()) as T) : null
 }
 
 /** Run `fn` over items, at most `n` at a time. */
@@ -200,11 +231,16 @@ const FANOUT_MEAN = 64
 /** Raw bytes of the base leaf a change lands in, about: a leaf's mean entries at the tree's mean size. */
 const leafBytesOf = (t: TreeSummary) => (t.count > 0 ? (t.bytes / t.count) * LEAF_MEAN : 0)
 
-/** The base level whose nodes the planner reads: the lowest with at most `baseNodes` of them. */
-function baseLevelFor(count: number): number {
+/**
+ * The base level whose nodes the planner reads: the lowest (above the leaves)
+ * with at most `baseNodes` of them. Level L has about count / (LEAF_MEAN ×
+ * FANOUT_MEAN^L) nodes; this counted level L − 1's until 2026-10-16, so a
+ * Crossref type read 26 nodes of ~4,096 leaves instead of 1,678 of ~64.
+ */
+export function baseLevelFor(count: number): number {
   if (parallelConfig.baseLevel !== null) return parallelConfig.baseLevel
   let level = 1
-  while (count / (LEAF_MEAN * FANOUT_MEAN ** (level - 1)) > parallelConfig.baseNodes) level++
+  while (count / (LEAF_MEAN * FANOUT_MEAN ** level) > parallelConfig.baseNodes) level++
   return level
 }
 
@@ -227,6 +263,36 @@ async function baseNodes(repo: Repo, root: string | null, level: number): Promis
   return out
 }
 
+/**
+ * Replace heavy level-1 base nodes by their leaves. Units can't be cut finer
+ * than split candidates (run marks, 1 in ~8 leaves; base node ends), so over
+ * leaves of large records (Crossref, 2026-10-16: up to 216 MB of records each) a
+ * unit was one interval of up to ~50 leaves and GBs of base. A node over
+ * `unitBytes` whose mean leaf is over `expandRatio` times the tree's is read,
+ * heaviest first, at most `expandReads` per tree; its leaves' last keys become
+ * candidates and their bytes exact. Order is kept.
+ */
+export async function expandHeavyNodes(
+  source: { node(hash: string): Promise<DecodedNode<RecordEntry>> },
+  nodes: NodeDesc[],
+  treeLeafBytes: number,
+): Promise<NodeDesc[]> {
+  const { unitBytes, expandRatio, expandReads } = parallelConfig
+  const meanLeaf = (d: NodeDesc) => (d.bytes / d.count) * LEAF_MEAN
+  const heavy = nodes
+    .filter(
+      (d) => d.level === 1 && d.bytes > unitBytes && meanLeaf(d) > expandRatio * treeLeafBytes,
+    )
+    .sort((a, b) => meanLeaf(b) - meanLeaf(a))
+    .slice(0, expandReads)
+  const children = new Map<string, NodeDesc[]>()
+  await pool(heavy, 6, async (d) => {
+    const node = await source.node(d.hash)
+    if (node.kind === 'node') children.set(d.hash, node.children)
+  })
+  return nodes.flatMap((d) => children.get(d.hash) ?? [d])
+}
+
 interface Range {
   after: string | null
   through: string | null
@@ -242,7 +308,8 @@ interface Range {
  * An interval's work is its changes' raw bytes (a part's spread evenly over the
  * intervals it spans), plus, when touched, the base bytes it may rewrite: at
  * most its base nodes' bytes (spread the same way), and at most a leaf for each
- * change.
+ * change. A unit closes at `unitBytes` of work, or at `unitEntries` entries
+ * counted the same way.
  */
 export function planRanges(
   slug: string,
@@ -250,6 +317,7 @@ export function planRanges(
   parts: RunPart[],
   base: { nodes: NodeDesc[]; leafBytes: number },
   unitBytes: number,
+  unitEntries = Infinity,
 ): Range[] {
   const n = candidates.length + 1
   // Interval i is (candidates[i − 1], candidates[i]]; a key belongs to the first
@@ -278,6 +346,7 @@ export function planRanges(
   const bytes = new Float64Array(n + 1)
   const entries = new Float64Array(n + 1)
   const baseBytes = new Float64Array(n + 1)
+  const baseCount = new Float64Array(n + 1)
   const spread = (arr: Float64Array, i0: number, i1: number, v: number) => {
     arr[i0]! += v / (i1 - i0 + 1)
     arr[i1 + 1]! -= v / (i1 - i0 + 1)
@@ -295,21 +364,28 @@ export function planRanges(
     // The node holds base keys in (low, lastKey].
     const i0 = low === null ? 0 : Math.min(n - 1, firstAtLeast(low, true))
     const i1 = intervalOf(node.lastKey)
-    if (i1 >= i0) spread(baseBytes, i0, i1, node.bytes)
+    if (i1 >= i0) {
+      spread(baseBytes, i0, i1, node.bytes)
+      spread(baseCount, i0, i1, node.count)
+    }
     low = node.lastKey
   }
+  const leafEntries = 2 ** LEAF_BOUNDARY_BITS
   const out: Range[] = []
   let unit: Range | null = null
   let acc = 0
+  let accEntries = 0
   let touched = 0
   let b = 0
   let e = 0
   let bb = 0
+  let bc = 0
   for (let i = 0; i < n; i++) {
     touched += touch[i]!
     b += bytes[i]!
     e += entries[i]!
     bb += baseBytes[i]!
+    bc += baseCount[i]!
     const after = i === 0 ? null : candidates[i - 1]!
     const through = i === n - 1 ? null : candidates[i]!
     if (touched === 0) {
@@ -321,16 +397,19 @@ export function planRanges(
       continue
     }
     const work = Math.max(0, b) + Math.max(0, Math.min(bb, e * base.leafBytes))
-    if (unit && acc > 0 && acc + work > unitBytes) {
+    const count = Math.max(0, e) + Math.max(0, Math.min(bc, e * leafEntries))
+    if (unit && acc > 0 && (acc + work > unitBytes || accEntries + count > unitEntries)) {
       out.push(unit)
       unit = null
     }
     if (!unit) {
       unit = { after, through, gap: false }
       acc = 0
+      accEntries = 0
     }
     unit.through = through
     acc += work
+    accEntries += count
   }
   if (unit) out.push(unit)
   return out
@@ -495,7 +574,11 @@ export async function planParallel(
       const tree = plan.types[slug]!.bases![set]
       // Nothing can reach a private tree that doesn't exist without a private upsert.
       if (set === 'private' && !privateType && !tree.root && !anyPrivate) continue
-      const nodes = await baseNodes(ctx.repo, tree.root, baseLevelFor(tree.count))
+      const nodes = await expandHeavyNodes(
+        new RepoSource(recordTree, ctx.repo),
+        await baseNodes(ctx.repo, tree.root, baseLevelFor(tree.count)),
+        leafBytesOf(tree),
+      )
       const fromBase = nodes.map((d) => d.lastKey)
       const candidates = [...new Set([...marks, ...fromBase])].filter(isNatural).sort(compareUtf8)
       const ranges = planRanges(
@@ -504,6 +587,7 @@ export async function planParallel(
         parts,
         { nodes, leafBytes: leafBytesOf(tree) },
         parallelConfig.unitBytes,
+        parallelConfig.unitEntries,
       )
       for (const [ord, r] of ranges.entries()) plan.units!.push({ set, type: slug, ord, ...r })
     }
@@ -763,6 +847,31 @@ async function unitRuns(ports: Ports, slicesKey: string): Promise<RunIndex[]> {
   return runs.map(normalizeIndex)
 }
 
+/** Leaves and records this large are logged as a unit meets them. */
+const BIG_LEAF_BYTES = 16 * 1024 * 1024
+const BIG_RECORD_BYTES = 1024 * 1024
+/** Base bodies this large (stored) are logged as a unit reads them. */
+const BIG_BODY_BYTES = 1024 * 1024
+const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`
+
+/** A unit's changes, passed through, logging large records and every 20,000th change. */
+async function* watchChanges(
+  log: (msg: string) => void,
+  changes: AsyncIterable<Change<RecordEntry>>,
+): AsyncGenerator<Change<RecordEntry>> {
+  let n = 0
+  let largest = 0
+  for await (const c of changes) {
+    n++
+    const size = c.entry?.size ?? 0
+    if (size > largest) largest = size
+    if (size >= BIG_RECORD_BYTES) log(`change ${c.key} is ${mb(size)}`)
+    if (n % 20_000 === 0) log(`${n} changes, at ${c.key}, largest ${mb(largest)}`)
+    yield c
+  }
+  log(`${n} changes in all, largest ${mb(largest)}`)
+}
+
 /** Run one unit. Idempotent: only a pending unit of the session's current plan runs. */
 export async function runCommitUnit(ports: Ports, unitId: string): Promise<void> {
   const [unit] = await ports.db
@@ -772,6 +881,16 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   if (!unit || unit.status !== 'pending') return
   const session = await getSession(ports, unit.sessionId)
   if (session?.status !== 'committing' || session.commitPlan !== unit.planId) return
+  isolate.unitsStarted++
+  try {
+    await runPendingUnit(ports, unit, session)
+  } finally {
+    isolate.unitsEnded++
+  }
+}
+
+async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow): Promise<void> {
+  const started = Date.now()
   const plan = await getJson<CommitPlan>(ports, `${planDir(session.id, unit.planId)}/plan.json`)
   const runs = await unitRuns(ports, unit.slicesKey!)
   const t = plan.types[unit.type]!
@@ -780,27 +899,65 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
   // Writes in flight hold compressed leaves; halved from the default so two units fit an isolate.
   const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, ...unitSink })
   const range = { after: unit.after, through: unit.through }
-  const changes = deltaChanges(
-    ports.stores.internal,
-    repo,
-    session.id,
-    runs,
-    unit.type,
-    set,
-    t.privateType,
-    { pub: !!t.public.root, priv: !!t.private.root },
-    range,
+  // Progress in the Worker's log, so a unit that dies (out of memory, say) shows
+  // how far it got, the largest things it met, and what else its isolate ran.
+  const tag = `${unit.id} ${unit.type}/${set} (${unit.after ?? 'start'}, ${unit.through ?? 'end'}]`
+  const log = (msg: string) => console.log(`[unit] ${isolateTag()} ${tag}: ${msg}`)
+  log(`start, attempt ${unit.attempts}, ${runs.length} runs`)
+  const changes = watchChanges(
+    log,
+    deltaChanges(
+      ports.stores.internal,
+      repo,
+      session.id,
+      runs,
+      unit.type,
+      set,
+      t.privateType,
+      { pub: !!t.public.root, priv: !!t.private.root },
+      range,
+    ),
   )
   const leaves: NodeDesc[] = []
   const refs = new FileRefDelta()
   // A privacy change merges into the moved tree (`bases`).
   const into = (t.bases ?? t)[set].root
-  const merged = await mergeTree(new RepoSource(recordTree, repo), sink, into, changes, {
-    ...builderOpts,
-    range,
-    leafOutput: (d) => leaves.push(d),
-    onChange: (before, after) => refs.record(set, before, after, unit.type),
-  })
+  // Base bodies by how they were read, and their stored bytes where known.
+  const reads = { memory: 0, cache: 0, whole: 0, stream: 0, storedBytes: 0 }
+  const onBodyRead = (r: BodyRead) => {
+    reads[r.from]++
+    reads.storedBytes += r.storedBytes ?? 0
+    if ((r.storedBytes ?? 0) >= BIG_BODY_BYTES)
+      log(`base body ${r.leaf.slice(0, 12)} from ${r.from}, ${mb(r.storedBytes ?? 0)} stored`)
+  }
+  // The most members compressing at a leaf's end: what a leaf's write holds raw.
+  let mostCompressing = 0
+  const merged = await mergeTree(
+    new RepoSource(recordTree, repo, { onBodyRead, pointers: true }),
+    sink,
+    into,
+    changes,
+    {
+      ...builderOpts,
+      range,
+      leafOutput: (d) => {
+        leaves.push(d)
+        mostCompressing = Math.max(mostCompressing, sink.compressingCount)
+        if (d.bytes >= BIG_LEAF_BYTES || leaves.length % 100 === 0)
+          log(
+            `leaf ${leaves.length} through ${d.lastKey}, ${d.count} entries, ${mb(d.bytes)}; ` +
+              `sink: ${sink.compressingCount} compressing (${mb(sink.compressingBytes)}), ` +
+              `${sink.writeCount} writes of ${mb(sink.writeBytes)}`,
+          )
+      },
+      onChange: (before, after) => refs.record(set, before, after, unit.type),
+    },
+  )
+  log(
+    `merged, ${leaves.length} leaves, ${JSON.stringify(merged.stats)}; ` +
+      `base bodies ${JSON.stringify({ ...reads, storedBytes: mb(reads.storedBytes) })}; ` +
+      `most compressing ${mostCompressing}`,
+  )
   await sink.flush()
   await refs.resolve(repo)
   const survived = unit.through === null || merged.lastKey === unit.through
@@ -826,6 +983,7 @@ export async function runCommitUnit(ports: Ports, unitId: string): Promise<void>
     )
     .limit(1)
   if (!left) await ports.jobs.enqueue({ type: 'commit.assemble', sessionId: session.id })
+  log(`done in ${Math.round((Date.now() - started) / 1000)}s`)
   // A slot is free: refill this user's windows, this session's or the next one's.
   await topUpUnits(ports, session.userId)
 }
@@ -954,41 +1112,83 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
 
     const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
     const repo = await ports.stores.forCollection(session.collectionId)
-    const source = new RepoSource(recordTree, repo)
+    // Base leaves keep large records as pointers, as in units (runPendingUnit).
+    const source = new RepoSource(recordTree, repo, { pointers: true })
     const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
     const built: Record<string, { public: TreeSummary; private: TreeSummary }> = {}
     for (const [slug, t] of Object.entries(plan.types)) built[slug] = { ...(t.bases ?? t) }
     const refs = new FileRefDelta()
     const stats = { added: 0, removed: 0, updated: 0 }
+    const take = (tree: AssembledTree) => {
+      built[tree.type]![tree.set] = tree.summary
+      stats.added += tree.stats.added
+      stats.removed += tree.stats.removed
+      stats.updated += tree.stats.updated
+      for (const [h, n] of tree.refs) refs.add(tree.set, tree.type, h, n)
+    }
+    // Trees built by this invocation: it always builds one before it may stop.
+    let builtHere = 0
     for (const group of trees(rows)) {
       const { set, type } = group[0]! as { set: SetName; type: string }
+      const units = group.filter((u) => !u.gap)
+      // A tree an earlier attempt finished is kept, so an attempt that stops
+      // (its time budget, or the wall clock) carries on at the next tree.
+      const treeKey = `${planDir(sessionId, planId)}/trees/${set}.${encodeURIComponent(type)}.json`
+      const saved = await getJsonIfAny<AssembledTree>(ports, treeKey)
+      if (saved && saved.units.join() === units.map((u) => u.id).join()) {
+        take(saved)
+        continue
+      }
+      if (builtHere > 0 && Date.now() - now > assemblyLimits.budgetMs) {
+        // Out of time for another tree: hand the rest to a fresh invocation.
+        await release()
+        await ports.jobs.enqueue({ type: 'commit.assemble', sessionId })
+        return
+      }
       // A type made public counts every record of its new public tree as added
       // (the build does that), not its public changes.
       const countStats = !(plan.types[type]!.move === 'toPublic' && set === 'public')
+      const treeStats = { added: 0, removed: 0, updated: 0 }
+      const treeRefs = new Map<string, number>()
       // Each segment's output is read once, when assembly reaches it.
-      const segments: Segment[] = group
-        .filter((u) => !u.gap)
-        .map((u) => ({
-          after: u.after,
-          through: u.through,
-          leaves: async () => {
-            const out = await getJson<UnitOutput>(ports, u.outputKey!)
-            if (countStats) {
-              stats.added += out.stats.added
-              stats.removed += out.stats.removed
-              stats.updated += out.stats.updated
-            }
-            // A unit covers one type, so its deltas are that type's too.
-            for (const [h, n] of out.refs) refs.add(set, type, h, n)
-            return out.leaves
-          },
-        }))
+      const segments: Segment[] = units.map((u) => ({
+        after: u.after,
+        through: u.through,
+        leaves: async () => {
+          const out = await getJson<UnitOutput>(ports, u.outputKey!)
+          if (countStats) {
+            treeStats.added += out.stats.added
+            treeStats.removed += out.stats.removed
+            treeStats.updated += out.stats.updated
+          }
+          // A unit covers one type, so its deltas are that type's too.
+          for (const [h, n] of out.refs) treeRefs.set(h, (treeRefs.get(h) ?? 0) + n)
+          return out.leaves
+        },
+      }))
+      const treeStarted = Date.now()
       const result = await assembleTree(source, sink, built[type]![set].root, segments)
-      built[type]![set] = summaryOf(
-        result.root
-          ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
-          : undefined,
+      console.log(
+        `[assemble] ${isolateTag()} ${sessionId} ${type}/${set}: ${segments.length} segments ` +
+          `in ${Math.round((Date.now() - treeStarted) / 1000)}s, ${JSON.stringify(result.stats)}`,
       )
+      const tree: AssembledTree = {
+        set,
+        type,
+        units: units.map((u) => u.id),
+        summary: summaryOf(
+          result.root
+            ? { root: result.root.hash, count: result.root.count, bytes: result.root.bytes }
+            : undefined,
+        ),
+        stats: treeStats,
+        refs: [...treeRefs],
+      }
+      // The tree's nodes are written before it counts as done.
+      await sink.flush()
+      await putJson(ports, treeKey, tree)
+      take(tree)
+      builtHere++
       await touch(ports, sessionId)
     }
     await sink.flush()
@@ -1006,6 +1206,18 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     await release()
     throw err
   }
+}
+
+/** One tree assembly finished, kept so a later attempt doesn't build it again. */
+interface AssembledTree {
+  set: SetName
+  type: string
+  /** The units it was built from: a saved tree counts only for the same ones. */
+  units: string[]
+  summary: TreeSummary
+  stats: { added: number; removed: number; updated: number }
+  /** File reference deltas: [file hash, delta]. */
+  refs: [string, number][]
 }
 
 /** What assembly built, kept for the publish job when a schema is revalidated first. */

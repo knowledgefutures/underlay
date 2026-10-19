@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { chunkLines, gunzipChunks, gunzipMembers, gunzipText, gzip } from '../../src/repo/gzip.js'
+import {
+  chunkLines,
+  gunzipChunks,
+  gunzipMembers,
+  gunzipStream,
+  gunzipText,
+  gzip,
+} from '../../src/repo/gzip.js'
 
 describe('gunzip', () => {
   // A large leaf body is several gzip members in one object. workerd's
@@ -69,5 +76,39 @@ describe('streaming gunzip', () => {
     const split: string[] = []
     for await (const l of chunkLines(oneByte())) split.push(l)
     expect(split).toEqual(['ab😀c', 'd'])
+  })
+
+  it('reads compressed input that arrives in chunks, and stops when the reader does', async () => {
+    const lines = Array.from(
+      { length: 20_000 },
+      (_, i) => `{"n":${i},"t":"é${'y'.repeat(i % 89)}"}`,
+    )
+    const text = lines.join('\n') + '\n'
+    const third = Math.floor(text.length / 3)
+    const body = new Uint8Array([
+      ...(await gzip(text.slice(0, third))),
+      ...(await gzip(text.slice(third, 2 * third))),
+      ...(await gzip(text.slice(2 * third))),
+    ])
+    let sent = 0
+    async function* pieces(size: number) {
+      for (let at = 0; at < body.length; at += size) {
+        sent = at + size
+        yield body.subarray(at, at + size)
+      }
+    }
+    const got: string[] = []
+    for await (const l of chunkLines(gunzipStream(pieces(997)))) got.push(l)
+    expect(got).toEqual(lines)
+    // A reader that stops early stops the input too.
+    for await (const _ of chunkLines(gunzipStream(pieces(64)))) break
+    expect(sent).toBeLessThan(body.length)
+    // Bad input fails the read.
+    async function* junk() {
+      yield new Uint8Array([0x1f, 0x8b, 8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    }
+    await expect(async () => {
+      for await (const _ of gunzipStream(junk())) void _
+    }).rejects.toThrow()
   })
 })

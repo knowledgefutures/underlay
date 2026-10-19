@@ -22,6 +22,7 @@ import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
 import { isBulk, QueueJobs, runJob } from './jobs.js'
+import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports, PublicAssets } from './ports.js'
 import { createStores } from './stores.js'
@@ -250,7 +251,10 @@ export default {
         await runJob(msg.body, ports)
         msg.ack()
       } catch (err) {
-        console.error(`[jobs] ${msg.body.type} failed (attempt ${msg.attempts}):`, err)
+        console.error(
+          `[jobs] ${isolateTag()} ${msg.body.type} failed (attempt ${msg.attempts}):`,
+          err,
+        )
         msg.retry({ delaySeconds: Math.min(3600, 2 ** msg.attempts) })
       }
     }
