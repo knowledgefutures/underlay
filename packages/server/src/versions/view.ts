@@ -128,8 +128,9 @@ async function* mergeById(
       }
     }
   } finally {
-    // A reader that stops early (a page) closes the leaf bodies both sets are streaming.
-    await Promise.all([ai.return?.(), bi.return?.()])
+    // A reader that stops early (a page) closes the leaf bodies both sets are
+    // streaming; settled, so a failing close can't replace the reader's error.
+    await Promise.allSettled([ai.return?.(), bi.return?.()])
   }
 }
 

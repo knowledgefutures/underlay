@@ -27,6 +27,50 @@ async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe('version views', () => {
+  it("closes both sets' leaf bodies when a reader stops early", async () => {
+    const h = await harness()
+    const c = await h.collection()
+    const ids = Array.from({ length: 1200 }, (_, i) => `a${String(i).padStart(4, '0')}`)
+    const isPrivate = (id: string) => Number(id.slice(1)) % 10 === 0
+    const r = await commitVersion(h.ports, {
+      collectionId: c.id,
+      base: null,
+      types: [
+        {
+          slug: 'Author',
+          schema: Author,
+          schemaHash: hashSchema(Author),
+          public: ids.filter((id) => !isPrivate(id)).map((id, i) => up(id, i)),
+          private: ids.filter(isPrivate).map((id, i) => up(id, i)),
+        },
+      ],
+      metadata: null,
+    })
+    if (r.status !== 'committed') throw new Error(r.status)
+    const repo = await h.ports.stores.forCollection(c.id)
+    // Count the leaf bodies being streamed.
+    let open = 0
+    let peak = 0
+    const bodyLineStream = repo.bodyLineStream.bind(repo)
+    repo.bodyLineStream = async function* (...args: Parameters<typeof bodyLineStream>) {
+      peak = Math.max(peak, ++open)
+      try {
+        yield* bodyLineStream(...args)
+      } finally {
+        open--
+      }
+    }
+    const owner = await loadView(repo, r.version, true)
+    let n = 0
+    for await (const e of typeRecords(owner, owner.types[0]!, { bodies: true })) {
+      expect(e.body).toBeDefined()
+      if (++n === 10) break
+    }
+    // One leaf of each set was open, and a page that stops closes both.
+    expect(peak).toBe(2)
+    expect(open).toBe(0)
+  })
+
   it('pages owners across both sets by offset and by key, and hides private records from others', async () => {
     const h = await harness()
     const c = await h.collection()
