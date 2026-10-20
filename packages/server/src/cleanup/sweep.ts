@@ -10,6 +10,9 @@
  *                roots/<digest>.json, private/<commitment>.json: unmarked
  *                files/<hash>: unmarked, with its `files` row
  *                collections/<id>/…: no collection row, no tombstone in grace
+ *                runs/<id>/…: layout F's files of a collection whose tombstone's
+ *                grace is over, once the areas are done, but what a live fork
+ *                still reads (KeyedLayout.dropCollection)
  *   internal     sessions/<id>/…: no push session row, past the orphan age
  *                (reference-log scratch, sessions/refs-…, is step 1's)
  *                uploads/<id>: no upload row, or one that's done, past the orphan age
@@ -24,8 +27,8 @@
  * inside it), delete `files` rows, then objects, checking the window's deadline
  * as it goes, and close it.
  */
-import type { Store } from '@underlay/protocol'
-import { and, asc, eq, gt, gte, inArray, or } from 'drizzle-orm'
+import { KeyedLayout, setHome, type Store } from '@underlay/protocol'
+import { and, asc, eq, gt, gte, inArray, isNull, lte, or } from 'drizzle-orm'
 
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
@@ -422,5 +425,57 @@ export async function sweepStep(
     if (deleted >= cleanupConfig.sweepDeletes) break
   }
   if ((await flush()) === 'wait') return { state: start, stats, outcome: 'wait' }
+  if (s.area >= AREAS.length && (await dropDeletedRuns(ports, repo.blobs, stats, dryRun)))
+    return { state: s, stats, outcome: 'more' }
   return { state: s, stats, outcome: s.area >= AREAS.length ? 'done' : 'more' }
+}
+
+/** Deleted collections whose layout F files one sweep job drops. */
+const DROPS_PER_JOB = 20
+
+/**
+ * Layout F's files of collections deleted past their grace, a few collections a
+ * job. A fork reads its parent's files where they are, so what a live fork lists
+ * stays, and goes with the last fork (KeyedLayout.dropCollection). Nothing writes
+ * to a deleted collection, so no fence is needed. True when more are due.
+ */
+async function dropDeletedRuns(
+  ports: Ports,
+  repo: Store,
+  stats: schema.CleanupStats,
+  dryRun: boolean,
+): Promise<boolean> {
+  const T = schema.collectionTombstones
+  const due = await ports.db
+    .select({ id: T.collectionId })
+    .from(T)
+    .where(
+      and(eq(T.recordLayout, 'f'), isNull(T.recordsDroppedAt), lte(T.deletedAt, graceCutoff())),
+    )
+    .orderBy(asc(T.collectionId))
+    .limit(DROPS_PER_JOB)
+  if (dryRun) return false
+  // A parent is gone once it has no row and its tombstone's grace is over. Homes are
+  // a collection's sets (`<collection>/<set>`).
+  const deleted = async (home: string) => {
+    const id = home.split('/')[0]!
+    const [row] = await ports.db
+      .select({ id: schema.collections.id })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, id))
+    if (row) return false
+    const [t] = await ports.db
+      .select({ id: T.collectionId })
+      .from(T)
+      .where(and(eq(T.collectionId, id), lte(T.deletedAt, graceCutoff())))
+    return !!t
+  }
+  for (const { id } of due) {
+    for (const set of ['public', 'private'] as const) {
+      const r = await KeyedLayout.dropCollection(repo, setHome(id, set), deleted)
+      count(stats, 'runs', 0, r.objects)
+    }
+    await ports.db.update(T).set({ recordsDroppedAt: new Date() }).where(eq(T.collectionId, id))
+  }
+  return due.length === DROPS_PER_JOB
 }

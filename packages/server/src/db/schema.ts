@@ -271,6 +271,15 @@ export const collections = sqliteTable(
      */
     reconciledSeq: integer('reconciled_seq').notNull().default(0),
     reconciledFilesRoot: text('reconciled_files_root'),
+    /**
+     * Where its record bytes live (record-storage-layout.md): `today`, inside leaf
+     * bodies, or `f`, in packs found through the collection's own index under
+     * `runs/<collection>/`. Set at creation (forks take their parent's); existing
+     * collections are `today` until converted.
+     */
+    recordLayout: text('record_layout', { enum: ['today', 'f'] })
+      .notNull()
+      .default('today'),
     deletedAt: ts('deleted_at'),
     createdAt: createdAt(),
     updatedAt: ts('updated_at')
@@ -733,6 +742,12 @@ export const collectionTombstones = sqliteTable('collection_tombstones', {
   deletedAt: ts('deleted_at')
     .notNull()
     .$defaultFn(() => new Date()),
+  /** The collection's record layout: layout F's files (`runs/<id>/`) go once its grace is over. */
+  recordLayout: text('record_layout', { enum: ['today', 'f'] })
+    .notNull()
+    .default('today'),
+  /** When cleanup dropped its layout F files (null: not yet, or none). */
+  recordsDroppedAt: ts('records_dropped_at'),
 })
 
 // --- Reference log (provenance; edge-redesign.md "Provenance: the reference log") --------

@@ -35,6 +35,7 @@ interface Gunzip extends AsyncIterable<Uint8Array> {
   end(chunk?: Uint8Array): void
   destroy(err?: Error): void
   once(event: 'drain' | 'close', listener: () => void): void
+  off(event: 'drain' | 'close', listener: () => void): void
   readonly destroyed: boolean
 }
 const zlib = (
@@ -129,9 +130,16 @@ export async function* gunzipStream(input: AsyncIterable<Uint8Array>): AsyncGene
       for await (const c of input) {
         if (stream.destroyed) return
         if (!stream.write(c))
+          // Whichever comes first; the other listener is removed, or one is left
+          // behind every time the stream pushes back (a leak across a long body).
           await new Promise<void>((resolve) => {
-            stream.once('drain', resolve)
-            stream.once('close', resolve)
+            const done = () => {
+              stream.off('drain', done)
+              stream.off('close', done)
+              resolve()
+            }
+            stream.once('drain', done)
+            stream.once('close', done)
           })
       }
       stream.end()

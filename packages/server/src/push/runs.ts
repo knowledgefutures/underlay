@@ -398,9 +398,16 @@ export class RunWriter {
   }
 }
 
-export async function writeRunIndex(store: Store, sessionId: string, index: RunIndex) {
+export async function writeRunIndex(
+  store: Store,
+  sessionId: string,
+  index: RunIndex,
+  /** Keep an index already there (it's the same: a compaction's pieces joined twice). */
+  opts: { ifAbsent?: boolean } = {},
+) {
   await store.put(indexKey(sessionId, index.seq), JSON.stringify({ v: 2, ...index }), {
     contentType: 'application/json',
+    ...(opts.ifAbsent ? { ifAbsent: true } : {}),
   })
 }
 

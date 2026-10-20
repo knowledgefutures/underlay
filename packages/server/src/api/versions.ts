@@ -383,7 +383,8 @@ export function versionRoutes() {
           c.var.meter.logicalBytes =
             (c.var.meter.logicalBytes ?? 0) +
             entries.reduce((n, e) => (view.withheld.has(e.hash) ? n : n + e.size + 1), 0)
-          if (plain) {
+          // F keeps no leaf bodies: its records come through the leaf stream.
+          if (plain && !view.repo.records) {
             yield await view.repo.rawBody(leaf.hash)
             continue
           }

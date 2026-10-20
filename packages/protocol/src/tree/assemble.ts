@@ -95,8 +95,14 @@ export async function assembleTree<E>(
     }
     stats.readNodes++
     if (desc.level === 0) {
-      // Read one entry at a time: a leaf of large records is never held whole.
-      const it = leafEntryStream(source, desc.hash)[Symbol.asyncIterator]()
+      // Read one entry at a time: a leaf of large records is never held whole. In a
+      // layout that keeps records out of leaves (repo/layouts), its entries pass
+      // through without their records, as a merge's do; and a rewritten leaf may
+      // be stored against this one (node deltas).
+      sink.rewriting?.(desc.hash)
+      const it = (source.sparseStream ?? ((h: string) => leafEntryStream(source, h)))(desc.hash)[
+        Symbol.asyncIterator
+      ]()
       const nextEntry = async () => {
         const r = await it.next()
         return r.done ? undefined : r.value

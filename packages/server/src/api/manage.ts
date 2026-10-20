@@ -166,6 +166,7 @@ export function manageRoutes() {
           versions: totals?.n ?? 0,
           totalBytes: Number(totals?.bytes ?? 0),
           deletedBy: c.var.principal?.userId ?? null,
+          recordLayout: col.recordLayout,
         })
         .onConflictDoUpdate({
           target: schema.collectionTombstones.collectionId,
@@ -174,6 +175,8 @@ export function manageRoutes() {
             refEvents: col.refEvents,
             refBytes: col.refBytes,
             deletedAt: new Date(),
+            recordLayout: col.recordLayout,
+            recordsDroppedAt: null,
           },
         }),
       db.delete(schema.collections).where(eq(schema.collections.id, col.id)),

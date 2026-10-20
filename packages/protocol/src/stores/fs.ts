@@ -45,6 +45,9 @@ interface NodeModules {
 type GetBuiltin = (id: string) => unknown
 let nodeModules: NodeModules | undefined
 /** Node's modules, through `process.getBuiltinModule` so no bundler sees a `node:` import. */
+/** Objects up to this size are read whole by `get` (see there). */
+const EAGER_BYTES = 1024 * 1024
+
 const node = async (): Promise<NodeModules> => {
   if (nodeModules) return nodeModules
   const get = (globalThis as { process?: { getBuiltinModule?: GetBuiltin } }).process
@@ -62,6 +65,23 @@ const enc = new TextEncoder()
 const hex = (b: ArrayBuffer) =>
   [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('')
 const unhex = (s: string) => new Uint8Array((s.match(/../g) ?? []).map((x) => parseInt(x, 16)))
+
+/**
+ * Move a written temporary file to its key. With `ifAbsent`, a hard link, which
+ * fails if the key exists: a check first and a rename after would let two
+ * writers both win (two maintain jobs both holding the lease, round 12 at 20,000
+ * collections), where R2's conditional put lets one.
+ */
+async function settle(fsp: typeof NodeFsp, tmp: string, path: string, ifAbsent?: boolean) {
+  if (!ifAbsent) return fsp.rename(tmp, path)
+  try {
+    await fsp.link(tmp, path)
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'EEXIST') throw err
+  } finally {
+    await fsp.rm(tmp, { force: true })
+  }
+}
 
 /** A store in a directory; with `presign`, one that presigns URLs served by the app. */
 export function fileStore(root: string): FileStore
@@ -122,6 +142,27 @@ export class FileStore implements Store {
         await fh.close()
       }
     }
+    // A small object is read now: deleted after this get, it still reads, as on R2 (a
+    // maintain job read a merge plan the merge's last job had just deleted). Large ones
+    // stay lazy: nothing deletes them while they're read (retired files wait out a grace).
+    if (size <= EAGER_BYTES) {
+      let buf: Uint8Array<ArrayBuffer>
+      try {
+        buf = await read()
+      } catch (err) {
+        // Deleted between the stat and the read: as if the get came after.
+        if ((err as { code?: string }).code === 'ENOENT') return null
+        throw err
+      }
+      return {
+        ...head,
+        get body() {
+          return new Blob([buf]).stream()
+        },
+        bytes: async () => buf,
+        text: async () => new TextDecoder().decode(buf),
+      }
+    }
     return {
       ...head,
       get body() {
@@ -157,7 +198,7 @@ export class FileStore implements Store {
     // Write then rename, so a reader never sees a partial object.
     const tmp = `${path}.${crypto.randomUUID()}.tmp`
     await fsp.writeFile(tmp, body)
-    await fsp.rename(tmp, path)
+    await settle(fsp, tmp, path, opts.ifAbsent)
     if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
   }
 
@@ -175,7 +216,7 @@ export class FileStore implements Store {
       await fsp.writeFile(tmp, new Uint8Array(0))
       for await (const part of parts) await fsp.appendFile(tmp, part)
       await opts.check?.()
-      await fsp.rename(tmp, path)
+      await settle(fsp, tmp, path, opts.ifAbsent)
     } catch (err) {
       await fsp.rm(tmp, { force: true })
       throw err
@@ -193,18 +234,25 @@ export class FileStore implements Store {
     const { fsp, path: P } = await node()
     const root = P.resolve(this.root)
     const out: string[] = []
+    // From the deepest folder the prefix names, into only the folders that can hold its
+    // keys: walking the whole bucket made a listing cost every file in it (the scale
+    // bench's 20,000 collections: most of each F maintain job, which lists a collection's
+    // manifests; R2 lists a prefix without that).
+    const start = P.resolve(root, prefix.slice(0, prefix.lastIndexOf('/') + 1))
+    if (start !== root && !start.startsWith(root + P.sep)) return { keys: [], info: [] }
     const walk = async (dir: string) => {
       const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])
       for (const e of entries) {
         const p = P.join(dir, e.name)
-        if (e.isDirectory()) await walk(p)
-        else if (!e.name.endsWith('.__type') && !e.name.endsWith('.tmp')) {
-          const key = P.relative(root, p).split(P.sep).join('/')
+        const key = P.relative(root, p).split(P.sep).join('/')
+        if (e.isDirectory()) {
+          if (`${key}/`.startsWith(prefix) || prefix.startsWith(`${key}/`)) await walk(p)
+        } else if (!e.name.endsWith('.__type') && !e.name.endsWith('.tmp')) {
           if (key.startsWith(prefix) && (!cursor || key > cursor)) out.push(key)
         }
       }
     }
-    await walk(root)
+    await walk(start)
     out.sort()
     const page = out.slice(0, 1000)
     const info = await Promise.all(

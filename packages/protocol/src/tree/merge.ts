@@ -55,6 +55,11 @@ export interface MergeOptions<E> extends BuilderOptions<E> {
   /** Called for every effective change, in key order: (old, new). */
   onChange?: (before: E | null, after: E | null) => void
   /**
+   * Whether `onChange` needs an old entry's payload (default true). A layout that
+   * keeps records out of leaves then reads it; false skips that read.
+   */
+  oldPayloads?: boolean
+  /**
    * Merge only this range (a commit unit). Requires `leafOutput`, and every
    * change must lie in the range.
    */
@@ -97,6 +102,8 @@ export function emptyStats(): MergeStats {
 export class Peekable<T> {
   readonly #it: Iterator<T> | AsyncIterator<T>
   #head: IteratorResult<T> | undefined
+  /** Items taken and put back, served before the iterator. */
+  #back: T[] = []
 
   constructor(src: Iterable<T> | AsyncIterable<T>) {
     this.#it =
@@ -106,14 +113,25 @@ export class Peekable<T> {
   }
 
   async peek(): Promise<T | undefined> {
+    if (this.#back.length) return this.#back[0]
     this.#head ??= await this.#it.next()
     return this.#head.done ? undefined : this.#head.value
   }
 
   async next(): Promise<T | undefined> {
+    if (this.#back.length) return this.#back.shift()
     const v = await this.peek()
     this.#head = undefined
     return v
+  }
+
+  /** The items while `ok` holds, left in place: a look further ahead than peek. */
+  async lookAhead(ok: (v: T) => boolean): Promise<T[]> {
+    const out: T[] = []
+    for (let v = await this.peek(); v !== undefined && ok(v); v = await this.peek())
+      out.push((await this.next())!)
+    this.#back = [...out, ...this.#back]
+    return out
   }
 }
 
@@ -167,9 +185,42 @@ export async function mergeTree<E>(
     }
   }
 
+  // Layouts that keep records out of leaves give entries without bodies; a
+  // changed entry's old body is fetched only when a change callback needs it.
+  const sparse = source.sparseStream
+  const needOld = !!sparse && !!opts.onChange && !!source.withPayload && opts.oldPayloads !== false
+  const withOld = async (desc: NodeDesc, old: E) =>
+    needOld ? source.withPayload!(desc.hash, old) : old
+
+  /**
+   * A sparse leaf's old records that the changes landing in it replace or remove,
+   * read in one batch (file references need them), by key.
+   */
+  const oldBodies = async (desc: NodeDesc, olds: E[]): Promise<Map<string, E>> => {
+    const keys = new Set(
+      (await pending.lookAhead((c) => compareUtf8(c.key, desc.lastKey) <= 0)).map((c) => c.key),
+    )
+    const at = olds.flatMap((o, i) => (keys.has(spec.key(o)) ? [i] : []))
+    if (!at.length) return new Map()
+    const got = await source.payloadsAt!(desc.hash, olds, at)
+    return new Map(got.map((e) => [spec.key(e), e]))
+  }
+
   const rewriteLeaf = async (desc: NodeDesc) => {
     stats.readNodes++
-    for await (const old of leafEntryStream(source, desc.hash)) {
+    sink.rewriting?.(desc.hash)
+    let entries: AsyncIterable<E> | E[] = sparse
+      ? sparse(desc.hash)
+      : leafEntryStream(source, desc.hash)
+    let olds: Map<string, E> | null = null
+    if (needOld && source.payloadsAt) {
+      const list: E[] = []
+      for await (const e of entries) list.push(e)
+      olds = await oldBodies(desc, list)
+      entries = list
+    }
+    const withOldOf = async (old: E) => olds?.get(spec.key(old)) ?? withOld(desc, old)
+    for await (const old of entries) {
       const oldKey = spec.key(old)
       // A leaf straddling a unit's range edge: keep only the range's entries.
       if (range && !inRange(range, oldKey)) continue
@@ -186,13 +237,13 @@ export async function mergeTree<E>(
         await nextChange()
         if (!c.entry) {
           stats.removed++
-          opts.onChange?.(old, null)
+          opts.onChange?.(await withOldOf(old), null)
         } else if (spec.same(old, c.entry)) {
           stats.unchanged++
           await add(old)
         } else {
           stats.updated++
-          opts.onChange?.(old, c.entry)
+          opts.onChange?.(await withOldOf(old), c.entry)
           await add(c.entry)
         }
       } else {

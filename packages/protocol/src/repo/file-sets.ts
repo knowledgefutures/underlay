@@ -62,6 +62,11 @@ const typedKey = (type: string, hash: string) => `${type}/${hash}`
  * `resolve`, which must run before `refs` is used.
  */
 export class FileRefDelta {
+  /**
+   * Sets whose base holds no file reference at all: a changed record's old version
+   * can't take one away, so it isn't read (packed layouts skip fetching it).
+   */
+  readonly noOldRefs = new Set<SetName>()
   /** Per set: file hash → change in references. */
   readonly refs: Record<SetName, Map<string, number>> = { public: new Map(), private: new Map() }
   /** Per set: "<type>/<file hash>" → change in that type's references. */
@@ -98,7 +103,7 @@ export class FileRefDelta {
 
   /** Feed one record change of a type in a set (mergeTree's onChange). */
   record(set: SetName, before: RecordEntry | null, after: RecordEntry | null, type: string): void {
-    if (before) this.#body(set, type, before.body, -1)
+    if (before && !this.noOldRefs.has(set)) this.#body(set, type, before.body, -1)
     if (after) this.#body(set, type, after.body, +1)
   }
 

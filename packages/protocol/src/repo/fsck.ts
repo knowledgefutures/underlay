@@ -23,6 +23,7 @@ import { mergeTree } from '../tree/merge.js'
 import { fileTree, recordTree, type RecordEntry } from '../tree/node.js'
 import { diffTrees, leaves, newNodes } from '../tree/read.js'
 import { verifyTree } from '../tree/verify.js'
+import type { RecordSet } from './layouts/index.js'
 import {
   type PublicKeyInfo,
   readCollectionInfo,
@@ -31,7 +32,7 @@ import {
   verifyLog,
   verifyLogEntries,
 } from './log.js'
-import { keys, openRepo, type Repo, RepoSource } from './repo.js'
+import { keys, type Repo, RepoSource } from './repo.js'
 
 export interface FsckOptions {
   /** Version hashes to check; with a collection id and none given, the log's. */
@@ -63,7 +64,8 @@ export interface FsckReport {
 export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckReport> {
   // Storage itself: no shared cache or memory of earlier reads, and every object
   // hash-checked as if from a location we don't operate.
-  const repo = openRepo(given.blobs, { trusted: false })
+  // Untrusted, so every object is checked against its hash; in the layout it has.
+  const repo = given.reopen({ trusted: false })
   const max = opts.maxErrors ?? 100
   const report: FsckReport = {
     ok: true,
@@ -121,7 +123,7 @@ export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckRep
   const seenFiles = new Set<string>()
   const seenSchemas = new Set<string>()
 
-  const checkSet = async (where: string, set: SetObject) => {
+  const checkSet = async (where: string, set: SetObject, rs: RecordSet) => {
     for (const [slug, t] of Object.entries(set.types)) {
       if (!seenSchemas.has(t.schema)) {
         seenSchemas.add(t.schema)
@@ -147,7 +149,7 @@ export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckRep
         const node = await attempt(`leaf ${leaf.hash}`, () => records.node(leaf.hash))
         if (!node || node.kind !== 'leaf') continue
         await attempt(`body of ${leaf.hash}`, () =>
-          repo.bodyLines({ hash: leaf.hash, entries: node.entries as RecordEntry[] }),
+          repo.bodyLines({ hash: leaf.hash, entries: node.entries as RecordEntry[] }, rs),
         )
       }
     }
@@ -204,7 +206,7 @@ export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckRep
     if (!root) continue
     const pubErr = checkSetObject(root.public)
     if (pubErr) fail(`${where} public ${pubErr}`)
-    else await checkSet(`${where} public`, root.public)
+    else await checkSet(`${where} public`, root.public, 'public')
     if (root.private) {
       // A public-only copy (a mirror of public sets) lacks the private set: not an error.
       if (!(await repo.blobs.head(keys.privateSet(root.private)))) continue
@@ -212,7 +214,7 @@ export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckRep
       if (!priv) continue
       const privErr = checkSetObject(priv, true)
       if (privErr) fail(`${where} private ${privErr}`)
-      else await checkSet(`${where} private`, priv)
+      else await checkSet(`${where} private`, priv, 'private')
     }
   }
   return report
@@ -254,7 +256,8 @@ export async function fsckStep(
   given: Repo,
   opts: FsckStepOptions,
 ): Promise<{ report: FsckReport; cursor: FsckCursor | null }> {
-  const repo = openRepo(given.blobs, { trusted: false })
+  // Untrusted, so every object is checked against its hash; in the layout it has.
+  const repo = given.reopen({ trusted: false })
   const max = opts.maxErrors ?? 100
   const budget = opts.changeBudget ?? 1_000_000
   const report: FsckReport = {
@@ -347,7 +350,7 @@ export async function fsckStep(
     if (n !== size || hasher.hex() !== hash) fail(`file ${hash} fails its hash or size`)
   }
 
-  const checkSet = async (where: string, set: SetObject, base: SetObject | null) => {
+  const checkSet = async (where: string, set: SetObject, base: SetObject | null, rs: RecordSet) => {
     let changes = 0
     for (const [slug, t] of Object.entries(set.types)) {
       const was = base?.types[slug]
@@ -369,7 +372,7 @@ export async function fsckStep(
         const node = await attempt(`leaf ${n.hash}`, () => records.node(n.hash))
         if (!node || node.kind !== 'leaf') continue
         await attempt(`body of ${n.hash}`, () =>
-          repo.bodyLines({ hash: n.hash, entries: node.entries as RecordEntry[] }),
+          repo.bodyLines({ hash: n.hash, entries: node.entries as RecordEntry[] }, rs),
         )
       }
     }
@@ -418,11 +421,17 @@ export async function fsckStep(
     if (now) {
       const pubErr = checkSetObject(now.root.public)
       if (pubErr) fail(`${where} public ${pubErr}`)
-      else spent += await checkSet(`${where} public`, now.root.public, before?.root.public ?? null)
+      else
+        spent += await checkSet(
+          `${where} public`,
+          now.root.public,
+          before?.root.public ?? null,
+          'public',
+        )
       if (now.priv) {
         const privErr = checkSetObject(now.priv, true)
         if (privErr) fail(`${where} private ${privErr}`)
-        else spent += await checkSet(`${where} private`, now.priv, before?.priv ?? null)
+        else spent += await checkSet(`${where} private`, now.priv, before?.priv ?? null, 'private')
       }
     }
     cursor = { seq, log, versionHash: entry.versionHash }

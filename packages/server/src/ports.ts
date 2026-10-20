@@ -1,4 +1,4 @@
-import type { Cache, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
+import type { Cache, LayoutName, PresigningStore, Repo, Signer, Store } from '@underlay/protocol'
 import type { LibSQLDatabase } from 'drizzle-orm/libsql'
 
 /**
@@ -39,8 +39,10 @@ export interface Jobs {
  * the repository of its primary placement; mirrors are written by sync jobs.
  */
 export interface Stores {
-  /** The repository of a collection's primary placement. */
+  /** The repository of a collection's primary placement, in the collection's record layout. */
   forCollection(collectionId: string): Promise<Repo>
+  /** The record layout a new collection gets (a fork takes its parent's). */
+  newCollections: LayoutName
   /** The repository at a storage location. */
   forLocation(locationId: string): Promise<Repo>
   /**

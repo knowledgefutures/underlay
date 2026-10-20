@@ -9,7 +9,7 @@
  * the public set only. Both collections must share a primary location, since a
  * repository never references another location.
  */
-import { makeRoot, newSalt } from '@underlay/protocol'
+import { type LayoutName, makeRoot, newSalt } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import { FenceError, fenced } from '../cleanup/fence.js'
@@ -28,6 +28,8 @@ export async function createCollectionRows(
     privateSalt?: string
     /** Until the first version's metadata replaces it. */
     summary?: schema.CollectionSummary
+    /** Its record layout: the platform's for new collections (`Stores.newCollections`). */
+    recordLayout?: LayoutName
   },
 ): Promise<typeof schema.collections.$inferSelect> {
   const id = crypto.randomUUID()
@@ -40,6 +42,7 @@ export async function createCollectionRows(
       public: c.public,
       privateSalt: c.privateSalt ?? newSalt(),
       summary: c.summary ?? null,
+      recordLayout: c.recordLayout ?? ports.stores.newCollections,
     }),
     ports.db.insert(schema.placements).values({
       collectionId: id,
@@ -74,9 +77,17 @@ export async function forkCollection(
   const collection = await createCollectionRows(ports, {
     ...target,
     ...(priv ? { privateSalt: source.collection.privateSalt } : {}),
+    // Layout F forks by reference: the fork reads its parent's packs and index.
+    recordLayout: source.collection.recordLayout,
   })
   const targetRepo = await ports.stores.forCollection(collection.id)
-  if (targetRepo !== repo) throw new Error('Forks across storage locations are not supported yet')
+  if (repo.records && targetRepo.records) {
+    // Layout F: the fork lists the parent's files and reads them where they are, a set
+    // at a time; a fork of the public set only never references the private set's.
+    for (const set of priv ? (['public', 'private'] as const) : (['public'] as const))
+      await repo.records[set].forkInto!(targetRepo.records[set])
+  } else if (targetRepo !== repo)
+    throw new Error('Forks across storage locations are not supported yet')
 
   const newRoot = makeRoot(root.metadata, root.public, priv)
   const v = source.version

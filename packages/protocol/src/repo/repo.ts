@@ -41,7 +41,19 @@ import {
   versionDigest,
   versionHash,
 } from '../format.js'
+import { compareUtf8 } from '../utf8.js'
 import { chunkLines, gunzipChunks, gunzipStream, gunzipText, gzip, splitLines } from './gzip.js'
+import {
+  type HeldRun,
+  type LayoutName,
+  MissingRecordError,
+  type Placed,
+  type RecordSet,
+  type RecordSets,
+  recordStore,
+  type RecordStore,
+  type RecordWriter,
+} from './layouts/index.js'
 import { Lru } from './lru.js'
 import { type Store, type Cache, noCache, putJoined } from './types.js'
 
@@ -133,7 +145,22 @@ export interface RepoOptions {
   lru?: Lru<unknown>
   /** Size of a private memory cache when `lru` isn't given (default 8 MB). */
   memoryBytes?: number
+  /**
+   * Where record bytes live (record-storage-layout.md): `today` (default) is leaf
+   * bodies; `f` is packs found through an index, per collection (`recordScope`).
+   * No hash depends on it.
+   */
+  layout?: LayoutName
+  /** Layout F keeps its packs and index per collection: the collection this repository is for. */
+  recordScope?: string
+  /** `delta` stores a rewritten leaf node as its changes against an earlier full node. */
+  nodes?: 'full' | 'delta'
 }
+
+/** A stored node that is a delta: `{"b":<base hash>,"p":[tuples put],"d":[keys removed]}`. */
+const DELTA_PREFIX = '{"b":"'
+/** A delta larger than this share of the full node is stored full instead (a new keyframe). */
+const DELTA_MAX_SHARE = 0.25
 
 /** Open the repository in a store. */
 export function openRepo(store: Store, opts: RepoOptions = {}): Repo {
@@ -145,6 +172,12 @@ export class Repo {
   readonly lru: Lru<unknown>
   readonly scope: string
   readonly trusted: boolean
+  /** Where records live when they aren't in leaf bodies, a store a set (null: today's layout). */
+  readonly records: RecordSets | null
+  readonly nodeDeltas: boolean
+  /** The layout it was opened in, and for layout F the collection (see `reopen`). */
+  readonly layout: LayoutName
+  readonly recordScope: string | undefined
 
   constructor(
     readonly blobs: Store,
@@ -154,6 +187,26 @@ export class Repo {
     this.lru = opts.lru ?? repoLru(opts.memoryBytes ?? DEFAULT_MEMORY_BYTES)
     this.scope = opts.scope ?? ''
     this.trusted = opts.trusted ?? false
+    const layout = opts.layout ?? 'today'
+    this.layout = layout
+    this.recordScope = opts.recordScope
+    this.records = recordStore(
+      layout,
+      this.lru,
+      `${this.scope}/${layout}/${opts.recordScope ?? ''}`,
+      opts.recordScope ? { root: blobs, home: opts.recordScope } : undefined,
+    )
+    this.nodeDeltas = opts.nodes === 'delta'
+  }
+
+  /** The same repository opened again with other options (fsck's untrusted copy), its layout kept. */
+  reopen(opts: Omit<RepoOptions, 'layout' | 'recordScope' | 'nodes'>): Repo {
+    return new Repo(this.blobs, {
+      layout: this.layout,
+      ...(this.recordScope ? { recordScope: this.recordScope } : {}),
+      nodes: this.nodeDeltas ? 'delta' : 'full',
+      ...opts,
+    })
   }
 
   #ck(key: string) {
@@ -224,17 +277,72 @@ export class Repo {
 
   async #nodeJson(hash: string, key: string): Promise<string> {
     const bytes = await this.#immutable(key, async (b) => {
-      if (sha256Hex(await gunzipText(b)) !== hash)
+      const text = await gunzipText(b)
+      // A delta is checked once it's expanded, below.
+      if (!text.startsWith(DELTA_PREFIX) && sha256Hex(text) !== hash)
         throw new IntegrityError(`Node ${hash} fails its hash`)
     })
     if (!bytes) throw new Error(`Missing node ${hash}`)
-    const json = await gunzipText(bytes)
+    let json = await gunzipText(bytes)
+    const delta = json.startsWith(DELTA_PREFIX)
+    this.lru.set(this.#ck(`base:${hash}`), {
+      v: delta ? (JSON.parse(json) as { b: string }).b : '',
+      approxBytes: 128,
+    })
+    if (delta) {
+      json = await this.#expand(json)
+      if (sha256Hex(json) !== hash)
+        throw new IntegrityError(`Node ${hash} fails its hash (from a delta)`)
+    }
     this.lru.set(this.#ck(key), json)
     return json
   }
 
-  async putNode(hash: string, json: string): Promise<void> {
-    await this.blobs.put(keys.node(hash), await gzip(json), {
+  /** A node as stored: full JSON, or a delta. */
+  async #storedNode(hash: string): Promise<string> {
+    const bytes = await this.#immutable(keys.node(hash))
+    if (!bytes) throw new Error(`Missing node ${hash}`)
+    return gunzipText(bytes)
+  }
+
+  async #expand(stored: string): Promise<string> {
+    const d = JSON.parse(stored) as { b: string; p: unknown[][]; d: string[] }
+    const tuples = new Map(leafTuples(await this.nodeJson(d.b)).map((t) => [tupleKey(t), t]))
+    for (const k of d.d) tuples.delete(k)
+    for (const t of d.p) tuples.set(t[0] as string, JSON.stringify(t))
+    const keysInOrder = [...tuples.keys()].sort(compareUtf8)
+    return '{"e":[' + keysInOrder.map((k) => tuples.get(k)!).join(',') + '],"t":"leaf"}'
+  }
+
+  /** The full node a delta of `base` diffs against: `base` itself, or its own base. */
+  async deltaBase(hash: string): Promise<string | null> {
+    const hit = this.lru.get(this.#ck(`base:${hash}`))
+    if (hit) return (hit as { v: string }).v || null
+    const stored = await this.#storedNode(hash)
+    return stored.startsWith(DELTA_PREFIX) ? (JSON.parse(stored) as { b: string }).b : null
+  }
+
+  /**
+   * Write a node. With node deltas, a rewritten leaf (`base`: the leaf it replaces)
+   * is stored as its changes against the base's full node, while they stay small.
+   */
+  async putNode(hash: string, json: string, base?: string): Promise<void> {
+    let stored = json
+    if (this.nodeDeltas && base && json.endsWith('],"t":"leaf"}')) {
+      const frame = (await this.deltaBase(base)) ?? base
+      const old = new Map(leafTuples(await this.nodeJson(frame)).map((t) => [tupleKey(t), t]))
+      const put: unknown[] = []
+      const seen = new Set<string>()
+      for (const t of leafTuples(json)) {
+        const k = tupleKey(t)
+        seen.add(k)
+        if (old.get(k) !== t) put.push(JSON.parse(t))
+      }
+      const del = [...old.keys()].filter((k) => !seen.has(k))
+      const delta = JSON.stringify({ b: frame, p: put, d: del })
+      if (delta.length <= json.length * DELTA_MAX_SHARE) stored = delta
+    }
+    await this.blobs.put(keys.node(hash), await gzip(stored), {
       contentType: 'application/gzip',
       ifAbsent: true,
     })
@@ -257,12 +365,81 @@ export class Repo {
    * A leaf's body lines, in entry order, with out-of-line records resolved. On an
    * untrusted location, each line is checked against the leaf's record hashes.
    */
-  async bodyLines(leaf: { hash: string; entries: readonly RecordEntry[] }): Promise<string[]> {
+  async bodyLines(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    /** Layout F: the set the leaf is in (else public, then private). */
+    set?: RecordSet,
+  ): Promise<string[]> {
     const key = keys.body(leaf.hash)
     const hit = this.lru.get(this.#ck(key))
     if (hit) return (hit as { lines: string[] }).lines
     // Two readers of one leaf at once decompress it once.
+    if (this.records) return this.#shared(`lines:${key}`, () => this.#packedLines(leaf, key, set))
     return this.#shared(`lines:${key}`, () => this.#bodyLines(leaf, key))
+  }
+
+  /**
+   * Read from the set's record store; a reader that doesn't know the leaf's set
+   * tries the public set, then the private one (a miss costs a second lookup).
+   */
+  async #inSet<T>(set: RecordSet | undefined, read: (r: RecordStore) => Promise<T>): Promise<T> {
+    const sets = this.records!
+    if (set) return read(sets[set])
+    try {
+      return await read(sets.public)
+    } catch (err) {
+      if (!(err instanceof MissingRecordError)) throw err
+      return read(sets.private)
+    }
+  }
+
+  async #packedLines(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    key: string,
+    set: RecordSet | undefined,
+  ): Promise<string[]> {
+    const lines = await this.#resolve(
+      await this.#inSet(set, (r) => r.leafLines(leaf.hash, leaf.entries)),
+    )
+    // A packed layout's records come from its packs, not a body the leaf hashes: on an
+    // untrusted location (a mirror read by a third party) each is checked as a body's is.
+    if (!this.trusted)
+      lines.forEach((l, i) => {
+        const e = leaf.entries[i]!
+        if (sha256Hex(l) !== e.hash)
+          throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} fails its hash`)
+        if (utf8ByteLength(l) !== e.size || !l.startsWith(`{"id":${JSON.stringify(e.key)},"type":`))
+          throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} isn't its entry's record`)
+      })
+    this.lru.set(this.#ck(key), { lines, approxBytes: lines.reduce((n, l) => n + l.length * 2, 0) })
+    return lines
+  }
+
+  /**
+   * Some of a leaf's records (by entry index), resolved. A packed layout reads only
+   * those; leaf bodies are read whole (or from memory) and picked from.
+   */
+  async linesAt(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    at: readonly number[],
+    set?: RecordSet,
+  ): Promise<string[]> {
+    if (!this.records) {
+      const lines = await this.bodyLines(leaf)
+      return at.map((i) => lines[i]!)
+    }
+    return this.#resolve(await this.#inSet(set, (r) => r.linesAt(leaf.hash, leaf.entries, at)))
+  }
+
+  /** One entry's record line (resolved): a changed record's old body, in a packed layout. */
+  async entryLine(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    i: number,
+    set?: RecordSet,
+  ): Promise<string> {
+    if (!this.records) return (await this.bodyLines(leaf))[i]!
+    const line = await this.#inSet(set, (r) => r.entryLine(leaf.hash, leaf.entries, i))
+    return line.startsWith(REF_PREFIX) ? this.#outOfLine(line) : line
   }
 
   async #bodyLines(
@@ -311,11 +488,19 @@ export class Repo {
       entries: readonly RecordEntry[]
     },
     onRead?: (r: BodyRead) => void,
-    opts: { pointers?: boolean } = {},
+    opts: { pointers?: boolean; set?: RecordSet } = {},
   ): AsyncGenerator<string> {
     const key = keys.body(leaf.hash)
     // The memory cache holds lines resolved.
     const hit = opts.pointers && this.trusted ? undefined : this.lru.get(this.#ck(key))
+    if (this.records && !hit) {
+      // A packed layout: 256 records at a time, so a leaf of large records is never held whole.
+      for (let i = 0; i < leaf.entries.length; i += 256) {
+        const at = Array.from({ length: Math.min(256, leaf.entries.length - i) }, (_, j) => i + j)
+        yield* await this.linesAt(leaf, at, opts.set)
+      }
+      return
+    }
     if (hit || !this.trusted) {
       onRead?.({ leaf: leaf.hash, from: hit ? 'memory' : 'whole', storedBytes: null })
       yield* hit ? (hit as { lines: string[] }).lines : await this.bodyLines(leaf)
@@ -358,6 +543,7 @@ export class Repo {
    * pointers; callers that need full records use bodyLines.
    */
   async rawBody(leafHash: string): Promise<Uint8Array> {
+    if (this.records) throw new Error('rawBody: records are not in leaf bodies in this layout')
     const bytes = await this.#immutable(keys.body(leafHash))
     if (!bytes) throw new Error(`Missing body for leaf ${leafHash}`)
     return bytes
@@ -489,6 +675,8 @@ export class RepoSource<E> implements NodeSource<E> {
       onBodyRead?: (r: BodyRead) => void
       /** `leafStream` keeps out-of-line records as pointers (Repo.bodyLineStream). */
       pointers?: boolean
+      /** Layout F: the record set this tree is in, so a read looks in its index alone. */
+      set?: RecordSet
     } = {},
   ) {}
 
@@ -501,8 +689,51 @@ export class RepoSource<E> implements NodeSource<E> {
     if (node.kind !== 'leaf') throw new Error(`Node ${hash} is not a leaf`)
     if (this.spec !== (recordTree as TreeSpec<unknown>)) return node.entries.slice()
     const entries = node.entries as RecordEntry[]
-    const lines = await this.repo.bodyLines({ hash, entries })
+    const lines = await this.repo.bodyLines({ hash, entries }, this.opts.set)
     return entries.map((e, i) => ({ ...e, body: lines[i]! })) as E[]
+  }
+
+  /**
+   * Layout F's leaf entries without bodies, for a merge: unchanged records aren't
+   * read or written again. Absent for today's layout.
+   */
+  get sparseStream(): ((hash: string) => AsyncGenerator<E>) | undefined {
+    const records = this.repo.records
+    if (!records || this.spec !== (recordTree as TreeSpec<unknown>)) return undefined
+    return async function* (this: RepoSource<E>, hash: string) {
+      const node = await this.node(hash)
+      if (node.kind !== 'leaf') throw new Error(`Node ${hash} is not a leaf`)
+      for (const e of node.entries as RecordEntry[])
+        yield { key: e.key, hash: e.hash, size: e.size } as E
+    }.bind(this)
+  }
+
+  /** Some of a leaf's entries with bodies, reading only those records (packed layouts only). */
+  get payloadsAt():
+    | ((leafHash: string, entries: readonly E[], at: readonly number[]) => Promise<E[]>)
+    | undefined {
+    if (!this.repo.records || this.spec !== (recordTree as TreeSpec<unknown>)) return undefined
+    return async (leafHash, entries, at) => {
+      const lines = await this.repo.linesAt(
+        { hash: leafHash, entries: entries as unknown as RecordEntry[] },
+        at,
+        this.opts.set,
+      )
+      return at.map((i, j) => ({ ...(entries[i] as unknown as RecordEntry), body: lines[j]! }) as E)
+    }
+  }
+
+  /** An entry from `sparseStream` with its body: a changed record's old version. */
+  async withPayload(leafHash: string, e: E): Promise<E> {
+    const node = await this.node(leafHash)
+    if (node.kind !== 'leaf') throw new Error(`Node ${leafHash} is not a leaf`)
+    const entries = node.entries as RecordEntry[]
+    const r = e as unknown as RecordEntry
+    const i = entries.findIndex((x) => x.key === r.key)
+    return {
+      ...r,
+      body: await this.repo.entryLine({ hash: leafHash, entries }, i, this.opts.set),
+    } as E
   }
 
   /** A leaf's entries with bodies, one at a time (Repo.bodyLineStream). */
@@ -517,6 +748,7 @@ export class RepoSource<E> implements NodeSource<E> {
     let i = 0
     for await (const body of this.repo.bodyLineStream({ hash, entries }, this.opts.onBodyRead, {
       pointers: this.opts.pointers ?? false,
+      ...(this.opts.set ? { set: this.opts.set } : {}),
     })) {
       yield { ...entries[i++]!, body } as E
     }
@@ -551,6 +783,10 @@ export class RepoSink<E> implements TreeSink<E> {
   /** Raw body bytes of the writes in flight. */
   #pendingBytes = 0
   readonly written: string[] = []
+  /** Layout F's writer for this sink's records: its set's (null for leaf bodies, or none yet). */
+  #records: RecordWriter | null = null
+  /** The leaf being rewritten: the base of the next leaf node's delta. */
+  #base: string | undefined
 
   constructor(
     readonly repo: Repo,
@@ -561,8 +797,26 @@ export class RepoSink<E> implements TreeSink<E> {
       pendingBytes?: number
       /** Raw text of members compressing before `settle()` waits (default 2 MB). */
       compressingBytes?: number
+      /** Layout F: the record set this sink's records go to (needed to write any). */
+      set?: RecordSet
+      /** Layout F: hold each run back from the manifest (`held`), for the commit to name. */
+      holdRecords?: boolean
     } = {},
   ) {}
+
+  /** Runs held back (`holdRecords`), in the order written. */
+  readonly held: HeldRun[] = []
+
+  /** Layout F's writer for this sink's set, made on first use; null for leaf bodies. */
+  get #writer(): RecordWriter | null {
+    if (!this.repo.records) return null
+    if (!this.opts.set) throw new Error('RepoSink: layout F writes records to a set; pass `set`')
+    return (this.#records ??= this.repo.records[this.opts.set].writer())
+  }
+
+  rewriting(base: string): void {
+    this.#base = base
+  }
 
   #run(key: string, work: () => Promise<void>, bytes = 0) {
     this.#pendingBytes += bytes
@@ -593,12 +847,29 @@ export class RepoSink<E> implements TreeSink<E> {
   }
 
   spill(entries: readonly E[]): void {
-    if (this.opts.bodyOf) this.#members.push(this.#member(entries))
+    if (!this.opts.bodyOf) return
+    if (this.repo.records) {
+      for (const e of entries) this.#place(e)
+      return
+    }
+    this.#members.push(this.#member(entries))
+  }
+
+  /** Store a new record in the packed layout, and note its place on the entry. */
+  #place(e: E) {
+    const p = e as unknown as Placed
+    if (p.loc !== undefined || p.body === undefined) return
+    p.loc = this.#writer!.add(p, p.body)
   }
 
   leaf(desc: NodeDesc, json: string, entries: readonly E[], spilled: number): void {
-    this.#run(keys.node(desc.hash), () => this.repo.putNode(desc.hash, json))
+    const base = this.#base
+    this.#run(keys.node(desc.hash), () => this.repo.putNode(desc.hash, json, base))
     if (!this.opts.bodyOf) return
+    if (this.repo.records) {
+      for (const e of entries.slice(spilled)) this.#place(e)
+      return
+    }
     const tail = entries.slice(spilled)
     const members = [...this.#members, ...(tail.length > 0 ? [this.#member(tail)] : [])]
     const bytes = this.#memberBytes
@@ -644,6 +915,11 @@ export class RepoSink<E> implements TreeSink<E> {
   async flush(): Promise<void> {
     while (this.#pending.size > 0) await Promise.race(this.#pending)
     if (this.#error) throw this.#error
+    if (this.#records) {
+      const run = await this.#records.finish({ hold: this.opts.holdRecords ?? false })
+      if (run) this.held.push(run)
+      this.#records = null
+    }
   }
 
   // Read-only, for measuring what a sink holds (scripts/memory.ts).
@@ -686,3 +962,10 @@ export const recordPayloadBytes = (e: RecordEntry) => e.body?.length ?? 0
 export const dropRecordBody = (e: RecordEntry) => {
   delete e.body
 }
+
+/** A leaf node's entry tuples, as their canonical JSON. */
+function leafTuples(json: string): string[] {
+  return (JSON.parse(json) as { e: unknown[] }).e.map((t) => JSON.stringify(t))
+}
+
+const tupleKey = (tuple: string) => (JSON.parse(tuple) as [string])[0]
