@@ -44,8 +44,8 @@ export interface RecordStore {
     entries: readonly RecordEntry[],
     at: readonly number[],
   ): Promise<string[]>
-  /** A writer for one commit unit or build. */
-  writer(): RecordWriter
+  /** A writer for one commit unit or build; with `hold`, its runs are returned, not named. */
+  writer(opts?: { hold?: boolean }): RecordWriter
   /**
    * Merges due after a write (layers, packs), run in the writer's own job as a commit's
    * tail. True when a budget stopped it with work perhaps left: queue another.
@@ -62,11 +62,13 @@ export interface RecordStore {
 export interface RecordWriter {
   /** Store one record line (a spilled or new entry): its place. */
   add(entry: RecordEntry, line: string): string
+  /** Write a run out if enough is held (called as a build goes): memory stays bounded. */
+  drain?(): Promise<void>
   /**
-   * Write what's held: packs, the index layer, then the manifest. With `hold`, the
-   * manifest isn't told: the run is returned, for the commit to name with its others.
+   * Write what's held: packs, the index layer, then the manifest. A writer made with
+   * `hold` doesn't tell the manifest: its runs are returned, for the commit to name.
    */
-  finish(opts?: { hold?: boolean }): Promise<HeldRun | null>
+  finish(): Promise<HeldRun[]>
 }
 
 /** A run a commit unit wrote and held back from the manifest (layout F). */

@@ -831,7 +831,9 @@ export class RepoSink<E> implements TreeSink<E> {
   get #writer(): RecordWriter | null {
     if (!this.repo.records) return null
     if (!this.opts.set) throw new Error('RepoSink: layout F writes records to a set; pass `set`')
-    return (this.#records ??= this.repo.records[this.opts.set].writer())
+    return (this.#records ??= this.repo.records[this.opts.set].writer({
+      hold: this.opts.holdRecords ?? false,
+    }))
   }
 
   rewriting(base: string): void {
@@ -910,6 +912,7 @@ export class RepoSink<E> implements TreeSink<E> {
   }
 
   async drain(): Promise<void> {
+    await this.#records?.drain?.()
     const limit = this.opts.concurrency ?? 16
     const bytes = this.opts.pendingBytes ?? 16 * 1024 * 1024
     while (this.#pending.size >= limit || (this.#pending.size > 0 && this.#pendingBytes > bytes)) {
@@ -939,8 +942,7 @@ export class RepoSink<E> implements TreeSink<E> {
     while (this.#pending.size > 0) await Promise.race(this.#pending)
     if (this.#error) throw this.#error
     if (this.#records) {
-      const run = await this.#records.finish({ hold: this.opts.holdRecords ?? false })
-      if (run) this.held.push(run)
+      this.held.push(...(await this.#records.finish()))
       this.#records = null
     }
   }

@@ -557,9 +557,10 @@ describe("a commit's held runs", () => {
       const root = memoryStore()
       const layout = fLayout(root)
       const pending = async () => (await root.list('runs/c1/manifest/f/pending/')).keys
-      const w = layout.writer()
+      const w = layout.writer({ hold: true })
       for (let i = 0; i < 100; i++) w.add(rec(i), line(i))
-      const run = (await w.finish({ hold: true }))!
+      const [run] = await w.finish()
+      if (!run) throw new Error('no run')
       await layout.appendRuns([run])
       // Before the first copy is folded in.
       await layout.appendRuns([run])
@@ -591,6 +592,41 @@ describe("a commit's held runs", () => {
       ).toEqual(all.map((i) => line(i)))
     } finally {
       layoutConfig.graceMs = saved
+    }
+  })
+})
+
+describe("a commit's writer", () => {
+  it('writes a run out each time a run of entries is held, not at the end', async () => {
+    // A commit's entries held to its end grew with the push: 204k records ran a
+    // 128 MB isolate out of memory (staging, 2026-10-20).
+    const saved = layoutConfig.writerRunEntries
+    layoutConfig.writerRunEntries = 100
+    try {
+      const root = memoryStore()
+      const layout = fLayout(root)
+      const keys = Array.from({ length: 350 }, (_, i) => `k${String(i).padStart(4, '0')}`)
+      const rec = (i: number) => ({ key: keys[i]!, hash: `h${i}`, size: 10 })
+      const held = layout.writer({ hold: true })
+      for (let i = 0; i < 350; i++) {
+        held.add(rec(i), `line ${i}`)
+        await held.drain?.()
+      }
+      const runs = await held.finish()
+      // Three full runs as it went, the rest at the end; each stands alone.
+      expect(runs.map((r) => r.layers.length > 0)).toEqual([true, true, true, true])
+      await layout.appendRuns(runs)
+      const all = Array.from({ length: 350 }, (_, i) => i)
+      expect(await layout.leafLines('leaf', all.map(rec))).toEqual(all.map((i) => `line ${i}`))
+      // Not held: each run is named as it's written.
+      const w = fLayout(memoryStore()).writer()
+      for (let i = 0; i < 350; i++) {
+        w.add(rec(i), `line ${i}`)
+        await w.drain?.()
+      }
+      expect(await w.finish()).toEqual([])
+    } finally {
+      layoutConfig.writerRunEntries = saved
     }
   })
 })
