@@ -27,10 +27,13 @@ import {
   openRepo,
   type RecordEntry,
   recordCanonical,
+  RECLAIM_MAX_RUNS,
   recordIdKey,
   RepoSink,
   recordTree,
   sha256Hex,
+  type Store,
+  TooManyRunsError,
   treeObjects,
   utf8ByteLength,
 } from '../../src/index.js'
@@ -41,6 +44,8 @@ import {
   levelFor,
   LayeredIndex,
   ManifestStore,
+  MERGE_READ_BUDGET,
+  mergeRead,
   pendingConfig,
   runs,
   RunWriter,
@@ -56,7 +61,7 @@ afterEach(() => {
 })
 
 /** A collection's layout F over `store`: its files under `runs/<home>/`. */
-const fLayout = (store = memoryStore(), home = 'c1', scope = 's') =>
+const fLayout = (store: Store = memoryStore(), home = 'c1', scope = 's') =>
   new KeyedLayout(new HomeStore(store, home), repoLru(8 << 20), scope)
 
 const ids = Array.from(
@@ -917,5 +922,97 @@ describe('layered index reads', () => {
     expect(many.get(key(4_999))).toMatch(/^a\./)
     // A key no layer holds.
     expect((await index.values(m, [`${ids[5]}\u0000nope`])).size).toBe(0)
+  })
+})
+
+describe("layout F's reads and merges hold a bounded amount", () => {
+  /** `store`, counting reads of keys matching `re` and the most at once. */
+  const watched = (store: Store, re: RegExp) => {
+    const n = { reads: 0, inFlight: 0, most: 0 }
+    const s = new Proxy(store, {
+      get(t, k) {
+        const v = Reflect.get(t, k, t) as unknown
+        if (k !== 'get' || typeof v !== 'function') return typeof v === 'function' ? v.bind(t) : v
+        return async (key: string, ...rest: unknown[]) => {
+          if (!re.test(key)) return (v as (...a: unknown[]) => unknown).call(t, key, ...rest)
+          n.reads++
+          n.most = Math.max(n.most, ++n.inFlight)
+          try {
+            return await (v as (...a: unknown[]) => Promise<unknown>).call(t, key, ...rest)
+          } finally {
+            n.inFlight--
+          }
+        }
+      },
+    })
+    return { store: s, n }
+  }
+
+  it("reads a leaf of a small type without the large type's records between its ids", async () => {
+    // As Crossref's: every type's ids are DOIs, so a small type's leaf spans
+    // much of the id space a large type fills.
+    const { store, n } = watched(memoryStore(), /\.ly$/)
+    const layout = fLayout(store)
+    const w = layout.writer()
+    for (let i = 0; i < 20_000; i++)
+      w.add('journal-article', { key: ids[i]!, hash: `h${i}`, size: 10 }, 'x'.repeat(100))
+    const small = ids.filter((_, i) => i % 200 === 0)
+    for (const [i, id] of small.entries())
+      w.add('dataset', { key: id, hash: `d${i}`, size: 10 }, `dataset ${i}`)
+    await w.finish()
+    const entries = small.map((id, i) => ({ key: id, hash: `d${i}`, size: 10 }))
+    const leaf = { hash: 'leaf', type: 'dataset', entries }
+    expect(await layout.leafLines(leaf)).toEqual(small.map((_, i) => `dataset ${i}`))
+    // The large type's 20,000 entries fill over a hundred pages; the leaf's are one or two.
+    expect(n.reads).toBeLessThanOrEqual(3)
+  })
+
+  it('reads an index of many runs a few layers at a time, newest first', async () => {
+    const { store, n } = watched(memoryStore(), /\.dir$/)
+    const layout = fLayout(store)
+    // Forty commits' runs, as a large push leaves before merges catch up.
+    for (let r = 0; r < 40; r++) {
+      const w = layout.writer()
+      for (let i = r * 100; i < r * 100 + 100; i++)
+        w.add('T', { key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
+      await w.finish()
+    }
+    expect(runs((await layout.manifests.latest()).layers).length).toBe(40)
+    // The oldest run's records: every layer is looked in.
+    const entries = Array.from({ length: 100 }, (_, i) => ({
+      key: ids[i]!,
+      hash: `h${i}`,
+      size: 10,
+    }))
+    n.most = 0
+    expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries })).toEqual(
+      entries.map((_, i) => `line ${i}`),
+    )
+    expect(n.most).toBeLessThanOrEqual(4)
+  })
+
+  it('plans a reclaim only once merges bring the runs down', async () => {
+    const layout = fLayout()
+    for (let r = 0; r <= RECLAIM_MAX_RUNS; r++) {
+      const w = layout.writer()
+      w.add('T', { key: ids[r]!, hash: `h${r}`, size: 10 }, `line ${r}`)
+      await w.finish()
+    }
+    await expect(layout.reclaimPlan()).rejects.toThrow(TooManyRunsError)
+    while (await layout.maintain());
+    await layout.maintain()
+    expect(runs((await layout.manifests.latest()).layers).length).toBeLessThanOrEqual(
+      RECLAIM_MAX_RUNS,
+    )
+    await expect(layout.reclaimPlan()).resolves.toBeTruthy()
+  })
+
+  it("shares a merge's read budget among its inputs", () => {
+    expect(mergeRead(1)).toBe(1024 * 1024)
+    expect(mergeRead(16)).toBe(1024 * 1024)
+    expect(mergeRead(128)).toBe(128 * 1024)
+    // Never below a few pages, however many inputs.
+    expect(mergeRead(1_000)).toBe(64 * 1024)
+    expect(mergeRead(128) * 128).toBeLessThanOrEqual(MERGE_READ_BUDGET)
   })
 })
