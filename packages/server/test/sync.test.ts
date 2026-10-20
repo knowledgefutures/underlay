@@ -45,7 +45,9 @@ async function records(repo: Repo, version: string) {
   const root = await repo.root(version)
   const out: string[] = []
   for (const [slug, t] of Object.entries(root.public.types)) {
-    for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
+    for await (const e of iterate(new RepoSource(recordTree, repo, { type: slug }), t.root, {
+      payloads: true,
+    })) {
       out.push(`${slug}/${e.key}:${e.body}`)
     }
   }

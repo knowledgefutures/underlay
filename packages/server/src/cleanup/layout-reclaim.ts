@@ -13,7 +13,14 @@
  * the collection while a reclaim runs, so it needs the write fence first
  * (cleanup/fence.ts). The scale bench ran it on F through `startLayoutReclaim`.
  */
-import { KeyedLayout, markRange, type RecordSet, type Repo, recordRoots } from '@underlay/protocol'
+import {
+  KeyedLayout,
+  markRange,
+  type RecordSet,
+  type Repo,
+  recordRoots,
+  TooManyRunsError,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -22,6 +29,9 @@ import type { JobMessage, Ports } from '../ports.js'
 
 /** Mostly-dead packs a rewrite job copies. */
 const REWRITE_PACKS = 4
+
+/** How long a plan waits for merges to bring the index's runs down (TooManyRunsError). */
+const PLAN_RETRY_SECONDS = 300
 
 interface Target {
   collectionId: string
@@ -59,7 +69,19 @@ registerJob('layout.reclaim', async (job, ports) => {
   const { repo, layout } = await open(ports, t)
   switch (job.step) {
     case 'plan': {
-      const plan = await layout.reclaimPlan()
+      let plan
+      try {
+        plan = await layout.reclaimPlan()
+      } catch (err) {
+        if (!(err instanceof TooManyRunsError)) throw err
+        // Each range job reads every run at once: merge them down first, then plan.
+        await ports.jobs.enqueue({ type: 'layout.maintain', ...t })
+        await ports.jobs.enqueue(
+          { type: 'layout.reclaim', step: 'plan', ...t },
+          { delaySeconds: PLAN_RETRY_SECONDS },
+        )
+        return
+      }
       await ports.jobs.enqueueBatch(
         plan.ranges.map((_, i) => ({
           type: 'layout.reclaim',

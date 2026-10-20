@@ -28,9 +28,13 @@ import {
   packIdsFor,
   type RecordEntry,
   recordCanonical,
+  RECLAIM_MAX_RUNS,
+  recordIdKey,
   RepoSink,
   recordTree,
   sha256Hex,
+  type Store,
+  TooManyRunsError,
   treeObjects,
   UPLOAD_PACK_FINAL_RAW,
   utf8ByteLength,
@@ -42,6 +46,8 @@ import {
   levelFor,
   LayeredIndex,
   ManifestStore,
+  MERGE_READ_BUDGET,
+  mergeRead,
   pendingConfig,
   runs,
   RunWriter,
@@ -57,7 +63,7 @@ afterEach(() => {
 })
 
 /** A collection's layout F over `store`: its files under `runs/<home>/`. */
-const fLayout = (store = memoryStore(), home = 'c1', scope = 's') =>
+const fLayout = (store: Store = memoryStore(), home = 'c1', scope = 's') =>
   new KeyedLayout(new HomeStore(store, home), repoLru(8 << 20), scope)
 
 const ids = Array.from(
@@ -101,7 +107,7 @@ describe('reclaim a key range at a time', () => {
     const line = (i: number, v: number) => `line ${v}.${i}${big ? ` ${noise(i * 7 + v)}` : ''}`
     const write = async (from: number, to: number, v: number) => {
       const w = layout.writer()
-      for (let i = from; i < to; i++) w.add(entry(i, v), line(i, v))
+      for (let i = from; i < to; i++) w.add('T', entry(i, v), line(i, v))
       await w.finish()
     }
     await write(0, n, 1)
@@ -115,9 +121,9 @@ describe('reclaim a key range at a time', () => {
 
     const live = new LiveHashes()
     const want = Array.from({ length: n }, (_, i) => entry(i, i < 2_000 ? 2 : 1))
-    for (const e of want) live.add(e.key, e.hash)
-    expect(live.has(want[0]!.key, 'h1.0')).toBe(false)
-    expect(live.has(want[0]!.key, want[0]!.hash)).toBe(true)
+    for (const e of want) live.add(recordIdKey('T', e.key), e.hash)
+    expect(live.has(recordIdKey('T', want[0]!.key), 'h1.0')).toBe(false)
+    expect(live.has(recordIdKey('T', want[0]!.key), want[0]!.hash)).toBe(true)
 
     const plan = await layout.reclaimPlan(500)
     expect(plan.ranges.length).toBeGreaterThan(3)
@@ -141,7 +147,7 @@ describe('reclaim a key range at a time', () => {
     const packs = await layout.allPacks()
     expect(packs.some((p) => swapped!.rewrite.includes(p.id))).toBe(false)
     expect(packs.reduce((s, p) => s + p.records, 0)).toBe(n)
-    const lines = await layout.leafLines('leaf', want)
+    const lines = await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })
     expect(lines).toEqual(want.map((_, i) => line(i, i < 2_000 ? 2 : 1)))
   })
 })
@@ -153,14 +159,16 @@ describe('concurrent commits', () => {
     await Promise.all(
       Array.from({ length: 12 }, async (_, k) => {
         const w = layout.writer()
-        for (let i = k * 100; i < k * 100 + 100; i++) w.add(entry(i), `line ${i}`)
+        for (let i = k * 100; i < k * 100 + 100; i++) w.add('T', entry(i), `line ${i}`)
         await w.finish()
       }),
     )
     expect((await layout.manifests.latest()).layers.length).toBe(12)
     await layout.maintain()
     const want = Array.from({ length: 1_200 }, (_, i) => entry(i))
-    expect(await layout.leafLines('leaf', want)).toEqual(want.map((_, i) => `line ${i}`))
+    expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
+      want.map((_, i) => `line ${i}`),
+    )
     expect((await layout.manifests.latest()).layers.length).toBeLessThan(12)
   })
 })
@@ -171,7 +179,7 @@ describe('size-tiered index levels', () => {
     const entry = (i: number) => ({ key: ids[i]!, hash: `h.${i}`, size: 10 })
     const write = async (from: number, n: number) => {
       const w = layout.writer()
-      for (let i = from; i < from + n; i++) w.add(entry(i), `line ${i}`)
+      for (let i = from; i < from + n; i++) w.add('T', entry(i), `line ${i}`)
       await w.finish()
     }
     await write(0, 8_000)
@@ -184,7 +192,7 @@ describe('size-tiered index levels', () => {
     expect(m.layers.some((l) => l.id === big.id)).toBe(true)
     expect(m.layers.length).toBe(2)
     const want = [...Array.from({ length: 8_000 }, (_, i) => i), 10_000, 10_019].map(entry)
-    expect(await layout.leafLines('leaf', want)).toEqual(
+    expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
       want.map((e) => `line ${ids.indexOf(e.key)}`),
     )
   })
@@ -223,7 +231,7 @@ describe('merges keep the newest place of every record', () => {
           const v = now > 1 && rand(3) === 0 ? 1 + rand(now - 1) : (top.get(i) ?? 0) + 1
           if (v > (top.get(i) ?? 0)) top.set(i, v)
           version.set(i, v)
-          w.add({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
+          w.add('T', { key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
         }
         await w.finish()
         // Several maintain jobs at once, as many commits' jobs would be: one does the work.
@@ -235,7 +243,9 @@ describe('merges keep the newest place of every record', () => {
       expect(new Set(m.layers.map((l) => l.run ?? l.id)).size).toBeLessThanOrEqual(13)
       const live = [...version].sort((a, b) => a[0] - b[0])
       const want = live.map(([i, v]) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }))
-      expect(await layout.leafLines('leaf', want)).toEqual(live.map(([i, v]) => `line ${v}.${i}`))
+      expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
+        live.map(([i, v]) => `line ${v}.${i}`),
+      )
     } finally {
       layoutConfig.graceMs = saved
       headConfig.intervalMs = 1000
@@ -281,7 +291,7 @@ describe('merges split into key-range jobs', () => {
           const now = version.get(i) ?? 0
           const v = now > 1 && rand(3) === 0 ? 1 + rand(now - 1) : now + 1
           version.set(i, v)
-          w.add({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
+          w.add('T', { key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
         }
         await w.finish()
         await layout.maintain({ split })
@@ -298,7 +308,9 @@ describe('merges split into key-range jobs', () => {
       expect(most).toBeLessThanOrEqual(20)
       const live = [...version].sort((a, b) => a[0] - b[0])
       const want = live.map(([i, v]) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }))
-      expect(await layout.leafLines('leaf', want)).toEqual(live.map(([i, v]) => `line ${v}.${i}`))
+      expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
+        live.map(([i, v]) => `line ${v}.${i}`),
+      )
     } finally {
       Object.assign(layoutConfig, saved)
     }
@@ -334,7 +346,7 @@ describe('a backlog of tiny commits', () => {
         for (const i of [...touched].sort((a, b) => a - b)) {
           const v = (version.get(i) ?? 0) + 1
           version.set(i, v)
-          w.add({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
+          w.add('T', { key: ids[i]!, hash: `h${v}.${i}`, size: 10 }, `line ${v}.${i}`)
         }
         await w.finish()
       }
@@ -346,7 +358,9 @@ describe('a backlog of tiny commits', () => {
     }
     const live = [...version].sort((a, b) => a[0] - b[0])
     const want = live.map(([i, v]) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 }))
-    expect(await layout.leafLines('leaf', want)).toEqual(live.map(([i, v]) => `line ${v}.${i}`))
+    expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
+      live.map(([i, v]) => `line ${v}.${i}`),
+    )
   })
 })
 
@@ -365,7 +379,7 @@ describe('pack merges', () => {
         for (let c = 0; c < 10; c++) {
           const w = layout.writer()
           for (let i = 0; i < 6; i++, next++)
-            w.add({ key: ids[next % ids.length]!, hash: `h${next}`, size: 10 }, `line ${next}`)
+            w.add('T', { key: ids[next % ids.length]!, hash: `h${next}`, size: 10 }, `line ${next}`)
           await w.finish()
         }
         await layout.maintain()
@@ -397,7 +411,7 @@ describe('layout F', () => {
     await Promise.all(
       Array.from({ length: 40 }, async (_, u) => {
         const w = layout.writer()
-        for (let i = u * 50; i < u * 50 + 50; i++) w.add(rec(i), line(i))
+        for (let i = u * 50; i < u * 50 + 50; i++) w.add('T', rec(i), line(i))
         await w.finish()
       }),
     )
@@ -405,18 +419,12 @@ describe('layout F', () => {
     // Readable before any merge folds them in: a reader that misses looks at pending runs.
     const all = Array.from({ length: 2000 }, (_, i) => i)
     expect(
-      await layout.leafLines(
-        'leaf',
-        all.map((i) => rec(i)),
-      ),
+      await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
     ).toEqual(all.map((i) => line(i)))
     await layout.maintain()
     expect((await root.list('runs/c1/manifest/f/pending/')).keys).toEqual([])
     expect(
-      await layout.leafLines(
-        'leaf',
-        all.map((i) => rec(i)),
-      ),
+      await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
     ).toEqual(all.map((i) => line(i)))
   })
 
@@ -430,7 +438,7 @@ describe('layout F', () => {
       const parent = open('p')
       const commit = async (l: KeyedLayout, from: number, to: number, v: number) => {
         const w = l.writer()
-        for (let i = from; i < to; i++) w.add(rec(i, v), line(i, v))
+        for (let i = from; i < to; i++) w.add('T', rec(i, v), line(i, v))
         await w.finish()
         await l.maintain()
       }
@@ -449,10 +457,7 @@ describe('layout F', () => {
       expect((await root.list('runs/fork/packs/')).keys).toEqual([])
       const base = Array.from({ length: 1200 }, (_, i) => i)
       expect(
-        await fork.leafLines(
-          'leaf',
-          base.map((i) => rec(i)),
-        ),
+        await fork.leafLines({ hash: 'leaf', type: 'T', entries: base.map((i) => rec(i)) }),
       ).toEqual(base.map((i) => line(i)))
       // Both go on: the parent merges its runs and packs away, sweeping at once.
       for (let c = 0; c < 10; c++) {
@@ -460,10 +465,7 @@ describe('layout F', () => {
         await commit(fork, 600 + c * 30, 600 + c * 30 + 30, 3)
       }
       expect(
-        await fork.leafLines(
-          'leaf',
-          base.map((i) => rec(i)),
-        ),
+        await fork.leafLines({ hash: 'leaf', type: 'T', entries: base.map((i) => rec(i)) }),
       ).toEqual(base.map((i) => line(i)))
       // The parent is deleted: what the fork reads stays, the rest goes.
       const gone = new Set<string>()
@@ -473,10 +475,7 @@ describe('layout F', () => {
       expect(dropped.kept).toBeGreaterThan(0)
       const forkView = open('fork')
       expect(
-        await forkView.leafLines(
-          'leaf',
-          base.map((i) => rec(i)),
-        ),
+        await forkView.leafLines({ hash: 'leaf', type: 'T', entries: base.map((i) => rec(i)) }),
       ).toEqual(base.map((i) => line(i)))
       // Then the fork: nothing of either is left.
       gone.add('fork')
@@ -517,7 +516,7 @@ describe('layout F', () => {
       // A load's units all land before its first maintain job.
       for (let u = 0; u < 300; u++) {
         const w = layout.writer()
-        for (let i = u * 5; i < u * 5 + 5; i++) w.add(rec(i), line(i))
+        for (let i = u * 5; i < u * 5 + 5; i++) w.add('T', rec(i), line(i))
         await w.finish()
       }
       // Each job queues the next while work is left, as the server's handler does.
@@ -532,10 +531,7 @@ describe('layout F', () => {
       expect((await root.list('runs/c1/manifest/f/pending/')).keys).toEqual([])
       const all = Array.from({ length: 1500 }, (_, i) => i)
       expect(
-        await layout.leafLines(
-          'leaf',
-          all.map((i) => rec(i)),
-        ),
+        await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
       ).toEqual(all.map((i) => line(i)))
     } finally {
       Object.assign(layoutConfig, saved)
@@ -559,9 +555,10 @@ describe("a commit's held runs", () => {
       const root = memoryStore()
       const layout = fLayout(root)
       const pending = async () => (await root.list('runs/c1/manifest/f/pending/')).keys
-      const w = layout.writer()
-      for (let i = 0; i < 100; i++) w.add(rec(i), line(i))
-      const run = (await w.finish({ hold: true }))!
+      const w = layout.writer({ hold: true })
+      for (let i = 0; i < 100; i++) w.add('T', rec(i), line(i))
+      const [run] = await w.finish()
+      if (!run) throw new Error('no run')
       await layout.appendRuns([run])
       // Before the first copy is folded in.
       await layout.appendRuns([run])
@@ -569,7 +566,7 @@ describe("a commit's held runs", () => {
       // Folded in, merged away, and swept.
       for (let c = 1; c <= 4; c++) {
         const w = layout.writer()
-        for (let i = c * 100; i < c * 100 + 100; i++) w.add(rec(i), line(i))
+        for (let i = c * 100; i < c * 100 + 100; i++) w.add('T', rec(i), line(i))
         await w.finish()
         await layout.maintain()
       }
@@ -586,13 +583,47 @@ describe("a commit's held runs", () => {
       await layout.maintain()
       const all = Array.from({ length: 500 }, (_, i) => i)
       expect(
-        await layout.leafLines(
-          'leaf',
-          all.map((i) => rec(i)),
-        ),
+        await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
       ).toEqual(all.map((i) => line(i)))
     } finally {
       layoutConfig.graceMs = saved
+    }
+  })
+})
+
+describe("a commit's writer", () => {
+  it('writes a run out each time a run of entries is held, not at the end', async () => {
+    // A commit's entries held to its end grew with the push: 204k records ran a
+    // 128 MB isolate out of memory (staging, 2026-10-20).
+    const saved = layoutConfig.writerRunEntries
+    layoutConfig.writerRunEntries = 100
+    try {
+      const root = memoryStore()
+      const layout = fLayout(root)
+      const keys = Array.from({ length: 350 }, (_, i) => `k${String(i).padStart(4, '0')}`)
+      const rec = (i: number) => ({ key: keys[i]!, hash: `h${i}`, size: 10 })
+      const held = layout.writer({ hold: true })
+      for (let i = 0; i < 350; i++) {
+        held.add('T', rec(i), `line ${i}`)
+        await held.drain?.()
+      }
+      const runs = await held.finish()
+      // Three full runs as it went, the rest at the end; each stands alone.
+      expect(runs.map((r) => r.layers.length > 0)).toEqual([true, true, true, true])
+      await layout.appendRuns(runs)
+      const all = Array.from({ length: 350 }, (_, i) => i)
+      expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map(rec) })).toEqual(
+        all.map((i) => `line ${i}`),
+      )
+      // Not held: each run is named as it's written.
+      const w = fLayout(memoryStore()).writer()
+      for (let i = 0; i < 350; i++) {
+        w.add('T', rec(i), `line ${i}`)
+        await w.drain?.()
+      }
+      expect(await w.finish()).toEqual([])
+    } finally {
+      layoutConfig.writerRunEntries = saved
     }
   })
 })
@@ -604,7 +635,7 @@ describe("an upload's packs", () => {
     Array.from({ length: to - from }, (_, j) => {
       // Out of key order, as a batch arrives.
       const i = to - 1 - j
-      return { id: ids[i]!, hash: `h${v}.${i}`, line: line(i, v) }
+      return { type: 'T', id: ids[i]!, hash: `h${v}.${i}`, line: line(i, v) }
     })
 
   it('are indexed where they lie, and merges re-point them once listed', async () => {
@@ -623,7 +654,7 @@ describe("an upload's packs", () => {
         expect(packs.map((p) => p.id)).toEqual(ids_)
         const before = await packsNow()
         const w = layout.writer()
-        recs.forEach((r, i) => w.addPlaced(rec(u * 100 + (99 - i)), places[i]!))
+        recs.forEach((_, i) => w.addPlaced('T', rec(u * 100 + (99 - i)), places[i]!))
         await w.finish()
         // The commit wrote no pack: only its index.
         expect(await packsNow()).toBe(before)
@@ -631,10 +662,7 @@ describe("an upload's packs", () => {
       }
       const all = Array.from({ length: 1000 }, (_, i) => i)
       const read = () =>
-        layout.leafLines(
-          'leaf',
-          all.map((i) => rec(i)),
-        )
+        layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) })
       expect(await read()).toEqual(all.map((i) => line(i)))
       // Small packs: listed in the manifest, merged, their records re-pointed.
       expect((await layout.manifests.latest()).packs).toHaveLength(10)
@@ -646,6 +674,33 @@ describe("an upload's packs", () => {
       expect(await read()).toEqual(all.map((i) => line(i)))
     } finally {
       layoutConfig.graceMs = saved
+    }
+  })
+
+  it("count toward a commit writer's runs, written as it goes", async () => {
+    // A commit of packed entries alone must not hold every index entry to its end (#63).
+    const saved = layoutConfig.writerRunEntries
+    layoutConfig.writerRunEntries = 100
+    try {
+      const layout = fLayout(memoryStore())
+      const recs = upload(0, 350)
+      const { places } = await layout.writePacks(recs, packIdsFor(recs))
+      const w = layout.writer({ hold: true })
+      for (let j = 0; j < 350; j++) {
+        w.addPlaced('T', rec(349 - j), places[j]!)
+        await w.drain?.()
+      }
+      const runs = await w.finish()
+      expect(runs.map((r) => r.layers.length > 0)).toEqual([true, true, true, true])
+      // Index runs only: the records stay in the upload's pack.
+      expect(runs.every((r) => r.packs.length === 0)).toBe(true)
+      await layout.appendRuns(runs)
+      const all = Array.from({ length: 350 }, (_, i) => i)
+      expect(
+        await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
+      ).toEqual(all.map((i) => line(i)))
+    } finally {
+      layoutConfig.writerRunEntries = saved
     }
   })
 
@@ -696,7 +751,7 @@ describe('the maintain lease', () => {
     for (let c = 0; c < 4; c++) {
       const w = layout.writer()
       for (let i = c * 10; i < c * 10 + 10; i++)
-        w.add({ key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
+        w.add('T', { key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
       await w.finish()
     }
     const put = root.put.bind(root)
@@ -728,10 +783,10 @@ describe('an untrusted repository in layout F', () => {
     const trusted = openRepo(store, { layout: 'f', recordScope: 'c1', trusted: true })
     const w = trusted.records!.public.writer()
     // The second record's stored line isn't its entry's record.
-    entries.forEach((e, i) => w.add(e, i === 1 ? line(9) : line(i)))
+    entries.forEach((e, i) => w.add('T', e, i === 1 ? line(9) : line(i)))
     await w.finish()
     const repo = openRepo(store, { layout: 'f', recordScope: 'c1' })
-    const leaf = { hash: 'leaf', entries }
+    const leaf = { hash: 'leaf', type: 'T', entries }
     expect(await repo.linesAt(leaf, [0, 2], 'public')).toEqual([line(0), line(2)])
     await expect(repo.linesAt(leaf, [1], 'public')).rejects.toThrow(IntegrityError)
     await expect(repo.entryLine(leaf, 1, 'public')).rejects.toThrow(IntegrityError)
@@ -796,16 +851,16 @@ describe('a sparse merge', () => {
   })
 })
 
-describe('a layer range read', () => {
-  it('finds its pages by binary search, as a lookup does', async () => {
+describe("a layer's read of a few keys", () => {
+  it('finds their pages by binary search', async () => {
     const store = memoryStore()
     const w = new RunWriter(store, 0)
     for (const id of ids) w.add(`${id}\u0000h`, 'v'.repeat(200))
     const [layer] = await w.finish()
     const lru = repoLru(64 << 20)
     const reader = new LayerReader(store, lru, 's')
-    const id = ids.at(-10)!
-    const want = await reader.range(layer!, `${id}\u0000`, `${id}\u0000￿`)
+    const key = `${ids.at(-10)!}\u0000h`
+    const want = await reader.pick(layer!, [key])
     expect(want).toHaveLength(1)
     // Count reads of the directory's first keys (it's cached now).
     const dir = (lru.get(`s/layerdir:${layer!.id}`) as { v: { first: string[] } }).v
@@ -818,7 +873,7 @@ describe('a layer range read', () => {
         return Reflect.get(t, k, r) as unknown
       },
     })
-    expect(await reader.range(layer!, `${id}\u0000`, `${id}\u0000￿`)).toEqual(want)
+    expect(await reader.pick(layer!, [key])).toEqual(want)
     expect(reads).toBeLessThan(40)
   })
 })
@@ -918,7 +973,7 @@ describe('a split merge whose inputs went', () => {
       for (let c = 0; c < 6; c++) {
         const w = layout.writer()
         for (let i = c * 10; i < c * 10 + 10; i++)
-          w.add({ key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
+          w.add('T', { key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
         await w.finish()
       }
       const plan = await layout.mergePlan((await layout.manifests.latest()).layers, 20)
@@ -931,7 +986,9 @@ describe('a split merge whose inputs went', () => {
       expect((await store.list('runs/c1/merges/')).keys).toEqual([])
       const m = await layout.manifests.latest()
       const want = Array.from({ length: 60 }, (_, i) => ({ key: ids[i]!, hash: `h${i}`, size: 10 }))
-      expect(await layout.leafLines('leaf', want)).toEqual(want.map((_, i) => `line ${i}`))
+      expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries: want })).toEqual(
+        want.map((_, i) => `line ${i}`),
+      )
       // No layer file is left but the manifest's and those it retired (the merge's inputs).
       const id = (k: string) => k.slice('layers/'.length).split('.')[0]!
       const files = new Set(
@@ -948,8 +1005,8 @@ describe('a split merge whose inputs went', () => {
   })
 })
 
-describe('layered index lookups', () => {
-  it('find what a range read finds, newest layer winning', async () => {
+describe('layered index reads', () => {
+  it('find the same values a few keys or many at a time, newest layer winning', async () => {
     const store = memoryStore()
     const manifests = new ManifestStore(store, 'f')
     const layer = async (from: number, to: number, tag: string, level: number, seq: number) => {
@@ -966,18 +1023,112 @@ describe('layered index lookups', () => {
     await layer(5_000, 6_000, 'c', 0, 3)
     const index = new LayeredIndex(store, repoLru(8 << 20), 's', manifests)
     const m = await manifests.current()
+    const key = (i: number) => `${ids[i]}\u0000h${i % 7}`
+    const all = Array.from({ length: 200 }, (_, j) => 4_900 + j)
+    const many = await index.values(m, all.map(key))
+    expect(many.size).toBe(200)
     for (const i of [0, 1, 4_999, 5_000, 5_500, 7_999, 8_000, 11_999, 12_000, 19_999]) {
-      const id = ids[i]!
-      const looked = await index.lookup(m, [id])
-      const ranged = await index.range(m, `${id}\u0000`, `${id}\u0000￿`)
-      expect([...looked].sort()).toEqual([...ranged].sort())
-      expect(looked.size).toBe(1)
+      const one = await index.values(m, [key(i)])
+      expect(one.size).toBe(1)
+      if (many.has(key(i))) expect(one.get(key(i))).toBe(many.get(key(i)))
     }
-    const many = ids.slice(4_990, 5_010)
-    const looked = await index.lookup(m, many)
-    const ranged = await index.range(m, `${many[0]}\u0000`, `${many.at(-1)}\u0000￿`)
-    expect([...looked].sort()).toEqual([...ranged].sort())
     // The newest layer's value wins where layers overlap.
-    expect([...(await index.lookup(m, [ids[5_500]!])).values()][0]).toMatch(/^c\./)
+    expect((await index.values(m, [key(5_500)])).get(key(5_500))).toMatch(/^c\./)
+    expect(many.get(key(5_000))).toMatch(/^c\./)
+    expect(many.get(key(4_999))).toMatch(/^a\./)
+    // A key no layer holds.
+    expect((await index.values(m, [`${ids[5]}\u0000nope`])).size).toBe(0)
+  })
+})
+
+describe("layout F's reads and merges hold a bounded amount", () => {
+  /** `store`, counting reads of keys matching `re` and the most at once. */
+  const watched = (store: Store, re: RegExp) => {
+    const n = { reads: 0, inFlight: 0, most: 0 }
+    const s = new Proxy(store, {
+      get(t, k) {
+        const v = Reflect.get(t, k, t) as unknown
+        if (k !== 'get' || typeof v !== 'function') return typeof v === 'function' ? v.bind(t) : v
+        return async (key: string, ...rest: unknown[]) => {
+          if (!re.test(key)) return (v as (...a: unknown[]) => unknown).call(t, key, ...rest)
+          n.reads++
+          n.most = Math.max(n.most, ++n.inFlight)
+          try {
+            return await (v as (...a: unknown[]) => Promise<unknown>).call(t, key, ...rest)
+          } finally {
+            n.inFlight--
+          }
+        }
+      },
+    })
+    return { store: s, n }
+  }
+
+  it("reads a leaf of a small type without the large type's records between its ids", async () => {
+    // As Crossref's: every type's ids are DOIs, so a small type's leaf spans
+    // much of the id space a large type fills.
+    const { store, n } = watched(memoryStore(), /\.ly$/)
+    const layout = fLayout(store)
+    const w = layout.writer()
+    for (let i = 0; i < 20_000; i++)
+      w.add('journal-article', { key: ids[i]!, hash: `h${i}`, size: 10 }, 'x'.repeat(100))
+    const small = ids.filter((_, i) => i % 200 === 0)
+    for (const [i, id] of small.entries())
+      w.add('dataset', { key: id, hash: `d${i}`, size: 10 }, `dataset ${i}`)
+    await w.finish()
+    const entries = small.map((id, i) => ({ key: id, hash: `d${i}`, size: 10 }))
+    const leaf = { hash: 'leaf', type: 'dataset', entries }
+    expect(await layout.leafLines(leaf)).toEqual(small.map((_, i) => `dataset ${i}`))
+    // The large type's 20,000 entries fill over a hundred pages; the leaf's are one or two.
+    expect(n.reads).toBeLessThanOrEqual(3)
+  })
+
+  it('reads an index of many runs a few layers at a time, newest first', async () => {
+    const { store, n } = watched(memoryStore(), /\.dir$/)
+    const layout = fLayout(store)
+    // Forty commits' runs, as a large push leaves before merges catch up.
+    for (let r = 0; r < 40; r++) {
+      const w = layout.writer()
+      for (let i = r * 100; i < r * 100 + 100; i++)
+        w.add('T', { key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
+      await w.finish()
+    }
+    expect(runs((await layout.manifests.latest()).layers).length).toBe(40)
+    // The oldest run's records: every layer is looked in.
+    const entries = Array.from({ length: 100 }, (_, i) => ({
+      key: ids[i]!,
+      hash: `h${i}`,
+      size: 10,
+    }))
+    n.most = 0
+    expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries })).toEqual(
+      entries.map((_, i) => `line ${i}`),
+    )
+    expect(n.most).toBeLessThanOrEqual(4)
+  })
+
+  it('plans a reclaim only once merges bring the runs down', async () => {
+    const layout = fLayout()
+    for (let r = 0; r <= RECLAIM_MAX_RUNS; r++) {
+      const w = layout.writer()
+      w.add('T', { key: ids[r]!, hash: `h${r}`, size: 10 }, `line ${r}`)
+      await w.finish()
+    }
+    await expect(layout.reclaimPlan()).rejects.toThrow(TooManyRunsError)
+    while (await layout.maintain());
+    await layout.maintain()
+    expect(runs((await layout.manifests.latest()).layers).length).toBeLessThanOrEqual(
+      RECLAIM_MAX_RUNS,
+    )
+    await expect(layout.reclaimPlan()).resolves.toBeTruthy()
+  })
+
+  it("shares a merge's read budget among its inputs", () => {
+    expect(mergeRead(1)).toBe(1024 * 1024)
+    expect(mergeRead(16)).toBe(1024 * 1024)
+    expect(mergeRead(128)).toBe(128 * 1024)
+    // Never below a few pages, however many inputs.
+    expect(mergeRead(1_000)).toBe(64 * 1024)
+    expect(mergeRead(128) * 128).toBeLessThanOrEqual(MERGE_READ_BUDGET)
   })
 })

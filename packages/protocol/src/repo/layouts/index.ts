@@ -11,8 +11,10 @@ export {
   layoutConfig,
   type MergePlan,
   MissingRecordError,
+  RECLAIM_MAX_RUNS,
   packIdsFor,
   type ReclaimPlan,
+  TooManyRunsError,
   UPLOAD_PACK_FINAL_RAW,
 } from './keyed.js'
 export { headConfig, type LayerInfo, type PackInfo, pendingConfig } from './kit.js'

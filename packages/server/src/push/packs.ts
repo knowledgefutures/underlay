@@ -50,7 +50,7 @@ export async function packEntries(
     // An upload marks an entry private exactly when it goes to the private set (deltaChanges).
     const group = [...last.values()].filter((e) => (e.p === true) === (set === 'private'))
     if (!group.length) continue
-    const recs = group.map((e) => ({ id: e.k, hash: e.h!, line: e.b! }))
+    const recs = group.map((e) => ({ type: e.t, id: e.k, hash: e.h!, line: e.b! }))
     const ids = packIdsFor(recs)
     // Recorded before they're written: an upload that dies leaves no pack cleanup can't find.
     await ports.db

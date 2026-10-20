@@ -50,6 +50,7 @@ import {
   type Placed,
   type RecordSet,
   type RecordSets,
+  type TypedLeaf,
   recordStore,
   type RecordStore,
   type RecordWriter,
@@ -368,7 +369,8 @@ export class Repo {
    * untrusted location, each line is checked against the leaf's record hashes.
    */
   async bodyLines(
-    leaf: { hash: string; entries: readonly RecordEntry[] },
+    /** Layout F: with its tree's type, which its records are found by. */
+    leaf: Leaf,
     /** Layout F: the set the leaf is in (else public, then private). */
     set?: RecordSet,
   ): Promise<string[]> {
@@ -395,14 +397,8 @@ export class Repo {
     }
   }
 
-  async #packedLines(
-    leaf: { hash: string; entries: readonly RecordEntry[] },
-    key: string,
-    set: RecordSet | undefined,
-  ): Promise<string[]> {
-    const lines = await this.#resolve(
-      await this.#inSet(set, (r) => r.leafLines(leaf.hash, leaf.entries)),
-    )
+  async #packedLines(leaf: Leaf, key: string, set: RecordSet | undefined): Promise<string[]> {
+    const lines = await this.#resolve(await this.#inSet(set, (r) => r.leafLines(typed(leaf))))
     this.#checkPacked(leaf, lines)
     this.lru.set(this.#ck(key), { lines, approxBytes: lines.reduce((n, l) => n + l.length * 2, 0) })
     return lines
@@ -433,30 +429,20 @@ export class Repo {
    * Some of a leaf's records (by entry index), resolved. A packed layout reads only
    * those; leaf bodies are read whole (or from memory) and picked from.
    */
-  async linesAt(
-    leaf: { hash: string; entries: readonly RecordEntry[] },
-    at: readonly number[],
-    set?: RecordSet,
-  ): Promise<string[]> {
+  async linesAt(leaf: Leaf, at: readonly number[], set?: RecordSet): Promise<string[]> {
     if (!this.records) {
       const lines = await this.bodyLines(leaf)
       return at.map((i) => lines[i]!)
     }
-    const lines = await this.#resolve(
-      await this.#inSet(set, (r) => r.linesAt(leaf.hash, leaf.entries, at)),
-    )
+    const lines = await this.#resolve(await this.#inSet(set, (r) => r.linesAt(typed(leaf), at)))
     this.#checkPacked(leaf, lines, at)
     return lines
   }
 
   /** One entry's record line (resolved): a changed record's old body, in a packed layout. */
-  async entryLine(
-    leaf: { hash: string; entries: readonly RecordEntry[] },
-    i: number,
-    set?: RecordSet,
-  ): Promise<string> {
+  async entryLine(leaf: Leaf, i: number, set?: RecordSet): Promise<string> {
     if (!this.records) return (await this.bodyLines(leaf))[i]!
-    const stored = await this.#inSet(set, (r) => r.entryLine(leaf.hash, leaf.entries, i))
+    const stored = await this.#inSet(set, (r) => r.entryLine(typed(leaf), i))
     const line = stored.startsWith(REF_PREFIX) ? await this.#outOfLine(stored) : stored
     this.#checkPacked(leaf, [line], [i])
     return line
@@ -503,10 +489,7 @@ export class Repo {
    * resolving each was a read for nothing, and it wrote the record inline.
    */
   async *bodyLineStream(
-    leaf: {
-      hash: string
-      entries: readonly RecordEntry[]
-    },
+    leaf: Leaf,
     onRead?: (r: BodyRead) => void,
     opts: { pointers?: boolean; set?: RecordSet } = {},
   ): AsyncGenerator<string> {
@@ -686,6 +669,19 @@ export interface BodyRead {
   storedBytes: number | null
 }
 
+/** A record tree's leaf: layout F also needs the tree's type, which its records are found by. */
+export interface Leaf {
+  hash: string
+  entries: readonly RecordEntry[]
+  type?: string | undefined
+}
+
+function typed(leaf: Leaf): TypedLeaf {
+  if (leaf.type === undefined)
+    throw new Error(`Leaf ${leaf.hash}: layout F reads records by their tree's type; pass it`)
+  return leaf as TypedLeaf
+}
+
 /** NodeSource over a repository. Record trees get bodies through `leafEntries`. */
 export class RepoSource<E> implements NodeSource<E> {
   constructor(
@@ -697,6 +693,8 @@ export class RepoSource<E> implements NodeSource<E> {
       pointers?: boolean
       /** Layout F: the record set this tree is in, so a read looks in its index alone. */
       set?: RecordSet
+      /** Layout F: the tree's type, which its records are found by (needed to read any). */
+      type?: string
     } = {},
   ) {}
 
@@ -709,7 +707,7 @@ export class RepoSource<E> implements NodeSource<E> {
     if (node.kind !== 'leaf') throw new Error(`Node ${hash} is not a leaf`)
     if (this.spec !== (recordTree as TreeSpec<unknown>)) return node.entries.slice()
     const entries = node.entries as RecordEntry[]
-    const lines = await this.repo.bodyLines({ hash, entries }, this.opts.set)
+    const lines = await this.repo.bodyLines({ hash, entries, type: this.opts.type }, this.opts.set)
     return entries.map((e, i) => ({ ...e, body: lines[i]! })) as E[]
   }
 
@@ -735,7 +733,7 @@ export class RepoSource<E> implements NodeSource<E> {
     if (!this.repo.records || this.spec !== (recordTree as TreeSpec<unknown>)) return undefined
     return async (leafHash, entries, at) => {
       const lines = await this.repo.linesAt(
-        { hash: leafHash, entries: entries as unknown as RecordEntry[] },
+        { hash: leafHash, entries: entries as unknown as RecordEntry[], type: this.opts.type },
         at,
         this.opts.set,
       )
@@ -752,7 +750,11 @@ export class RepoSource<E> implements NodeSource<E> {
     const i = entries.findIndex((x) => x.key === r.key)
     return {
       ...r,
-      body: await this.repo.entryLine({ hash: leafHash, entries }, i, this.opts.set),
+      body: await this.repo.entryLine(
+        { hash: leafHash, entries, type: this.opts.type },
+        i,
+        this.opts.set,
+      ),
     } as E
   }
 
@@ -766,10 +768,14 @@ export class RepoSource<E> implements NodeSource<E> {
     }
     const entries = node.entries as RecordEntry[]
     let i = 0
-    for await (const body of this.repo.bodyLineStream({ hash, entries }, this.opts.onBodyRead, {
-      pointers: this.opts.pointers ?? false,
-      ...(this.opts.set ? { set: this.opts.set } : {}),
-    })) {
+    for await (const body of this.repo.bodyLineStream(
+      { hash, entries, type: this.opts.type },
+      this.opts.onBodyRead,
+      {
+        pointers: this.opts.pointers ?? false,
+        ...(this.opts.set ? { set: this.opts.set } : {}),
+      },
+    )) {
       yield { ...entries[i++]!, body } as E
     }
   }
@@ -819,19 +825,31 @@ export class RepoSink<E> implements TreeSink<E> {
       compressingBytes?: number
       /** Layout F: the record set this sink's records go to (needed to write any). */
       set?: RecordSet
+      /** Layout F: the type of the tree being built (needed to write any; see `type`). */
+      type?: string
       /** Layout F: hold each run back from the manifest (`held`), for the commit to name. */
       holdRecords?: boolean
     } = {},
-  ) {}
+  ) {
+    this.type = opts.type
+  }
 
   /** Runs held back (`holdRecords`), in the order written. */
   readonly held: HeldRun[] = []
+
+  /**
+   * Layout F: the type of the tree being built, which its records are stored under.
+   * A sink that builds several types' trees, one after another, is told each.
+   */
+  type: string | undefined
 
   /** Layout F's writer for this sink's set, made on first use; null for leaf bodies. */
   get #writer(): RecordWriter | null {
     if (!this.repo.records) return null
     if (!this.opts.set) throw new Error('RepoSink: layout F writes records to a set; pass `set`')
-    return (this.#records ??= this.repo.records[this.opts.set].writer())
+    return (this.#records ??= this.repo.records[this.opts.set].writer({
+      hold: this.opts.holdRecords ?? false,
+    }))
   }
 
   rewriting(base: string): void {
@@ -882,9 +900,13 @@ export class RepoSink<E> implements TreeSink<E> {
    */
   #place(e: E) {
     const p = e as unknown as Placed
-    if (p.loc !== undefined) return
-    if (p.packed !== undefined) p.loc = this.#writer!.addPlaced(p, p.packed)
-    else if (p.body !== undefined) p.loc = this.#writer!.add(p, p.body)
+    if (p.loc !== undefined || (p.body === undefined && p.packed === undefined)) return
+    if (this.type === undefined)
+      throw new Error("RepoSink: layout F stores records by type; set the tree's `type`")
+    p.loc =
+      p.packed !== undefined
+        ? this.#writer!.addPlaced(this.type, p, p.packed)
+        : this.#writer!.add(this.type, p, p.body!)
   }
 
   leaf(desc: NodeDesc, json: string, entries: readonly E[], spilled: number): void {
@@ -915,6 +937,7 @@ export class RepoSink<E> implements TreeSink<E> {
   }
 
   async drain(): Promise<void> {
+    await this.#records?.drain?.()
     const limit = this.opts.concurrency ?? 16
     const bytes = this.opts.pendingBytes ?? 16 * 1024 * 1024
     while (this.#pending.size >= limit || (this.#pending.size > 0 && this.#pendingBytes > bytes)) {
@@ -944,8 +967,7 @@ export class RepoSink<E> implements TreeSink<E> {
     while (this.#pending.size > 0) await Promise.race(this.#pending)
     if (this.#error) throw this.#error
     if (this.#records) {
-      const run = await this.#records.finish({ hold: this.opts.holdRecords ?? false })
-      if (run) this.held.push(run)
+      this.held.push(...(await this.#records.finish()))
       this.#records = null
     }
   }

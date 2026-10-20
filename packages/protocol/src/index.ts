@@ -24,14 +24,18 @@ export {
   type PackRecord,
   type Placed,
   MissingRecordError,
+  RECLAIM_MAX_RUNS,
   type ReclaimPlan,
+  recordIdKey,
   recordKey,
   UPLOAD_PACK_FINAL_RAW,
   type RecordSet,
   type RecordSets,
   setHome,
+  TooManyRunsError,
+  type TypedLeaf,
 } from './repo/layouts/index.js'
-export { LiveHashes, markRange, recordRoots } from './repo/layouts/reclaim.js'
+export { LiveHashes, markRange, recordRoots, type TypedRoot } from './repo/layouts/reclaim.js'
 export {
   fsck,
   type FsckCursor,

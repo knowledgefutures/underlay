@@ -318,7 +318,7 @@ export async function rebuildFileRefs(
     const set = sets[name]
     const delta = new FileRefDelta()
     for (const [slug, t] of Object.entries(set.types)) {
-      const source = new RepoSource(recordTree, repo, { set: name })
+      const source = new RepoSource(recordTree, repo, { set: name, type: slug })
       for await (const e of iterate(source, t.root, { payloads: true })) {
         delta.record(name, null, e, slug)
       }
