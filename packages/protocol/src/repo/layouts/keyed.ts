@@ -1242,6 +1242,8 @@ class KeyedWriter implements RecordWriter {
    * out of memory on staging, 2026-10-20).
    */
   async drain(): Promise<void> {
+    // Packs write as they fill: without waiting, large records piled up compressing.
+    await this.#packs.ready()
     if (this.#entries.length >= layoutConfig.writerRunEntries) await this.#run()
   }
 
