@@ -43,6 +43,7 @@
  *                      the unit's peak, where it was (which base leaf, how far in), and
  *                      what its sink held then
  *   --seed N           data seed (default 1)
+ *   --layout L         the collection's record layout: today (default) or f
  *   --read-ms N        then read the last version whole through records.ndjson and
  *                      records.ndjson.gz, as a client taking a chunk every N ms (find-doi
  *                      over a range, 2026-10-18), sampling at every chunk (default 0: no read)
@@ -122,6 +123,7 @@ const LEAF_MB = str('leaf-mb', '').split(',').filter(Boolean).map(Number)
 const REPUSH = args.includes('--repush')
 const PUSHES = opt('pushes', 2)
 const CACHE = str('cache', 'none')
+const LAYOUT = str('layout', 'today') as 'today' | 'f'
 const TIMER_MS = opt('timer-ms', 0)
 const READ_MS = opt('read-ms', 0)
 const PIECES = args.includes('--pieces')
@@ -779,7 +781,13 @@ await db.insert(schema.user).values({ id: 'u1', name: 'u1', email: 'u1@example.o
 await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u1', role: 'owner' })
 const [collection] = await db
   .insert(schema.collections)
-  .values({ organizationId: 'org1', slug: 'works', name: 'works', privateSalt: newSalt() })
+  .values({
+    organizationId: 'org1',
+    slug: 'works',
+    name: 'works',
+    privateSalt: newSalt(),
+    recordLayout: LAYOUT,
+  })
   .returning()
 await db.insert(schema.placements).values({
   collectionId: collection!.id,

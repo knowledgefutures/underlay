@@ -127,6 +127,8 @@ export const layoutConfig = {
    * one job ~10,460).
    */
   maintainCalls: 6_000,
+  /** Index entries a commit's writer holds before writing them out as a run (tests set it low). */
+  writerRunEntries: 20_000,
   /**
    * Index runs, or packs, one merge takes at most: each is two reads, so a pass's
    * calls stay well inside what `maintainCalls` leaves (tests set it low).
@@ -268,8 +270,8 @@ export class KeyedLayout implements RecordStore {
     return (await this.leafLines(leafHash, [entries[i]!]))[0]!
   }
 
-  writer(): RecordWriter {
-    return new KeyedWriter(this)
+  writer(opts: { hold?: boolean } = {}): RecordWriter {
+    return new KeyedWriter(this, opts)
   }
 
   /** A commit's runs its units held back (RecordWriter.finish), as one pending object. */
@@ -1215,10 +1217,15 @@ export class HomeStore extends PrefixedStore {
 }
 
 class KeyedWriter implements RecordWriter {
-  readonly #packs: PackWriter
+  #packs: PackWriter
   #entries: [string, string][] = []
+  /** Runs written and held back from the manifest (`hold`), in order. */
+  readonly #held: PendingRun[] = []
 
-  constructor(readonly layout: KeyedLayout) {
+  constructor(
+    readonly layout: KeyedLayout,
+    readonly opts: { hold?: boolean } = {},
+  ) {
     this.#packs = new PackWriter(layout.store)
   }
 
@@ -1229,9 +1236,25 @@ class KeyedWriter implements RecordWriter {
     return at
   }
 
-  async finish(opts: { hold?: boolean } = {}): Promise<PendingRun | null> {
+  /**
+   * Write a run out once `writerRunEntries` index entries are held: a commit's
+   * entries held to its end grew with the push (204k records, a 128 MB isolate
+   * out of memory on staging, 2026-10-20).
+   */
+  async drain(): Promise<void> {
+    if (this.#entries.length >= layoutConfig.writerRunEntries) await this.#run()
+  }
+
+  async finish(): Promise<PendingRun[]> {
+    await this.#run()
+    return this.#held.splice(0)
+  }
+
+  /** The entries held as an index run, with the packs they're in (closed: a run stands alone). */
+  async #run(): Promise<void> {
     const packs = await this.#packs.finish()
-    if (!this.#entries.length) return null
+    this.#packs = new PackWriter(this.layout.store)
+    if (!this.#entries.length) return
     this.#entries.sort((a, b) => compareUtf8(a[0], b[0]))
     const lw = new RunWriter(this.layout.store, 0)
     for (const [k, v] of this.#entries) lw.add(k, v)
@@ -1241,10 +1264,9 @@ class KeyedWriter implements RecordWriter {
     // (a failed update) is one reclaim finds with nothing live, and drops.
     await this.layout.registry.add(packs.filter(KeyedLayout.final))
     const run = { layers: files, packs: packs.filter((p) => !KeyedLayout.final(p)) }
-    // Held: the caller names it later, with the rest of its commit (appendRuns).
-    if (opts.hold) return run
-    await this.layout.manifests.append(run.layers, run.packs)
+    // Held: the caller names them later, with the rest of its commit (appendRuns).
+    if (this.opts.hold) this.#held.push(run)
+    else await this.layout.manifests.append(run.layers, run.packs)
     // Merges run after the commit, as their own job (the server's layout.maintain).
-    return null
   }
 }

@@ -180,9 +180,6 @@ async function* treeAsUpserts(
   }
 }
 
-/** Records one copy writes as a pending run of the set's index before starting another. */
-const COPY_BATCH = 100_000
-
 /**
  * Layout F: a type's tree moving to the other set takes its records along, copied
  * as stored into that set's packs, since a set's files hold only its own records
@@ -192,8 +189,7 @@ const COPY_BATCH = 100_000
 async function copyRecords(repo: Repo, root: string | null, from: SetName, to: SetName) {
   if (!repo.records || root === null) return
   const source = new RepoSource(recordTree, repo, { set: from })
-  let writer = repo.records[to].writer()
-  let n = 0
+  const writer = repo.records[to].writer()
   for await (const leaf of leaves(source, root)) {
     const node = await source.node(leaf.hash)
     const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
@@ -201,12 +197,7 @@ async function copyRecords(repo: Repo, root: string | null, from: SetName, to: S
       const at = Array.from({ length: Math.min(256, entries.length - i) }, (_, j) => i + j)
       const lines = await repo.records[from].linesAt(leaf.hash, entries, at)
       at.forEach((k, j) => writer.add(entries[k]!, lines[j]!))
-      n += at.length
-    }
-    if (n >= COPY_BATCH) {
-      await writer.finish()
-      writer = repo.records[to].writer()
-      n = 0
+      await writer.drain?.()
     }
   }
   await writer.finish()
