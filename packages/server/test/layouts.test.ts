@@ -100,6 +100,55 @@ async function records(h: Harness, collectionId: string) {
   return { repo, out }
 }
 
+describe('layout F maintenance', () => {
+  it("queues no private set's maintain for a collection with no private records", async () => {
+    // An idle maintain is a bulk slot and a dozen storage calls a commit: with thousands
+    // of collections committing, the queue they share is what loads wait on.
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('pub', { recordLayout: 'f' })
+    await h.collection('mixed', { recordLayout: 'f' })
+    const queued: { set: unknown; collectionId: unknown }[] = []
+    const { enqueue, enqueueBatch } = h.ports.jobs
+    h.ports.jobs.enqueue = (job, o) => {
+      if (job.type === 'layout.maintain')
+        queued.push({ set: job.set, collectionId: job.collectionId })
+      return enqueue.call(h.ports.jobs, job, o)
+    }
+    h.ports.jobs.enqueueBatch = (jobs) => {
+      for (const job of jobs)
+        if (job.type === 'layout.maintain')
+          queued.push({ set: job.set, collectionId: job.collectionId })
+      return enqueueBatch.call(h.ports.jobs, jobs)
+    }
+    const all = Array.from({ length: 300 }, (_, i) => rec(id(i), `n${i}`))
+    await push(h, user, '/api/collections/org/pub', { schemas: { Author } }, all, [], false)
+    await push(
+      h,
+      user,
+      '/api/collections/org/mixed',
+      { schemas: { Author } },
+      [...all, rec(id(9000), 'p', true)],
+      [],
+      false,
+    )
+    const [pub, mixed] = await Promise.all(
+      ['pub', 'mixed'].map(async (slug) => {
+        const [c] = await h.ports.db
+          .select()
+          .from(schema.collections)
+          .where(eq(schema.collections.slug, slug))
+        return c!.id
+      }),
+    )
+    const sets = (c: string) => [
+      ...new Set(queued.filter((q) => q.collectionId === c).map((q) => q.set)),
+    ]
+    expect(sets(pub!)).toEqual(['public'])
+    expect(sets(mixed!).sort()).toEqual(['private', 'public'])
+  })
+})
+
 describe("today's layout and layout F side by side", () => {
   it('give the same versions, read the same records, and both pass fsck', async () => {
     const h = await harness()

@@ -167,12 +167,15 @@ async function* overlay(
   }
 }
 
-/** Every entry of a tree (with bodies) as upserts. */
+/** Every entry of a tree (with bodies) as upserts, read from the tree's set. */
 async function* treeAsUpserts(
   repo: Repo,
   root: string | null,
+  set: SetName,
 ): AsyncGenerator<Change<RecordEntry>> {
-  for await (const e of iterate(new RepoSource(recordTree, repo), root, { payloads: true })) {
+  for await (const e of iterate(new RepoSource(recordTree, repo, { set }), root, {
+    payloads: true,
+  })) {
     yield { key: e.key, entry: e }
   }
 }
@@ -286,7 +289,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       }
       return
     }
-    for await (const e of treeAsUpserts(repo, tree)) {
+    for await (const e of treeAsUpserts(repo, tree, from)) {
       refs.record(from, e.entry, null, slug)
       if (to) refs.record(to, null, e.entry, slug)
     }
@@ -355,9 +358,9 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
           'private',
           t.slug,
           privRoot,
-          overlay(treeAsUpserts(repo, pubRoot), privChanges ?? asAsync([])),
+          overlay(treeAsUpserts(repo, pubRoot, 'public'), privChanges ?? asAsync([])),
         )
-        for await (const e of treeAsUpserts(repo, pubRoot))
+        for await (const e of treeAsUpserts(repo, pubRoot, 'public'))
           refs.record('public', e.entry, null, t.slug)
       } else {
         priv = privChanges

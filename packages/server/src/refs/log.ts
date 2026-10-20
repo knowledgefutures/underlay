@@ -86,7 +86,11 @@ export async function* versionEvents(
 ): AsyncGenerator<RefEvent> {
   const repo = await ports.stores.forCollection(version.collectionId)
   const { now, before } = await viewsOf(ports, version)
-  const records = new RepoSource(recordTree, repo)
+  // A set's records from its own source: layout F keeps them apart.
+  const sources = {
+    public: new RepoSource(recordTree, repo, { set: 'public' }),
+    private: new RepoSource(recordTree, repo, { set: 'private' }),
+  }
   const files = new RepoSource(fileTree, repo)
   const c = version.collectionId
   const seq = version.seq
@@ -103,7 +107,7 @@ export async function* versionEvents(
         if (scope && scope.slug !== slug) continue
         const a = before?.types.find((t) => t.slug === slug)?.[set]?.root ?? null
         const b = now.types.find((t) => t.slug === slug)?.[set]?.root ?? null
-        for await (const d of diffTrees(records, a, b, { after })) {
+        for await (const d of diffTrees(sources[set], a, b, { after })) {
           if (past(d.key)) break
           if (d.before) yield [d.before.hash, 'r', c, set, seq, '-', slug, d.key]
           if (d.after) yield [d.after.hash, 'r', c, set, seq, '+', slug, d.key]

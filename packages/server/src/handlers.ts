@@ -48,19 +48,23 @@ registerJob('version.published', async (job, ports) => {
   await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
   await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })
   const [v] = await ports.db
-    .select({ collectionId: schema.versions.collectionId })
+    .select({ collectionId: schema.versions.collectionId, hash: schema.versions.hash })
     .from(schema.versions)
     .where(eq(schema.versions.id, String(job.versionId)))
   if (v) await queueMirrors(ports, v.collectionId)
-  // Layout F merges a collection's packs and index runs after a commit, a set a job
-  // (a set with nothing due leaves after a few reads).
-  if (v && (await ports.stores.forCollection(v.collectionId)).records)
+  // Layout F merges a collection's packs and index runs after a commit, a set a job. The
+  // private set's only when the version has one: an idle job is a bulk slot and a dozen
+  // storage calls, and a collection with no private records would pay them every commit.
+  const repo = v && (await ports.stores.forCollection(v.collectionId))
+  if (v && repo?.records) {
+    const sets = (await repo.root(v.hash)).private
+      ? (['public', 'private'] as const)
+      : (['public'] as const)
     await ports.jobs.enqueueBatch(
-      RECORD_SETS.map((set) => ({ type: 'layout.maintain', collectionId: v.collectionId, set })),
+      sets.map((set) => ({ type: 'layout.maintain', collectionId: v.collectionId, set })),
     )
+  }
 })
-
-const RECORD_SETS = ['public', 'private'] as const
 
 /** A job's record set, and the collection's layout F store for it (null: not on F). */
 async function setLayout(ports: Ports, job: JobMessage): Promise<KeyedLayout | null> {
