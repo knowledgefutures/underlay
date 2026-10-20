@@ -167,6 +167,12 @@ export class Marker {
     if (this.spent) return false
     const node = await this.#read(() => this.repo.decoded(spec, root))
     await this.onRead?.()
+    // A leaf stored as a delta needs the full node it was diffed against. (The read
+    // just now noted the base in memory, so this costs nothing for full nodes.)
+    if (node.kind === 'leaf') {
+      const base = await this.repo.deltaBase(root)
+      if (base) this.marks.add('n', base)
+    }
     if (node.kind === 'leaf') leaf?.(node.entries)
     else {
       // A slice of children at a time keeps the walk close to depth first.

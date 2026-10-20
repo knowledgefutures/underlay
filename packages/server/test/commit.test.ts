@@ -406,7 +406,8 @@ describe('commitVersion', () => {
   })
 
   it('falls back to reading records on a count tree without per-type counts', async () => {
-    const h = await harness()
+    // It watches leaf bodies being read: today's layout's.
+    const h = await harness({ newCollections: 'today' })
     const c = await h.collection()
     const repo = await h.ports.stores.forCollection(c.id)
     await h.ports.db

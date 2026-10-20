@@ -48,6 +48,8 @@ export interface TreeSink<E> {
    * waits on writes, so a leaf read isn't held up by the previous leaf's write.
    */
   settle?(): Promise<void> | undefined
+  /** The base leaf being rewritten now (node deltas diff the next leaf against it). */
+  rewriting?(base: string): void
 }
 
 export interface BuilderOptions<E> {

@@ -88,10 +88,12 @@ describe('fsck', () => {
     ])
     await repo.blobs.put(headKey, head)
 
-    // Corrupt a file, drop a body, and sign nothing it trusts.
+    // Corrupt a file, drop a body (in layout F, a pack of records), and sign nothing it trusts.
     await repo.blobs.put(keys.file(sha(pdf)), 'other bytes!')
-    const bodies = [...h.bucket.objects.keys()].filter((k) => k.includes('/bodies/'))
-    h.bucket.objects.delete(bodies[0]!)
+    const held = [...h.bucket.objects.keys()].filter((k) =>
+      repo.records ? /\/packs\/[^/]+\.pk$/.test(k) : k.includes('/bodies/'),
+    )
+    h.bucket.objects.delete(held[0]!)
     const bad = await fsck(repo, { collectionId: c.id, trustedKeys: [], fileBytes: true })
     expect(bad.ok).toBe(false)
     const text = bad.errors.join('\n')

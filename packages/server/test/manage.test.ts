@@ -135,7 +135,11 @@ describe('collection management', () => {
       forkedFrom: { version: 'v1.0.2' },
       version: { recordCount: 1 },
     })
-    expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(4) // root, log entry, head.json
+    // Root, log entry, head.json; layout F adds the fork's list of its parent's files, a
+    // marker in the parent, and the fork's manifest and its head (the public set's alone).
+    expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(
+      h.ports.stores.newCollections === 'f' ? 8 : 4,
+    )
     const [child] = await h.ports.db
       .select()
       .from(schema.collections)

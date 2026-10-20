@@ -20,6 +20,7 @@ import {
   type FsckCursor,
   type FsckReport,
   fsckStep,
+  KeyedLayout,
   readCollectionInfo,
   readHead,
 } from '@underlay/protocol'
@@ -28,6 +29,7 @@ import { and, asc, eq, gt } from 'drizzle-orm'
 import './files/files.js'
 import { reconcileDue } from './billing/reconcile.js'
 import { cleanupTick } from './cleanup/runs.js'
+import './cleanup/layout-reclaim.js'
 import * as schema from './db/schema.js'
 import './push/compact.js'
 import './push/parallel.js'
@@ -35,7 +37,7 @@ import './refs/log.js'
 import { registerJob } from './jobs.js'
 import { recheckLocations } from './locations/locations.js'
 import { laggingPlacements, queueMirrors } from './locations/mirror.js'
-import type { Ports } from './ports.js'
+import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
@@ -46,10 +48,64 @@ registerJob('version.published', async (job, ports) => {
   await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
   await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })
   const [v] = await ports.db
-    .select({ collectionId: schema.versions.collectionId })
+    .select({ collectionId: schema.versions.collectionId, hash: schema.versions.hash })
     .from(schema.versions)
     .where(eq(schema.versions.id, String(job.versionId)))
   if (v) await queueMirrors(ports, v.collectionId)
+  // Layout F merges a collection's packs and index runs after a commit, a set a job. The
+  // private set's only when the version has one: an idle job is a bulk slot and a dozen
+  // storage calls, and a collection with no private records would pay them every commit.
+  const repo = v && (await ports.stores.forCollection(v.collectionId))
+  if (v && repo?.records) {
+    const sets = (await repo.root(v.hash)).private
+      ? (['public', 'private'] as const)
+      : (['public'] as const)
+    await ports.jobs.enqueueBatch(
+      sets.map((set) => ({ type: 'layout.maintain', collectionId: v.collectionId, set })),
+    )
+  }
+})
+
+/** A job's record set, and the collection's layout F store for it (null: not on F). */
+async function setLayout(ports: Ports, job: JobMessage): Promise<KeyedLayout | null> {
+  const repo = await ports.stores.forCollection(String(job.collectionId))
+  const records = repo.records?.[job.set === 'private' ? 'private' : 'public']
+  return records instanceof KeyedLayout ? records : null
+}
+
+registerJob('layout.maintain', async (job, ports) => {
+  const layout = await setLayout(ports, job)
+  if (!layout) return
+  // A merge too large for one job runs as key-range jobs, swapped in by the last.
+  const more = await layout.maintain({
+    split: (plan) =>
+      ports.jobs.enqueueBatch(
+        plan.ranges.map((_, i) => ({
+          type: 'layout.merge',
+          collectionId: String(job.collectionId),
+          set: String(job.set ?? 'public'),
+          plan: plan.id,
+          range: i,
+        })),
+      ),
+  })
+  // Stopped by its time or storage-call budget: the next job carries on (a load's
+  // last commit queues no other).
+  if (more)
+    await ports.jobs.enqueue({
+      type: 'layout.maintain',
+      collectionId: String(job.collectionId),
+      set: String(job.set ?? 'public'),
+    })
+})
+
+registerJob('layout.merge', async (job, ports) => {
+  const layout = await setLayout(ports, job)
+  if (!layout) return
+  const plan = await layout.mergePlanById(String(job.plan))
+  // Gone: swapped in, or abandoned.
+  if (!plan) return
+  if (await layout.mergeRange(plan, Number(job.range))) await layout.mergeSwap(plan)
 })
 
 registerJob('maintenance.sweep', async (_job, ports) => {

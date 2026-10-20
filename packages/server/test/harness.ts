@@ -10,6 +10,7 @@ import {
   memoryStore,
   newSalt,
   type Signer,
+  type LayoutName,
 } from '@underlay/protocol'
 
 import '../src/handlers.js'
@@ -22,6 +23,9 @@ import type { Ports } from '../src/ports.js'
 import { createStores } from '../src/stores.js'
 
 const dirs: string[] = []
+
+/** The layout this test project runs collections on (vitest.config.ts). */
+const testLayout = (process.env.UNDERLAY_TEST_LAYOUT ?? 'today') as LayoutName
 
 /** Outbound requests made by the app (webhooks), and the responder tests set. */
 export const outboundCalls: { url: string; init: RequestInit }[] = []
@@ -56,10 +60,18 @@ export interface Harness {
   /** SQL statements sent so far (D1 runs at most 1,000 per invocation). */
   statements(): number
   /** An org and a collection with a primary placement on the platform location. */
-  collection(slug?: string): Promise<typeof schema.collections.$inferSelect>
+  /** A collection in the org, in the project's layout unless `recordLayout` says. */
+  collection(
+    slug?: string,
+    opts?: { recordLayout?: LayoutName },
+  ): Promise<typeof schema.collections.$inferSelect>
 }
 
-export async function harness(): Promise<Harness> {
+/**
+ * The record layout new collections get: the test project's (vitest.config.ts runs
+ * the suite once a layout), unless a test needs one.
+ */
+export async function harness(opts: { newCollections?: LayoutName } = {}): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'ul-it-'))
   dirs.push(dir)
   let statements = 0
@@ -72,7 +84,12 @@ export async function harness(): Promise<Harness> {
   const signer = await ed25519Signer(await generateSigningKey())
   const ports: Ports = {
     db,
-    stores: createStores(db, cache, { bucket, repoPrefix: 'repo', internalPrefix: 'internal' }),
+    stores: createStores(db, cache, {
+      bucket,
+      repoPrefix: 'repo',
+      internalPrefix: 'internal',
+      newCollections: opts.newCollections ?? testLayout,
+    }),
     cache,
     signer: async () => signer,
     jobs: new SqliteJobs(db),
@@ -132,11 +149,17 @@ export async function harness(): Promise<Harness> {
         }),
       )
     },
-    async collection(slug = 'c') {
+    async collection(slug = 'c', opts: { recordLayout?: LayoutName } = {}) {
       await ensureOrg()
       const [c] = await db
         .insert(schema.collections)
-        .values({ organizationId: 'org1', slug, name: slug, privateSalt: newSalt() })
+        .values({
+          organizationId: 'org1',
+          slug,
+          name: slug,
+          privateSalt: newSalt(),
+          recordLayout: opts.recordLayout ?? ports.stores.newCollections,
+        })
         .returning()
       await db.insert(schema.placements).values({
         collectionId: c!.id,

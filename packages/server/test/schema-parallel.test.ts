@@ -6,6 +6,7 @@
  */
 import { createHash } from 'node:crypto'
 
+import { iterate, type RecordSet, RepoSource, recordTree } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
@@ -118,6 +119,17 @@ async function planKeys(h: Harness, sid: string) {
   return out
 }
 
+/** Records of a tree read with their bodies from one set alone (layout F keeps them apart). */
+async function readsFrom(h: Harness, collectionId: string, set: RecordSet, root: string | null) {
+  const repo = await h.ports.stores.forCollection(collectionId)
+  let n = 0
+  for await (const e of iterate(new RepoSource(recordTree, repo, { set }), root, {
+    payloads: true,
+  }))
+    if (e.body) n++
+  return n
+}
+
 async function planOf(h: Harness, sid: string) {
   const key = (await planKeys(h, sid)).find((k) => k.endsWith('/plan.json'))!
   return JSON.parse(await (await h.ports.stores.internal.get(key))!.text()) as {
@@ -224,13 +236,18 @@ describe('schema and privacy changes in a parallel commit', () => {
     const pa = await push(h, user, paths.a, { schemas: { Doc: PrivateDoc } }, changes, 'parallel')
     const pb = await push(h, user, paths.b, { schemas: { Doc: PrivateDoc } }, changes, 'serial')
     expect(pa.status.status).toBe('committed')
-    expect(pa.parallel).toBe(true)
-    expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPrivate')
+    // Layout F copies a moved type's records into the other set's packs, in the serial build.
+    if (a.recordLayout === 'today') {
+      expect(pa.parallel).toBe(true)
+      expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPrivate')
+    } else expect(pa.parallel).toBe(false)
     expect(pb.status.status).toBe('committed')
     const ha = await head(h, a.id)
     expect(ha).toEqual(await head(h, b.id))
     expect(ha.public.types.Doc).toBeUndefined()
     expect(ha.private?.types.Doc?.count).toBe(300)
+    // Every record of the moved type reads from its new set alone.
+    expect(await readsFrom(h, a.id, 'private', ha.private!.types.Doc!.root)).toBe(300)
   }, 30_000)
 
   it('makes a private type public by moving its tree, as the serial commit does', async () => {
@@ -243,11 +260,16 @@ describe('schema and privacy changes in a parallel commit', () => {
     const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
     const pb = await push(h, user, paths.b, { schemas: { Doc } }, changes, 'serial')
     expect(pa.status.status).toBe('committed')
-    expect(pa.parallel).toBe(true)
-    expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPublic')
+    if (a.recordLayout === 'today') {
+      expect(pa.parallel).toBe(true)
+      expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPublic')
+    } else expect(pa.parallel).toBe(false)
     expect(pb.status.status).toBe('committed')
     expect(pa.status.result.changes).toEqual(pb.status.result.changes)
     const ha = await head(h, a.id)
+    expect(await readsFrom(h, a.id, 'public', ha.public.types.Doc!.root)).toBe(
+      ha.public.types.Doc!.count,
+    )
     expect(ha).toEqual(await head(h, b.id))
     expect(ha.public.types.Doc?.count).toBe(340)
   }, 30_000)

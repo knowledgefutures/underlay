@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import {
+  headConfig,
   iterate,
   openRepo,
   PrefixedStore,
@@ -14,7 +15,7 @@ import {
   verifyTree,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
@@ -97,14 +98,22 @@ async function addLocation(
 }
 
 /** The mirror as a reader sees it: a repository in the bucket, verified. */
-function mirrorRepo(f: FakeS3, prefix: string): Repo {
+/** A mirror's bucket as a third party opens it: in the collection's record layout, when given. */
+function mirrorRepo(
+  f: FakeS3,
+  prefix: string,
+  c?: { id: string; recordLayout: 'today' | 'f' },
+): Repo {
   const store = s3Store({
     endpoint: f.url,
     bucket: 'bucket',
     accessKeyId: 'AKID',
     secretAccessKey: 'secret',
   })
-  return openRepo(new PrefixedStore(store, prefix))
+  return openRepo(
+    new PrefixedStore(store, prefix),
+    c?.recordLayout === 'f' ? { layout: 'f', recordScope: c.id, nodes: 'delta' } : {},
+  )
 }
 
 async function placements(h: Harness, user: string, path: string) {
@@ -124,8 +133,8 @@ async function placements(h: Harness, user: string, path: string) {
   }
 }
 
-async function setup() {
-  const h = await harness()
+async function setup(storage: Parameters<typeof harness>[0] = {}) {
+  const h = await harness(storage)
   const user = await h.member()
   const c = await h.collection('books')
   const path = '/api/collections/org/books'
@@ -150,6 +159,103 @@ async function setup() {
   )
   return { h, user, c, path, cover, v1, v2 }
 }
+
+describe('bucket mirrors of layout F (records in packs of the collection)', () => {
+  // F moves a manifest's head at most once a second; the tests' jobs needn't wait.
+  beforeEach(() => void (headConfig.intervalMs = 25))
+  afterEach(() => void (headConfig.intervalMs = 1000))
+
+  it('copies the record files as written, and the bucket reads with no database', async () => {
+    const { h, user, c, path, v2 } = await setup({ newCollections: 'f' })
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'mirror')
+    const created = await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public+private' },
+    })
+    expect(created.status).toBe(201)
+    await h.drain()
+    const mirror = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    expect(mirror).toMatchObject({ syncedSeq: 2, state: 'active', lastError: null })
+
+    // Opened as layout F over the bucket alone: every record reads, every tree verifies.
+    const store = s3Store({
+      endpoint: f.url,
+      bucket: 'bucket',
+      accessKeyId: 'AKID',
+      secretAccessKey: 'secret',
+    })
+    const repo = openRepo(new PrefixedStore(store, 'mirror'), {
+      layout: 'f',
+      recordScope: c.id,
+      nodes: 'delta',
+    })
+    expect(await readHead(repo, c.id)).toMatchObject({ seq: 2, versionHash: v2.hash })
+    const root = await repo.root(v2.hash)
+    const priv = await repo.privateSet(root.private!)
+    for (const [set, t] of [
+      ['public', root.public.types.Book!],
+      ['private', priv.types.Book!],
+    ] as const) {
+      const src = new RepoSource(recordTree, repo, { set })
+      expect((await verifyTree(src, t.root)).errors).toEqual([])
+      let n = 0
+      for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
+      expect(n).toBe(t.count)
+    }
+    // No leaf bodies: the records are the collection's packs, a set's apart, copied as they are.
+    const put = (part: string) => f.requests.some((r) => r.method === 'PUT' && r.url.includes(part))
+    expect(put('/bodies/')).toBe(false)
+    expect(put(`/runs/${c.id}/public/packs/`)).toBe(true)
+    expect(put(`/runs/${c.id}/private/packs/`)).toBe(true)
+
+    // The next version copies only what changed.
+    const before = f.requests.length
+    await push(h, user, path, {}, [book('b5', 'again')])
+    await h.drain()
+    expect(
+      (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!.syncedSeq,
+    ).toBe(3)
+    expect(f.requests.slice(before).filter((r) => r.method === 'PUT').length).toBeLessThan(30)
+  })
+
+  it('copies the public set alone to a public-only mirror of a collection with private records', async () => {
+    // Someone who doesn't own a collection may mirror it: they get its public records only.
+    const { h, user, c, path, v2 } = await setup({ newCollections: 'f' })
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'mirror')
+    await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public' },
+    })
+    await h.drain()
+    const mirror = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    expect(mirror).toMatchObject({ syncedSeq: 2, state: 'active', lastError: null })
+    const put = (part: string) => f.requests.some((r) => r.method === 'PUT' && r.url.includes(part))
+    expect(put(`/runs/${c.id}/public/packs/`)).toBe(true)
+    expect(put(`/runs/${c.id}/private/`)).toBe(false)
+    // The public set reads from the bucket alone.
+    const store = s3Store({
+      endpoint: f.url,
+      bucket: 'bucket',
+      accessKeyId: 'AKID',
+      secretAccessKey: 'secret',
+    })
+    const repo = openRepo(new PrefixedStore(store, 'mirror'), {
+      layout: 'f',
+      recordScope: c.id,
+      nodes: 'delta',
+    })
+    const t = (await repo.root(v2.hash)).public.types.Book!
+    const src = new RepoSource(recordTree, repo, { set: 'public' })
+    expect((await verifyTree(src, t.root)).errors).toEqual([])
+    let n = 0
+    for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
+    expect(n).toBe(t.count)
+  })
+})
 
 describe('bucket mirrors', () => {
   it('adds a location, mirrors the history, and the bucket reads as a repository', async () => {
@@ -179,7 +285,7 @@ describe('bucket mirrors', () => {
     })
 
     // A third party with read access sees a complete, verifiable repository.
-    const repo = mirrorRepo(f, 'mirror')
+    const repo = mirrorRepo(f, 'mirror', c)
     const head = await readHead(repo, c.id)
     expect(head).toMatchObject({ seq: 2, versionHash: v2.hash })
     const info = await readCollectionInfo(repo, c.id)
@@ -187,8 +293,11 @@ describe('bucket mirrors', () => {
     expect(entries).toHaveLength(2)
     const root = await repo.root(v2.hash)
     const priv = await repo.privateSet(root.private!)
-    const src = new RepoSource(recordTree, repo)
-    for (const t of [root.public.types.Book!, priv.types.Book!]) {
+    for (const [set, t] of [
+      ['public', root.public.types.Book!],
+      ['private', priv.types.Book!],
+    ] as const) {
+      const src = new RepoSource(recordTree, repo, { set })
       expect((await verifyTree(src, t.root)).errors).toEqual([])
       let n = 0
       for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++

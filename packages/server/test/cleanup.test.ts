@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { fsck, newSalt } from '@underlay/protocol'
+import { fsck, newSalt, openRepo } from '@underlay/protocol'
 import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -208,7 +208,12 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     // aren't kept: they're bookkeeping for new commits.)
     const platform = await h.ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
     for (const id of [a.id, cRow!.id]) {
-      const report = await fsck(platform, {
+      // Its row is gone: opened in the layout it was made in (layout F: its own files).
+      const repo =
+        h.ports.stores.newCollections === 'f'
+          ? openRepo(platform.blobs, { layout: 'f', recordScope: id, nodes: 'delta' })
+          : platform
+      const report = await fsck(repo, {
         collectionId: id,
         trustedKeys: [h.signer.publicKey],
         fileBytes: true,
