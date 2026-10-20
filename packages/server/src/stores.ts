@@ -48,8 +48,17 @@ export interface PlatformStorage {
 const PRIMARY_TTL_MS = 60_000
 const primaryCache = new Map<string, { locationId: string; layout: LayoutName; at: number }>()
 
+/**
+ * Layout F's repositories (one a collection) an isolate keeps, the most recently
+ * used: each holds its manifests' state, and an isolate serving thousands of
+ * collections would otherwise keep every one it ever opened.
+ */
+export const collectionRepos = { max: 256 }
+
 export function createStores(db: Db, cache: Cache, platform: PlatformStorage): Stores {
   const repos = new Map<string, Repo>()
+  /** F's, by location and collection; a Map's order is its recency (a hit moves to the end). */
+  const runRepos = new Map<string, Repo>()
   const files = platform.files ?? presigning(platform.bucket)
 
   const forLocation = async (locationId: string): Promise<Repo> => {
@@ -82,8 +91,12 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
    */
   const forCollectionRuns = async (locationId: string, collectionId: string): Promise<Repo> => {
     const k = `${locationId}/${collectionId}`
-    const known = repos.get(k)
-    if (known) return known
+    const known = runRepos.get(k)
+    if (known) {
+      runRepos.delete(k)
+      runRepos.set(k, known)
+      return known
+    }
     const loc = await forLocation(locationId)
     const repo = new Repo(loc.blobs, {
       cache,
@@ -94,7 +107,8 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       recordScope: collectionId,
       nodes: 'delta',
     })
-    repos.set(k, repo)
+    runRepos.set(k, repo)
+    if (runRepos.size > collectionRepos.max) runRepos.delete(runRepos.keys().next().value!)
     return repo
   }
   const located = (locationId: string, collectionId: string, layout: LayoutName) =>

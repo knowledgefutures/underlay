@@ -10,7 +10,7 @@
  * repository never references another location.
  */
 import { type LayoutName, makeRoot, newSalt } from '@underlay/protocol'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import { FenceError, fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
@@ -70,6 +70,21 @@ export async function forkCollection(
   collection: typeof schema.collections.$inferSelect
   version: typeof schema.versions.$inferSelect
 }> {
+  // The fork is made on the platform location (createCollectionRows), and a repository
+  // never references another location's objects: in layout F the fork would list files
+  // its location doesn't hold. Checked by location, as F opens a repository a collection.
+  const [primary] = await ports.db
+    .select({ locationId: schema.placements.locationId })
+    .from(schema.placements)
+    .where(
+      and(
+        eq(schema.placements.collectionId, source.collection.id),
+        eq(schema.placements.role, 'primary'),
+      ),
+    )
+    .limit(1)
+  if (primary?.locationId !== schema.PLATFORM_LOCATION_ID)
+    throw new Error('Forks across storage locations are not supported yet')
   const repo = await ports.stores.forCollection(source.collection.id)
   const root = await repo.root(source.version.hash)
   const priv = includePrivate && root.private ? await repo.privateSet(root.private) : null
@@ -86,8 +101,7 @@ export async function forkCollection(
     // at a time; a fork of the public set only never references the private set's.
     for (const set of priv ? (['public', 'private'] as const) : (['public'] as const))
       await repo.records[set].forkInto!(targetRepo.records[set])
-  } else if (targetRepo !== repo)
-    throw new Error('Forks across storage locations are not supported yet')
+  }
 
   const newRoot = makeRoot(root.metadata, root.public, priv)
   const v = source.version
