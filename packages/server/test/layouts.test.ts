@@ -12,6 +12,8 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { parallelConfig } from '../src/push/parallel.js'
+import { collectionRepos } from '../src/stores.js'
+import { forkCollection } from '../src/versions/fork.js'
 import { cleanup, type Harness, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -212,4 +214,68 @@ describe("today's layout and layout F side by side", () => {
     const sha = (s: string) => createHash('sha256').update(s).digest('hex')
     expect(sha(a.out.join('\n'))).toBe(sha(b.out.join('\n')))
   }, 60_000)
+})
+
+describe("layout F's repositories", () => {
+  it('are kept for the most recently used collections only', async () => {
+    // One a collection: an isolate serving thousands of collections kept every one.
+    collectionRepos.max = 2
+    try {
+      const h = await harness()
+      const [a, b, c] = [
+        await h.collection('a', { recordLayout: 'f' }),
+        await h.collection('b', { recordLayout: 'f' }),
+        await h.collection('c', { recordLayout: 'f' }),
+      ]
+      const open = (x: { id: string }) => h.ports.stores.forCollection(x.id)
+      const ra = await open(a)
+      const rb = await open(b)
+      // A hit counts as a use: `b` is now the oldest, and `c` takes its place.
+      expect(await open(a)).toBe(ra)
+      await open(c)
+      expect(await open(a)).toBe(ra)
+      expect(await open(b)).not.toBe(rb)
+    } finally {
+      collectionRepos.max = 256
+    }
+  })
+})
+
+describe('forks', () => {
+  it('are refused for a collection on another storage location', async () => {
+    // A fork is made on the platform location, and a repository never references
+    // another location's objects (F would list files its location doesn't hold).
+    const h = await harness()
+    const user = await h.member()
+    await h.ports.db.insert(schema.storageLocations).values({
+      id: 'other',
+      kind: 'platform',
+      name: 'Other',
+      prefix: 'other',
+      status: 'active',
+    })
+    const c = await h.collection('lib')
+    await h.ports.db
+      .update(schema.placements)
+      .set({ locationId: 'other' })
+      .where(eq(schema.placements.collectionId, c.id))
+    const path = '/api/collections/org/lib'
+    await push(h, user, path, { schemas: { Author } }, [rec('a1', 'A')], [], false)
+    const [col] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, c.id))
+    const [version] = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, c.id))
+    await expect(
+      forkCollection(
+        h.ports,
+        { collection: col!, version: version! },
+        { organizationId: 'org1', slug: 'lib-fork', name: 'lib-fork', public: false },
+        true,
+      ),
+    ).rejects.toThrow(/across storage locations/)
+  })
 })

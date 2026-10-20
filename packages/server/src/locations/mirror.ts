@@ -102,13 +102,17 @@ async function copyRecordFiles(
     contentType: 'application/json',
   })
   await dest.put(manifestKeys.head, JSON.stringify(manifest), { contentType: 'application/json' })
-  // What no manifest lists any more (merged away) goes from the mirror too.
+  // What no manifest lists any more (merged away) goes from the mirror too, but for
+  // files another placement at this location may hold (KeyedLayout.mirrorDroppable).
   const listed = new Set(files.map((f) => f.key))
-  for (const k of [...copied])
-    if (!listed.has(k)) {
-      await dest.delete(k).catch(() => undefined)
-      copied.delete(k)
-    }
+  const { drop, forget } = await repo.records.mirrorDroppable(
+    [...copied].filter((k) => !listed.has(k)),
+  )
+  for (const k of drop) {
+    await dest.delete(k).catch(() => undefined)
+    copied.delete(k)
+  }
+  for (const k of forget) copied.delete(k)
   await remember()
   return true
 }

@@ -255,6 +255,62 @@ describe('bucket mirrors of layout F (records in packs of the collection)', () =
     for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
     expect(n).toBe(t.count)
   })
+
+  it.each(['fork', 'parent'])(
+    'keeps the files a fork and its parent share, mirrored to one location, when the %s merges them away',
+    async (merger) => {
+      // A fork reads its parent's files at the parent's keys, and a mirror copies them
+      // there: one placement deleting what its collection no longer lists took files
+      // the other's still does.
+      const { h, user, path } = await setup({ newCollections: 'f' })
+      const f = await fake()
+      const loc = await addLocation(h, user, f, 'mirror')
+      const mirror = async (p: string) =>
+        expect(
+          (
+            await h.request(`${p}/placements`, {
+              method: 'POST',
+              user,
+              json: { locationId: loc.body.location.id, sets: 'public+private' },
+            })
+          ).status,
+        ).toBe(201)
+      await mirror(path)
+      await h.drain()
+      const forkPath = '/api/collections/org/books-fork'
+      const forked = await h.request(`${path}/fork`, {
+        method: 'POST',
+        user,
+        json: { targetOrg: 'org', slug: 'books-fork' },
+      })
+      expect(forked.status).toBe(201)
+      await mirror(forkPath)
+      await h.drain()
+      // Small commits, until one side's pack merge takes packs both list.
+      for (let i = 0; i < 8; i++) {
+        await push(h, user, merger === 'fork' ? forkPath : path, {}, [book(`n${i}`, 'n')])
+        await h.drain()
+      }
+      // Each mirror reads from the bucket alone.
+      for (const slug of ['books', 'books-fork']) {
+        const [col] = await h.ports.db
+          .select()
+          .from(schema.collections)
+          .where(eq(schema.collections.slug, slug))
+        const [head] = await h.ports.db
+          .select()
+          .from(schema.versions)
+          .where(eq(schema.versions.id, col!.headVersionId!))
+        const repo = mirrorRepo(f, 'mirror', col!)
+        expect(await readHead(repo, col!.id)).toMatchObject({ versionHash: head!.hash })
+        const t = (await repo.root(head!.hash)).public.types.Book!
+        let n = 0
+        const src = new RepoSource(recordTree, repo, { set: 'public' })
+        for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
+        expect(n).toBe(t.count)
+      }
+    },
+  )
 })
 
 describe('bucket mirrors', () => {
