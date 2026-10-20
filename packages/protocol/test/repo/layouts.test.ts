@@ -576,8 +576,11 @@ describe("a commit's held runs", () => {
       const id = run.layers[0]!.id
       expect((await layout.manifests.latest()).layers.some((l) => l.id === id)).toBe(false)
       expect((await root.list(`runs/c1/layers/${id}`)).keys).toEqual([])
+      // The retry writes nothing (a commit's own pending object may still be listed,
+      // folded in but not yet deleted, depending on what the last maintain wrote).
+      const before = await pending()
       await layout.appendRuns([run])
-      expect(await pending()).toEqual([])
+      expect(await pending()).toEqual(before)
       await layout.maintain()
       const all = Array.from({ length: 500 }, (_, i) => i)
       expect(
