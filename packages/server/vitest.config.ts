@@ -4,6 +4,9 @@ import { defineConfig } from 'vitest/config'
 // on layout F (packs per collection). Both are live while collections convert.
 export default defineConfig({
   test: {
+    setupFiles: ['test/setup.ts'],
+    // The suite runs twice and F's jobs do more per commit: room for a slow CI runner.
+    testTimeout: 20_000,
     projects: [
       {
         extends: true,

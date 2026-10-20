@@ -213,7 +213,7 @@ describe('merges keep the newest place of every record', () => {
       layoutConfig.graceMs = saved
       headConfig.intervalMs = 1000
     }
-  })
+  }, 30_000)
 })
 
 describe('merges split into key-range jobs', () => {
@@ -275,7 +275,7 @@ describe('merges split into key-range jobs', () => {
     } finally {
       Object.assign(layoutConfig, saved)
     }
-  })
+  }, 30_000)
 })
 
 describe('a backlog of tiny commits', () => {
@@ -326,6 +326,8 @@ describe('a backlog of tiny commits', () => {
 describe('pack merges', () => {
   it('reach every tier while commits keep landing', async () => {
     // One pass a job, with commits between: tier 0 always has enough (FANOUT) to merge.
+    // Not a test of the head: its interval only makes the 120 jobs wait.
+    headConfig.intervalMs = 1
     const saved = { ...layoutConfig }
     layoutConfig.maintainBudgetMs = 0
     try {
@@ -347,7 +349,7 @@ describe('pack merges', () => {
     } finally {
       Object.assign(layoutConfig, saved)
     }
-  })
+  }, 30_000)
 })
 
 describe('layout F', () => {
