@@ -31,7 +31,7 @@ import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
 import type { SessionCommitResult } from './outcome.js'
-import { packEntries, packStats } from './packs.js'
+import { keyOrderPlacer, OutOfKeyOrder, packEntries } from './packs.js'
 import { planParallel, SerialTooLargeError } from './parallel.js'
 import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
@@ -49,6 +49,19 @@ import {
 /** 8 MB: an upload request holds its batch several times over (text, records, run lines). */
 export const MAX_BATCH_BYTES = 8 * 1024 * 1024
 export const MAX_BATCH_LINES = 10_000
+/**
+ * A key-ordered session's batches (layout F, `in_key_order`): records stream into
+ * packs as they arrive, so a request holds only its run entries (about 150 bytes a
+ * record) and the pack filling. Larger batches mean fewer runs to compact.
+ */
+export const KEY_ORDER_BATCH_BYTES = 64 * 1024 * 1024
+export const KEY_ORDER_BATCH_LINES = 50_000
+
+/** A session's batch limits: larger for one whose records stream into packs. */
+export const batchLimits = (session: Pick<SessionRow, 'inKeyOrder'>) =>
+  session.inKeyOrder
+    ? { bytes: KEY_ORDER_BATCH_BYTES, lines: KEY_ORDER_BATCH_LINES }
+    : { bytes: MAX_BATCH_BYTES, lines: MAX_BATCH_LINES }
 const MAX_REPORTED = 100
 
 export interface LineError {
@@ -83,7 +96,13 @@ export async function prepareRecords(
   inputs: SessionInputs,
   input: string | AsyncIterable<string>,
   /** `packed`: the records go into packs (layout F), so large ones aren't staged apart. */
-  opts: { stripUnknownFields: boolean; packed?: boolean },
+  opts: {
+    stripUnknownFields: boolean
+    packed?: boolean
+    maxLines?: number
+    /** Each accepted record as it's read (a key-ordered session's packing), with its line number. */
+    place?: (e: RunEntry, line: number) => Promise<void>
+  },
 ): Promise<
   { entries: RunEntry[] } | { errors: LineError[]; total: number } | { tooManyLines: true }
 > {
@@ -115,7 +134,7 @@ export async function prepareRecords(
   let i = -1
   for await (const line of source) {
     i++
-    if (i >= MAX_BATCH_LINES) return { tooManyLines: true }
+    if (i >= (opts.maxLines ?? MAX_BATCH_LINES)) return { tooManyLines: true }
     let rec
     try {
       rec = parseRecordLine(line)
@@ -180,6 +199,8 @@ export async function prepareRecords(
       ...(isPrivate ? { p: true } : {}),
       ...(refs.length ? { r: refs } : {}),
     }
+    // A batch with an invalid record is refused whole: nothing more is packed.
+    if (opts.place && total === 0) await opts.place(entry, i + 1)
     entries.push(entry)
   }
   return total > 0 ? { errors, total } : { entries }
@@ -191,14 +212,28 @@ export async function ingestRecords(
   input: string | AsyncIterable<string>,
 ): Promise<IngestResult> {
   const inputs = await loadInputs(ports, session.id)
-  // Layout F: the records go straight into the collection's packs.
+  // Layout F: the records go straight into the collection's packs; a key-ordered
+  // session's as they arrive.
   const records = (await ports.stores.forCollection(session.collectionId)).records
-  const prepared = await prepareRecords(ports, session.id, inputs, input, {
-    stripUnknownFields: session.stripUnknownFields,
-    packed: records !== null,
-  })
+  const placer = records && session.inKeyOrder ? keyOrderPlacer(ports, session.id, records) : null
+  const limits = batchLimits(session)
+  let prepared
+  try {
+    prepared = await prepareRecords(ports, session.id, inputs, input, {
+      stripUnknownFields: session.stripUnknownFields,
+      packed: records !== null,
+      maxLines: limits.lines,
+      ...(placer ? { place: placer.place } : {}),
+    })
+  } catch (err) {
+    // Packs already written are reported (their rows' stats), so cleanup settles them.
+    await placer?.finish().catch(() => {})
+    if (err instanceof OutOfKeyOrder) return { ok: false, status: 422, error: err.message }
+    throw err
+  }
+  await placer?.finish()
   if ('tooManyLines' in prepared) {
-    return { ok: false, status: 413, error: `At most ${MAX_BATCH_LINES} records per batch` }
+    return { ok: false, status: 413, error: `At most ${limits.lines} records per batch` }
   }
   if ('errors' in prepared) {
     return {
@@ -212,16 +247,9 @@ export async function ingestRecords(
   if (prepared.entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
   const seq = await nextRunSeq(ports, session.id)
   if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
-  const packs = records ? await packEntries(ports, session.id, records, prepared.entries) : []
+  if (records && !placer) await packEntries(ports, session.id, records, prepared.entries)
   const index = await writeRun(ports.stores.internal, session.id, seq, prepared.entries)
-  await recordRun(
-    ports,
-    session.id,
-    'records',
-    index,
-    { records: prepared.entries.length },
-    packStats(ports, session.id, packs),
-  )
+  await recordRun(ports, session.id, 'records', index, { records: prepared.entries.length })
   return { ok: true, received: prepared.entries.length }
 }
 

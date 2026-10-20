@@ -6,31 +6,48 @@
  * compacting 206 GB, 2026-10-19), and commit units index the records without
  * reading or writing them again.
  *
+ * A session opened `in_key_order` (its uploads sorted by type and id) streams each
+ * record into a pack as it arrives (`keyOrderPlacer`): packs fill to 16 MB, hold
+ * neighbouring records, and a batch isn't held in memory, so batches can be larger.
+ * Otherwise a batch is sorted and packed once it's read (`packEntries`), a pack a
+ * batch, in whatever order the batches come.
+ *
  * A pack is outside the collection's index and manifest until a commit names it
  * (`adoptSessionPacks`, just before the version publishes). Each is recorded in
- * `push_packs` before it's written, so storage cleanup can delete the packs of a
- * push that never published (`dropSessionPacks`).
+ * `push_packs` before it's written and its stats once it is, so storage cleanup can
+ * settle the packs of a push that never published (`settleSessionPacks`).
  */
 import {
-  packIdsFor,
+  type PackHooks,
   type PackInfo,
   type RecordSet,
   type RecordSets,
   type Repo,
+  type UploadWriter,
 } from '@underlay/protocol'
 import { and, eq, isNotNull } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { type RunEntry, runKey } from './runs.js'
+import { compareRunKeys, type RunEntry, runKey } from './runs.js'
 
 const SETS = ['public', 'private'] as const
 
-/** A pack an upload wrote, for its row's stats. */
-export interface UploadPack {
-  set: RecordSet
-  pack: PackInfo
-}
+/** An upload marks an entry private exactly when it goes to the private set (deltaChanges). */
+const setOf = (e: RunEntry): RecordSet => (e.p ? 'private' : 'public')
+
+/** Each pack recorded before it's written, and its stats once it is. */
+const hooksFor = (ports: Ports, sessionId: string, set: RecordSet): PackHooks => ({
+  before: async (packId) => {
+    await ports.db.insert(schema.pushPacks).values({ sessionId, packId, set })
+  },
+  after: async (pack) => {
+    await ports.db
+      .update(schema.pushPacks)
+      .set({ records: pack.records, bytes: pack.bytes, raw: pack.raw })
+      .where(and(eq(schema.pushPacks.sessionId, sessionId), eq(schema.pushPacks.packId, pack.id)))
+  },
+})
 
 /**
  * Write a batch's records into packs, a set each, and give their entries places
@@ -42,38 +59,58 @@ export async function packEntries(
   sessionId: string,
   records: RecordSets,
   entries: RunEntry[],
-): Promise<UploadPack[]> {
+): Promise<void> {
   const last = new Map<string, RunEntry>()
   for (const e of entries) last.set(runKey(e), e)
-  const out: UploadPack[] = []
   for (const set of SETS) {
-    // An upload marks an entry private exactly when it goes to the private set (deltaChanges).
-    const group = [...last.values()].filter((e) => (e.p === true) === (set === 'private'))
+    const group = [...last.values()].filter((e) => setOf(e) === set)
     if (!group.length) continue
     const recs = group.map((e) => ({ type: e.t, id: e.k, hash: e.h!, line: e.b! }))
-    const ids = packIdsFor(recs)
-    // Recorded before they're written: an upload that dies leaves no pack cleanup can't find.
-    await ports.db
-      .insert(schema.pushPacks)
-      .values(ids.map((packId) => ({ sessionId, packId, set })))
-    const { places, packs } = await records[set].writePacks!(recs, ids)
+    const { places } = await records[set].writePacks!(recs, hooksFor(ports, sessionId, set))
     group.forEach((e, i) => {
       e.l = places[i]!
       delete e.b
     })
-    out.push(...packs.map((pack) => ({ set, pack })))
   }
-  return out
 }
 
-/** The statements that record written packs' stats (run with the upload's run row). */
-export const packStats = (ports: Ports, sessionId: string, packs: UploadPack[]) =>
-  packs.map(({ pack }) =>
-    ports.db
-      .update(schema.pushPacks)
-      .set({ records: pack.records, bytes: pack.bytes, raw: pack.raw })
-      .where(and(eq(schema.pushPacks.sessionId, sessionId), eq(schema.pushPacks.packId, pack.id))),
-  )
+/** A record of a key-ordered upload that comes before the one ahead of it. */
+export class OutOfKeyOrder extends Error {
+  constructor(readonly line: number) {
+    super(
+      `Records out of key order at line ${line}: this session was opened in_key_order, so each batch's records go by type, then id`,
+    )
+  }
+}
+
+/**
+ * Places a key-ordered batch's records as they arrive: each straight into its set's
+ * pack, its entry left with a place instead of a body. `finish` writes the last
+ * packs. A record before the one ahead of it throws OutOfKeyOrder.
+ */
+export function keyOrderPlacer(ports: Ports, sessionId: string, records: RecordSets) {
+  const writers = new Map<RecordSet, UploadWriter>()
+  let last: RunEntry | null = null
+  let n = 0
+  return {
+    async place(e: RunEntry, line: number): Promise<void> {
+      if (last && compareRunKeys(e, last) < 0) throw new OutOfKeyOrder(line)
+      last = e
+      const set = setOf(e)
+      let w = writers.get(set)
+      if (!w) {
+        w = records[set].uploadWriter!(hooksFor(ports, sessionId, set))
+        writers.set(set, w)
+      }
+      e.l = w.append({ type: e.t, id: e.k, hash: e.h!, line: e.b! })
+      delete e.b
+      if (++n % 256 === 0) await w.ready()
+    },
+    async finish(): Promise<void> {
+      for (const w of writers.values()) await w.finish()
+    },
+  }
+}
 
 /**
  * List a session's packs in the collection's manifest or registry. Called once the
@@ -96,14 +133,16 @@ export async function adoptSessionPacks(ports: Ports, repo: Repo, sessionId: str
 
 /**
  * At storage cleanup, settle a finished session's packs, then drop its rows:
- * - a version names the session: its commit listed them, nothing to do;
+ * - a pack with no stats was never reported written, so no recorded run places a
+ *   record in it: deleted, whatever became of the session;
+ * - a version names the session: its commit listed the rest, nothing to do;
  * - no commit of it ever started: nothing indexes their records, so they're deleted;
  * - a commit started and never published: its index may name their records (one the
  *   collection already held, say, whose newest place is now such a pack), so they're
  *   listed instead, and reclaim drops what no version uses.
- * Returns the objects and bytes deleted (a pack is two objects), counting packs that
- * were written. A collection whose repository won't open (deleted) is left to the
- * sweep, which drops its files.
+ * A pack the collection lists is never deleted here (KeyedLayout.dropPacks). Returns
+ * the objects and bytes deleted (a pack is two objects). A collection whose
+ * repository won't open (deleted) is left to the sweep, which drops its files.
  */
 export async function settleSessionPacks(
   ports: Ports,
@@ -127,28 +166,25 @@ export async function settleSessionPacks(
   } catch {
     repo = null
   }
-  if (!published && repo?.records) {
-    if (session.commitStarted) {
-      if (!dryRun) await adoptSessionPacks(ports, repo, session.id)
-    } else {
-      for (const set of SETS) {
-        const mine = rows.filter((r) => r.set === set)
-        if (!mine.length) continue
-        // Refused if a commit listed them after all (KeyedLayout.dropPacks).
-        const dropped =
-          dryRun ||
-          (await repo.records[set].dropPacks!(
+  if (repo?.records) {
+    const keepWritten = !!published || session.commitStarted
+    if (!published && session.commitStarted && !dryRun)
+      await adoptSessionPacks(ports, repo, session.id)
+    for (const set of SETS) {
+      const drop = rows.filter((r) => r.set === set && (r.records === null || !keepWritten))
+      if (!drop.length) continue
+      const ids = dryRun
+        ? drop.map((r) => r.packId)
+        : await repo.records[set].dropPacks!(
             session.id,
-            mine.map((r) => r.packId),
-          ))
-        if (!dropped) continue
-        // A row without stats is a pack never written, or one whose upload died writing it.
-        for (const r of mine)
-          if (r.records !== null) {
-            gone.objects += 2
-            gone.bytes += r.bytes ?? 0
-          }
-      }
+            drop.map((r) => r.packId),
+          )
+      const dropped = new Set(ids)
+      for (const r of drop)
+        if (dropped.has(r.packId) && r.records !== null) {
+          gone.objects += 2
+          gone.bytes += r.bytes ?? 0
+        }
     }
   }
   if (!dryRun)

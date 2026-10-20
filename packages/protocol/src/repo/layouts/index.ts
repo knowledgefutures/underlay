@@ -12,12 +12,11 @@ export {
   type MergePlan,
   MissingRecordError,
   RECLAIM_MAX_RUNS,
-  packIdsFor,
   type ReclaimPlan,
   TooManyRunsError,
   UPLOAD_PACK_FINAL_RAW,
 } from './keyed.js'
-export { headConfig, type LayerInfo, type PackInfo, pendingConfig } from './kit.js'
+export { headConfig, type LayerInfo, type PackHooks, type PackInfo, pendingConfig } from './kit.js'
 export * from './types.js'
 
 /** A set's home under the collection's: `runs/<collection>/<set>/` holds its files. */

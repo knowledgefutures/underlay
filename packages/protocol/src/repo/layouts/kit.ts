@@ -76,6 +76,15 @@ export interface PackInfo {
   raw: number
 }
 
+/**
+ * Called around each pack's write. An upload records a pack before it's written, so
+ * cleanup can find it if the upload dies, and its stats once it is.
+ */
+export interface PackHooks {
+  before?(id: string): Promise<void>
+  after?(pack: PackInfo): Promise<void>
+}
+
 export class PackWriter {
   #id = ''
   #blocks: Promise<Uint8Array>[] = []
@@ -90,15 +99,14 @@ export class PackWriter {
 
   constructor(
     readonly store: Store,
-    /** `ids` names each new pack (an upload's, recorded before they're written); else random. */
-    readonly opts: { tier?: number; ids?: () => string } = {},
+    readonly opts: { tier?: number; hooks?: PackHooks } = {},
   ) {}
 
   /** Add a record line under `key`; returns its place. A key below the last starts a new pack. */
   append(key: string, line: string): string {
     if (this.#lastKey !== null && compareUtf8(key, this.#lastKey) < 0) this.#close()
     this.#lastKey = key
-    if (!this.#id) this.#id = this.opts.ids ? this.opts.ids() : newId()
+    if (!this.#id) this.#id = newId()
     this.#lines.push(`${key}\t${line}`)
     const at = loc(this.#id, this.#blocks.length, this.#lines.length - 1)
     this.#raw += key.length + line.length + 2
@@ -152,15 +160,18 @@ export class PackWriter {
     const parts = await Promise.all(job.blocks)
     const offsets = [0]
     for (const p of parts) offsets.push(offsets.at(-1)! + p.byteLength)
+    await this.opts.hooks?.before?.(job.id)
     await putJoined(this.store, packKey(job.id), parts, { ifAbsent: true })
     await this.store.put(packDirKey(job.id), JSON.stringify(offsets), { ifAbsent: true })
-    this.done.push({
+    const pack = {
       id: job.id,
       tier: this.opts.tier ?? 0,
       records: job.records,
       bytes: offsets.at(-1)!,
       raw: job.raw,
-    })
+    }
+    this.done.push(pack)
+    await this.opts.hooks?.after?.(pack)
   }
 
   /** Close the current pack and wait for every write. */

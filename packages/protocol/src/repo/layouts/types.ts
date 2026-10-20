@@ -5,7 +5,7 @@
  * holds. Neither changes a node, a root or any hash.
  */
 import type { RecordEntry } from '../../tree/node.js'
-import type { PackInfo, PendingRun } from './kit.js'
+import type { PackHooks, PackInfo, PendingRun } from './kit.js'
 
 export const LAYOUTS = ['today', 'f'] as const
 export type LayoutName = (typeof LAYOUTS)[number]
@@ -23,6 +23,16 @@ export interface PackRecord {
   id: string
   hash: string
   line: string
+}
+
+/** Writes an upload's records into packs (RecordStore.uploadWriter). */
+export interface UploadWriter {
+  /** Write one record: its place. */
+  append(record: PackRecord): string
+  /** Wait while too much is held (call between records): memory stays bounded. */
+  ready(): Promise<void>
+  /** Write the last pack and wait for every write: the packs written. */
+  finish(): Promise<PackInfo[]>
 }
 
 /** Records still in use, from a mark over every retained version (storage reclaim). */
@@ -73,13 +83,15 @@ export interface RecordStore {
   /** Give a fork its records: it lists the parent's files and reads them where they are. */
   forkInto?(target: RecordStore): Promise<Record<string, number>>
   /**
-   * Write an upload's records into packs of their own, named by `ids` (more than it
-   * needs; see `packIdsFor`), outside the index and the manifest: their places, in
-   * the order given, and the packs written.
+   * A writer of an upload's records into packs of its own, outside the index and the
+   * manifest until a commit names them (`adoptPacks`). Records in key order fill whole
+   * packs; one below the last starts a new pack.
    */
+  uploadWriter?(hooks?: PackHooks): UploadWriter
+  /** An upload's records into packs, sorted first: their places, in the order given. */
   writePacks?(
     records: readonly PackRecord[],
-    ids: readonly string[],
+    hooks?: PackHooks,
   ): Promise<{ places: string[]; packs: PackInfo[] }>
   /**
    * List packs uploads wrote, once the commit's index names their records: large
@@ -87,8 +99,8 @@ export interface RecordStore {
    * commit's, so a retry lists nothing twice.
    */
   adoptPacks?(name: string, packs: readonly PackInfo[]): Promise<void>
-  /** Delete packs uploads wrote for commit `name`, unless it named them (false then). */
-  dropPacks?(name: string, ids: readonly string[]): Promise<boolean>
+  /** Delete packs uploads wrote for commit `name`, but none the collection lists: the ids deleted. */
+  dropPacks?(name: string, ids: readonly string[]): Promise<string[]>
 }
 
 export interface RecordWriter {

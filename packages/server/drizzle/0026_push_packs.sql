@@ -10,4 +10,6 @@ CREATE TABLE `push_packs` (
 	FOREIGN KEY (`session_id`) REFERENCES `push_sessions`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-ALTER TABLE `push_sessions` ADD `commit_started` integer DEFAULT false NOT NULL;
+ALTER TABLE `push_sessions` ADD `commit_started` integer DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE `push_sessions` ADD `in_key_order` integer DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE `push_sessions` ADD `overlapping_uploads` integer DEFAULT 0 NOT NULL;

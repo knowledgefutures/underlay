@@ -613,6 +613,18 @@ export const pushSessions = sqliteTable(
      * (push/packs.ts), so cleanup leaves those to reclaim instead of deleting them.
      */
     commitStarted: bool('commit_started').notNull().default(false),
+    /**
+     * Opened `in_key_order` on a layout F collection: each batch's records come by
+     * type, then id, and stream straight into packs (push/packs.ts), so batches
+     * may be larger (push/delta.ts `batchLimits`).
+     */
+    inKeyOrder: bool('in_key_order').notNull().default(false),
+    /**
+     * Uploads whose key range overlapped an earlier upload's (or a compaction's)
+     * when they landed: 0 means the session's uploads came in key order, and its
+     * packs hold neighbouring records.
+     */
+    overlappingUploads: integer('overlapping_uploads').notNull().default(0),
     /** When storage cleanup deleted the session's objects (sessions/<id>/) and run rows. */
     cleanedAt: ts('cleaned_at'),
     /**

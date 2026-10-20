@@ -41,14 +41,18 @@ async function json(res: Response) {
   return (await res.json()) as any
 }
 
-async function open(h: Harness, user: string, slug: string) {
+async function open(h: Harness, user: string, slug: string, extra: object = {}) {
   const res = await h.request(`/api/collections/org/${slug}/push`, {
     method: 'POST',
     user,
-    json: { schemas: { Doc } },
+    json: { schemas: { Doc }, ...extra },
   })
   expect(res.status).toBe(200)
   return (await json(res)).session_id as string
+}
+
+async function status(h: Harness, user: string, slug: string, sid: string) {
+  return json(await h.request(`/api/collections/org/${slug}/push/${sid}`, { user }))
 }
 
 async function upload(h: Harness, user: string, slug: string, sid: string, batch: object[]) {
@@ -361,5 +365,89 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     }
     expect((await layout.manifests.latest()).adopted).toContain(sid)
     expect((await headRecords(h, c.id)).out).toEqual(['public same unchanged'])
+  })
+  describe('in key order', () => {
+    // A batch's records by id, from `from`; ids sort as their numbers do.
+    const sorted = (from: number, n: number, title = 'r') =>
+      Array.from({ length: n }, (_, i) => doc(id(from + i), `${title}${from + i}`))
+
+    it('stream into whole packs, take larger batches, and count no overlaps', async () => {
+      const h = await harness()
+      const user = await h.member()
+      const c = await h.collection('k', { recordLayout: 'f' })
+      const res = await h.request('/api/collections/org/k/push', {
+        method: 'POST',
+        user,
+        json: { schemas: { Doc }, in_key_order: true },
+      })
+      const opened = await json(res)
+      expect(opened.in_key_order).toBe(true)
+      expect(opened.limits).toMatchObject({ batch_bytes: 64 * 1024 * 1024, batch_lines: 50_000 })
+      const sid = opened.session_id as string
+      // One batch over the default 8 MB: a single pack, its records together.
+      const big = (from: number) =>
+        Array.from({ length: 1100 }, (_, i) => doc(id(from + i), `${'z'.repeat(8000)}${from + i}`))
+      await upload(h, user, 'k', sid, big(0))
+      expect(packKeys(h, c.id)).toHaveLength(2)
+      await upload(h, user, 'k', sid, sorted(5000, 50))
+      expect((await status(h, user, 'k', sid)).overlapping_uploads).toBe(0)
+      expect(await commit(h, user, 'k', sid)).toBe(201)
+      const { out } = await headRecords(h, c.id)
+      expect(out).toHaveLength(1150)
+      expect(out[1100]).toBe(`public ${id(5000)} r5000`)
+    })
+
+    it('refuse a batch out of order, and cleanup deletes what it packed', async () => {
+      const h = await harness()
+      const user = await h.member()
+      const c = await h.collection('o', { recordLayout: 'f' })
+      const sid = await open(h, user, 'o', { in_key_order: true })
+      const batch = [...sorted(0, 300), doc(id(10), 'behind')]
+      const r = await h.request(`/api/collections/org/o/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: batch,
+      })
+      expect(r.status).toBe(422)
+      expect((await json(r)).error).toMatch(/out of key order at line 301/)
+      // What it packed before the refusal is reported, for cleanup.
+      const rows = await h.ports.db
+        .select()
+        .from(schema.pushPacks)
+        .where(eq(schema.pushPacks.sessionId, sid))
+      expect(rows.length).toBeGreaterThan(0)
+      expect(rows.every((row) => row.records !== null)).toBe(true)
+      expect((await status(h, user, 'o', sid)).records_received).toBe(0)
+      await h.request(`/api/collections/org/o/push/${sid}`, { method: 'DELETE', user })
+      await h.ports.db
+        .update(schema.pushSessions)
+        .set({ expiresAt: new Date(Date.now() - cleanupConfig.sessionGraceMs - DAY) })
+      await startRun(h.ports, 'internal', { trigger: 'manual' })
+      await h.drain()
+      expect(packKeys(h, c.id)).toEqual([])
+    })
+
+    it('is counted when uploads overlap, and ignored on today’s layout', async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('ov', { recordLayout: 'f' })
+      const sid = await open(h, user, 'ov')
+      await upload(h, user, 'ov', sid, sorted(0, 100))
+      await upload(h, user, 'ov', sid, sorted(200, 100))
+      expect((await status(h, user, 'ov', sid)).overlapping_uploads).toBe(0)
+      // Ids 50–149: inside the first upload's range.
+      await upload(h, user, 'ov', sid, sorted(50, 100))
+      expect((await status(h, user, 'ov', sid)).overlapping_uploads).toBe(1)
+
+      await h.collection('t', { recordLayout: 'today' })
+      const res = await h.request('/api/collections/org/t/push', {
+        method: 'POST',
+        user,
+        json: { schemas: { Doc }, in_key_order: true },
+      })
+      const opened = await json(res)
+      expect(opened.in_key_order).toBe(false)
+      expect(opened.limits.batch_bytes).toBe(8 * 1024 * 1024)
+    })
   })
 })

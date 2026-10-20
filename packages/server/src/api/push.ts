@@ -22,9 +22,9 @@ import type { Ports } from '../ports.js'
 import {
   headBase,
   ingestDeletes,
+  batchLimits,
   ingestRecords,
   MAX_BATCH_BYTES,
-  MAX_BATCH_LINES,
 } from '../push/delta.js'
 import { finalizeSession } from '../push/finalize.js'
 import { unitProgress } from '../push/recover.js'
@@ -54,10 +54,10 @@ export const commitConfig = { asyncAbove: 100_000 }
  * This node's push limits, advertised when a session opens (docs/protocol-v2.md,
  * section 11.4). Read on each call: tests lower some of them.
  */
-export const pushLimits = () => ({
+export const pushLimits = (session: Pick<SessionRow, 'inKeyOrder'> = { inKeyOrder: false }) => ({
   open_bytes: MAX_OPEN_BYTES,
-  batch_bytes: MAX_BATCH_BYTES,
-  batch_lines: MAX_BATCH_LINES,
+  batch_bytes: batchLimits(session).bytes,
+  batch_lines: batchLimits(session).lines,
   session_idle_seconds: SESSION_TTL_MS / 1000,
   open_sessions: limits.openSessions,
   file_bytes: SMALL_UPLOAD_BYTES,
@@ -248,6 +248,10 @@ async function statusBody(ports: Ports, s: SessionRow) {
     expires_at: s.expiresAt,
     created_at: s.createdAt,
     finalize_started_at: s.finalizeStartedAt,
+    // Whether the uploads came in key order: an upload that overlapped an earlier
+    // one's key range leaves records scattered across packs (layout F).
+    in_key_order: s.inKeyOrder,
+    overlapping_uploads: s.overlappingUploads,
     result: s.result ?? null,
     error: s.error ?? null,
   }
@@ -356,6 +360,8 @@ export function pushRoutes() {
         appId: str(body.app_id),
         actorId: str(body.actor_id),
         stripUnknownFields: body.strip_unknown_fields === true,
+        // Only layout F packs records at upload: elsewhere it changes nothing.
+        inKeyOrder: body.in_key_order === true && access.collection.recordLayout === 'f',
       },
       inputs,
     )
@@ -369,7 +375,8 @@ export function pushRoutes() {
         inputs.files && 'add' in inputs.files ? inputs.files.add : [],
       ),
       expires_at: session.expiresAt,
-      limits: pushLimits(),
+      in_key_order: session.inKeyOrder,
+      limits: pushLimits(session),
     })
   })
 
@@ -379,12 +386,13 @@ export function pushRoutes() {
     const session = await ownSession(c, access)
     if (session instanceof Response) return session
     // Parsed line by line as the body arrives (v2-scale-review.md S6).
+    const max = batchLimits(session).bytes
     let r
     try {
-      r = await ingestRecords(c.var.ports, session, readLines(c, MAX_BATCH_BYTES))
+      r = await ingestRecords(c.var.ports, session, readLines(c, max))
     } catch (err) {
       if (err instanceof BodyTooLarge)
-        return jsonError(c, 413, `Batches are limited to ${MAX_BATCH_BYTES} bytes`)
+        return jsonError(c, 413, `Batches are limited to ${max} bytes`)
       throw err
     }
     return r.ok

@@ -25,7 +25,6 @@ import {
   mergeTree,
   type NodeSource,
   openRepo,
-  packIdsFor,
   type RecordEntry,
   recordCanonical,
   RECLAIM_MAX_RUNS,
@@ -648,10 +647,17 @@ describe("an upload's packs", () => {
       // Ten small uploads, each into a pack of its own; their commits index them.
       for (let u = 0; u < 10; u++) {
         const recs = upload(u * 100, u * 100 + 100)
-        const ids_ = packIdsFor(recs)
-        expect(ids_).toHaveLength(1)
-        const { places, packs } = await layout.writePacks(recs, ids_)
-        expect(packs.map((p) => p.id)).toEqual(ids_)
+        // Each pack is announced before it's written, and reported once it is.
+        const seen: string[] = []
+        const { places, packs } = await layout.writePacks(recs, {
+          before: async (id) => {
+            seen.push(`before ${id}`)
+            expect(await root.head(`runs/c1/packs/${id}.pk`)).toBeNull()
+          },
+          after: async (p) => void seen.push(`after ${p.id} ${p.records}`),
+        })
+        expect(packs).toHaveLength(1)
+        expect(seen).toEqual([`before ${packs[0]!.id}`, `after ${packs[0]!.id} 100`])
         const before = await packsNow()
         const w = layout.writer()
         recs.forEach((_, i) => w.addPlaced('T', rec(u * 100 + (99 - i)), places[i]!))
@@ -677,6 +683,33 @@ describe("an upload's packs", () => {
     }
   })
 
+  it('stream into whole packs when they arrive in key order', async () => {
+    // A sorted upload's records go straight into packs as they arrive: 16 MB raw
+    // each, not one pack a request.
+    const layout = fLayout(memoryStore())
+    const big = (i: number) => ({
+      type: 'T',
+      id: `k${String(i).padStart(5, '0')}`,
+      hash: `h${i}`,
+      line: `${i}:${'x'.repeat(20_000)}`,
+    })
+    const sorted = layout.uploadWriter()
+    const places: string[] = []
+    for (let i = 0; i < 1000; i++) {
+      places.push(sorted.append(big(i)))
+      await sorted.ready()
+    }
+    const packs = await sorted.finish()
+    // 20 MB of records: one full pack and the rest.
+    expect(packs).toHaveLength(2)
+    expect(packs[0]!.raw).toBeGreaterThanOrEqual(16 * 1024 * 1024)
+    expect(new Set(places.map((p) => p.split('.')[0])).size).toBe(2)
+    // Out of order, each step down starts a new pack.
+    const shuffled = layout.uploadWriter()
+    for (const i of [5, 6, 1, 2, 9, 3]) shuffled.append(big(i))
+    expect(await shuffled.finish()).toHaveLength(3)
+  })
+
   it("count toward a commit writer's runs, written as it goes", async () => {
     // A commit of packed entries alone must not hold every index entry to its end (#63).
     const saved = layoutConfig.writerRunEntries
@@ -684,7 +717,7 @@ describe("an upload's packs", () => {
     try {
       const layout = fLayout(memoryStore())
       const recs = upload(0, 350)
-      const { places } = await layout.writePacks(recs, packIdsFor(recs))
+      const { places } = await layout.writePacks(recs)
       const w = layout.writer({ hold: true })
       for (let j = 0; j < 350; j++) {
         w.addPlaced('T', rec(349 - j), places[j]!)
@@ -708,7 +741,7 @@ describe("an upload's packs", () => {
     const root = memoryStore()
     const layout = fLayout(root)
     const recs = upload(0, 50)
-    const { packs } = await layout.writePacks(recs, packIdsFor(recs))
+    const { packs } = await layout.writePacks(recs)
     await layout.adoptPacks('s1', packs)
     await layout.adoptPacks('s1', packs)
     expect((await layout.manifests.latest()).packs.map((p) => p.id)).toEqual([packs[0]!.id])
@@ -728,14 +761,17 @@ describe("an upload's packs", () => {
     const root = memoryStore()
     const layout = fLayout(root)
     const named = upload(0, 20)
-    const a = await layout.writePacks(named, packIdsFor(named))
+    const a = await layout.writePacks(named)
     await layout.adoptPacks('kept', a.packs)
     const left = upload(20, 40)
-    const b = await layout.writePacks(left, packIdsFor(left))
+    const b = await layout.writePacks(left)
     const files = async () => (await root.list('runs/c1/packs/')).keys
     expect(await files()).toHaveLength(4)
-    expect(await layout.dropPacks('kept', [a.packs[0]!.id])).toBe(false)
-    expect(await layout.dropPacks('left', [b.packs[0]!.id, 'neverwritten'])).toBe(true)
+    expect(await layout.dropPacks('kept', [a.packs[0]!.id])).toEqual([])
+    expect(await layout.dropPacks('left', [b.packs[0]!.id, 'neverwritten'])).toEqual([
+      b.packs[0]!.id,
+      'neverwritten',
+    ])
     expect((await files()).sort()).toEqual(
       [`runs/c1/packs/${a.packs[0]!.id}.dir`, `runs/c1/packs/${a.packs[0]!.id}.pk`].sort(),
     )
