@@ -139,6 +139,7 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
       // uploads (still in storage) and a fresh plan.
       await transition(ports, session.id, 'failed', 'committing', {
         finalizeStartedAt: new Date(),
+        commitStarted: true,
         error: null,
         commitPlan: null,
         commitPhase: null,
@@ -151,6 +152,7 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
     : // The error of a commit refused for missing files is cleared on the next try.
       await transition(ports, session.id, 'open', 'committing', {
         finalizeStartedAt: new Date(),
+        commitStarted: true,
         error: null,
         ...rebased,
       })

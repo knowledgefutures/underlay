@@ -875,11 +875,16 @@ export class RepoSink<E> implements TreeSink<E> {
     this.#members.push(this.#member(entries))
   }
 
-  /** Store a new record in the packed layout, and note its place on the entry. */
+  /**
+   * Store a new record in the packed layout, and note its place on the entry. One an
+   * upload already wrote into a pack (`packed`) is only indexed there: its bytes
+   * aren't read or written again.
+   */
   #place(e: E) {
     const p = e as unknown as Placed
-    if (p.loc !== undefined || p.body === undefined) return
-    p.loc = this.#writer!.add(p, p.body)
+    if (p.loc !== undefined) return
+    if (p.packed !== undefined) p.loc = this.#writer!.addPlaced(p, p.packed)
+    else if (p.body !== undefined) p.loc = this.#writer!.add(p, p.body)
   }
 
   leaf(desc: NodeDesc, json: string, entries: readonly E[], spilled: number): void {

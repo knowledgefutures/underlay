@@ -38,6 +38,7 @@ import {
   type SetObject,
   type TreeSummary,
 } from '../format.js'
+import type { Placed } from './layouts/types.js'
 import { outOfLineHash, type Repo, RepoSink, RepoSource } from './repo.js'
 
 export type SetName = 'public' | 'private'
@@ -103,8 +104,16 @@ export class FileRefDelta {
 
   /** Feed one record change of a type in a set (mergeTree's onChange). */
   record(set: SetName, before: RecordEntry | null, after: RecordEntry | null, type: string): void {
-    if (before && !this.noOldRefs.has(set)) this.#body(set, type, before.body, -1)
-    if (after) this.#body(set, type, after.body, +1)
+    if (before && !this.noOldRefs.has(set)) this.#entry(set, type, before, -1)
+    if (after) this.#entry(set, type, after, +1)
+  }
+
+  #entry(set: SetName, type: string, e: RecordEntry, by: number) {
+    // Written into a pack at upload: its references were read from it then.
+    const p = e as Placed
+    if (p.body === undefined && p.packed !== undefined) {
+      for (const h of p.fileRefs ?? []) this.add(set, type, h, by)
+    } else this.#body(set, type, e.body, by)
   }
 
   /**

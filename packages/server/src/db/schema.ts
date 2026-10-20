@@ -607,6 +607,12 @@ export const pushSessions = sqliteTable(
     result: json<Record<string, unknown>>('result'),
     error: json<{ statusCode: number; error: string; [k: string]: unknown }>('error'),
     finalizeStartedAt: ts('finalize_started_at'),
+    /**
+     * A commit of this session has started, ever (unlike `finalizeStartedAt`, never
+     * cleared): its index may name records in the packs its uploads wrote
+     * (push/packs.ts), so cleanup leaves those to reclaim instead of deleting them.
+     */
+    commitStarted: bool('commit_started').notNull().default(false),
     /** When storage cleanup deleted the session's objects (sessions/<id>/) and run rows. */
     cleanedAt: ts('cleaned_at'),
     /**
@@ -660,6 +666,30 @@ export const pushRuns = sqliteTable(
     primaryKey({ columns: [t.sessionId, t.seq] }),
     index('push_runs_tier_idx').on(t.sessionId, t.tier, t.mergingInto),
   ],
+)
+
+/**
+ * A pack an upload wrote straight into a layout F collection (push/delta.ts): its
+ * records' places go in the session's runs, so the commit indexes them without
+ * moving them. A row is written before its pack; the stats once the pack is
+ * written (null: it never was). The commit lists the packs in the collection's
+ * manifest or registry; storage cleanup deletes those of a push that never did.
+ */
+export const pushPacks = sqliteTable(
+  'push_packs',
+  {
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => pushSessions.id, { onDelete: 'cascade' }),
+    packId: text('pack_id').notNull(),
+    set: text('record_set', { enum: ['public', 'private'] }).notNull(),
+    /** PackInfo, once written. */
+    records: integer('records'),
+    bytes: integer('bytes'),
+    raw: integer('raw'),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.packId] })],
 )
 
 export type CommitUnitStatus = 'pending' | 'done' | 'failed' | 'superseded'

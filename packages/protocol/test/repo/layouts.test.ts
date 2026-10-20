@@ -25,12 +25,14 @@ import {
   mergeTree,
   type NodeSource,
   openRepo,
+  packIdsFor,
   type RecordEntry,
   recordCanonical,
   RepoSink,
   recordTree,
   sha256Hex,
   treeObjects,
+  UPLOAD_PACK_FINAL_RAW,
   utf8ByteLength,
 } from '../../src/index.js'
 import {
@@ -592,6 +594,96 @@ describe("a commit's held runs", () => {
     } finally {
       layoutConfig.graceMs = saved
     }
+  })
+})
+
+describe("an upload's packs", () => {
+  const rec = (i: number, v = 1) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 })
+  const line = (i: number, v = 1) => `line ${v}.${i}`
+  const upload = (from: number, to: number, v = 1) =>
+    Array.from({ length: to - from }, (_, j) => {
+      // Out of key order, as a batch arrives.
+      const i = to - 1 - j
+      return { id: ids[i]!, hash: `h${v}.${i}`, line: line(i, v) }
+    })
+
+  it('are indexed where they lie, and merges re-point them once listed', async () => {
+    const saved = layoutConfig.graceMs
+    layoutConfig.graceMs = 0
+    try {
+      const root = memoryStore()
+      const layout = fLayout(root)
+      const packsNow = async () => (await root.list('runs/c1/packs/')).keys.length
+      // Ten small uploads, each into a pack of its own; their commits index them.
+      for (let u = 0; u < 10; u++) {
+        const recs = upload(u * 100, u * 100 + 100)
+        const ids_ = packIdsFor(recs)
+        expect(ids_).toHaveLength(1)
+        const { places, packs } = await layout.writePacks(recs, ids_)
+        expect(packs.map((p) => p.id)).toEqual(ids_)
+        const before = await packsNow()
+        const w = layout.writer()
+        recs.forEach((r, i) => w.addPlaced(rec(u * 100 + (99 - i)), places[i]!))
+        await w.finish()
+        // The commit wrote no pack: only its index.
+        expect(await packsNow()).toBe(before)
+        await layout.adoptPacks(`s${u}`, packs)
+      }
+      const all = Array.from({ length: 1000 }, (_, i) => i)
+      const read = () =>
+        layout.leafLines(
+          'leaf',
+          all.map((i) => rec(i)),
+        )
+      expect(await read()).toEqual(all.map((i) => line(i)))
+      // Small packs: listed in the manifest, merged, their records re-pointed.
+      expect((await layout.manifests.latest()).packs).toHaveLength(10)
+      await layout.maintain()
+      await new Promise((r) => setTimeout(r, 5))
+      await layout.maintain()
+      const m = await layout.manifests.latest()
+      expect(m.packs.length).toBeLessThan(10)
+      expect(await read()).toEqual(all.map((i) => line(i)))
+    } finally {
+      layoutConfig.graceMs = saved
+    }
+  })
+
+  it('are listed once however often a commit retries, even after a merge took them', async () => {
+    const root = memoryStore()
+    const layout = fLayout(root)
+    const recs = upload(0, 50)
+    const { packs } = await layout.writePacks(recs, packIdsFor(recs))
+    await layout.adoptPacks('s1', packs)
+    await layout.adoptPacks('s1', packs)
+    expect((await layout.manifests.latest()).packs.map((p) => p.id)).toEqual([packs[0]!.id])
+    // As if a merge took it: a retry must not list it again.
+    await layout.manifests.update((m) => ({ ...m, packs: [] }))
+    await layout.adoptPacks('s1', packs)
+    expect((await layout.manifests.latest()).packs).toEqual([])
+
+    // A large one goes in the registry, once.
+    const large = { ...packs[0]!, raw: UPLOAD_PACK_FINAL_RAW }
+    await layout.adoptPacks('s2', [large])
+    await layout.adoptPacks('s2', [large])
+    expect((await layout.registry.read()).packs).toEqual([large])
+  })
+
+  it('are dropped for a push that never listed them, and kept once it did', async () => {
+    const root = memoryStore()
+    const layout = fLayout(root)
+    const named = upload(0, 20)
+    const a = await layout.writePacks(named, packIdsFor(named))
+    await layout.adoptPacks('kept', a.packs)
+    const left = upload(20, 40)
+    const b = await layout.writePacks(left, packIdsFor(left))
+    const files = async () => (await root.list('runs/c1/packs/')).keys
+    expect(await files()).toHaveLength(4)
+    expect(await layout.dropPacks('kept', [a.packs[0]!.id])).toBe(false)
+    expect(await layout.dropPacks('left', [b.packs[0]!.id, 'neverwritten'])).toBe(true)
+    expect((await files()).sort()).toEqual(
+      [`runs/c1/packs/${a.packs[0]!.id}.dir`, `runs/c1/packs/${a.packs[0]!.id}.pk`].sort(),
+    )
   })
 })
 

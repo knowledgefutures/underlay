@@ -77,14 +77,15 @@ export class PackWriter {
 
   constructor(
     readonly store: Store,
-    readonly opts: { tier?: number } = {},
+    /** `ids` names each new pack (an upload's, recorded before they're written); else random. */
+    readonly opts: { tier?: number; ids?: () => string } = {},
   ) {}
 
   /** Add a record line under `key`; returns its place. A key below the last starts a new pack. */
   append(key: string, line: string): string {
     if (this.#lastKey !== null && compareUtf8(key, this.#lastKey) < 0) this.#close()
     this.#lastKey = key
-    if (!this.#id) this.#id = newId()
+    if (!this.#id) this.#id = this.opts.ids ? this.opts.ids() : newId()
     this.#lines.push(`${key}\t${line}`)
     const at = loc(this.#id, this.#blocks.length, this.#lines.length - 1)
     this.#raw += key.length + line.length + 2
@@ -758,6 +759,11 @@ export interface Manifest {
    * delete failed must never be folded again once its layers are merged away.
    */
   folded?: string[]
+  /**
+   * The latest commits whose uploads' packs were listed (KeyedLayout.adoptPacks): a
+   * retry lists none again, not even one a merge has since taken and swept.
+   */
+  adopted?: string[]
 }
 
 const empty = (): Manifest => ({ seq: 0, layers: [], packs: [], retired: [], stats: {} })
@@ -812,12 +818,20 @@ export class PackRegistry {
     return `manifest/${this.name}/packs/`
   }
 
-  /** List `packs` in a new object; its key (null for none). */
-  async add(packs: readonly PackInfo[]): Promise<string | null> {
+  /**
+   * List `packs` in a new object; its key (null for none). `name` makes the key
+   * fixed, so listing the same packs again (a retried commit) writes nothing.
+   */
+  async add(packs: readonly PackInfo[], name: string = newId()): Promise<string | null> {
     if (!packs.length) return null
-    const key = `${this.#prefix}${newId()}.json`
+    const key = this.keyFor(name)
     await this.store.put(key, JSON.stringify(packs), { ifAbsent: true })
     return key
+  }
+
+  /** The key of the registry object `name`. */
+  keyFor(name: string): string {
+    return `${this.#prefix}${name}.json`
   }
 
   async read(): Promise<{ keys: string[]; packs: PackInfo[] }> {
@@ -828,11 +842,13 @@ export class PackRegistry {
       keys.push(...page.keys)
       cursor = page.cursor
     } while (cursor)
-    const packs: PackInfo[] = []
+    // A pack listed twice (a retried commit naming an upload's packs after a reclaim
+    // replaced their object) is one pack.
+    const packs = new Map<string, PackInfo>()
     for (let i = 0; i < keys.length; i += 16)
       for (const o of await Promise.all(keys.slice(i, i + 16).map((k) => this.store.get(k))))
-        if (o) packs.push(...(JSON.parse(await o.text()) as PackInfo[]))
-    return { keys, packs }
+        if (o) for (const p of JSON.parse(await o.text()) as PackInfo[]) packs.set(p.id, p)
+    return { keys, packs: [...packs.values()] }
   }
 
   /** Replace the objects `keys` with one listing `packs`. */

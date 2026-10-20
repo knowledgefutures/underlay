@@ -19,6 +19,7 @@ import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { settleSessionPacks } from '../push/packs.js'
 import { cleanupConfig, count, emptyStats, problem } from './config.js'
 
 const TERMINAL: schema.SessionStatus[] = ['committed', 'failed', 'expired']
@@ -67,7 +68,11 @@ export async function cleanInternal(
 
   // Push sessions.
   const sessions = await db
-    .select({ id: schema.pushSessions.id })
+    .select({
+      id: schema.pushSessions.id,
+      collectionId: schema.pushSessions.collectionId,
+      commitStarted: schema.pushSessions.commitStarted,
+    })
     .from(schema.pushSessions)
     .where(
       and(
@@ -89,7 +94,12 @@ export async function cleanInternal(
     count(stats, 'sessions', gone.bytes, gone.objects)
     // A session bigger than what's left of the budget finishes next time.
     if (!gone.complete) more = true
-    if (dryRun || !gone.complete) continue
+    if (!gone.complete) continue
+    // Layout F: packs the uploads wrote into the collection (push/packs.ts).
+    const packs = await settleSessionPacks(ports, s, dryRun)
+    budget -= packs.objects
+    if (packs.objects) count(stats, 'upload packs', packs.bytes, packs.objects)
+    if (dryRun) continue
     const [runs, units] = await Promise.all([
       db
         .delete(schema.pushRuns)

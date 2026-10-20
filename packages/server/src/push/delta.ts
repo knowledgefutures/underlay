@@ -12,6 +12,7 @@ import {
   checkTypeSlug,
   compileSchema,
   emptySet,
+  fileRefs,
   InputRuleError,
   OUT_OF_LINE_BYTES,
   parseRecordLine,
@@ -30,6 +31,7 @@ import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
 import type { SessionCommitResult } from './outcome.js'
+import { packEntries, packStats } from './packs.js'
 import { planParallel, SerialTooLargeError } from './parallel.js'
 import { type RunEntry, type RunIndex, writeRun } from './runs.js'
 import {
@@ -80,7 +82,8 @@ export async function prepareRecords(
   sessionId: string,
   inputs: SessionInputs,
   input: string | AsyncIterable<string>,
-  opts: { stripUnknownFields: boolean },
+  /** `packed`: the records go into packs (layout F), so large ones aren't staged apart. */
+  opts: { stripUnknownFields: boolean; packed?: boolean },
 ): Promise<
   { entries: RunEntry[] } | { errors: LineError[]; total: number } | { tooManyLines: true }
 > {
@@ -161,10 +164,13 @@ export async function prepareRecords(
     const hash = sha256Hex(canonical)
     const size = utf8ByteLength(canonical)
     const body =
-      size > OUT_OF_LINE_BYTES
+      size > OUT_OF_LINE_BYTES && !opts.packed
         ? await stageOutOfLine(internal, sessionId, hash, canonical)
         : canonical
     const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
+    // A packed record's body leaves its entry (push/packs.ts): the commit counts its
+    // file references from these.
+    const refs = opts.packed && canonical.includes('"$file"') ? fileRefs(data) : []
     const entry: RunEntry = {
       t: rec.type,
       k: rec.id,
@@ -172,6 +178,7 @@ export async function prepareRecords(
       s: size,
       b: body,
       ...(isPrivate ? { p: true } : {}),
+      ...(refs.length ? { r: refs } : {}),
     }
     entries.push(entry)
   }
@@ -184,8 +191,11 @@ export async function ingestRecords(
   input: string | AsyncIterable<string>,
 ): Promise<IngestResult> {
   const inputs = await loadInputs(ports, session.id)
+  // Layout F: the records go straight into the collection's packs.
+  const records = (await ports.stores.forCollection(session.collectionId)).records
   const prepared = await prepareRecords(ports, session.id, inputs, input, {
     stripUnknownFields: session.stripUnknownFields,
+    packed: records !== null,
   })
   if ('tooManyLines' in prepared) {
     return { ok: false, status: 413, error: `At most ${MAX_BATCH_LINES} records per batch` }
@@ -202,8 +212,16 @@ export async function ingestRecords(
   if (prepared.entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
   const seq = await nextRunSeq(ports, session.id)
   if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
+  const packs = records ? await packEntries(ports, session.id, records, prepared.entries) : []
   const index = await writeRun(ports.stores.internal, session.id, seq, prepared.entries)
-  await recordRun(ports, session.id, 'records', index, { records: prepared.entries.length })
+  await recordRun(
+    ports,
+    session.id,
+    'records',
+    index,
+    { records: prepared.entries.length },
+    packStats(ports, session.id, packs),
+  )
   return { ok: true, received: prepared.entries.length }
 }
 

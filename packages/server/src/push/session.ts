@@ -44,6 +44,8 @@ export interface SessionInputs {
 
 export type SessionRow = typeof schema.pushSessions.$inferSelect
 
+type BatchStatement = Parameters<Ports['db']['batch']>[0][number]
+
 const inputsKey = (id: string) => `sessions/${id}/inputs.json`
 
 export async function createSession(
@@ -113,6 +115,8 @@ export async function recordRun(
   kind: 'records' | 'deletes',
   index: RunIndex,
   counters: { records?: number },
+  /** More statements for the same batch (packs.ts: the upload's packs' stats). */
+  extra: BatchStatement[] = [],
 ): Promise<void> {
   const count = runCount(index)
   await ports.db.batch([
@@ -133,6 +137,7 @@ export async function recordRun(
         recordsReceived: sql`${schema.pushSessions.recordsReceived} + ${counters.records ?? 0}`,
       })
       .where(eq(schema.pushSessions.id, sessionId)),
+    ...extra,
   ])
   await maybeCompact(ports, sessionId, index.tier ?? 0)
 }

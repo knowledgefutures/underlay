@@ -11,7 +11,9 @@ export {
   layoutConfig,
   type MergePlan,
   MissingRecordError,
+  packIdsFor,
   type ReclaimPlan,
+  UPLOAD_PACK_FINAL_RAW,
 } from './keyed.js'
 export { headConfig, type LayerInfo, type PackInfo, pendingConfig } from './kit.js'
 export * from './types.js'

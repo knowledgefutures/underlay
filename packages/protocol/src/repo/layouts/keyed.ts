@@ -36,6 +36,7 @@ import {
   newId,
   type PackInfo,
   PackReader,
+  PACK_RAW,
   PackWriter,
   packDirKey,
   packKey,
@@ -47,7 +48,13 @@ import {
   filterKey,
 } from './kit.js'
 import { type KeyRange, LiveHashes } from './reclaim.js'
-import { type LiveSet, recordKey, type RecordStore, type RecordWriter } from './types.js'
+import {
+  type LiveSet,
+  type PackRecord,
+  recordKey,
+  type RecordStore,
+  type RecordWriter,
+} from './types.js'
 
 /** Index entries a reclaim range job works on: its live set is 8 bytes an entry. */
 export const RECLAIM_RANGE_ENTRIES = 250_000
@@ -113,6 +120,27 @@ const MAX_RUNS = 10
 /** Packs under this many stored bytes, times 8 per tier, are merged eight at a time. */
 const SMALL_PACK = 4 * 1024 * 1024
 const MAX_PACK_TIER = 3
+/**
+ * An upload's pack this large (raw) is listed with the packs no merge takes: a bulk
+ * load's batches (8 MB each) are written once, where they stay. Merging them was
+ * the external sort again, one pack at a time on the set's one maintain lane.
+ * Smaller ones (a small push's) are merged like a commit's.
+ */
+export const UPLOAD_PACK_FINAL_RAW = 1024 * 1024
+/** Commits whose uploads' packs a manifest remembers listing (`Manifest.adopted`). */
+const ADOPTED_KEPT = 1000
+
+/**
+ * Ids for the packs `writePacks` makes of these records, recorded before they're
+ * written (so an upload that dies leaves nothing unknown). A pack closes only once
+ * it holds PACK_RAW (PackWriter, the same count of a line), so this many at most.
+ */
+export function packIdsFor(records: readonly PackRecord[]): string[] {
+  let raw = 0
+  for (const r of records) raw += r.id.length + r.hash.length + r.line.length + 3
+  return Array.from({ length: Math.floor(raw / PACK_RAW) + 1 }, newId)
+}
+
 /** How long a replaced object stays readable (readers holding an older manifest). */
 export const layoutConfig = {
   graceMs: 60_000,
@@ -270,6 +298,78 @@ export class KeyedLayout implements RecordStore {
 
   writer(): RecordWriter {
     return new KeyedWriter(this)
+  }
+
+  /**
+   * An upload's records into packs of their own, in key order, outside the index and
+   * the manifest until a commit names them (adoptPacks). Their places, in the order
+   * given, go in the push's runs, so a commit indexes the records without moving them.
+   */
+  async writePacks(
+    records: readonly PackRecord[],
+    ids: readonly string[],
+  ): Promise<{ places: string[]; packs: PackInfo[] }> {
+    let next = 0
+    const pw = new PackWriter(this.store, {
+      ids: () => {
+        const id = ids[next++]
+        if (id === undefined) throw new Error('writePacks: the records need more packs than ids')
+        return id
+      },
+    })
+    const keys = records.map((r) => recordKey(r.id, r.hash))
+    const order = keys.map((_, i) => i).sort((a, b) => compareUtf8(keys[a]!, keys[b]!))
+    const places: string[] = Array.from({ length: records.length })
+    let n = 0
+    for (const i of order) {
+      places[i] = pw.append(keys[i]!, records[i]!.line)
+      if (++n % 1024 === 0) await pw.ready()
+    }
+    return { places, packs: await pw.finish() }
+  }
+
+  /**
+   * List packs uploads wrote, once the commit's index names their records (after its
+   * runs are appended: a merge re-points a pack's records in a newer layer, which a
+   * commit's layer folded in later would otherwise override with the old places).
+   * Large ones go in the registry, small ones in the manifest for merges. Once only
+   * a `name`: a retry finds it in `adopted` and lists nothing.
+   */
+  async adoptPacks(name: string, packs: readonly PackInfo[]): Promise<void> {
+    if (!packs.length) return
+    if ((await this.manifests.latest()).adopted?.includes(name)) return
+    const large = (p: PackInfo) => p.raw >= UPLOAD_PACK_FINAL_RAW || KeyedLayout.final(p)
+    // A fixed key: written once even if this stops before the manifest says so.
+    await this.registry.add(packs.filter(large), `upload-${name}`)
+    const small = packs.filter((p) => !large(p))
+    await this.manifests.update((m) => {
+      if (m.adopted?.includes(name)) return null
+      const have = new Set(m.packs.map((p) => p.id))
+      m.packs.push(...small.filter((p) => !have.has(p.id)))
+      m.adopted = [...(m.adopted ?? []), name].slice(-ADOPTED_KEPT)
+      return m
+    })
+  }
+
+  /**
+   * Delete packs an upload wrote for a commit `name` that never named them (an
+   * abandoned push). A commit that named them and then didn't publish (a conflict,
+   * then the session failed) leaves them: the manifest or registry lists them, so
+   * they go only by reclaim. False when kept.
+   */
+  async dropPacks(name: string, ids: readonly string[]): Promise<boolean> {
+    const m = await this.manifests.latest()
+    if (m.adopted?.includes(name)) return false
+    if (await this.store.head(this.registry.keyFor(`upload-${name}`))) return false
+    const listed = new Set([...m.packs.map((p) => p.id), ...m.retired.map((r) => r.key)])
+    const gone = ids.filter((id) => !listed.has(id) && !listed.has(packKey(id)))
+    for (let i = 0; i < gone.length; i += 16)
+      await Promise.all(
+        gone
+          .slice(i, i + 16)
+          .flatMap((id) => [this.store.delete(packKey(id)), this.store.delete(packDirKey(id))]),
+      )
+    return true
   }
 
   /** A commit's runs its units held back (RecordWriter.finish), as one pending object. */
@@ -1227,6 +1327,11 @@ class KeyedWriter implements RecordWriter {
     const at = this.#packs.append(k, line)
     this.#entries.push([k, at])
     return at
+  }
+
+  addPlaced(entry: RecordEntry, place: string): string {
+    this.#entries.push([recordKey(entry.key, entry.hash), place])
+    return place
   }
 
   async finish(opts: { hold?: boolean } = {}): Promise<PendingRun | null> {

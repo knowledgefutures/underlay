@@ -44,6 +44,7 @@ import { eq } from 'drizzle-orm'
 import { FenceError, writeFence } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { adoptSessionPacks } from '../push/packs.js'
 import { publishCollectionInfo } from './collection-info.js'
 import { collectionFileSizes, fileSizes } from './file-refs.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
@@ -152,6 +153,9 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     recordsChanged,
   } = built
   if (base && versionHash === base.hash) return { status: 'no_changes', versionHash }
+  // Layout F: packs the push's uploads wrote are listed now that the index names their
+  // records, before the version publishes (push/packs.ts).
+  if (input.pushSessionId) await adoptSessionPacks(ports, repo, input.pushSessionId)
 
   const sv = input.migrated
     ? parseSemver(input.migrated.semver)
