@@ -194,7 +194,18 @@ export class KeyedLayout implements RecordStore {
   /** Every pack: the manifest's and the registry's (reclaim, forks). */
   async allPacks(): Promise<PackInfo[]> {
     const m = await this.manifests.latest()
-    return [...m.packs, ...(await this.registry.read()).packs]
+    return [...m.packs, ...(await this.#registered(m)).packs]
+  }
+
+  /**
+   * The registry's objects, and its packs `m` doesn't list: a reclaim lists the packs
+   * it will rewrite in the manifest, then takes them out of the registry, so for a
+   * moment a pack can be in both.
+   */
+  async #registered(m: Manifest): Promise<{ keys: string[]; packs: PackInfo[] }> {
+    const r = await this.registry.read()
+    const listed = new Set(m.packs.map((p) => p.id))
+    return { keys: r.keys, packs: r.packs.filter((p) => !listed.has(p.id)) }
   }
 
   async #find(m: Manifest, entries: readonly RecordEntry[]): Promise<(string | undefined)[]> {
@@ -321,12 +332,26 @@ export class KeyedLayout implements RecordStore {
           held ? (JSON.parse(await held.text()) as { token: string; at: number }) : null,
         )
         .catch(() => null)
-      if (v?.token === token) return () => this.store.delete(key)
+      if (v?.token === token) return () => this.#release(key, token)
       // A lease older than a job can run is a job that died holding it.
       if (!v || Date.now() - v.at < MAINTAIN_LEASE_MS) return null
-      await this.store.delete(key)
+      await this.#release(key, v.token)
     }
     return null
+  }
+
+  /**
+   * Delete the lease if `token` still holds it: a job that ran past its lease, which
+   * another then took, mustn't release the new holder's. The store has no conditional
+   * delete, so a takeover between this read and the delete still loses it; the window
+   * is one request, not the rest of a job.
+   */
+  async #release(key: string, token: string): Promise<void> {
+    const held = await this.store
+      .get(key)
+      .then(async (o) => (o ? (JSON.parse(await o.text()) as { token: string }).token : null))
+      .catch(() => null)
+    if (held === token) await this.store.delete(key)
   }
 
   /**
@@ -478,6 +503,8 @@ export class KeyedLayout implements RecordStore {
     unlisted?: string[]
     newLayers?: LayerInfo[]
     newPacks?: PackInfo[]
+    /** Registry packs to list in the manifest too (reclaim's, until their rewrite swaps them out). */
+    relist?: PackInfo[]
     /** New layers keep their sequence (a merged run); else they're the newest (re-pointed records). */
     keepSeq?: boolean
   }): Promise<boolean> {
@@ -504,7 +531,8 @@ export class KeyedLayout implements RecordStore {
       // A pack merge's layer is the newest: its places win over the old ones.
       const seq = topSeq(m) + 1
       for (const l of newLayers) m.layers.push(o.keepSeq ? l : { ...l, seq })
-      m.packs.push(...listed)
+      const have = new Set(m.packs.map((p) => p.id))
+      m.packs.push(...listed, ...(o.relist ?? []).filter((p) => !have.has(p.id)))
       for (const id of oldLayers)
         m.retired.push(
           { key: layerKey(id), at: now },
@@ -726,7 +754,7 @@ export class KeyedLayout implements RecordStore {
   async reclaimPlan(rangeEntries = RECLAIM_RANGE_ENTRIES): Promise<ReclaimPlan> {
     const m = await this.manifests.latest()
     const ranges = await this.#cutRanges(m.layers, rangeEntries)
-    const registry = await this.registry.read()
+    const registry = await this.#registered(m)
     const plan: ReclaimPlan = {
       id: newId(),
       layers: m.layers,
@@ -840,26 +868,32 @@ export class KeyedLayout implements RecordStore {
     // One run across the ranges, at the level its whole size puts it.
     const level = Math.max(plan.level, levelFor(stats.entriesKept))
     for (const f of files) f.level = level
+    const registered: PackInfo[] = []
+    for (const key of plan.registry) {
+      const o = await this.store.get(key)
+      if (o) registered.push(...(JSON.parse(await o.text()) as PackInfo[]))
+    }
     const m = await this.manifests.latest()
     const listed = new Set(m.packs.map((p) => p.id))
+    const rewriting = new Set(rewrite)
     const swapped = await this.#swap({
       oldLayers: plan.layers.map((l) => l.id),
       oldPacks: drop.filter((id) => listed.has(id)),
       unlisted: drop.filter((id) => !listed.has(id)),
       newLayers: files,
+      // Registry packs being rewritten move to the manifest: listed somewhere until
+      // their rewrite swaps them out (else a reclaim planned meanwhile drops their
+      // live records, and a fork or a mirror misses them).
+      relist: registered.filter((p) => rewriting.has(p.id)),
       keepSeq: true,
     })
     if (swapped) {
-      // The registry's objects as one, without the dropped packs or the ones being rewritten
-      // (their rewrite lists what it writes).
+      // The registry's objects as one, without the dropped packs or the ones now listed.
       const gone = new Set([...drop, ...rewrite])
-      const kept: PackInfo[] = []
-      for (const key of plan.registry) {
-        const o = await this.store.get(key)
-        if (o)
-          kept.push(...(JSON.parse(await o.text()) as PackInfo[]).filter((p) => !gone.has(p.id)))
-      }
-      await this.registry.replace(plan.registry, kept)
+      await this.registry.replace(
+        plan.registry,
+        registered.filter((p) => !gone.has(p.id)),
+      )
     }
     await this.#dropPlan(plan)
     await this.manifests.settle()
@@ -883,7 +917,7 @@ export class KeyedLayout implements RecordStore {
    */
   async reclaimRewrite(packIds: readonly string[]): Promise<Record<string, number>> {
     const m = await this.manifests.latest()
-    // Packs the manifest lists must still be there; the others reclaim took out of the registry.
+    // Packs the manifest lists must still be there; the others (an older reclaim's) are in neither.
     const listed = new Set(m.packs.map((p) => p.id))
     const retired = new Set(m.retired.map((r) => r.key))
     const ids = packIds.filter((id) => !retired.has(packKey(id)))
@@ -944,7 +978,7 @@ export class KeyedLayout implements RecordStore {
     if (!(from instanceof HomeStore) || !(to instanceof HomeStore))
       throw new Error('forkInto: F needs both collections in their own prefixes')
     const m = await this.manifests.latest()
-    const registered = (await this.registry.read()).packs
+    const registered = (await this.#registered(m)).packs
     // Each file's home: where the parent read it from (its own parent's), else the parent.
     const mine = await from.inherited()
     const inherited: Inherited = { packs: {}, layers: {} }
@@ -988,7 +1022,7 @@ export class KeyedLayout implements RecordStore {
     const home = this.store
     if (!(home instanceof HomeStore)) throw new Error('mirrorFiles: layout F only')
     const m = await this.manifests.latest()
-    const registry = await this.registry.read()
+    const registry = await this.#registered(m)
     const inh = await home.inherited()
     const at = (h: string | undefined, key: string) => `runs/${h ?? home.home}/${key}`
     const files: { key: string; bytes?: number; optional?: boolean }[] = []
@@ -1016,6 +1050,26 @@ export class KeyedLayout implements RecordStore {
         head: `${dir}/head.json`,
       },
     }
+  }
+
+  /**
+   * F: of the files a mirror copied that `mirrorFiles` no longer lists, which it may
+   * delete (`drop`) and which to forget without deleting (`forget`). Another
+   * collection's (a fork's parent's, at its own keys) are forgotten: that collection
+   * may be mirrored at the same location. This set's own stay while a live fork reads
+   * them, as here: that fork's mirror there may list them. The rest are dropped.
+   */
+  async mirrorDroppable(keys: readonly string[]): Promise<{ drop: string[]; forget: string[] }> {
+    const home = this.store
+    if (!(home instanceof HomeStore)) throw new Error('mirrorDroppable: layout F only')
+    const own = `runs/${home.home}/`
+    const held = keys.some((k) => k.startsWith(own)) ? await home.forkHeld() : new Set<string>()
+    const drop: string[] = []
+    const forget: string[] = []
+    for (const k of keys)
+      if (!k.startsWith(own)) forget.push(k)
+      else if (!held.has(fileId(k.slice(own.length)) ?? '')) drop.push(k)
+    return { drop, forget }
   }
 
   /**

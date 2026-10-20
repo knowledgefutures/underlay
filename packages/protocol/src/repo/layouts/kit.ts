@@ -408,6 +408,18 @@ interface LayerDir {
   off: number[]
 }
 
+/** The last page whose first key is ≤ `key` (0 if none is), by binary search. */
+function pageAt(dir: LayerDir, key: string): number {
+  let lo = 0
+  let hi = dir.first.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (compareUtf8(dir.first[mid]!, key) <= 0) lo = mid
+    else hi = mid - 1
+  }
+  return lo
+}
+
 export class LayerWriter {
   readonly id = newId()
   #pages: Promise<Uint8Array>[] = []
@@ -622,13 +634,7 @@ export class LayerReader {
     const pages = new Set<number>()
     for (const id of maybe) {
       // Pages whose range can hold id's keys: from the last page starting at or before id.
-      let lo = 0
-      let hi = dir.first.length - 1
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1
-        if (compareUtf8(dir.first[mid]!, id) <= 0) lo = mid
-        else hi = mid - 1
-      }
+      const lo = pageAt(dir, id)
       pages.add(lo)
       for (
         let p = lo + 1;
@@ -649,10 +655,8 @@ export class LayerReader {
     if (compareUtf8(layer.max, from) < 0 || compareUtf8(layer.min, to) > 0) return []
     const dir = await this.#dir(layer.id)
     // The last page whose first key is ≤ from, through the last whose first key is ≤ to.
-    let lo = 0
-    while (lo + 1 < dir.first.length && compareUtf8(dir.first[lo + 1]!, from) <= 0) lo++
-    let hi = lo
-    while (hi + 1 < dir.first.length && compareUtf8(dir.first[hi + 1]!, to) <= 0) hi++
+    const lo = pageAt(dir, from)
+    const hi = Math.max(lo, pageAt(dir, to))
     const out: [string, string][] = []
     const pages = await Promise.all(
       Array.from({ length: hi - lo + 1 }, (_, j) => this.#page(layer.id, dir, lo + j)),
@@ -678,10 +682,7 @@ export class LayerReader {
     if (to !== undefined && compareUtf8(layer.min, to) >= 0) return
     const dir = await this.#dir(layer.id)
     const off = dir.off
-    let start = 0
-    if (from !== undefined)
-      while (start + 1 < dir.first.length && compareUtf8(dir.first[start + 1]!, from) <= 0) start++
-    for (let p = start; p < dir.first.length;) {
+    for (let p = from === undefined ? 0 : pageAt(dir, from); p < dir.first.length;) {
       if (to !== undefined && compareUtf8(dir.first[p]!, to) >= 0) return
       let e = p
       while (e + 1 < dir.first.length && off[e + 2]! - off[p]! <= MERGE_READ) e++
@@ -1079,6 +1080,17 @@ export class ManifestStore {
    */
   async appendRuns(runs: PendingRun[]): Promise<void> {
     if (!runs.length) return
+    // A retry (assembly appended them, then stopped before saving its tree) names them
+    // once only: a second object, folded in after the first's layers merged away, would
+    // bring them back as the newest run, of files swept since. A tree's runs go in one
+    // object, all or none, so they were named if the index lists any of their layers
+    // (pending ones included) or retired one, or its files are gone (swept: a unit's
+    // layer files are deleted no other way).
+    const m = await this.latest()
+    const known = new Set([...m.layers.map((l) => layerKey(l.id)), ...m.retired.map((r) => r.key)])
+    if (runs.some((r) => r.layers.some((l) => known.has(layerKey(l.id))))) return
+    const first = runs.find((r) => r.layers.length)?.layers[0]
+    if (first && !(await this.store.head(layerDirKey(first.id)))) return
     await this.#putPending({ runs })
   }
 

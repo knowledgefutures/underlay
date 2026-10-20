@@ -6,17 +6,37 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  buildTree,
+  decodeNode,
+  describeNode,
+  encodeLeaf,
+  gunzipText,
+  hashNode,
   headConfig,
   HomeStore,
+  IntegrityError,
   KeyedLayout,
   layoutConfig,
   LiveHashes,
+  MapSource,
+  MemorySink,
   memoryStore,
   type MergePlan,
+  mergeTree,
+  type NodeSource,
+  openRepo,
+  type RecordEntry,
+  recordCanonical,
+  RepoSink,
+  recordTree,
+  sha256Hex,
+  treeObjects,
+  utf8ByteLength,
 } from '../../src/index.js'
 import {
   buildFilter,
   filterHas,
+  LayerReader,
   levelFor,
   LayeredIndex,
   ManifestStore,
@@ -109,6 +129,11 @@ describe('reclaim a key range at a time', () => {
     expect(swapped!.rewrite.length).toBeGreaterThan(0)
     // A second caller doesn't swap again.
     expect(await layout.reclaimSwap(plan)).toBeNull()
+    // Until its rewrite swaps it out, a pack being rewritten is still listed (once): a
+    // reclaim planned meanwhile, a fork or a mirror would otherwise lose its records.
+    const between = (await layout.allPacks()).map((p) => p.id)
+    expect(swapped!.rewrite.filter((id) => !between.includes(id))).toEqual([])
+    expect(new Set(between).size).toBe(between.length)
     for (const id of swapped!.rewrite) await layout.reclaimRewrite([id])
 
     const packs = await layout.allPacks()
@@ -515,6 +540,237 @@ describe('layout F', () => {
       pendingConfig.deletesPerUpdate = 500
       headConfig.intervalMs = 1000
     }
+  })
+})
+
+describe("a commit's held runs", () => {
+  const rec = (i: number, v = 1) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 })
+  const line = (i: number, v = 1) => `line ${v}.${i}`
+
+  it('are named once, however often a retry appends them', async () => {
+    // Assembly appends a tree's runs, then saves the tree: a retry between the two
+    // appends them again, perhaps after the first copy was folded in and merged away
+    // (its files swept). Folded in again, they'd be the newest run, of files gone.
+    const saved = layoutConfig.graceMs
+    layoutConfig.graceMs = 0
+    try {
+      const root = memoryStore()
+      const layout = fLayout(root)
+      const pending = async () => (await root.list('runs/c1/manifest/f/pending/')).keys
+      const w = layout.writer()
+      for (let i = 0; i < 100; i++) w.add(rec(i), line(i))
+      const run = (await w.finish({ hold: true }))!
+      await layout.appendRuns([run])
+      // Before the first copy is folded in.
+      await layout.appendRuns([run])
+      expect(await pending()).toHaveLength(1)
+      // Folded in, merged away, and swept.
+      for (let c = 1; c <= 4; c++) {
+        const w = layout.writer()
+        for (let i = c * 100; i < c * 100 + 100; i++) w.add(rec(i), line(i))
+        await w.finish()
+        await layout.maintain()
+      }
+      await new Promise((r) => setTimeout(r, 5))
+      await layout.maintain()
+      const id = run.layers[0]!.id
+      expect((await layout.manifests.latest()).layers.some((l) => l.id === id)).toBe(false)
+      expect((await root.list(`runs/c1/layers/${id}`)).keys).toEqual([])
+      await layout.appendRuns([run])
+      expect(await pending()).toEqual([])
+      await layout.maintain()
+      const all = Array.from({ length: 500 }, (_, i) => i)
+      expect(
+        await layout.leafLines(
+          'leaf',
+          all.map((i) => rec(i)),
+        ),
+      ).toEqual(all.map((i) => line(i)))
+    } finally {
+      layoutConfig.graceMs = saved
+    }
+  })
+})
+
+describe('the maintain lease', () => {
+  it('is left alone when another job took it over', async () => {
+    // A job that ran past its lease, which another job then took: releasing it at
+    // the end must not release the new holder's.
+    const root = memoryStore()
+    const layout = fLayout(root)
+    for (let c = 0; c < 4; c++) {
+      const w = layout.writer()
+      for (let i = c * 10; i < c * 10 + 10; i++)
+        w.add({ key: ids[i]!, hash: `h${i}`, size: 10 }, `line ${i}`)
+      await w.finish()
+    }
+    const put = root.put.bind(root)
+    let taken = false
+    root.put = async (key, body, opts) => {
+      // Taken over while this job merges.
+      if (!taken && key.startsWith('runs/c1/manifest/f/0')) {
+        taken = true
+        await put('runs/c1/maintain/lease', JSON.stringify({ token: 'other', at: Date.now() }))
+      }
+      return put(key, body, opts)
+    }
+    await layout.maintain()
+    expect(taken).toBe(true)
+    const lease = await root.get('runs/c1/maintain/lease')
+    expect((JSON.parse(await lease!.text()) as { token: string }).token).toBe('other')
+  })
+})
+
+describe('an untrusted repository in layout F', () => {
+  it('checks every record it reads against its entry, however it reads it', async () => {
+    const store = memoryStore()
+    const line = (i: number) => recordCanonical(`r${i}`, 'T', { n: i })
+    const entries = [0, 1, 2].map((i) => ({
+      key: `r${i}`,
+      hash: sha256Hex(line(i)),
+      size: utf8ByteLength(line(i)),
+    }))
+    const trusted = openRepo(store, { layout: 'f', recordScope: 'c1', trusted: true })
+    const w = trusted.records!.public.writer()
+    // The second record's stored line isn't its entry's record.
+    entries.forEach((e, i) => w.add(e, i === 1 ? line(9) : line(i)))
+    await w.finish()
+    const repo = openRepo(store, { layout: 'f', recordScope: 'c1' })
+    const leaf = { hash: 'leaf', entries }
+    expect(await repo.linesAt(leaf, [0, 2], 'public')).toEqual([line(0), line(2)])
+    await expect(repo.linesAt(leaf, [1], 'public')).rejects.toThrow(IntegrityError)
+    await expect(repo.entryLine(leaf, 1, 'public')).rejects.toThrow(IntegrityError)
+    await expect(repo.bodyLines(leaf, 'public')).rejects.toThrow(IntegrityError)
+    const stream = async () => {
+      for await (const _ of repo.bodyLineStream(leaf, undefined, { set: 'public' }));
+    }
+    await expect(stream()).rejects.toThrow(IntegrityError)
+  })
+})
+
+describe('a sparse merge', () => {
+  it("reads ahead of a leaf's changes a batch at a time, not to its last key", async () => {
+    // A leaf's range can take any number of inserts: looking ahead to its last key for
+    // the old records the changes replace held every one of them at once.
+    const e = (k: string, v = 0): RecordEntry => ({
+      key: k,
+      hash: sha256Hex(`${k}#${v}`),
+      size: 10,
+    })
+    const sink = new MemorySink<RecordEntry>()
+    const base = new MapSource(recordTree, sink.nodes, sink.leaves)
+    const root = buildTree(recordTree, sink, [e('a'), e('z')])!
+    expect(root.level).toBe(0)
+    const reads: number[] = []
+    const source: NodeSource<RecordEntry> = {
+      spec: recordTree,
+      node: (h) => base.node(h),
+      leafEntries: (h) => base.leafEntries(h),
+      sparseStream: async function* (h) {
+        yield* await base.leafEntries(h)
+      },
+      withPayload: async (_h, x) => ({ ...x, body: 'old' }),
+      payloadsAt: async (_h, entries, at) => {
+        reads.push(...at)
+        return at.map((i) => ({ ...entries[i]!, body: 'old' }))
+      },
+    }
+    let pulled = 0
+    let applied = 0
+    let most = 0
+    const changes = (async function* () {
+      yield { key: 'a', entry: e('a', 1) }
+      for (let i = 0; i < 20_000; i++) {
+        most = Math.max(most, ++pulled - applied)
+        const k = `m${String(i).padStart(6, '0')}`
+        yield { key: k, entry: e(k) }
+      }
+      yield { key: 'z', entry: e('z', 1) }
+    })()
+    const olds: (string | undefined)[] = []
+    await mergeTree(source, new MemorySink<RecordEntry>(), root.hash, changes, {
+      onChange: (before) => {
+        applied++
+        if (before) olds.push(before.body)
+      },
+    })
+    expect(applied).toBe(20_002)
+    expect(olds).toEqual(['old', 'old'])
+    expect(reads.sort()).toEqual([0, 1])
+    expect(most).toBeLessThan(2_000)
+  })
+})
+
+describe('a layer range read', () => {
+  it('finds its pages by binary search, as a lookup does', async () => {
+    const store = memoryStore()
+    const w = new RunWriter(store, 0)
+    for (const id of ids) w.add(`${id}\u0000h`, 'v'.repeat(200))
+    const [layer] = await w.finish()
+    const lru = repoLru(64 << 20)
+    const reader = new LayerReader(store, lru, 's')
+    const id = ids.at(-10)!
+    const want = await reader.range(layer!, `${id}\u0000`, `${id}\u0000￿`)
+    expect(want).toHaveLength(1)
+    // Count reads of the directory's first keys (it's cached now).
+    const dir = (lru.get(`s/layerdir:${layer!.id}`) as { v: { first: string[] } }).v
+    const first = dir.first
+    expect(first.length).toBeGreaterThan(200)
+    let reads = 0
+    dir.first = new Proxy(first, {
+      get(t, k, r) {
+        if (typeof k === 'string' && /^\d+$/.test(k)) reads++
+        return Reflect.get(t, k, r) as unknown
+      },
+    })
+    expect(await reader.range(layer!, `${id}\u0000`, `${id}\u0000￿`)).toEqual(want)
+    expect(reads).toBeLessThan(40)
+  })
+})
+
+describe('node deltas', () => {
+  const e = (i: number, v = 0) => ({
+    key: `k${String(i).padStart(3, '0')}`,
+    hash: sha256Hex(`${i}#${v}`),
+    size: 10,
+  })
+  const base = Array.from({ length: 40 }, (_, i) => e(i))
+  const changed = (at: number) => base.map((x, i) => (i === at ? e(i, 1) : x))
+  /** Write one leaf of `entries` through `sink`; its hash. */
+  const write = async (sink: RepoSink<RecordEntry>, entries: RecordEntry[]) => {
+    const json = encodeLeaf(recordTree, entries)
+    const hash = hashNode(json)
+    sink.leaf(describeNode(recordTree, decodeNode(recordTree, json, hash)), json, entries, 0)
+    await sink.flush()
+    return hash
+  }
+  const repoOf = () =>
+    openRepo(memoryStore(), { layout: 'f', recordScope: 'c1', nodes: 'delta', trusted: true })
+
+  it('diff a rewritten leaf against the leaf it replaces, and no later leaf', async () => {
+    const repo = repoOf()
+    const a = await write(new RepoSink(repo), base)
+    const sink = new RepoSink<RecordEntry>(repo)
+    sink.rewriting(a)
+    const b = await write(sink, changed(3))
+    // The sink's next leaf rewrites nothing (a merge reused the nodes between, or appends).
+    const c = await write(sink, changed(7))
+    expect(await repo.deltaBase(b)).toBe(a)
+    expect(await repo.deltaBase(c)).toBeNull()
+  })
+
+  it('go to a mirror in full: it may not hold the node a delta is against', async () => {
+    const repo = repoOf()
+    const a = await write(new RepoSink(repo), base)
+    const sink = new RepoSink<RecordEntry>(repo)
+    sink.rewriting(a)
+    const b = await write(sink, changed(3))
+    expect(await repo.deltaBase(b)).toBe(a)
+    const tree = { set: 'public', kind: 'records', slug: 'T', base: null, target: b } as const
+    const sent = []
+    for await (const o of treeObjects(repo, tree)) sent.push(o)
+    expect(sent.map((o) => o.key)).toEqual([`nodes/${b}`])
+    expect(sha256Hex(await gunzipText(sent[0]!.bytes))).toBe(b)
   })
 })
 

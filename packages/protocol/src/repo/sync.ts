@@ -40,7 +40,14 @@ import {
   versionHash,
 } from '../format.js'
 import { gunzipText, gzip, splitLines } from './gzip.js'
-import { IntegrityError, keys, OUT_OF_LINE_BYTES, outOfLineHash, type Repo } from './repo.js'
+import {
+  IntegrityError,
+  isNodeDelta,
+  keys,
+  OUT_OF_LINE_BYTES,
+  outOfLineHash,
+  type Repo,
+} from './repo.js'
 
 /** Which sets a sync moves: `public`, or `all` (public and private). */
 export type SyncSets = 'public' | 'all'
@@ -193,15 +200,14 @@ export async function* treeObjects(
   for await (const n of newNodes(source as NodeSource<unknown>, tree.base, tree.target, {
     after,
   })) {
-    // A receiver checks each node against its hash: one stored as a delta (node
-    // deltas) goes in full. A mirror copies it as stored, with the node it's against.
-    const node = {
-      key: keys.node(n.hash),
-      bytes:
-        opts.bodies && repo.nodeDeltas
-          ? await gzip(await repo.nodeJson(n.hash))
-          : await raw(repo, keys.node(n.hash)),
-    }
+    // A node stored as a delta (node deltas) goes in full: a receiver checks each node
+    // against its hash, and a mirror may not hold the node a delta is against (another
+    // version's, a fork's parent's, or a private leaf a public mirror never gets). The
+    // cost: a mirror stores rewritten leaves in full, a delta being under a quarter of one.
+    let bytes = await raw(repo, keys.node(n.hash))
+    if (n.level === 0 && isNodeDelta(await gunzipText(bytes)))
+      bytes = await gzip(await repo.nodeJson(n.hash))
+    const node = { key: keys.node(n.hash), bytes }
     if (n.level !== 0) {
       yield node
       continue

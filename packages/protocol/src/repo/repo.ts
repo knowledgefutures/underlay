@@ -159,6 +159,8 @@ export interface RepoOptions {
 
 /** A stored node that is a delta: `{"b":<base hash>,"p":[tuples put],"d":[keys removed]}`. */
 const DELTA_PREFIX = '{"b":"'
+/** Whether a stored node's JSON is a delta (node deltas), not the node itself. */
+export const isNodeDelta = (stored: string) => stored.startsWith(DELTA_PREFIX)
 /** A delta larger than this share of the full node is stored full instead (a new keyframe). */
 const DELTA_MAX_SHARE = 0.25
 
@@ -401,18 +403,30 @@ export class Repo {
     const lines = await this.#resolve(
       await this.#inSet(set, (r) => r.leafLines(leaf.hash, leaf.entries)),
     )
-    // A packed layout's records come from its packs, not a body the leaf hashes: on an
-    // untrusted location (a mirror read by a third party) each is checked as a body's is.
-    if (!this.trusted)
-      lines.forEach((l, i) => {
-        const e = leaf.entries[i]!
-        if (sha256Hex(l) !== e.hash)
-          throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} fails its hash`)
-        if (utf8ByteLength(l) !== e.size || !l.startsWith(`{"id":${JSON.stringify(e.key)},"type":`))
-          throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} isn't its entry's record`)
-      })
+    this.#checkPacked(leaf, lines)
     this.lru.set(this.#ck(key), { lines, approxBytes: lines.reduce((n, l) => n + l.length * 2, 0) })
     return lines
+  }
+
+  /**
+   * A packed layout's records come from its packs, not a body the leaf hashes: on an
+   * untrusted location (a mirror read by a third party) each line read, resolved, is
+   * checked as a body's is, against its entry (`at[j]`, else the j-th).
+   */
+  #checkPacked(
+    leaf: { hash: string; entries: readonly RecordEntry[] },
+    lines: readonly string[],
+    at?: readonly number[],
+  ): void {
+    if (this.trusted) return
+    lines.forEach((l, j) => {
+      const i = at ? at[j]! : j
+      const e = leaf.entries[i]!
+      if (sha256Hex(l) !== e.hash)
+        throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} fails its hash`)
+      if (utf8ByteLength(l) !== e.size || !l.startsWith(`{"id":${JSON.stringify(e.key)},"type":`))
+        throw new IntegrityError(`Leaf ${leaf.hash}: record ${i} isn't its entry's record`)
+    })
   }
 
   /**
@@ -428,7 +442,11 @@ export class Repo {
       const lines = await this.bodyLines(leaf)
       return at.map((i) => lines[i]!)
     }
-    return this.#resolve(await this.#inSet(set, (r) => r.linesAt(leaf.hash, leaf.entries, at)))
+    const lines = await this.#resolve(
+      await this.#inSet(set, (r) => r.linesAt(leaf.hash, leaf.entries, at)),
+    )
+    this.#checkPacked(leaf, lines, at)
+    return lines
   }
 
   /** One entry's record line (resolved): a changed record's old body, in a packed layout. */
@@ -438,8 +456,10 @@ export class Repo {
     set?: RecordSet,
   ): Promise<string> {
     if (!this.records) return (await this.bodyLines(leaf))[i]!
-    const line = await this.#inSet(set, (r) => r.entryLine(leaf.hash, leaf.entries, i))
-    return line.startsWith(REF_PREFIX) ? this.#outOfLine(line) : line
+    const stored = await this.#inSet(set, (r) => r.entryLine(leaf.hash, leaf.entries, i))
+    const line = stored.startsWith(REF_PREFIX) ? await this.#outOfLine(stored) : stored
+    this.#checkPacked(leaf, [line], [i])
+    return line
   }
 
   async #bodyLines(
@@ -863,7 +883,10 @@ export class RepoSink<E> implements TreeSink<E> {
   }
 
   leaf(desc: NodeDesc, json: string, entries: readonly E[], spilled: number): void {
+    // The base is the leaf being rewritten, for this leaf alone: a later one (after
+    // reused nodes, or appended) would only be diffed against an unrelated node.
     const base = this.#base
+    this.#base = undefined
     this.#run(keys.node(desc.hash), () => this.repo.putNode(desc.hash, json, base))
     if (!this.opts.bodyOf) return
     if (this.repo.records) {
