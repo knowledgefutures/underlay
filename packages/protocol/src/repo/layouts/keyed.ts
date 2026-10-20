@@ -1,7 +1,7 @@
 import type { RecordEntry } from '../../tree/node.js'
 /**
  * Layout F (record-storage-layout.md): records in packs, found through an index
- * keyed by (id, record hash), with no map per leaf. Everything is per collection:
+ * keyed by (type, id, record hash), with no map per leaf. Everything is per collection:
  * its packs, index and manifest live under its own prefix (`runs/<collection>/`),
  * the manifest as objects (no database), so a collection is maintained on its own
  * and a mirror copies its files as written. A fork reads its parent's files where
@@ -12,8 +12,9 @@ import type { RecordEntry } from '../../tree/node.js'
  * into one, and small packs of a tier into one, re-pointing their records in a
  * new layer. Reclaiming keeps only what a mark found live.
  *
- * The record type isn't part of the key (readers of a leaf don't know it), so a
- * leaf's index range also holds other types' records with ids in that range.
+ * Every read and merge holds a bounded amount however large the collection: an
+ * index read takes a few layers at a time and keeps only the keys it wants, a
+ * merge's reads share a fixed budget (`mergeRead`), and writers write as they go.
  */
 import { compareUtf8 } from '../../utf8.js'
 import type { Lru } from '../lru.js'
@@ -31,6 +32,7 @@ import {
   runs,
   type Manifest,
   ManifestStore,
+  mergeRead,
   mergeSorted,
   PackRegistry,
   newId,
@@ -47,10 +49,25 @@ import {
   filterKey,
 } from './kit.js'
 import { type KeyRange, LiveHashes } from './reclaim.js'
-import { type LiveSet, recordKey, type RecordStore, type RecordWriter } from './types.js'
+import {
+  type LiveSet,
+  recordKey,
+  type RecordStore,
+  type RecordWriter,
+  type TypedLeaf,
+} from './types.js'
 
 /** Index entries a reclaim range job works on: its live set is 8 bytes an entry. */
 export const RECLAIM_RANGE_ENTRIES = 250_000
+
+/**
+ * Index runs past which a reclaim waits for merges: each range job reads every run
+ * at once (a share of `mergeRead`'s budget each, and each one's directory).
+ */
+export const RECLAIM_MAX_RUNS = 32
+
+/** A reclaim asked for while the index has more than RECLAIM_MAX_RUNS runs: merge, then ask again. */
+export class TooManyRunsError extends Error {}
 
 /** A reclaim's snapshot of the index and packs, and the key ranges its jobs work in. */
 export interface ReclaimPlan {
@@ -210,64 +227,50 @@ export class KeyedLayout implements RecordStore {
     return { keys: r.keys, packs: r.packs.filter((p) => !listed.has(p.id)) }
   }
 
-  async #find(m: Manifest, entries: readonly RecordEntry[]): Promise<(string | undefined)[]> {
-    // A few records: each looked up through the layers' filters, so only files
-    // that may hold it are read. A run of a leaf: one range over the layers.
-    const found =
-      entries.length <= 64
-        ? await this.index.lookup(m, [...new Set(entries.map((e) => e.key))])
-        : await this.index.range(
-            m,
-            `${entries[0]!.key}\u0000`,
-            `${entries.at(-1)!.key}\u0000\uffff`,
-          )
-    return entries.map((e) => found.get(recordKey(e.key, e.hash)))
+  /** Each entry's place: a few keys through the filters, a leaf's as one range of its type's. */
+  async #find(
+    m: Manifest,
+    type: string,
+    entries: readonly RecordEntry[],
+  ): Promise<(string | undefined)[]> {
+    const keys = entries.map((e) => recordKey(type, e.key, e.hash))
+    const found = await this.index.values(m, keys)
+    return keys.map((k) => found.get(k))
   }
 
-  async leafLines(leafHash: string, entries: readonly RecordEntry[]): Promise<string[]> {
-    if (!entries.length) return []
+  async leafLines(leaf: TypedLeaf): Promise<string[]> {
+    if (!leaf.entries.length) return []
     try {
-      return await this.#leafLines(leafHash, entries, await this.manifests.current())
+      return await this.#leafLines(leaf, await this.manifests.current())
     } catch (err) {
       // A head behind the newest manifest (F moves it at most once a second) can name
       // files a merge has since swept: read again from the newest.
       if (!(err instanceof Error) || !/^Missing (pack|layer)/.test(err.message)) throw err
-      return this.#leafLines(leafHash, entries, await this.manifests.latest())
+      return this.#leafLines(leaf, await this.manifests.latest())
     }
   }
 
-  async #leafLines(
-    leafHash: string,
-    entries: readonly RecordEntry[],
-    m: Manifest,
-  ): Promise<string[]> {
-    let found = await this.#find(m, entries)
+  async #leafLines(leaf: TypedLeaf, m: Manifest): Promise<string[]> {
+    let found = await this.#find(m, leaf.type, leaf.entries)
     // Another isolate may have committed since this one read the manifest.
     if (found.some((x) => x === undefined))
-      found = await this.#find(await this.manifests.latest(), entries)
+      found = await this.#find(await this.manifests.latest(), leaf.type, leaf.entries)
     const missing = found.findIndex((x) => x === undefined)
     if (missing >= 0) {
-      const e = entries[missing]!
+      const e = leaf.entries[missing]!
       throw new MissingRecordError(
-        `Layout ${this.name}: leaf ${leafHash} has no stored record ${e.key} (${e.hash})`,
+        `Layout ${this.name}: leaf ${leaf.hash} has no stored ${leaf.type} record ${e.key} (${e.hash})`,
       )
     }
     return this.packs.lines(found as string[])
   }
 
-  linesAt(
-    leafHash: string,
-    entries: readonly RecordEntry[],
-    at: readonly number[],
-  ): Promise<string[]> {
-    return this.leafLines(
-      leafHash,
-      at.map((i) => entries[i]!),
-    )
+  linesAt(leaf: TypedLeaf, at: readonly number[]): Promise<string[]> {
+    return this.leafLines({ ...leaf, entries: at.map((i) => leaf.entries[i]!) })
   }
 
-  async entryLine(leafHash: string, entries: readonly RecordEntry[], i: number): Promise<string> {
-    return (await this.leafLines(leafHash, [entries[i]!]))[0]!
+  async entryLine(leaf: TypedLeaf, i: number): Promise<string> {
+    return (await this.linesAt(leaf, [i]))[0]!
   }
 
   writer(opts: { hold?: boolean } = {}): RecordWriter {
@@ -432,7 +435,10 @@ export class KeyedLayout implements RecordStore {
     const out = new RunWriter(this.store, Math.max(...inputs.map((r) => r.level)))
     let n = 0
     // Entries of dropped packs never reach a merge: reclaim rewrites the index as it drops them.
-    for await (const [k, v] of mergeSorted(inputs.map((r) => runEntries(this.layers, r.files)))) {
+    const read = mergeRead(inputs.length)
+    for await (const [k, v] of mergeSorted(
+      inputs.map((r) => runEntries(this.layers, r.files, undefined, undefined, read)),
+    )) {
       out.add(k, v)
       if (++n % 1024 === 0) await out.ready()
     }
@@ -475,9 +481,11 @@ export class KeyedLayout implements RecordStore {
       stored += p.bytes
     }
     const reader = this.packs
+    const read = mergeRead(inputs.length)
     const streams = inputs.map((p) =>
       (async function* () {
-        for await (const { key, line } of reader.all(p.id)) yield [key, line] as [string, string]
+        for await (const { key, line } of reader.all(p.id, read))
+          yield [key, line] as [string, string]
       })(),
     )
     const pw = new PackWriter(this.store, { tier: tier + 1 })
@@ -589,7 +597,7 @@ export class KeyedLayout implements RecordStore {
   async reclaim(live: LiveSet): Promise<Record<string, number>> {
     const h = new LiveHashes()
     for (const k of live.records) {
-      const z = k.indexOf('\u0000')
+      const z = k.lastIndexOf('\u0000')
       h.add(k.slice(0, z), k.slice(z + 1))
     }
     const plan = await this.reclaimPlan()
@@ -669,9 +677,12 @@ export class KeyedLayout implements RecordStore {
     const r = plan.ranges[i]!
     const out = new RunWriter(this.store, plan.level)
     const inputs = runs(plan.layers).sort((a, b) => b.seq - a.seq)
+    const read = mergeRead(inputs.length)
     let n = 0
     for await (const [k, v] of mergeSorted(
-      inputs.map((x) => runEntries(this.layers, x.files, r.lo ?? undefined, r.hi ?? undefined)),
+      inputs.map((x) =>
+        runEntries(this.layers, x.files, r.lo ?? undefined, r.hi ?? undefined, read),
+      ),
     )) {
       out.add(k, v)
       if (++n % 1024 === 0) await out.ready()
@@ -755,6 +766,9 @@ export class KeyedLayout implements RecordStore {
 
   async reclaimPlan(rangeEntries = RECLAIM_RANGE_ENTRIES): Promise<ReclaimPlan> {
     const m = await this.manifests.latest()
+    const n = runs(m.layers).length
+    if (n > RECLAIM_MAX_RUNS)
+      throw new TooManyRunsError(`Reclaim: ${n} index runs, more than ${RECLAIM_MAX_RUNS}`)
     const ranges = await this.#cutRanges(m.layers, rangeEntries)
     const registry = await this.#registered(m)
     const plan: ReclaimPlan = {
@@ -792,8 +806,9 @@ export class KeyedLayout implements RecordStore {
     let dropped = 0
     const out = new RunWriter(this.store, plan.level)
     const inputs = runs(plan.layers).sort((a, b) => b.seq - a.seq)
+    const read = mergeRead(inputs.length)
     for await (const [k, v] of mergeSorted(
-      inputs.map((x) => runEntries(this.layers, x.files, from, to)),
+      inputs.map((x) => runEntries(this.layers, x.files, from, to, read)),
     )) {
       const pack = parseLoc(v).pack
       const z = k.lastIndexOf('\u0000')
@@ -925,35 +940,36 @@ export class KeyedLayout implements RecordStore {
     const ids = packIds.filter((id) => !retired.has(packKey(id)))
     if (!ids.length) return {}
     const pw = new PackWriter(this.store, { tier: 0 })
-    const moved: [string, string][] = []
+    const lw = new RunWriter(this.store, 0)
     let kept = 0
     let dropped = 0
-    for (const id of ids) {
-      let batch: { key: string; line: string; place: string }[] = []
-      const flush = async () => {
-        const found = await this.index.lookup(m, [...new Set(batch.map((b) => filterKey(b.key)))])
-        for (const b of batch) {
-          const v = found.get(b.key)
-          if (v === undefined || v !== b.place) {
-            dropped++
-            continue
-          }
-          moved.push([b.key, pw.append(b.key, b.line)])
-          kept++
+    // The packs' records in key order (each pack is sorted), so the new packs and
+    // the layer pointing at them are written as they go. A record in two of them
+    // comes twice; the index points at one copy, the one kept.
+    const read = mergeRead(ids.length)
+    let batch: { key: string; line: string; place: string }[] = []
+    const flush = async () => {
+      const found = await this.index.values(
+        m,
+        batch.map((b) => b.key),
+      )
+      for (const b of batch) {
+        if (found.get(b.key) !== b.place) {
+          dropped++
+          continue
         }
-        batch = []
-        await pw.ready()
+        lw.add(b.key, pw.append(b.key, b.line))
+        kept++
       }
-      for await (const x of this.packs.all(id)) {
-        batch.push(x)
-        if (batch.length === 1024) await flush()
-      }
-      await flush()
+      batch = []
+      await Promise.all([pw.ready(), lw.ready()])
     }
+    for await (const x of mergeAll(ids.map((id) => this.packs.all(id, read)))) {
+      batch.push(x)
+      if (batch.length === 1024) await flush()
+    }
+    await flush()
     const packs = await pw.finish()
-    moved.sort((a, b) => compareUtf8(a[0], b[0]))
-    const lw = new RunWriter(this.store, 0)
-    for (const [k, v] of moved) lw.add(k, v)
     const files = await lw.finish()
     await this.#swap({
       oldPacks: ids.filter((id) => listed.has(id)),
@@ -1116,6 +1132,25 @@ export class KeyedLayout implements RecordStore {
   }
 }
 
+/** Pack records from several sorted streams, in key order, every one kept (mergeSorted keeps one a key). */
+async function* mergeAll<T extends { key: string }>(
+  streams: AsyncIterable<T>[],
+): AsyncGenerator<T> {
+  const its = streams.map((s) => s[Symbol.asyncIterator]())
+  const heads = await Promise.all(its.map((it) => it.next()))
+  for (;;) {
+    let best = -1
+    for (let i = 0; i < heads.length; i++) {
+      const h = heads[i]!
+      if (h.done) continue
+      if (best < 0 || compareUtf8(h.value.key, (heads[best]!.value as T).key) < 0) best = i
+    }
+    if (best < 0) return
+    yield heads[best]!.value as T
+    heads[best] = await its[best]!.next()
+  }
+}
+
 /** F: the files a fork read from other collections at fork time, by id: where each lives. */
 export interface Inherited {
   packs: Record<string, string>
@@ -1229,8 +1264,8 @@ class KeyedWriter implements RecordWriter {
     this.#packs = new PackWriter(layout.store)
   }
 
-  add(entry: RecordEntry, line: string): string {
-    const k = recordKey(entry.key, entry.hash)
+  add(type: string, entry: RecordEntry, line: string): string {
+    const k = recordKey(type, entry.key, entry.hash)
     const at = this.#packs.append(k, line)
     this.#entries.push([k, at])
     return at

@@ -370,9 +370,9 @@ export function versionRoutes() {
     const want = c.req.query('type')
     const types = view.types.filter((t) => t.public?.root && (!want || t.slug === want))
     if (want && types.length === 0) return jsonError(c, 404, `No public records of type ${want}`)
-    const source = new RepoSource(recordTree, view.repo, { set: 'public' })
     const members = async function* () {
       for (const t of types) {
+        const source = new RepoSource(recordTree, view.repo, { set: 'public', type: t.slug })
         for await (const leaf of leaves(source, t.public!.root)) {
           const node = await source.node(leaf.hash)
           const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]

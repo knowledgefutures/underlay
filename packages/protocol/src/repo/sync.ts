@@ -231,9 +231,16 @@ export async function* treeObjects(
         yield { ...node, resumeKey: n.lastKey }
         continue
       }
-      const lines = await repo.records[tree.set].leafLines(n.hash, entries)
-      const body = await gzip(lines.join('\n') + '\n')
-      yield { key: keys.body(n.hash), bytes: body, resumeKey: n.lastKey }
+      // Built a member per 256 records, so the leaf is never held raw: as stored, a
+      // body is gzip members, and only its compressed size is held (as a stored one is).
+      const store = repo.records[tree.set]
+      const leafOf = { hash: n.hash, type: tree.slug!, entries }
+      const members: Uint8Array[] = []
+      for (let i = 0; i < entries.length; i += 256) {
+        const at = Array.from({ length: Math.min(256, entries.length - i) }, (_, j) => i + j)
+        members.push(await gzip((await store.linesAt(leafOf, at)).join('\n') + '\n'))
+      }
+      yield { key: keys.body(n.hash), bytes: concatBytes(members), resumeKey: n.lastKey }
       continue
     }
     yield node
@@ -244,6 +251,16 @@ export async function* treeObjects(
     }
     yield { key: keys.body(n.hash), bytes: body, resumeKey: n.lastKey }
   }
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0))
+  let at = 0
+  for (const p of parts) {
+    out.set(p, at)
+    at += p.byteLength
+  }
+  return out
 }
 
 /** The objects version `target` reaches that `opts.base` doesn't. */

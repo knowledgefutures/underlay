@@ -120,10 +120,16 @@ async function planKeys(h: Harness, sid: string) {
 }
 
 /** Records of a tree read with their bodies from one set alone (layout F keeps them apart). */
-async function readsFrom(h: Harness, collectionId: string, set: RecordSet, root: string | null) {
+async function readsFrom(
+  h: Harness,
+  collectionId: string,
+  set: RecordSet,
+  type: string,
+  root: string | null,
+) {
   const repo = await h.ports.stores.forCollection(collectionId)
   let n = 0
-  for await (const e of iterate(new RepoSource(recordTree, repo, { set }), root, {
+  for await (const e of iterate(new RepoSource(recordTree, repo, { set, type }), root, {
     payloads: true,
   }))
     if (e.body) n++
@@ -247,7 +253,7 @@ describe('schema and privacy changes in a parallel commit', () => {
     expect(ha.public.types.Doc).toBeUndefined()
     expect(ha.private?.types.Doc?.count).toBe(300)
     // Every record of the moved type reads from its new set alone.
-    expect(await readsFrom(h, a.id, 'private', ha.private!.types.Doc!.root)).toBe(300)
+    expect(await readsFrom(h, a.id, 'private', 'Doc', ha.private!.types.Doc!.root)).toBe(300)
   }, 30_000)
 
   it('makes a private type public by moving its tree, as the serial commit does', async () => {
@@ -267,7 +273,7 @@ describe('schema and privacy changes in a parallel commit', () => {
     expect(pb.status.status).toBe('committed')
     expect(pa.status.result.changes).toEqual(pb.status.result.changes)
     const ha = await head(h, a.id)
-    expect(await readsFrom(h, a.id, 'public', ha.public.types.Doc!.root)).toBe(
+    expect(await readsFrom(h, a.id, 'public', 'Doc', ha.public.types.Doc!.root)).toBe(
       ha.public.types.Doc!.count,
     )
     expect(ha).toEqual(await head(h, b.id))

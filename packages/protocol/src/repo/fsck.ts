@@ -32,7 +32,23 @@ import {
   verifyLog,
   verifyLogEntries,
 } from './log.js'
-import { keys, type Repo, RepoSource } from './repo.js'
+import { keys, type Leaf, type Repo, RepoSource } from './repo.js'
+
+/**
+ * Read a leaf's records, each checked against its entry (the repository is opened
+ * untrusted). Layout F reads them a few hundred at a time: a leaf of large
+ * records is never held whole.
+ */
+async function checkLeaf(repo: Repo, leaf: Leaf, set: RecordSet): Promise<void> {
+  if (!repo.records) {
+    await repo.bodyLines(leaf, set)
+    return
+  }
+  for (let i = 0; i < leaf.entries.length; i += 256) {
+    const at = Array.from({ length: Math.min(256, leaf.entries.length - i) }, (_, j) => i + j)
+    await repo.linesAt(leaf, at, set)
+  }
+}
 
 export interface FsckOptions {
   /** Version hashes to check; with a collection id and none given, the log's. */
@@ -149,7 +165,11 @@ export async function fsck(given: Repo, opts: FsckOptions = {}): Promise<FsckRep
         const node = await attempt(`leaf ${leaf.hash}`, () => records.node(leaf.hash))
         if (!node || node.kind !== 'leaf') continue
         await attempt(`body of ${leaf.hash}`, () =>
-          repo.bodyLines({ hash: leaf.hash, entries: node.entries as RecordEntry[] }, rs),
+          checkLeaf(
+            repo,
+            { hash: leaf.hash, type: slug, entries: node.entries as RecordEntry[] },
+            rs,
+          ),
         )
       }
     }
@@ -372,7 +392,7 @@ export async function fsckStep(
         const node = await attempt(`leaf ${n.hash}`, () => records.node(n.hash))
         if (!node || node.kind !== 'leaf') continue
         await attempt(`body of ${n.hash}`, () =>
-          repo.bodyLines({ hash: n.hash, entries: node.entries as RecordEntry[] }, rs),
+          checkLeaf(repo, { hash: n.hash, type: slug, entries: node.entries as RecordEntry[] }, rs),
         )
       }
     }

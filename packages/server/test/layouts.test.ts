@@ -95,7 +95,7 @@ async function records(h: Harness, collectionId: string) {
   if (root.private)
     sets.push(['private', (await repo.privateSet(root.private)).types.Author?.root ?? null])
   for (const [set, tree] of sets)
-    for await (const e of iterate(new RepoSource(recordTree, repo, { set }), tree, {
+    for await (const e of iterate(new RepoSource(recordTree, repo, { set, type: 'Author' }), tree, {
       payloads: true,
     }))
       out.push(`${set} ${e.key} ${e.body}`)

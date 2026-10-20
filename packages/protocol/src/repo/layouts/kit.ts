@@ -39,8 +39,21 @@ export const levelFor = (entries: number) =>
     : Math.ceil(Math.log(entries / LEVEL_BASE) / Math.log(LAYER_FANOUT) - 1e-9)
 /** Raw bytes of one file of a merged run: a merge holds one file's pages, never the level's. */
 export const RUN_FILE_RAW = 16 * 1024 * 1024
-/** Bytes a merge reads from each input at a time. */
+/** Bytes a merge reads from each input at a time, at most. */
 const MERGE_READ = 1024 * 1024
+/** Bytes a merge reads at a time over all its inputs: each input's share, at least MERGE_READ_MIN. */
+export const MERGE_READ_BUDGET = 16 * 1024 * 1024
+const MERGE_READ_MIN = 64 * 1024
+/** Each input's read size when a merge takes `inputs` streams at once. */
+export const mergeRead = (inputs: number) =>
+  Math.max(
+    MERGE_READ_MIN,
+    Math.min(MERGE_READ, Math.floor(MERGE_READ_BUDGET / Math.max(1, inputs))),
+  )
+/** Blocks of one pack a read takes in one request, at most (neighbours, gaps of up to two). */
+const READ_BLOCKS = 16
+/** Layers an index read works through at once, newest first. */
+const READ_LAYERS = 4
 
 export const newId = () => crypto.randomUUID().replace(/-/g, '')
 
@@ -199,22 +212,35 @@ export class PackReader {
     return v
   }
 
-  /** Lines at many places, read a block once each, `concurrency` blocks at a time. */
   /**
    * Lines at many places. Blocks are read in runs: neighbouring blocks of one pack
-   * (gaps of up to two) come in one range request, as a sorted pack's leaf does.
+   * (gaps of up to two, READ_BLOCKS at most) come in one range request, as a sorted
+   * pack's leaf does. Each block's lines are taken as it's decoded and the block
+   * let go (the memory cache may keep it): a leaf whose records are spread over
+   * many packs never holds every block it touches.
    */
-  async lines(places: readonly string[], concurrency = 16): Promise<string[]> {
+  async lines(places: readonly string[], concurrency = 8): Promise<string[]> {
     const parsed = places.map(parseLoc)
-    const got = new Map<string, string[]>()
+    const out: (string | undefined)[] = Array.from({ length: parsed.length })
+    // Where each block's lines go: (line in block, index in `out`).
+    const wants = new Map<string, [number, number][]>()
     const need = new Map<string, Set<number>>()
-    for (const p of parsed) {
+    parsed.forEach((p, i) => {
       const k = `${p.pack}.${p.block}`
-      if (got.has(k)) continue
       const hit = this.lru.get(`${this.scope}/block:${k}`)
-      if (hit) got.set(k, (hit as { v: string[] }).v)
-      else need.set(p.pack, (need.get(p.pack) ?? new Set()).add(p.block))
-    }
+      if (hit) {
+        out[i] = (hit as { v: string[] }).v[p.line]
+        if (out[i] === undefined)
+          throw new Error(`No line ${p.line} in block ${p.block} of pack ${p.pack}`)
+        return
+      }
+      const w = wants.get(k)
+      if (w) w.push([p.line, i])
+      else {
+        wants.set(k, [[p.line, i]])
+        need.set(p.pack, (need.get(p.pack) ?? new Set()).add(p.block))
+      }
+    })
     const runs: { pack: string; from: number; to: number }[] = []
     for (const [pack, set] of need) {
       const blocks = [...set].sort((x, y) => x - y)
@@ -223,25 +249,32 @@ export class PackReader {
         while (
           j + 1 < blocks.length &&
           blocks[j + 1]! - blocks[j]! <= 3 &&
-          blocks[j + 1]! - blocks[i]! < 256
+          blocks[j + 1]! - blocks[i]! < READ_BLOCKS
         )
           j++
         runs.push({ pack, from: blocks[i]!, to: blocks[j]! })
         i = j + 1
       }
     }
-    for (let i = 0; i < runs.length; i += concurrency)
-      await Promise.all(runs.slice(i, i + concurrency).map((r) => this.#run(r, got)))
-    return parsed.map((p) => {
-      const line = got.get(`${p.pack}.${p.block}`)?.[p.line]
-      if (line === undefined)
-        throw new Error(`No line ${p.line} in block ${p.block} of pack ${p.pack}`)
-      return line
-    })
+    const take = (pack: string, b: number, v: string[]) => {
+      for (const [line, i] of wants.get(`${pack}.${b}`) ?? []) {
+        out[i] = v[line]
+        if (out[i] === undefined) throw new Error(`No line ${line} in block ${b} of pack ${pack}`)
+      }
+    }
+    let next = 0
+    const worker = async () => {
+      while (next < runs.length) await this.#run(runs[next++]!, take)
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, runs.length) }, worker))
+    return out as string[]
   }
 
-  /** Blocks `from` through `to` of a pack, in one range read. */
-  async #run(r: { pack: string; from: number; to: number }, got: Map<string, string[]>) {
+  /** Blocks `from` through `to` of a pack, in one range read, each handed to `take` as decoded. */
+  async #run(
+    r: { pack: string; from: number; to: number },
+    take: (pack: string, block: number, lines: string[]) => void,
+  ) {
     const dir = await this.#dir(r.pack)
     const start = dir[r.from]!
     const o = await this.store.get(packKey(r.pack), {
@@ -255,17 +288,20 @@ export class PackReader {
       const v = text.split('\n')
       v.pop()
       for (let i = 0; i < v.length; i++) v[i] = v[i]!.slice(v[i]!.indexOf('\t') + 1)
-      got.set(`${r.pack}.${b}`, v)
+      take(r.pack, b, v)
       this.lru.set(`${this.scope}/block:${r.pack}.${b}`, { v, approxBytes: text.length * 2 })
     }
   }
 
-  /** A whole pack's records in order, with their keys, read 8 MB at a time (merges and reclaims). */
-  async *all(pack: string): AsyncGenerator<{ key: string; line: string; place: string }> {
+  /** A whole pack's records in order, with their keys, read `readBytes` at a time (merges and reclaims). */
+  async *all(
+    pack: string,
+    readBytes = MERGE_READ,
+  ): AsyncGenerator<{ key: string; line: string; place: string }> {
     const dir = await this.#dir(pack)
     for (let b = 0; b < dir.length - 1;) {
       let e = b
-      while (e + 1 < dir.length - 1 && dir[e + 2]! - dir[b]! <= MERGE_READ) e++
+      while (e + 1 < dir.length - 1 && dir[e + 2]! - dir[b]! <= readBytes) e++
       const o = await this.store.get(packKey(pack), {
         offset: dir[b]!,
         length: dir[e + 1]! - dir[b]!,
@@ -326,9 +362,9 @@ export const layerKey = (id: string) => `layers/${id}.ly`
 export const layerDirKey = (id: string) => `layers/${id}.dir`
 export const layerFilterKey = (id: string) => `layers/${id}.bf`
 
-/** What a layer's filter holds for a key: its id part (before \u0000), or the whole key. */
+/** What a layer's filter holds for a key: all but its hash (after the last \u0000), or the whole key. */
 export const filterKey = (k: string) => {
-  const z = k.indexOf('\u0000')
+  const z = k.lastIndexOf('\u0000')
   return z < 0 ? k : k.slice(0, z)
 }
 
@@ -619,51 +655,44 @@ export class LayerReader {
   }
 
   /**
-   * Entries whose filter key is one of `ids` (records of those ids), reading only
-   * pages the layer's filter says may hold them.
+   * The entries of `keys` (sorted, exact) this layer holds. Only keys its filter
+   * may hold are looked for. A few keys read the one page each could be in; more
+   * (a leaf's) read the pages from the first such key's to the last's, one at a
+   * time, keeping only the keys wanted: a range also holds older versions of the
+   * leaf's records, and memory stays a page however many.
    */
-  async lookup(layer: LayerInfo, ids: readonly string[]): Promise<[string, string][]> {
-    const inRange = ids.filter(
-      (id) => compareUtf8(layer.max, id) >= 0 && compareUtf8(layer.min, `${id}\u0000\uffff`) <= 0,
+  async pick(layer: LayerInfo, keys: readonly string[]): Promise<[string, string][]> {
+    const inRange = keys.filter(
+      (k) => compareUtf8(layer.min, k) <= 0 && compareUtf8(layer.max, k) >= 0,
     )
     if (!inRange.length) return []
     const filter = await this.#filter(layer.id)
-    const maybe = filter ? inRange.filter((id) => filterHas(filter, id)) : inRange
+    const maybe = filter ? inRange.filter((k) => filterHas(filter, filterKey(k))) : inRange
     if (!maybe.length) return []
     const dir = await this.#dir(layer.id)
-    const pages = new Set<number>()
-    for (const id of maybe) {
-      // Pages whose range can hold id's keys: from the last page starting at or before id.
-      const lo = pageAt(dir, id)
-      pages.add(lo)
-      for (
-        let p = lo + 1;
-        p < dir.first.length && compareUtf8(dir.first[p]!, `${id}\u0000\uffff`) <= 0;
-        p++
-      )
-        pages.add(p)
-    }
     const want = new Set(maybe)
     const out: [string, string][] = []
-    const read = await Promise.all([...pages].map((p) => this.#page(layer.id, dir, p)))
-    for (const page of read) for (const e of page) if (want.has(filterKey(e[0]))) out.push(e)
-    return out
-  }
-
-  /** Entries with keys in [from, to], in key order. */
-  async range(layer: LayerInfo, from: string, to: string): Promise<[string, string][]> {
-    if (compareUtf8(layer.max, from) < 0 || compareUtf8(layer.min, to) > 0) return []
-    const dir = await this.#dir(layer.id)
-    // The last page whose first key is ≤ from, through the last whose first key is ≤ to.
-    const lo = pageAt(dir, from)
-    const hi = Math.max(lo, pageAt(dir, to))
-    const out: [string, string][] = []
-    const pages = await Promise.all(
-      Array.from({ length: hi - lo + 1 }, (_, j) => this.#page(layer.id, dir, lo + j)),
-    )
-    for (const page of pages)
-      for (const e of page)
-        if (compareUtf8(e[0], from) >= 0 && compareUtf8(e[0], to) <= 0) out.push(e)
+    const keep = (page: [string, string][]) => {
+      for (const e of page) if (want.has(e[0])) out.push(e)
+    }
+    if (maybe.length <= 64) {
+      const pages = [...new Set(maybe.map((k) => pageAt(dir, k)))]
+      for (let i = 0; i < pages.length; i += 8)
+        for (const page of await Promise.all(
+          pages.slice(i, i + 8).map((p) => this.#page(layer.id, dir, p)),
+        ))
+          keep(page)
+      return out
+    }
+    const lo = pageAt(dir, maybe[0]!)
+    const hi = Math.max(lo, pageAt(dir, maybe.at(-1)!))
+    // One page ahead: the next page's read overlaps this one's scan.
+    let ahead = this.#page(layer.id, dir, lo)
+    for (let p = lo; p <= hi; p++) {
+      const page = await ahead
+      if (p < hi) ahead = this.#page(layer.id, dir, p + 1)
+      keep(page)
+    }
     return out
   }
 
@@ -674,10 +703,15 @@ export class LayerReader {
   }
 
   /**
-   * Every entry in order (keys in [from, to) when given), read 2 MB at a time,
+   * Every entry in order (keys in [from, to) when given), read `readBytes` at a time,
    * bypassing the cache (merges, reclaim's key ranges).
    */
-  async *all(layer: LayerInfo, from?: string, to?: string): AsyncGenerator<[string, string]> {
+  async *all(
+    layer: LayerInfo,
+    from?: string,
+    to?: string,
+    readBytes = MERGE_READ,
+  ): AsyncGenerator<[string, string]> {
     if (from !== undefined && compareUtf8(layer.max, from) < 0) return
     if (to !== undefined && compareUtf8(layer.min, to) >= 0) return
     const dir = await this.#dir(layer.id)
@@ -685,7 +719,7 @@ export class LayerReader {
     for (let p = from === undefined ? 0 : pageAt(dir, from); p < dir.first.length;) {
       if (to !== undefined && compareUtf8(dir.first[p]!, to) >= 0) return
       let e = p
-      while (e + 1 < dir.first.length && off[e + 2]! - off[p]! <= MERGE_READ) e++
+      while (e + 1 < dir.first.length && off[e + 2]! - off[p]! <= readBytes) e++
       const o = await this.store.get(layerKey(layer.id), {
         offset: off[p]!,
         length: off[e + 1]! - off[p]!,
@@ -709,14 +743,18 @@ export class LayerReader {
   }
 }
 
-/** A run's entries in order (keys in [from, to) when given): its files one after another. */
+/**
+ * A run's entries in order (keys in [from, to) when given): its files one after
+ * another, read `readBytes` at a time (`mergeRead` of the merge's input count).
+ */
 export async function* runEntries(
   reader: LayerReader,
   files: readonly LayerInfo[],
   from?: string,
   to?: string,
+  readBytes = MERGE_READ,
 ): AsyncGenerator<[string, string]> {
-  for (const f of files) yield* reader.all(f, from, to)
+  for (const f of files) yield* reader.all(f, from, to, readBytes)
 }
 
 /** Merge sorted streams, newest first winning a repeated key. */
@@ -1160,21 +1198,23 @@ export class LayeredIndex {
     this.reader = new LayerReader(store, lru, scope)
   }
 
-  /** Values for the keys of `ids` (by filter key), newest layer winning, from manifest `m`. */
-  async lookup(m: Manifest, ids: readonly string[]): Promise<Map<string, string>> {
-    const layers = m.layers.filter(this.filter).sort((a, b) => b.seq - a.seq)
-    const results = await Promise.all(layers.map((l) => this.reader.lookup(l, ids)))
+  /**
+   * Values of `keys` (exact), newest layer winning, from manifest `m`: READ_LAYERS
+   * layers at a time, newest first, until every key is found. Memory is the keys'
+   * values and a few layers' pages, however many layers there are (a large push
+   * leaves hundreds until merges catch up).
+   */
+  async values(m: Manifest, keys: Iterable<string>): Promise<Map<string, string>> {
+    const sorted = [...new Set(keys)].sort(compareUtf8)
     const out = new Map<string, string>()
-    for (const r of results) for (const [k, v] of r) if (!out.has(k)) out.set(k, v)
-    return out
-  }
-
-  /** Values for keys in [from, to], newest layer winning, from manifest `m`. */
-  async range(m: Manifest, from: string, to: string): Promise<Map<string, string>> {
     const layers = m.layers.filter(this.filter).sort((a, b) => b.seq - a.seq)
-    const results = await Promise.all(layers.map((l) => this.reader.range(l, from, to)))
-    const out = new Map<string, string>()
-    for (const r of results) for (const [k, v] of r) if (!out.has(k)) out.set(k, v)
+    for (let i = 0; i < layers.length && out.size < sorted.length; i += READ_LAYERS) {
+      const left = out.size ? sorted.filter((k) => !out.has(k)) : sorted
+      const got = await Promise.all(
+        layers.slice(i, i + READ_LAYERS).map((l) => this.reader.pick(l, left)),
+      )
+      for (const r of got) for (const [k, v] of r) if (!out.has(k)) out.set(k, v)
+    }
     return out
   }
 }

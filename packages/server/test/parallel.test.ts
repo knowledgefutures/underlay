@@ -206,7 +206,7 @@ describe('parallel commit', () => {
     expect(t.public.count).toBe(6012)
     let n = 0
     for await (const e of iterate(
-      new RepoSource(recordTree, t.repo, { set: 'public' }),
+      new RepoSource(recordTree, t.repo, { set: 'public', type: 'Author' }),
       t.public.root,
       {
         payloads: true,
