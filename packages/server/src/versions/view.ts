@@ -156,7 +156,7 @@ export async function* typeRecords(
   }
   // Each set's records from its own source: layout F keeps them apart.
   const it = (root: string | null, set: 'public' | 'private') =>
-    iterate(new RepoSource(recordTree, view.repo, { set }), root, {
+    iterate(new RepoSource(recordTree, view.repo, { set, type: type.slug }), root, {
       payloads: opts.bodies ?? false,
       stream: true,
       ...(after !== undefined ? { after } : {}),
@@ -226,7 +226,7 @@ export async function getRecord(
     ['private', view.owner ? type.private : null],
   ] as const) {
     if (!tree?.root) continue
-    const source = new RepoSource(recordTree, view.repo, { set })
+    const source = new RepoSource(recordTree, view.repo, { set, type: type.slug })
     const hit = await getEntry(source, tree.root, id)
     if (!hit) continue
     if (view.withheld.has(hit.hash)) return null
@@ -246,7 +246,11 @@ async function bodyOf(source: RepoSource<RecordEntry>, root: string, key: string
         const i = node.entries.findIndex((e) => e.key === key)
         if (i < 0) throw new Error(`Record ${key} is not in leaf ${hash}`)
         return (
-          await source.repo.linesAt({ hash, entries: node.entries }, [i], source.opts.set)
+          await source.repo.linesAt(
+            { hash, entries: node.entries, type: source.opts.type },
+            [i],
+            source.opts.set,
+          )
         )[0]!
       }
       // Streamed, stopping at the record: a leaf of large records is never held whole.
@@ -300,7 +304,7 @@ export async function recordBodies(
         const at = entries.flatMap((e, i) =>
           keys.has(`${type}\u0000${e.key}`) && !view.withheld.has(e.hash) ? [i] : [],
         )
-        const lines = await source.repo.linesAt({ hash, entries }, at, leafSet.get(hash))
+        const lines = await source.repo.linesAt({ hash, entries, type }, at, leafSet.get(hash))
         at.forEach((i, j) => out.set(`${type}\u0000${entries[i]!.key}`, lines[j]!))
         continue
       }

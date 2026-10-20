@@ -15,7 +15,7 @@ export type Placed = RecordEntry & { loc?: string }
 
 /** Records still in use, from a mark over every retained version (storage reclaim). */
 export interface LiveSet {
-  /** `${id}\u0000${hash}` of every record in a retained version. */
+  /** `recordKey(type, id, hash)` of every record in a retained version. */
   records: Set<string>
 }
 
@@ -32,18 +32,21 @@ export interface RecordSets {
   readonly private: RecordStore
 }
 
+/** A leaf of a type's record tree: its records are found by type, id and hash. */
+export interface TypedLeaf {
+  hash: string
+  type: string
+  entries: readonly RecordEntry[]
+}
+
 export interface RecordStore {
   readonly name: LayoutName
   /** The stored lines of a leaf's entries, in entry order (out-of-line pointers unresolved). */
-  leafLines(leafHash: string, entries: readonly RecordEntry[]): Promise<string[]>
+  leafLines(leaf: TypedLeaf): Promise<string[]>
   /** One entry's stored line: a changed record's old body, which file references need. */
-  entryLine(leafHash: string, entries: readonly RecordEntry[], i: number): Promise<string>
+  entryLine(leaf: TypedLeaf, i: number): Promise<string>
   /** The stored lines of some of a leaf's entries (by index), reading only those records. */
-  linesAt(
-    leafHash: string,
-    entries: readonly RecordEntry[],
-    at: readonly number[],
-  ): Promise<string[]>
+  linesAt(leaf: TypedLeaf, at: readonly number[]): Promise<string[]>
   /** A writer for one commit unit or build; with `hold`, its runs are returned, not named. */
   writer(opts?: { hold?: boolean }): RecordWriter
   /**
@@ -60,8 +63,8 @@ export interface RecordStore {
 }
 
 export interface RecordWriter {
-  /** Store one record line (a spilled or new entry): its place. */
-  add(entry: RecordEntry, line: string): string
+  /** Store one record line (a spilled or new entry) of type `type`: its place. */
+  add(type: string, entry: RecordEntry, line: string): string
   /** Write a run out if enough is held (called as a build goes): memory stays bounded. */
   drain?(): Promise<void>
   /**
@@ -74,4 +77,13 @@ export interface RecordWriter {
 /** A run a commit unit wrote and held back from the manifest (layout F). */
 export type HeldRun = PendingRun
 
-export const recordKey = (id: string, hash: string) => `${id}\u0000${hash}`
+/**
+ * A record's index key: its type, id and hash. The type comes first so a type's
+ * records are together in the index, as its tree's leaves are: a leaf's records are
+ * one short range, never the other types' records whose ids fall between its ids.
+ */
+export const recordKey = (type: string, id: string, hash: string) =>
+  `${type}\u0000${id}\u0000${hash}`
+
+/** The key a record's versions share (`recordKey` without the hash): what a filter holds. */
+export const recordIdKey = (type: string, id: string) => `${type}\u0000${id}`

@@ -909,6 +909,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
     bodyOf: bodyOfRecord,
     ...unitSink,
     set,
+    type: unit.type,
     holdRecords: true,
   })
   const range = { after: unit.after, through: unit.through }
@@ -956,7 +957,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   // The most members compressing at a leaf's end: what a leaf's write holds raw.
   let mostCompressing = 0
   const merged = await mergeTree(
-    new RepoSource(recordTree, repo, { onBodyRead, pointers: true, set }),
+    new RepoSource(recordTree, repo, { onBodyRead, pointers: true, set, type: unit.type }),
     sink,
     into,
     changes,
@@ -1138,11 +1139,10 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
     const repo = await ports.stores.forCollection(session.collectionId)
     // Base leaves keep large records as pointers, as in units (runPendingUnit). A source
-    // and a sink a set: layout F reads and writes each set's records apart.
-    const sources = {
-      public: new RepoSource(recordTree, repo, { pointers: true, set: 'public' }),
-      private: new RepoSource(recordTree, repo, { pointers: true, set: 'private' }),
-    }
+    // a tree and a sink a set (told each tree's type): layout F reads and writes each
+    // set's records apart, and finds them by type.
+    const sourceOf = (set: SetName, type: string) =>
+      new RepoSource(recordTree, repo, { pointers: true, set, type })
     const sinks = {
       public: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'public' }),
       private: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'private' }),
@@ -1201,7 +1201,13 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
         },
       }))
       const treeStarted = Date.now()
-      const result = await assembleTree(sources[set], sinks[set], built[type]![set].root, segments)
+      sinks[set].type = type
+      const result = await assembleTree(
+        sourceOf(set, type),
+        sinks[set],
+        built[type]![set].root,
+        segments,
+      )
       console.log(
         `[assemble] ${isolateTag()} ${sessionId} ${type}/${set}: ${segments.length} segments ` +
           `in ${Math.round((Date.now() - treeStarted) / 1000)}s, ${JSON.stringify(result.stats)}`,
@@ -1452,7 +1458,7 @@ export async function runValidation(
     const inputs = await loadInputs(ports, sessionId)
     const validate = compileSchema(inputs.schemas[t.type]!)
     const repo = await ports.stores.forCollection(session.collectionId)
-    const source = new RepoSource(recordTree, repo, { set: t.set })
+    const source = new RepoSource(recordTree, repo, { set: t.set, type: t.type })
     const result: ValidationResult = { total: 0, errors: [] }
     for await (const e of entriesInRange(source, t.root, t.after, t.through)) {
       const errs = validate((JSON.parse(e.body!) as { data: unknown }).data)

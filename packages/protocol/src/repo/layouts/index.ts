@@ -11,7 +11,9 @@ export {
   layoutConfig,
   type MergePlan,
   MissingRecordError,
+  RECLAIM_MAX_RUNS,
   type ReclaimPlan,
+  TooManyRunsError,
 } from './keyed.js'
 export { headConfig, type LayerInfo, type PackInfo, pendingConfig } from './kit.js'
 export * from './types.js'

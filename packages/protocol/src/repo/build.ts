@@ -167,13 +167,14 @@ async function* overlay(
   }
 }
 
-/** Every entry of a tree (with bodies) as upserts, read from the tree's set. */
+/** Every entry of a type's tree (with bodies) as upserts, read from the tree's set. */
 async function* treeAsUpserts(
   repo: Repo,
   root: string | null,
   set: SetName,
+  type: string,
 ): AsyncGenerator<Change<RecordEntry>> {
-  for await (const e of iterate(new RepoSource(recordTree, repo, { set }), root, {
+  for await (const e of iterate(new RepoSource(recordTree, repo, { set, type }), root, {
     payloads: true,
   })) {
     yield { key: e.key, entry: e }
@@ -186,17 +187,23 @@ async function* treeAsUpserts(
  * (a public mirror copies them as they are). O(type size), as a rebuild is; the
  * old set's copies go when its reclaim finds them unreferenced.
  */
-async function copyRecords(repo: Repo, root: string | null, from: SetName, to: SetName) {
+async function copyRecords(
+  repo: Repo,
+  root: string | null,
+  type: string,
+  from: SetName,
+  to: SetName,
+) {
   if (!repo.records || root === null) return
-  const source = new RepoSource(recordTree, repo, { set: from })
+  const source = new RepoSource(recordTree, repo, { set: from, type })
   const writer = repo.records[to].writer()
   for await (const leaf of leaves(source, root)) {
     const node = await source.node(leaf.hash)
     const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
     for (let i = 0; i < entries.length; i += 256) {
       const at = Array.from({ length: Math.min(256, entries.length - i) }, (_, j) => i + j)
-      const lines = await repo.records[from].linesAt(leaf.hash, entries, at)
-      at.forEach((k, j) => writer.add(entries[k]!, lines[j]!))
+      const lines = await repo.records[from].linesAt({ hash: leaf.hash, type, entries }, at)
+      at.forEach((k, j) => writer.add(type, entries[k]!, lines[j]!))
       await writer.drain?.()
     }
   }
@@ -214,11 +221,11 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     ? await repo.privateSet(baseRoot.private)
     : emptySet()
 
-  // A source and a sink a set: layout F reads and writes each set's records apart.
-  const sources = {
-    public: new RepoSource(recordTree, repo, { set: 'public' }),
-    private: new RepoSource(recordTree, repo, { set: 'private' }),
-  }
+  // A source a set and type, and a sink a set (told each tree's type): layout F reads
+  // and writes each set's records apart, and finds them by type.
+  const source = (set: SetName, type: string) => new RepoSource(recordTree, repo, { set, type })
+  // Nodes alone: any source reads them.
+  const nodes = new RepoSource(recordTree, repo)
   const sinks = {
     public: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'public' }),
     private: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'private' }),
@@ -242,7 +249,8 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
     baseTree: string | null,
     changes: AsyncIterable<Change<RecordEntry>>,
   ) => {
-    const result = await mergeTree(sources[set], sinks[set], baseTree, changes, {
+    sinks[set].type = type
+    const result = await mergeTree(source(set, type), sinks[set], baseTree, changes, {
       ...builderOpts,
       oldPayloads: !refs.noOldRefs.has(set),
       onChange: (before, after) => {
@@ -280,7 +288,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       }
       return
     }
-    for await (const e of treeAsUpserts(repo, tree, from)) {
+    for await (const e of treeAsUpserts(repo, tree, from, slug)) {
       refs.record(from, e.entry, null, slug)
       if (to) refs.record(to, null, e.entry, slug)
     }
@@ -341,7 +349,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
         // The tree moves as it is (summary() drops the old schema hash), with its
         // file references; this push's private changes then merge into it.
         await moveRefs('public', 'private', t.slug, pubRoot)
-        await copyRecords(repo, pubRoot, 'public', 'private')
+        await copyRecords(repo, pubRoot, t.slug, 'public', 'private')
         priv = privChanges ? await merge('private', t.slug, pubRoot, privChanges) : summary(pubBase)
       } else if (pubRoot) {
         // Records in both sets: the union is a merge, O(public part).
@@ -349,9 +357,9 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
           'private',
           t.slug,
           privRoot,
-          overlay(treeAsUpserts(repo, pubRoot, 'public'), privChanges ?? asAsync([])),
+          overlay(treeAsUpserts(repo, pubRoot, 'public', t.slug), privChanges ?? asAsync([])),
         )
-        for await (const e of treeAsUpserts(repo, pubRoot, 'public'))
+        for await (const e of treeAsUpserts(repo, pubRoot, 'public', t.slug))
           refs.record('public', e.entry, null, t.slug)
       } else {
         priv = privChanges
@@ -366,7 +374,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
       // merge into it (trees are canonical, so this is the tree a rebuild makes).
       // Stats count every record of the new public tree as added, as a rebuild did.
       await moveRefs('private', 'public', t.slug, privRoot)
-      await copyRecords(repo, privRoot, 'private', 'public')
+      await copyRecords(repo, privRoot, t.slug, 'private', 'public')
       const before = { ...stats }
       pub = await merge('public', t.slug, privRoot, pubChanges ?? asAsync([]))
       Object.assign(stats, before)
@@ -417,10 +425,9 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
         [basePublic.types[t.slug]?.root ?? null, pub, priv],
         [basePrivate.types[t.slug]?.root ?? null, priv, pub],
       ] as const) {
-        // Nodes alone: either set's source reads them.
-        for await (const d of diffTrees(sources.public, before, after)) {
+        for await (const d of diffTrees(nodes, before, after)) {
           if (d.before || !d.after) continue
-          if (await getEntry(sources.public, other, d.key)) {
+          if (await getEntry(nodes, other, d.key)) {
             throw new Error(
               `Record ${JSON.stringify(d.key)} of type ${t.slug} is in both the public and private sets`,
             )
@@ -443,7 +450,9 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
         ['public', newPublic.types[t.slug]],
         ['private', newPrivate.types[t.slug]],
       ] as const) {
-        for await (const e of iterate(sources[set], tree?.root ?? null, { payloads: true })) {
+        for await (const e of iterate(source(set, t.slug), tree?.root ?? null, {
+          payloads: true,
+        })) {
           const errs = input.validate(t.schema, (JSON.parse(e.body!) as { data: unknown }).data)
           if (errs) {
             errorCount++

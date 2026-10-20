@@ -198,7 +198,7 @@ describe('bucket mirrors of layout F (records in packs of the collection)', () =
       ['public', root.public.types.Book!],
       ['private', priv.types.Book!],
     ] as const) {
-      const src = new RepoSource(recordTree, repo, { set })
+      const src = new RepoSource(recordTree, repo, { set, type: 'Book' })
       expect((await verifyTree(src, t.root)).errors).toEqual([])
       let n = 0
       for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
@@ -249,7 +249,7 @@ describe('bucket mirrors of layout F (records in packs of the collection)', () =
       nodes: 'delta',
     })
     const t = (await repo.root(v2.hash)).public.types.Book!
-    const src = new RepoSource(recordTree, repo, { set: 'public' })
+    const src = new RepoSource(recordTree, repo, { set: 'public', type: 'Book' })
     expect((await verifyTree(src, t.root)).errors).toEqual([])
     let n = 0
     for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
@@ -305,7 +305,7 @@ describe('bucket mirrors of layout F (records in packs of the collection)', () =
         expect(await readHead(repo, col!.id)).toMatchObject({ versionHash: head!.hash })
         const t = (await repo.root(head!.hash)).public.types.Book!
         let n = 0
-        const src = new RepoSource(recordTree, repo, { set: 'public' })
+        const src = new RepoSource(recordTree, repo, { set: 'public', type: 'Book' })
         for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
         expect(n).toBe(t.count)
       }
@@ -353,7 +353,7 @@ describe('bucket mirrors', () => {
       ['public', root.public.types.Book!],
       ['private', priv.types.Book!],
     ] as const) {
-      const src = new RepoSource(recordTree, repo, { set })
+      const src = new RepoSource(recordTree, repo, { set, type: 'Book' })
       expect((await verifyTree(src, t.root)).errors).toEqual([])
       let n = 0
       for await (const e of iterate(src, t.root, { payloads: true })) if (e.body) n++
