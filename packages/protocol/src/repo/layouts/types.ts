@@ -128,5 +128,33 @@ export type HeldRun = PendingRun
 export const recordKey = (type: string, id: string, hash: string) =>
   `${type}\u0000${id}\u0000${hash}`
 
+/** Record bytes a reader of a leaf takes at once (layout F): a leaf of small records in one read. */
+export const LEAF_CHUNK_BYTES = 4 * 1024 * 1024
+
+/**
+ * A leaf's entries as runs of indexes of at most LEAF_CHUNK_BYTES of records (one at
+ * least): each run is one index lookup, so a leaf of small records is read in one,
+ * and one of large records is never held whole.
+ */
+export function leafChunks(
+  entries: readonly RecordEntry[],
+  maxBytes = LEAF_CHUNK_BYTES,
+): number[][] {
+  const out: number[][] = []
+  let run: number[] = []
+  let bytes = 0
+  entries.forEach((e, i) => {
+    if (run.length && bytes + e.size > maxBytes) {
+      out.push(run)
+      run = []
+      bytes = 0
+    }
+    run.push(i)
+    bytes += e.size
+  })
+  if (run.length) out.push(run)
+  return out
+}
+
 /** The key a record's versions share (`recordKey` without the hash): what a filter holds. */
 export const recordIdKey = (type: string, id: string) => `${type}\u0000${id}`

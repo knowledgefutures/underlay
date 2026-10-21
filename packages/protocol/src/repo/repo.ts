@@ -45,6 +45,7 @@ import { compareUtf8 } from '../utf8.js'
 import { chunkLines, gunzipChunks, gunzipStream, gunzipText, gzip, splitLines } from './gzip.js'
 import {
   type HeldRun,
+  leafChunks,
   type LayoutName,
   MissingRecordError,
   type Placed,
@@ -497,11 +498,8 @@ export class Repo {
     // The memory cache holds lines resolved.
     const hit = opts.pointers && this.trusted ? undefined : this.lru.get(this.#ck(key))
     if (this.records && !hit) {
-      // A packed layout: 256 records at a time, so a leaf of large records is never held whole.
-      for (let i = 0; i < leaf.entries.length; i += 256) {
-        const at = Array.from({ length: Math.min(256, leaf.entries.length - i) }, (_, j) => i + j)
-        yield* await this.linesAt(leaf, at, opts.set)
-      }
+      // A packed layout: a few MB of records at a time, so a leaf of large records is never held whole.
+      for (const at of leafChunks(leaf.entries)) yield* await this.linesAt(leaf, at, opts.set)
       return
     }
     if (hit || !this.trusted) {
