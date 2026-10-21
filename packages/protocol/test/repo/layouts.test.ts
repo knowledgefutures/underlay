@@ -392,6 +392,58 @@ describe('pack merges', () => {
   }, 30_000)
 })
 
+describe('packs never span types', () => {
+  it('close where the type changes, and say which type they hold', async () => {
+    const layout = fLayout()
+    const w = layout.uploadWriter()
+    for (const type of ['A', 'B', 'C'])
+      for (let i = 0; i < 5; i++)
+        w.append({ type, id: ids[i]!, hash: `h${i}`, line: `${type}${i}` })
+    // Packs are reported as their writes finish, in any order.
+    const packs = await w.finish()
+    expect(packs.map((p) => `${p.type}: ${p.records}`).sort()).toEqual(['A: 5', 'B: 5', 'C: 5'])
+  })
+
+  it("merge one type's packs at a time, keeping every record readable", async () => {
+    const saved = { ...layoutConfig }
+    layoutConfig.graceMs = 0
+    // Eight packs a merge: eight of one type make a pack of 32 records, where eight of
+    // both types would make two of 16 and tier up half-full.
+    layoutConfig.mergeInputs = 8
+    try {
+      const layout = fLayout()
+      // Tiny commits, each of two types: every commit writes a pack of each.
+      const types = ['A', 'B']
+      const rec = (i: number) => ({ key: ids[i]!, hash: `h${i}`, size: 10 })
+      for (let c = 0; c < 16; c++) {
+        const w = layout.writer()
+        for (const type of types)
+          for (let i = c * 4; i < c * 4 + 4; i++) w.add(type, rec(i), `${type} ${i}`)
+        await w.finish()
+      }
+      const before = (await layout.manifests.latest()).packs
+      expect(before).toHaveLength(32)
+      expect(new Set(before.map((p) => p.type))).toEqual(new Set(types))
+      while (await layout.maintain());
+      const after = (await layout.manifests.latest()).packs
+      expect(after.map((p) => `${p.type} tier ${p.tier}: ${p.records}`).sort()).toEqual([
+        'A tier 1: 32',
+        'A tier 1: 32',
+        'B tier 1: 32',
+        'B tier 1: 32',
+      ])
+      for (const type of types) {
+        const entries = Array.from({ length: 64 }, (_, i) => rec(i))
+        expect(await layout.leafLines({ hash: 'leaf', type, entries })).toEqual(
+          entries.map((_, i) => `${type} ${i}`),
+        )
+      }
+    } finally {
+      Object.assign(layoutConfig, saved)
+    }
+  })
+})
+
 describe('layout F', () => {
   const rec = (i: number, v = 1) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 })
   const line = (i: number, v = 1) => `line ${v}.${i}`

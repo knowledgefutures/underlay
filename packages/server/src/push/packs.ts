@@ -44,7 +44,7 @@ const hooksFor = (ports: Ports, sessionId: string, set: RecordSet): PackHooks =>
   after: async (pack) => {
     await ports.db
       .update(schema.pushPacks)
-      .set({ records: pack.records, bytes: pack.bytes, raw: pack.raw })
+      .set({ records: pack.records, bytes: pack.bytes, raw: pack.raw, recordType: pack.type })
       .where(and(eq(schema.pushPacks.sessionId, sessionId), eq(schema.pushPacks.packId, pack.id)))
   },
 })
@@ -126,7 +126,14 @@ export async function adoptSessionPacks(ports: Ports, repo: Repo, sessionId: str
   for (const set of SETS) {
     const packs: PackInfo[] = rows
       .filter((r) => r.set === set)
-      .map((r) => ({ id: r.packId, tier: 0, records: r.records!, bytes: r.bytes!, raw: r.raw! }))
+      .map((r) => ({
+        id: r.packId,
+        tier: 0,
+        records: r.records!,
+        bytes: r.bytes!,
+        raw: r.raw!,
+        ...(r.recordType ? { type: r.recordType } : {}),
+      }))
     if (packs.length) await repo.records[set].adoptPacks!(sessionId, packs)
   }
 }
