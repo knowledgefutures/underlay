@@ -89,6 +89,7 @@ export async function harness(opts: { newCollections?: LayoutName } = {}): Promi
       repoPrefix: 'repo',
       internalPrefix: 'internal',
       newCollections: opts.newCollections ?? testLayout,
+      leveledPacks: process.env.UNDERLAY_TEST_LEVELED === '1',
     }),
     cache,
     signer: async () => signer,

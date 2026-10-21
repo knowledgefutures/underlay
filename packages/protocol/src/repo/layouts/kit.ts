@@ -17,6 +17,7 @@ import { compareUtf8 } from '../../utf8.js'
 import { gunzipText, gzip } from '../gzip.js'
 import type { Lru } from '../lru.js'
 import { putJoined, type Store } from '../types.js'
+import type { Levels } from './levels.js'
 
 export const BLOCK_RAW = 64 * 1024
 export const PACK_RAW = 16 * 1024 * 1024
@@ -79,6 +80,13 @@ export interface PackInfo {
    * spans types and merges take one type's packs. Absent on packs written before.
    */
   type?: string
+  /** The pack's first and last keys: a level's packs never overlap (KeyedLayout's levels). */
+  lo?: string
+  hi?: string
+  /** A leveled collection's level the pack is in: 0 (or absent) for a commit's or upload's. */
+  level?: number
+  /** A pack of replaced versions a leveled merge moved out, by month written (`2026-10`). */
+  history?: string
 }
 
 /** The record type a key leads with (recordKey); '' for a key without one. */
@@ -105,13 +113,22 @@ export class PackWriter {
   #records = 0
   #lastKey: string | null = null
   #type = ''
+  #lo = ''
+  #hi = ''
   readonly done: PackInfo[] = []
   readonly #writing = new Set<Promise<void>>()
   #error: unknown = null
 
   constructor(
     readonly store: Store,
-    readonly opts: { tier?: number; hooks?: PackHooks } = {},
+    readonly opts: {
+      tier?: number
+      hooks?: PackHooks
+      level?: number
+      history?: string
+      /** Raw bytes a pack closes at (PACK_RAW). */
+      packRaw?: number
+    } = {},
   ) {}
 
   /**
@@ -124,13 +141,19 @@ export class PackWriter {
       this.#close()
     this.#type = type
     this.#lastKey = key
-    if (!this.#id) this.#id = newId()
+    if (!this.#id) {
+      this.#id = newId()
+      this.#lo = key
+    }
+    this.#hi = key
     this.#lines.push(`${key}\t${line}`)
     const at = loc(this.#id, this.#blocks.length, this.#lines.length - 1)
     this.#raw += key.length + line.length + 2
     this.#records++
     if (this.#raw >= BLOCK_RAW) this.#seal()
-    if (this.#packRaw >= PACK_RAW) this.#close()
+    // A size given counts the block filling too (a small one closes within a block).
+    const limit = this.opts.packRaw
+    if (limit ? this.#packRaw + this.#raw >= limit : this.#packRaw >= PACK_RAW) this.#close()
     return at
   }
 
@@ -167,6 +190,8 @@ export class PackWriter {
       records: this.#records,
       raw: this.#packRaw,
       type: this.#type,
+      lo: this.#lo,
+      hi: this.#hi,
     }
     this.#id = ''
     this.#blocks = []
@@ -186,6 +211,8 @@ export class PackWriter {
     records: number
     raw: number
     type: string
+    lo: string
+    hi: string
   }) {
     const parts = await Promise.all(job.blocks)
     const offsets = [0]
@@ -200,6 +227,10 @@ export class PackWriter {
       bytes: offsets.at(-1)!,
       raw: job.raw,
       ...(job.type ? { type: job.type } : {}),
+      lo: job.lo,
+      hi: job.hi,
+      ...(this.opts.level ? { level: this.opts.level } : {}),
+      ...(this.opts.history ? { history: this.opts.history } : {}),
     }
     this.done.push(pack)
     await this.opts.hooks?.after?.(pack)
@@ -844,6 +875,11 @@ export interface Manifest {
    * retry lists none again, not even one a merge has since taken and swept.
    */
   adopted?: string[]
+  /**
+   * A leveled collection's levels 1… (levels.ts), by level: the shards listing each
+   * one's packs. `packs` above is level 0.
+   */
+  levels?: Levels
 }
 
 const empty = (): Manifest => ({ seq: 0, layers: [], packs: [], retired: [], stats: {} })

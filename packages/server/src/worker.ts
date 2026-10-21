@@ -66,6 +66,8 @@ export interface Env {
   AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
+  /** '1': layout F levels new collections' packs (stores.ts `leveledPacks`). */
+  LEVELED_PACKS?: string
   /**
    * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
    * Reached through the PUBLIC_ASSETS binding when there is one, otherwise
@@ -136,6 +138,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
       files: s3,
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+      leveledPacks: env.LEVELED_PACKS === '1',
       // The bulk Worker's isolates run jobs, whose reads rarely repeat.
       ...(env.ROLE === 'bulk' ? { memoryBytes: 8 * 1024 * 1024 } : {}),
     }),

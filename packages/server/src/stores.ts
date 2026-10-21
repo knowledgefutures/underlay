@@ -9,6 +9,7 @@
 import {
   type LayoutName,
   type Cache,
+  layoutConfig,
   PrefixedStore,
   type PresigningStore,
   Repo,
@@ -42,6 +43,11 @@ export interface PlatformStorage {
    * parent's.
    */
   newCollections?: LayoutName
+  /**
+   * Layout F: level a collection's packs (leveled-packs-design.md) when its first write
+   * finds it empty. A collection holding packs already stays tiered.
+   */
+  leveledPacks?: boolean
 }
 
 /** Primary placements change rarely, a collection's layout only by a conversion; remember them briefly per isolate. */
@@ -60,6 +66,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
   /** F's, by location and collection; a Map's order is its recency (a hit moves to the end). */
   const runRepos = new Map<string, Repo>()
   const files = platform.files ?? presigning(platform.bucket)
+  layoutConfig.levelNew = platform.leveledPacks === true
 
   const forLocation = async (locationId: string): Promise<Repo> => {
     const known = repos.get(locationId)
