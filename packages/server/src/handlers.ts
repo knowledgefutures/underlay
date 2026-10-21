@@ -30,6 +30,7 @@ import './files/files.js'
 import { reconcileDue } from './billing/reconcile.js'
 import { cleanupTick } from './cleanup/runs.js'
 import './cleanup/layout-reclaim.js'
+import './layouts/convert.js'
 import * as schema from './db/schema.js'
 import './push/compact.js'
 import './push/parallel.js'
@@ -66,9 +67,17 @@ registerJob('version.published', async (job, ports) => {
   }
 })
 
-/** A job's record set, and the collection's layout F store for it (null: not on F). */
+/**
+ * A job's record set, and the collection's layout F store for it (null: not on F).
+ * `layout: 'f'` opens it on F whatever the collection's layout: a conversion's
+ * merges run while the collection is still on today's (layouts/convert.ts).
+ */
 async function setLayout(ports: Ports, job: JobMessage): Promise<KeyedLayout | null> {
-  const repo = await ports.stores.forCollection(String(job.collectionId))
+  const id = String(job.collectionId)
+  const repo =
+    job.layout === 'f'
+      ? await ports.stores.forCollectionAs(id, 'f')
+      : await ports.stores.forCollection(id)
   const records = repo.records?.[job.set === 'private' ? 'private' : 'public']
   return records instanceof KeyedLayout ? records : null
 }
@@ -86,6 +95,7 @@ registerJob('layout.maintain', async (job, ports) => {
           set: String(job.set ?? 'public'),
           plan: plan.id,
           range: i,
+          ...(job.layout === 'f' ? { layout: 'f' } : {}),
         })),
       ),
   })
@@ -96,6 +106,7 @@ registerJob('layout.maintain', async (job, ports) => {
       type: 'layout.maintain',
       collectionId: String(job.collectionId),
       set: String(job.set ?? 'public'),
+      ...(job.layout === 'f' ? { layout: 'f' } : {}),
     })
 })
 

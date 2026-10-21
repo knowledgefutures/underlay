@@ -238,6 +238,17 @@ export class KeyedLayout implements RecordStore {
     return keys.map((k) => found.get(k))
   }
 
+  /**
+   * Which of `entries` (of type `type`) the index doesn't hold, by index into
+   * `entries`, from the newest manifest: a conversion writes only these, so a job
+   * that runs again writes nothing twice.
+   */
+  async missing(type: string, entries: readonly RecordEntry[]): Promise<number[]> {
+    if (!entries.length) return []
+    const found = await this.#find(await this.manifests.latest(), type, entries)
+    return found.flatMap((x, i) => (x === undefined ? [i] : []))
+  }
+
   async leafLines(leaf: TypedLeaf): Promise<string[]> {
     if (!leaf.entries.length) return []
     try {

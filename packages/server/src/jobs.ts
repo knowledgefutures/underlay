@@ -55,6 +55,8 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   // Its reclaim, a key range a job (cleanup/layout-reclaim.ts), and merges too large for one job.
   'layout.reclaim',
   'layout.merge',
+  // Converting a collection from today's layout to F (layouts/convert.ts).
+  'layout.convert',
 ])
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)

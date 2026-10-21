@@ -38,6 +38,7 @@ import {
   bodyOfRecord,
   type Change,
   type DecodedNode,
+  type LayoutName,
   compileSchema,
   boundaryBytes,
   compareUtf8,
@@ -154,6 +155,12 @@ interface UnitSpec {
 interface CommitPlan {
   id: string
   /**
+   * The record layout the commit writes in, read when it was planned: its units and
+   * assembly write in it whatever their isolates last noted, and it publishes only
+   * if the collection is still in it. Absent in plans made before conversions.
+   */
+  layout?: LayoutName
+  /**
    * The storage fence epoch read before the units wrote anything. Assembly
    * publishes under it, so a deletion window during the commit fails the push
    * (503, push again) rather than publishing a tree with a hole.
@@ -249,6 +256,12 @@ export function baseLevelFor(count: number): number {
   while (count / (LEAF_MEAN * FANOUT_MEAN ** level) > parallelConfig.baseNodes) level++
   return level
 }
+
+/** The collection's repository in the layout its commit was planned in. */
+const planRepo = (ports: Ports, collectionId: string, plan: CommitPlan) =>
+  plan.layout
+    ? ports.stores.forCollectionAs(collectionId, plan.layout)
+    : ports.stores.forCollection(collectionId)
 
 /** The base tree's nodes at `level` (or its root, when that's lower), in order. */
 async function baseNodes(repo: Repo, root: string | null, level: number): Promise<NodeDesc[]> {
@@ -557,6 +570,7 @@ export async function planParallel(
   const dir = planDir(session.id, planId)
   const plan: CommitPlan = {
     id: planId,
+    layout: ctx.repo.layout,
     base: ctx.base,
     fence: ctx.fence,
     types: {},
@@ -903,7 +917,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   const runs = await unitRuns(ports, unit.slicesKey!)
   const t = plan.types[unit.type]!
   const set = unit.set as SetName
-  const repo = await ports.stores.forCollection(session.collectionId)
+  const repo = await planRepo(ports, session.collectionId, plan)
   // Writes in flight hold compressed leaves; halved from the default so two units fit an isolate.
   const sink = new RepoSink<RecordEntry>(repo, {
     bodyOf: bodyOfRecord,
@@ -1137,7 +1151,7 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
     }
 
     const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
-    const repo = await ports.stores.forCollection(session.collectionId)
+    const repo = await planRepo(ports, session.collectionId, plan)
     // Base leaves keep large records as pointers, as in units (runPendingUnit). A source
     // a tree and a sink a set (told each tree's type): layout F reads and writes each
     // set's records apart, and finds them by type.
@@ -1294,6 +1308,7 @@ async function publish(ports: Ports, session: SessionRow, plan: CommitPlan, a: A
   const outcome = await commitOutcome(ports, session.id, () =>
     commitVersion(ports, {
       collectionId: session.collectionId,
+      ...(plan.layout ? { recordLayout: plan.layout } : {}),
       // Plans written before the fence existed fail if any window has opened since.
       fence: plan.fence ?? 0,
       base: plan.base,
@@ -1354,7 +1369,7 @@ async function startValidation(
   plan: CommitPlan,
   built: Assembled['built'],
 ) {
-  const repo = await ports.stores.forCollection(session.collectionId)
+  const repo = await planRepo(ports, session.collectionId, plan)
   const tasks: ValidationTask[] = []
   for (const [type, t] of Object.entries(plan.types)) {
     if (!t.validate) continue
@@ -1457,7 +1472,8 @@ export async function runValidation(
     const t = tasks[task]!
     const inputs = await loadInputs(ports, sessionId)
     const validate = compileSchema(inputs.schemas[t.type]!)
-    const repo = await ports.stores.forCollection(session.collectionId)
+    const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
+    const repo = await planRepo(ports, session.collectionId, plan)
     const source = new RepoSource(recordTree, repo, { set: t.set, type: t.type })
     const result: ValidationResult = { total: 0, errors: [] }
     for await (const e of entriesInRange(source, t.root, t.after, t.through)) {

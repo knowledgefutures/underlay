@@ -26,6 +26,7 @@ import {
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
+import { checkSwitching } from '../layouts/convert.js'
 import type { Ports } from '../ports.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
@@ -342,7 +343,11 @@ export async function commitDeltaSession(
   const schemaErr = schemaSetError(inputs.schemas)
   if (schemaErr) return { status: 'schema_refused', error: schemaErr }
   const runs = await sessionRuns(ports, session.id)
+  // The layout as the database has it now, not as this isolate last noted it (a
+  // conversion may have just switched it): the commit keeps it to the end.
+  ports.stores.forget(session.collectionId)
   const repo = await ports.stores.forCollection(session.collectionId)
+  await checkSwitching(ports, session.collectionId, repo.layout)
   const root = base ? await repo.root(base.hash) : null
   const priv = root?.private ? await repo.privateSet(root.private) : null
   const sets = { pub: root?.public ?? emptySet(), priv: priv ?? emptySet() }
@@ -356,6 +361,7 @@ export async function commitDeltaSession(
   }
   return commitVersion(ports, {
     collectionId: session.collectionId,
+    recordLayout: repo.layout,
     fence,
     base,
     types: await typeInputsForDelta(ports, session, inputs, runs, {

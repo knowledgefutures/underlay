@@ -33,6 +33,13 @@ export {
 } from './repo/layouts/index.js'
 export { LiveHashes, markRange, recordRoots, type TypedRoot } from './repo/layouts/reclaim.js'
 export {
+  type ConvertBudget,
+  type ConvertProgress,
+  type ConvertTree,
+  convertTree,
+  versionTrees,
+} from './repo/convert.js'
+export {
   fsck,
   type FsckCursor,
   type FsckOptions,
