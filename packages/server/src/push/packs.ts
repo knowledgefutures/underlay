@@ -54,6 +54,7 @@ const hooksFor = (ports: Ports, sessionId: string, set: RecordSet): PackHooks =>
         recordType: pack.type,
         loKey: keyText(pack.lo),
         hiKey: keyText(pack.hi),
+        indexed: pack.indexed ?? false,
       })
       .where(and(eq(schema.pushPacks.sessionId, sessionId), eq(schema.pushPacks.packId, pack.id)))
   },
@@ -146,6 +147,7 @@ export async function adoptSessionPacks(ports: Ports, repo: Repo, sessionId: str
         ...(r.loKey && r.hiKey
           ? { lo: JSON.parse(r.loKey) as string, hi: JSON.parse(r.hiKey) as string }
           : {}),
+        ...(r.indexed ? { indexed: true as const } : {}),
       }))
     if (packs.length) await repo.records[set].adoptPacks!(sessionId, packs)
   }

@@ -708,6 +708,8 @@ export const pushPacks = sqliteTable(
      */
     loKey: text('lo_key'),
     hiKey: text('hi_key'),
+    /** Whether it carries its own index (PackInfo.indexed): a leveled collection's do. */
+    indexed: integer('indexed', { mode: 'boolean' }),
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.sessionId, t.packId] })],

@@ -41,7 +41,10 @@ import {
   type PackHooks,
   PackWriter,
   packDirKey,
+  packIndex,
+  packIndexId,
   packKey,
+  packKeys,
   parseLoc,
   topSeq,
   layerDirKey,
@@ -52,12 +55,16 @@ import {
 import {
   LEVEL_RATIO,
   levelConfig,
+  levelKey,
   type LevelShard,
+  type Levels,
   LevelShards,
   levelRaw,
   levelTargets,
   MAX_LEVEL,
+  overlaps,
   shardKey,
+  type Tree,
 } from './levels.js'
 import { type KeyRange, LiveHashes } from './reclaim.js'
 import {
@@ -93,11 +100,20 @@ export interface ReclaimPlan {
   /** Where the new run goes: the plan's lowest level and newest sequence (newer commits still win). */
   level: number
   seq: number
+  /**
+   * Leveled: the levels and the history's level 0 as planned. The index holds level
+   * 0's entries only, so a range job counts these packs' live records through each
+   * pack's own index.
+   */
+  levels?: Levels
+  history?: PackInfo[]
 }
 
 interface RangeResult {
   files: LayerInfo[]
   perPack: Record<string, number>
+  /** Leveled: each level or history pack's live records in the range, and its records. */
+  leveled?: Record<string, [number, number]>
   kept: number
   dropped: number
 }
@@ -119,6 +135,8 @@ export interface MergePlan {
   level: number
   seq: number
   at: number
+  /** Leveled: a merge of every run, settling this many of `stats.indexStale` when it swaps in. */
+  stale?: number
 }
 
 const mergeKey = (plan: string, name: string) => `merges/${plan}/${name}`
@@ -240,7 +258,7 @@ export class KeyedLayout implements RecordStore {
     this.packs = new PackReader(store, lru, scope)
     this.index = new LayeredIndex(store, lru, scope, this.manifests)
     this.layers = this.index.reader
-    this.levels = new LevelShards(store)
+    this.levels = new LevelShards(store, lru)
   }
 
   /** Whether no pack merge will take `p` again: it then lives in the registry, not the manifest. */
@@ -288,28 +306,45 @@ export class KeyedLayout implements RecordStore {
 
   /**
    * Whether `p` is listed in the registry rather than the manifest or a level: in a
-   * leveled collection only history packs are (every other is merged again).
+   * leveled collection none is (every pack is merged again, history ones too).
    */
   #final(p: PackInfo, leveled: boolean): boolean {
-    return leveled ? !!p.history : KeyedLayout.final(p)
+    return !leveled && KeyedLayout.final(p)
   }
 
-  /** Every pack of levels 1… , by level. */
-  async #levelPacks(m: Manifest): Promise<Map<number, PackInfo[]>> {
-    const out = new Map<number, PackInfo[]>()
-    for (const [l, shards] of Object.entries(m.levels ?? {}))
-      if (shards.length) out.set(Number(l), await this.levels.packs(shards))
+  /** Packs a leveled lookup found swept (#leafLines): their index entries are skipped. */
+  readonly #gone = new Set<string>()
+  readonly #retired = new WeakMap<Manifest, Set<string>>()
+
+  /** The packs `m` lists as retired, by id. */
+  #retiredPacks(m: Manifest): Set<string> {
+    let out = this.#retired.get(m)
+    if (!out) {
+      out = new Set()
+      for (const r of m.retired)
+        if (r.key.startsWith('packs/') && r.key.endsWith('.pk')) out.add(r.key.slice(6, -3))
+      this.#retired.set(m, out)
+    }
     return out
+  }
+
+  /** Every pack of the levels (both trees'), by level key. */
+  async #levelPacks(m: Manifest): Promise<Map<string, PackInfo[]>> {
+    const out = new Map<string, PackInfo[]>()
+    for (const [l, shards] of Object.entries(m.levels ?? {}))
+      if (shards.length) out.set(l, await this.levels.packs(shards))
+    return out
+  }
+
+  /** Every pack the levels and the history's level 0 list (a leveled collection's, past level 0). */
+  async #leveledPacks(m: Manifest): Promise<PackInfo[]> {
+    return [...[...(await this.#levelPacks(m)).values()].flat(), ...(m.history ?? [])]
   }
 
   /** Every pack: the manifest's, the levels' and the registry's (reclaim, forks). */
   async allPacks(): Promise<PackInfo[]> {
     const m = await this.manifests.latest()
-    return [
-      ...m.packs,
-      ...[...(await this.#levelPacks(m)).values()].flat(),
-      ...(await this.#registered(m)).packs,
-    ]
+    return [...m.packs, ...(await this.#leveledPacks(m)), ...(await this.#registered(m)).packs]
   }
 
   /**
@@ -330,8 +365,62 @@ export class KeyedLayout implements RecordStore {
     entries: readonly RecordEntry[],
   ): Promise<(string | undefined)[]> {
     const keys = entries.map((e) => recordKey(type, e.key, e.hash))
-    const found = await this.index.values(m, keys)
+    const found =
+      m.levels || m.history ? await this.#findLeveled(m, keys) : await this.index.values(m, keys)
     return keys.map((k) => found.get(k))
+  }
+
+  /**
+   * A leveled collection's lookup: level 0 through the index (commits' runs); then
+   * every current level at once, each pack through its own index; then the history's
+   * level 0 and levels for what's left (an old version's replaced records). A level
+   * holds at most a pack or two of a leaf's range, so a leaf reads a few directories
+   * and pages a level, however many days of changes went in.
+   *
+   * The index also has entries of packs that left level 0 until its runs merge. One
+   * whose pack is retired (merged down: kept, and listed, until no run names it) is
+   * skipped, its record read where it is now; a sorted load's, adopted as the bottom
+   * level, is good until a merge rewrites that pack (any copy of a key is the same
+   * record). One whose pack is gone anyway (a head older than the sweep) is skipped
+   * once its read fails (#leafLines).
+   */
+  async #findLeveled(m: Manifest, keys: readonly string[]): Promise<Map<string, string>> {
+    const retired = this.#retiredPacks(m)
+    const found = new Map<string, string>()
+    for (const [k, v] of await this.index.values(m, keys)) {
+      const pack = parseLoc(v).pack
+      if (!retired.has(pack) && !this.#gone.has(pack)) found.set(k, v)
+    }
+    let left = [...new Set(keys)].filter((k) => !found.has(k)).sort(compareUtf8)
+    const probe = async (packs: PackInfo[]) => {
+      const got = await Promise.all(
+        packs.map((p) =>
+          p.indexed
+            ? this.layers.pick(
+                packIndex(p),
+                left.filter((k) => compareUtf8(k, p.lo!) >= 0 && compareUtf8(k, p.hi!) <= 0),
+              )
+            : [],
+        ),
+      )
+      for (const r of got) for (const [k, v] of r) if (!found.has(k)) found.set(k, v)
+      left = left.filter((k) => !found.has(k))
+    }
+    const levelsOf = async (tree: Tree) => {
+      const out: PackInfo[] = []
+      for (let l = 1; l <= MAX_LEVEL; l++) {
+        const shards = m.levels?.[levelKey(tree, l)]
+        if (shards?.length)
+          out.push(...(await this.levels.overlapping(shards, left[0]!, left.at(-1)!)))
+      }
+      return out
+    }
+    if (left.length) await probe(await levelsOf(''))
+    if (left.length) {
+      const zeroH = (m.history ?? []).filter((p) => overlaps(p.lo!, p.hi!, left[0]!, left.at(-1)!))
+      await probe([...zeroH, ...(await levelsOf('h'))])
+    }
+    return found
   }
 
   async leafLines(leaf: TypedLeaf): Promise<string[]> {
@@ -341,12 +430,31 @@ export class KeyedLayout implements RecordStore {
     } catch (err) {
       // A head behind the newest manifest (F moves it at most once a second) can name
       // files a merge has since swept: read again from the newest.
-      if (!(err instanceof Error) || !/^Missing (pack|layer)/.test(err.message)) throw err
+      if (!(err instanceof Error) || !/^Missing (pack|layer|level shard)/.test(err.message))
+        throw err
       return this.#leafLines(leaf, await this.manifests.latest())
     }
   }
 
   async #leafLines(leaf: TypedLeaf, m: Manifest): Promise<string[]> {
+    for (let tries = 0; ; tries++) {
+      const places = await this.#places(leaf, m)
+      try {
+        return await this.packs.lines(places)
+      } catch (err) {
+        // Leveled: an index entry naming a pack that merged down and was swept since
+        // (the index drops those when its runs merge). Its records are in the levels: the
+        // pack is skipped from now on (ids are never reused) and the leaf found again.
+        const gone = err instanceof Error && /^Missing pack (?:directory )?(\S+)$/.exec(err.message)
+        if (!gone || !(m.levels || m.history) || this.#gone.has(gone[1]!) || tries >= 8) throw err
+        if (this.#gone.size > 100_000) this.#gone.clear()
+        this.#gone.add(gone[1]!)
+      }
+    }
+  }
+
+  /** Where each of a leaf's records is, or MissingRecordError. */
+  async #places(leaf: TypedLeaf, m: Manifest): Promise<string[]> {
     let found = await this.#find(m, leaf.type, leaf.entries)
     // Another isolate may have committed since this one read the manifest.
     if (found.some((x) => x === undefined))
@@ -358,7 +466,7 @@ export class KeyedLayout implements RecordStore {
         `Layout ${this.name}: leaf ${leaf.hash} has no stored ${leaf.type} record ${e.key} (${e.hash})`,
       )
     }
-    return this.packs.lines(found as string[])
+    return found as string[]
   }
 
   linesAt(leaf: TypedLeaf, at: readonly number[]): Promise<string[]> {
@@ -381,7 +489,9 @@ export class KeyedLayout implements RecordStore {
    * last starts a new pack.
    */
   uploadWriter(hooks: PackHooks = {}): UploadWriter {
-    const pw = new PackWriter(this.store, { hooks })
+    // A leveled collection's packs each carry their own index: a sorted load's are its
+    // bottom level, which no index layer covers.
+    const pw = new PackWriter(this.store, { hooks, index: this.leveled() })
     return {
       append: (r) => pw.append(recordKey(r.type, r.id, r.hash), r.line),
       ready: () => pw.ready(),
@@ -438,8 +548,10 @@ export class KeyedLayout implements RecordStore {
    */
   async #adoptLeveled(name: string, packs: readonly PackInfo[]): Promise<void> {
     const sorted = [...packs].sort((a, b) => compareUtf8(a.lo ?? '', b.lo ?? ''))
+    // Each carrying its own index (nothing else will once level 0's index entries stop
+    // counting for them), and none overlapping.
     const disjoint = sorted.every(
-      (p, i) => p.lo && p.hi && (i === 0 || compareUtf8(p.lo, sorted[i - 1]!.hi!) > 0),
+      (p, i) => p.indexed && p.lo && p.hi && (i === 0 || compareUtf8(p.lo, sorted[i - 1]!.hi!) > 0),
     )
     const empty = (m: Manifest) =>
       !m.packs.length && !Object.values(m.levels ?? {}).some((s) => s.length)
@@ -448,7 +560,9 @@ export class KeyedLayout implements RecordStore {
       let placed = false
       await this.manifests.update((m) => {
         if (m.adopted?.includes(name) || !empty(m)) return null
-        m.levels = { ...m.levels, [MAX_LEVEL]: shards }
+        m.levels = { ...m.levels, [levelKey('', MAX_LEVEL)]: shards }
+        // The load's commit indexed every record: entries no lookup takes now (#mergeLayers).
+        m.stats.indexStale = (m.stats.indexStale ?? 0) + packs.reduce((n, p) => n + p.records, 0)
         m.adopted = [...(m.adopted ?? []), name].slice(-ADOPTED_KEPT)
         placed = true
         return m
@@ -477,14 +591,12 @@ export class KeyedLayout implements RecordStore {
     const registered = await this.store.get(this.registry.keyFor(`upload-${name}`))
     if (registered)
       for (const p of JSON.parse(await registered.text()) as PackInfo[]) listed.add(p.id)
-    for (const ps of (await this.#levelPacks(m)).values()) for (const p of ps) listed.add(p.id)
+    for (const p of await this.#leveledPacks(m)) listed.add(p.id)
     const gone = ids.filter((id) => !listed.has(id) && !listed.has(packKey(id)))
-    for (let i = 0; i < gone.length; i += 16)
-      await Promise.all(
-        gone
-          .slice(i, i + 16)
-          .flatMap((id) => [this.store.delete(packKey(id)), this.store.delete(packDirKey(id))]),
-      )
+    // With its own index, if it had one (deleting what isn't there is nothing).
+    const keys = gone.flatMap((id) => packKeys({ id, indexed: true }))
+    for (let i = 0; i < keys.length; i += 16)
+      await Promise.all(keys.slice(i, i + 16).map((k) => this.store.delete(k)))
     return gone
   }
 
@@ -519,7 +631,9 @@ export class KeyedLayout implements RecordStore {
       const leveled = await this.leveled()
       for (;;) {
         const layers = await this.#mergeLayers(opts.split)
-        const packs = leveled ? await this.#mergeLevels() : await this.#mergePacks()
+        const packs = leveled
+          ? [await this.#mergeLevels(''), await this.#mergeLevels('h')].some(Boolean)
+          : await this.#mergePacks()
         if (!layers && !packs) break
         if (Date.now() >= until || spent() >= layoutConfig.maintainCalls) {
           more = true
@@ -590,6 +704,7 @@ export class KeyedLayout implements RecordStore {
     const blocked = new Set(
       (split ? await this.#mergesInFlight() : []).flatMap((p) => runs(p.layers).map((r) => r.id)),
     )
+    const started = Date.now()
     const m = await this.manifests.latest()
     const all = runs(m.layers).sort((a, b) => b.seq - a.seq)
     const size = (r: (typeof all)[number]) => r.files.reduce((n, f) => n + f.entries, 0)
@@ -599,15 +714,33 @@ export class KeyedLayout implements RecordStore {
       if (!blocked.has(r.id)) free.at(-1)!.push(r)
       else if (free.at(-1)!.length) free.push([])
     let inputs: typeof all | null = null
-    for (const rs of free) {
-      let take = 1
-      let newer = rs.length ? size(rs[0]!) : 0
-      while (take < rs.length && size(rs[take]!) <= newer) newer += size(rs[take++]!)
-      if (take >= LAYER_FANOUT) {
-        inputs = rs.slice(0, take)
-        break
-      }
+    // Leveled: the index serves level 0 only, and entries of packs that went down are
+    // dead weight the size rule below may never reach (newer runs shrink as the keeper
+    // drops theirs, and a sorted load's run points only at the bottom level). Once
+    // they're half the index, every run merges at once: only a merge of them all is sure
+    // to meet every stale entry, so it waits for no split merge to hold any.
+    const stale = m.levels || m.history ? (m.stats.indexStale ?? 0) : 0
+    let settles = 0
+    if (
+      stale &&
+      all.length &&
+      free[0]!.length === all.length &&
+      all.length <= layoutConfig.mergeInputs &&
+      stale >= Math.max(levelConfig.staleEntries, all.reduce((n, r) => n + size(r), 0) / 2)
+    ) {
+      inputs = all
+      settles = stale
     }
+    if (!inputs)
+      for (const rs of free) {
+        let take = 1
+        let newer = rs.length ? size(rs[0]!) : 0
+        while (take < rs.length && size(rs[take]!) <= newer) newer += size(rs[take++]!)
+        if (take >= LAYER_FANOUT) {
+          inputs = rs.slice(0, take)
+          break
+        }
+      }
     // Too many runs (small ones stranded behind a larger one, which the rule above
     // never reaches; a pack merge's run, the newest when written, strands all before
     // it): merge the longest stretch of adjacent runs no larger than the smallest
@@ -640,7 +773,13 @@ export class KeyedLayout implements RecordStore {
     // The newest of them: still adjacent; the next pass takes the rest.
     inputs = inputs.slice(0, layoutConfig.mergeInputs)
     if (split && inputs.reduce((n, r) => n + size(r), 0) > layoutConfig.mergeJobEntries) {
-      await split(await this.mergePlan(inputs.flatMap((r) => r.files)))
+      await split(
+        await this.mergePlan(
+          inputs.flatMap((r) => r.files),
+          undefined,
+          settles,
+        ),
+      )
       // Its inputs are a block now; other runs may still merge.
       return true
     }
@@ -648,9 +787,15 @@ export class KeyedLayout implements RecordStore {
     let n = 0
     // Entries of dropped packs never reach a merge: reclaim rewrites the index as it drops them.
     const read = mergeRead(inputs.length)
+    const keep = await this.#indexKeeper(m)
+    let dropped = 0
     for await (const [k, v] of mergeSorted(
       inputs.map((r) => runEntries(this.layers, r.files, undefined, undefined, read)),
     )) {
+      if (keep && !(await keep(v))) {
+        dropped++
+        continue
+      }
       out.add(k, v)
       if (++n % 1024 === 0) await out.ready()
     }
@@ -658,8 +803,35 @@ export class KeyedLayout implements RecordStore {
     return this.#swap({
       oldLayers: inputs.flatMap((r) => r.files.map((f) => f.id)),
       newLayers: files,
+      settles: settles || dropped,
+      ...(settles ? { settledAt: started } : {}),
       keepSeq: true,
     })
+  }
+
+  /**
+   * Leveled: which index entries a merge of index layers keeps (null: every one, a
+   * tiered collection). The index serves level 0 only, so an entry goes once its pack
+   * has: it's in a level or the history (its own index finds it there), retired, or
+   * gone. Not a pack that's merely unlisted yet: an upload's packs are listed only
+   * after its commit's entries naming them are in the index.
+   */
+  async #indexKeeper(m: Manifest): Promise<((place: string) => Promise<boolean>) | null> {
+    if (!m.levels && !m.history) return null
+    const zero = new Set(m.packs.map((p) => p.id))
+    const left = new Set([
+      ...(await this.#leveledPacks(m)).map((p) => p.id),
+      ...this.#retiredPacks(m),
+    ])
+    const known = new Map<string, Promise<boolean>>()
+    return (place: string) => {
+      const pack = parseLoc(place).pack
+      if (zero.has(pack)) return Promise.resolve(true)
+      if (left.has(pack)) return Promise.resolve(false)
+      let k = known.get(pack)
+      if (!k) known.set(pack, (k = this.store.head(packDirKey(pack)).then((h) => h !== null)))
+      return k
+    }
   }
 
   /**
@@ -721,27 +893,32 @@ export class KeyedLayout implements RecordStore {
   }
 
   /**
-   * Leveled: one merge down, from the level most over its target (levels.ts). Level 0's
-   * oldest packs merge into the base level; a pack of a level below it merges into
-   * the next, picking the one whose overlap there is smallest for its size (RocksDB's
-   * kMinOverlappingRatio: each merge rewrites as little as it can). Both sides go
-   * through as streams into the next level's packs, cut at 16 MiB and at types, and a
-   * new layer points the index at where each record now is.
+   * Leveled: one merge down in `tree`, from the level most over its target (levels.ts).
+   * Level 0's oldest packs merge into the base level; a pack of a level below it merges
+   * into the next, picking the one whose overlap there is smallest for its size
+   * (RocksDB's kMinOverlappingRatio: each merge rewrites as little as it can). Both
+   * sides go through as streams into the next level's packs, cut at 16 MiB and at
+   * types, each carrying its own index: nothing else points at them, so a merge
+   * writes no index layer.
    *
-   * A record id found with several hashes keeps the newest (level 0's newest pack,
-   * then the upper level) in the levels; the older hashes go to this month's history
-   * packs. That's a guess at which is current: a revert brings back an old hash, then
-   * read from history. Only locality depends on it, since the index says where every
-   * copy is.
+   * In the current versions' tree a record id found with several hashes keeps the
+   * newest (level 0's newest pack, then the upper level) in the levels; the older
+   * hashes go to the history's level 0. That's a guess at which is current: a revert
+   * brings back an old hash, then read from history. Only locality depends on it,
+   * since a lookup goes on to the history for whatever the levels don't hold. The
+   * history's own merges keep every copy (one of each key).
    */
-  async #mergeLevels(): Promise<boolean> {
+  async #mergeLevels(tree: Tree): Promise<boolean> {
     const m = await this.manifests.latest()
-    const { base, targets } = levelTargets(m.levels)
-    const zero = m.packs.filter((p) => !p.history)
+    const { base, targets } = levelTargets(m.levels, tree)
+    const zero = tree ? (m.history ?? []) : m.packs.filter((p) => !p.history)
     const zeroRaw = zero.reduce((n, p) => n + p.raw, 0)
     // Level 0 merges once it's a tenth of the level it merges into: while a collection
     // is small its base is the bottom, and a few small commits shouldn't rewrite it all.
-    const zeroTrigger = Math.max(levelConfig.level0Raw, levelRaw(m.levels, base) / LEVEL_RATIO)
+    const zeroTrigger = Math.max(
+      levelConfig.level0Raw,
+      levelRaw(m.levels, base, tree) / LEVEL_RATIO,
+    )
     let from = -1
     let score = 1
     if (zero.length >= levelConfig.level0Packs || zeroRaw >= zeroTrigger) {
@@ -749,7 +926,7 @@ export class KeyedLayout implements RecordStore {
       score = Math.max(zero.length / levelConfig.level0Packs, zeroRaw / zeroTrigger)
     }
     for (let l = 1; l < MAX_LEVEL; l++) {
-      const raw = levelRaw(m.levels, l)
+      const raw = levelRaw(m.levels, l, tree)
       if (!raw) continue
       // A level above the base has no room: what it holds goes down first.
       const s = targets[l]! > 0 ? raw / targets[l]! : Infinity
@@ -759,6 +936,7 @@ export class KeyedLayout implements RecordStore {
       }
     }
     if (from < 0) return false
+    const shardsOf = (l: number) => m.levels?.[levelKey(tree, l)] ?? []
     let upper: PackInfo[]
     let target: number
     if (from === 0) {
@@ -773,8 +951,8 @@ export class KeyedLayout implements RecordStore {
       target = base
     } else {
       target = from + 1
-      const here = await this.levels.packs(m.levels?.[from] ?? [])
-      const below = await this.levels.packs(m.levels?.[target] ?? [])
+      const here = await this.levels.packs(shardsOf(from))
+      const below = await this.levels.packs(shardsOf(target))
       // Each pack's overlap below, by a walk of both in key order.
       let best: PackInfo | null = null
       let bestRatio = Infinity
@@ -794,7 +972,7 @@ export class KeyedLayout implements RecordStore {
     }
     const lo = upper.reduce((a, p) => (compareUtf8(p.lo!, a) < 0 ? p.lo! : a), upper[0]!.lo!)
     const hi = upper.reduce((a, p) => (compareUtf8(p.hi!, a) > 0 ? p.hi! : a), upper[0]!.hi!)
-    const lower = await this.levels.overlapping(m.levels?.[target] ?? [], lo, hi)
+    const lower = await this.levels.overlapping(shardsOf(target), lo, hi)
     // Newest first: level 0's newest pack, …, its oldest, then the level below.
     const ranked = [...(from === 0 ? [...upper].reverse() : upper), ...lower]
     const reader = this.packs
@@ -805,9 +983,17 @@ export class KeyedLayout implements RecordStore {
       })(),
     )
     const month = new Date().toISOString().slice(0, 7)
-    const pw = new PackWriter(this.store, { level: target, packRaw: levelConfig.packRaw })
-    const hw = new PackWriter(this.store, { history: month, packRaw: levelConfig.packRaw })
-    const lw = new RunWriter(this.store, 0)
+    const pw = new PackWriter(this.store, {
+      level: target,
+      packRaw: levelConfig.packRaw,
+      index: true,
+      ...(tree ? { history: month } : {}),
+    })
+    const hw = new PackWriter(this.store, {
+      history: month,
+      packRaw: levelConfig.packRaw,
+      index: true,
+    })
     let group: { key: string; line: string; rank: number }[] = []
     let n = 0
     const flush = async () => {
@@ -818,14 +1004,14 @@ export class KeyedLayout implements RecordStore {
       for (const x of group) {
         // A copy of a key already written (the same record twice) is one record.
         if (x.key === last) continue
-        if (x.key === cur.key) {
-          if (x !== cur) continue
-          lw.add(x.key, pw.append(x.key, x.line))
-        } else lw.add(x.key, hw.append(x.key, x.line))
+        if (tree || x.key === cur.key) {
+          if (!tree && x !== cur) continue
+          pw.append(x.key, x.line)
+        } else hw.append(x.key, x.line)
         last = x.key
       }
       group = []
-      if (++n % 64 === 0) await Promise.all([pw.ready(), hw.ready(), lw.ready()])
+      if (++n % 64 === 0) await Promise.all([pw.ready(), hw.ready()])
     }
     for await (const x of mergeAll(streams)) {
       const id = x.key.slice(0, x.key.lastIndexOf('\u0000'))
@@ -838,49 +1024,64 @@ export class KeyedLayout implements RecordStore {
     await flush()
     const packs = await pw.finish()
     const history = await hw.finish()
-    const files = await lw.finish()
     return this.#swapLevels({
-      zero: from === 0 ? upper.map((p) => p.id) : [],
-      from: from > 0 ? { level: from, ids: upper.map((p) => p.id) } : null,
+      tree,
+      zero: from === 0 ? upper : [],
+      from: from > 0 ? { level: from, packs: upper } : null,
       target,
-      lower: lower.map((p) => p.id),
+      lower,
       packs,
       history,
-      layers: files,
+      stat: 'levelMerges',
     })
   }
 
   /**
    * A leveled merge's result in one manifest change: its inputs out of level 0 or
-   * their level, its output in the target level, its history packs in the registry,
-   * and its layer the newest. Only if the levels it changed are as it read them and
-   * level 0's inputs are still listed; otherwise everything it wrote goes.
+   * their level, its output in the target level, its history packs in the history's
+   * level 0. Only if the levels it changed are as it read them and level 0's inputs
+   * are still listed; otherwise everything it wrote goes.
    */
   async #swapLevels(o: {
-    zero: string[]
-    from: { level: number; ids: string[] } | null
-    target: number
-    lower: string[]
+    tree: Tree
+    zero: PackInfo[]
+    from: { level: number; packs: PackInfo[] } | null
+    /** The level its output goes to; null for none (the history's level 0 takes it). */
+    target: number | null
+    lower: PackInfo[]
     packs: PackInfo[]
     history: PackInfo[]
-    layers: LayerInfo[]
+    stat: 'levelMerges' | 'levelRewrites'
   }): Promise<boolean> {
     const m0 = await this.manifests.latest()
-    const changed = new Map<number, Awaited<ReturnType<LevelShards['replace']>>>()
-    if (o.from)
+    const changed = new Map<string, Awaited<ReturnType<LevelShards['replace']>>>()
+    if (o.from) {
+      const key = levelKey(o.tree, o.from.level)
       changed.set(
-        o.from.level,
-        await this.levels.replace(m0.levels?.[o.from.level] ?? [], new Set(o.from.ids), []),
+        key,
+        await this.levels.replace(
+          m0.levels?.[key] ?? [],
+          new Set(o.from.packs.map((p) => p.id)),
+          [],
+        ),
       )
-    changed.set(
-      o.target,
-      await this.levels.replace(m0.levels?.[o.target] ?? [], new Set(o.lower), o.packs),
-    )
-    const registered = await this.registry.add(o.history)
-    const zero = new Set(o.zero)
+    }
+    if (o.target !== null) {
+      const key = levelKey(o.tree, o.target)
+      changed.set(
+        key,
+        await this.levels.replace(
+          m0.levels?.[key] ?? [],
+          new Set(o.lower.map((p) => p.id)),
+          o.packs,
+        ),
+      )
+    }
+    const zero = new Set(o.zero.map((p) => p.id))
     let lost = false
     await this.manifests.update((m) => {
-      const have = new Set(m.packs.map((p) => p.id))
+      const listed = o.tree ? (m.history ?? []) : m.packs
+      const have = new Set(listed.map((p) => p.id))
       if (
         ![...zero].every((id) => have.has(id)) ||
         [...changed.keys()].some((l) => !sameShards(m.levels?.[l], m0.levels?.[l]))
@@ -889,24 +1090,27 @@ export class KeyedLayout implements RecordStore {
         return null
       }
       const now = Date.now()
-      m.packs = m.packs.filter((p) => !zero.has(p.id))
+      if (o.tree) m.history = listed.filter((p) => !zero.has(p.id))
+      else {
+        m.packs = listed.filter((p) => !zero.has(p.id))
+        // Their records' index entries now lead nowhere a lookup takes (#mergeLayers).
+        const gone = o.zero.reduce((n, p) => n + p.records, 0)
+        if (gone) m.stats.indexStale = (m.stats.indexStale ?? 0) + gone
+      }
+      if (o.history.length) m.history = [...(m.history ?? []), ...o.history]
       m.levels = { ...m.levels }
       for (const [l, c] of changed) m.levels[l] = c.shards
-      const seq = topSeq(m) + 1
-      for (const l of o.layers) m.layers.push({ ...l, seq })
-      for (const id of [...o.zero, ...(o.from?.ids ?? []), ...o.lower])
-        m.retired.push({ key: packKey(id), at: now }, { key: packDirKey(id), at: now })
+      for (const p of [...o.zero, ...(o.from?.packs ?? []), ...o.lower])
+        for (const k of packKeys(p)) m.retired.push({ key: k, at: now })
       for (const c of changed.values())
         for (const id of c.replaced) m.retired.push({ key: shardKey(id), at: now })
-      m.stats.levelMerges = (m.stats.levelMerges ?? 0) + 1
+      m.stats[o.stat] = (m.stats[o.stat] ?? 0) + 1
       return m
     })
     if (!lost) return true
     const gone = [
-      ...o.layers.flatMap((l) => [layerKey(l.id), layerDirKey(l.id), layerFilterKey(l.id)]),
-      ...[...o.packs, ...o.history].flatMap((p) => [packKey(p.id), packDirKey(p.id)]),
+      ...[...o.packs, ...o.history].flatMap(packKeys),
       ...[...changed.values()].flatMap((c) => c.written.map(shardKey)),
-      ...(registered ? [registered] : []),
     ]
     for (let i = 0; i < gone.length; i += 16)
       await Promise.all(gone.slice(i, i + 16).map((k) => this.store.delete(k)))
@@ -932,16 +1136,21 @@ export class KeyedLayout implements RecordStore {
     relist?: PackInfo[]
     /** New layers keep their sequence (a merged run); else they're the newest (re-pointed records). */
     keepSeq?: boolean
+    /** Of `stats.indexStale`, how many entries this merge dropped (or met, merging every run). */
+    settles?: number
+    /** A merge of every run: when it started (no run names a pack retired before then). */
+    settledAt?: number
   }): Promise<boolean> {
     const oldLayers = new Set(o.oldLayers ?? [])
     const oldPacks = new Set(o.oldPacks ?? [])
+    const unlisted = new Set(o.unlisted ?? [])
     const newLayers = o.newLayers ?? []
     const newPacks = o.newPacks ?? []
     const leveled = await this.leveled()
     const listed = newPacks.filter((p) => !this.#final(p, leveled))
     const registered = await this.registry.add(newPacks.filter((p) => this.#final(p, leveled)))
     const m0 = leveled ? await this.manifests.latest() : null
-    const changed = new Map<number, Awaited<ReturnType<LevelShards['replace']>>>()
+    const changed = new Map<string, Awaited<ReturnType<LevelShards['replace']>>>()
     const inLevels = new Set<string>()
     if (m0) {
       const gone = new Set([...oldPacks, ...(o.unlisted ?? [])])
@@ -955,7 +1164,7 @@ export class KeyedLayout implements RecordStore {
     let lost = false
     await this.manifests.update((m) => {
       const haveL = new Set(m.layers.map((l) => l.id))
-      const haveP = new Set(m.packs.map((p) => p.id))
+      const haveP = new Set([...m.packs, ...(m.history ?? [])].map((p) => p.id))
       if (
         ![...oldLayers].every((id) => haveL.has(id)) ||
         ![...oldPacks].every((id) => haveP.has(id) || inLevels.has(id)) ||
@@ -965,8 +1174,11 @@ export class KeyedLayout implements RecordStore {
         return null
       }
       const now = Date.now()
+      if (o.settles) m.stats.indexStale = Math.max(0, (m.stats.indexStale ?? 0) - o.settles)
+      if (o.settledAt) m.stats.indexSettledAt = Math.max(m.stats.indexSettledAt ?? 0, o.settledAt)
       m.layers = m.layers.filter((l) => !oldLayers.has(l.id))
       m.packs = m.packs.filter((p) => !oldPacks.has(p.id))
+      if (m.history) m.history = m.history.filter((p) => !oldPacks.has(p.id) && !unlisted.has(p.id))
       if (changed.size) {
         m.levels = { ...m.levels }
         for (const [l, c] of changed) {
@@ -986,7 +1198,8 @@ export class KeyedLayout implements RecordStore {
           { key: layerFilterKey(id), at: now },
         )
       for (const id of [...oldPacks, ...(o.unlisted ?? [])])
-        m.retired.push({ key: packKey(id), at: now }, { key: packDirKey(id), at: now })
+        for (const key of packKeys(leveled ? { id, indexed: true } : { id }))
+          m.retired.push({ key, at: now })
       return m
     })
     if (lost) {
@@ -996,8 +1209,7 @@ export class KeyedLayout implements RecordStore {
           this.store.delete(layerDirKey(l.id)),
           this.store.delete(layerFilterKey(l.id)),
         ])
-      for (const p of newPacks)
-        await Promise.all([this.store.delete(packKey(p.id)), this.store.delete(packDirKey(p.id))])
+      for (const p of newPacks) await Promise.all(packKeys(p).map((k) => this.store.delete(k)))
       for (const c of changed.values())
         await Promise.all(c.written.map((id) => this.store.delete(shardKey(id))))
       if (registered) await this.store.delete(registered)
@@ -1011,6 +1223,13 @@ export class KeyedLayout implements RecordStore {
     const m = await this.manifests.current(0)
     const cutoff = Date.now() - layoutConfig.graceMs
     let due = m.retired.filter((r) => r.at < cutoff)
+    // Leveled: the index may still name a pack retired since its runs last all merged
+    // (#mergeLayers), so that pack stays until they have; or until nothing it counts as
+    // stale is left (the count only ever overestimates).
+    if ((m.levels || m.history) && m.stats.indexStale) {
+      const settled = m.stats.indexSettledAt ?? 0
+      due = due.filter((r) => !r.key.startsWith('packs/') || r.at < settled)
+    }
     if (!due.length) return true
     // F: a live fork may still read what this collection merged away; those stay
     // retired (swept once the fork goes) rather than deleted.
@@ -1043,7 +1262,7 @@ export class KeyedLayout implements RecordStore {
     const swapped = await this.reclaimSwap(plan)
     if (!swapped) return {}
     for (let i = 0; i < swapped.rewrite.length; i += 4)
-      await this.reclaimRewrite(swapped.rewrite.slice(i, i + 4))
+      await this.reclaimRewrite(swapped.rewrite.slice(i, i + 4), async () => h)
     return swapped.stats
   }
 
@@ -1054,9 +1273,13 @@ export class KeyedLayout implements RecordStore {
    * each of about `rangeEntries` index entries. Saved for the range jobs.
    */
   /** Key ranges over `layers` of about `rangeEntries` entries each, cut at record ids. */
-  async #cutRanges(layers: readonly LayerInfo[], rangeEntries: number): Promise<KeyRange[]> {
+  async #cutRanges(
+    layers: readonly LayerInfo[],
+    rangeEntries: number,
+    extra: [string, number][] = [],
+  ): Promise<KeyRange[]> {
     // Cut points from the layers' page keys, sampled to keep a plan small.
-    const cuts: [string, number][] = []
+    const cuts: [string, number][] = [...extra]
     const total = layers.reduce((n, l) => n + l.entries, 0)
     for (const l of layers) {
       const { keys, perPage } = await this.layers.pageKeys(l)
@@ -1085,8 +1308,10 @@ export class KeyedLayout implements RecordStore {
   async mergePlan(
     layers: LayerInfo[],
     rangeEntries = layoutConfig.mergeJobEntries,
+    stale = 0,
   ): Promise<MergePlan> {
     const plan: MergePlan = {
+      ...(stale ? { stale } : {}),
       id: newId(),
       layers,
       ranges: await this.#cutRanges(layers, rangeEntries),
@@ -1116,12 +1341,14 @@ export class KeyedLayout implements RecordStore {
     const out = new RunWriter(this.store, plan.level)
     const inputs = runs(plan.layers).sort((a, b) => b.seq - a.seq)
     const read = mergeRead(inputs.length)
+    const keep = await this.#indexKeeper(await this.manifests.latest())
     let n = 0
     for await (const [k, v] of mergeSorted(
       inputs.map((x) =>
         runEntries(this.layers, x.files, r.lo ?? undefined, r.hi ?? undefined, read),
       ),
     )) {
+      if (keep && !(await keep(v))) continue
       out.add(k, v)
       if (++n % 1024 === 0) await out.ready()
     }
@@ -1155,6 +1382,7 @@ export class KeyedLayout implements RecordStore {
       oldLayers: plan.layers.map((l) => l.id),
       newLayers: files.map((f) => ({ ...f, level, seq: plan.seq, run: plan.id })),
       keepSeq: true,
+      ...(plan.stale ? { settles: plan.stale, settledAt: plan.at } : {}),
     })
     await this.#dropMerge(plan, false)
     await this.manifests.settle()
@@ -1207,13 +1435,20 @@ export class KeyedLayout implements RecordStore {
     const n = runs(m.layers).length
     if (n > RECLAIM_MAX_RUNS)
       throw new TooManyRunsError(`Reclaim: ${n} index runs, more than ${RECLAIM_MAX_RUNS}`)
-    const ranges = await this.#cutRanges(m.layers, rangeEntries)
+    // Leveled: the levels' packs cut ranges too (by their first keys, each its records),
+    // since the index no longer has their entries.
+    const leveled = m.levels || m.history ? await this.#leveledPacks(m) : null
+    const ranges = await this.#cutRanges(
+      m.layers,
+      rangeEntries,
+      (leveled ?? []).map((p) => [filterKey(p.lo!), p.records]),
+    )
     const registry = await this.#registered(m)
-    const levelPacks = [...(await this.#levelPacks(m)).values()].flat()
     const plan: ReclaimPlan = {
       id: newId(),
       layers: m.layers,
-      packs: [...m.packs, ...levelPacks, ...registry.packs].map((p) => ({
+      ...(leveled ? { levels: m.levels ?? {}, history: m.history ?? [] } : {}),
+      packs: [...m.packs, ...registry.packs].map((p) => ({
         id: p.id,
         records: p.records,
       })),
@@ -1264,6 +1499,7 @@ export class KeyedLayout implements RecordStore {
     }
     const files = await out.finish(plan.seq)
     const result: RangeResult = { files, perPack, kept, dropped }
+    if (plan.levels || plan.history) result.leveled = await this.#countLeveled(plan, r, live)
     await this.store.put(
       reclaimKey(plan.id, `range-${String(i).padStart(6, '0')}`),
       JSON.stringify(result),
@@ -1276,6 +1512,40 @@ export class KeyedLayout implements RecordStore {
       cursor = page.cursor
     } while (cursor)
     return done >= plan.ranges.length
+  }
+
+  /**
+   * Leveled: the live records in range `r` of each level and history pack the plan
+   * lists, read from its own index (a pack across ranges is counted in each).
+   */
+  async #countLeveled(
+    plan: ReclaimPlan,
+    r: KeyRange,
+    live: LiveHashes,
+  ): Promise<Record<string, [number, number]>> {
+    // Index keys in [lo, hi) are the ones whose type and id are (reclaim.ts, KeyRange).
+    const within = (lo: string, hi: string) =>
+      (r.hi === null || compareUtf8(lo, r.hi) < 0) && (r.lo === null || compareUtf8(hi, r.lo) >= 0)
+    const packs = (plan.history ?? []).filter((p) => within(p.lo!, p.hi!))
+    for (const shards of Object.values(plan.levels ?? {}))
+      for (const p of await this.levels.packs(shards.filter((s) => within(s.lo, s.hi))))
+        if (within(p.lo!, p.hi!)) packs.push(p)
+    const out: Record<string, [number, number]> = {}
+    for (const p of packs) {
+      let n = 0
+      for await (const [k] of runEntries(
+        this.layers,
+        [packIndex(p)],
+        r.lo ?? undefined,
+        r.hi ?? undefined,
+        mergeRead(1),
+      )) {
+        const z = k.lastIndexOf('\u0000')
+        if (live.has(k.slice(0, z), k.slice(z + 1))) n++
+      }
+      out[p.id] = [n, p.records]
+    }
+    return out
   }
 
   /**
@@ -1292,6 +1562,7 @@ export class KeyedLayout implements RecordStore {
     if ((await (await this.store.get(reclaimKey(plan.id, 'swap')))?.text()) !== token) return null
     const files: LayerInfo[] = []
     const live = new Map<string, number>()
+    const leveled = new Map<string, [number, number]>()
     const stats = {
       ranges: plan.ranges.length,
       entriesKept: 0,
@@ -1311,6 +1582,8 @@ export class KeyedLayout implements RecordStore {
       const r = JSON.parse(await o.text()) as RangeResult
       files.push(...r.files.map((f) => ({ ...f, seq: plan.seq, run: plan.id })))
       for (const [p, n] of Object.entries(r.perPack)) live.set(p, (live.get(p) ?? 0) + n)
+      for (const [p, [n, records]] of Object.entries(r.leveled ?? {}))
+        leveled.set(p, [(leveled.get(p)?.[0] ?? 0) + n, records])
       stats.entriesKept += r.kept
       stats.entriesDropped += r.dropped
     }
@@ -1322,6 +1595,14 @@ export class KeyedLayout implements RecordStore {
       else if (n < p.records / 2) rewrite.push(p.id)
       stats.recordsDropped += p.records - n
     }
+    // Leveled packs, in place: one with nothing live goes, one under half is copied
+    // within its level (reclaimRewrite).
+    for (const [id, [n, records]] of leveled) {
+      if (n === 0) drop.push(id)
+      else if (n < records / 2) rewrite.push(id)
+      stats.recordsDropped += records - n
+    }
+    stats.packs += leveled.size
     stats.packsDropped = drop.length
     stats.packsRewritten = rewrite.length
     // One run across the ranges, at the level its whole size puts it.
@@ -1370,12 +1651,84 @@ export class KeyedLayout implements RecordStore {
   }
 
   /**
-   * Step 4, a few packs a job: copy their live records into new packs and point
-   * the index at them with a new, newest layer. A record is live when the index
-   * still points at this copy of it.
+   * Step 4, a few packs a job: copy their live records into new packs. Level 0's (and
+   * a tiered collection's) are pointed at by a new, newest index layer, and a record
+   * is live when the index still points at this copy of it. A leveled collection's
+   * level and history packs are copied in place, within their level: no index entry
+   * says what's live there, so `mark` marks the pack's key range again (the server
+   * job's markRange over the retained versions).
    */
-  async reclaimRewrite(packIds: readonly string[]): Promise<Record<string, number>> {
+  async reclaimRewrite(
+    packIds: readonly string[],
+    mark?: (range: KeyRange) => Promise<LiveHashes>,
+  ): Promise<Record<string, number>> {
     const m = await this.manifests.latest()
+    const stats = { packsRead: 0, recordsKept: 0, recordsDropped: 0 }
+    const leveled = new Map(
+      (m.levels || m.history ? await this.#leveledPacks(m) : []).map((p) => [p.id, p]),
+    )
+    const zeroH = new Set((m.history ?? []).map((p) => p.id))
+    for (const id of packIds) {
+      const p = leveled.get(id)
+      if (!p) continue
+      if (!mark) throw new Error('reclaimRewrite: a level pack needs its range marked')
+      const [kept, dropped] = await this.#rewriteLeveled(p, zeroH.has(id), mark)
+      stats.packsRead++
+      stats.recordsKept += kept
+      stats.recordsDropped += dropped
+    }
+    const rest = packIds.filter((id) => !leveled.has(id))
+    if (rest.length)
+      for (const [k, v] of Object.entries(await this.#rewriteRepointed(m, rest)))
+        stats[k as keyof typeof stats] += v
+    return stats
+  }
+
+  /** A leveled pack's live records copied to new packs of its own level (or the history's level 0). */
+  async #rewriteLeveled(
+    p: PackInfo,
+    inZero: boolean,
+    mark: (range: KeyRange) => Promise<LiveHashes>,
+  ): Promise<[number, number]> {
+    // Its ids from the first through the last (no id holds a NUL, so this is just past it).
+    const live = await mark({ lo: filterKey(p.lo!), hi: `${filterKey(p.hi!)}\u0000` })
+    const pw = new PackWriter(this.store, {
+      packRaw: levelConfig.packRaw,
+      index: true,
+      ...(p.level ? { level: p.level } : {}),
+      ...(p.history ? { history: p.history } : {}),
+    })
+    let kept = 0
+    let dropped = 0
+    for await (const { key, line } of this.packs.all(p.id, mergeRead(1))) {
+      const z = key.lastIndexOf('\u0000')
+      if (!live.has(key.slice(0, z), key.slice(z + 1))) {
+        dropped++
+        continue
+      }
+      pw.append(key, line)
+      if (++kept % 1024 === 0) await pw.ready()
+    }
+    const packs = await pw.finish()
+    // Within its old range, so its level still doesn't overlap.
+    await this.#swapLevels({
+      tree: p.history ? 'h' : '',
+      zero: inZero ? [p] : [],
+      from: null,
+      target: inZero ? null : p.level!,
+      lower: inZero ? [] : [p],
+      packs: inZero ? [] : packs,
+      history: inZero ? packs : [],
+      stat: 'levelRewrites',
+    })
+    return [kept, dropped]
+  }
+
+  /** Reclaim's rewrite of packs the index points into. */
+  async #rewriteRepointed(
+    m: Manifest,
+    packIds: readonly string[],
+  ): Promise<Record<string, number>> {
     // Packs the manifest lists must still be there; the others (an older reclaim's) are in neither.
     const listed = new Set(m.packs.map((p) => p.id))
     const retired = new Set(m.retired.map((r) => r.key))
@@ -1443,8 +1796,12 @@ export class KeyedLayout implements RecordStore {
     // Each file's home: where the parent read it from (its own parent's), else the parent.
     const mine = await from.inherited()
     const inherited: Inherited = { packs: {}, layers: {} }
-    for (const p of [...m.packs, ...registered, ...[...levelPacks.values()].flat()])
+    for (const p of [...m.packs, ...registered, ...(await this.#leveledPacks(m))]) {
       inherited.packs[p.id] = mine.packs[p.id] ?? from.home
+      // A pack's own index is a layer file, read from where the pack is.
+      const index = packIndexId(p.id)
+      if (p.indexed) inherited.layers[index] = mine.layers[index] ?? from.home
+    }
     for (const l of m.layers) inherited.layers[l.id] = mine.layers[l.id] ?? from.home
     const homes = new Set([...Object.values(inherited.packs), ...Object.values(inherited.layers)])
     // Every home first learns of the fork: from then on it keeps what the fork lists.
@@ -1467,6 +1824,7 @@ export class KeyedLayout implements RecordStore {
     const top = Math.max(0, ...m.layers.map((l) => l.seq))
     await target.manifests.update((n) => {
       if (Object.keys(levels).length) n.levels = levels
+      if (m.history) n.history = [...m.history]
       n.packs.push(...m.packs)
       n.layers.push(...m.layers.map((l) => ({ ...l, seq: l.seq - top - 1 })))
       return n
@@ -1503,10 +1861,13 @@ export class KeyedLayout implements RecordStore {
         { key: at(h, layerFilterKey(l.id)), optional: true },
       )
     }
-    const levelPacks = [...(await this.#levelPacks(m)).values()].flat()
-    for (const p of [...m.packs, ...levelPacks, ...registry.packs]) {
+    for (const p of [...m.packs, ...(await this.#leveledPacks(m)), ...registry.packs]) {
       const h = inh.packs[p.id]
       files.push({ key: at(h, packKey(p.id)), bytes: p.bytes }, { key: at(h, packDirKey(p.id)) })
+      if (!p.indexed) continue
+      const index = packIndexId(p.id)
+      const hi = inh.layers[index]
+      files.push({ key: at(hi, layerKey(index)) }, { key: at(hi, layerDirKey(index)) })
     }
     for (const k of registry.keys) files.push({ key: at(undefined, k) })
     // A leveled collection's mark and its levels' shards: the copy's own, written once.

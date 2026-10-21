@@ -15,6 +15,7 @@
  * key range touches. Readers never read them: records are found through the index.
  */
 import { compareUtf8 } from '../../utf8.js'
+import type { Lru } from '../lru.js'
 import type { Store } from '../types.js'
 import { newId, PACK_RAW, type PackInfo } from './kit.js'
 
@@ -44,6 +45,13 @@ export const levelConfig = {
   packRaw: PACK_RAW,
   /** Packs a shard lists at most. */
   shardPacks: 512,
+  /**
+   * Index entries that can no longer serve a lookup (Manifest.stats.indexStale) past
+   * which, once they're half the index, every run merges at once to drop them. The
+   * index is about level 0 and these, so that merge is small (50k entries: ~3 MB);
+   * until it runs, a lookup reads their runs for nothing, and merged-down packs stay.
+   */
+  staleEntries: 50_000,
 }
 
 /** A shard of a level's listing, as the manifest names it. */
@@ -57,7 +65,16 @@ export interface LevelShard {
   bytes: number
 }
 
+/**
+ * By level key: `1`…`6` the current versions' levels, `h1`…`h6` the history's (replaced
+ * versions, every one kept, leveled the same way so an old version's lookup reads a
+ * pack a level, not one a month).
+ */
 export type Levels = Record<string, LevelShard[]>
+
+/** The two trees a leveled collection keeps: current versions, and the history. */
+export type Tree = '' | 'h'
+export const levelKey = (tree: Tree, level: number) => `${tree}${level}`
 
 export const shardKey = (id: string) => `manifest/f/levels/${id}.json`
 
@@ -68,8 +85,8 @@ export const overlaps = (aLo: string, aHi: string, bLo: string, bHi: string) =>
 const byLo = (a: PackInfo, b: PackInfo) => compareUtf8(a.lo!, b.lo!)
 
 /** Raw bytes a level holds. */
-export const levelRaw = (levels: Levels | undefined, level: number) =>
-  (levels?.[level] ?? []).reduce((n, s) => n + s.raw, 0)
+export const levelRaw = (levels: Levels | undefined, level: number, tree: Tree = '') =>
+  (levels?.[levelKey(tree, level)] ?? []).reduce((n, s) => n + s.raw, 0)
 
 /**
  * Each level's target size from the bottom up, and the base level, where level 0
@@ -78,9 +95,12 @@ export const levelRaw = (levels: Levels | undefined, level: number) =>
  * 0's merges and goes down a pack at a time). Levels above the base have no room
  * (target 0).
  */
-export function levelTargets(levels: Levels | undefined): { base: number; targets: number[] } {
+export function levelTargets(
+  levels: Levels | undefined,
+  tree: Tree = '',
+): { base: number; targets: number[] } {
   const targets = Array.from<number>({ length: MAX_LEVEL + 1 }).fill(0)
-  let t = levelRaw(levels, MAX_LEVEL)
+  let t = levelRaw(levels, MAX_LEVEL, tree)
   targets[MAX_LEVEL] = Infinity
   let base = MAX_LEVEL - 1
   targets[base] = t / LEVEL_RATIO
@@ -96,19 +116,34 @@ export function levelTargets(levels: Levels | undefined): { base: number; target
 
 /** The shards a leveled collection's levels are listed in (each read once: they never change). */
 export class LevelShards {
-  readonly #read = new Map<string, Promise<PackInfo[]>>()
+  readonly #loading = new Map<string, Promise<PackInfo[]>>()
 
-  constructor(readonly store: Store) {}
+  /** Shards are written once: kept in the layout's memory cache, by id. */
+  constructor(
+    readonly store: Store,
+    readonly lru: Lru<unknown>,
+  ) {}
+
+  #keep(id: string, packs: PackInfo[], bytes: number) {
+    this.lru.set(`shard:${id}`, { packs, approxBytes: bytes * 2 })
+  }
 
   read(id: string): Promise<PackInfo[]> {
-    let p = this.#read.get(id)
+    const hit = this.lru.get(`shard:${id}`) as { packs: PackInfo[] } | undefined
+    if (hit) return Promise.resolve(hit.packs)
+    let p = this.#loading.get(id)
     if (!p) {
-      p = this.store.get(shardKey(id)).then(async (o) => {
-        if (!o) throw new Error(`Missing level shard ${id}`)
-        return JSON.parse(await o.text()) as PackInfo[]
-      })
-      p.catch(() => this.#read.delete(id))
-      this.#read.set(id, p)
+      p = this.store
+        .get(shardKey(id))
+        .then(async (o) => {
+          if (!o) throw new Error(`Missing level shard ${id}`)
+          const text = await o.text()
+          const packs = JSON.parse(text) as PackInfo[]
+          this.#keep(id, packs, text.length)
+          return packs
+        })
+        .finally(() => this.#loading.delete(id))
+      this.#loading.set(id, p)
     }
     return p
   }
@@ -134,8 +169,9 @@ export class LevelShards {
     for (let i = 0; i < packs.length; i += levelConfig.shardPacks) {
       const ps = packs.slice(i, i + levelConfig.shardPacks)
       const id = newId()
-      this.#read.set(id, Promise.resolve(ps))
-      await this.store.put(shardKey(id), JSON.stringify(ps), { ifAbsent: true })
+      const body = JSON.stringify(ps)
+      await this.store.put(shardKey(id), body, { ifAbsent: true })
+      this.#keep(id, ps, body.length)
       out.push({
         id,
         lo: ps[0]!.lo!,
