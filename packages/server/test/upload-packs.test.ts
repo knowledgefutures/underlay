@@ -6,7 +6,14 @@
  */
 import { createHash } from 'node:crypto'
 
-import { countTree, iterate, type RecordSet, RepoSource, recordTree } from '@underlay/protocol'
+import {
+  countTree,
+  iterate,
+  layoutConfig,
+  type RecordSet,
+  RepoSource,
+  recordTree,
+} from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
@@ -274,7 +281,29 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     )
     expect(await commit(h, user, 'l', sid)).toBe(201)
     const registry = `repo/runs/${c.id}/public/manifest/f/packs/upload-${sid}.json`
-    expect(h.bucket.objects.has(registry)).toBe(true)
+    // Leveled, the first load (into an empty collection, none of its packs overlapping)
+    // is the bottom level instead, as written.
+    expect(h.bucket.objects.has(registry)).toBe(!layoutConfig.levelNew)
+    const repo = await h.ports.stores.forCollection(c.id)
+    const layout = repo.records!.public as unknown as {
+      manifests: {
+        latest(): Promise<{
+          packs: { id: string; tier: number; type?: string }[]
+          levels?: Record<string, { id: string }[]>
+        }>
+      }
+      levels: { packs(s: { id: string }[]): Promise<{ lo?: string; hi?: string }[]> }
+    }
+    if (layoutConfig.levelNew) {
+      const bottom = (await layout.manifests.latest()).levels?.[6]
+      expect(bottom).toHaveLength(1)
+      // Its key range whole, NULs and all, through the database.
+      const [p] = await layout.levels.packs(bottom!)
+      expect([p!.lo!.split('\u0000').slice(0, 2), p!.hi!.split('\u0000').slice(0, 2)]).toEqual([
+        ['Doc', id(0)],
+        ['Doc', id(599)],
+      ])
+    }
     // Small pushes: their packs go in the manifest, and merges re-point their records.
     for (let j = 0; j < 10; j++) {
       const s = await open(h, user, 'l')
@@ -284,15 +313,11 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     const { out } = await headRecords(h, c.id)
     expect(out).toHaveLength(610)
     expect(out.filter((r) => /changed|small/.test(r))).toHaveLength(20)
-    const repo = await h.ports.stores.forCollection(c.id)
-    const layout = repo.records!.public as unknown as {
-      manifests: {
-        latest(): Promise<{ packs: { id: string; tier: number; type?: string }[] }>
-      }
-    }
     const m = await layout.manifests.latest()
-    // Every small pack listed, or merged into one above them, and each says its type.
-    expect(m.packs.some((p) => p.tier > 0) || m.packs.length >= 10).toBe(true)
+    // Every small pack listed, or merged into one above them (leveled: all ten in level
+    // 0, under its 16-pack trigger), and each says its type.
+    if (layoutConfig.levelNew) expect(m.packs).toHaveLength(10)
+    else expect(m.packs.some((p) => p.tier > 0) || m.packs.length >= 10).toBe(true)
     expect(m.packs.every((p) => p.type === 'Doc')).toBe(true)
     expect(new Set(m.packs.map((p) => p.id)).size).toBe(m.packs.length)
   })

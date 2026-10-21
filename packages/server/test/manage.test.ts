@@ -1,4 +1,4 @@
-import { readHead, verifyLog } from '@underlay/protocol'
+import { layoutConfig, readHead, verifyLog } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -136,9 +136,10 @@ describe('collection management', () => {
       version: { recordCount: 1 },
     })
     // Root, log entry, head.json; layout F adds the fork's list of its parent's files, a
-    // marker in the parent, and the fork's manifest and its head (the public set's alone).
+    // marker in the parent, and the fork's manifest and its head (the public set's alone);
+    // leveled, the fork's leveled mark and its level's shard.
     expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(
-      h.ports.stores.newCollections === 'f' ? 8 : 4,
+      h.ports.stores.newCollections === 'f' ? (layoutConfig.levelNew ? 10 : 8) : 4,
     )
     const [child] = await h.ports.db
       .select()

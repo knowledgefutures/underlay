@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { fsck, newSalt, openRepo } from '@underlay/protocol'
+import { fsck, layoutConfig, newSalt, openRepo } from '@underlay/protocol'
 import { eq, sql } from 'drizzle-orm'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -308,7 +308,8 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     const fresh = await h.collection('new')
     const puts = h.bucket.puts
     await push(h, user, 'new', records, 'the pdf')
-    expect(h.bucket.puts - puts).toBeLessThan(15) // mostly reused
+    // Mostly reused (leveled, the new collection's mark is one more).
+    expect(h.bucket.puts - puts).toBeLessThan(layoutConfig.levelNew ? 17 : 15)
     ageAll(h)
 
     const sweep = await run(h, 'sweep')

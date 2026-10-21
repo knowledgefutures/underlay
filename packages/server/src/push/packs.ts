@@ -36,6 +36,9 @@ const SETS = ['public', 'private'] as const
 /** An upload marks an entry private exactly when it goes to the private set (deltaChanges). */
 const setOf = (e: RunEntry): RecordSet => (e.p ? 'private' : 'public')
 
+/** A record key as SQLite text: JSON, since keys hold NULs and text stops at one. */
+const keyText = (key: string | undefined) => (key === undefined ? undefined : JSON.stringify(key))
+
 /** Each pack recorded before it's written, and its stats once it is. */
 const hooksFor = (ports: Ports, sessionId: string, set: RecordSet): PackHooks => ({
   before: async (packId) => {
@@ -44,7 +47,14 @@ const hooksFor = (ports: Ports, sessionId: string, set: RecordSet): PackHooks =>
   after: async (pack) => {
     await ports.db
       .update(schema.pushPacks)
-      .set({ records: pack.records, bytes: pack.bytes, raw: pack.raw, recordType: pack.type })
+      .set({
+        records: pack.records,
+        bytes: pack.bytes,
+        raw: pack.raw,
+        recordType: pack.type,
+        loKey: keyText(pack.lo),
+        hiKey: keyText(pack.hi),
+      })
       .where(and(eq(schema.pushPacks.sessionId, sessionId), eq(schema.pushPacks.packId, pack.id)))
   },
 })
@@ -133,6 +143,9 @@ export async function adoptSessionPacks(ports: Ports, repo: Repo, sessionId: str
         bytes: r.bytes!,
         raw: r.raw!,
         ...(r.recordType ? { type: r.recordType } : {}),
+        ...(r.loKey && r.hiKey
+          ? { lo: JSON.parse(r.loKey) as string, hi: JSON.parse(r.hiKey) as string }
+          : {}),
       }))
     if (packs.length) await repo.records[set].adoptPacks!(sessionId, packs)
   }
