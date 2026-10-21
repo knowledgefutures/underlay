@@ -74,6 +74,17 @@ export interface PackInfo {
   /** Stored (compressed) bytes, and raw. */
   bytes: number
   raw: number
+  /**
+   * The record type the pack holds: a pack closes where the type changes, so no pack
+   * spans types and merges take one type's packs. Absent on packs written before.
+   */
+  type?: string
+}
+
+/** The record type a key leads with (recordKey); '' for a key without one. */
+const typeOf = (key: string) => {
+  const i = key.indexOf('\u0000')
+  return i < 0 ? '' : key.slice(0, i)
 }
 
 /**
@@ -93,6 +104,7 @@ export class PackWriter {
   #packRaw = 0
   #records = 0
   #lastKey: string | null = null
+  #type = ''
   readonly done: PackInfo[] = []
   readonly #writing = new Set<Promise<void>>()
   #error: unknown = null
@@ -102,9 +114,15 @@ export class PackWriter {
     readonly opts: { tier?: number; hooks?: PackHooks } = {},
   ) {}
 
-  /** Add a record line under `key`; returns its place. A key below the last starts a new pack. */
+  /**
+   * Add a record line under `key`; returns its place. A key below the last, or of
+   * another type, starts a new pack.
+   */
   append(key: string, line: string): string {
-    if (this.#lastKey !== null && compareUtf8(key, this.#lastKey) < 0) this.#close()
+    const type = typeOf(key)
+    if (this.#lastKey !== null && (type !== this.#type || compareUtf8(key, this.#lastKey) < 0))
+      this.#close()
+    this.#type = type
     this.#lastKey = key
     if (!this.#id) this.#id = newId()
     this.#lines.push(`${key}\t${line}`)
@@ -143,7 +161,13 @@ export class PackWriter {
     this.#seal()
     this.#lastKey = null
     if (!this.#blocks.length) return
-    const job = { id: this.#id, blocks: this.#blocks, records: this.#records, raw: this.#packRaw }
+    const job = {
+      id: this.#id,
+      blocks: this.#blocks,
+      records: this.#records,
+      raw: this.#packRaw,
+      type: this.#type,
+    }
     this.#id = ''
     this.#blocks = []
     this.#records = 0
@@ -156,19 +180,26 @@ export class PackWriter {
     this.#writing.add(p)
   }
 
-  async #write(job: { id: string; blocks: Promise<Uint8Array>[]; records: number; raw: number }) {
+  async #write(job: {
+    id: string
+    blocks: Promise<Uint8Array>[]
+    records: number
+    raw: number
+    type: string
+  }) {
     const parts = await Promise.all(job.blocks)
     const offsets = [0]
     for (const p of parts) offsets.push(offsets.at(-1)! + p.byteLength)
     await this.opts.hooks?.before?.(job.id)
     await putJoined(this.store, packKey(job.id), parts, { ifAbsent: true })
     await this.store.put(packDirKey(job.id), JSON.stringify(offsets), { ifAbsent: true })
-    const pack = {
+    const pack: PackInfo = {
       id: job.id,
       tier: this.opts.tier ?? 0,
       records: job.records,
       bytes: offsets.at(-1)!,
       raw: job.raw,
+      ...(job.type ? { type: job.type } : {}),
     }
     this.done.push(pack)
     await this.opts.hooks?.after?.(pack)
