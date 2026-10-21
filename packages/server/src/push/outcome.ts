@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm'
 
 import { FenceError, StorageBusyError } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
+import { LayoutChangedError, LayoutSwitchingError } from '../layouts/errors.js'
 import type { Ports } from '../ports.js'
 import type { CommitResult } from '../versions/commit.js'
 import { SESSION_TTL_MS, transition } from './session.js'
@@ -52,6 +53,9 @@ export async function commitOutcome(
           statusCode: 503,
         },
       }
+    }
+    if (err instanceof LayoutChangedError || err instanceof LayoutSwitchingError) {
+      return { status: 503, body: { error: `${err.message}. Push again.`, statusCode: 503 } }
     }
     if (!(err instanceof MissingFilesError)) throw err
     return {

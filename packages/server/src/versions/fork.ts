@@ -126,6 +126,7 @@ export async function forkCollection(
     const hash = await repo.putRoot(newRoot)
     const published = await publishVersion(ports.db, {
       fence,
+      recordLayout: targetRepo.layout,
       version: {
         id: versionId,
         collectionId: collection.id,

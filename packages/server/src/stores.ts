@@ -114,34 +114,41 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
   const located = (locationId: string, collectionId: string, layout: LayoutName) =>
     layout === 'f' ? forCollectionRuns(locationId, collectionId) : forLocation(locationId)
 
+  const primary = async (collectionId: string) => {
+    const hit = primaryCache.get(collectionId)
+    if (hit && Date.now() - hit.at < PRIMARY_TTL_MS) return hit
+    const [row] = await db
+      .select({
+        locationId: schema.placements.locationId,
+        layout: schema.collections.recordLayout,
+      })
+      .from(schema.placements)
+      .innerJoin(schema.collections, eq(schema.collections.id, schema.placements.collectionId))
+      .where(
+        and(
+          eq(schema.placements.collectionId, collectionId),
+          eq(schema.placements.role, 'primary'),
+        ),
+      )
+      .limit(1)
+    if (!row) throw new Error(`Collection ${collectionId} has no primary placement`)
+    const found = { locationId: row.locationId, layout: row.layout, at: Date.now() }
+    primaryCache.set(collectionId, found)
+    return found
+  }
+
   return {
     forLocation,
     newCollections: platform.newCollections ?? 'today',
     async forCollection(collectionId: string): Promise<Repo> {
-      const hit = primaryCache.get(collectionId)
-      if (hit && Date.now() - hit.at < PRIMARY_TTL_MS)
-        return located(hit.locationId, collectionId, hit.layout)
-      const [row] = await db
-        .select({
-          locationId: schema.placements.locationId,
-          layout: schema.collections.recordLayout,
-        })
-        .from(schema.placements)
-        .innerJoin(schema.collections, eq(schema.collections.id, schema.placements.collectionId))
-        .where(
-          and(
-            eq(schema.placements.collectionId, collectionId),
-            eq(schema.placements.role, 'primary'),
-          ),
-        )
-        .limit(1)
-      if (!row) throw new Error(`Collection ${collectionId} has no primary placement`)
-      primaryCache.set(collectionId, {
-        locationId: row.locationId,
-        layout: row.layout,
-        at: Date.now(),
-      })
-      return located(row.locationId, collectionId, row.layout)
+      const p = await primary(collectionId)
+      return located(p.locationId, collectionId, p.layout)
+    },
+    async forCollectionAs(collectionId: string, layout: LayoutName): Promise<Repo> {
+      return located((await primary(collectionId)).locationId, collectionId, layout)
+    },
+    forget(collectionId: string): void {
+      primaryCache.delete(collectionId)
     },
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,

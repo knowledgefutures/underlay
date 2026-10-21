@@ -16,7 +16,7 @@
  * under is unchanged (cleanup/fence.ts): if a deletion window opened since, an
  * object the version reuses may be gone, so the caller redoes its writes.
  */
-import { type SetName } from '@underlay/protocol'
+import { type LayoutName, type SetName } from '@underlay/protocol'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import { fenceHolds, fenceMoved } from '../cleanup/fence.js'
@@ -66,6 +66,11 @@ export interface SchemaUsageChange {
 
 export interface PublishInput {
   version: NewVersionRow
+  /**
+   * The record layout the version's records were written in: it publishes only if
+   * the collection is still in it (a conversion to F may have switched it).
+   */
+  recordLayout: LayoutName
   /** The storage fence epoch read before the version's objects were written. */
   fence: number
   baseVersionId: string | null
@@ -86,7 +91,13 @@ export interface PublishInput {
 export async function publishVersion(
   db: Db,
   p: PublishInput,
-): Promise<{ ok: boolean; headVersionId: string | null; fenced: boolean }> {
+): Promise<{
+  ok: boolean
+  headVersionId: string | null
+  fenced: boolean
+  /** The collection's layout changed since the version was written: redo it. */
+  layoutMoved: boolean
+}> {
   const v = p.version
   const now = Date.now()
   const createdAt = v.createdAt?.getTime() ?? now
@@ -145,7 +156,9 @@ export async function publishVersion(
           pushSessionId: lit<string | null>(v.pushSessionId ?? null).as('push_session_id'),
         })
         .from(schema.collections)
-        .where(and(headIsBase, fenceHolds(p.fence))) as never,
+        .where(
+          and(headIsBase, eq(schema.collections.recordLayout, p.recordLayout), fenceHolds(p.fence)),
+        ) as never,
     ),
     // 2. Move the head, only if it is still the base and the row from 1 exists.
     db
@@ -224,7 +237,7 @@ export async function publishVersion(
   await db.batch(statements as unknown as Parameters<Db['batch']>[0])
 
   const [row] = await db
-    .select({ head: schema.collections.headVersionId })
+    .select({ head: schema.collections.headVersionId, layout: schema.collections.recordLayout })
     .from(schema.collections)
     .where(eq(schema.collections.id, v.collectionId))
     .limit(1)
@@ -233,5 +246,6 @@ export async function publishVersion(
     ok,
     headVersionId: row?.head ?? null,
     fenced: !ok && (await fenceMoved(db, p.fence)),
+    layoutMoved: !ok && row !== undefined && row.layout !== p.recordLayout,
   }
 }

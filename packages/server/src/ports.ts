@@ -41,6 +41,13 @@ export interface Jobs {
 export interface Stores {
   /** The repository of a collection's primary placement, in the collection's record layout. */
   forCollection(collectionId: string): Promise<Repo>
+  /**
+   * The same placement in a given layout, whatever the collection's: a conversion
+   * reads today's and writes F's, and a commit keeps the layout it planned in.
+   */
+  forCollectionAs(collectionId: string, layout: LayoutName): Promise<Repo>
+  /** Forget this isolate's note of a collection's placement and layout (it changed). */
+  forget(collectionId: string): void
   /** The record layout a new collection gets (a fork takes its parent's). */
   newCollections: LayoutName
   /** The repository at a storage location. */

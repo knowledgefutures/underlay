@@ -38,11 +38,13 @@ import {
   setRecordTotals,
   signEntry,
   type TreeSummary,
+  type LayoutName,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import { FenceError, writeFence } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
+import { LayoutChangedError } from '../layouts/errors.js'
 import type { Ports } from '../ports.js'
 import { publishCollectionInfo } from './collection-info.js'
 import { collectionFileSizes, fileSizes } from './file-refs.js'
@@ -62,6 +64,12 @@ export interface BaseVersion {
 
 export interface CommitInput {
   collectionId: string
+  /**
+   * The record layout the commit writes in: a parallel commit's plan's, which its
+   * units wrote in. Else the collection's, read now. It publishes only if the
+   * collection is still in it.
+   */
+  recordLayout?: LayoutName
   /**
    * The storage fence epoch read when this commit's write phase began (before a
    * parallel commit's units, or around a retry loop). Read here when absent.
@@ -115,13 +123,20 @@ export type CommitResult =
 
 export async function commitVersion(ports: Ports, input: CommitInput): Promise<CommitResult> {
   const { db } = ports
-  const repo = await ports.stores.forCollection(input.collectionId)
   const [collection] = await db
     .select()
     .from(schema.collections)
     .where(eq(schema.collections.id, input.collectionId))
     .limit(1)
   if (!collection) throw new Error(`Collection ${input.collectionId} not found`)
+  // The layout from the row just read, not an isolate's note of it (a conversion
+  // may have switched it in the last minute).
+  const recordLayout = input.recordLayout ?? collection.recordLayout
+  if (recordLayout !== collection.recordLayout) {
+    ports.stores.forget(input.collectionId)
+    throw new LayoutChangedError()
+  }
+  const repo = await ports.stores.forCollectionAs(input.collectionId, recordLayout)
   const fence = input.fence ?? (await writeFence(db))
 
   const built = await buildVersion(repo, {
@@ -221,6 +236,7 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
   }
   const published = await publishVersion(db, {
     fence,
+    recordLayout,
     version: versionRow,
     baseVersionId: base?.id ?? null,
     collectionUpdate: {
@@ -231,6 +247,10 @@ export async function commitVersion(ports: Ports, input: CommitInput): Promise<C
     usage,
   })
   if (published.fenced) throw new FenceError()
+  if (published.layoutMoved) {
+    ports.stores.forget(input.collectionId)
+    throw new LayoutChangedError()
+  }
   if (!published.ok) return { status: 'conflict', headVersionId: published.headVersionId }
 
   const [version] = await db

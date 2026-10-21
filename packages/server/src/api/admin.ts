@@ -17,6 +17,8 @@
  *   POST    /api/admin/fsck                      stewards: {collection, fileBytes?} checks its repository
  *   GET     /api/admin/fsck?collection=          stewards: the last check's report
  *   POST    /api/admin/usage/rebuild             stewards: {day} recomputes them from the usage log
+ *   POST    /api/admin/convert                   stewards: {collection} converts it to layout F
+ *   GET     /api/admin/convert?collection=       stewards: the conversion's state
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
  */
@@ -27,6 +29,7 @@ import type { AppEnv } from '../app.js'
 import { usageFor } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { conversionState, startConversion } from '../layouts/convert.js'
 import { forgetDenylist } from '../lib/limits.js'
 import { jsonError } from './access.js'
 
@@ -250,6 +253,27 @@ export function adminRoutes() {
       fileBytes: b?.fileBytes === true,
     })
     return c.json({ ok: true, queued: true }, 202)
+  })
+
+  app.post('/api/admin/convert', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as { collection?: unknown } | null
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    if (col.recordLayout !== 'today')
+      return jsonError(c, 409, `Collection is already on layout ${col.recordLayout}`)
+    return c.json(await startConversion(c.var.ports, col.id), 202)
+  })
+
+  app.get('/api/admin/convert', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const col = await collectionBySlugs(c, c.req.query('collection'))
+    if (!col) return jsonError(c, 404, 'Collection not found (?collection=owner/slug)')
+    const state = await conversionState(c.var.ports, col.id)
+    if (!state) return jsonError(c, 404, 'Not converted')
+    return c.json({ ...state, recordLayout: col.recordLayout })
   })
 
   app.get('/api/admin/fsck', async (c) => {
