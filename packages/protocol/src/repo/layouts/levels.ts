@@ -47,9 +47,11 @@ export const levelConfig = {
   shardPacks: 512,
   /**
    * Index entries that can no longer serve a lookup (Manifest.stats.indexStale) past
-   * which, once they're half the index, every run merges at once to drop them.
+   * which, once they're half the index, every run merges at once to drop them. The
+   * index is about level 0 and these, so that merge is small (50k entries: ~3 MB);
+   * until it runs, a lookup reads their runs for nothing, and merged-down packs stay.
    */
-  staleEntries: 1_000_000,
+  staleEntries: 50_000,
 }
 
 /** A shard of a level's listing, as the manifest names it. */

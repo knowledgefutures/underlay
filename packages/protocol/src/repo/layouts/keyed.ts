@@ -314,6 +314,19 @@ export class KeyedLayout implements RecordStore {
 
   /** Packs a leveled lookup found swept (#leafLines): their index entries are skipped. */
   readonly #gone = new Set<string>()
+  readonly #retired = new WeakMap<Manifest, Set<string>>()
+
+  /** The packs `m` lists as retired, by id. */
+  #retiredPacks(m: Manifest): Set<string> {
+    let out = this.#retired.get(m)
+    if (!out) {
+      out = new Set()
+      for (const r of m.retired)
+        if (r.key.startsWith('packs/') && r.key.endsWith('.pk')) out.add(r.key.slice(6, -3))
+      this.#retired.set(m, out)
+    }
+    return out
+  }
 
   /** Every pack of the levels (both trees'), by level key. */
   async #levelPacks(m: Manifest): Promise<Map<string, PackInfo[]>> {
@@ -364,15 +377,20 @@ export class KeyedLayout implements RecordStore {
    * holds at most a pack or two of a leaf's range, so a leaf reads a few directories
    * and pages a level, however many days of changes went in.
    *
-   * The index also has entries of packs that left level 0 (merged down, or a sorted
-   * load adopted as the bottom level) until its runs merge: a place stays good while
-   * its pack is there (any copy of a key is the same record), and one whose pack was
-   * swept is skipped (#leafLines).
+   * The index also has entries of packs that left level 0 until its runs merge. One
+   * whose pack is retired (merged down: kept, and listed, until no run names it) is
+   * skipped, its record read where it is now; a sorted load's, adopted as the bottom
+   * level, is good until a merge rewrites that pack (any copy of a key is the same
+   * record). One whose pack is gone anyway (a head older than the sweep) is skipped
+   * once its read fails (#leafLines).
    */
   async #findLeveled(m: Manifest, keys: readonly string[]): Promise<Map<string, string>> {
+    const retired = this.#retiredPacks(m)
     const found = new Map<string, string>()
-    for (const [k, v] of await this.index.values(m, keys))
-      if (!this.#gone.has(parseLoc(v).pack)) found.set(k, v)
+    for (const [k, v] of await this.index.values(m, keys)) {
+      const pack = parseLoc(v).pack
+      if (!retired.has(pack) && !this.#gone.has(pack)) found.set(k, v)
+    }
     let left = [...new Set(keys)].filter((k) => !found.has(k)).sort(compareUtf8)
     const probe = async (packs: PackInfo[]) => {
       const got = await Promise.all(
@@ -801,9 +819,10 @@ export class KeyedLayout implements RecordStore {
   async #indexKeeper(m: Manifest): Promise<((place: string) => Promise<boolean>) | null> {
     if (!m.levels && !m.history) return null
     const zero = new Set(m.packs.map((p) => p.id))
-    const left = new Set((await this.#leveledPacks(m)).map((p) => p.id))
-    for (const r of m.retired)
-      if (r.key.startsWith('packs/') && r.key.endsWith('.pk')) left.add(r.key.slice(6, -3))
+    const left = new Set([
+      ...(await this.#leveledPacks(m)).map((p) => p.id),
+      ...this.#retiredPacks(m),
+    ])
     const known = new Map<string, Promise<boolean>>()
     return (place: string) => {
       const pack = parseLoc(place).pack
