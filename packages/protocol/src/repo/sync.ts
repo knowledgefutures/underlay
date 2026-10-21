@@ -40,6 +40,7 @@ import {
   versionHash,
 } from '../format.js'
 import { gunzipText, gzip, splitLines } from './gzip.js'
+import { leafChunks } from './layouts/index.js'
 import {
   IntegrityError,
   isNodeDelta,
@@ -231,15 +232,13 @@ export async function* treeObjects(
         yield { ...node, resumeKey: n.lastKey }
         continue
       }
-      // Built a member per 256 records, so the leaf is never held raw: as stored, a
+      // Built a member per few MB of records, so the leaf is never held raw: as stored, a
       // body is gzip members, and only its compressed size is held (as a stored one is).
       const store = repo.records[tree.set]
       const leafOf = { hash: n.hash, type: tree.slug!, entries }
       const members: Uint8Array[] = []
-      for (let i = 0; i < entries.length; i += 256) {
-        const at = Array.from({ length: Math.min(256, entries.length - i) }, (_, j) => i + j)
+      for (const at of leafChunks(entries))
         members.push(await gzip((await store.linesAt(leafOf, at)).join('\n') + '\n'))
-      }
       yield { key: keys.body(n.hash), bytes: concatBytes(members), resumeKey: n.lastKey }
       continue
     }

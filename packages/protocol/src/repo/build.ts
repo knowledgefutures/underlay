@@ -47,6 +47,7 @@ import {
   tracksTypes,
   typeFileRefs,
 } from './file-sets.js'
+import { leafChunks } from './layouts/index.js'
 import {
   bodyOfRecord,
   dropRecordBody,
@@ -200,8 +201,7 @@ async function copyRecords(
   for await (const leaf of leaves(source, root)) {
     const node = await source.node(leaf.hash)
     const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
-    for (let i = 0; i < entries.length; i += 256) {
-      const at = Array.from({ length: Math.min(256, entries.length - i) }, (_, j) => i + j)
+    for (const at of leafChunks(entries)) {
       const lines = await repo.records[from].linesAt({ hash: leaf.hash, type, entries }, at)
       at.forEach((k, j) => writer.add(type, entries[k]!, lines[j]!))
       await writer.drain?.()

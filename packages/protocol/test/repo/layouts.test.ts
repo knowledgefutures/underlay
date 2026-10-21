@@ -1192,7 +1192,8 @@ describe("layout F's reads and merges hold a bounded amount", () => {
     expect(await layout.leafLines({ hash: 'leaf', type: 'T', entries })).toEqual(
       entries.map((_, i) => `line ${i}`),
     )
-    expect(n.most).toBeLessThanOrEqual(4)
+    // Sixteen at a time: never all forty.
+    expect(n.most).toBeLessThanOrEqual(16)
   })
 
   it('plans a reclaim only once merges bring the runs down', async () => {

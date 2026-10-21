@@ -51,10 +51,18 @@ export const mergeRead = (inputs: number) =>
     MERGE_READ_MIN,
     Math.min(MERGE_READ, Math.floor(MERGE_READ_BUDGET / Math.max(1, inputs))),
   )
-/** Blocks of one pack a read takes in one request, at most (neighbours, gaps of up to two). */
-const READ_BLOCKS = 16
-/** Layers an index read works through at once, newest first. */
-const READ_LAYERS = 4
+/**
+ * Blocks of one pack a read takes in one request, at most (neighbours, gaps of up to
+ * two): a leaf of large records in a request or two, about 1 MB compressed each.
+ */
+const READ_BLOCKS = 64
+/**
+ * Layers an index read works through at once, newest first, of those whose keys
+ * overlap it: the ~10 runs a collection usually has in one round of reads.
+ */
+const READ_LAYERS = 16
+/** Pages of one layer a leaf's read has in flight (a typed leaf's range is a few). */
+const READ_PAGES = 8
 
 export const newId = () => crypto.randomUUID().replace(/-/g, '')
 
@@ -800,12 +808,12 @@ export class LayerReader {
     }
     const lo = pageAt(dir, maybe[0]!)
     const hi = Math.max(lo, pageAt(dir, maybe.at(-1)!))
-    // One page ahead: the next page's read overlaps this one's scan.
-    let ahead = this.#page(layer.id, dir, lo)
+    // READ_PAGES in flight, taken in order: a range of a few pages in one round trip.
+    const ahead: Promise<[string, string][]>[] = []
+    let next = lo
     for (let p = lo; p <= hi; p++) {
-      const page = await ahead
-      if (p < hi) ahead = this.#page(layer.id, dir, p + 1)
-      keep(page)
+      while (next <= hi && next < p + READ_PAGES) ahead.push(this.#page(layer.id, dir, next++))
+      keep(await ahead.shift()!)
     }
     return out
   }
@@ -1343,7 +1351,13 @@ export class LayeredIndex {
   async values(m: Manifest, keys: Iterable<string>): Promise<Map<string, string>> {
     const sorted = [...new Set(keys)].sort(compareUtf8)
     const out = new Map<string, string>()
-    const layers = m.layers.filter(this.filter).sort((a, b) => b.seq - a.seq)
+    if (!sorted.length) return out
+    // Only layers whose keys overlap the read's (from the manifest: no reads).
+    const lo = sorted[0]!
+    const hi = sorted.at(-1)!
+    const layers = m.layers
+      .filter((l) => this.filter(l) && compareUtf8(l.min, hi) <= 0 && compareUtf8(l.max, lo) >= 0)
+      .sort((a, b) => b.seq - a.seq)
     for (let i = 0; i < layers.length && out.size < sorted.length; i += READ_LAYERS) {
       const left = out.size ? sorted.filter((k) => !out.has(k)) : sorted
       const got = await Promise.all(

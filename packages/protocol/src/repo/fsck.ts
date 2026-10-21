@@ -23,7 +23,7 @@ import { mergeTree } from '../tree/merge.js'
 import { fileTree, recordTree, type RecordEntry } from '../tree/node.js'
 import { diffTrees, leaves, newNodes } from '../tree/read.js'
 import { verifyTree } from '../tree/verify.js'
-import type { RecordSet } from './layouts/index.js'
+import { leafChunks, type RecordSet } from './layouts/index.js'
 import {
   type PublicKeyInfo,
   readCollectionInfo,
@@ -36,7 +36,7 @@ import { keys, type Leaf, type Repo, RepoSource } from './repo.js'
 
 /**
  * Read a leaf's records, each checked against its entry (the repository is opened
- * untrusted). Layout F reads them a few hundred at a time: a leaf of large
+ * untrusted). Layout F reads them a few MB at a time (leafChunks): a leaf of large
  * records is never held whole.
  */
 async function checkLeaf(repo: Repo, leaf: Leaf, set: RecordSet): Promise<void> {
@@ -44,10 +44,7 @@ async function checkLeaf(repo: Repo, leaf: Leaf, set: RecordSet): Promise<void> 
     await repo.bodyLines(leaf, set)
     return
   }
-  for (let i = 0; i < leaf.entries.length; i += 256) {
-    const at = Array.from({ length: Math.min(256, leaf.entries.length - i) }, (_, j) => i + j)
-    await repo.linesAt(leaf, at, set)
-  }
+  for (const at of leafChunks(leaf.entries)) await repo.linesAt(leaf, at, set)
 }
 
 export interface FsckOptions {
