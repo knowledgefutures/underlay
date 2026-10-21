@@ -292,8 +292,18 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
           levels?: Record<string, { id: string }[]>
         }>
       }
+      levels: { packs(s: { id: string }[]): Promise<{ lo?: string; hi?: string }[]> }
     }
-    if (layoutConfig.levelNew) expect((await layout.manifests.latest()).levels?.[6]).toHaveLength(1)
+    if (layoutConfig.levelNew) {
+      const bottom = (await layout.manifests.latest()).levels?.[6]
+      expect(bottom).toHaveLength(1)
+      // Its key range whole, NULs and all, through the database.
+      const [p] = await layout.levels.packs(bottom!)
+      expect([p!.lo!.split('\u0000').slice(0, 2), p!.hi!.split('\u0000').slice(0, 2)]).toEqual([
+        ['Doc', id(0)],
+        ['Doc', id(599)],
+      ])
+    }
     // Small pushes: their packs go in the manifest, and merges re-point their records.
     for (let j = 0; j < 10; j++) {
       const s = await open(h, user, 'l')

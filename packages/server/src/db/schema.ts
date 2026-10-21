@@ -702,8 +702,9 @@ export const pushPacks = sqliteTable(
     /** The record type the pack holds (PackInfo.type): merges take one type's packs. */
     recordType: text('record_type'),
     /**
-     * Its first and last keys (PackInfo.lo, hi): a leveled collection takes a sorted
-     * load's packs, none overlapping, as its bottom level.
+     * Its first and last keys (PackInfo.lo, hi), as JSON strings (a key's NULs would
+     * end SQLite text): a leveled collection takes a sorted load's packs, none
+     * overlapping, as its bottom level.
      */
     loKey: text('lo_key'),
     hiKey: text('hi_key'),
