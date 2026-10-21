@@ -6,7 +6,8 @@
  *   range     one job a range: mark the range's live records over every retained
  *             version, keep the index entries they need; the last range done
  *             swaps the new index in, drops dead packs, queues the rewrites
- *   rewrite   a few mostly-dead packs a job: copy their live records out
+ *   rewrite   a few mostly-dead packs a job: copy their live records out (a leveled
+ *             collection's level packs in place, their range marked again)
  *
  * Nothing starts it yet: records only go dead when versions are thinned (a
  * deleted collection's files go whole, cleanup/sweep.ts), and nothing may commit to
@@ -20,6 +21,7 @@ import {
   type Repo,
   recordRoots,
   TooManyRunsError,
+  type TypedRoot,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
@@ -111,9 +113,16 @@ registerJob('layout.reclaim', async (job, ports) => {
       await ports.jobs.enqueueBatch(jobs)
       return
     }
-    case 'rewrite':
-      await layout.reclaimRewrite(String(job.packs).split(','))
+    case 'rewrite': {
+      // A level's pack has no index entries to say what's live: marked again over its
+      // key range (the retained versions read once a job).
+      let roots: Promise<TypedRoot[]> | undefined
+      await layout.reclaimRewrite(String(job.packs).split(','), async (r) => {
+        roots ??= retained(ports, t).then((v) => recordRoots(repo, v))
+        return (await markRange(repo, await roots, r)).live
+      })
       return
+    }
     default:
       throw new Error(`layout.reclaim: unknown step ${String(job.step)}`)
   }

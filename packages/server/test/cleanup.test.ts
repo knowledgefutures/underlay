@@ -308,8 +308,9 @@ describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
     const fresh = await h.collection('new')
     const puts = h.bucket.puts
     await push(h, user, 'new', records, 'the pdf')
-    // Mostly reused (leveled, the new collection's mark is one more).
-    expect(h.bucket.puts - puts).toBeLessThan(layoutConfig.levelNew ? 17 : 15)
+    // Mostly reused (leveled, the new collection's mark is one more, and the upload's
+    // pack carries its own index: two).
+    expect(h.bucket.puts - puts).toBeLessThan(layoutConfig.levelNew ? 19 : 15)
     ageAll(h)
 
     const sweep = await run(h, 'sweep')

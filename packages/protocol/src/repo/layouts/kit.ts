@@ -87,7 +87,31 @@ export interface PackInfo {
   level?: number
   /** A pack of replaced versions a leveled merge moved out, by month written (`2026-10`). */
   history?: string
+  /**
+   * The pack carries its own index (`packIndex`): its records' places, in a layer of
+   * its own, so a leveled collection finds what its levels hold without the index
+   * every copy used to need an entry in.
+   */
+  indexed?: true
 }
+
+/** The layer indexing a pack's records (`PackInfo.indexed`): named after the pack. */
+export const packIndexId = (pack: string) => `${pack}i`
+export const packIndex = (p: PackInfo): LayerInfo => ({
+  id: packIndexId(p.id),
+  level: 0,
+  seq: 0,
+  entries: p.records,
+  bytes: 0,
+  min: p.lo!,
+  max: p.hi!,
+})
+/** The objects of a pack, with its index's when it has one. */
+export const packKeys = (p: { id: string; indexed?: true }) => [
+  packKey(p.id),
+  packDirKey(p.id),
+  ...(p.indexed ? [layerKey(packIndexId(p.id)), layerDirKey(packIndexId(p.id))] : []),
+]
 
 /** The record type a key leads with (recordKey); '' for a key without one. */
 const typeOf = (key: string) => {
@@ -115,6 +139,7 @@ export class PackWriter {
   #type = ''
   #lo = ''
   #hi = ''
+  #index: LayerWriter | null = null
   readonly done: PackInfo[] = []
   readonly #writing = new Set<Promise<void>>()
   #error: unknown = null
@@ -128,6 +153,12 @@ export class PackWriter {
       history?: string
       /** Raw bytes a pack closes at (PACK_RAW). */
       packRaw?: number
+      /**
+       * Write each pack's own index (`PackInfo.indexed`) beside it; a promise is read
+       * when the pack is written (the index is built as records come, then dropped
+       * if it turns out unwanted).
+       */
+      index?: boolean | Promise<boolean>
     } = {},
   ) {}
 
@@ -144,10 +175,12 @@ export class PackWriter {
     if (!this.#id) {
       this.#id = newId()
       this.#lo = key
+      if (this.opts.index) this.#index = new LayerWriter(this.store, 0, packIndexId(this.#id))
     }
     this.#hi = key
     this.#lines.push(`${key}\t${line}`)
     const at = loc(this.#id, this.#blocks.length, this.#lines.length - 1)
+    this.#index?.add(key, at)
     this.#raw += key.length + line.length + 2
     this.#records++
     if (this.#raw >= BLOCK_RAW) this.#seal()
@@ -192,7 +225,9 @@ export class PackWriter {
       type: this.#type,
       lo: this.#lo,
       hi: this.#hi,
+      index: this.#index,
     }
+    this.#index = null
     this.#id = ''
     this.#blocks = []
     this.#records = 0
@@ -213,6 +248,7 @@ export class PackWriter {
     type: string
     lo: string
     hi: string
+    index: LayerWriter | null
   }) {
     const parts = await Promise.all(job.blocks)
     const offsets = [0]
@@ -220,6 +256,9 @@ export class PackWriter {
     await this.opts.hooks?.before?.(job.id)
     await putJoined(this.store, packKey(job.id), parts, { ifAbsent: true })
     await this.store.put(packDirKey(job.id), JSON.stringify(offsets), { ifAbsent: true })
+    // Its index after the pack itself: a listed pack's index is always there.
+    const indexed = job.index !== null && (await this.opts.index) === true
+    if (indexed) await job.index!.finish()
     const pack: PackInfo = {
       id: job.id,
       tier: this.opts.tier ?? 0,
@@ -231,6 +270,7 @@ export class PackWriter {
       hi: job.hi,
       ...(this.opts.level ? { level: this.opts.level } : {}),
       ...(this.opts.history ? { history: this.opts.history } : {}),
+      ...(indexed ? { indexed: true as const } : {}),
     }
     this.done.push(pack)
     await this.opts.hooks?.after?.(pack)
@@ -531,7 +571,6 @@ function pageAt(dir: LayerDir, key: string): number {
 }
 
 export class LayerWriter {
-  readonly id = newId()
   #pages: Promise<Uint8Array>[] = []
   #first: string[] = []
   #lines: string[] = []
@@ -546,6 +585,7 @@ export class LayerWriter {
   constructor(
     readonly store: Store,
     readonly level: number,
+    readonly id = newId(),
   ) {}
 
   /** Add in key order (a repeated key keeps the first). */
@@ -880,6 +920,8 @@ export interface Manifest {
    * one's packs. `packs` above is level 0.
    */
   levels?: Levels
+  /** A leveled collection's history level 0: replaced versions merges moved out, not yet merged down. */
+  history?: PackInfo[]
 }
 
 const empty = (): Manifest => ({ seq: 0, layers: [], packs: [], retired: [], stats: {} })
