@@ -540,28 +540,36 @@ export class KeyedLayout implements RecordStore {
     })
   }
 
-  /** Merge eight small packs of a tier into one, re-pointing their records in a new layer. */
+  /**
+   * Merge eight small packs of a tier and type into one, re-pointing their records in
+   * a new layer. A merge takes one type's packs, so its output holds one type and a
+   * type's records gather in fewer packs (a leaf read of one type at three years of
+   * Crossref dailies, simulated: 72 GETs at the median where mixing types took 255).
+   * Packs from before types were recorded merge among themselves.
+   */
   async #mergePacks(): Promise<boolean> {
     const m = await this.manifests.latest()
-    const tiers = new Map<number, PackInfo[]>()
+    const queues = new Map<string, { tier: number; packs: PackInfo[] }>()
     for (const p of m.packs) {
       if (KeyedLayout.final(p)) continue
-      tiers.set(p.tier, [...(tiers.get(p.tier) ?? []), p])
+      const q = `${p.tier}\u0000${p.type ?? ''}`
+      const queue = queues.get(q) ?? { tier: p.tier, packs: [] }
+      queue.packs.push(p)
+      queues.set(q, queue)
     }
-    // The tier with the most packs: the lowest that has enough never runs out while
-    // commits land, so higher tiers never merged (round 14 at 20,000 collections:
-    // 718 tier-1 packs listed and rising).
-    const [tier, most] = [...tiers].reduce<[number, number]>(
-      (best, [t, ps]) => (ps.length > best[1] ? [t, ps.length] : best),
-      [-1, 0],
-    )
-    if (most < FANOUT) return false
-    // As many of the tier's packs as fit MERGE_PACKS_BYTES stored (at least FANOUT): many
+    // The queue with the most packs: the lowest tier that has enough never runs out
+    // while commits land, so higher tiers never merged (round 14 at 20,000
+    // collections: 718 tier-1 packs listed and rising).
+    let queue: { tier: number; packs: PackInfo[] } | undefined
+    for (const q of queues.values()) if (q.packs.length > (queue?.packs.length ?? 0)) queue = q
+    if (!queue || queue.packs.length < FANOUT) return false
+    const tier = queue.tier
+    // As many of the queue's packs as fit MERGE_PACKS_BYTES stored (at least FANOUT): many
     // collections' tiny commits each write a tiny pack, and eight at a time fell behind
     // (6,639 waiting at 15,000 collections, every commit reading them all).
     const inputs: PackInfo[] = []
     let stored = 0
-    for (const p of tiers.get(tier)!) {
+    for (const p of queue.packs) {
       if (
         inputs.length >= FANOUT &&
         (stored + p.bytes > MERGE_PACKS_BYTES || inputs.length >= layoutConfig.mergeInputs)

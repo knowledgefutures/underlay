@@ -699,6 +699,8 @@ export const pushPacks = sqliteTable(
     records: integer('records'),
     bytes: integer('bytes'),
     raw: integer('raw'),
+    /** The record type the pack holds (PackInfo.type): merges take one type's packs. */
+    recordType: text('record_type'),
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.sessionId, t.packId] })],

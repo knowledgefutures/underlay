@@ -143,6 +143,8 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     const written = rows.filter((r) => r.records !== null)
     expect(written).toHaveLength(1)
     expect(written[0]!.records).toBe(300)
+    // Its type, so a merge once it's listed takes it with its own type's packs.
+    expect(written[0]!.recordType).toBe('Doc')
 
     // The commit indexes them where they are: no record is written again.
     expect(await commit(h, user, 'a', sid)).toBe(201)
@@ -284,11 +286,14 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     expect(out.filter((r) => /changed|small/.test(r))).toHaveLength(20)
     const repo = await h.ports.stores.forCollection(c.id)
     const layout = repo.records!.public as unknown as {
-      manifests: { latest(): Promise<{ packs: { id: string; tier: number }[] }> }
+      manifests: {
+        latest(): Promise<{ packs: { id: string; tier: number; type?: string }[] }>
+      }
     }
     const m = await layout.manifests.latest()
-    // Every small pack listed, or merged into one above them.
+    // Every small pack listed, or merged into one above them, and each says its type.
     expect(m.packs.some((p) => p.tier > 0) || m.packs.length >= 10).toBe(true)
+    expect(m.packs.every((p) => p.type === 'Doc')).toBe(true)
     expect(new Set(m.packs.map((p) => p.id)).size).toBe(m.packs.length)
   })
 
