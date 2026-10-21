@@ -220,7 +220,10 @@ describe('one version from many uploads', () => {
       })
     const status = async () => json(await h.request(`${path}/push/${sid}`, { user }))
     expect((await status()).progress).toMatchObject({ runs: 6, phase: null, units: null })
-    expect((await status()).progress.run_bytes).toBeGreaterThan(6 * 10 * 512)
+    // Runs hold the records, or on layout F their places in the uploads' packs.
+    if (process.env.UNDERLAY_TEST_LAYOUT === 'f')
+      expect((await status()).progress.run_bytes).toBeLessThan(6 * 10 * 512)
+    else expect((await status()).progress.run_bytes).toBeGreaterThan(6 * 10 * 512)
     Object.assign(compactConfig, { commitRuns: 2 })
     const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
     // Too many runs for one commit: it compacts first, and answers 202.

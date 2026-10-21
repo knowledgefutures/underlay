@@ -35,6 +35,7 @@ import {
   type Store,
   TooManyRunsError,
   treeObjects,
+  UPLOAD_PACK_FINAL_RAW,
   utf8ByteLength,
 } from '../../src/index.js'
 import {
@@ -623,6 +624,157 @@ describe("a commit's writer", () => {
     } finally {
       layoutConfig.writerRunEntries = saved
     }
+  })
+})
+
+describe("an upload's packs", () => {
+  const rec = (i: number, v = 1) => ({ key: ids[i]!, hash: `h${v}.${i}`, size: 10 })
+  const line = (i: number, v = 1) => `line ${v}.${i}`
+  const upload = (from: number, to: number, v = 1) =>
+    Array.from({ length: to - from }, (_, j) => {
+      // Out of key order, as a batch arrives.
+      const i = to - 1 - j
+      return { type: 'T', id: ids[i]!, hash: `h${v}.${i}`, line: line(i, v) }
+    })
+
+  it('are indexed where they lie, and merges re-point them once listed', async () => {
+    const saved = layoutConfig.graceMs
+    layoutConfig.graceMs = 0
+    try {
+      const root = memoryStore()
+      const layout = fLayout(root)
+      const packsNow = async () => (await root.list('runs/c1/packs/')).keys.length
+      // Ten small uploads, each into a pack of its own; their commits index them.
+      for (let u = 0; u < 10; u++) {
+        const recs = upload(u * 100, u * 100 + 100)
+        // Each pack is announced before it's written, and reported once it is.
+        const seen: string[] = []
+        const { places, packs } = await layout.writePacks(recs, {
+          before: async (id) => {
+            seen.push(`before ${id}`)
+            expect(await root.head(`runs/c1/packs/${id}.pk`)).toBeNull()
+          },
+          after: async (p) => void seen.push(`after ${p.id} ${p.records}`),
+        })
+        expect(packs).toHaveLength(1)
+        expect(seen).toEqual([`before ${packs[0]!.id}`, `after ${packs[0]!.id} 100`])
+        const before = await packsNow()
+        const w = layout.writer()
+        recs.forEach((_, i) => w.addPlaced('T', rec(u * 100 + (99 - i)), places[i]!))
+        await w.finish()
+        // The commit wrote no pack: only its index.
+        expect(await packsNow()).toBe(before)
+        await layout.adoptPacks(`s${u}`, packs)
+      }
+      const all = Array.from({ length: 1000 }, (_, i) => i)
+      const read = () =>
+        layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) })
+      expect(await read()).toEqual(all.map((i) => line(i)))
+      // Small packs: listed in the manifest, merged, their records re-pointed.
+      expect((await layout.manifests.latest()).packs).toHaveLength(10)
+      await layout.maintain()
+      await new Promise((r) => setTimeout(r, 5))
+      await layout.maintain()
+      const m = await layout.manifests.latest()
+      expect(m.packs.length).toBeLessThan(10)
+      expect(await read()).toEqual(all.map((i) => line(i)))
+    } finally {
+      layoutConfig.graceMs = saved
+    }
+  })
+
+  it('stream into whole packs when they arrive in key order', async () => {
+    // A sorted upload's records go straight into packs as they arrive: 16 MB raw
+    // each, not one pack a request.
+    const layout = fLayout(memoryStore())
+    const big = (i: number) => ({
+      type: 'T',
+      id: `k${String(i).padStart(5, '0')}`,
+      hash: `h${i}`,
+      line: `${i}:${'x'.repeat(20_000)}`,
+    })
+    const sorted = layout.uploadWriter()
+    const places: string[] = []
+    for (let i = 0; i < 1000; i++) {
+      places.push(sorted.append(big(i)))
+      await sorted.ready()
+    }
+    const packs = await sorted.finish()
+    // 20 MB of records: one full pack and the rest.
+    expect(packs).toHaveLength(2)
+    expect(packs[0]!.raw).toBeGreaterThanOrEqual(16 * 1024 * 1024)
+    expect(new Set(places.map((p) => p.split('.')[0])).size).toBe(2)
+    // Out of order, each step down starts a new pack.
+    const shuffled = layout.uploadWriter()
+    for (const i of [5, 6, 1, 2, 9, 3]) shuffled.append(big(i))
+    expect(await shuffled.finish()).toHaveLength(3)
+  })
+
+  it("count toward a commit writer's runs, written as it goes", async () => {
+    // A commit of packed entries alone must not hold every index entry to its end (#63).
+    const saved = layoutConfig.writerRunEntries
+    layoutConfig.writerRunEntries = 100
+    try {
+      const layout = fLayout(memoryStore())
+      const recs = upload(0, 350)
+      const { places } = await layout.writePacks(recs)
+      const w = layout.writer({ hold: true })
+      for (let j = 0; j < 350; j++) {
+        w.addPlaced('T', rec(349 - j), places[j]!)
+        await w.drain?.()
+      }
+      const runs = await w.finish()
+      expect(runs.map((r) => r.layers.length > 0)).toEqual([true, true, true, true])
+      // Index runs only: the records stay in the upload's pack.
+      expect(runs.every((r) => r.packs.length === 0)).toBe(true)
+      await layout.appendRuns(runs)
+      const all = Array.from({ length: 350 }, (_, i) => i)
+      expect(
+        await layout.leafLines({ hash: 'leaf', type: 'T', entries: all.map((i) => rec(i)) }),
+      ).toEqual(all.map((i) => line(i)))
+    } finally {
+      layoutConfig.writerRunEntries = saved
+    }
+  })
+
+  it('are listed once however often a commit retries, even after a merge took them', async () => {
+    const root = memoryStore()
+    const layout = fLayout(root)
+    const recs = upload(0, 50)
+    const { packs } = await layout.writePacks(recs)
+    await layout.adoptPacks('s1', packs)
+    await layout.adoptPacks('s1', packs)
+    expect((await layout.manifests.latest()).packs.map((p) => p.id)).toEqual([packs[0]!.id])
+    // As if a merge took it: a retry must not list it again.
+    await layout.manifests.update((m) => ({ ...m, packs: [] }))
+    await layout.adoptPacks('s1', packs)
+    expect((await layout.manifests.latest()).packs).toEqual([])
+
+    // A large one goes in the registry, once.
+    const large = { ...packs[0]!, raw: UPLOAD_PACK_FINAL_RAW }
+    await layout.adoptPacks('s2', [large])
+    await layout.adoptPacks('s2', [large])
+    expect((await layout.registry.read()).packs).toEqual([large])
+  })
+
+  it('are dropped for a push that never listed them, and kept once it did', async () => {
+    const root = memoryStore()
+    const layout = fLayout(root)
+    const named = upload(0, 20)
+    const a = await layout.writePacks(named)
+    await layout.adoptPacks('kept', a.packs)
+    const left = upload(20, 40)
+    const b = await layout.writePacks(left)
+    const files = async () => (await root.list('runs/c1/packs/')).keys
+    expect(await files()).toHaveLength(4)
+    expect(await layout.dropPacks('kept', [a.packs[0]!.id])).toEqual([])
+    expect(await layout.dropPacks('left', [b.packs[0]!.id, 'neverwritten'])).toEqual([
+      b.packs[0]!.id,
+      'neverwritten',
+    ])
+    expect((await files()).sort()).toEqual(
+      [`runs/c1/packs/${a.packs[0]!.id}.dir`, `runs/c1/packs/${a.packs[0]!.id}.pk`].sort(),
+    )
   })
 })
 

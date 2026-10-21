@@ -778,23 +778,25 @@ DELETE <collection>/push/<sid>            abandon the session
 
 **Opening a session.** The request body is a JSON object. Every member is OPTIONAL.
 
-| Member                 | Meaning                                                                                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `base`                 | The semver of the version the changes are against. If it is not the collection's head, the server MUST answer 409 with `currentVersion`. `null` or absent: the head at the time of opening |
-| `schemas`              | The complete type set, slug → schema (Section 5). It replaces the base's type set; a type omitted is removed with its records. Absent: the base's type set                                 |
-| `metadata`             | Replaces the base's metadata. An object or `null`                                                                                                                                          |
-| `metadata_patch`       | An object whose top-level members are merged into the base's metadata. Ignored if `metadata` is present. With neither, the base's metadata is kept                                         |
-| `files`                | `{"add": [fileHash, …], "remove": [fileHash, …]}`: files to declare or remove in addition to those records reference (Section 9)                                                           |
-| `message`              | A string recorded in the log entry                                                                                                                                                         |
-| `app_id`, `actor_id`   | Strings identifying the publishing application and actor                                                                                                                                   |
-| `strip_unknown_fields` | A boolean; see **Records**                                                                                                                                                                 |
+| Member                 | Meaning                                                                                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `base`                 | The semver of the version the changes are against. If it is not the collection's head, the server MUST answer 409 with `currentVersion`. `null` or absent: the head at the time of opening               |
+| `schemas`              | The complete type set, slug → schema (Section 5). It replaces the base's type set; a type omitted is removed with its records. Absent: the base's type set                                               |
+| `metadata`             | Replaces the base's metadata. An object or `null`                                                                                                                                                        |
+| `metadata_patch`       | An object whose top-level members are merged into the base's metadata. Ignored if `metadata` is present. With neither, the base's metadata is kept                                                       |
+| `files`                | `{"add": [fileHash, …], "remove": [fileHash, …]}`: files to declare or remove in addition to those records reference (Section 9)                                                                         |
+| `message`              | A string recorded in the log entry                                                                                                                                                                       |
+| `app_id`, `actor_id`   | Strings identifying the publishing application and actor                                                                                                                                                 |
+| `strip_unknown_fields` | A boolean; see **Records**                                                                                                                                                                               |
+| `in_key_order`         | A boolean: the client sends each records request's lines in key order (type, then id); see **Records**. A server MAY decline it (the response's `in_key_order` says), and MAY then allow larger requests |
 
-The response is 200 with `{"session_id", "base", "needed_files", "expires_at", "limits"}`:
+The response is 200 with `{"session_id", "base", "needed_files", "expires_at", "in_key_order", "limits"}`:
 
 - `base` is the semver the session is against, or `null` if the collection has no versions;
 - `needed_files` lists the declared files the server does not hold for the collection; the client
   MUST upload them before committing;
 - `expires_at` is when the session expires; it is extended by each records or deletes request;
+- `in_key_order` is whether the server took the session as key-ordered;
 - `limits` are the server's limits, by which a client MUST size its requests:
 
 | Limit                  | Meaning                                                           |
@@ -819,6 +821,10 @@ type's schema (Section 5.1), and its type MUST be in the session's type set.
   identified by its 1-based `line` number among the request's non-empty lines, and MUST store
   nothing from the request. A server MAY list only the first failures, with `totalErrors` giving
   their number.
+- In a session the server took as `in_key_order`, each request's lines MUST come in key order:
+  by type, then id, as UTF-8 bytes (equal keys allowed; the later wins). A line before the one
+  ahead of it fails the request with 422, and nothing from it is stored. Order across requests is
+  the client's to keep; a server MAY report how many requests overlapped earlier ones' key ranges.
 
 **Deletes.** `POST …/deletes` takes NDJSON lines `{"type", "id"}` and answers 200 with
 `{"received": n}`. Each line MUST satisfy the syntax, duplicate key, unsafe integer and lone surrogate rules, and its `id` and `type` the record id and type slug rules (Section 3); the type MUST be in the session's type set. Deleting a (type, id) the base does
@@ -861,7 +867,10 @@ server's storage: a client can upload a whole corpus into one session over many 
 days, and commit it as one version. A server keeps the uploads in storage rather than memory, and
 a background commit's status MAY carry `progress` (underlay.org: `runs`, `run_bytes`,
 `runs_compacting`, `phase` of `compacting`, `planning`, `units` or `assembling`, `units` done of
-`total`, and `progress_at`). An open session expires only after `session_idle_seconds` without an
+`total`, and `progress_at`). underlay.org's status also carries `in_key_order` and
+`overlapping_uploads`, the records requests whose key range overlapped an earlier one's: a corpus
+sent in key order, with none overlapping, is stored with each record next to its neighbours, and
+reads back with the fewest requests. An open session expires only after `session_idle_seconds` without an
 upload, so a client that stops can pick the same session up again by its id. Each version rewrites
 the leaves its changes land in, so one large version costs far less than the same records in many
 small ones.
@@ -909,7 +918,8 @@ The reference implementation defines these in `packages/protocol/src/constants.t
 test vectors repeat them.
 
 Server limits (Section 11.4) are not protocol constants. Informative: underlay.org advertises
-`open_bytes` 8 MiB, `batch_bytes` 8 MiB, `batch_lines` 10,000, `session_idle_seconds` 43,200,
+`open_bytes` 8 MiB, `batch_bytes` 8 MiB (64 MiB in an `in_key_order` session), `batch_lines`
+10,000 (50,000 in one), `session_idle_seconds` 43,200,
 `open_sessions` 20 and `file_bytes` 32 MiB; caps log pages at 1,000 entries, manifest pages at
 25,000 records and diff pages at 5,000 records or 4 MiB of records; stores records over 64 KiB
 out of line; and commits in the background when a session uploaded more than 100,000 records or a

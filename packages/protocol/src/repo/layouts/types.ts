@@ -5,13 +5,35 @@
  * holds. Neither changes a node, a root or any hash.
  */
 import type { RecordEntry } from '../../tree/node.js'
-import type { PendingRun } from './kit.js'
+import type { PackHooks, PackInfo, PendingRun } from './kit.js'
 
 export const LAYOUTS = ['today', 'f'] as const
 export type LayoutName = (typeof LAYOUTS)[number]
 
-/** A record entry as layout F carries it through a build: with its place once stored. */
-export type Placed = RecordEntry & { loc?: string }
+/**
+ * A record entry as layout F carries it through a build: with its place once stored.
+ * A record written into a pack at upload comes without its body: `packed` is its
+ * place there and `fileRefs` the files it references, read from it at upload.
+ */
+export type Placed = RecordEntry & { loc?: string; packed?: string; fileRefs?: string[] }
+
+/** A record an upload writes into a pack: its type, id, hash and canonical line. */
+export interface PackRecord {
+  type: string
+  id: string
+  hash: string
+  line: string
+}
+
+/** Writes an upload's records into packs (RecordStore.uploadWriter). */
+export interface UploadWriter {
+  /** Write one record: its place. */
+  append(record: PackRecord): string
+  /** Wait while too much is held (call between records): memory stays bounded. */
+  ready(): Promise<void>
+  /** Write the last pack and wait for every write: the packs written. */
+  finish(): Promise<PackInfo[]>
+}
 
 /** Records still in use, from a mark over every retained version (storage reclaim). */
 export interface LiveSet {
@@ -60,6 +82,25 @@ export interface RecordStore {
   appendRuns?(runs: HeldRun[]): Promise<void>
   /** Give a fork its records: it lists the parent's files and reads them where they are. */
   forkInto?(target: RecordStore): Promise<Record<string, number>>
+  /**
+   * A writer of an upload's records into packs of its own, outside the index and the
+   * manifest until a commit names them (`adoptPacks`). Records in key order fill whole
+   * packs; one below the last starts a new pack.
+   */
+  uploadWriter?(hooks?: PackHooks): UploadWriter
+  /** An upload's records into packs, sorted first: their places, in the order given. */
+  writePacks?(
+    records: readonly PackRecord[],
+    hooks?: PackHooks,
+  ): Promise<{ places: string[]; packs: PackInfo[] }>
+  /**
+   * List packs uploads wrote, once the commit's index names their records: large
+   * ones in the registry, small ones in the manifest for merges. `name` is the
+   * commit's, so a retry lists nothing twice.
+   */
+  adoptPacks?(name: string, packs: readonly PackInfo[]): Promise<void>
+  /** Delete packs uploads wrote for commit `name`, but none the collection lists: the ids deleted. */
+  dropPacks?(name: string, ids: readonly string[]): Promise<string[]>
 }
 
 export interface RecordWriter {
@@ -67,6 +108,8 @@ export interface RecordWriter {
   add(type: string, entry: RecordEntry, line: string): string
   /** Write a run out if enough is held (called as a build goes): memory stays bounded. */
   drain?(): Promise<void>
+  /** Index a record of type `type` an upload already wrote into a pack, at `place`; returns it. */
+  addPlaced(type: string, entry: RecordEntry, place: string): string
   /**
    * Write what's held: packs, the index layer, then the manifest. A writer made with
    * `hold` doesn't tell the manifest: its runs are returned, for the commit to name.

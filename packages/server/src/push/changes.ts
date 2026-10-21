@@ -9,6 +9,7 @@ import {
   keys,
   outOfLineHash,
   outOfLinePointer,
+  type Placed,
   type RecordEntry,
   type Repo,
   type SetName,
@@ -64,12 +65,13 @@ export async function takeStaged(
 
 export const isPrivateSchema = (s: Record<string, unknown>) => s.private === true
 
-export const toRecordEntry = (e: RunEntry): RecordEntry => ({
-  key: e.k,
-  hash: e.h!,
-  size: e.s!,
-  body: e.b!,
-})
+/** A run entry as the commit takes it: with its body, or its place in an upload's pack. */
+export function toRecordEntry(e: RunEntry): RecordEntry {
+  if (e.l === undefined) return { key: e.k, hash: e.h!, size: e.s!, body: e.b! }
+  const placed: Placed = { key: e.k, hash: e.h!, size: e.s!, packed: e.l }
+  if (e.r) placed.fileRefs = e.r
+  return placed
+}
 
 /** Which sets of a type the base has a tree in. */
 export interface BaseSets {
