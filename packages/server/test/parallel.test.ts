@@ -3,6 +3,7 @@ import { gunzipSync } from 'node:zlib'
 
 import {
   boundaryBytes,
+  iterate,
   recordTree,
   RepoSource,
   trailingZeros,
@@ -169,6 +170,52 @@ describe('parallel commit', () => {
     expect(status.status).toBe('committed')
   })
 
+  it("names a commit's records in layout F's index once a tree, not once a unit", async () => {
+    // A unit's runs went in a pending object each: a 30M push left ~3,300, and a cold
+    // isolate's first manifest read reads them all.
+    const h = await harness({ newCollections: 'f' })
+    const user = await h.member()
+    const c = await h.collection('fh')
+    const path = '/api/collections/org/fh'
+    const id = (i: number) => `r${String(i).padStart(5, '0')}`
+    const pending: string[] = []
+    const put = h.bucket.put.bind(h.bucket)
+    h.bucket.put = (key, body, opts) => {
+      if (key.startsWith(`repo/runs/${c.id}/`) && key.includes('/manifest/f/pending/'))
+        pending.push(key)
+      return put(key, body, opts)
+    }
+    // Marks are where units can be cut: a dozen units.
+    const m = markIds('fm', 12)
+    const records = [
+      ...Array.from({ length: 6000 }, (_, i) => rec(id(i), `n${i}`)),
+      ...m.map((k) => rec(k, k)),
+    ]
+    const { sid } = await push(h, user, path, { schemas: { Author } }, [records], [], {
+      unitBytes: 1,
+    })
+    h.bucket.put = put
+    const units = await h.ports.db
+      .select()
+      .from(schema.commitUnits)
+      .where(eq(schema.commitUnits.sessionId, sid))
+    expect(units.filter((u) => !u.gap).length).toBeGreaterThan(4)
+    // One type in one set: one object, however many units.
+    expect(pending.length).toBe(1)
+    const t = await trees(h, c.id)
+    expect(t.public.count).toBe(6012)
+    let n = 0
+    for await (const e of iterate(
+      new RepoSource(recordTree, t.repo, { set: 'public', type: 'Author' }),
+      t.public.root,
+      {
+        payloads: true,
+      },
+    ))
+      if (e.body) n++
+    expect(n).toBe(6012)
+  })
+
   it('builds the same trees as the serial commit', async () => {
     const h = await harness()
     const user = await h.member()
@@ -307,7 +354,8 @@ describe('parallel commit', () => {
   }, 60_000)
 
   it('keeps large base records as pointers when units rewrite their leaves', async () => {
-    const h = await harness()
+    // Pointers in leaf bodies: today's layout's (F keeps records out of leaves).
+    const h = await harness({ newCollections: 'today' })
     const user = await h.member()
     const a = await h.collection('ka')
     const b = await h.collection('kb')

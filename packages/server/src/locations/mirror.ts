@@ -10,7 +10,11 @@
  * reaches that the previous version doesn't, then the file bytes it added, the
  * private set object (public+private placements only), the root, then
  * collection.json, the signed log entry and head.json, in the repository's
- * write order. Backfill is the same loop from version 1. A copy stops after a
+ * write order. Layout F keeps records out of leaf bodies, in files of the
+ * collection's own, a set's apart: after the nodes, the job copies those of the
+ * sets the placement holds that it hasn't yet, as they are, and the manifest
+ * that lists them (KeyedLayout.mirrorFiles).
+ * Backfill is the same loop from version 1. A copy stops after a
  * budget and resumes from a cursor (the tree and last key done), so no single
  * job copies more than a few thousand objects. Copies are tracked in the
  * placement row, never found by HEAD requests: a write-only mirror can't read.
@@ -23,6 +27,8 @@ import {
   type FileEntry,
   fileTree,
   jcs,
+  KeyedLayout,
+  type RecordSet,
   keys,
   type LogEntry,
   putFromParts,
@@ -50,6 +56,65 @@ export const mirrorConfig = {
   fileBytesPerJob: 256 * 1024 * 1024,
   /** Files are read and written in parts of this size (S3 joins parts under 5 MiB). */
   partBytes: 8 * 1024 * 1024,
+  /** A packed layout's record files one job copies before it queues the rest. */
+  recordFilesPerJob: 500,
+}
+
+/** A set's record files (F) a mirror placement holds: copied once, and dropped once no manifest lists them. */
+const copiedKey = (placementId: string, set: RecordSet) =>
+  `mirrors/${placementId}/record-files${set === 'public' ? '' : `-${set}`}.json`
+
+/**
+ * Copy a packed layout's record files a placement lacks, then the manifest naming
+ * them. False when the job's budget ran out first (the next job carries on: what
+ * was copied is remembered).
+ */
+async function copyRecordFiles(
+  ports: Ports,
+  repo: { blobs: Store; records: KeyedLayout },
+  dest: Store,
+  placementId: string,
+  set: RecordSet,
+): Promise<boolean> {
+  const { files, manifest, manifestKeys } = await repo.records.mirrorFiles()
+  const saved = await ports.stores.internal.get(copiedKey(placementId, set))
+  const copied = new Set<string>(saved ? (JSON.parse(await saved.text()) as string[]) : [])
+  const remember = () =>
+    ports.stores.internal.put(copiedKey(placementId, set), JSON.stringify([...copied]))
+  let n = 0
+  for (const f of files) {
+    if (copied.has(f.key)) continue
+    const head = await repo.blobs.head(f.key)
+    if (!head) {
+      if (f.optional) continue
+      // Swept since the listing (a merge replaced it): the next job lists again. Still
+      // listed and still missing is a broken collection, not something to wait out.
+      const again = await repo.records.mirrorFiles()
+      if (again.files.some((g) => g.key === f.key) && !(await repo.blobs.head(f.key)))
+        throw new Error(`Record file ${f.key} is listed but missing`)
+      return remember().then(() => false)
+    }
+    await putFromParts(dest, f.key, readParts(repo.blobs, f.key, head.size, mirrorConfig.partBytes))
+    copied.add(f.key)
+    if (++n >= mirrorConfig.recordFilesPerJob) return remember().then(() => false)
+  }
+  await dest.put(manifestKeys.numbered, JSON.stringify(manifest), {
+    contentType: 'application/json',
+  })
+  await dest.put(manifestKeys.head, JSON.stringify(manifest), { contentType: 'application/json' })
+  // What no manifest lists any more (merged away) goes from the mirror too, but for
+  // files another placement at this location may hold (KeyedLayout.mirrorDroppable).
+  const listed = new Set(files.map((f) => f.key))
+  const { drop, forget } = await repo.records.mirrorDroppable(
+    [...copied].filter((k) => !listed.has(k)),
+  )
+  for (const k of drop) {
+    await dest.delete(k).catch(() => undefined)
+    copied.delete(k)
+  }
+  for (const k of forget) copied.delete(k)
+  await remember()
+  return true
 }
 
 type Placement = typeof schema.placements.$inferSelect
@@ -190,6 +255,10 @@ export async function mirrorStep(ports: Ports, placementId: string): Promise<boo
     const dest = await locationStore(ports, loc)
     const sets: SyncSets = p.sets === 'public+private' ? 'all' : 'public'
     const work = await versionWork(repo, version.hash, { base: prev?.hash ?? null, sets })
+    // Layout F keeps each set's records in files of its own: a mirror copies the sets
+    // it holds, so a public-only mirror never gets a private record.
+    const packed = repo.records
+    const recordSets: RecordSet[] = sets === 'all' ? ['public', 'private'] : ['public']
     const cursor = saved?.seq === seq ? saved : { seq, tree: -1, after: null }
     const raw = async (key: string) => {
       const obj = await repo.blobs.get(key)
@@ -228,6 +297,15 @@ export async function mirrorStep(ports: Ports, placementId: string): Promise<boo
 
     // File bytes the version added to the sets this placement holds.
     const filesStep = work.trees.length
+    // F's record files and manifest, before the version can be named.
+    if (packed && cursor.tree <= filesStep && (cursor.tree < filesStep || cursor.after === null)) {
+      for (const set of recordSets) {
+        const records = packed[set]
+        if (!(records instanceof KeyedLayout)) continue
+        if (!(await copyRecordFiles(ports, { blobs: repo.blobs, records }, dest, p.id, set)))
+          return save(filesStep, null)
+      }
+    }
     if (cursor.tree <= filesStep) {
       const source = new RepoSource(fileTree, repo)
       const added: FileEntry[] = []

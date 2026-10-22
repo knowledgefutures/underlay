@@ -62,8 +62,12 @@ export interface RunEntry {
   s?: number
   /** Pushed as private. */
   p?: boolean
-  /** The canonical record (records runs). */
+  /** The canonical record (records runs), unless it's in a pack (`l`). */
   b?: string
+  /** Layout F: the record's place in a pack the upload wrote (push/packs.ts). */
+  l?: string
+  /** With `l`: the files the record references, read at upload. */
+  r?: string[]
   /** A delete (delta deletes runs). */
   x?: boolean
   /** Precedence: the seq of the upload this entry came from (compacted runs only). */
@@ -398,9 +402,16 @@ export class RunWriter {
   }
 }
 
-export async function writeRunIndex(store: Store, sessionId: string, index: RunIndex) {
+export async function writeRunIndex(
+  store: Store,
+  sessionId: string,
+  index: RunIndex,
+  /** Keep an index already there (it's the same: a compaction's pieces joined twice). */
+  opts: { ifAbsent?: boolean } = {},
+) {
   await store.put(indexKey(sessionId, index.seq), JSON.stringify({ v: 2, ...index }), {
     contentType: 'application/json',
+    ...(opts.ifAbsent ? { ifAbsent: true } : {}),
   })
 }
 

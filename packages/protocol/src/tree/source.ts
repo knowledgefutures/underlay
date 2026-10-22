@@ -18,6 +18,17 @@ export interface NodeSource<E> {
    * large records is never held whole. Readers fall back to `leafEntries`.
    */
   leafStream?(hash: string): AsyncIterable<E>
+  /**
+   * A leaf's entries without payloads, for a merge in a layout that doesn't keep
+   * records in leaves (repo/layouts): unchanged entries pass through unread.
+   */
+  readonly sparseStream?: ((hash: string) => AsyncIterable<E>) | undefined
+  /** An entry from `sparseStream` with its payload (a changed entry's old version). */
+  withPayload?(leafHash: string, e: E): Promise<E>
+  /** Some of a leaf's entries with payloads, reading only those (packed layouts). */
+  readonly payloadsAt?:
+    | ((leafHash: string, entries: readonly E[], at: readonly number[]) => Promise<E[]>)
+    | undefined
 }
 
 /** A leaf's entries with payloads: streamed where the source can. */

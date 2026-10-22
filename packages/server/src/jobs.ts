@@ -53,6 +53,11 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'cleanup.internal',
   'cleanup.mark',
   'cleanup.sweep',
+  // Layout F's merges after a commit.
+  'layout.maintain',
+  // Its reclaim, a key range a job (cleanup/layout-reclaim.ts), and merges too large for one job.
+  'layout.reclaim',
+  'layout.merge',
 ])
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)

@@ -6,6 +6,37 @@
 export * from './format.js'
 export * from './repo/types.js'
 export * from './repo/repo.js'
+// Record layouts: today's (leaf bodies) and F (packs per collection and set), record-storage-layout.md.
+export {
+  headConfig,
+  HomeStore,
+  type Inherited,
+  type HeldRun,
+  KeyedLayout,
+  LAYOUTS,
+  type LayerInfo,
+  type LayoutName,
+  layoutConfig,
+  type LiveSet,
+  type MergePlan,
+  type PackInfo,
+  type PackHooks,
+  type PackRecord,
+  type UploadWriter,
+  type Placed,
+  MissingRecordError,
+  RECLAIM_MAX_RUNS,
+  type ReclaimPlan,
+  recordIdKey,
+  recordKey,
+  UPLOAD_PACK_FINAL_RAW,
+  type RecordSet,
+  type RecordSets,
+  setHome,
+  TooManyRunsError,
+  type TypedLeaf,
+} from './repo/layouts/index.js'
+export { LiveHashes, markRange, recordRoots, type TypedRoot } from './repo/layouts/reclaim.js'
 export {
   fsck,
   type FsckCursor,

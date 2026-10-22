@@ -336,7 +336,9 @@ async function joinPieces(ports: Ports, sessionId: string, seq: number, plan: Co
     parts.push(...(JSON.parse(await obj.text()) as RunPart[]))
   }
   const index: RunIndex = { seq, tier: plan.tier, parts }
-  await writeRunIndex(store, sessionId, index)
+  // The last two pieces can finish together and both join: the index is the same,
+  // written once (a second write of a key within a second is one R2 refuses).
+  await writeRunIndex(store, sessionId, index, { ifAbsent: true })
   await finishCompaction(ports, sessionId, seq, index)
 }
 

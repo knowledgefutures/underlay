@@ -328,6 +328,53 @@ describe('recovering stalled commits', () => {
     expect(res.status).toBe(201)
   })
 
+  it("writes a compaction's run index once when its last pieces finish together", async () => {
+    // Each of the last two pieces sees every piece done and joins them: the index was
+    // written twice within a second, which R2 refuses (the scale bench, 2026-10-19).
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('join')
+    const path = '/api/collections/org/join'
+    Object.assign(compactConfig, { pieceBytes: 1 })
+    const all = ids(MERGE_FAN_IN * 5)
+    const batches = Array.from({ length: MERGE_FAN_IN }, (_, i) =>
+      all.slice(i * 5, i * 5 + 5).map(rec),
+    )
+    const sid = await upload(h, user, path, batches)
+    const jobs = (type: string) =>
+      h.ports.db.select().from(schema.jobs).where(eq(schema.jobs.type, type))
+    while ((await jobs('push.compactPiece')).length === 0)
+      expect(await drainSqliteJobs(h.ports, { max: 1 })).toBe(1)
+    const pieces = (await jobs('push.compactPiece')).map(
+      (j) => (j.payload as unknown as { piece: number }).piece,
+    )
+    expect(pieces.length).toBeGreaterThan(1)
+    const [run] = await h.ports.db
+      .select()
+      .from(schema.pushRuns)
+      .where(eq(schema.pushRuns.sessionId, sid))
+    const seq = run!.mergingInto!
+    const internal = h.ports.stores.internal
+    const put = internal.put.bind(internal)
+    const writes: { ifAbsent: boolean }[] = []
+    internal.put = (key, body, opts) => {
+      if (key.endsWith(`/runs/${seq}/index.json`)) writes.push({ ifAbsent: !!opts?.ifAbsent })
+      return put(key, body, opts)
+    }
+    // Every piece at once: the last ones finish together.
+    await Promise.all(pieces.map((p) => compactPiece(h.ports, sid, seq, p)))
+    internal.put = put
+    expect(writes.length).toBeGreaterThan(0)
+    expect(writes.every((w) => w.ifAbsent)).toBe(true)
+    await dropJobs(h, 'push.compactPiece')
+    await h.drain()
+    const runs = await h.ports.db
+      .select()
+      .from(schema.pushRuns)
+      .where(eq(schema.pushRuns.sessionId, sid))
+    expect(runs.map((r) => [r.tier, r.mergingInto])).toEqual([[1, null]])
+  })
+
   it('leaves a long compaction alone while its pieces keep finishing', async () => {
     const h = await harness()
     const user = await h.member()

@@ -39,8 +39,16 @@ import {
   versionDigest,
   versionHash,
 } from '../format.js'
-import { gunzipText, splitLines } from './gzip.js'
-import { IntegrityError, keys, outOfLineHash, type Repo } from './repo.js'
+import { gunzipText, gzip, splitLines } from './gzip.js'
+import { leafChunks } from './layouts/index.js'
+import {
+  IntegrityError,
+  isNodeDelta,
+  keys,
+  OUT_OF_LINE_BYTES,
+  outOfLineHash,
+  type Repo,
+} from './repo.js'
 
 /** Which sets a sync moves: `public`, or `all` (public and private). */
 export type SyncSets = 'public' | 'all'
@@ -177,23 +185,61 @@ export async function versionWork(
  * One tree's new objects, top down: nodes, and after each record leaf its
  * out-of-line records and body. `resumeKey` marks the objects after which a
  * walk can stop and resume with `after` (each leaf's last key).
+ *
+ * Layout F keeps no leaf bodies. A mirror copies its record files as they are
+ * (KeyedLayout.mirrorFiles), so by default its leaves come without one; with
+ * `bodies`, each is built from the leaf's stored records (out-of-line ones as
+ * pointers, as a body stores them), for a receiver that takes today's format.
  */
 export async function* treeObjects(
   repo: Repo,
   tree: SyncTree,
   after: string | null = null,
+  opts: { bodies?: boolean } = {},
 ): AsyncGenerator<PackObject & { resumeKey?: string }> {
   const source = tree.kind === 'records' ? nodesOnly(repo, recordTree) : nodesOnly(repo, fileTree)
   for await (const n of newNodes(source as NodeSource<unknown>, tree.base, tree.target, {
     after,
   })) {
-    const node = { key: keys.node(n.hash), bytes: await raw(repo, keys.node(n.hash)) }
+    // A node stored as a delta (node deltas) goes in full: a receiver checks each node
+    // against its hash, and a mirror may not hold the node a delta is against (another
+    // version's, a fork's parent's, or a private leaf a public mirror never gets). The
+    // cost: a mirror stores rewritten leaves in full, a delta being under a quarter of one.
+    let bytes = await raw(repo, keys.node(n.hash))
+    if (n.level === 0 && isNodeDelta(await gunzipText(bytes)))
+      bytes = await gzip(await repo.nodeJson(n.hash))
+    const node = { key: keys.node(n.hash), bytes }
     if (n.level !== 0) {
       yield node
       continue
     }
     if (tree.kind === 'files') {
       yield { ...node, resumeKey: n.lastKey }
+      continue
+    }
+    // A packed layout's records aren't in leaf bodies: the layout's own files carry
+    // them (KeyedLayout.mirrorFiles), but for records over OUT_OF_LINE_BYTES, objects
+    // of their own as in any layout. The leaf's entries say which (by size, the one
+    // threshold every writer uses), with no record read.
+    if (repo.records) {
+      const leaf = await repo.decoded(recordTree, n.hash)
+      const entries = leaf.kind === 'leaf' ? leaf.entries : []
+      if (opts.bodies) yield node
+      for (const e of entries)
+        if (e.size > OUT_OF_LINE_BYTES)
+          yield { key: keys.record(e.hash), bytes: await raw(repo, keys.record(e.hash)) }
+      if (!opts.bodies) {
+        yield { ...node, resumeKey: n.lastKey }
+        continue
+      }
+      // Built a member per few MB of records, so the leaf is never held raw: as stored, a
+      // body is gzip members, and only its compressed size is held (as a stored one is).
+      const store = repo.records[tree.set]
+      const leafOf = { hash: n.hash, type: tree.slug!, entries }
+      const members: Uint8Array[] = []
+      for (const at of leafChunks(entries))
+        members.push(await gzip((await store.linesAt(leafOf, at)).join('\n') + '\n'))
+      yield { key: keys.body(n.hash), bytes: concatBytes(members), resumeKey: n.lastKey }
       continue
     }
     yield node
@@ -206,6 +252,16 @@ export async function* treeObjects(
   }
 }
 
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0))
+  let at = 0
+  for (const p of parts) {
+    out.set(p, at)
+    at += p.byteLength
+  }
+  return out
+}
+
 /** The objects version `target` reaches that `opts.base` doesn't. */
 export async function* packVersion(
   repo: Repo,
@@ -215,7 +271,9 @@ export async function* packVersion(
   const work = await versionWork(repo, target, opts)
   for (const key of work.schemas) yield { key, bytes: await raw(repo, key) }
   for (const tree of work.trees) {
-    for await (const { key, bytes } of treeObjects(repo, tree)) yield { key, bytes }
+    // A receiver takes leaf bodies: layout F's are built from its records.
+    for await (const { key, bytes } of treeObjects(repo, tree, null, { bodies: true }))
+      yield { key, bytes }
   }
   if (work.privateSet) yield { key: work.privateSet, bytes: await raw(repo, work.privateSet) }
   yield { key: work.rootKey, bytes: await raw(repo, work.rootKey) }

@@ -370,9 +370,9 @@ export function versionRoutes() {
     const want = c.req.query('type')
     const types = view.types.filter((t) => t.public?.root && (!want || t.slug === want))
     if (want && types.length === 0) return jsonError(c, 404, `No public records of type ${want}`)
-    const source = new RepoSource(recordTree, view.repo)
     const members = async function* () {
       for (const t of types) {
+        const source = new RepoSource(recordTree, view.repo, { set: 'public', type: t.slug })
         for await (const leaf of leaves(source, t.public!.root)) {
           const node = await source.node(leaf.hash)
           const entries = (node.kind === 'leaf' ? node.entries : []) as RecordEntry[]
@@ -383,7 +383,8 @@ export function versionRoutes() {
           c.var.meter.logicalBytes =
             (c.var.meter.logicalBytes ?? 0) +
             entries.reduce((n, e) => (view.withheld.has(e.hash) ? n : n + e.size + 1), 0)
-          if (plain) {
+          // F keeps no leaf bodies: its records come through the leaf stream.
+          if (plain && !view.repo.records) {
             yield await view.repo.rawBody(leaf.hash)
             continue
           }
@@ -784,7 +785,11 @@ async function* diffAll(
   cursor: { t: string; k: string } | null,
   { moves = false }: { moves?: boolean } = {},
 ): AsyncGenerator<TypedDiff> {
-  const source = new RepoSource(recordTree, to.repo)
+  // A set's records from its own source: layout F keeps them apart.
+  const sources = {
+    public: new RepoSource(recordTree, to.repo, { set: 'public' }),
+    private: new RepoSource(recordTree, to.repo, { set: 'private' }),
+  }
   // A change to a blocked record (the denylist) isn't served.
   const shown = (d: TypedDiff) => !(d.after && to.withheld.has(d.after.hash))
   const slugs = new Set([...(from?.types.map((t) => t.slug) ?? []), ...to.types.map((t) => t.slug)])
@@ -798,7 +803,7 @@ async function* diffAll(
     const side = (set: 'public' | 'private') =>
       set === 'private' && !to.owner
         ? null
-        : diffTrees(source, a?.[set]?.root ?? null, b?.[set]?.root ?? null, after)[
+        : diffTrees(sources[set], a?.[set]?.root ?? null, b?.[set]?.root ?? null, after)[
             Symbol.asyncIterator
           ]()
     const pub = side('public')

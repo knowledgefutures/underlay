@@ -47,6 +47,7 @@ import {
   mergeTree,
   type NodeDesc,
   type BodyRead,
+  type HeldRun,
   type RecordEntry,
   recordPayloadBytes,
   recordTree,
@@ -187,6 +188,11 @@ interface UnitOutput {
   stats: { added: number; removed: number; updated: number }
   /** File reference count deltas: [fileHash, delta]. */
   refs: [string, number][]
+  /**
+   * Layout F: the index runs and packs it wrote, held back from the manifest; the
+   * assembly names a tree's together (one pending object a tree, not one a unit).
+   */
+  records?: HeldRun[]
 }
 
 type UnitRow = typeof schema.commitUnits.$inferSelect
@@ -444,7 +450,9 @@ interface TypeMode {
  * type (so moving them is O(files)): public → private with nothing in the
  * private set yet, and private → public with no private upsert of the type in
  * this push. Anything else that changes privacy, and a type removed from a base
- * without per-type counts, stays serial at the cost of the type.
+ * without per-type counts, stays serial at the cost of the type. In layout F a
+ * moved type's records move to the other set's packs (build.ts copyRecords), so
+ * every privacy change is serial there, at the cost of the type.
  */
 async function typeModes(
   repo: Repo,
@@ -472,11 +480,11 @@ async function typeModes(
     const pubRoot = pubBase?.root ?? null
     const privRoot = privBase?.root ?? null
     if (isPrivateSchema(s) && pubRoot) {
-      if (!privRoot && tracked.public) mode.move = 'toPrivate'
+      if (!privRoot && tracked.public && !repo.records) mode.move = 'toPrivate'
       else mode.serialOnly = bytes
     } else if (!isPrivateSchema(s) && !pubBase && privBase) {
       const privateUpserts = runs.some((ix) => partsInRange(ix, { type: slug }).some((p) => p.p))
-      if (tracked.private && !privateUpserts) mode.move = 'toPublic'
+      if (tracked.private && !privateUpserts && !repo.records) mode.move = 'toPublic'
       else mode.serialOnly = bytes
     }
     modes[slug] = mode
@@ -897,7 +905,13 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   const set = unit.set as SetName
   const repo = await ports.stores.forCollection(session.collectionId)
   // Writes in flight hold compressed leaves; halved from the default so two units fit an isolate.
-  const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, ...unitSink })
+  const sink = new RepoSink<RecordEntry>(repo, {
+    bodyOf: bodyOfRecord,
+    ...unitSink,
+    set,
+    type: unit.type,
+    holdRecords: true,
+  })
   const range = { after: unit.after, through: unit.through }
   // Progress in the Worker's log, so a unit that dies (out of memory, say) shows
   // how far it got, the largest things it met, and what else its isolate ran.
@@ -920,6 +934,16 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   )
   const leaves: NodeDesc[] = []
   const refs = new FileRefDelta()
+  // A base with no file references in this set: old records can't hold any, so a
+  // packed layout needn't read them (the scale bench, round 3).
+  const [baseRefs] = session.baseVersionId
+    ? await ports.db
+        .select({ pub: schema.versions.publicRefsRoot, priv: schema.versions.privateRefsRoot })
+        .from(schema.versions)
+        .where(eq(schema.versions.id, session.baseVersionId))
+    : []
+  if (!baseRefs || (set === 'public' ? baseRefs.pub : baseRefs.priv) === null)
+    refs.noOldRefs.add(set)
   // A privacy change merges into the moved tree (`bases`).
   const into = (t.bases ?? t)[set].root
   // Base bodies by how they were read, and their stored bytes where known.
@@ -933,7 +957,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
   // The most members compressing at a leaf's end: what a leaf's write holds raw.
   let mostCompressing = 0
   const merged = await mergeTree(
-    new RepoSource(recordTree, repo, { onBodyRead, pointers: true }),
+    new RepoSource(recordTree, repo, { onBodyRead, pointers: true, set, type: unit.type }),
     sink,
     into,
     changes,
@@ -951,6 +975,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
           )
       },
       onChange: (before, after) => refs.record(set, before, after, unit.type),
+      oldPayloads: !refs.noOldRefs.has(set),
     },
   )
   log(
@@ -966,6 +991,7 @@ async function runPendingUnit(ports: Ports, unit: UnitRow, session: SessionRow):
     leaves,
     stats: { added, removed, updated },
     refs: [...refs.refs[set]].filter(([, n]) => n !== 0),
+    ...(sink.held.length ? { records: sink.held } : {}),
   }
   const outputKey = `${planDir(session.id, unit.planId)}/${unit.id}.out.json`
   await putJson(ports, outputKey, output)
@@ -1112,9 +1138,15 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
 
     const plan = await getJson<CommitPlan>(ports, `${planDir(sessionId, planId)}/plan.json`)
     const repo = await ports.stores.forCollection(session.collectionId)
-    // Base leaves keep large records as pointers, as in units (runPendingUnit).
-    const source = new RepoSource(recordTree, repo, { pointers: true })
-    const sink = new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord })
+    // Base leaves keep large records as pointers, as in units (runPendingUnit). A source
+    // a tree and a sink a set (told each tree's type): layout F reads and writes each
+    // set's records apart, and finds them by type.
+    const sourceOf = (set: SetName, type: string) =>
+      new RepoSource(recordTree, repo, { pointers: true, set, type })
+    const sinks = {
+      public: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'public' }),
+      private: new RepoSink<RecordEntry>(repo, { bodyOf: bodyOfRecord, set: 'private' }),
+    }
     const built: Record<string, { public: TreeSummary; private: TreeSummary }> = {}
     for (const [slug, t] of Object.entries(plan.types)) built[slug] = { ...(t.bases ?? t) }
     const refs = new FileRefDelta()
@@ -1150,6 +1182,7 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
       const countStats = !(plan.types[type]!.move === 'toPublic' && set === 'public')
       const treeStats = { added: 0, removed: 0, updated: 0 }
       const treeRefs = new Map<string, number>()
+      const treeRuns: HeldRun[] = []
       // Each segment's output is read once, when assembly reaches it.
       const segments: Segment[] = units.map((u) => ({
         after: u.after,
@@ -1163,11 +1196,18 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
           }
           // A unit covers one type, so its deltas are that type's too.
           for (const [h, n] of out.refs) treeRefs.set(h, (treeRefs.get(h) ?? 0) + n)
+          if (out.records) treeRuns.push(...out.records)
           return out.leaves
         },
       }))
       const treeStarted = Date.now()
-      const result = await assembleTree(source, sink, built[type]![set].root, segments)
+      sinks[set].type = type
+      const result = await assembleTree(
+        sourceOf(set, type),
+        sinks[set],
+        built[type]![set].root,
+        segments,
+      )
       console.log(
         `[assemble] ${isolateTag()} ${sessionId} ${type}/${set}: ${segments.length} segments ` +
           `in ${Math.round((Date.now() - treeStarted) / 1000)}s, ${JSON.stringify(result.stats)}`,
@@ -1184,14 +1224,17 @@ export async function assembleParallel(ports: Ports, sessionId: string): Promise
         stats: treeStats,
         refs: [...treeRefs],
       }
-      // The tree's nodes are written before it counts as done.
-      await sink.flush()
+      // The tree's nodes are written before it counts as done, and in layout F its units'
+      // records named in the set's index (a retry writing them again folds in once).
+      await sinks[set].flush()
+      await repo.records?.[set].appendRuns?.(treeRuns)
       await putJson(ports, treeKey, tree)
       take(tree)
       builtHere++
       await touch(ports, sessionId)
     }
-    await sink.flush()
+    await sinks.public.flush()
+    await sinks.private.flush()
 
     const assembled: Assembled = { built, refs: refsOut(refs), stats }
     if (Object.values(plan.types).some((t) => t.validate)) {
@@ -1415,7 +1458,7 @@ export async function runValidation(
     const inputs = await loadInputs(ports, sessionId)
     const validate = compileSchema(inputs.schemas[t.type]!)
     const repo = await ports.stores.forCollection(session.collectionId)
-    const source = new RepoSource(recordTree, repo)
+    const source = new RepoSource(recordTree, repo, { set: t.set, type: t.type })
     const result: ValidationResult = { total: 0, errors: [] }
     for await (const e of entriesInRange(source, t.root, t.after, t.through)) {
       const errs = validate((JSON.parse(e.body!) as { data: unknown }).data)

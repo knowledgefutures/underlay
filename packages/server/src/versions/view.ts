@@ -154,13 +154,14 @@ export async function* typeRecords(
     if (opts.offset >= type.count) return
     after = await keyBeforeOffset(source, pubRoot, privRoot, opts.offset)
   }
-  const it = (root: string | null) =>
-    iterate(source, root, {
+  // Each set's records from its own source: layout F keeps them apart.
+  const it = (root: string | null, set: 'public' | 'private') =>
+    iterate(new RepoSource(recordTree, view.repo, { set, type: type.slug }), root, {
       payloads: opts.bodies ?? false,
       stream: true,
       ...(after !== undefined ? { after } : {}),
     })
-  for await (const { e, set } of mergeById(it(pubRoot), it(privRoot))) {
+  for await (const { e, set } of mergeById(it(pubRoot, 'public'), it(privRoot, 'private'))) {
     if (view.withheld.has(e.hash)) continue
     yield { ...e, type: type.slug, set }
   }
@@ -220,12 +221,12 @@ export async function getRecord(
   type: TypeView,
   id: string,
 ): Promise<VisibleRecord | null> {
-  const source = new RepoSource(recordTree, view.repo)
   for (const [set, tree] of [
     ['public', type.public],
     ['private', view.owner ? type.private : null],
   ] as const) {
     if (!tree?.root) continue
+    const source = new RepoSource(recordTree, view.repo, { set, type: type.slug })
     const hit = await getEntry(source, tree.root, id)
     if (!hit) continue
     if (view.withheld.has(hit.hash)) return null
@@ -240,6 +241,18 @@ async function bodyOf(source: RepoSource<RecordEntry>, root: string, key: string
   for (;;) {
     const node = await source.node(hash)
     if (node.kind === 'leaf') {
+      if (source.repo.records) {
+        // A packed layout reads the one record.
+        const i = node.entries.findIndex((e) => e.key === key)
+        if (i < 0) throw new Error(`Record ${key} is not in leaf ${hash}`)
+        return (
+          await source.repo.linesAt(
+            { hash, entries: node.entries, type: source.opts.type },
+            [i],
+            source.opts.set,
+          )
+        )[0]!
+      }
       // Streamed, stopping at the record: a leaf of large records is never held whole.
       for await (const e of source.leafStream(hash)) if (e.key === key) return e.body!
       throw new Error(`Record ${key} is not in leaf ${hash}`)
@@ -261,6 +274,8 @@ export async function recordBodies(
 ): Promise<Map<string, string>> {
   const source = new RepoSource(recordTree, view.repo)
   const byLeaf = new Map<string, Set<string>>()
+  // Each leaf's set: layout F reads a record from its set's index.
+  const leafSet = new Map<string, 'public' | 'private'>()
   for (const w of wanted) {
     const t = view.types.find((x) => x.slug === w.type)
     let hash = (w.set === 'public' ? t?.public : t?.private)?.root ?? null
@@ -273,6 +288,7 @@ export async function recordBodies(
     const keys = byLeaf.get(hash) ?? new Set<string>()
     keys.add(`${w.type}\u0000${w.key}`)
     byLeaf.set(hash, keys)
+    leafSet.set(hash, w.set)
   }
   const out = new Map<string, string>()
   const leaves = [...byLeaf]
@@ -281,6 +297,17 @@ export async function recordBodies(
     while (next < leaves.length) {
       const [hash, keys] = leaves[next++]!
       const type = [...keys][0]!.split('\u0000')[0]!
+      if (source.repo.records) {
+        // A packed layout reads only the records wanted.
+        const node = await source.node(hash)
+        const entries = node.kind === 'leaf' ? node.entries : []
+        const at = entries.flatMap((e, i) =>
+          keys.has(`${type}\u0000${e.key}`) && !view.withheld.has(e.hash) ? [i] : [],
+        )
+        const lines = await source.repo.linesAt({ hash, entries, type }, at, leafSet.get(hash))
+        at.forEach((i, j) => out.set(`${type}\u0000${entries[i]!.key}`, lines[j]!))
+        continue
+      }
       let left = keys.size
       for await (const e of source.leafStream(hash)) {
         const k = `${type}\u0000${e.key}`
@@ -290,6 +317,8 @@ export async function recordBodies(
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, leaves.length) }, worker))
+  // A packed layout reads a few records a leaf: more leaves at once.
+  const n = source.repo.records ? Math.max(concurrency, 16) : concurrency
+  await Promise.all(Array.from({ length: Math.min(n, leaves.length) }, worker))
   return out
 }

@@ -183,12 +183,16 @@ export async function* iterate<E>(
     }
     return
   }
+  // A packed layout reads records only as they're yielded, 64 at a time: leaves
+  // ahead hold their entries, never their records.
+  const lazy = opts.payloads ? source.payloadsAt : undefined
   const load = (h: string) =>
-    opts.payloads
+    opts.payloads && !lazy
       ? source.leafEntries(h)
       : source.node(h).then((n) => (n.kind === 'leaf' ? n.entries : []))
   const ahead = Math.max(1, opts.prefetch ?? 4)
-  const queue: { entries: Promise<E[]>; skip: number; after: string | undefined }[] = []
+  const queue: { hash: string; entries: Promise<E[]>; skip: number; after: string | undefined }[] =
+    []
   const leaves = leavesFrom(source, await rootDesc(source, root), opts.after, opts.offset ?? 0)
   let exhausted = false
   const fill = async () => {
@@ -200,7 +204,7 @@ export async function* iterate<E>(
       }
       const entries = load(r.value.leaf.hash)
       entries.catch(() => {}) // surfaced when awaited below
-      queue.push({ entries, skip: r.value.skip, after: r.value.after })
+      queue.push({ hash: r.value.leaf.hash, entries, skip: r.value.skip, after: r.value.after })
     }
   }
   for (;;) {
@@ -213,6 +217,61 @@ export async function* iterate<E>(
       while (i < entries.length && compareUtf8(spec.key(entries[i]!), next.after) <= 0) i++
     }
     i += next.skip
+    if (lazy) {
+      // Records in batches of up to 1 MB, read six at a time ahead of the reader,
+      // across leaves: about 6 MB of records ahead whatever the leaves (4 × 4 MB
+      // passed 128 MB with decoded strings at 12M), in enough parallel reads that a
+      // scan rarely waits (3 × 2 MB held as much but made exports 60% slower).
+      const leafBatches = function* (hash: string, list: E[], from: number) {
+        for (let at = from; at < list.length;) {
+          const idx: number[] = []
+          let bytes = 0
+          while (
+            at < list.length &&
+            idx.length < 2048 &&
+            (idx.length === 0 || bytes < 1024 * 1024)
+          ) {
+            bytes += spec.bytes(list[at]!)
+            idx.push(at++)
+          }
+          yield { hash, list, idx }
+        }
+      }
+      const window: Promise<E[]>[] = []
+      const source1 = leafBatches(next.hash, entries, i)
+      const more = async function* () {
+        yield* source1
+        // Then the leaves already queued behind this one, and the rest.
+        for (;;) {
+          await fill()
+          const n = queue.shift()
+          if (!n) return
+          const list = await n.entries
+          let j = 0
+          if (n.after !== undefined)
+            while (j < list.length && compareUtf8(spec.key(list[j]!), n.after) <= 0) j++
+          yield* leafBatches(n.hash, list, j + n.skip)
+        }
+      }
+      const batches = more()
+      const start = async () => {
+        const r = await batches.next()
+        if (r.done) return false
+        const p = lazy(r.value.hash, r.value.list, r.value.idx)
+        p.catch(() => {})
+        window.push(p)
+        return true
+      }
+      while (window.length < 6 && (await start())) {
+        // Fill the window.
+      }
+      while (window.length) {
+        const got = await window.shift()!
+        await start()
+        yield* got
+      }
+      return
+    }
     for (; i < entries.length; i++) yield entries[i]!
   }
 }

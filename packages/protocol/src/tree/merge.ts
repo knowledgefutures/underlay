@@ -55,6 +55,11 @@ export interface MergeOptions<E> extends BuilderOptions<E> {
   /** Called for every effective change, in key order: (old, new). */
   onChange?: (before: E | null, after: E | null) => void
   /**
+   * Whether `onChange` needs an old entry's payload (default true). A layout that
+   * keeps records out of leaves then reads it; false skips that read.
+   */
+  oldPayloads?: boolean
+  /**
    * Merge only this range (a commit unit). Requires `leafOutput`, and every
    * change must lie in the range.
    */
@@ -97,6 +102,9 @@ export function emptyStats(): MergeStats {
 export class Peekable<T> {
   readonly #it: Iterator<T> | AsyncIterator<T>
   #head: IteratorResult<T> | undefined
+  /** Items taken and put back, served before the iterator, from `#at` on (no shift: O(1) a take). */
+  #back: T[] = []
+  #at = 0
 
   constructor(src: Iterable<T> | AsyncIterable<T>) {
     this.#it =
@@ -106,16 +114,42 @@ export class Peekable<T> {
   }
 
   async peek(): Promise<T | undefined> {
+    if (this.#at < this.#back.length) return this.#back[this.#at]
     this.#head ??= await this.#it.next()
     return this.#head.done ? undefined : this.#head.value
   }
 
   async next(): Promise<T | undefined> {
+    if (this.#at < this.#back.length) {
+      const v = this.#back[this.#at++]
+      if (this.#at === this.#back.length) {
+        this.#back = []
+        this.#at = 0
+      }
+      return v
+    }
     const v = await this.peek()
     this.#head = undefined
     return v
   }
+
+  /** The items while `ok` holds, `max` at most, left in place: a look further ahead than peek. */
+  async lookAhead(ok: (v: T) => boolean, max = Infinity): Promise<T[]> {
+    const out: T[] = []
+    for (
+      let v = await this.peek();
+      v !== undefined && ok(v) && out.length < max;
+      v = await this.peek()
+    )
+      out.push((await this.next())!)
+    this.#back = [...out, ...this.#back.slice(this.#at)]
+    this.#at = 0
+    return out
+  }
 }
+
+/** Changes a sparse leaf's merge looks ahead for the old records they replace (one read). */
+const OLD_BATCH = 1024
 
 export async function mergeTree<E>(
   source: NodeSource<E>,
@@ -167,9 +201,49 @@ export async function mergeTree<E>(
     }
   }
 
+  // Layouts that keep records out of leaves give entries without bodies; a
+  // changed entry's old body is fetched only when a change callback needs it.
+  const sparse = source.sparseStream
+  const needOld = !!sparse && !!opts.onChange && !!source.withPayload && opts.oldPayloads !== false
+  const withOld = async (desc: NodeDesc, old: E) =>
+    needOld ? source.withPayload!(desc.hash, old) : old
+
+  /**
+   * A sparse leaf's old records that `first` and the changes after it landing in the
+   * leaf replace or remove, read in one batch (file references need them), by key. It
+   * looks OLD_BATCH changes ahead at most: a leaf's range can take any number of
+   * inserts, and looking to its last key held them all.
+   */
+  const oldBodies = async (desc: NodeDesc, olds: E[], first: string): Promise<Map<string, E>> => {
+    const ahead = await pending.lookAhead((c) => compareUtf8(c.key, desc.lastKey) <= 0, OLD_BATCH)
+    const keys = new Set([first, ...ahead.map((c) => c.key)])
+    const at = olds.flatMap((o, i) => (keys.has(spec.key(o)) ? [i] : []))
+    const got = await source.payloadsAt!(desc.hash, olds, at)
+    return new Map(got.map((e) => [spec.key(e), e]))
+  }
+
   const rewriteLeaf = async (desc: NodeDesc) => {
     stats.readNodes++
-    for await (const old of leafEntryStream(source, desc.hash)) {
+    sink.rewriting?.(desc.hash)
+    let entries: AsyncIterable<E> | E[] = sparse
+      ? sparse(desc.hash)
+      : leafEntryStream(source, desc.hash)
+    let list: E[] | null = null
+    const olds = new Map<string, E>()
+    if (needOld && source.payloadsAt) {
+      list = []
+      for await (const e of entries) list.push(e)
+      entries = list
+    }
+    const withOldOf = async (old: E) => {
+      if (!list) return withOld(desc, old)
+      const k = spec.key(old)
+      if (!olds.has(k)) for (const [key, e] of await oldBodies(desc, list, k)) olds.set(key, e)
+      const e = olds.get(k)!
+      olds.delete(k)
+      return e
+    }
+    for await (const old of entries) {
       const oldKey = spec.key(old)
       // A leaf straddling a unit's range edge: keep only the range's entries.
       if (range && !inRange(range, oldKey)) continue
@@ -186,13 +260,13 @@ export async function mergeTree<E>(
         await nextChange()
         if (!c.entry) {
           stats.removed++
-          opts.onChange?.(old, null)
+          opts.onChange?.(await withOldOf(old), null)
         } else if (spec.same(old, c.entry)) {
           stats.unchanged++
           await add(old)
         } else {
           stats.updated++
-          opts.onChange?.(old, c.entry)
+          opts.onChange?.(await withOldOf(old), c.entry)
           await add(c.entry)
         }
       } else {

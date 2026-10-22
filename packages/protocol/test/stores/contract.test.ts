@@ -123,6 +123,18 @@ for (const [name, make] of makers) {
       expect(await (await store.get('fresh'))!.text()).toBe('only')
     })
 
+    it('lets one of several concurrent ifAbsent writers win, for good', async () => {
+      // A lease is an ifAbsent put read back: every writer must read the same winner.
+      const seen = await Promise.all(
+        Array.from({ length: 8 }, async (_, i) => {
+          await store.put('lease', `w${i}`, { ifAbsent: true })
+          return (await store.get('lease'))!.text()
+        }),
+      )
+      const won = await (await store.get('lease'))!.text()
+      expect(seen).toEqual(seen.map(() => won))
+    })
+
     it('streams bodies', async () => {
       await store.put('stream', enc.encode('x'.repeat(100_000)))
       const obj = await store.get('stream')

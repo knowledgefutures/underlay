@@ -7,6 +7,7 @@
  * credential encryption lands with bucket mirrors (phase 11).
  */
 import {
+  type LayoutName,
   type Cache,
   PrefixedStore,
   type PresigningStore,
@@ -34,14 +35,30 @@ export interface PlatformStorage {
   internalPrefix: string
   /** The isolate's memory cache for repository objects (default 32 MB; the bulk Worker's is smaller). */
   memoryBytes?: number
+  /**
+   * The record layout new collections get (record-storage-layout.md): `today`
+   * (default for now), leaf bodies, or `f`, records in packs per collection. Each collection keeps
+   * the layout it was created with (`collections.record_layout`); forks take their
+   * parent's.
+   */
+  newCollections?: LayoutName
 }
 
-/** Primary placements change rarely; remember them briefly per isolate. */
+/** Primary placements change rarely, a collection's layout only by a conversion; remember them briefly per isolate. */
 const PRIMARY_TTL_MS = 60_000
-const primaryCache = new Map<string, { locationId: string; at: number }>()
+const primaryCache = new Map<string, { locationId: string; layout: LayoutName; at: number }>()
+
+/**
+ * Layout F's repositories (one a collection) an isolate keeps, the most recently
+ * used: each holds its manifests' state, and an isolate serving thousands of
+ * collections would otherwise keep every one it ever opened.
+ */
+export const collectionRepos = { max: 256 }
 
 export function createStores(db: Db, cache: Cache, platform: PlatformStorage): Stores {
   const repos = new Map<string, Repo>()
+  /** F's, by location and collection; a Map's order is its recency (a hit moves to the end). */
+  const runRepos = new Map<string, Repo>()
   const files = platform.files ?? presigning(platform.bucket)
 
   const forLocation = async (locationId: string): Promise<Repo> => {
@@ -67,14 +84,50 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     return repo
   }
 
+  /**
+   * Layout F keeps records per collection: one repository per collection over the
+   * location's objects (nodes are shared), its packs, index and manifest under
+   * `runs/<collection>/`, and rewritten leaves stored as node deltas.
+   */
+  const forCollectionRuns = async (locationId: string, collectionId: string): Promise<Repo> => {
+    const k = `${locationId}/${collectionId}`
+    const known = runRepos.get(k)
+    if (known) {
+      runRepos.delete(k)
+      runRepos.set(k, known)
+      return known
+    }
+    const loc = await forLocation(locationId)
+    const repo = new Repo(loc.blobs, {
+      cache,
+      scope: loc.scope,
+      trusted: true,
+      lru: loc.lru,
+      layout: 'f',
+      recordScope: collectionId,
+      nodes: 'delta',
+    })
+    runRepos.set(k, repo)
+    if (runRepos.size > collectionRepos.max) runRepos.delete(runRepos.keys().next().value!)
+    return repo
+  }
+  const located = (locationId: string, collectionId: string, layout: LayoutName) =>
+    layout === 'f' ? forCollectionRuns(locationId, collectionId) : forLocation(locationId)
+
   return {
     forLocation,
+    newCollections: platform.newCollections ?? 'today',
     async forCollection(collectionId: string): Promise<Repo> {
       const hit = primaryCache.get(collectionId)
-      if (hit && Date.now() - hit.at < PRIMARY_TTL_MS) return forLocation(hit.locationId)
+      if (hit && Date.now() - hit.at < PRIMARY_TTL_MS)
+        return located(hit.locationId, collectionId, hit.layout)
       const [row] = await db
-        .select({ locationId: schema.placements.locationId })
+        .select({
+          locationId: schema.placements.locationId,
+          layout: schema.collections.recordLayout,
+        })
         .from(schema.placements)
+        .innerJoin(schema.collections, eq(schema.collections.id, schema.placements.collectionId))
         .where(
           and(
             eq(schema.placements.collectionId, collectionId),
@@ -83,8 +136,12 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
         )
         .limit(1)
       if (!row) throw new Error(`Collection ${collectionId} has no primary placement`)
-      primaryCache.set(collectionId, { locationId: row.locationId, at: Date.now() })
-      return forLocation(row.locationId)
+      primaryCache.set(collectionId, {
+        locationId: row.locationId,
+        layout: row.layout,
+        at: Date.now(),
+      })
+      return located(row.locationId, collectionId, row.layout)
     },
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,

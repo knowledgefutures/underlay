@@ -43,9 +43,14 @@
  *                      the unit's peak, where it was (which base leaf, how far in), and
  *                      what its sink held then
  *   --seed N           data seed (default 1)
+ *   --layout L         the collection's record layout: today (default) or f
  *   --read-ms N        then read the last version whole through records.ndjson and
  *                      records.ndjson.gz, as a client taking a chunk every N ms (find-doi
  *                      over a range, 2026-10-18), sampling at every chunk (default 0: no read)
+ *   --small-every K    about one record in K is a `dataset`, ids spread over the same DOI
+ *                      space as the others: a small type whose leaves each span much of
+ *                      it, as Crossref's small types' do (layout F reads such a leaf by type)
+ *   --max-mb N         exit 1 if any job's peak is over N MB: a memory gate for a round
  *
  * Unit peaks are sampled at every spill, leaf end and body write, on the timer, and
  * at storage operations; a sample forces a GC only when the reading without one
@@ -122,8 +127,11 @@ const LEAF_MB = str('leaf-mb', '').split(',').filter(Boolean).map(Number)
 const REPUSH = args.includes('--repush')
 const PUSHES = opt('pushes', 2)
 const CACHE = str('cache', 'none')
+const LAYOUT = str('layout', 'today') as 'today' | 'f'
 const TIMER_MS = opt('timer-ms', 0)
 const READ_MS = opt('read-ms', 0)
+const SMALL_EVERY = opt('small-every', 0)
+const MAX_MB = opt('max-mb', 0)
 const PIECES = args.includes('--pieces')
 const NO_GC = args.includes('--no-gc')
 const UNITS = args.includes('--units') || RECORD_KB > 0 || LEAF_MB.length > 0
@@ -631,7 +639,7 @@ function work(doi: string, version = 0) {
   return {
     id: doi,
     // The type follows the DOI, so an update lands on the same record.
-    type: doi.charCodeAt(doi.length - 1) % 5 ? 'journal-article' : 'book-chapter',
+    type: typeOf(doi),
     data: {
       DOI: doi,
       title: [words(10)],
@@ -642,6 +650,12 @@ function work(doi: string, version = 0) {
       version,
     },
   }
+}
+
+/** A record's type, from its DOI: a fifth book chapters, and with --small-every a few datasets. */
+function typeOf(doi: string) {
+  if (SMALL_EVERY > 0 && (hash32(`small\u0000${doi}`) >>> 0) % SMALL_EVERY === 0) return 'dataset'
+  return doi.charCodeAt(doi.length - 1) % 5 ? 'journal-article' : 'book-chapter'
 }
 
 // --- Records of a set size (--record-kb) --------------------------------------------------
@@ -704,7 +718,7 @@ function sizedWork(doi: string, version: number) {
     version,
     reference: [] as object[],
   }
-  const rec = { id: doi, type: 'journal-article', data }
+  const rec = { id: doi, type: SMALL_EVERY ? typeOf(doi) : 'journal-article', data }
   const target = RECORD_KB * 1024
   let size = Buffer.byteLength(JSON.stringify(rec))
   for (let i = 0; size < target; i++) {
@@ -779,7 +793,13 @@ await db.insert(schema.user).values({ id: 'u1', name: 'u1', email: 'u1@example.o
 await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u1', role: 'owner' })
 const [collection] = await db
   .insert(schema.collections)
-  .values({ organizationId: 'org1', slug: 'works', name: 'works', privateSalt: newSalt() })
+  .values({
+    organizationId: 'org1',
+    slug: 'works',
+    name: 'works',
+    privateSalt: newSalt(),
+    recordLayout: LAYOUT,
+  })
   .returning()
 await db.insert(schema.placements).values({
   collectionId: collection!.id,
@@ -892,7 +912,11 @@ async function prepareCache() {
   console.error(`  cache warmed: ${n} objects, ${(bytes / MB).toFixed(0)} MB`)
 }
 
-const schemas = { 'journal-article': { type: 'object' }, 'book-chapter': { type: 'object' } }
+const schemas = {
+  'journal-article': { type: 'object' },
+  'book-chapter': { type: 'object' },
+  ...(SMALL_EVERY > 0 ? { dataset: { type: 'object' } } : {}),
+}
 const dois =
   LEAF_MB.length > 0
     ? leafIds()
@@ -1017,3 +1041,9 @@ report(
   ),
 )
 await rm(dir, { recursive: true, force: true })
+if (MAX_MB > 0) {
+  const over = rows.filter(([, v]) => v.peak / MB > MAX_MB)
+  for (const [k, v] of over)
+    console.error(`over ${MAX_MB} MB: ${k} peaked at ${(v.peak / MB).toFixed(1)} MB`)
+  if (over.length) process.exitCode = 1
+}

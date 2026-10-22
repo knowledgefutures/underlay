@@ -6,7 +6,7 @@
  * list.
  */
 import { checkSchemaFull, hashSchema } from '@underlay/protocol'
-import { and, asc, count, eq, gt, or, sql } from 'drizzle-orm'
+import { and, asc, count, eq, gt, gte, lte, ne, or, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
@@ -134,7 +134,37 @@ export async function recordRun(
       })
       .where(eq(schema.pushSessions.id, sessionId)),
   ])
+  if (kind === 'records' && index.parts.length) await noteOverlap(ports, sessionId, index)
   await maybeCompact(ports, sessionId, index.tier ?? 0)
+}
+
+/**
+ * Count an upload whose key range overlaps another run of the session's: checked
+ * once the upload's own run is recorded, so of two that land together the later
+ * check sees the earlier (a compacted run's range spans its inputs', gaps included).
+ */
+async function noteOverlap(ports: Ports, sessionId: string, index: RunIndex): Promise<void> {
+  const r = schema.pushRuns
+  const first = index.parts[0]!.first
+  const last = index.parts[index.parts.length - 1]!.last
+  const [hit] = await ports.db
+    .select({ seq: r.seq })
+    .from(r)
+    .where(
+      and(
+        eq(r.sessionId, sessionId),
+        eq(r.kind, 'records'),
+        ne(r.seq, index.seq),
+        lte(r.firstKey, last),
+        gte(r.lastKey, first),
+      ),
+    )
+    .limit(1)
+  if (!hit) return
+  await ports.db
+    .update(schema.pushSessions)
+    .set({ overlappingUploads: sql`${schema.pushSessions.overlappingUploads} + 1` })
+    .where(eq(schema.pushSessions.id, sessionId))
 }
 
 export async function sessionRuns(

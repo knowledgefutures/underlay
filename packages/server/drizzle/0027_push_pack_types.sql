@@ -1,0 +1,1 @@
+ALTER TABLE `push_packs` ADD `record_type` text;

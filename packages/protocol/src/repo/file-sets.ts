@@ -38,6 +38,7 @@ import {
   type SetObject,
   type TreeSummary,
 } from '../format.js'
+import type { Placed } from './layouts/types.js'
 import { outOfLineHash, type Repo, RepoSink, RepoSource } from './repo.js'
 
 export type SetName = 'public' | 'private'
@@ -62,6 +63,11 @@ const typedKey = (type: string, hash: string) => `${type}/${hash}`
  * `resolve`, which must run before `refs` is used.
  */
 export class FileRefDelta {
+  /**
+   * Sets whose base holds no file reference at all: a changed record's old version
+   * can't take one away, so it isn't read (packed layouts skip fetching it).
+   */
+  readonly noOldRefs = new Set<SetName>()
   /** Per set: file hash → change in references. */
   readonly refs: Record<SetName, Map<string, number>> = { public: new Map(), private: new Map() }
   /** Per set: "<type>/<file hash>" → change in that type's references. */
@@ -98,8 +104,16 @@ export class FileRefDelta {
 
   /** Feed one record change of a type in a set (mergeTree's onChange). */
   record(set: SetName, before: RecordEntry | null, after: RecordEntry | null, type: string): void {
-    if (before) this.#body(set, type, before.body, -1)
-    if (after) this.#body(set, type, after.body, +1)
+    if (before && !this.noOldRefs.has(set)) this.#entry(set, type, before, -1)
+    if (after) this.#entry(set, type, after, +1)
+  }
+
+  #entry(set: SetName, type: string, e: RecordEntry, by: number) {
+    // Written into a pack at upload: its references were read from it then.
+    const p = e as Placed
+    if (p.body === undefined && p.packed !== undefined) {
+      for (const h of p.fileRefs ?? []) this.add(set, type, h, by)
+    } else this.#body(set, type, e.body, by)
   }
 
   /**
@@ -304,7 +318,8 @@ export async function rebuildFileRefs(
     const set = sets[name]
     const delta = new FileRefDelta()
     for (const [slug, t] of Object.entries(set.types)) {
-      for await (const e of iterate(new RepoSource(recordTree, repo), t.root, { payloads: true })) {
+      const source = new RepoSource(recordTree, repo, { set: name, type: slug })
+      for await (const e of iterate(source, t.root, { payloads: true })) {
         delta.record(name, null, e, slug)
       }
     }
