@@ -88,6 +88,7 @@
         "producers": [
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
+          { "binding": "JOBS_COMPACT", "queue": "underlay-staging-compact" },
           { "binding": "USAGE", "queue": "underlay-staging-usage" },
         ],
         "consumers": [
@@ -98,7 +99,7 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
-          // The bulk queue's consumer is the bulk Worker (wrangler.bulk.jsonc).
+          // The bulk and compaction queues' consumer is the bulk Worker (wrangler.bulk.jsonc).
           // Usage events (billing/usage.ts): up to 100 requests' events per log object.
           {
             "queue": "underlay-staging-usage",

@@ -11,6 +11,9 @@
  * a whole collection, and go to their own queue, one per invocation; the rest
  * are small and interactive (a webhook, a file check), and run several at a
  * time so they never wait behind a bulk push or a mirror backfill.
+ *
+ * A push's run compactions are bulk jobs with a queue of their own where one is
+ * bound (COMPACT_JOBS), so that they can run more at once than commit units.
  */
 import { and, asc, eq, lte, or, sql } from 'drizzle-orm'
 
@@ -59,6 +62,16 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
 
 export const isBulk = (type: string) => BULK_JOBS.has(type)
 
+/**
+ * Bulk jobs that go to the compaction queue when one is bound, else with the
+ * rest. A merge holds about 12 MB (runs.ts runConfig) and mostly waits on R2,
+ * where a unit holds whole leaves: at the bulk queue's 8 at once, the commit
+ * compaction of 30M records took about 10.5 h at about 30 CPU-minutes an hour
+ * (staging, 2026-10-19). push.commit, which claims each next round and then
+ * runs the commit, stays on the bulk queue.
+ */
+export const COMPACT_JOBS: ReadonlySet<string> = new Set(['push.compact', 'push.compactPiece'])
+
 const handlers = new Map<string, JobHandler>()
 
 export function registerJob(type: string, handler: JobHandler): void {
@@ -78,13 +91,19 @@ interface CfQueue {
   sendBatch(messages: { body: unknown; delaySeconds?: number }[]): Promise<void>
 }
 
-/** Jobs on Cloudflare Queues: interactive and bulk queues (one queue for both if no bulk is bound). */
+/**
+ * Jobs on Cloudflare Queues: interactive, bulk and compaction queues. Without a
+ * compaction queue compactions go to the bulk one; without a bulk queue,
+ * everything goes to the one queue.
+ */
 export class QueueJobs implements Jobs {
   constructor(
     readonly queue: CfQueue,
     readonly bulk: CfQueue = queue,
+    readonly compact: CfQueue = bulk,
   ) {}
   #for(type: string) {
+    if (COMPACT_JOBS.has(type)) return this.compact
     return isBulk(type) ? this.bulk : this.queue
   }
   async enqueue(job: JobMessage, opts?: { delaySeconds?: number }) {
@@ -94,13 +113,13 @@ export class QueueJobs implements Jobs {
     )
   }
   async enqueueBatch(jobs: JobMessage[]) {
-    for (const q of [this.queue, this.bulk]) {
+    // Each queue once: an unbound one is the same object as the queue it falls back to.
+    for (const q of new Set([this.queue, this.bulk, this.compact])) {
       const mine = jobs.filter((j) => this.#for(j.type) === q)
       // sendBatch takes at most 100 messages.
       for (let i = 0; i < mine.length; i += 100) {
         await q.sendBatch(mine.slice(i, i + 100).map((body) => ({ body })))
       }
-      if (this.bulk === this.queue) break
     }
   }
 }

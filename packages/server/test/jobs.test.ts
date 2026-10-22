@@ -50,6 +50,42 @@ describe('job queues', () => {
     expect(one.sent).toEqual(['commit.unit', 'files.verify'])
   })
 
+  it('sends compactions to the compaction queue, or with the bulk jobs when there is none', async () => {
+    const interactive = fakeQueue()
+    const bulk = fakeQueue()
+    const compact = fakeQueue()
+    const jobs = new QueueJobs(interactive, bulk, compact)
+    await jobs.enqueue({ type: 'push.compact', sessionId: 's', seq: 2 })
+    await jobs.enqueueBatch([
+      { type: 'push.compactPiece', sessionId: 's', seq: 2, piece: 0 },
+      { type: 'push.commit', sessionId: 's' },
+      { type: 'commit.unit', unitId: 'u' },
+      { type: 'webhooks.deliver', deliveryId: 'd' },
+      ...Array.from({ length: 150 }, (_, piece) => ({
+        type: 'push.compactPiece',
+        sessionId: 's',
+        seq: 3,
+        piece,
+      })),
+    ])
+    expect(compact.sent).toHaveLength(152)
+    expect(compact.sent.slice(0, 2)).toEqual(['push.compact', 'push.compactPiece'])
+    // The commit, which claims each next round of compactions, stays with the units.
+    expect(bulk.sent).toEqual(['push.commit', 'commit.unit'])
+    expect(interactive.sent).toEqual(['webhooks.deliver'])
+
+    // No compaction queue bound: compactions go with the other bulk jobs, once each.
+    const one = fakeQueue()
+    const two = fakeQueue()
+    await new QueueJobs(one, two).enqueueBatch([
+      { type: 'push.compactPiece', sessionId: 's', seq: 2, piece: 0 },
+      { type: 'commit.unit', unitId: 'u' },
+      { type: 'webhooks.deliver', deliveryId: 'd' },
+    ])
+    expect(two.sent).toEqual(['push.compactPiece', 'commit.unit'])
+    expect(one.sent).toEqual(['webhooks.deliver'])
+  })
+
   it('runs interactive jobs before bulk ones on Node', async () => {
     const h = await harness()
     const ran: string[] = []

@@ -1,6 +1,7 @@
 // The bulk job Worker: the same code as wrangler.jsonc's Worker, deployed as a
 // second Worker that consumes only the bulk queue (jobs.ts BULK_JOBS: commits,
-// compactions, indexing, mirrors, cleanup). It serves no routes.
+// compactions, indexing, mirrors, cleanup) and, on staging, the compaction
+// queue (jobs.ts COMPACT_JOBS). It serves no routes.
 //
 // Why a second Worker: Workers memory is 128 MB per isolate, and an isolate
 // runs several invocations at once. Bulk jobs are sized to share an isolate
@@ -17,6 +18,9 @@
 // Worker is up. Secrets (wrangler secret put <NAME> -c wrangler.bulk.jsonc --env <env>),
 // the same values as the main Worker's:
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, SIGNING_KEY, LOCATION_KEY
+//
+// Queues are made by hand before a deploy names them; the compaction queue:
+//   wrangler queues create underlay-staging-compact
 //
 // Keep bindings and vars in step with wrangler.jsonc.
 {
@@ -58,6 +62,7 @@
         "producers": [
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
+          { "binding": "JOBS_COMPACT", "queue": "underlay-staging-compact" },
           { "binding": "USAGE", "queue": "underlay-staging-usage" },
         ],
         "consumers": [
@@ -65,6 +70,16 @@
             "queue": "underlay-staging-bulk",
             "max_batch_size": 1,
             "max_concurrency": 8,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-staging-dead",
+          },
+          // Run compactions, more at once than units: a merge holds about 12 MB and
+          // mostly waits on R2 (jobs.ts COMPACT_JOBS). Prod has no compaction queue;
+          // its bulk queue runs 100 at once.
+          {
+            "queue": "underlay-staging-compact",
+            "max_batch_size": 1,
+            "max_concurrency": 32,
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
