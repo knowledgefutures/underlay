@@ -15,10 +15,10 @@
 //   LOCATION_KEY                             32 bytes base64url; encrypts storage credentials
 //   SESSION_SECRET                           better-auth secret
 //   OIDC_CLIENT_SECRET                       kf_underlay secret of that env's KF Auth instance
-//                                            (staging: dev-auth's, which staging-auth kept)
-//   AUTH_INTERNAL_API_KEY                    optional: KF Auth's internal API key (as v1). Without
-//                                            it new orgs can't link a KF org and
-//                                            /api/kf/summary answers 401.
+//                                            (staging: dev-auth's, which staging-auth kept).
+//                                            Also the Basic credentials for KF Auth's internal
+//                                            API (the KF orgs new orgs link to). /api/kf/summary
+//                                            checks the console's KF-Console-Token instead.
 //   ASSETS_ACCESS_KEY_ID, ASSETS_SECRET_ACCESS_KEY
 //                                            optional: R2 S3 keys for ASSETS_BUCKET when there's
 //                                            no PUBLIC_ASSETS binding (else the R2_* keys)

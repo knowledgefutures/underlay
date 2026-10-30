@@ -4,7 +4,7 @@
  *
  *   GET|PUT /api/admin/explore-tags              {tags: string[]}             stewards
  *   GET|PUT /api/admin/explore-collections       {collections: "owner/slug"[]} stewards
- *   GET     /api/kf/summary?kf_org_id=           KF Auth, with the internal API key
+ *   GET     /api/kf/summary?kf_org_id=           the KF console, with its KF-Console-Token
  *   POST    /api/abuse-reports                   {hash?, url?, reason, contact?}: anyone
  *   GET     /api/admin/abuse-reports             stewards: ?status=open|blocked|dismissed
  *   PATCH   /api/admin/abuse-reports/:id         stewards: {status: 'dismissed'|'open'}
@@ -108,11 +108,14 @@ export function adminRoutes() {
   }
 
   app.get('/api/kf/summary', async (c) => {
-    const kfOrgId = c.req.query('kf_org_id')
-    if (!kfOrgId) return jsonError(c, 400, 'kf_org_id is required')
-    if (!c.var.kf?.isInternalCall(c.req.header('authorization'))) {
+    // The token is for the URL registered as underlay's summary_url in kf-console.
+    const registered = new URL('/api/kf/summary', c.var.config.appUrl).href
+    const token = c.req.header('kf-console-token')
+    if (!(await c.var.kf?.isConsoleCall(token, 'GET', registered))) {
       return jsonError(c, 401, 'Unauthorized')
     }
+    const kfOrgId = c.req.query('kf_org_id')
+    if (!kfOrgId) return jsonError(c, 400, 'kf_org_id is required')
     const { db } = c.var.ports
     const appUrl = c.var.config.appUrl
     const orgs = await db

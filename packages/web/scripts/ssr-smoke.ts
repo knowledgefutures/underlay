@@ -70,7 +70,7 @@ try {
       orgs: async () => [],
       entitled: async () => false,
       defaultOrgId: async () => null,
-      isInternalCall: () => false,
+      isConsoleCall: async () => false,
     },
   }))
 

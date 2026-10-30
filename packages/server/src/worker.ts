@@ -64,8 +64,6 @@ export interface Env {
   RL_USER?: RateLimitBinding
   /** Anonymous pages, ARK and the auth routes (lib/limits.ts). */
   RL_PAGE?: RateLimitBinding
-  /** KF Auth's internal API key: KF orgs for new orgs, and /api/kf/summary. Optional. */
-  AUTH_INTERNAL_API_KEY?: string
   REPO_PREFIX?: string
   INTERNAL_PREFIX?: string
   /**
@@ -182,11 +180,11 @@ function kfFor(env: Env): Kf {
   let kf = kfs.get(env.DB)
   if (!kf) {
     kf = createKf(primaryDb(env), {
+      issuerUrl: env.OIDC_ISSUER_URL,
       // No private network on Workers: server-to-server calls use the public URL.
       internalUrl: env.OIDC_ISSUER_URL,
       clientId: env.OIDC_CLIENT_ID,
       clientSecret: env.OIDC_CLIENT_SECRET,
-      internalApiKey: env.AUTH_INTERNAL_API_KEY,
     })
     kfs.set(env.DB, kf)
   }

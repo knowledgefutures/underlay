@@ -233,7 +233,7 @@ describe('KF org links on organizations', () => {
       orgs: async () => [],
       entitled: async (_u: string, id: string) => id === 'kf-mine',
       defaultOrgId: async () => 'kf-default',
-      isInternalCall: () => false,
+      isConsoleCall: async () => false,
     }
     const auth = createAuth(
       h.ports.db,

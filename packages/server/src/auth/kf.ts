@@ -1,8 +1,10 @@
 /**
  * KF Auth beyond sign-in: a user's profile and role (OIDC userinfo with their
- * stored token, refreshed when it expires) and, when the deployment has the
- * service key, the internal API for the KF orgs a user belongs to. Ported from
- * v1's `src/lib/auth.server.ts` and `src/lib/auth-internal.server.ts`.
+ * stored token, refreshed when it expires), the internal API for the KF orgs a
+ * user belongs to (called as the app, with its client credentials), and the
+ * check on calls from the console (its signed `KF-Console-Token`). Ported from
+ * v1's `src/lib/auth.server.ts` and `src/lib/auth-internal.server.ts`; the
+ * console side follows kf-console's docs/calling-kf.md.
  *
  * Every call fails soft: KF Auth being down costs a role or an org list, never
  * a page.
@@ -13,17 +15,20 @@
  * account row again for the token the winner stored.
  */
 import { and, eq } from 'drizzle-orm'
+import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose'
 
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 
 export interface KfConfig {
+  /** KF Auth's public origin: console tokens are issued by `<issuerUrl>/api/auth`. */
+  issuerUrl: string
   /** Issuer URL for server-to-server calls. */
   internalUrl: string
+  /** This app's client (`kf_underlay`): the audience of console tokens. */
   clientId: string
+  /** Its secret: with the id, the Basic credentials for KF Auth's internal API. */
   clientSecret: string
-  /** Shared secret for KF Auth's internal API (`AUTH_INTERNAL_API_KEY`); optional. */
-  internalApiKey?: string | undefined
 }
 
 export interface KfProfile {
@@ -49,18 +54,25 @@ export interface Kf {
    * read, the role read in the last 30 s.
    */
   role(userId: string): Promise<string | null>
-  /** KF orgs the user belongs to; [] without the internal API. */
+  /** KF orgs the user belongs to; [] without a client secret. */
   orgs(userId: string): Promise<KfOrg[]>
   /** Whether the user belongs to KF org `kfOrgId`. */
   entitled(userId: string, kfOrgId: string): Promise<boolean>
   /** The user's personal KF org (else their first), for new orgs. */
   defaultOrgId(userId: string): Promise<string | null>
-  /** Whether an Authorization header carries the internal API key. */
-  isInternalCall(authorization: string | undefined): boolean
+  /**
+   * Whether `token` (a request's `KF-Console-Token`) is the console calling
+   * `method registeredUrl` on this app. The registered URL, not the one the
+   * request arrived at, which a proxy may have rewritten.
+   */
+  isConsoleCall(token: string | undefined, method: string, registeredUrl: string): Promise<boolean>
 }
 
 const PROFILE_TTL_MS = 30_000
 const TIMEOUT_MS = 5_000
+/** Console tokens live 60 s; KF allows 30 s of clock skew. */
+const CONSOLE_TOKEN_MAX_AGE_S = 60
+const CLOCK_SKEW_S = 30
 
 export interface KfOptions {
   /** How long a failed refresh waits before it reads the account row again. */
@@ -87,6 +99,13 @@ export function createKf(
   const refreshing = new Map<string, Promise<string | null>>()
   const call = (url: string, init: RequestInit = {}) =>
     fetcher(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const basic = `Basic ${btoa(`${cfg.clientId}:${cfg.clientSecret}`)}`
+  const issuer = `${cfg.issuerUrl}/api/auth`
+  // Cached per isolate; fetched again when a token names a new key (keys rotate).
+  const consoleKeys = createRemoteJWKSet(new URL(`${cfg.internalUrl}/api/auth/jwks`), {
+    timeoutDuration: TIMEOUT_MS,
+    [customFetch]: (url, init) => fetcher(url, init),
+  })
 
   const account = async (userId: string): Promise<AccountRow | null> => {
     const [acct] = await db
@@ -190,10 +209,10 @@ export function createKf(
   }
 
   async function internal<T>(path: string): Promise<T | null> {
-    if (!cfg.internalApiKey) return null
+    if (!cfg.clientSecret) return null
     try {
       const res = await call(`${cfg.internalUrl}/api/internal${path}`, {
-        headers: { authorization: `Bearer ${cfg.internalApiKey}` },
+        headers: { authorization: basic },
       })
       return res.ok ? ((await res.json()) as T) : null
     } catch {
@@ -238,7 +257,7 @@ export function createKf(
       return hit && Date.now() - hit.at < PROFILE_TTL_MS ? hit.profile.role : null
     },
     async orgs(userId) {
-      if (!cfg.internalApiKey) return []
+      if (!cfg.clientSecret) return []
       const [acct] = await db
         .select({ accountId: schema.account.accountId })
         .from(schema.account)
@@ -264,19 +283,25 @@ export function createKf(
       const orgs = await kf.orgs(userId)
       return (orgs.find((o) => o.type === 'personal') ?? orgs[0])?.id ?? null
     },
-    isInternalCall(authorization) {
-      return (
-        !!cfg.internalApiKey && timingSafeEqual(authorization ?? '', `Bearer ${cfg.internalApiKey}`)
-      )
+    async isConsoleCall(token, method, registeredUrl) {
+      if (!token) return false
+      try {
+        const { payload } = await jwtVerify(token, consoleKeys, {
+          issuer,
+          audience: cfg.clientId,
+          // What tells it apart from an ID token, which has the same issuer and audience.
+          subject: 'kf-console',
+          algorithms: ['EdDSA'],
+          maxTokenAge: CONSOLE_TOKEN_MAX_AGE_S,
+          clockTolerance: CLOCK_SKEW_S,
+        })
+        const url = new URL(registeredUrl)
+        return payload.htm === method && payload.htu === `${url.origin}${url.pathname}`
+      } catch (err) {
+        console.warn('[kf] console token refused:', String(err))
+        return false
+      }
     },
   }
   return kf
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a)
-  const y = new TextEncoder().encode(b)
-  let diff = x.length ^ y.length
-  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0)
-  return diff === 0
 }

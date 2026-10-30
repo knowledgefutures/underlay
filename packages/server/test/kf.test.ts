@@ -1,9 +1,11 @@
 import { eq } from 'drizzle-orm'
+import { generateKeyPair } from 'jose'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createKf } from '../src/auth/kf.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { ISSUER_URL, kfConsole } from './kf-console.js'
 
 afterAll(cleanup)
 
@@ -56,7 +58,7 @@ describe('KF Auth client', () => {
 
     const kf = createKf(
       db,
-      { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's', internalApiKey: 'ik' },
+      { issuerUrl: 'http://kf', internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
       fetcher,
     )
     expect(await kf.profile('u1')).toEqual({ name: 'Ada L', image: null, role: 'admin' })
@@ -73,27 +75,25 @@ describe('KF Auth client', () => {
     expect(await kf.defaultOrgId('u1')).toBe('kf-own')
     expect(await kf.entitled('u1', 'kf-shared')).toBe(true)
     expect(await kf.entitled('u1', 'kf-else')).toBe(false)
-    expect(
-      calls.filter((c) => c.includes('/internal/')).every((c) => c.endsWith('Bearer ik')),
-    ).toBe(true)
-
-    expect(kf.isInternalCall('Bearer ik')).toBe(true)
-    expect(kf.isInternalCall('Bearer i')).toBe(false)
-    expect(kf.isInternalCall(undefined)).toBe(false)
+    // The internal API is called as the app: Basic with its client id and secret, no key.
+    const internal = calls.filter((c) => c.includes('/internal/'))
+    expect(internal.length).toBeGreaterThan(0)
+    expect(internal.every((c) => c.endsWith(`Basic ${btoa('c:s')}`))).toBe(true)
+    expect(internal.some((c) => c.includes('Bearer'))).toBe(false)
   })
 
-  it('without the internal key, has no orgs and accepts no internal calls', async () => {
+  it('without a client secret, has no orgs; without a token, no console call', async () => {
     const h = await harness()
     const kf = createKf(
       h.ports.db,
-      { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+      { issuerUrl: 'http://kf', internalUrl: 'http://kf', clientId: 'c', clientSecret: '' },
       (() => {
         throw new Error('no network')
       }) as typeof fetch,
     )
     expect(await kf.orgs('u1')).toEqual([])
     expect(await kf.profile('u1')).toBeNull()
-    expect(kf.isInternalCall('Bearer ')).toBe(false)
+    expect(await kf.isConsoleCall(undefined, 'GET', 'http://app/api/kf/summary')).toBe(false)
   })
 
   describe('refreshing an expired token', () => {
@@ -137,7 +137,7 @@ describe('KF Auth client', () => {
       }) as typeof fetch
       const kf = createKf(
         db,
-        { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+        { issuerUrl: 'http://kf', internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
         fetcher,
       )
       const roles = await Promise.all(Array.from({ length: 8 }, () => kf.role('u1')))
@@ -166,7 +166,7 @@ describe('KF Auth client', () => {
         }) as typeof fetch
         const kf = createKf(
           db,
-          { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+          { issuerUrl: 'http://kf', internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
           fetcher,
           { rereadDelayMs: 0 },
         )
@@ -194,7 +194,7 @@ describe('KF Auth client', () => {
       try {
         const kf = createKf(
           db,
-          { internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
+          { issuerUrl: 'http://kf', internalUrl: 'http://kf', clientId: 'c', clientSecret: 's' },
           fetcher,
           { rereadDelayMs: 0 },
         )
@@ -205,5 +205,58 @@ describe('KF Auth client', () => {
         console.warn = warn
       }
     })
+  })
+})
+
+describe('calls from the KF console', () => {
+  const summary = 'https://app.test/api/kf/summary'
+
+  async function setup() {
+    const h = await harness()
+    const t = await kfConsole(h.ports.db)
+    // Refusals are logged.
+    const warn = console.warn
+    console.warn = () => {}
+    return { ...t, [Symbol.dispose]: () => void (console.warn = warn) }
+  }
+
+  it('accepts a token for this app and this call', async () => {
+    using t = await setup()
+    expect(await t.kf.isConsoleCall(await t.sign(summary), 'GET', summary)).toBe(true)
+    // The registered URL carries no query; KF's htu doesn't either.
+    const withQuery = `${summary}?kf_org_id=x`
+    expect(await t.kf.isConsoleCall(await t.sign(summary), 'GET', withQuery)).toBe(true)
+    // The JWKS is fetched once (from the internal URL) and cached.
+    expect(await t.kf.isConsoleCall(await t.sign(summary), 'GET', summary)).toBe(true)
+    expect(t.jwksFetches()).toBe(1)
+  })
+
+  it('refuses a missing token, or one for anyone or anything else', async () => {
+    using t = await setup()
+    const now = Math.floor(Date.now() / 1000)
+    const stranger = await generateKeyPair('EdDSA')
+    const refused = {
+      missing: undefined,
+      'not a JWT': 'Bearer internal-key',
+      'another app': await t.sign(summary, {}, { aud: 'kf_pubpub' }),
+      'an ID token (a user as sub)': await t.sign(summary, {}, { sub: 'user-1' }),
+      'another issuer': await t.sign(summary, {}, { iss: 'https://evil.test/api/auth' }),
+      'the bare auth origin as issuer': await t.sign(summary, {}, { iss: ISSUER_URL }),
+      expired: await t.sign(summary, {}, { iat: now - 200, exp: now - 100 }),
+      'older than 60 s': await t.sign(summary, {}, { iat: now - 200, exp: now + 60 }),
+      'another method': await t.sign(summary, { htm: 'POST' }),
+      'another path': await t.sign('https://app.test/api/kf/webhooks'),
+      'another host': await t.sign('https://evil.test/api/kf/summary'),
+      'no htm/htu': await t.sign(summary, { htm: undefined, htu: undefined }),
+      'a key KF does not publish': await t.sign(summary, {}, { key: stranger.privateKey }),
+    }
+    for (const [why, token] of Object.entries(refused)) {
+      expect(await t.kf.isConsoleCall(token, 'GET', summary), why).toBe(false)
+    }
+    // A good token with its payload changed.
+    const [head, body, sig] = (await t.sign(summary)).split('.')
+    const payload = { ...JSON.parse(atob(body!)), aud: 'kf_pubpub' }
+    const tampered = `${head}.${btoa(JSON.stringify(payload))}.${sig}`
+    expect(await t.kf.isConsoleCall(tampered, 'GET', summary)).toBe(false)
   })
 })

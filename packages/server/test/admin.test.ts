@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { cleanup } from './harness.js'
 import { setup } from './kf-app.js'
+import { kfConsole } from './kf-console.js'
 
 afterAll(cleanup)
 
@@ -27,18 +28,19 @@ describe('steward and KF summary routes', () => {
     }
   })
 
-  it('answers KF Auth with an org’s collections, with the internal key only', async () => {
+  it('answers the KF console with an org’s collections, with its token only', async () => {
     const { h, call, db } = await setup()
     await h.collection('c')
     await db.update(schema.organization).set({ kfOrgId: 'kf-1' })
     const url = '/api/kf/summary?kf_org_id=kf-1'
 
     expect((await call(url)).status).toBe(401)
-    expect((await call(url, { authorization: 'Bearer wrong' })).status).toBe(401)
-    expect((await call('/api/kf/summary', { authorization: 'Bearer internal-key' })).status).toBe(
-      400,
-    )
-    const res = await (await call(url, { authorization: 'Bearer internal-key' })).json()
+    expect((await call(url, { consoleToken: 'wrong' })).status).toBe(401)
+    // The old shared key, which the console still sends alongside, is no longer read.
+    expect((await call(url, { authorization: 'Bearer internal-key' })).status).toBe(401)
+    expect((await call('/api/kf/summary')).status).toBe(401)
+    expect((await call('/api/kf/summary', { consoleToken: 'console-token' })).status).toBe(400)
+    const res = await (await call(url, { consoleToken: 'console-token' })).json()
     expect(res.orgs).toEqual([
       {
         id: 'org1',
@@ -55,8 +57,31 @@ describe('steward and KF summary routes', () => {
       },
     ])
     const none = await call('/api/kf/summary?kf_org_id=kf-none', {
-      authorization: 'Bearer internal-key',
+      consoleToken: 'console-token',
     })
     expect(await none.json()).toEqual({ orgs: [] })
+  })
+
+  it('checks a real console token against the registered summary URL', async () => {
+    let t!: Awaited<ReturnType<typeof kfConsole>>
+    const { h, call, db } = await setup({
+      kf: async (h) => (t = await kfConsole(h.ports.db)).kf,
+    })
+    await h.collection('c')
+    await db.update(schema.organization).set({ kfOrgId: 'kf-1' })
+    const url = '/api/kf/summary?kf_org_id=kf-1'
+    const warn = console.warn
+    console.warn = () => {}
+    try {
+      const ok = await call(url, { consoleToken: await t.sign('http://test/api/kf/summary') })
+      expect(ok.status).toBe(200)
+      expect((await ok.json()).orgs).toHaveLength(1)
+      // A token for another app's summary URL, or for another of this app's routes.
+      for (const htu of ['https://www.pubpub.org/api/kf/summary', 'http://test/api/kf/other']) {
+        expect((await call(url, { consoleToken: await t.sign(htu) })).status).toBe(401)
+      }
+    } finally {
+      console.warn = warn
+    }
   })
 })
