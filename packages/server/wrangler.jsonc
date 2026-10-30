@@ -154,6 +154,7 @@
         "producers": [
           { "binding": "JOBS", "queue": "underlay-prod-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
+          { "binding": "JOBS_COMPACT", "queue": "underlay-prod-compact" },
           { "binding": "USAGE", "queue": "underlay-prod-usage" },
         ],
         "consumers": [
