@@ -75,7 +75,7 @@
           },
           // Run compactions, more at once than units: a merge holds about 12 MB and
           // mostly waits on R2 (jobs.ts COMPACT_JOBS). Prod has no compaction queue;
-          // its bulk queue runs 100 at once.
+          // its bulk queue runs 8 at once, as staging's does.
           {
             "queue": "underlay-staging-compact",
             "max_batch_size": 1,
@@ -121,7 +121,7 @@
           {
             "queue": "underlay-prod-bulk",
             "max_batch_size": 1,
-            "max_concurrency": 100,
+            "max_concurrency": 8,
             "max_retries": 10,
             "dead_letter_queue": "underlay-prod-dead",
           },
