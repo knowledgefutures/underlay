@@ -6,7 +6,7 @@ import type { Principal } from '../src/api/access.js'
 import { createApp } from '../src/app.js'
 import type { Kf } from '../src/auth/kf.js'
 import * as schema from '../src/db/schema.js'
-import { harness } from './harness.js'
+import { type Harness, harness } from './harness.js'
 
 /** A KF Auth stand-in: user u1 belongs to KF org kf-1 and is a steward. */
 export const fakeKf: Kf = {
@@ -19,20 +19,24 @@ export const fakeKf: Kf = {
       : [],
   entitled: async (userId, id) => userId === 'u1' && id === 'kf-1',
   defaultOrgId: async () => null,
-  isInternalCall: (h) => h === 'Bearer internal-key',
+  // Kf's own tests check real tokens; this one, that the route asks about the registered URL.
+  isConsoleCall: async (token, method, url) =>
+    token === 'console-token' && method === 'GET' && url === 'http://test/api/kf/summary',
 }
 
 /**
- * The harness's ports behind an app that knows sessions and keys:
+ * The harness's ports behind an app that knows sessions and keys (and `fakeKf`, unless
+ * `opts.kf` makes another):
  * `x-test-user` signs in (session `s-<user>`), `x-test-key: read|write|admin|scoped|org`
  * (or `scoped-write:<id>`, `scoped-admin:<id>`) makes the caller an API key of that kind.
  */
-export async function setup() {
+export async function setup(opts: { kf?: (h: Harness) => Kf | Promise<Kf> } = {}) {
   const h = await harness()
+  const kf = opts.kf ? await opts.kf(h) : fakeKf
   const app = createApp(() => ({
     ports: h.ports,
     config: { appUrl: 'http://test', deployment: 'test' },
-    kf: fakeKf,
+    kf,
     authenticate: async (req): Promise<Principal | null> => {
       const user = req.headers.get('x-test-user')
       if (!user) return null
@@ -62,12 +66,14 @@ export async function setup() {
       key?: string
       json?: unknown
       authorization?: string
+      consoleToken?: string
     } = {},
   ) => {
     const headers = new Headers()
     if (init.user) headers.set('x-test-user', init.user)
     if (init.key) headers.set('x-test-key', init.key)
     if (init.authorization) headers.set('authorization', init.authorization)
+    if (init.consoleToken) headers.set('kf-console-token', init.consoleToken)
     if (init.json !== undefined) headers.set('content-type', 'application/json')
     return app.fetch(
       new Request(`http://test${path}`, {

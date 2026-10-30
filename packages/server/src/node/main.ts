@@ -178,7 +178,7 @@ const oidc = {
   clientId: env.OIDC_CLIENT_ID ?? 'kf_underlay',
   clientSecret: env.OIDC_CLIENT_SECRET ?? '',
 }
-const kf = createKf(db, { ...oidc, internalApiKey: env.AUTH_INTERNAL_API_KEY })
+const kf = createKf(db, oidc)
 const auth = createAuth(
   db,
   { appUrl, secret: env.SESSION_SECRET ?? 'dev-secret-change-me', oidc },
