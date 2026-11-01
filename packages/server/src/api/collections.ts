@@ -105,16 +105,20 @@ export function collectionRoutes() {
     const p = c.var.principal
     let currentUser = null
     if (p && p.scope === 'session') {
-      const [u] = await db.select().from(schema.user).where(eq(schema.user.id, p.userId)).limit(1)
-      if (u) {
-        const orgs = await db
+      const { cache, waitUntil } = c.var.ports
+      // At once: each is a round trip, and the profile may wait on KF Auth.
+      const [[u], orgs, profile] = await Promise.all([
+        db.select().from(schema.user).where(eq(schema.user.id, p.userId)).limit(1),
+        db
           .select({ org: schema.organization, role: schema.member.role })
           .from(schema.member)
           .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-          .where(eq(schema.member.userId, u.id))
-        const def = orgs.find((o) => o.org.isDefault) ?? null
+          .where(eq(schema.member.userId, p.userId)),
         // The role decides steward pages; name and picture follow KF Auth (v1).
-        const profile = (await c.var.kf?.profile(u.id)) ?? null
+        c.var.kf?.profile(p.userId, { cache, waitUntil }) ?? null,
+      ])
+      if (u) {
+        const def = orgs.find((o) => o.org.isDefault) ?? null
         currentUser = {
           id: u.id,
           slug: def?.org.slug ?? null,

@@ -18,7 +18,7 @@ import { and, eq } from 'drizzle-orm'
 import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose'
 
 import * as schema from '../db/schema.js'
-import type { Db } from '../ports.js'
+import type { Cache, Db } from '../ports.js'
 
 export interface KfConfig {
   /** KF Auth's public origin: console tokens are issued by `<issuerUrl>/api/auth`. */
@@ -46,9 +46,21 @@ export interface KfOrg {
   role: string
 }
 
+/** Where a request lets profiles outlive the isolate, and refresh after it. */
+export interface ProfileContext {
+  /** Shared by isolates (the Cache API on Workers). */
+  cache: Cache
+  /** Run work after the response (ctx.waitUntil). */
+  waitUntil: (p: Promise<unknown>) => void
+}
+
 export interface Kf {
-  /** Profile for the app shell; cached for 30 s per isolate. */
-  profile(userId: string): Promise<KfProfile | null>
+  /**
+   * Profile for the app shell: fresh for 30 s. With `ctx`, one up to a day old
+   * is returned at once and fetched again after the response, so a page only
+   * waits on KF Auth for a user no isolate in this colo has seen that day.
+   */
+  profile(userId: string, ctx?: ProfileContext): Promise<KfProfile | null>
   /**
    * The user's KF role, read fresh: for authorization. When KF Auth can't be
    * read, the role read in the last 30 s.
@@ -69,6 +81,8 @@ export interface Kf {
 }
 
 const PROFILE_TTL_MS = 30_000
+/** How long a profile is shown while a fresh one is fetched. */
+const PROFILE_STALE_MS = 24 * 60 * 60 * 1000
 const TIMEOUT_MS = 5_000
 /** Console tokens live 60 s; KF allows 30 s of clock skew. */
 const CONSOLE_TOKEN_MAX_AGE_S = 60
@@ -80,6 +94,22 @@ export interface KfOptions {
 }
 
 type AccountRow = typeof schema.account.$inferSelect
+
+interface ProfileEntry {
+  profile: KfProfile
+  at: number
+}
+
+const profileKey = (userId: string) => `kf-profile/${userId}`
+
+async function sharedProfile(cache: Cache, userId: string): Promise<ProfileEntry | null> {
+  try {
+    const bytes = await cache.get(profileKey(userId))
+    return bytes ? (JSON.parse(new TextDecoder().decode(bytes)) as ProfileEntry) : null
+  } catch {
+    return null
+  }
+}
 
 /** A stored access token good for at least 30 s more. */
 const usable = (acct: AccountRow) =>
@@ -94,7 +124,9 @@ export function createKf(
   opts: KfOptions = {},
 ): Kf {
   const rereadDelayMs = opts.rereadDelayMs ?? 500
-  const profiles = new Map<string, { profile: KfProfile; at: number }>()
+  const profiles = new Map<string, ProfileEntry>()
+  /** Profile fetches in flight, by user. */
+  const loading = new Map<string, Promise<KfProfile | null>>()
   /** Refreshes in flight, by user. */
   const refreshing = new Map<string, Promise<string | null>>()
   const call = (url: string, init: RequestInit = {}) =>
@@ -238,13 +270,42 @@ export function createKf(
     return null
   }
 
+  /** Fetch a profile and remember it here and in the shared cache; once per user at a time. */
+  function loadProfile(userId: string, ctx?: ProfileContext): Promise<KfProfile | null> {
+    let flight = loading.get(userId)
+    if (!flight) {
+      flight = fetchProfile(userId)
+        .then(async (profile) => {
+          if (!profile) return null
+          const entry: ProfileEntry = { profile, at: Date.now() }
+          profiles.set(userId, entry)
+          await ctx?.cache
+            .put(profileKey(userId), new TextEncoder().encode(JSON.stringify(entry)), {
+              ttlSeconds: PROFILE_STALE_MS / 1000,
+            })
+            .catch(() => {})
+          return profile
+        })
+        .finally(() => loading.delete(userId))
+      loading.set(userId, flight)
+    }
+    return flight
+  }
+
   const kf: Kf = {
-    async profile(userId) {
-      const hit = profiles.get(userId)
-      if (hit && Date.now() - hit.at < PROFILE_TTL_MS) return hit.profile
-      const profile = await fetchProfile(userId)
-      if (profile) profiles.set(userId, { profile, at: Date.now() })
-      return profile
+    async profile(userId, ctx) {
+      let hit = profiles.get(userId)
+      if (!hit && ctx) {
+        hit = (await sharedProfile(ctx.cache, userId)) ?? undefined
+        if (hit) profiles.set(userId, hit)
+      }
+      const age = hit ? Date.now() - hit.at : Infinity
+      if (hit && age < PROFILE_TTL_MS) return hit.profile
+      if (hit && ctx && age < PROFILE_STALE_MS) {
+        ctx.waitUntil(loadProfile(userId, ctx))
+        return hit.profile
+      }
+      return loadProfile(userId, ctx)
     },
     async role(userId) {
       const profile = await fetchProfile(userId)

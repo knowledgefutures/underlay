@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { generateKeyPair } from 'jose'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createKf } from '../src/auth/kf.js'
 import * as schema from '../src/db/schema.js'
@@ -204,6 +204,63 @@ describe('KF Auth client', () => {
       } finally {
         console.warn = warn
       }
+    })
+  })
+
+  describe('profiles for the app shell', () => {
+    afterEach(() => vi.useRealTimers())
+
+    it('are shared by isolates, and a stale one is served while it refreshes', async () => {
+      const h = await harness()
+      const { db, cache } = h.ports
+      await db.insert(schema.user).values({ id: 'u1', name: 'Ada', email: 'ada@example.org' })
+      await db.insert(schema.account).values({
+        id: 'a1',
+        accountId: 'kf-u1',
+        providerId: 'kf-auth',
+        userId: 'u1',
+        accessToken: 'tok',
+        accessTokenExpiresAt: new Date(Date.now() + 30 * 86_400_000),
+      })
+      let name = 'Ada L'
+      let calls = 0
+      const fetcher = (async () => {
+        calls++
+        return json({ name })
+      }) as unknown as typeof fetch
+      const cfg = {
+        issuerUrl: 'http://kf',
+        internalUrl: 'http://kf',
+        clientId: 'c',
+        clientSecret: 's',
+      }
+      const pending: Promise<unknown>[] = []
+      const ctx = { cache, waitUntil: (p: Promise<unknown>) => void pending.push(p) }
+      const settle = async () => {
+        await Promise.all(pending.splice(0))
+      }
+
+      // One isolate fetches; another finds it in the shared cache.
+      expect((await createKf(db, cfg, fetcher).profile('u1', ctx))?.name).toBe('Ada L')
+      const isolate = createKf(db, cfg, fetcher)
+      expect((await isolate.profile('u1', ctx))?.name).toBe('Ada L')
+      expect(calls).toBe(1)
+
+      // Past 30 s: the old one at once, the new one fetched after the response.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.now() + 60_000)
+      name = 'Ada M'
+      expect((await isolate.profile('u1', ctx))?.name).toBe('Ada L')
+      await settle()
+      expect(calls).toBe(2)
+      expect((await isolate.profile('u1', ctx))?.name).toBe('Ada M')
+
+      // Past a day, or without a context, the page waits for KF Auth.
+      vi.setSystemTime(Date.now() + 2 * 86_400_000)
+      name = 'Ada N'
+      expect((await isolate.profile('u1', ctx))?.name).toBe('Ada N')
+      expect(pending).toEqual([])
+      expect(calls).toBe(3)
     })
   })
 })
