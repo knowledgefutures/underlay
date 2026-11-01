@@ -62,6 +62,9 @@ export function createAuth(
       database: { generateId: () => crypto.randomUUID() },
       backgroundTasks: { handler: waitUntil },
     },
+    // The session and user ride in a signed cookie for five minutes, so a signed-in
+    // request skips the session lookup; a revoked session lasts that long here.
+    session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
     plugins: [
       genericOAuth({
         config: [
@@ -337,7 +340,7 @@ async function verifyKey(auth: Auth, ports: Ports, key: string): Promise<Princip
  * InvalidKeyError (401), rather than passing as anonymous.
  */
 export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
-  return async (req, ports) => {
+  return async (req, ports, setCookie) => {
     const auth = getAuth(ports)
     const bearer = req.headers.get('authorization')
     const queryToken =
@@ -355,7 +358,12 @@ export function authenticator(getAuth: (ports: Ports) => Auth): Authenticate {
       return principal
     }
     try {
-      const session = await auth.api.getSession({ headers: req.headers })
+      const { headers, response: session } = await auth.api.getSession({
+        headers: req.headers,
+        returnHeaders: true,
+      })
+      // The cookie cache renewed, the session extended, or an expired one cleared.
+      for (const cookie of headers.getSetCookie()) setCookie?.(cookie)
       if (session) {
         return {
           userId: session.user.id,

@@ -39,7 +39,12 @@ export interface AppConfig {
   kfAccountUrl?: string | undefined
 }
 
-export type Authenticate = (req: Request, ports: Ports) => Promise<Principal | null>
+/** `setCookie` takes cookies the session lookup set, for the response. */
+export type Authenticate = (
+  req: Request,
+  ports: Ports,
+  setCookie?: (value: string) => void,
+) => Promise<Principal | null>
 
 /**
  * What one page view's in-process API calls share: the caller, authenticated
@@ -181,14 +186,26 @@ export function createApp(setup: Setup) {
     c.set('kf', kf ?? null)
     const page = inProcess.get(c.req.raw) ?? null
     c.set('page', page)
+    const cookies: string[] = []
     try {
-      c.set('principal', page ? page.principal : await authenticate(c.req.raw, ports))
+      c.set(
+        'principal',
+        page ? page.principal : await authenticate(c.req.raw, ports, (v) => cookies.push(v)),
+      )
     } catch (err) {
       if ((err as Error).name !== 'InvalidKeyError') throw err
       return c.json({ error: (err as Error).message, statusCode: 401 }, 401)
     }
     c.set('meter', newMeter())
     await next()
+    if (!cookies.length) return
+    try {
+      for (const v of cookies) c.res.headers.append('set-cookie', v)
+    } catch {
+      // A response with immutable headers (one fetched from elsewhere): copy it.
+      c.res = new Response(c.res.body, c.res)
+      for (const v of cookies) c.res.headers.append('set-cookie', v)
+    }
   })
 
   // Usage (billing/usage.ts): a collection API call and its response bytes, billed

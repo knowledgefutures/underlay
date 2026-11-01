@@ -1,3 +1,4 @@
+import { makeSignature } from 'better-auth/crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -221,6 +222,52 @@ describe('better-auth on SQLite', () => {
     expect((await stateOf('//evil.example/x')).callbackURL).toBe('/dashboard')
     expect((await stateOf('/\\evil.example')).callbackURL).toBe('/dashboard')
     expect((await stateOf('https://evil.example/')).callbackURL).toBe('/dashboard')
+  })
+})
+
+describe('sessions', () => {
+  it('ride in a signed cookie, so later requests skip the session lookup', async () => {
+    const h = await harness()
+    const user = await h.member('u1')
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+    )
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+    }))
+    const ctx = await auth.$context
+    const session = await ctx.internalAdapter.createSession(user)
+    const token = `${session.token}.${await makeSignature(session.token, ctx.secret)}`
+    const signedIn = `${ctx.authCookies.sessionToken.name}=${token}`
+    const context = async (cookie: string) => {
+      const before = h.statements()
+      const res = await app.fetch(new Request('http://test/api/context', { headers: { cookie } }))
+      const body = (await res.json()) as { currentUser: { id: string } | null }
+      expect(body.currentUser?.id).toBe(user)
+      return { res, statements: h.statements() - before }
+    }
+
+    // The session is read once, and the response carries the cookie that caches it.
+    const first = await context(signedIn)
+    const cached = first.res.headers
+      .getSetCookie()
+      .find((c) => c.startsWith(`${ctx.authCookies.sessionData.name}=`))
+    expect(cached).toBeDefined()
+    const withCache = await context(`${signedIn}; ${cached!.split(';')[0]}`)
+    expect(withCache.statements).toBeLessThan(first.statements)
   })
 })
 
