@@ -17,6 +17,7 @@ import {
 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
+import { dbIdentity } from './db/identity.js'
 import * as schema from './db/schema.js'
 import type { Db, Stores } from './ports.js'
 
@@ -47,6 +48,8 @@ export interface PlatformStorage {
 /** Primary placements change rarely, a collection's layout only by a conversion; remember them briefly per isolate. */
 const PRIMARY_TTL_MS = 60_000
 const primaryCache = new Map<string, { locationId: string; layout: LayoutName; at: number }>()
+/** Platform locations' key prefixes, per database and location, for as long. */
+const prefixCache = new WeakMap<object, Map<string, { prefix: string; at: number }>>()
 
 /**
  * Layout F's repositories (one a collection) an isolate keeps, the most recently
@@ -61,9 +64,13 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
   const runRepos = new Map<string, Repo>()
   const files = platform.files ?? presigning(platform.bucket)
 
-  const forLocation = async (locationId: string): Promise<Repo> => {
-    const known = repos.get(locationId)
-    if (known) return known
+  let prefixes = prefixCache.get(dbIdentity(db))
+  if (!prefixes) prefixCache.set(dbIdentity(db), (prefixes = new Map()))
+
+  /** A platform location's key prefix in the bucket. */
+  const locationPrefix = async (locationId: string): Promise<string> => {
+    const hit = prefixes.get(locationId)
+    if (hit && Date.now() - hit.at < PRIMARY_TTL_MS) return hit.prefix
     const [loc] = await db
       .select()
       .from(schema.storageLocations)
@@ -74,6 +81,14 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       throw new Error(`Storage location ${locationId} (${loc.kind}) is not readable yet`)
     }
     const prefix = [platform.repoPrefix, loc.prefix].filter(Boolean).join('/')
+    prefixes.set(locationId, { prefix, at: Date.now() })
+    return prefix
+  }
+
+  const forLocation = async (locationId: string): Promise<Repo> => {
+    const known = repos.get(locationId)
+    if (known) return known
+    const prefix = await locationPrefix(locationId)
     const repo = new Repo(new PrefixedStore(platform.bucket, prefix), {
       cache,
       scope: `loc:${locationId}`,

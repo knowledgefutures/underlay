@@ -1,3 +1,4 @@
+import { dbIdentity } from '../db/identity.js'
 import * as schema from '../db/schema.js'
 /**
  * Abuse controls (edge-redesign.md, "Files"; v2-alignment-review.md, "Abuse
@@ -101,21 +102,22 @@ const denyCache = new WeakMap<object, { at: number; hashes: Promise<Set<string>>
 
 /** Blocked hashes (files and records), cached per database for a minute. */
 export function deniedHashes(db: Db): Promise<Set<string>> {
-  const hit = denyCache.get(db)
+  const key = dbIdentity(db)
+  const hit = denyCache.get(key)
   if (hit && Date.now() - hit.at < DENY_TTL_MS) return hit.hashes
   const hashes = db
     .select({ hash: schema.denylist.hash })
     .from(schema.denylist)
     .then((rows) => new Set(rows.map((r) => r.hash)))
   // A failed read isn't cached.
-  hashes.catch(() => denyCache.delete(db))
-  denyCache.set(db, { at: Date.now(), hashes })
+  hashes.catch(() => denyCache.delete(key))
+  denyCache.set(key, { at: Date.now(), hashes })
   return hashes
 }
 
 /** Forget the cached denylist (after this isolate changes it). */
 export function forgetDenylist(db: Db): void {
-  denyCache.delete(db)
+  denyCache.delete(dbIdentity(db))
 }
 
 /** Whether a hash is blocked. Accepts `sha256:`-prefixed file hashes. */

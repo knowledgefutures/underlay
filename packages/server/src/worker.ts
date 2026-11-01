@@ -119,7 +119,7 @@ function publicAssets(env: Env): PublicAssets | undefined {
 }
 
 function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
-  const db = req ? openD1(d1For(env, req)) : primaryDb(env)
+  const db = req ? openD1(d1For(env, req), env.DB) : primaryDb(env)
   const cache = new CfCache(caches as never, env.DEPLOYMENT, (p) => ctx.waitUntil(p))
   const assets = publicAssets(env)
   const s3 = s3Store({

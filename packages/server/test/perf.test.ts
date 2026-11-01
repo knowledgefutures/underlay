@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
 
+import { memoryStore } from '@underlay/protocol'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import { createApp } from '../src/app.js'
+import { setDbIdentity } from '../src/db/identity.js'
 import * as schema from '../src/db/schema.js'
+import { PLATFORM_LOCATION_ID } from '../src/db/schema.js'
+import { deniedHashes } from '../src/lib/limits.js'
+import type { Db } from '../src/ports.js'
+import { createStores } from '../src/stores.js'
 import { cleanup, harness } from './harness.js'
 
 afterAll(cleanup)
@@ -119,5 +125,30 @@ describe('page performance', () => {
     }))
     await app.fetch(new Request('http://test/some/page'))
     expect(calls).toBe(1)
+  })
+})
+
+describe('isolate caches', () => {
+  it('outlive a request’s database handle', async () => {
+    const h = await harness()
+    // As on Workers: each request opens its own Db over the isolate's one binding.
+    const request = () => {
+      const db = Object.create(h.ports.db) as Db
+      setDbIdentity(db, h.ports.db)
+      return db
+    }
+    const platform = { bucket: memoryStore(), repoPrefix: 'repo', internalPrefix: 'internal' }
+    const reads = async (fn: (db: Db) => Promise<unknown>) => {
+      const before = h.statements()
+      await fn(request())
+      return h.statements() - before
+    }
+    const location = (db: Db) =>
+      createStores(db, h.ports.cache, platform).forLocation(PLATFORM_LOCATION_ID)
+
+    expect(await reads(deniedHashes)).toBe(1)
+    expect(await reads(deniedHashes)).toBe(0)
+    expect(await reads(location)).toBe(1)
+    expect(await reads(location)).toBe(0)
   })
 })
