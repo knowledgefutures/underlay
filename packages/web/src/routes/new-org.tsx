@@ -5,6 +5,7 @@ import BaseLayout from '~/components/BaseLayout'
 import { Alert, Button, Field, Input, Select } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
+import { HELP_EMAIL } from '~/lib/contact'
 import { slugify } from '~/lib/format'
 
 interface KfAccount {
@@ -45,7 +46,7 @@ export default function NewOrg() {
       const { data, error: err } = await authClient.organization.create({
         name: displayName,
         slug,
-        kfOrgId: kfOrgId || undefined,
+        kfOrgId,
       } as any)
       if (err) {
         setError(err.message ?? 'Failed to create organization')
@@ -73,6 +74,15 @@ export default function NewOrg() {
 
         {!loaded ? (
           <p className="text-ink-muted text-sm">Loading…</p>
+        ) : kfAccounts.length === 0 ? (
+          <Alert variant="info">
+            An Underlay organization belongs to a Knowledge Futures account, and you aren&rsquo;t in
+            one yet. Email{' '}
+            <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
+              {HELP_EMAIL}
+            </a>{' '}
+            and we&rsquo;ll set one up for you.
+          </Alert>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && <Alert variant="error">{error}</Alert>}
@@ -147,7 +157,7 @@ export default function NewOrg() {
 
             <Button
               type="submit"
-              disabled={submitting || !slug || !displayName || (kfAccounts.length > 1 && !kfOrgId)}
+              disabled={submitting || !slug || !displayName || !kfOrgId}
               className="w-full"
             >
               {submitting ? 'Creating...' : 'Create organization'}

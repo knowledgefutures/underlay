@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
+import { HELP_EMAIL } from '~/lib/contact'
 
 const recordExample = `{
   "id": "pub-001",
@@ -134,12 +135,13 @@ export default function DocsConcepts() {
       <p>Underlay has two account types:</p>
       <ul>
         <li>
-          <strong>Users</strong>: people, who sign in with KF Auth. Each user has a personal account
-          that can own collections.
+          <strong>Users</strong>: people, who sign in with KF Auth. Users who signed up before
+          November 2026 also have a personal account that can own collections.
         </li>
         <li>
           <strong>Organizations</strong>: group accounts with members who have roles (owner, admin,
-          member)
+          member). Each belongs to a Knowledge Futures account; to have one set up, email{' '}
+          <a href={`mailto:${HELP_EMAIL}`}>{HELP_EMAIL}</a>.
         </li>
       </ul>
       <p>

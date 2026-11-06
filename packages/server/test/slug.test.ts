@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import {
-  defaultOrgSlugCandidate,
   RESERVED_COLLECTION_SLUGS,
   RESERVED_ORG_SLUGS,
   validateCollectionSlug,
@@ -36,16 +35,6 @@ describe('top-level paths', () => {
     // Collections may use words only orgs can't: arxiv/search is fine, org/settings isn't.
     expect(validateCollectionSlug('search')).toBeNull()
     expect(validateCollectionSlug('settings')).toBe('That slug is reserved')
-  })
-
-  it('give personal orgs a free slug when the email names a reserved word', () => {
-    expect(defaultOrgSlugCandidate('ada@example.org')).toBe('ada')
-    expect(defaultOrgSlugCandidate('ada@example.org', 2)).toBe('ada-2')
-    expect(defaultOrgSlugCandidate('support@example.org')).toBe('support-1')
-    expect(defaultOrgSlugCandidate('support@example.org', 1)).toBe('support-2')
-    expect(defaultOrgSlugCandidate('a@example.org')).toBe('a-1')
-    for (const e of ['admin@x.org', 'user@x.org', '@x.org'])
-      expect(validateOrgSlug(defaultOrgSlugCandidate(e))).toBeNull()
   })
 
   it('redirect old blog and protocol URLs', async () => {

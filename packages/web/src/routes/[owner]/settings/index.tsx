@@ -415,7 +415,9 @@ export default function OwnerSettings() {
                 KF Account
               </label>
               <Select id="kfOrgId" value={kfOrgId} onChange={(e) => setKfOrgId(e.target.value)}>
-                <option value="">— None —</option>
+                <option value="" disabled>
+                  Select a KF account…
+                </option>
                 {kfOrgs.map((kfOrg) => (
                   <option key={kfOrg.id} value={kfOrg.id}>
                     {kfOrg.name}
@@ -423,7 +425,7 @@ export default function OwnerSettings() {
                 ))}
               </Select>
             </div>
-            <Button type="submit" disabled={submitting === 'kforg'}>
+            <Button type="submit" disabled={submitting === 'kforg' || !kfOrgId}>
               {submitting === 'kforg' ? 'Saving…' : 'Save changes'}
             </Button>
           </form>

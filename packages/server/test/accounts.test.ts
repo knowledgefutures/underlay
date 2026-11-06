@@ -77,6 +77,23 @@ describe('account routes', () => {
     ).toEqual([])
   })
 
+  it('serves and deletes a user with no personal org, confirmed by email', async () => {
+    const { call, db } = await setup()
+    await db.insert(schema.user).values({ id: 'n1', name: 'Nell', email: 'nell@example.org' })
+    const me = await (await call('/api/accounts/me', { user: 'n1' })).json()
+    expect(me).toMatchObject({ id: 'n1', slug: null, displayName: 'Nell', orgs: [] })
+    expect(
+      (await call('/api/accounts/me', { method: 'PATCH', user: 'n1', json: { bio: 'b' } })).status,
+    ).toBe(404)
+
+    const del = (json: Record<string, string>) =>
+      call('/api/accounts/me', { method: 'DELETE', user: 'n1', json })
+    expect((await del({ confirmEmail: 'other@example.org' })).status).toBe(422)
+    expect((await del({ confirmSlug: 'n1' })).status).toBe(422)
+    expect((await del({ confirmEmail: 'nell@example.org' })).status).toBe(200)
+    expect(await db.select().from(schema.user).where(eq(schema.user.id, 'n1'))).toEqual([])
+  })
+
   it('lists and revokes the user’s own sessions', async () => {
     const { call, db, user } = await setup()
     await user('u1')
@@ -172,7 +189,9 @@ describe('account routes', () => {
       .from(schema.organization)
       .where(eq(schema.organization.id, 'org1'))
     expect(org).toMatchObject({ kfOrgId: 'kf-1', name: 'Org One' })
-    expect((await patch('u1', { kfOrgId: null })).status).toBe(200)
+    // An org keeps a KF account.
+    expect((await patch('u1', { kfOrgId: null })).status).toBe(422)
+    expect((await patch('u1', { kfOrgId: '' })).status).toBe(422)
 
     expect(await (await call('/api/accounts/available-kf-orgs', { user: 'u1' })).json()).toEqual([
       expect.objectContaining({ id: 'kf-1' }),

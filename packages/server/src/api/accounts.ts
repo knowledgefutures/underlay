@@ -23,6 +23,7 @@ import { and, count, eq, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { NO_KF_ACCOUNT } from '../auth/auth.js'
 import * as schema from '../db/schema.js'
 import { deleteOrgAvatars } from '../lib/avatars.js'
 import { validateOrgSlug } from '../lib/slug.js'
@@ -157,29 +158,49 @@ export function accountRoutes() {
     // Deleting the account takes a session or an admin key, as org deletion does (capRole).
     if (c.var.principal?.scope === 'read' || c.var.principal?.scope === 'write')
       return jsonError(c, 403, 'Deleting an account needs a session or an admin key')
-    const body = (await c.req.json().catch(() => null)) as { confirmSlug?: unknown } | null
+    const body = (await c.req.json().catch(() => null)) as {
+      confirmSlug?: unknown
+      confirmEmail?: unknown
+    } | null
+    const { db } = c.var.ports
+    // Users from before 2026-11 have a personal org, confirmed by its slug;
+    // everyone else confirms with their email.
     const org = await personalOrg(c, userId)
-    if (!org) return jsonError(c, 404, 'Account not found')
-    if (body?.confirmSlug !== org.slug) {
-      return jsonError(c, 422, 'Username confirmation does not match')
-    }
-    const held = await collectionCount(c, org.id)
-    if (held) {
-      return jsonError(
-        c,
-        409,
-        `Your account still holds ${held} collection${held === 1 ? '' : 's'}. Delete or transfer them first.`,
-      )
+    if (org) {
+      if (body?.confirmSlug !== org.slug) {
+        return jsonError(c, 422, 'Username confirmation does not match')
+      }
+      const held = await collectionCount(c, org.id)
+      if (held) {
+        return jsonError(
+          c,
+          409,
+          `Your account still holds ${held} collection${held === 1 ? '' : 's'}. Delete or transfer them first.`,
+        )
+      }
+    } else {
+      const [u] = await db
+        .select({ email: schema.user.email })
+        .from(schema.user)
+        .where(eq(schema.user.id, userId))
+        .limit(1)
+      if (!u) return jsonError(c, 404, 'Account not found')
+      if (body?.confirmEmail !== u.email) {
+        return jsonError(c, 422, 'Email confirmation does not match')
+      }
     }
     // Members, sessions, accounts and sent invitations cascade from the user row.
-    const { db } = c.var.ports
     await db.batch([
       db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId)),
-      db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id)),
-      db.delete(schema.organization).where(eq(schema.organization.id, org.id)),
+      ...(org
+        ? [
+            db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id)),
+            db.delete(schema.organization).where(eq(schema.organization.id, org.id)),
+          ]
+        : []),
       db.delete(schema.user).where(eq(schema.user.id, userId)),
     ])
-    await deleteOrgAvatars(c.var.ports.publicAssets, org.id)
+    if (org) await deleteOrgAvatars(c.var.ports.publicAssets, org.id)
     return c.json({ ok: true })
   })
 
@@ -280,7 +301,9 @@ export function accountRoutes() {
       if (bad) return bad
     }
     // /api/kf/summary trusts kfOrgId, so a caller may set only one of their own KF orgs.
+    // An org keeps a KF account: it may move to another, never to none.
     const kfOrgId = strOrNull(body.kfOrgId)
+    if (kfOrgId !== undefined && !kfOrgId) return jsonError(c, 422, NO_KF_ACCOUNT)
     if (kfOrgId && !(await c.var.kf?.entitled(userId, kfOrgId))) {
       return jsonError(c, 403, 'You are not a member of that KF organization')
     }

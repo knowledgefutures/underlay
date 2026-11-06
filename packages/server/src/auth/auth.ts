@@ -15,12 +15,12 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError } from 'better-auth/api'
 import { genericOAuth } from 'better-auth/plugins'
 import { organization } from 'better-auth/plugins/organization'
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 
 import type { Principal } from '../api/access.js'
 import type { Authenticate } from '../app.js'
 import * as schema from '../db/schema.js'
-import { defaultOrgSlugCandidate, validateOrgSlug } from '../lib/slug.js'
+import { validateOrgSlug } from '../lib/slug.js'
 import type { Db, Ports } from '../ports.js'
 import type { Kf } from './kf.js'
 
@@ -39,6 +39,16 @@ export interface AuthConfig {
   /** Extra trusted origins (e.g. http:// variants in dev). */
   trustedOrigins?: string[]
 }
+
+/** Where someone with no KF account asks for one. */
+export const HELP_EMAIL = 'help@underlay.org'
+
+/**
+ * Every organization belongs to a KF account (a party KF does business with),
+ * one its creator is a member of. KF sets the account up on request: that
+ * keeps a gate on who uses Underlay, and gives usage somewhere to be billed.
+ */
+export const NO_KF_ACCOUNT = `An Underlay organization belongs to a Knowledge Futures account. Email ${HELP_EMAIL} and we'll set one up for you.`
 
 function assertValidSlug(slug: unknown) {
   const err = validateOrgSlug(slug)
@@ -110,15 +120,15 @@ export function createAuth(
             const base = { ...org, logo: null, avatarUrl: null }
             const asked = (org as { kfOrgId?: string | null }).kfOrgId
             if (asked && kf && (await kf.entitled(user.id, asked))) return { data: base }
-            // Not one of theirs, or none asked: no KF account. A KF account is a
-            // party KF does business with, linked on purpose, never by default.
-            return { data: { ...base, kfOrgId: null } }
+            throw new APIError('FORBIDDEN', { message: NO_KF_ACCOUNT })
           },
           beforeUpdateOrganization: async ({ organization: org, user }) => {
             if (org.slug !== undefined) assertValidSlug(org.slug)
-            // Clearing is allowed; setting needs membership of that KF org.
+            // An org keeps a KF account: it may move to another one the caller belongs to.
             const asked = (org as { kfOrgId?: string | null }).kfOrgId
-            if (!asked || (kf && (await kf.entitled(user.id, asked)))) return
+            if (asked === undefined) return
+            if (!asked) throw new APIError('BAD_REQUEST', { message: NO_KF_ACCOUNT })
+            if (kf && (await kf.entitled(user.id, asked))) return
             throw new APIError('FORBIDDEN', { message: 'Not a KF organization you belong to' })
           },
         },
@@ -164,37 +174,9 @@ export function createAuth(
           },
         },
       },
-      user: {
-        create: {
-          after: async (user) => {
-            // Every user gets a personal (default) organization, as in v1: the
-            // first free of 50 candidate slugs, read in one query.
-            const candidates = Array.from({ length: 50 }, (_, i) =>
-              defaultOrgSlugCandidate(user.email, i),
-            )
-            const taken = new Set(
-              (
-                await db
-                  .select({ slug: schema.organization.slug })
-                  .from(schema.organization)
-                  .where(inArray(schema.organization.slug, candidates))
-              ).map((r) => r.slug),
-            )
-            const slug =
-              candidates.find((s) => !taken.has(s)) ??
-              `${candidates[0]!.replace(/-\d+$/, '')}-${crypto.randomUUID().slice(0, 8)}`
-            const orgId = crypto.randomUUID()
-            await db.batch([
-              db
-                .insert(schema.organization)
-                .values({ id: orgId, name: user.name, slug, isDefault: true }),
-              db
-                .insert(schema.member)
-                .values({ organizationId: orgId, userId: user.id, role: 'owner' }),
-            ])
-          },
-        },
-      },
+      // No personal organization for a new user (v1 made one, and users who
+      // have one keep it): collections belong to organizations, and an
+      // organization to a KF account.
     },
   })
 }

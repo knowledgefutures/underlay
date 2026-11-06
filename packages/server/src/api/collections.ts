@@ -121,6 +121,7 @@ export function collectionRoutes() {
         const def = orgs.find((o) => o.org.isDefault) ?? null
         currentUser = {
           id: u.id,
+          email: u.email,
           slug: def?.org.slug ?? null,
           displayName: profile?.name ?? u.name ?? def?.org.name ?? null,
           avatarUrl: profile?.image ?? u.image ?? null,

@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { Alert, Button, Field, Input, Select } from '~/components/ui'
@@ -65,105 +65,115 @@ export default function NewCollection() {
           A collection holds versioned, structured data. You can push records via the API or CLI.
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {error && <Alert variant="error">{error}</Alert>}
+        {ownerOptions.length === 0 ? (
+          <Alert variant="info">
+            A collection belongs to an organization, and you aren&rsquo;t in one yet.{' '}
+            <Link to="/new-org" className="text-link hover:underline">
+              Create an organization
+            </Link>
+            , or ask an organization&rsquo;s owner to invite you.
+          </Alert>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {error && <Alert variant="error">{error}</Alert>}
 
-          <Field label="Owner">
-            {ownerOptions.length > 1 ? (
-              <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
-                {ownerOptions.map((o: any) => (
-                  <option key={o.slug} value={o.slug}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            ) : (
-              <div className="bg-parchment-dark border-rule rounded-control border px-3 py-2 text-sm">
-                {ownerOptions[0]?.label ?? owner}
+            <Field label="Owner">
+              {ownerOptions.length > 1 ? (
+                <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
+                  {ownerOptions.map((o: any) => (
+                    <option key={o.slug} value={o.slug}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <div className="bg-parchment-dark border-rule rounded-control border px-3 py-2 text-sm">
+                  {ownerOptions[0]?.label ?? owner}
+                </div>
+              )}
+            </Field>
+
+            <Field
+              label="URL slug"
+              hint={
+                <>
+                  Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
+                  <span className="font-mono">
+                    {siteHost}/{owner}/{slug || '...'}
+                  </span>
+                </>
+              }
+            >
+              <Input
+                type="text"
+                required
+                pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
+                minLength={2}
+                placeholder="my-dataset"
+                value={slug}
+                onChange={(e) => setSlug(slugify(e.target.value))}
+              />
+            </Field>
+
+            <Field
+              label={
+                <>
+                  Description <span className="text-ink-muted font-normal">(optional)</span>
+                </>
+              }
+            >
+              <Input
+                type="text"
+                placeholder="A short description of this collection"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </Field>
+
+            {/* Visibility */}
+            <fieldset>
+              <legend className="text-ink mb-2 text-sm font-medium">Visibility</legend>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2.5">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    checked={!isPublic}
+                    onChange={() => setIsPublic(false)}
+                    className="accent-ink mt-0.5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Private</div>
+                    <div className="text-ink-muted text-xs">
+                      Only you and organization members can see this collection.
+                    </div>
+                  </div>
+                </label>
+                <label className="flex items-start gap-2.5">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    checked={isPublic}
+                    onChange={() => setIsPublic(true)}
+                    className="accent-ink mt-0.5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium">Public</div>
+                    <div className="text-ink-muted text-xs">
+                      Anyone can see this collection. It will appear in Explore.
+                    </div>
+                  </div>
+                </label>
               </div>
-            )}
-          </Field>
+            </fieldset>
 
-          <Field
-            label="URL slug"
-            hint={
-              <>
-                Lowercase letters, numbers, and hyphens. This becomes the URL:{' '}
-                <span className="font-mono">
-                  {siteHost}/{owner}/{slug || '...'}
-                </span>
-              </>
-            }
-          >
-            <Input
-              type="text"
-              required
-              pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
-              minLength={2}
-              placeholder="my-dataset"
-              value={slug}
-              onChange={(e) => setSlug(slugify(e.target.value))}
-            />
-          </Field>
+            <hr className="border-rule" />
 
-          <Field
-            label={
-              <>
-                Description <span className="text-ink-muted font-normal">(optional)</span>
-              </>
-            }
-          >
-            <Input
-              type="text"
-              placeholder="A short description of this collection"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </Field>
-
-          {/* Visibility */}
-          <fieldset>
-            <legend className="text-ink mb-2 text-sm font-medium">Visibility</legend>
-            <div className="space-y-2">
-              <label className="flex items-start gap-2.5">
-                <input
-                  type="radio"
-                  name="visibility"
-                  checked={!isPublic}
-                  onChange={() => setIsPublic(false)}
-                  className="accent-ink mt-0.5"
-                />
-                <div>
-                  <div className="text-sm font-medium">Private</div>
-                  <div className="text-ink-muted text-xs">
-                    Only you and organization members can see this collection.
-                  </div>
-                </div>
-              </label>
-              <label className="flex items-start gap-2.5">
-                <input
-                  type="radio"
-                  name="visibility"
-                  checked={isPublic}
-                  onChange={() => setIsPublic(true)}
-                  className="accent-ink mt-0.5"
-                />
-                <div>
-                  <div className="text-sm font-medium">Public</div>
-                  <div className="text-ink-muted text-xs">
-                    Anyone can see this collection. It will appear in Explore.
-                  </div>
-                </div>
-              </label>
-            </div>
-          </fieldset>
-
-          <hr className="border-rule" />
-
-          <Button type="submit" disabled={submitting || !slug || !owner} className="w-full">
-            {submitting ? 'Creating...' : 'Create collection'}
-          </Button>
-        </form>
+            <Button type="submit" disabled={submitting || !slug || !owner} className="w-full">
+              {submitting ? 'Creating...' : 'Create collection'}
+            </Button>
+          </form>
+        )}
       </div>
     </BaseLayout>
   )

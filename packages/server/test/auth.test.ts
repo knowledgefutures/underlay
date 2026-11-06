@@ -143,7 +143,7 @@ describe('better-auth on SQLite', () => {
     expect(res.status).toBeLessThan(500)
   })
 
-  it('gives every new user a personal organization', async () => {
+  it('gives a new user no personal organization', async () => {
     const h = await harness()
     const auth = createAuth(
       h.ports.db,
@@ -165,10 +165,8 @@ describe('better-auth on SQLite', () => {
       email: 'ada@example.org',
       emailVerified: true,
     })
-    const orgs = await h.ports.db.select().from(schema.organization)
-    expect(orgs.map((o) => [o.slug, o.isDefault])).toEqual([['ada', true]])
-    const members = await h.ports.db.select().from(schema.member)
-    expect(members[0]).toMatchObject({ organizationId: orgs[0]!.id, role: 'owner' })
+    expect(await h.ports.db.select().from(schema.organization)).toEqual([])
+    expect(await h.ports.db.select().from(schema.member)).toEqual([])
   })
 
   it('sends /login to KF Auth, and renders the page only to show an error', async () => {
@@ -272,7 +270,7 @@ describe('sessions', () => {
 })
 
 describe('KF org links on organizations', () => {
-  it('keeps a kfOrgId the creator belongs to, and drops any other', async () => {
+  it('creates an org only on a KF account the creator belongs to', async () => {
     const h = await harness()
     const kf = {
       profile: async () => null,
@@ -302,14 +300,13 @@ describe('KF org links on organizations', () => {
       email: 'ada@example.org',
       emailVerified: true,
     })
-    const create = (slug: string, kfOrgId: string) =>
+    const create = (slug: string, kfOrgId?: string) =>
       auth.api.createOrganization({ body: { name: slug, slug, userId: user.id, kfOrgId } as never })
     await create('mine', 'kf-mine')
-    await create('theirs', 'kf-theirs')
+    await expect(create('theirs', 'kf-theirs')).rejects.toThrow(/help@underlay\.org/)
+    await expect(create('none')).rejects.toThrow(/help@underlay\.org/)
     const orgs = await h.ports.db.select().from(schema.organization)
-    const link = (slug: string) => orgs.find((o) => o.slug === slug)?.kfOrgId
-    expect(link('mine')).toBe('kf-mine')
-    expect(link('theirs')).toBeNull()
+    expect(orgs.map((o) => [o.slug, o.kfOrgId])).toEqual([['mine', 'kf-mine']])
 
     // Logos come from the upload only: better-auth's fields are any URL.
     await auth.api.createOrganization({
@@ -317,6 +314,7 @@ describe('KF org links on organizations', () => {
         name: 'logo',
         slug: 'logo',
         userId: user.id,
+        kfOrgId: 'kf-mine',
         logo: 'https://evil.example/x.png',
       } as never,
     })
@@ -331,6 +329,7 @@ describe('KF org links on organizations', () => {
         name: 'av',
         slug: 'av',
         userId: user.id,
+        kfOrgId: 'kf-mine',
         avatarUrl: 'https://evil.example/x.png',
       } as never,
     })

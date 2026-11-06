@@ -66,8 +66,9 @@ per data center and is approximate.
 
 ## Core Concepts
 
-- Organization: owns collections. Every user has a personal organization. Identified by :owner
-  (its slug).
+- Organization: owns collections, and belongs to a Knowledge Futures account its creator is a
+  member of (to have one set up, email help@underlay.org). Users who signed up before November
+  2026 also have a personal organization; new users don't. Identified by :owner (its slug).
 - Collection: a named, versioned body of data owned by an organization. Identified by
   :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). Public or private.
 - Version: an immutable state of a collection: schemas, records, files and metadata. Identified
@@ -712,7 +713,7 @@ readers can verify it and everything public, and learn only whether a private se
 ## Organization and Collection Management
 
 Organizations:
-POST   /api/auth/organization/create   → {"name", "slug"}
+POST   /api/auth/organization/create   → {"name", "slug", "kfOrgId"} (403 without a KF account you belong to)
 GET    /api/auth/organization/list     → your organizations
 GET    /api/accounts/:slug             → an organization or user profile (public)
 GET    /api/accounts/:slug/members     → its members (public)

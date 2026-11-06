@@ -164,16 +164,24 @@ export default function OwnerPage() {
                   Members
                 </h3>
                 <div className="space-y-0.5">
-                  {members.map((m: any) => (
-                    <Link
-                      key={m.slug}
-                      to={`/${m.slug}`}
-                      className="hover:bg-parchment-dark rounded-control flex items-center gap-2 px-2 py-1 transition-colors"
-                    >
-                      <span className="text-sm font-medium">{m.slug}</span>
-                      <span className="text-ink-muted text-[10px]">{m.role}</span>
-                    </Link>
-                  ))}
+                  {members.map((m: any, i: number) =>
+                    // Members from before 2026-11 have a personal account to link to.
+                    m.slug ? (
+                      <Link
+                        key={m.slug}
+                        to={`/${m.slug}`}
+                        className="hover:bg-parchment-dark rounded-control flex items-center gap-2 px-2 py-1 transition-colors"
+                      >
+                        <span className="text-sm font-medium">{m.slug}</span>
+                        <span className="text-ink-muted text-[10px]">{m.role}</span>
+                      </Link>
+                    ) : (
+                      <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1">
+                        <span className="text-sm font-medium">{m.displayName}</span>
+                        <span className="text-ink-muted text-[10px]">{m.role}</span>
+                      </div>
+                    ),
+                  )}
                 </div>
               </div>
             )}

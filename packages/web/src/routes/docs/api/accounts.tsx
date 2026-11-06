@@ -1,4 +1,5 @@
 import DocsLayout from '~/components/DocsLayout'
+import { HELP_EMAIL } from '~/lib/contact'
 
 const meRes = `{
   "id": "uuid",
@@ -58,7 +59,8 @@ const okRes = `{ "ok": true }`
 
 const createOrgReq = `{
   "name": "My Lab",
-  "slug": "my-lab"
+  "slug": "my-lab",
+  "kfOrgId": "kf-account-id"
 }`
 
 const acceptReq = `{ "token": "invitation-id" }`
@@ -124,9 +126,11 @@ export default function DocsApiAccounts() {
         </li>
       </ul>
       <p>
-        User accounts are created automatically on first sign-in via KF Auth (OAuth2/PKCE), each
-        with a personal account (an organization with <code>isDefault: true</code>) that the user
-        owns. There are no local signup or login endpoints.
+        User accounts are created automatically on first sign-in via KF Auth (OAuth2/PKCE). There
+        are no local signup or login endpoints. Collections belong to organizations, and each
+        organization to a Knowledge Futures account. Users who signed up before November 2026 also
+        have a personal account (an organization with <code>isDefault: true</code>); new users
+        don&rsquo;t.
       </p>
       <p>
         API keys have three scopes: <code>read</code>, <code>write</code> and <code>admin</code>. A
@@ -153,7 +157,8 @@ export default function DocsApiAccounts() {
         <p>
           Get the authenticated user, with every organization they belong to. <code>slug</code> and{' '}
           <code>displayName</code> are those of the user&rsquo;s personal account (the entry in{' '}
-          <code>orgs</code> with <code>isDefault: true</code>).
+          <code>orgs</code> with <code>isDefault: true</code>) when they have one; otherwise{' '}
+          <code>slug</code> is <code>null</code> and <code>displayName</code> is their name.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -189,8 +194,8 @@ export default function DocsApiAccounts() {
         <p className="scope">No auth required</p>
         <p>
           List an account&rsquo;s members and their roles (<code>owner</code>, <code>admin</code> or{' '}
-          <code>member</code>). <code>slug</code> is the member&rsquo;s personal account. An unknown
-          slug returns <code>404</code>.
+          <code>member</code>). <code>slug</code> is the member&rsquo;s personal account, or{' '}
+          <code>null</code> if they have none. An unknown slug returns <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -210,8 +215,9 @@ export default function DocsApiAccounts() {
         <p>
           Update an organization&rsquo;s profile. Pass only the fields to change: <code>slug</code>,{' '}
           <code>displayName</code>, <code>bio</code>, <code>website</code> and <code>kfOrgId</code>{' '}
-          (the KF organization it is linked to, which must be one you belong to). <code>null</code>{' '}
-          clears <code>bio</code>, <code>website</code> or <code>kfOrgId</code>.
+          (the KF account it belongs to, which must be one you belong to). <code>null</code> clears{' '}
+          <code>bio</code> or <code>website</code>; <code>kfOrgId</code> can move to another KF
+          account but can&rsquo;t be cleared (<code>422</code>).
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -286,8 +292,14 @@ export default function DocsApiAccounts() {
         <p className="scope">Auth: session</p>
         <p>
           Create an organization, with you as its owner. Managed by better-auth&rsquo;s organization
-          plugin; the slug must be a valid, unused account slug.{' '}
-          <code>GET /api/auth/organization/list</code> lists the organizations you belong to.
+          plugin; the slug must be a valid, unused account slug, and <code>kfOrgId</code> a
+          Knowledge Futures account you belong to (<code>GET /api/accounts/available-kf-orgs</code>
+          lists them). Without one the request is refused with <code>403</code>; email{' '}
+          <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
+            {HELP_EMAIL}
+          </a>{' '}
+          to have one set up. <code>GET /api/auth/organization/list</code> lists the organizations
+          you belong to.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">

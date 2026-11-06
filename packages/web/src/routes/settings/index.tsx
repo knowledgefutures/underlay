@@ -32,8 +32,13 @@ export default function Settings() {
   const [orgInvitations, setOrgInvitations] = useState(notifPrefs.orgInvitations ?? true)
   const [securityAlerts, setSecurityAlerts] = useState(notifPrefs.securityAlerts ?? true)
 
-  // Delete account
+  // Users from before 2026-11 have a personal org: the username, bio and links
+  // live on it. Everyone else has only their KF profile.
+  const hasProfile = Boolean(currentUser?.slug)
+
+  // Delete account: confirmed by username, or by email without one
   const [confirmSlug, setConfirmSlug] = useState('')
+  const confirmWord: string = hasProfile ? currentUser.slug : (currentUser?.email ?? '')
 
   const [submitting, setSubmitting] = useState('')
 
@@ -104,7 +109,7 @@ export default function Settings() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ confirmSlug }),
+        body: JSON.stringify(hasProfile ? { confirmSlug } : { confirmEmail: confirmSlug.trim() }),
       })
       if (res.ok) {
         window.location.href = '/'
@@ -150,7 +155,7 @@ export default function Settings() {
         )}
         <div className="min-w-0">
           <p className="text-sm font-medium">{currentUser.displayName}</p>
-          <p className="text-ink-muted font-mono text-xs">@{currentUser.slug}</p>
+          {hasProfile && <p className="text-ink-muted font-mono text-xs">@{currentUser.slug}</p>}
           <p className="text-ink-muted mt-2 text-xs">
             Picture managed by your{' '}
             <a
@@ -166,84 +171,88 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Profile */}
-      <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium">Display name</label>
-          <p className="text-ink-muted text-sm">{currentUser.displayName}</p>
-          <p className="text-ink-muted mt-1 text-xs">
-            Managed by your{' '}
-            <a
-              href={kfAccountUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-link hover:underline"
-            >
-              KF Account
-            </a>
-            .
-          </p>
-        </div>
-        <div>
-          <label htmlFor="bio" className="mb-1 block text-sm font-medium">
-            Bio
-          </label>
-          <Textarea
-            id="bio"
-            rows={3}
-            placeholder="A short bio..."
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
+      {/* Profile: a personal org's fields */}
+      {hasProfile && (
+        <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
           <div>
-            <label htmlFor="website" className="mb-1 block text-sm font-medium">
-              Website
-            </label>
-            <Input
-              type="url"
-              id="website"
-              value={website}
-              onChange={(e) => setWebsite(e.target.value)}
-              placeholder="https://..."
-            />
+            <label className="mb-1 block text-sm font-medium">Display name</label>
+            <p className="text-ink-muted text-sm">{currentUser.displayName}</p>
+            <p className="text-ink-muted mt-1 text-xs">
+              Managed by your{' '}
+              <a
+                href={kfAccountUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-link hover:underline"
+              >
+                KF Account
+              </a>
+              .
+            </p>
           </div>
           <div>
-            <label htmlFor="location" className="mb-1 block text-sm font-medium">
-              Location
+            <label htmlFor="bio" className="mb-1 block text-sm font-medium">
+              Bio
+            </label>
+            <Textarea
+              id="bio"
+              rows={3}
+              placeholder="A short bio..."
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="website" className="mb-1 block text-sm font-medium">
+                Website
+              </label>
+              <Input
+                type="url"
+                id="website"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                placeholder="https://..."
+              />
+            </div>
+            <div>
+              <label htmlFor="location" className="mb-1 block text-sm font-medium">
+                Location
+              </label>
+              <Input
+                type="text"
+                id="location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="City, Country"
+              />
+            </div>
+          </div>
+          <div>
+            <label htmlFor="slug" className="mb-1 block text-sm font-medium">
+              Username
             </label>
             <Input
               type="text"
-              id="location"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="City, Country"
+              id="slug"
+              value={slugValue}
+              onChange={(e) =>
+                setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+              }
+              pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
+              className="font-mono"
             />
+            {slugValue !== currentUser?.slug && (
+              <p className="mt-1 text-xs text-amber-700">
+                Changing your username will update all your URLs.
+              </p>
+            )}
           </div>
-        </div>
-        <div>
-          <label htmlFor="slug" className="mb-1 block text-sm font-medium">
-            Username
-          </label>
-          <Input
-            type="text"
-            id="slug"
-            value={slugValue}
-            onChange={(e) => setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-            pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
-            className="font-mono"
-          />
-          {slugValue !== currentUser?.slug && (
-            <p className="mt-1 text-xs text-amber-700">
-              Changing your username will update all your URLs.
-            </p>
-          )}
-        </div>
-        <Button type="submit" disabled={submitting === 'profile'}>
-          {submitting === 'profile' ? 'Saving…' : 'Save changes'}
-        </Button>
-      </form>
+          <Button type="submit" disabled={submitting === 'profile'}>
+            {submitting === 'profile' ? 'Saving…' : 'Save changes'}
+          </Button>
+        </form>
+      )}
 
       {/* KF Auth Account — name, email, password, security */}
       <div className="border-rule mb-10 border-t pt-6">
@@ -261,45 +270,48 @@ export default function Settings() {
         </a>
       </div>
 
-      {/* Notifications */}
-      <div className="border-rule mb-10 border-t pt-6">
-        <SectionHeading>Notifications</SectionHeading>
-        <p className="text-ink-muted mb-3 text-xs">
-          Email notifications (requires SMTP configuration).
-        </p>
-        <form onSubmit={handleUpdateNotifications} className="space-y-3">
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={collectionActivity}
-              onChange={(e) => setCollectionActivity(e.target.checked)}
-            />
-            Collection activity (new versions pushed)
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={orgInvitations}
-              onChange={(e) => setOrgInvitations(e.target.checked)}
-            />
-            Organization invitations
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={securityAlerts}
-              onChange={(e) => setSecurityAlerts(e.target.checked)}
-            />
-            Security alerts (new logins, password changes)
-          </label>
-          <Button type="submit" disabled={submitting === 'notifications'}>
-            {submitting === 'notifications' ? 'Saving…' : 'Save changes'}
-          </Button>
-        </form>
-      </div>
+      {/* Notifications: saved on the personal org, so only with one */}
+      {hasProfile && (
+        <div className="border-rule mb-10 border-t pt-6">
+          <SectionHeading>Notifications</SectionHeading>
+          <p className="text-ink-muted mb-3 text-xs">
+            Email notifications (requires SMTP configuration).
+          </p>
+          <form onSubmit={handleUpdateNotifications} className="space-y-3">
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={collectionActivity}
+                onChange={(e) => setCollectionActivity(e.target.checked)}
+              />
+              Collection activity (new versions pushed)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={orgInvitations}
+                onChange={(e) => setOrgInvitations(e.target.checked)}
+              />
+              Organization invitations
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={securityAlerts}
+                onChange={(e) => setSecurityAlerts(e.target.checked)}
+              />
+              Security alerts (new logins, password changes)
+            </label>
+            <Button type="submit" disabled={submitting === 'notifications'}>
+              {submitting === 'notifications' ? 'Saving…' : 'Save changes'}
+            </Button>
+          </form>
+        </div>
+      )}
 
       {/* Danger zone */}
       <div className="rounded-surface border border-red-200 p-4">
         <h2 className="mb-2 text-sm font-semibold text-red-700">Danger zone</h2>
         <p className="text-ink-muted mb-3 text-sm">
-          Permanently delete your account. You must first transfer or delete all your collections.
+          Permanently delete your account.
+          {hasProfile && ' You must first transfer or delete all your collections.'}
         </p>
         <details className="group">
           <summary className="cursor-pointer text-sm text-red-700 hover:underline">
@@ -308,7 +320,7 @@ export default function Settings() {
           <form onSubmit={handleDeleteAccount} className="mt-3 space-y-3">
             <div>
               <label htmlFor="confirmSlug" className="text-ink-muted mb-1 block text-sm">
-                Type <strong>{currentUser.slug}</strong> to confirm:
+                Type <strong>{confirmWord}</strong> to confirm:
               </label>
               <input
                 type="text"

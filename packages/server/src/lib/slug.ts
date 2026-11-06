@@ -218,19 +218,3 @@ export const validateOrgSlug = (slug: unknown) => validate(slug, RESERVED_ORG_SL
 
 /** A collection slug's problem, or null when it's acceptable. */
 export const validateCollectionSlug = (slug: unknown) => validate(slug, RESERVED_COLLECTION_SLUGS)
-
-/**
- * Candidate slug for a user's default org, from their email's local part. A
- * local part that is too short or reserved (`admin@…`, `support@…`) gets a
- * numeric suffix from the start (`support-1`); `attempt` > 0 counts collisions.
- */
-export function defaultOrgSlugCandidate(email: string, attempt = 0): string {
-  const local = (email.split('@')[0] ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 30)
-    .replace(/^-+|-+$/g, '')
-  if (local.length < 2 || RESERVED_ORG_SLUGS.has(local)) return `${local || 'user'}-${attempt + 1}`
-  return attempt === 0 ? local : `${local}-${attempt}`
-}
