@@ -10,13 +10,12 @@ import {
   type Usage,
 } from '~/components/admin-stats'
 import AdminLayout from '~/components/AdminLayout'
-import { Badge, Checkbox, Input } from '~/components/ui'
+import { Checkbox, Input } from '~/components/ui'
 import { formatBytes } from '~/lib/format'
 
 interface Org {
   slug: string
   name: string
-  personal: boolean
   members: number
   collections: number
   publicCollections: number
@@ -42,15 +41,12 @@ export default function AdminOrgs() {
       label: 'Organization',
       sort: (o) => o.slug,
       render: (o) => (
-        <span className="flex items-center gap-1.5">
-          <Link
-            to={`/admin/orgs/${o.slug}${days ? `?days=${days}` : ''}`}
-            className="text-link hover:underline"
-          >
-            {o.name}
-          </Link>
-          {o.personal && <Badge>personal</Badge>}
-        </span>
+        <Link
+          to={`/admin/orgs/${o.slug}${days ? `?days=${days}` : ''}`}
+          className="text-link hover:underline"
+        >
+          {o.name}
+        </Link>
       ),
     },
     {

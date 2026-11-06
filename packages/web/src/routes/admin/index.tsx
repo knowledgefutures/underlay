@@ -18,7 +18,6 @@ interface Overview {
   totals: {
     users: number
     orgs: number
-    personalOrgs: number
     collections: number
     publicCollections: number
     records: number
@@ -82,12 +81,7 @@ function Body({ data }: { data: Overview }) {
 
       <SectionHeading>Holdings</SectionHeading>
       <StatGrid>
-        <StatTile
-          label="Organizations"
-          value={compact(t.orgs)}
-          detail={`and ${compact(t.personalOrgs)} personal`}
-          to="/admin/orgs"
-        />
+        <StatTile label="Organizations" value={compact(t.orgs)} to="/admin/orgs" />
         <StatTile label="Users" value={compact(t.users)} />
         <StatTile
           label="Collections"

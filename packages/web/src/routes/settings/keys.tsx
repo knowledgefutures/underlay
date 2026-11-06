@@ -6,15 +6,20 @@ import { useAppContext } from '~/lib/app-context'
 
 export default function SettingsKeys() {
   const { currentUser } = useAppContext()
+  // The playground and the collection picker use one org: the first by name.
+  const owner: string =
+    [...(currentUser?.orgs ?? [])].sort((a: any, b: any) =>
+      a.displayName.localeCompare(b.displayName),
+    )[0]?.slug ?? ''
 
   const [collections, setCollections] = useState<{ id: string; slug: string }[]>([])
 
   useEffect(() => {
-    if (!currentUser) return
-    fetch(`/api/accounts/${currentUser.slug}/collections`, { credentials: 'include' })
+    if (!owner) return
+    fetch(`/api/accounts/${owner}/collections`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : []))
       .then(setCollections)
-  }, [currentUser])
+  }, [owner])
 
   return (
     <SettingsLayout
@@ -23,7 +28,7 @@ export default function SettingsKeys() {
       description="Keys for pushing and pulling data with the API or CLI."
       groups={userSettingsRail}
     >
-      <ApiKeysPanel owner={currentUser.slug} collections={collections} />
+      <ApiKeysPanel owner={owner} collections={collections} />
     </SettingsLayout>
   )
 }

@@ -13,13 +13,12 @@ export default function NewCollection() {
 
   const ownerOptions = (currentUser?.orgs ?? []).map((o: any) => ({
     slug: o.slug,
-    label: `${o.name ?? o.displayName ?? o.slug}${o.isDefault ? ' (personal)' : ''}`,
+    label: o.name ?? o.displayName ?? o.slug,
   }))
-  // Prefer the org the user navigated from (?owner=), then their personal org.
+  // Prefer the org the user navigated from (?owner=), then their first.
   const requestedOwner = searchParams.get('owner')
   const defaultOwner =
     (requestedOwner && currentUser?.orgs?.find((o: any) => o.slug === requestedOwner)) ||
-    currentUser?.orgs?.find((o: any) => o.isDefault) ||
     currentUser?.orgs?.[0]
 
   const [owner, setOwner] = useState(defaultOwner?.slug ?? '')

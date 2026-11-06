@@ -135,8 +135,7 @@ export default function DocsConcepts() {
       <p>Underlay has two account types:</p>
       <ul>
         <li>
-          <strong>Users</strong>: people, who sign in with KF Auth. Users who signed up before
-          November 2026 also have a personal account that can own collections.
+          <strong>Users</strong>: people, who sign in with KF Auth and belong to organizations.
         </li>
         <li>
           <strong>Organizations</strong>: group accounts with members who have roles (owner, admin,

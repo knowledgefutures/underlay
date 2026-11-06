@@ -36,7 +36,7 @@ interface Collection {
 
 interface OrgStats {
   since: string
-  org: { slug: string; name: string; personal: boolean }
+  org: { slug: string; name: string }
   totals: {
     records: number
     latestBytes: number
@@ -152,10 +152,7 @@ export default function AdminOrg() {
   ]
 
   return (
-    <AdminLayout
-      title={org.name}
-      {...(org.personal ? { description: 'A personal organization.' } : {})}
-    >
+    <AdminLayout title={org.name}>
       <p className="mb-6 text-sm">
         <Link to={`/${owner}`} className="text-link hover:underline">
           /{owner}

@@ -104,12 +104,11 @@ export function createAuth(
               // Set only by the logo upload (api/avatars.ts), never by a client.
               avatarUrl: { type: 'string', required: false, input: false },
               // Server-controlled, as in v1: a caller must not claim another
-              // institution's NAAN or the default-org flag.
+              // institution's NAAN.
               arkNaan: { type: 'string', required: false, input: false },
               // Picked in the new-org form, and checked in the hooks below against
               // the caller's own KF orgs: /api/kf/summary trusts it.
               kfOrgId: { type: 'string', required: false, input: true },
-              isDefault: { type: 'boolean', required: false, input: false, defaultValue: false },
             },
           },
         },
@@ -174,9 +173,8 @@ export function createAuth(
           },
         },
       },
-      // No personal organization for a new user (v1 made one, and users who
-      // have one keep it): collections belong to organizations, and an
-      // organization to a KF account.
+      // No organization for a new user (v1 made a personal one): collections
+      // belong to organizations, and an organization to a KF account.
     },
   })
 }

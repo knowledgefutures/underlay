@@ -20,8 +20,8 @@ Protocol specification: https://www.underlay.org/docs/protocol
    A key has a scope, read, write or admin, and may be confined to some collections.
 
 2. Session cookie (browser use):
-   Sign in through KF Auth SSO at https://www.underlay.org/login. An account, with a personal
-   organization, is created on first sign-in.
+   Sign in through KF Auth SSO at https://www.underlay.org/login. An account is created on
+   first sign-in.
 
 Public data needs no authentication. Publishing, settings and private data need a key or a
 session. A Bearer key that doesn't verify is refused with 401 {"error": "Invalid or expired API
@@ -67,8 +67,7 @@ per data center and is approximate.
 ## Core Concepts
 
 - Organization: owns collections, and belongs to a Knowledge Futures account its creator is a
-  member of (to have one set up, email help@underlay.org). Users who signed up before November
-  2026 also have a personal organization; new users don't. Identified by :owner (its slug).
+  member of (to have one set up, email help@underlay.org). Identified by :owner (its slug).
 - Collection: a named, versioned body of data owned by an organization. Identified by
   :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). Public or private.
 - Version: an immutable state of a collection: schemas, records, files and metadata. Identified
@@ -715,11 +714,10 @@ readers can verify it and everything public, and learn only whether a private se
 Organizations:
 POST   /api/auth/organization/create   → {"name", "slug", "kfOrgId"} (403 without a KF account you belong to)
 GET    /api/auth/organization/list     → your organizations
-GET    /api/accounts/:slug             → an organization or user profile (public)
+GET    /api/accounts/:slug             → an organization's profile (public)
 GET    /api/accounts/:slug/members     → its members (public)
 PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?} (owners: session or admin key)
-DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections,
-                                          or for a personal organization)
+DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections)
 PATCH  /api/accounts/:slug/ark         → {"naan": "<digits>" | null} (owners and admins: session or admin key)
 GET    /api/accounts/me                → you and your memberships (session or unscoped personal key)
 Invitations and member roles are managed under /api/auth/organization/*; accept an invitation

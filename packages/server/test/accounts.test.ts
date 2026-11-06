@@ -15,83 +15,51 @@ describe('account routes', () => {
 
     expect((await call('/api/accounts/me')).status).toBe(401)
     const me = await (await call('/api/accounts/me', { user: 'u1' })).json()
-    expect(me).toMatchObject({ id: 'u1', slug: 'u1', email: 'u1@example.org' })
-    expect(me.orgs.map((o: { slug: string }) => o.slug).sort()).toEqual(['org', 'u1'])
+    expect(me).toMatchObject({ id: 'u1', displayName: 'u1', email: 'u1@example.org' })
+    expect(me).not.toHaveProperty('slug')
+    expect(me.orgs).toEqual([{ organizationId: 'org1', role: 'owner', slug: 'org', name: 'Org' }])
 
     expect((await call('/api/accounts/me', { user: 'u1', key: 'read' })).status).toBe(200)
     expect((await call('/api/accounts/me', { user: 'u1', key: 'scoped' })).status).toBe(403)
     expect((await call('/api/accounts/me', { user: 'u1', key: 'org' })).status).toBe(403)
-    expect(
-      (await call('/api/accounts/me', { method: 'PATCH', user: 'u1', key: 'read', json: {} }))
-        .status,
-    ).toBe(403)
 
     // The steward role and display name come from KF Auth.
     const ctx = await (await call('/api/context', { user: 'u1' })).json()
     expect(ctx.currentUser).toMatchObject({ kfRole: 'admin', displayName: 'Ada KF' })
+    expect(ctx.currentUser).not.toHaveProperty('slug')
+    expect(ctx.currentUser.orgs).toEqual([
+      { organizationId: 'org1', slug: 'org', displayName: 'Org', role: 'owner' },
+    ])
   })
 
-  it('updates the personal profile, checking the slug', async () => {
-    const { call, db, user } = await setup()
-    await user('u1')
-    await user('u2')
-    const patch = (json: unknown) => call('/api/accounts/me', { method: 'PATCH', user: 'u1', json })
-
-    expect((await patch({ slug: 'u2' })).status).toBe(409)
-    expect((await patch({ slug: 'Bad Slug' })).status).toBe(422)
-    const ok = await patch({ slug: 'ada', displayName: 'Ada', bio: 'hi', website: null })
-    expect(await ok.json()).toEqual({ ok: true, slug: 'ada' })
-    const [org] = await db
-      .select()
-      .from(schema.organization)
-      .where(eq(schema.organization.id, 'p-u1'))
-    expect(org).toMatchObject({ slug: 'ada', name: 'Ada', bio: 'hi', website: null })
-  })
-
-  it('deletes an account only when confirmed and empty', async () => {
-    const { call, db, user } = await setup()
-    await user('u1')
-    const del = (confirmSlug: string) =>
-      call('/api/accounts/me', { method: 'DELETE', user: 'u1', json: { confirmSlug } })
-
-    expect((await del('nope')).status).toBe(422)
-    // A write key can't delete the account; a session or an admin key can.
-    const byKey = (key: string) =>
-      call('/api/accounts/me', { method: 'DELETE', user: 'u1', key, json: { confirmSlug: 'u1' } })
-    expect((await byKey('write')).status).toBe(403)
-    await db.insert(schema.collections).values({
-      organizationId: 'p-u1',
-      slug: 'keep',
-      name: 'keep',
-      privateSalt: 'aa',
-    })
-    const refused = await del('u1')
-    expect(refused.status).toBe(409)
-    expect((await refused.json()).error).toContain('1 collection')
-
-    await db.delete(schema.collections).where(eq(schema.collections.slug, 'keep'))
-    expect((await del('u1')).status).toBe(200)
-    expect(await db.select().from(schema.user).where(eq(schema.user.id, 'u1'))).toEqual([])
-    expect(
-      await db.select().from(schema.organization).where(eq(schema.organization.id, 'p-u1')),
-    ).toEqual([])
-  })
-
-  it('serves and deletes a user with no personal org, confirmed by email', async () => {
-    const { call, db } = await setup()
+  it('deletes an account confirmed by email, with its keys', async () => {
+    const { h, call, db } = await setup()
     await db.insert(schema.user).values({ id: 'n1', name: 'Nell', email: 'nell@example.org' })
-    const me = await (await call('/api/accounts/me', { user: 'n1' })).json()
-    expect(me).toMatchObject({ id: 'n1', slug: null, displayName: 'Nell', orgs: [] })
-    expect(
-      (await call('/api/accounts/me', { method: 'PATCH', user: 'n1', json: { bio: 'b' } })).status,
-    ).toBe(404)
+    await h.member('n1')
+    await db.insert(schema.apikey).values({ id: 'k-n1', referenceId: 'n1', key: 'hashed' })
 
     const del = (json: Record<string, string>) =>
       call('/api/accounts/me', { method: 'DELETE', user: 'n1', json })
     expect((await del({ confirmEmail: 'other@example.org' })).status).toBe(422)
     expect((await del({ confirmSlug: 'n1' })).status).toBe(422)
+    // A write key can't delete the account; a session or an admin key can.
+    expect(
+      (
+        await call('/api/accounts/me', {
+          method: 'DELETE',
+          user: 'n1',
+          key: 'write',
+          json: { confirmEmail: 'nell@example.org' },
+        })
+      ).status,
+    ).toBe(403)
     expect((await del({ confirmEmail: 'nell@example.org' })).status).toBe(200)
     expect(await db.select().from(schema.user).where(eq(schema.user.id, 'n1'))).toEqual([])
+    expect(await db.select().from(schema.apikey).where(eq(schema.apikey.id, 'k-n1'))).toEqual([])
+    // The orgs it belonged to stay.
+    expect(
+      await db.select().from(schema.organization).where(eq(schema.organization.id, 'org1')),
+    ).toHaveLength(1)
   })
 
   it('lists and revokes the user’s own sessions', async () => {
@@ -200,7 +168,6 @@ describe('account routes', () => {
     await h.collection('c')
     expect((await call('/api/accounts/org', { method: 'DELETE', user: 'u2' })).status).toBe(403)
     expect((await call('/api/accounts/org', { method: 'DELETE', user: 'u1' })).status).toBe(409)
-    expect((await call('/api/accounts/u2', { method: 'DELETE', user: 'u2' })).status).toBe(409)
     await db.delete(schema.collections)
     expect((await asKey('write', 'DELETE')).status).toBe(403)
     expect((await call('/api/accounts/org', { method: 'DELETE', user: 'u1' })).status).toBe(200)

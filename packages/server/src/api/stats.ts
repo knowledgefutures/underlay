@@ -153,9 +153,9 @@ function sums(cols: CollectionFigures[]): Sums {
 /** The organizations, with members and their collections' figures summed; and the collections. */
 async function orgFigures(c: Context<AppEnv>) {
   const [orgs, members, cols] = await Promise.all([
-    rows<{ id: string; slug: string; name: string; isDefault: number; createdAt: number }>(
+    rows<{ id: string; slug: string; name: string; createdAt: number }>(
       c,
-      sql`SELECT id, slug, name, is_default AS isDefault, created_at AS createdAt FROM organization`,
+      sql`SELECT id, slug, name, created_at AS createdAt FROM organization`,
     ),
     rows<{ orgId: string; n: number }>(
       c,
@@ -172,7 +172,6 @@ async function orgFigures(c: Context<AppEnv>) {
       id: o.id,
       slug: o.slug,
       name: o.name,
-      personal: !!o.isDefault,
       createdAt: n(o.createdAt),
       members: memberCount.get(o.id) ?? 0,
       collections: mine.length,
@@ -227,8 +226,7 @@ export function statsRoutes() {
       since,
       totals: {
         users: n(users[0]?.n),
-        orgs: orgs.filter((o) => !o.personal).length,
-        personalOrgs: orgs.filter((o) => o.personal).length,
+        orgs: orgs.length,
         collections: cols.length,
         publicCollections: cols.filter((col) => col.public).length,
         ...sums(cols),
@@ -256,9 +254,9 @@ export function statsRoutes() {
 
   app.get('/api/admin/stats/orgs/:slug', async (c) => {
     const { since, days } = period(c)
-    const [org] = await rows<{ id: string; slug: string; name: string; isDefault: number }>(
+    const [org] = await rows<{ id: string; slug: string; name: string }>(
       c,
-      sql`SELECT id, slug, name, is_default AS isDefault FROM organization
+      sql`SELECT id, slug, name FROM organization
           WHERE slug = ${c.req.param('slug')}`,
     )
     if (!org) return jsonError(c, 404, 'Organization not found')
@@ -278,7 +276,7 @@ export function statsRoutes() {
     for (const u of daily.values()) for (const m of METRICS) usage[m] += u[m]
     return c.json({
       since,
-      org: { id: org.id, slug: org.slug, name: org.name, personal: !!org.isDefault },
+      org: { id: org.id, slug: org.slug, name: org.name },
       totals: sums(cols),
       usage,
       daily: days.map((day) => ({ day, ...(daily.get(day) ?? emptyUsage()) })),
@@ -395,7 +393,6 @@ export function statsRoutes() {
         .map((o) => ({
           slug: o.slug,
           name: o.name,
-          personal: o.personal,
           collections: o.collections,
           latestBytes: o.latestBytes,
           historyBytes: o.historyBytes,

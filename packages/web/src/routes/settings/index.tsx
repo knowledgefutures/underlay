@@ -1,115 +1,28 @@
 import { type FormEvent, useState } from 'react'
 
 import SettingsLayout, { accountCrumb, userSettingsRail } from '~/components/SettingsLayout'
-import {
-  Alert,
-  Button,
-  buttonClasses,
-  Checkbox,
-  Input,
-  SectionHeading,
-  Textarea,
-} from '~/components/ui'
+import { Alert, Button, buttonClasses, SectionHeading } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 
 export default function Settings() {
   const { currentUser, kfAccountUrl } = useAppContext()
 
-  const [success, setSuccess] = useState('')
   const [error, setError] = useState('')
 
-  // Profile form (Underlay-specific fields only — name/email managed by KF Auth)
-  const [slugValue, setSlugValue] = useState(currentUser?.slug ?? '')
-  const [bio, setBio] = useState(currentUser?.bio ?? '')
-  const [website, setWebsite] = useState(currentUser?.website ?? '')
-  const [location, setLocation] = useState(currentUser?.location ?? '')
-
-  // Notifications
-  const notifPrefs = (currentUser?.notificationPrefs as Record<string, boolean>) ?? {}
-  const [collectionActivity, setCollectionActivity] = useState(
-    notifPrefs.collectionActivity ?? true,
-  )
-  const [orgInvitations, setOrgInvitations] = useState(notifPrefs.orgInvitations ?? true)
-  const [securityAlerts, setSecurityAlerts] = useState(notifPrefs.securityAlerts ?? true)
-
-  // Users from before 2026-11 have a personal org: the username, bio and links
-  // live on it. Everyone else has only their KF profile.
-  const hasProfile = Boolean(currentUser?.slug)
-
-  // Delete account: confirmed by username, or by email without one
-  const [confirmSlug, setConfirmSlug] = useState('')
-  const confirmWord: string = hasProfile ? currentUser.slug : (currentUser?.email ?? '')
-
-  const [submitting, setSubmitting] = useState('')
-
-  function clearMessages() {
-    setSuccess('')
-    setError('')
-  }
-
-  async function handleUpdateProfile(e: FormEvent) {
-    e.preventDefault()
-    clearMessages()
-    setSubmitting('profile')
-    const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== currentUser?.slug
-    try {
-      const payload: Record<string, any> = { bio, website, location }
-      if (slugChanged) payload.slug = slugValue.trim()
-
-      const res = await fetch('/api/accounts/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        if (slugChanged) {
-          window.location.href = '/settings'
-          return
-        }
-        setSuccess('Profile updated.')
-      } else {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error ?? 'Update failed.')
-      }
-    } finally {
-      setSubmitting('')
-    }
-  }
-
-  async function handleUpdateNotifications(e: FormEvent) {
-    e.preventDefault()
-    clearMessages()
-    setSubmitting('notifications')
-    try {
-      const res = await fetch('/api/accounts/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          notificationPrefs: { collectionActivity, orgInvitations, securityAlerts },
-        }),
-      })
-      if (res.ok) {
-        setSuccess('Notification preferences saved.')
-      } else {
-        setError('Failed to save preferences.')
-      }
-    } finally {
-      setSubmitting('')
-    }
-  }
+  // Delete account: confirmed by email
+  const [confirmEmail, setConfirmEmail] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   async function handleDeleteAccount(e: FormEvent) {
     e.preventDefault()
-    clearMessages()
-    setSubmitting('delete')
+    setError('')
+    setSubmitting(true)
     try {
       const res = await fetch('/api/accounts/me', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(hasProfile ? { confirmSlug } : { confirmEmail: confirmSlug.trim() }),
+        body: JSON.stringify({ confirmEmail: confirmEmail.trim() }),
       })
       if (res.ok) {
         window.location.href = '/'
@@ -118,7 +31,7 @@ export default function Settings() {
         setError(body.error ?? 'Failed to delete account.')
       }
     } finally {
-      setSubmitting('')
+      setSubmitting(false)
     }
   }
 
@@ -126,21 +39,16 @@ export default function Settings() {
     <SettingsLayout
       crumb={accountCrumb}
       title="Profile"
-      description="Your public identity on Underlay."
+      description="Your account on Underlay."
       groups={userSettingsRail}
     >
-      {success && (
-        <Alert variant="success" className="mb-4">
-          {success}
-        </Alert>
-      )}
       {error && (
         <Alert variant="error" className="mb-4">
           {error}
         </Alert>
       )}
 
-      {/* Avatar — the picture comes from KF Auth, so it is changed there */}
+      {/* Avatar and name come from KF Auth, so they are changed there */}
       <div className="mb-8 flex items-start gap-4">
         {currentUser.avatarUrl ? (
           <img
@@ -155,9 +63,8 @@ export default function Settings() {
         )}
         <div className="min-w-0">
           <p className="text-sm font-medium">{currentUser.displayName}</p>
-          {hasProfile && <p className="text-ink-muted font-mono text-xs">@{currentUser.slug}</p>}
           <p className="text-ink-muted mt-2 text-xs">
-            Picture managed by your{' '}
+            Name and picture managed by your{' '}
             <a
               href={kfAccountUrl}
               target="_blank"
@@ -170,89 +77,6 @@ export default function Settings() {
           </p>
         </div>
       </div>
-
-      {/* Profile: a personal org's fields */}
-      {hasProfile && (
-        <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium">Display name</label>
-            <p className="text-ink-muted text-sm">{currentUser.displayName}</p>
-            <p className="text-ink-muted mt-1 text-xs">
-              Managed by your{' '}
-              <a
-                href={kfAccountUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link hover:underline"
-              >
-                KF Account
-              </a>
-              .
-            </p>
-          </div>
-          <div>
-            <label htmlFor="bio" className="mb-1 block text-sm font-medium">
-              Bio
-            </label>
-            <Textarea
-              id="bio"
-              rows={3}
-              placeholder="A short bio..."
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="website" className="mb-1 block text-sm font-medium">
-                Website
-              </label>
-              <Input
-                type="url"
-                id="website"
-                value={website}
-                onChange={(e) => setWebsite(e.target.value)}
-                placeholder="https://..."
-              />
-            </div>
-            <div>
-              <label htmlFor="location" className="mb-1 block text-sm font-medium">
-                Location
-              </label>
-              <Input
-                type="text"
-                id="location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="City, Country"
-              />
-            </div>
-          </div>
-          <div>
-            <label htmlFor="slug" className="mb-1 block text-sm font-medium">
-              Username
-            </label>
-            <Input
-              type="text"
-              id="slug"
-              value={slugValue}
-              onChange={(e) =>
-                setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
-              }
-              pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
-              className="font-mono"
-            />
-            {slugValue !== currentUser?.slug && (
-              <p className="mt-1 text-xs text-amber-700">
-                Changing your username will update all your URLs.
-              </p>
-            )}
-          </div>
-          <Button type="submit" disabled={submitting === 'profile'}>
-            {submitting === 'profile' ? 'Saving…' : 'Save changes'}
-          </Button>
-        </form>
-      )}
 
       {/* KF Auth Account — name, email, password, security */}
       <div className="border-rule mb-10 border-t pt-6">
@@ -270,70 +94,31 @@ export default function Settings() {
         </a>
       </div>
 
-      {/* Notifications: saved on the personal org, so only with one */}
-      {hasProfile && (
-        <div className="border-rule mb-10 border-t pt-6">
-          <SectionHeading>Notifications</SectionHeading>
-          <p className="text-ink-muted mb-3 text-xs">
-            Email notifications (requires SMTP configuration).
-          </p>
-          <form onSubmit={handleUpdateNotifications} className="space-y-3">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={collectionActivity}
-                onChange={(e) => setCollectionActivity(e.target.checked)}
-              />
-              Collection activity (new versions pushed)
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={orgInvitations}
-                onChange={(e) => setOrgInvitations(e.target.checked)}
-              />
-              Organization invitations
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={securityAlerts}
-                onChange={(e) => setSecurityAlerts(e.target.checked)}
-              />
-              Security alerts (new logins, password changes)
-            </label>
-            <Button type="submit" disabled={submitting === 'notifications'}>
-              {submitting === 'notifications' ? 'Saving…' : 'Save changes'}
-            </Button>
-          </form>
-        </div>
-      )}
-
       {/* Danger zone */}
       <div className="rounded-surface border border-red-200 p-4">
         <h2 className="mb-2 text-sm font-semibold text-red-700">Danger zone</h2>
-        <p className="text-ink-muted mb-3 text-sm">
-          Permanently delete your account.
-          {hasProfile && ' You must first transfer or delete all your collections.'}
-        </p>
+        <p className="text-ink-muted mb-3 text-sm">Permanently delete your account.</p>
         <details className="group">
           <summary className="cursor-pointer text-sm text-red-700 hover:underline">
             Delete my account…
           </summary>
           <form onSubmit={handleDeleteAccount} className="mt-3 space-y-3">
             <div>
-              <label htmlFor="confirmSlug" className="text-ink-muted mb-1 block text-sm">
-                Type <strong>{confirmWord}</strong> to confirm:
+              <label htmlFor="confirmEmail" className="text-ink-muted mb-1 block text-sm">
+                Type <strong>{currentUser?.email ?? ''}</strong> to confirm:
               </label>
               <input
                 type="text"
-                id="confirmSlug"
-                value={confirmSlug}
-                onChange={(e) => setConfirmSlug(e.target.value)}
+                id="confirmEmail"
+                value={confirmEmail}
+                onChange={(e) => setConfirmEmail(e.target.value)}
                 required
                 autoComplete="off"
                 className="bg-parchment rounded-control w-full border border-red-200 px-3 py-2 text-sm focus:border-red-400 focus:outline-none"
               />
             </div>
-            <Button type="submit" variant="danger" disabled={submitting === 'delete'}>
-              {submitting === 'delete' ? 'Deleting…' : 'Delete my account'}
+            <Button type="submit" variant="danger" disabled={submitting}>
+              {submitting ? 'Deleting…' : 'Delete my account'}
             </Button>
           </form>
         </details>

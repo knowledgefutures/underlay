@@ -100,7 +100,6 @@ const listRes = `[
     "appId": "pubpub-sync",
     "pushedBy": "user-42",
     "pushedByName": "Ada Lovelace",
-    "pushedBySlug": "ada",
     "actorId": "user-42",
     "recordCount": 150,
     "fileCount": 12,
@@ -729,9 +728,8 @@ export default function DocsApiVersions() {
           <code>typeCounts</code> count the sets the caller may read: for anyone outside the
           collection&rsquo;s members, public records only. <code>baseSemver</code> is the version
           the push started from (<code>null</code> for the first). <code>pushedBy</code>,{' '}
-          <code>pushedByName</code>, <code>pushedBySlug</code> (the pusher&rsquo;s personal account)
-          and <code>actorId</code> are for the collection&rsquo;s members only. <code>ark</code> is
-          null when the collection&rsquo;s ARK is off.
+          <code>pushedByName</code> and <code>actorId</code> are for the collection&rsquo;s members
+          only. <code>ark</code> is null when the collection&rsquo;s ARK is off.
         </p>
       </div>
 

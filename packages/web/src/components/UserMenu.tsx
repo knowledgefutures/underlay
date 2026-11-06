@@ -6,11 +6,9 @@ import { useDismissable } from '~/lib/use-dismissable'
 interface Org {
   slug: string
   displayName: string
-  isDefault?: boolean
 }
 
 interface UserMenuProps {
-  slug: string
   displayName?: string | null
   avatarUrl?: string | null
   orgs?: Org[]
@@ -18,7 +16,6 @@ interface UserMenuProps {
 }
 
 export default function UserMenu({
-  slug,
   displayName,
   avatarUrl,
   orgs = [],
@@ -33,14 +30,10 @@ export default function UserMenu({
     rootRef,
   )
 
-  const initial = (displayName || slug || '?').charAt(0).toUpperCase()
+  const initial = (displayName || '?').charAt(0).toUpperCase()
 
-  // Personal org first, then alphabetical — the raw membership order is arbitrary.
-  const sortedOrgs = [...orgs].sort(
-    (a, b) =>
-      Number(b.isDefault ?? false) - Number(a.isDefault ?? false) ||
-      a.displayName.localeCompare(b.displayName),
-  )
+  // Alphabetical: the raw membership order is arbitrary.
+  const sortedOrgs = [...orgs].sort((a, b) => a.displayName.localeCompare(b.displayName))
 
   return (
     <div ref={rootRef} className="relative">
@@ -99,9 +92,6 @@ export default function UserMenu({
                       onClick={() => setOpen(false)}
                     >
                       {org.displayName}
-                      {org.isDefault && (
-                        <span className="text-ink-muted ml-1 text-xs">(personal)</span>
-                      )}
                     </Link>
                   ))}
                 </div>

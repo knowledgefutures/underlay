@@ -3,7 +3,6 @@ import { Link, useLoaderData, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { ButtonLink, EmptyState, Input } from '~/components/ui'
-import { useAppContext } from '~/lib/app-context'
 import { bareSemver, formatBytes, timeAgo } from '~/lib/format'
 
 interface DashboardCollection {
@@ -29,7 +28,6 @@ interface OwnerFacet {
 const FACET_COLLAPSE_COUNT = 8
 
 export default function Dashboard() {
-  const { currentUser } = useAppContext()
   const { collections, owners } = useLoaderData() as {
     collections: DashboardCollection[]
     owners: OwnerFacet[]
@@ -40,14 +38,8 @@ export default function Dashboard() {
   const [filter, setFilter] = useState('')
   const [showAllOrgs, setShowAllOrgs] = useState(false)
 
-  const personalSlug: string | undefined = currentUser?.orgs?.find((o: any) => o.isDefault)?.slug
-
-  // Personal org first, then by collection count (the server's order).
-  const sortedOwners = [...owners].sort((a, b) => {
-    if (a.slug === personalSlug) return -1
-    if (b.slug === personalSlug) return 1
-    return b.count - a.count
-  })
+  // By collection count (the server's order).
+  const sortedOwners = [...owners].sort((a, b) => b.count - a.count)
   const visibleOwners = showAllOrgs ? sortedOwners : sortedOwners.slice(0, FACET_COLLAPSE_COUNT)
   const hiddenOwnerCount = sortedOwners.length - visibleOwners.length
   const totalCount = owners.reduce((sum, o) => sum + o.count, 0)
@@ -97,12 +89,7 @@ export default function Dashboard() {
                 <span className="bg-parchment-dark text-ink-muted flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold">
                   {(org.name ?? org.slug).charAt(0).toUpperCase()}
                 </span>
-                <span className="min-w-0 truncate">
-                  {org.name ?? org.slug}
-                  {org.slug === personalSlug && (
-                    <span className="text-ink-muted ml-1 font-normal">(personal)</span>
-                  )}
-                </span>
+                <span className="min-w-0 truncate">{org.name ?? org.slug}</span>
                 <span className="text-ink-muted ml-auto font-mono text-[10px]">{org.count}</span>
               </Link>
             ))}

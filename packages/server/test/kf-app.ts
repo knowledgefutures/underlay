@@ -81,13 +81,9 @@ export async function setup(opts: { kf?: (h: Harness) => Kf | Promise<Kf> } = {}
     )
   }
   const { db } = h.ports
-  /** A user with a personal org `<id>` (and membership of `org` as owner via h.member). */
+  /** A user `<id>`, in no org (add memberships with h.member). */
   const user = async (id: string) => {
     await db.insert(schema.user).values({ id, name: id, email: `${id}@example.org` })
-    await db
-      .insert(schema.organization)
-      .values({ id: `p-${id}`, name: id, slug: id, isDefault: true })
-    await db.insert(schema.member).values({ organizationId: `p-${id}`, userId: id, role: 'owner' })
     return id
   }
   return { h, call, db, user }

@@ -3,8 +3,7 @@
  * shapes, which the UI calls):
  *
  *   GET    /api/accounts/me                       profile and memberships
- *   PATCH  /api/accounts/me                       {slug?, displayName?, bio?, website?}
- *   DELETE /api/accounts/me                       {confirmSlug}
+ *   DELETE /api/accounts/me                       {confirmEmail}
  *   GET    /api/accounts/me/sessions              signed-in devices
  *   DELETE /api/accounts/me/sessions/:id
  *   GET    /api/accounts/available-kf-orgs        KF orgs a new org may link to
@@ -15,9 +14,8 @@
  * Sessions, invitation acceptance and the guards on deletion are new in v2;
  * the UI called the first two, but v1 never served them.
  *
- * Deleting an org cascades to its collections in this schema, so an org (or a
- * personal account) that still holds collections is refused: delete or
- * transfer them first.
+ * Deleting an org cascades to its collections in this schema, so an org that
+ * still holds collections is refused: delete or transfer them first.
  */
 import { and, count, eq, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
@@ -60,16 +58,6 @@ export async function roleIn(c: Context<AppEnv>, orgId: string, userId: string) 
   return m?.role ?? null
 }
 
-async function personalOrg(c: Context<AppEnv>, userId: string) {
-  const [row] = await c.var.ports.db
-    .select({ org: schema.organization })
-    .from(schema.member)
-    .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-    .where(and(eq(schema.member.userId, userId), eq(schema.organization.isDefault, true)))
-    .limit(1)
-  return row?.org ?? null
-}
-
 /** Collections an org still holds (soft-deleted ones excluded). */
 async function collectionCount(c: Context<AppEnv>, orgId: string) {
   const [row] = await c.var.ports.db
@@ -106,50 +94,19 @@ export function accountRoutes() {
         role: schema.member.role,
         slug: schema.organization.slug,
         name: schema.organization.name,
-        isDefault: schema.organization.isDefault,
       })
       .from(schema.member)
       .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
       .where(eq(schema.member.userId, u.id))
-    const own = orgs.find((o) => o.isDefault)
     return c.json({
       id: u.id,
       name: u.name,
       email: u.email,
       image: u.image,
-      slug: own?.slug ?? null,
-      displayName: own?.name ?? u.name,
+      displayName: u.name,
       createdAt: u.createdAt,
       orgs,
     })
-  })
-
-  app.patch('/api/accounts/me', async (c) => {
-    const userId = requireUser(c, true)
-    if (userId instanceof Response) return userId
-    const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
-    const org = await personalOrg(c, userId)
-    if (!org) return jsonError(c, 404, 'Default org not found')
-    if (body.slug !== undefined) {
-      const bad = await slugProblem(c, body.slug, org.id)
-      if (bad) return bad
-    }
-    // notificationPrefs (sent by the settings page) has nowhere to live yet; as v1, ignored.
-    const set: Partial<typeof schema.organization.$inferInsert> = {}
-    if (str(body.slug) !== undefined) set.slug = str(body.slug)!
-    if (str(body.displayName) !== undefined) set.name = str(body.displayName)!
-    if (strOrNull(body.bio) !== undefined) set.bio = strOrNull(body.bio)!
-    if (strOrNull(body.website) !== undefined) set.website = strOrNull(body.website)!
-    if (Object.keys(set).length) {
-      await c.var.ports.db
-        .update(schema.organization)
-        .set(set)
-        .where(eq(schema.organization.id, org.id))
-      // Each collection.json names its owner by slug and name (spec 11.1).
-      if (set.slug !== undefined || set.name !== undefined)
-        await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
-    }
-    return c.json({ ok: true, slug: set.slug ?? org.slug })
   })
 
   app.delete('/api/accounts/me', async (c) => {
@@ -158,49 +115,22 @@ export function accountRoutes() {
     // Deleting the account takes a session or an admin key, as org deletion does (capRole).
     if (c.var.principal?.scope === 'read' || c.var.principal?.scope === 'write')
       return jsonError(c, 403, 'Deleting an account needs a session or an admin key')
-    const body = (await c.req.json().catch(() => null)) as {
-      confirmSlug?: unknown
-      confirmEmail?: unknown
-    } | null
+    const body = (await c.req.json().catch(() => null)) as { confirmEmail?: unknown } | null
     const { db } = c.var.ports
-    // Users from before 2026-11 have a personal org, confirmed by its slug;
-    // everyone else confirms with their email.
-    const org = await personalOrg(c, userId)
-    if (org) {
-      if (body?.confirmSlug !== org.slug) {
-        return jsonError(c, 422, 'Username confirmation does not match')
-      }
-      const held = await collectionCount(c, org.id)
-      if (held) {
-        return jsonError(
-          c,
-          409,
-          `Your account still holds ${held} collection${held === 1 ? '' : 's'}. Delete or transfer them first.`,
-        )
-      }
-    } else {
-      const [u] = await db
-        .select({ email: schema.user.email })
-        .from(schema.user)
-        .where(eq(schema.user.id, userId))
-        .limit(1)
-      if (!u) return jsonError(c, 404, 'Account not found')
-      if (body?.confirmEmail !== u.email) {
-        return jsonError(c, 422, 'Email confirmation does not match')
-      }
+    const [u] = await db
+      .select({ email: schema.user.email })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1)
+    if (!u) return jsonError(c, 404, 'Account not found')
+    if (body?.confirmEmail !== u.email) {
+      return jsonError(c, 422, 'Email confirmation does not match')
     }
     // Members, sessions, accounts and sent invitations cascade from the user row.
     await db.batch([
       db.delete(schema.apikey).where(eq(schema.apikey.referenceId, userId)),
-      ...(org
-        ? [
-            db.delete(schema.apikey).where(eq(schema.apikey.referenceId, org.id)),
-            db.delete(schema.organization).where(eq(schema.organization.id, org.id)),
-          ]
-        : []),
       db.delete(schema.user).where(eq(schema.user.id, userId)),
     ])
-    if (org) await deleteOrgAvatars(c.var.ports.publicAssets, org.id)
     return c.json({ ok: true })
   })
 
@@ -334,7 +264,6 @@ export function accountRoutes() {
     if (capRole(c.var.principal!, await roleIn(c, org.id, userId)) !== 'owner') {
       return jsonError(c, 403, 'Must be an owner to delete the organization')
     }
-    if (org.isDefault) return jsonError(c, 409, 'A personal account is deleted from its settings')
     const held = await collectionCount(c, org.id)
     if (held) {
       return jsonError(

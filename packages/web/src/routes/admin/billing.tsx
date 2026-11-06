@@ -11,13 +11,12 @@ import {
   type Usage,
 } from '~/components/admin-stats'
 import AdminLayout from '~/components/AdminLayout'
-import { Badge, SectionHeading } from '~/components/ui'
+import { SectionHeading } from '~/components/ui'
 import { formatBytes } from '~/lib/format'
 
 interface BillingOrg {
   slug: string
   name: string
-  personal: boolean
   collections: number
   latestBytes: number
   historyBytes: number
@@ -77,12 +76,9 @@ export default function AdminBilling() {
       label: 'Organization',
       sort: (o) => o.slug,
       render: (o) => (
-        <span className="flex items-center gap-1.5">
-          <Link to={`/admin/orgs/${o.slug}`} className="text-link hover:underline">
-            {o.name}
-          </Link>
-          {o.personal && <Badge>personal</Badge>}
-        </span>
+        <Link to={`/admin/orgs/${o.slug}`} className="text-link hover:underline">
+          {o.name}
+        </Link>
       ),
     },
     {

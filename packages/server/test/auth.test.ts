@@ -143,7 +143,7 @@ describe('better-auth on SQLite', () => {
     expect(res.status).toBeLessThan(500)
   })
 
-  it('gives a new user no personal organization', async () => {
+  it('gives a new user no organization', async () => {
     const h = await harness()
     const auth = createAuth(
       h.ports.db,

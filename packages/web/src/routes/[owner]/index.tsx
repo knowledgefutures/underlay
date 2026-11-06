@@ -4,6 +4,7 @@ import BaseLayout from '~/components/BaseLayout'
 import { Breakable, ButtonLink, EmptyState } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
 import { formatDate, timeAgo } from '~/lib/format'
+import { useIsOwner } from '~/lib/use-is-owner'
 
 export default function OwnerPage() {
   const { owner } = useParams()
@@ -15,7 +16,8 @@ export default function OwnerPage() {
   }
 
   const isMember = currentUser?.orgs?.some((o: any) => o.slug === owner) ?? false
-  const isOwner = currentUser?.slug === owner
+  // Members and KF admins see the settings link.
+  const isOwner = useIsOwner(owner)
 
   return (
     <BaseLayout>
@@ -41,7 +43,7 @@ export default function OwnerPage() {
                 <span className="text-ink-muted font-mono text-sm">@{account.slug}</span>
               </div>
               <div className="flex items-center gap-3">
-                {(isMember || isOwner) && (
+                {isOwner && (
                   <Link
                     to={`/${owner}/settings`}
                     className="text-ink-muted hover:text-ink text-sm transition-colors"
@@ -98,7 +100,7 @@ export default function OwnerPage() {
 
             {collections.length === 0 ? (
               <EmptyState>
-                {isMember || isOwner ? 'No collections yet.' : 'No public collections yet.'}
+                {isMember ? 'No collections yet.' : 'No public collections yet.'}
               </EmptyState>
             ) : (
               <div className="border-rule rounded-surface overflow-x-auto border">
@@ -164,24 +166,12 @@ export default function OwnerPage() {
                   Members
                 </h3>
                 <div className="space-y-0.5">
-                  {members.map((m: any, i: number) =>
-                    // Members from before 2026-11 have a personal account to link to.
-                    m.slug ? (
-                      <Link
-                        key={m.slug}
-                        to={`/${m.slug}`}
-                        className="hover:bg-parchment-dark rounded-control flex items-center gap-2 px-2 py-1 transition-colors"
-                      >
-                        <span className="text-sm font-medium">{m.slug}</span>
-                        <span className="text-ink-muted text-[10px]">{m.role}</span>
-                      </Link>
-                    ) : (
-                      <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1">
-                        <span className="text-sm font-medium">{m.displayName}</span>
-                        <span className="text-ink-muted text-[10px]">{m.role}</span>
-                      </div>
-                    ),
-                  )}
+                  {members.map((m: any, i: number) => (
+                    <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1">
+                      <span className="text-sm font-medium">{m.displayName}</span>
+                      <span className="text-ink-muted text-[10px]">{m.role}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

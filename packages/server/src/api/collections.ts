@@ -61,39 +61,23 @@ export function versionSummary(
   }
 }
 
-/**
- * Versions with their pusher's name and personal account slug (the account
- * page at /<slug>) added, where the caller sees `pushedBy`.
- */
+/** Versions with their pusher's name added, where the caller sees `pushedBy`. */
 export async function withPusherNames<T extends { pushedBy?: string | null }>(
   db: Db,
   versions: T[],
-): Promise<(T & { pushedByName?: string | null; pushedBySlug?: string | null })[]> {
+): Promise<(T & { pushedByName?: string | null })[]> {
   const ids = [...new Set(versions.map((v) => v.pushedBy).filter((id): id is string => !!id))]
   if (ids.length === 0) return versions
   const names = new Map<string, string>()
-  const slugs = new Map<string, string>()
   for (const part of chunks(ids)) {
     const rows = await db
       .select({ id: schema.user.id, name: schema.user.name })
       .from(schema.user)
       .where(inArray(schema.user.id, part))
     for (const r of rows) names.set(r.id, r.name)
-    const own = await db
-      .select({ userId: schema.member.userId, slug: schema.organization.slug })
-      .from(schema.member)
-      .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-      .where(and(inArray(schema.member.userId, part), eq(schema.organization.isDefault, true)))
-    for (const r of own) slugs.set(r.userId, r.slug)
   }
   return versions.map((v) =>
-    v.pushedBy === undefined
-      ? v
-      : {
-          ...v,
-          pushedByName: names.get(v.pushedBy ?? '') ?? null,
-          pushedBySlug: slugs.get(v.pushedBy ?? '') ?? null,
-        },
+    v.pushedBy === undefined ? v : { ...v, pushedByName: names.get(v.pushedBy ?? '') ?? null },
   )
 }
 
@@ -118,21 +102,17 @@ export function collectionRoutes() {
         c.var.kf?.profile(p.userId, { cache, waitUntil }) ?? null,
       ])
       if (u) {
-        const def = orgs.find((o) => o.org.isDefault) ?? null
         currentUser = {
           id: u.id,
           email: u.email,
-          slug: def?.org.slug ?? null,
-          displayName: profile?.name ?? u.name ?? def?.org.name ?? null,
+          displayName: profile?.name ?? u.name ?? null,
           avatarUrl: profile?.image ?? u.image ?? null,
           kfRole: profile?.role ?? null,
-          defaultOrg: def ? { slug: def.org.slug, displayName: def.org.name } : null,
           orgs: orgs.map((o) => ({
             organizationId: o.org.id,
             slug: o.org.slug,
             displayName: o.org.name,
             role: o.role,
-            isDefault: o.org.isDefault,
           })),
         }
       }
@@ -397,7 +377,6 @@ export function collectionRoutes() {
       bio: org.bio,
       website: org.website,
       createdAt: org.createdAt,
-      isDefault: org.isDefault,
       arkNaan: org.arkNaan,
       arkShoulder: shoulder?.shoulder ?? null,
     })
@@ -412,29 +391,11 @@ export function collectionRoutes() {
       .limit(1)
     if (!org) return jsonError(c, 404, 'Not found')
     const members = await db
-      .select({ role: schema.member.role, userId: schema.member.userId, name: schema.user.name })
+      .select({ role: schema.member.role, name: schema.user.name })
       .from(schema.member)
       .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
       .where(eq(schema.member.organizationId, org.id))
-    const defaults: { userId: string; slug: string }[] = []
-    for (const part of chunks(members.map((m) => m.userId))) {
-      defaults.push(
-        ...(await db
-          .select({ userId: schema.member.userId, slug: schema.organization.slug })
-          .from(schema.member)
-          .innerJoin(schema.organization, eq(schema.organization.id, schema.member.organizationId))
-          .where(
-            and(inArray(schema.member.userId, part), eq(schema.organization.isDefault, true)),
-          )),
-      )
-    }
-    return c.json(
-      members.map((m) => ({
-        role: m.role,
-        slug: defaults.find((d) => d.userId === m.userId)?.slug ?? null,
-        displayName: m.name,
-      })),
-    )
+    return c.json(members.map((m) => ({ role: m.role, displayName: m.name })))
   })
 
   return app

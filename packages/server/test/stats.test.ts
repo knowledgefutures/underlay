@@ -68,7 +68,6 @@ describe('admin stats', () => {
     expect(overview.totals).toMatchObject({
       users: 2,
       orgs: 1,
-      personalOrgs: 2,
       collections: 1,
       records: 2,
       publicRecords: 1,
@@ -82,9 +81,9 @@ describe('admin stats', () => {
 
     const { orgs } = await get('/api/admin/stats/orgs')
     const org = orgs.find((o: any) => o.slug === 'org')
-    expect(org).toMatchObject({ personal: false, members: 1, collections: 1, records: 2 })
+    expect(org).toMatchObject({ members: 1, collections: 1, records: 2 })
+    expect(org).not.toHaveProperty('personal')
     expect(org.usage.api_calls).toBe(7)
-    expect(orgs.find((o: any) => o.slug === 'u1')).toMatchObject({ personal: true, records: 0 })
 
     const detail = await get('/api/admin/stats/orgs/org?days=30')
     expect(detail.collections).toEqual([

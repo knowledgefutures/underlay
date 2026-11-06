@@ -36,7 +36,6 @@ export default function BaseLayout({ children }: { children: React.ReactNode }) 
               <>
                 <CreateMenu />
                 <UserMenu
-                  slug={currentUser.slug}
                   displayName={currentUser.displayName}
                   avatarUrl={currentUser.avatarUrl}
                   orgs={currentUser.orgs ?? []}

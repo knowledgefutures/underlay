@@ -6,23 +6,14 @@ const meRes = `{
   "name": "Jane Doe",
   "email": "user@example.com",
   "image": "https://...",
-  "slug": "jdoe",
   "displayName": "Jane Doe",
   "createdAt": "2026-01-15T00:00:00.000Z",
   "orgs": [
     {
       "organizationId": "uuid",
-      "role": "owner",
-      "slug": "jdoe",
-      "name": "Jane Doe",
-      "isDefault": true
-    },
-    {
-      "organizationId": "uuid",
       "role": "member",
       "slug": "knowledge-futures",
-      "name": "Knowledge Futures",
-      "isDefault": false
+      "name": "Knowledge Futures"
     }
   ]
 }`
@@ -37,14 +28,13 @@ const accountRes = `{
   "bio": "Open infrastructure for knowledge",
   "website": "https://www.knowledgefutures.org",
   "createdAt": "2026-01-15T00:00:00.000Z",
-  "isDefault": false,
   "arkNaan": "12345",
   "arkShoulder": "ul"
 }`
 
 const membersRes = `[
-  { "role": "owner", "slug": "jdoe", "displayName": "Jane Doe" },
-  { "role": "member", "slug": "asmith", "displayName": "Alex Smith" }
+  { "role": "owner", "displayName": "Jane Doe" },
+  { "role": "member", "displayName": "Alex Smith" }
 ]`
 
 const updateOrgReq = `{
@@ -128,9 +118,7 @@ export default function DocsApiAccounts() {
       <p>
         User accounts are created automatically on first sign-in via KF Auth (OAuth2/PKCE). There
         are no local signup or login endpoints. Collections belong to organizations, and each
-        organization to a Knowledge Futures account. Users who signed up before November 2026 also
-        have a personal account (an organization with <code>isDefault: true</code>); new users
-        don&rsquo;t.
+        organization to a Knowledge Futures account.
       </p>
       <p>
         API keys have three scopes: <code>read</code>, <code>write</code> and <code>admin</code>. A
@@ -155,10 +143,8 @@ export default function DocsApiAccounts() {
         <h2 id="get-api-accounts-me">GET /api/accounts/me</h2>
         <p className="scope">Auth: session or an unscoped personal API key (any scope)</p>
         <p>
-          Get the authenticated user, with every organization they belong to. <code>slug</code> and{' '}
-          <code>displayName</code> are those of the user&rsquo;s personal account (the entry in{' '}
-          <code>orgs</code> with <code>isDefault: true</code>) when they have one; otherwise{' '}
-          <code>slug</code> is <code>null</code> and <code>displayName</code> is their name.
+          Get the authenticated user, with every organization they belong to.{' '}
+          <code>displayName</code> is the user&rsquo;s name.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -174,10 +160,9 @@ export default function DocsApiAccounts() {
         <h2 id="get-api-accounts-slug">GET /api/accounts/:slug</h2>
         <p className="scope">No auth required</p>
         <p>
-          Get the public profile of any account. <code>isDefault</code> is <code>true</code> for a
-          user&rsquo;s personal account and <code>false</code> for an organization.{' '}
-          <code>arkNaan</code> and <code>arkShoulder</code> are null when the account has no ARK
-          settings of its own. An unknown slug returns <code>404</code>.
+          Get the public profile of any account. <code>arkNaan</code> and <code>arkShoulder</code>{' '}
+          are null when the account has no ARK settings of its own. An unknown slug returns{' '}
+          <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -194,8 +179,7 @@ export default function DocsApiAccounts() {
         <p className="scope">No auth required</p>
         <p>
           List an account&rsquo;s members and their roles (<code>owner</code>, <code>admin</code> or{' '}
-          <code>member</code>). <code>slug</code> is the member&rsquo;s personal account, or{' '}
-          <code>null</code> if they have none. An unknown slug returns <code>404</code>.
+          <code>member</code>), by name. An unknown slug returns <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -274,8 +258,7 @@ export default function DocsApiAccounts() {
         <p>
           Delete an organization, with its memberships, invitations and API keys. An organization
           that still holds collections is refused with <code>409</code>: delete or transfer them
-          first. A personal account can&rsquo;t be deleted here (also <code>409</code>); it is
-          deleted from its own settings.
+          first.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
