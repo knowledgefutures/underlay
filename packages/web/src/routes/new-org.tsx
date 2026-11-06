@@ -82,11 +82,11 @@ export default function NewOrg() {
             </p>
             <p className="mt-2">
               Each Underlay organization belongs to a Knowledge Futures billing account, which is
-              separate from the login you signed in with. You aren&rsquo;t part of one yet. Email{' '}
+              separate from the login you signed in with. Email{' '}
               <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
                 {HELP_EMAIL}
               </a>{' '}
-              to tell us about your work, and we&rsquo;ll set one up for you.
+              and tell us a little about your work, and we&rsquo;ll set one up with you.
             </p>
           </Alert>
         ) : (
