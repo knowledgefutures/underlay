@@ -72,7 +72,6 @@ describe('KF Auth client', () => {
     expect(await kf.role('u1')).toBe('admin')
     expect(calls).toEqual(['GET /api/auth/oauth2/userinfo Bearer fresh'])
 
-    expect(await kf.defaultOrgId('u1')).toBe('kf-own')
     expect(await kf.entitled('u1', 'kf-shared')).toBe(true)
     expect(await kf.entitled('u1', 'kf-else')).toBe(false)
     // The internal API is called as the app: Basic with its client id and secret, no key.

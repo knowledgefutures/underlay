@@ -18,7 +18,6 @@ export const fakeKf: Kf = {
       ? [{ id: 'kf-1', name: 'KF One', slug: 'kf-one', type: 'shared', role: 'owner' }]
       : [],
   entitled: async (userId, id) => userId === 'u1' && id === 'kf-1',
-  defaultOrgId: async () => null,
   // Kf's own tests check real tokens; this one, that the route asks about the registered URL.
   isConsoleCall: async (token, method, url) =>
     token === 'console-token' && method === 'GET' && url === 'http://test/api/kf/summary',

@@ -69,7 +69,6 @@ try {
       role: async (userId) => (userId === 'steward' ? 'admin' : null),
       orgs: async () => [],
       entitled: async () => false,
-      defaultOrgId: async () => null,
       isConsoleCall: async () => false,
     },
   }))

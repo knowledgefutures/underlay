@@ -70,8 +70,6 @@ export interface Kf {
   orgs(userId: string): Promise<KfOrg[]>
   /** Whether the user belongs to KF org `kfOrgId`. */
   entitled(userId: string, kfOrgId: string): Promise<boolean>
-  /** The user's personal KF org (else their first), for new orgs. */
-  defaultOrgId(userId: string): Promise<string | null>
   /**
    * Whether `token` (a request's `KF-Console-Token`) is the console calling
    * `method registeredUrl` on this app. The registered URL, not the one the
@@ -339,10 +337,6 @@ export function createKf(
     },
     async entitled(userId, kfOrgId) {
       return (await kf.orgs(userId)).some((o) => o.id === kfOrgId)
-    },
-    async defaultOrgId(userId) {
-      const orgs = await kf.orgs(userId)
-      return (orgs.find((o) => o.type === 'personal') ?? orgs[0])?.id ?? null
     },
     async isConsoleCall(token, method, registeredUrl) {
       if (!token) return false

@@ -272,14 +272,13 @@ describe('sessions', () => {
 })
 
 describe('KF org links on organizations', () => {
-  it('keeps a kfOrgId the creator belongs to, and replaces any other', async () => {
+  it('keeps a kfOrgId the creator belongs to, and drops any other', async () => {
     const h = await harness()
     const kf = {
       profile: async () => null,
       role: async () => null,
       orgs: async () => [],
       entitled: async (_u: string, id: string) => id === 'kf-mine',
-      defaultOrgId: async () => 'kf-default',
       isConsoleCall: async () => false,
     }
     const auth = createAuth(
@@ -310,7 +309,7 @@ describe('KF org links on organizations', () => {
     const orgs = await h.ports.db.select().from(schema.organization)
     const link = (slug: string) => orgs.find((o) => o.slug === slug)?.kfOrgId
     expect(link('mine')).toBe('kf-mine')
-    expect(link('theirs')).toBe('kf-default')
+    expect(link('theirs')).toBeNull()
 
     // Logos come from the upload only: better-auth's fields are any URL.
     await auth.api.createOrganization({

@@ -110,9 +110,9 @@ export function createAuth(
             const base = { ...org, logo: null, avatarUrl: null }
             const asked = (org as { kfOrgId?: string | null }).kfOrgId
             if (asked && kf && (await kf.entitled(user.id, asked))) return { data: base }
-            // Not one of theirs (or none asked): the server's choice, never the client's.
-            const kfOrgId = kf ? await kf.defaultOrgId(user.id) : null
-            return { data: { ...base, kfOrgId: kfOrgId ?? null } }
+            // Not one of theirs, or none asked: no KF account. A KF account is a
+            // party KF does business with, linked on purpose, never by default.
+            return { data: { ...base, kfOrgId: null } }
           },
           beforeUpdateOrganization: async ({ organization: org, user }) => {
             if (org.slug !== undefined) assertValidSlug(org.slug)
@@ -161,33 +161,6 @@ export function createAuth(
                   ne(schema.account.id, account.id),
                 ),
               )
-            // Link the personal org to the user's KF org. Not at user creation: KF
-            // Auth's internal API is looked up through this account row.
-            if (kf && account.providerId === 'kf-auth') {
-              const kfOrgId = await kf.defaultOrgId(account.userId)
-              if (kfOrgId) {
-                const [own] = await db
-                  .select({ id: schema.organization.id, kfOrgId: schema.organization.kfOrgId })
-                  .from(schema.organization)
-                  .innerJoin(
-                    schema.member,
-                    eq(schema.member.organizationId, schema.organization.id),
-                  )
-                  .where(
-                    and(
-                      eq(schema.member.userId, account.userId),
-                      eq(schema.organization.isDefault, true),
-                    ),
-                  )
-                  .limit(1)
-                if (own && !own.kfOrgId) {
-                  await db
-                    .update(schema.organization)
-                    .set({ kfOrgId })
-                    .where(eq(schema.organization.id, own.id))
-                }
-              }
-            }
           },
         },
       },
