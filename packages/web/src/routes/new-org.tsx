@@ -76,12 +76,17 @@ export default function NewOrg() {
           <p className="text-ink-muted text-sm">Loading…</p>
         ) : kfAccounts.length === 0 ? (
           <Alert variant="info">
-            An Underlay organization belongs to a Knowledge Futures account, and you aren&rsquo;t in
-            one yet. Email{' '}
-            <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
-              {HELP_EMAIL}
-            </a>{' '}
-            and we&rsquo;ll set one up for you.
+            <p>
+              Underlay is opening to new organizations gradually, so it can grow at a pace that
+              keeps it fast, reliable, and sustainable for the people who depend on it.
+            </p>
+            <p className="mt-2">
+              Each organization belongs to a Knowledge Futures account. Email{' '}
+              <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
+                {HELP_EMAIL}
+              </a>{' '}
+              to tell us about your work, and we&rsquo;ll set one up for you.
+            </p>
           </Alert>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
