@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
+import { HELP_EMAIL } from '~/lib/contact'
 
 const pushExample = `{
   "base": null,
@@ -557,8 +558,7 @@ export default function DocsIntegration() {
       </p>
       <p>
         Built by <a href="https://www.knowledgefutures.org">Knowledge Futures</a>, a 501(c)(3)
-        public charity. Contact:{' '}
-        <a href="mailto:team@knowledgefutures.org">team@knowledgefutures.org</a>
+        public charity. Contact: <a href={`mailto:${HELP_EMAIL}`}>{HELP_EMAIL}</a>
       </p>
     </DocsLayout>
   )
