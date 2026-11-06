@@ -14,9 +14,7 @@ export const fakeKf: Kf = {
     userId === 'u1' ? { name: 'Ada KF', image: null, role: 'admin' } : null,
   role: async (userId) => (userId === 'u1' ? 'admin' : null),
   orgs: async (userId) =>
-    userId === 'u1'
-      ? [{ id: 'kf-1', name: 'KF One', slug: 'kf-one', type: 'shared', role: 'owner' }]
-      : [],
+    userId === 'u1' ? [{ id: 'kf-1', name: 'KF One', slug: 'kf-one', role: 'owner' }] : [],
   entitled: async (userId, id) => userId === 'u1' && id === 'kf-1',
   // Kf's own tests check real tokens; this one, that the route asks about the registered URL.
   isConsoleCall: async (token, method, url) =>

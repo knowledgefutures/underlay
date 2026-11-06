@@ -42,7 +42,6 @@ export interface KfOrg {
   id: string
   name: string
   slug: string
-  type: 'personal' | 'shared'
   role: string
 }
 

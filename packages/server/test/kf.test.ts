@@ -49,8 +49,8 @@ describe('KF Auth client', () => {
       if (url.endsWith('/internal/users/k2')) return json({ email: 'ADA@example.org' })
       if (url.endsWith('/internal/users/k2/orgs')) {
         return json([
-          { id: 'kf-shared', name: 'S', slug: 's', type: 'shared', role: 'member' },
-          { id: 'kf-own', name: 'A', slug: 'a', type: 'personal', role: 'owner' },
+          { id: 'kf-shared', name: 'S', slug: 's', role: 'member' },
+          { id: 'kf-own', name: 'A', slug: 'a', role: 'owner' },
         ])
       }
       return json({}, 404)
