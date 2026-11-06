@@ -81,7 +81,8 @@ export default function NewOrg() {
               keeps it fast, reliable, and sustainable for the people who depend on it.
             </p>
             <p className="mt-2">
-              Each organization belongs to a Knowledge Futures account. Email{' '}
+              Each Underlay organization belongs to a Knowledge Futures billing account, which is
+              separate from the login you signed in with. You aren&rsquo;t part of one yet. Email{' '}
               <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
                 {HELP_EMAIL}
               </a>{' '}
