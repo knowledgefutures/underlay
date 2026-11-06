@@ -57,7 +57,7 @@
         // staging replaces dev.underlay.org: dev's data, and staging KF Auth (kf-console),
         // which carries dev-auth's users and clients. Its account pages live on the auth host.
         "OIDC_ISSUER_URL": "https://staging-auth.knowledgefutures.org",
-        "OIDC_ACCOUNT_URL": "https://staging-auth.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://staging-auth.knowledgefutures.org/profile",
         "OIDC_CLIENT_ID": "kf_underlay",
         // underlay-staging-public's custom domain.
         "ASSETS_BASE_URL": "https://assets-staging.underlay.org",
@@ -122,7 +122,7 @@
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-prod",
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
-        "OIDC_ACCOUNT_URL": "https://account.knowledgefutures.org",
+        "OIDC_ACCOUNT_URL": "https://auth.knowledgefutures.org/profile",
         "OIDC_CLIENT_ID": "kf_underlay",
         // v1's public assets domain. It serves v1's underlay-public until the DNS switch,
         // then underlay-prod-public (PUBLIC_ASSETS); logos uploaded before then don't show.
