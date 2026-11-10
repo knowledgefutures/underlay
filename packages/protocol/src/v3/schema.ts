@@ -285,7 +285,7 @@ export async function checkUpload(
   }
 }
 
-/** The publisher's types that have records in an upload, from its key entries. */
+/** The types that have rows in an upload, from its key entries: a seek for each type. */
 async function typesOf(
   store: Store,
   files: FileRef[],
@@ -299,7 +299,8 @@ async function typesOf(
     await cursor.seek()
     while (cursor.current) {
       const type = cursor.current.type
-      if (cursor.current.kind === 'r') out.add(type)
+      // Its first row may be a removal with records after it, so every type counts.
+      out.add(type)
       // Skip to the next type: past every id of this one.
       await cursor.seek({ type: type + '\u0000', id: '' })
     }

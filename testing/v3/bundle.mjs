@@ -32,7 +32,9 @@ for (const name of ['bench', 'cli']) {
     target: 'node22',
     outfile: resolve(here, `../dist/${name}.mjs`),
     define: { __BENCH_COMMIT__: JSON.stringify(commit) },
-    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    banner: {
+      js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
+    },
     logLevel: 'warning',
   })
 }

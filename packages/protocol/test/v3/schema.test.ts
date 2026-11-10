@@ -90,6 +90,26 @@ describe('validating records', () => {
     expect(await v3.headNumber(store, 'c')).toBe(0)
   })
 
+  it('validates a type whose first row in the upload is a removal', async () => {
+    const store = memoryStore()
+    await upload(store, [
+      schema('work', workSchema),
+      work('a', { title: 'A' }),
+      work('m', { title: 'M' }),
+    ])
+    const r = await upload(store, [
+      rem('work', 'a'),
+      work('b', { title: 'B' }),
+      work('c', { title: 'C' }),
+    ])
+    expect(r.check).toMatchObject({ bump: 'minor', validated: 2 })
+    await expect(upload(store, [rem('work', 'b'), work('d', { year: 1 })])).rejects.toThrow(
+      /work "d"/,
+    )
+    // Only removals of a type with no schema: nothing to validate, nothing refused.
+    await upload(store, [rem('ghost', 'x')])
+  })
+
   it('collects several problems, up to a limit', async () => {
     const store = memoryStore()
     await upload(store, [schema('work', workSchema)])
