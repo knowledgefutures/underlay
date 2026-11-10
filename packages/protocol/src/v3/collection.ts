@@ -170,12 +170,12 @@ export async function forkCollection(
         number: 1,
         createdAt: now().toISOString(),
       }
-      if (!(await createLayout(store, copy, null))) throw new CollectionError('Fork layout exists')
+      if (!(await createLayout(store, copy))) throw new CollectionError('Fork layout exists')
       bytes += jcs(copy).length
       objects++
     }
     await writeLatest(store, fork, { commit: at, layout: layout ? 1 : 0 })
-    objects++
+    objects += layout ? 2 : 1
   } catch (err) {
     await deleteCollection(store, fork).catch(() => {})
     throw err

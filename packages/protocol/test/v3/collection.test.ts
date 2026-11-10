@@ -69,7 +69,8 @@ describe('forks', () => {
     const fork = await v3.forkCollection(store, 'parent', 'fork')
     // No sorted-record-file was written or copied.
     expect(await collect(listAll(store, 'records/'))).toEqual(records)
-    expect(fork.objects).toBe(1 + 6 + 1 + 1)
+    // The description, six commits, the layout, and the two hints.
+    expect(fork.objects).toBe(1 + 6 + 1 + 2)
     expect(fork.bytes).toBeLessThan(8000)
     const head = (await v3.findHead(store, 'parent'))!
     expect(fork.description).toMatchObject({

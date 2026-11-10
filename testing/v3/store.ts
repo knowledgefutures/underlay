@@ -94,7 +94,7 @@ export function kindOf(key: string): string {
   if (key.startsWith('sweep/')) return 'sweep'
   if (key.includes('/commits/')) return 'commits'
   if (key.includes('/layouts/')) return 'layouts'
-  if (key.endsWith('/latest.json')) return 'latest'
+  if (key.endsWith('/latest.json') || key.endsWith('/latest-layout.json')) return 'latest'
   if (key.endsWith('/collection.json')) return 'description'
   return 'other'
 }

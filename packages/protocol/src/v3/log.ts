@@ -61,7 +61,12 @@ export interface Layout {
   retained?: [number, number][]
 }
 
-/** `latest.json`: where to start looking for the newest commit and layout. May be stale. */
+/**
+ * Where to start looking for the newest commit and layout. May be stale. Kept as
+ * two objects, `latest.json` for the commit and `latest-layout.json` for the
+ * layout, so that each has one writer: a committer and a rebuild never overwrite
+ * each other's hint, or one key twice in a second.
+ */
 export interface Latest {
   commit: number
   layout: number
@@ -85,6 +90,7 @@ export const descriptionKey = (c: string) => `${collectionPrefix(c)}collection.j
 export const commitKey = (c: string, n: number) => `${collectionPrefix(c)}commits/${num(n)}.json`
 export const layoutKey = (c: string, n: number) => `${collectionPrefix(c)}layouts/${num(n)}.json`
 export const latestKey = (c: string) => `${collectionPrefix(c)}latest.json`
+export const layoutHintKey = (c: string) => `${collectionPrefix(c)}latest-layout.json`
 
 export const commitBytes = (commit: Commit): Uint8Array => utf8(jcs(commit))
 export const versionId = (bytes: Uint8Array): string => VERSION_ID_PREFIX + sha256Hex(bytes)
@@ -234,21 +240,45 @@ export async function readLayout(
   return layout
 }
 
-export async function readLatest(store: Store, collection: string): Promise<Latest | null> {
-  const obj = await store.get(latestKey(collection))
+async function readHint(store: Store, key: string, member: string): Promise<number | null> {
+  const obj = await store.get(key)
   if (!obj) return null
   try {
-    const l = JSON.parse(await obj.text()) as Partial<Latest>
-    if (isNumber(l.commit) && isNumber(l.layout)) return { commit: l.commit, layout: l.layout }
+    const n = (JSON.parse(await obj.text()) as Record<string, unknown>)[member]
+    return isNumber(n) ? n : null
   } catch {
     // A hint that does not parse is no hint.
+    return null
   }
-  return null
 }
 
-/** Overwrite the hint. It is only a hint: a failed write (a rate limit) is ignored. */
+/** The hinted newest commit number, or null. */
+export const readCommitHint = (store: Store, collection: string) =>
+  readHint(store, latestKey(collection), 'commit')
+/** The hinted newest layout number, or null. */
+export const readLayoutHint = (store: Store, collection: string) =>
+  readHint(store, layoutHintKey(collection), 'layout')
+
+/** Both hints, or null if the collection has neither. */
+export async function readLatest(store: Store, collection: string): Promise<Latest | null> {
+  const [commit, layout] = await Promise.all([
+    readCommitHint(store, collection),
+    readLayoutHint(store, collection),
+  ])
+  if (commit === null && layout === null) return null
+  return { commit: commit ?? 0, layout: layout ?? 0 }
+}
+
+/** Overwrite a hint. It is only a hint: a failed write (a rate limit) is ignored. */
+export async function writeCommitHint(store: Store, collection: string, commit: number) {
+  await store.put(latestKey(collection), jcs({ commit })).catch(() => {})
+}
+export async function writeLayoutHint(store: Store, collection: string, layout: number) {
+  await store.put(layoutHintKey(collection), jcs({ layout })).catch(() => {})
+}
 export async function writeLatest(store: Store, collection: string, latest: Latest): Promise<void> {
-  await store.put(latestKey(collection), jcs(latest)).catch(() => {})
+  await writeCommitHint(store, collection, latest.commit)
+  if (latest.layout > 0) await writeLayoutHint(store, collection, latest.layout)
 }
 
 /**
@@ -281,9 +311,9 @@ export async function headNumber(
   collection: string,
   latest?: Latest | null,
 ): Promise<number> {
-  const hint = latest === undefined ? await readLatest(store, collection) : latest
+  const hinted = latest === undefined ? await readCommitHint(store, collection) : latest?.commit
   const exists = async (n: number) => (await store.head(commitKey(collection, n))) !== null
-  let from = hint?.commit ?? 0
+  let from = hinted ?? 0
   // A hint is never ahead of the log, unless it outlived a deleted collection.
   if (from > 0 && !(await exists(from))) from = 0
   return probeUp(exists, from)
@@ -308,9 +338,9 @@ export async function findLayout(
   collection: string,
   latest?: Latest | null,
 ): Promise<Layout | null> {
-  const hint = latest === undefined ? await readLatest(store, collection) : latest
+  const hinted = latest === undefined ? await readLayoutHint(store, collection) : latest?.layout
   const exists = async (n: number) => (await store.head(layoutKey(collection, n))) !== null
-  let from = hint?.layout ?? 0
+  let from = hinted ?? 0
   if (from > 0 && !(await exists(from))) from = 0
   const n = await probeUp(exists, from)
   if (n === 0) return null
@@ -371,11 +401,11 @@ export async function createCommit(
 ): Promise<StoredCommit> {
   checkCollectionId(collection)
   const attempts = opts.attempts ?? 50
-  const latest = await readLatest(store, collection)
+  const hinted = await readCommitHint(store, collection)
   // The hinted commit, if it is there; the create below finds out whether it is the newest.
   let head: StoredCommit | null = null
-  if (latest && latest.commit > 0) head = await readCommit(store, collection, latest.commit)
-  if (!head && latest?.commit !== 0) head = await findHead(store, collection, null)
+  if (hinted !== null && hinted > 0) head = await readCommit(store, collection, hinted)
+  if (!head && hinted !== 0) head = await findHead(store, collection, null)
   for (let attempt = 0; attempt < attempts; attempt++) {
     const bump = typeof input.bump === 'function' ? await input.bump(head) : input.bump
     const commit: Commit = {
@@ -394,7 +424,7 @@ export async function createCommit(
     const won = await createObject(store, key, bytes, { contentType: 'application/json' })
     const mine = { commit, id: versionId(bytes), bytes }
     if (won) {
-      await writeLatest(store, collection, { commit: commit.number, layout: latest?.layout ?? 0 })
+      await writeCommitHint(store, collection, commit.number)
       return mine
     }
     // Lost, or a retried request that had in fact won: see what holds the number. The
@@ -411,22 +441,12 @@ export async function createCommit(
 }
 
 /** Create the next layout; false if another rebuild took the number first. */
-export async function createLayout(
-  store: Store,
-  layout: Layout,
-  latest?: Latest | null,
-): Promise<boolean> {
+export async function createLayout(store: Store, layout: Layout): Promise<boolean> {
   checkCollectionId(layout.collection)
   const won = await createObject(store, layoutKey(layout.collection, layout.number), jcs(layout), {
     contentType: 'application/json',
   })
-  if (won) {
-    const hint = latest === undefined ? await readLatest(store, layout.collection) : latest
-    await writeLatest(store, layout.collection, {
-      commit: Math.max(hint?.commit ?? 0, layout.through),
-      layout: layout.number,
-    })
-  }
+  if (won) await writeLayoutHint(store, layout.collection, layout.number)
   return won
 }
 

@@ -295,7 +295,8 @@ assets/<sha256>                   assets, shared the same way
 collections/<id>/collection.json
 collections/<id>/commits/<number, 16 digits>.json
 collections/<id>/layouts/<number, 16 digits>.json
-collections/<id>/latest.json      a hint, may be stale
+collections/<id>/latest.json          a hint to the newest commit, may be stale
+collections/<id>/latest-layout.json   a hint to the newest layout, may be stale
 tmp/                              files being written, before their id is known
 trash/records/, trash/assets/     objects the sweep removed, kept for a while
 sweep/                            the sweep's own state
@@ -303,9 +304,10 @@ sweep/                            the sweep's own state
 
 - Commits and layouts are created with a put that fails if the key exists. Nothing else decides
   a race.
-- `latest.json` is `{"commit": n, "layout": m}`, overwritten after each commit or layout. A
-  reader starts from it and probes upward; without it, a reader probes from 1. A failed write
-  of it is ignored.
+- `latest.json` is `{"commit": n}`, overwritten after each commit; `latest-layout.json` is
+  `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
+  key is written twice when a layout follows a commit. A reader starts from them and probes
+  upward; without them, a reader probes from 1. A failed write of either is ignored.
 - A file or asset is stored once. An upload of one already stored is not written again, and the
   uploader is not told.
 - **Rebuild policy.** Each layout file carries `run`, a number shared by the files one merge
