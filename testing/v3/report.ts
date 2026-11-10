@@ -449,7 +449,7 @@ function besideF(r: Results): string {
     rows.push(
       [`<b>${n0(many.collections)} collections</b>`, '', ''],
       ['Loading them all', secs(many.load.seconds), f.load],
-      ['Requests for one small commit', `${num(many.days?.[0]?.commitRequests?.p50)}`, f.perCommit],
+      ['Requests for one small commit, with its layout', perCommit(many.days?.[0]), f.perCommit],
       [
         `A burst of ${n0(many.burst.commits)} commits at once`,
         `${secs(many.burst.seconds)}, p95 ${ms(many.burst.commitMs.p95)}`,
@@ -789,6 +789,10 @@ function suiteDetail(r: Results, suite: string, label: string): string {
   return out
 }
 
+/** Requests for a commit in a many-collections phase: the phase's total over its commits. */
+const perCommit = (d: R | undefined): string =>
+  d && d.commits > 0 ? num((d.classA + d.classB) / d.commits) : ''
+
 function manyDetail(r: Results): string {
   const many = r.many()
   if (!many) return ''
@@ -804,7 +808,7 @@ function manyDetail(r: Results): string {
     ],
     ...(many.days as R[]).map((d) => [
       `Day ${d.day}: a commit to every collection`,
-      `${secs(d.seconds)}, ${num(d.commitsPerSecond)} commits a second, ${num(d.commitRequests.p50)} requests each (p95 ${num(d.commitRequests.p95)}), ${n0(d.merges)} merges, ${d.failed} failed`,
+      `${secs(d.seconds)}, ${num(d.commitsPerSecond)} commits a second, ${perCommit(d)} requests each with its layout, ${n0(d.merges)} merges, ${d.failed} failed`,
     ]),
     [
       `Burst: ${n0(many.burst.commits)} commits at once`,
