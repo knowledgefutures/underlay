@@ -111,9 +111,11 @@ async function sized(
   await step(w, 'recreate', '', () => S.recreate(w, { write: 2 }))
   await step(w, 'schema', '', () => S.schemaChange(w))
   await step(w, 'forks', '', () => S.forks(w, o.forkDays))
+  // Two days at the rate layout F's bench used (240,000 a day at Crossref's size), to set beside its.
+  await step(w, 'daily', 'f-rate-2', () => S.daily(w, 2, true, 240_000 / 180_000_000))
 }
 
-const MANY_DEFAULT = { records: 200, days: 2, streams: 8 }
+const MANY_DEFAULT = { records: 9, days: 2, streams: 8 }
 
 async function suite(name: string): Promise<void> {
   const latency = str('latency', name === 'gate' ? 'none' : 'r2')
@@ -125,7 +127,7 @@ async function suite(name: string): Promise<void> {
     case 'gate': {
       const w = world(name, { ...base, records: 20_000 })
       await sized(w, { days: [3, 7, 12], forkDays: 5, samples: 40 })
-      const o = { ...MANY_DEFAULT, collections: 60, burst: 20, records: 50 }
+      const o = { ...MANY_DEFAULT, collections: 60, burst: 20 }
       await step(w, 'many', '', () => S.many(w, o))
       await step(w, 'sweep', '', () => S.sweepUnderLoad(w, o))
       await step(w, 'racing', '', () => S.racing(w, { writers: 3, streams: 4, commits: 3 }))

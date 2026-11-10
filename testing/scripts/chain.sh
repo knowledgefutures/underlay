@@ -13,7 +13,12 @@ gen=$1; shift
 B=${UL_BENCH_DIR:-$HOME/underlay-bench}/v3
 mkdir -p "$B"
 L=$B/chain-$gen.log
-if [ -n "$BENCH" ]; then run="node --max-old-space-size=128 $BENCH"; else run="node --max-old-space-size=128 --import tsx v3/bench.ts"; fi
+# A chain measures one build of the code: the bundle is copied aside, so a later
+# build (the next round's) can't change what a running chain executes.
+[ -n "$BENCH" ] || { node v3/bundle.mjs > /dev/null || exit 1; BENCH=dist/bench.mjs; }
+mkdir -p "$B/bin"
+cp "$BENCH" "$B/bin/$gen-bench.mjs"
+run="node --max-old-space-size=128 $B/bin/$gen-bench.mjs"
 [ -n "$NICE" ] && run="$NICE $run"
 echo "=== chain $gen: $* ($(date))" >> "$L"
 for step in "$@"; do

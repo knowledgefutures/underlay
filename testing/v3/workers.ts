@@ -235,6 +235,7 @@ export interface ManySpec {
   /** What to do to each: create and load it, or commit one more day to it. */
   phase: 'load' | 'day'
   day: number
+  /** The median size of a collection's first load, in records. */
   records: number
   rate: number
   /** Collections worked on at once in this process. */
@@ -245,6 +246,16 @@ export interface ManySpec {
 
 export const manyId = (n: number) => `m${String(n).padStart(6, '0')}`
 const manySeed = (n: number) => hash32(`many/${n}`)
+
+/**
+ * Records in a collection's first load: most are small and a few are large, as
+ * the layout F run's were (half under 10 records, one in twenty over 75, the
+ * largest 20,000). `scale` is the median.
+ */
+export function manySize(n: number, scale: number): number {
+  const u = prng(hash32(`many-size/${n}`))()
+  return Math.min(20_000, Math.max(1, Math.round((scale / 1.8) * (1 / (1 - u)) ** 0.85)))
+}
 
 async function many(): Promise<void> {
   const s = await readSpec<ManySpec>()
@@ -259,7 +270,7 @@ async function many(): Promise<void> {
   const one = async (n: number) => {
     const id = manyId(n)
     const seed = manySeed(n)
-    const wl = new Workload(seed, s.records)
+    const wl = new Workload(seed, manySize(n, s.records))
     let rows: Iterable<v3.LineRow>
     if (s.phase === 'load') {
       await v3.createCollection(store, id)

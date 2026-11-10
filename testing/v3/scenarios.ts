@@ -221,7 +221,12 @@ export async function load(w: World): Promise<Result> {
  * the server's commit are measured apart. With `maintain`, the rebuild policy
  * runs after each day and what it rewrites is measured too.
  */
-export async function daily(w: World, days: number, maintain: boolean): Promise<Result> {
+export async function daily(
+  w: World,
+  days: number,
+  maintain: boolean,
+  rate = w.rate,
+): Promise<Result> {
   const store = storeOf(w)
   const engine = engineOf(w)
   const wl = loadWorkload(w)
@@ -229,7 +234,7 @@ export async function daily(w: World, days: number, maintain: boolean): Promise<
   const rows: Result[] = []
   for (let n = 0; n < days; n++) {
     const day = ++at.value.day
-    const changes = [...dayRows(wl, day, w.rate)]
+    const changes = [...dayRows(wl, day, rate)]
     const build = await measure(store, () => engine.build(changes))
     const commit = await measure(store, () =>
       engine.commitFiles(w.collection, build.value, `day ${day}`),
@@ -266,6 +271,7 @@ export async function daily(w: World, days: number, maintain: boolean): Promise<
   return {
     days,
     maintain,
+    rate,
     records: wl.live,
     changesPerDay: of((r) => r.changes as number),
     storedBytesPerDay: of((r) => r.storedBytes as number),
@@ -623,7 +629,7 @@ export async function schemaChange(w: World, type = 'journal-article'): Promise<
 export interface ManyOptions {
   collections: number
   burst: number
-  /** Records in each collection's first load. */
+  /** The median size of a collection's first load, in records (sizes are skewed: see manySize). */
   records: number
   /** Days of small commits to every collection after loading. */
   days: number
