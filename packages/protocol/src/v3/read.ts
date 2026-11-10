@@ -32,7 +32,7 @@ import {
   readLayout,
   readLog,
 } from './log.js'
-import { EntryCursor, type FileReader, SortedFile } from './reader.js'
+import { EntryCursor, type FileReader, MissingFileError, SortedFile } from './reader.js'
 import { Heap, inParallel } from './util.js'
 
 /** A file of a view: what a reader needs to know before opening it. */
@@ -67,6 +67,22 @@ export class VersionError extends Error {
   }
 }
 
+/**
+ * Open a file by id. If it is not where files are kept, look in `trash/`: the
+ * sweep moves a file there before deleting it, and a commit that named it in
+ * the same moment still reads until the next pass moves it back.
+ */
+export async function openFile(store: Store, id: string): Promise<SortedFile> {
+  try {
+    return await SortedFile.open(store, recordKey(id), { id })
+  } catch (err) {
+    if (!(err instanceof MissingFileError)) throw err
+    return SortedFile.open(store, `trash/${recordKey(id)}`, { id }).catch(() => {
+      throw err
+    })
+  }
+}
+
 /** Opened files (their footers), kept by file id. Files never change, so entries never expire. */
 export class FileCache {
   readonly #lru: Lru<SortedFile>
@@ -79,7 +95,7 @@ export class FileCache {
     if (hit) return Promise.resolve(hit)
     let p = this.#opening.get(id)
     if (!p) {
-      p = SortedFile.open(store, recordKey(id), { id }).then(
+      p = openFile(store, id).then(
         (f) => {
           this.#lru.set(id, f)
           this.#opening.delete(id)
@@ -103,7 +119,7 @@ export interface ReadOptions {
 }
 
 const open = (store: Store, id: string, opts: ReadOptions): Promise<SortedFile> =>
-  opts.cache ? opts.cache.open(store, id) : SortedFile.open(store, recordKey(id), { id })
+  opts.cache ? opts.cache.open(store, id) : openFile(store, id)
 
 const viewFile = (f: LayoutFile): ViewFile => ({
   id: f.id,

@@ -43,7 +43,7 @@ export interface LayoutFile extends FileRef {
   labeled: boolean
   /** The commits whose rows it holds; `[c, c]` for a commit's own (unlabeled) file. */
   commits: [number, number]
-  /** Reference server: the layout that wrote it; 0 for a commit's own file. */
+  /** Reference server: a number shared by the files one merge wrote; 0 for a commit's own file. */
   run?: number
   /** Reference server: the file's stored size in bytes. */
   size?: number

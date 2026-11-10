@@ -315,7 +315,7 @@ export async function mergeFiles(
 
 /** A layout's files of one run: files written by one rebuild, or one commit's own files. */
 export interface Run {
-  /** The layout that wrote it; 0 for a commit's own files. */
+  /** A number shared by the files one merge wrote; 0 for a commit's own files. */
   run: number
   files: LayoutFile[]
   commits: [number, number]
@@ -502,6 +502,8 @@ export async function rebuild(
 
   const merged = new Set<string>()
   const outputs: LayoutFile[] = []
+  // A run number is only a name for the files one merge wrote: unique within the layout.
+  let nextRun = 1 + files.reduce((n, f) => Math.max(n, f.run ?? 0), 0)
   for (const group of plan) {
     const inputs = group.flatMap((r) => r.files)
     for (const f of inputs) {
@@ -520,7 +522,7 @@ export async function rebuild(
       ...(retained ? { retained } : {}),
     })
     // A merge of one run keeps its run number, so a takedown does not regroup the layout.
-    const run = group.length === 1 ? group[0]!.run : number
+    const run = group.length === 1 ? group[0]!.run : nextRun++
     for (const f of m.files) outputs.push({ ...f, run })
     result.merges++
     result.filesIn += inputs.length
