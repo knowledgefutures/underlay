@@ -68,26 +68,31 @@ let workerCounts = zeroCounts()
 export async function measure<T>(
   store: BenchStore,
   fn: () => Promise<T>,
+  /** Leave out what workers report: for a step measured while another step's workers run. */
+  own = false,
 ): Promise<{ value: T; m: Measured }> {
   const before = store.snapshot()
   const cpu0 = process.cpuUsage()
   const t0 = performance.now()
   memory.reset()
-  workerCpu = 0
-  workerRss = 0
-  workerHeap = 0
-  workerCounts = zeroCounts()
+  if (!own) {
+    workerCpu = 0
+    workerRss = 0
+    workerHeap = 0
+    workerCounts = zeroCounts()
+  }
   const value = await fn()
   const cpu = process.cpuUsage(cpu0)
-  const own = memory.peak()
-  const requests = addCounts(subCounts(store.snapshot(), before), workerCounts)
+  const mine = memory.peak()
+  const requests = subCounts(store.snapshot(), before)
+  if (!own) addCounts(requests, workerCounts)
   return {
     value,
     m: {
       seconds: round((performance.now() - t0) / 1000, 3),
-      cpuSeconds: round((cpu.user + cpu.system) / 1e6 + workerCpu, 3),
-      peakRssMb: Math.max(own.rssMb, workerRss),
-      peakHeapMb: Math.max(own.heapMb, workerHeap),
+      cpuSeconds: round((cpu.user + cpu.system) / 1e6 + (own ? 0 : workerCpu), 3),
+      peakRssMb: own ? mine.rssMb : Math.max(mine.rssMb, workerRss),
+      peakHeapMb: own ? mine.heapMb : Math.max(mine.heapMb, workerHeap),
       requests,
       cost: costOf(requests),
     },
