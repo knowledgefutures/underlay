@@ -785,6 +785,13 @@ function suiteDetail(r: Results, suite: string, label: string): string {
       `${secs(fk.fork.seconds)}, ${n0(fk.fork.objects)} small objects, ${bytes(fk.fork.bytes)} written, ${bytes(fk.fork.recordBytesAdded)} of records. After ${fk.days} days of changes to both: ${num(lastTrack.sharedShare * 100)}% of the fork still shared; the two list ${bytes(lastTrack.parentBytes + lastTrack.forkBytes)}, the location stores ${bytes(lastTrack.physicalBytes)}`,
     ])
   }
+  const st = r.get(suite, 'storage')
+  if (st) {
+    rows.push([
+      'What the stored files are made of',
+      `${n0(st.all.files)} files, ${bytes(st.all.bytes)}: record blocks ${bytes(st.all.recordBlocks)}, key blocks ${bytes(st.all.keyBlocks)} (${num(st.keyBlockShare * 100)}%, ${num(st.keyBytesPerEntry)} bytes an entry), footers ${bytes(st.all.footers)}; commits ${bytes(st.stored.commits?.bytes ?? 0)}, layouts ${bytes(st.stored.layouts?.bytes ?? 0)}`,
+    ])
+  }
   if (rows.length > 0) out += table(['Other steps', ''], rows, { num: [] })
   return out
 }

@@ -125,7 +125,7 @@ async function suite(name: string): Promise<void> {
   const base = { latency, workers, ...(args.level ? { level: num('level', 6) } : {}) }
   // A suite's folder is its name, or `--label` (a trial of a suite beside the real run).
   const folder = suiteOf(name)
-  if (!args.keep && !args.resume && name !== 'crossref-extra') {
+  if (!args.keep && !args.resume && name !== 'crossref-extra' && name !== 'split') {
     await rm(join(benchDir(), 'v3', folder), { recursive: true, force: true })
   }
   switch (name) {
@@ -237,6 +237,13 @@ async function suite(name: string): Promise<void> {
       await step(w, 'recreate', '', () => S.recreate(w, { write: 2 }))
       await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
       await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
+      break
+    }
+    case 'split': {
+      // What a store an earlier chain left is made of (`--label` names its folder; nothing is
+      // emptied or written but the result).
+      const w = world(folder, { ...base, records: 0 })
+      await step(w, 'storage', '', () => S.storageSplit(w))
       break
     }
     case 'crossref-extra': {

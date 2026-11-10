@@ -1406,3 +1406,46 @@ export async function crossrefSchema(w: World, type: string): Promise<Result> {
     stricter: { ...stricter, recordsPerSecond: Math.round(stricter.scanned / stricter.seconds) },
   }
 }
+
+/**
+ * What the stored sorted-record-files are made of: record blocks, key blocks,
+ * footers and trailers, from each file's own footer. Read off disk, so it
+ * counts no requests.
+ */
+export async function storageSplit(w: World): Promise<Result> {
+  const store = storeOf(w)
+  const out = {
+    files: 0,
+    bytes: 0,
+    recordBlocks: 0,
+    keyBlocks: 0,
+    footers: 0,
+    lines: 0,
+    entries: 0,
+  }
+  const labeled = { ...out }
+  for await (const key of listAll(store.inner, 'records/')) {
+    const f = await v3.SortedFile.open(store.inner, key)
+    const records = f.locator.recordBlocks.reduce((n, b) => n + b, 0)
+    const keys = f.locator.keyBlocks.reduce((n, b) => n + b, 0)
+    for (const t of f.content.labeled ? [out, labeled] : [out]) {
+      t.files++
+      t.bytes += f.size
+      t.recordBlocks += records
+      t.keyBlocks += keys
+      t.footers += f.size - records - keys
+      t.lines += f.content.bytes
+      t.entries += f.content.entries
+    }
+  }
+  const disk = await diskUsage(w.storeDir)
+  log('storage split', out)
+  return {
+    all: out,
+    rebuilt: labeled,
+    keyBlockShare: round(out.keyBlocks / Math.max(1, out.bytes), 4),
+    keyBytesPerEntry: round(out.keyBlocks / Math.max(1, out.entries), 1),
+    storedOverLines: round(out.bytes / Math.max(1, out.lines), 4),
+    stored: disk,
+  }
+}
