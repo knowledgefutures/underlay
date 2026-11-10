@@ -176,6 +176,7 @@ async function verify(): Promise<void> {
   let records = 0
   let entries = 0
   let lineBytes = 0
+  let done = 0
   const problems: string[] = []
   for (const f of s.files) {
     const v = await v3.verifyFile(store, v3.recordKey(f.id), {
@@ -196,6 +197,7 @@ async function verify(): Promise<void> {
     })
     entries += v.content.entries
     lineBytes += v.content.bytes
+    if (++done % 25 === 0) log(`verify: ${done}/${s.files.length} files, ${records} records`)
   }
   report(store, { files: s.files.length, entries, records, lineBytes, problems })
 }
