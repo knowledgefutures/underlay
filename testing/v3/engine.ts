@@ -166,6 +166,7 @@ export class V3Engine implements Engine {
     })) {
       records++
       bytes += r.line?.byteLength ?? 0
+      if (records % 2_000_000 === 0) console.log(`export: ${records} records`)
     }
     return { records, bytes }
   }
