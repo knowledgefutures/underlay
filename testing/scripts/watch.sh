@@ -13,7 +13,8 @@ gen=$1
 limit=$(( ${2:-30} * 60 ))
 B=${UL_BENCH_DIR:-$HOME/underlay-bench}/v3
 L=$B/chain-$gen.log
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
+# GNU stat first: its -f means something else (and succeeds), so BSD's form is the fallback.
+mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
 start=$(date +%s)
 while :; do
   now=$(date +%s)
