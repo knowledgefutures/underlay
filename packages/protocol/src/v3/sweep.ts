@@ -23,7 +23,6 @@
  * Every step is a stream: memory is the sorter's budget and a number per
  * collection, whatever the number of collections or files.
  */
-import { jcs } from '../jcs.js'
 import { putFromParts, readParts, type Store } from '../repo/types.js'
 import { recordKey } from './build.js'
 import { ASSET_TYPE } from './constants.js'
@@ -83,18 +82,31 @@ export interface SweepResult {
 }
 
 const DAY = 24 * 60 * 60 * 1000
-const STATE_KEY = 'sweep/state.json'
+const LEDGER_PREFIX = 'sweep/ledger-'
 
+/**
+ * The sweep's state is its ledger: one line per condemned or trashed object,
+ * written whole by each pass under the pass's number. Nothing is overwritten,
+ * so two passes close together never write one key twice. The newest ledger is
+ * the state; older ones are deleted once it is written.
+ */
 interface State {
   pass: number
-  at: number
-  /** The ledger: one line per condemned or trashed object. */
   ledger: string
+  older: string[]
 }
 
 async function readState(store: Store): Promise<State | null> {
-  const obj = await store.get(STATE_KEY)
-  return obj ? (JSON.parse(await obj.text()) as State) : null
+  const keys: string[] = []
+  let cursor: string | undefined
+  do {
+    const page = await store.list(LEDGER_PREFIX, cursor)
+    keys.push(...page.keys)
+    cursor = page.cursor
+  } while (cursor !== undefined)
+  const ledger = keys.pop()
+  if (!ledger) return null
+  return { pass: Number.parseInt(ledger.slice(LEDGER_PREFIX.length), 10), ledger, older: keys }
 }
 
 const tally = (): Tally => ({
@@ -415,16 +427,14 @@ export async function sweep(store: Store, opts: SweepOptions = {}): Promise<Swee
       }
     }
   }
-  const ledgerKey = `sweep/ledger-${String(pass).padStart(8, '0')}`
+  const ledgerKey = `${LEDGER_PREFIX}${String(pass).padStart(8, '0')}`
   const ledger = (async function* () {
     const assets = grouped(readLines(scratch, assetsKey))
     yield* fold('assets/', assets, result.assets)
     yield* fold('records/', grouped(readLines(scratch, listedKey)), result.records)
   })()
   await writeLines(store, ledgerKey, ledger)
-  const next: State = { pass, at: started, ledger: ledgerKey }
-  await store.put(STATE_KEY, jcs(next))
-  if (state) await store.delete(state.ledger)
+  if (state) for (const key of [...state.older, state.ledger]) await store.delete(key)
   await scratch.delete(listedKey)
   await scratch.delete(assetsKey)
   return result

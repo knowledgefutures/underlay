@@ -188,10 +188,7 @@ describe('the sweep', () => {
     await checkReads(store, 'c', model, rand)
     // The sweep keeps one ledger and no scratch.
     expect(await keys('tmp/')).toBe(0)
-    expect(await collect(listAll(store, 'sweep/'))).toEqual([
-      'sweep/ledger-00000005',
-      'sweep/state.json',
-    ])
+    expect(await collect(listAll(store, 'sweep/'))).toEqual(['sweep/ledger-00000005'])
   })
 
   it('reprieves a condemned file that is listed again, and restores one from trash', async () => {

@@ -170,6 +170,31 @@ export function parseInputLine(text: string): LineRow & { data?: unknown } {
   return { kind: 'r', type, id, line, data: rec.data }
 }
 
+/**
+ * A row from a record a builder already holds as values (not as a line of
+ * text): its key is checked and its data put in canonical form.
+ */
+export function rowFromRecord(id: string, type: string, data: unknown): LineRow {
+  const keyError = checkKey(type, id)
+  if (keyError) {
+    throw new InputRuleError(checkRecordId(id) === keyError ? 'bad_id' : 'bad_type', keyError)
+  }
+  const line = recordCanonical(id, type, data)
+  if (utf8ByteLength(line) > MAX_RECORD_BYTES) {
+    throw new InputRuleError('record_too_large', `Record exceeds ${MAX_RECORD_BYTES} bytes`)
+  }
+  return { kind: 'r', type, id, line }
+}
+
+/** A removal row for a key. */
+export function removalRow(id: string, type: string): LineRow {
+  const keyError = checkKey(type, id)
+  if (keyError) {
+    throw new InputRuleError(checkRecordId(id) === keyError ? 'bad_id' : 'bad_type', keyError)
+  }
+  return { kind: 'x', type, id, line: removalLine(id, type) }
+}
+
 /** The end (exclusive) of the JSON string starting at `from`, which must be a quote. */
 function stringEnd(s: string, from: number): number {
   if (s.charCodeAt(from) !== 0x22) throw new FormatError('Not a canonical line')
