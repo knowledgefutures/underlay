@@ -634,11 +634,11 @@ function policy(r: Results): string {
     out += table(
       [
         'Ratio',
-        'Sorted-record-files a read checks, mean',
+        'Files a read checks, mean',
         'Most',
         'Lines rewritten a day',
-        'Stored a day, at a quarter of lines',
-        'Times each byte is rewritten',
+        'Stored a day (¼ of lines)',
+        'Rewrites of each byte',
         'Largest single merge',
       ],
       (p.ratios as R[]).map((x) => [
@@ -837,8 +837,10 @@ function suiteDetail(r: Results, suite: string, label: string): string {
   const m = r.get(suite, 'maintain', 'catch-up')
   if (m)
     rows.push([
-      'Rebuild after 30 commits',
-      `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; files a read checks, ${m.groupsBefore ?? m.runsBefore} to ${m.groups ?? m.runs}; most heap ${n0(m.peakHeapMb)} MB`,
+      'The rebuild policy, catching up on the commits so far',
+      m.merges > 0
+        ? `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; files a read checks, ${m.groupsBefore ?? m.runsBefore} to ${m.groups ?? m.runs}; most heap ${n0(m.peakHeapMb)} MB`
+        : `${secs(m.seconds)}: nothing to merge yet (fewer than ten groups of files at one tier), so one layout file listing them all; files a read checks, ${m.groups ?? m.runs}`,
     ])
   const rc = r.get(suite, 'recreate')
   if (rc)
@@ -927,7 +929,7 @@ function suitesTable(r: Results): string {
     bySuite.set(x.suite, [...(bySuite.get(x.suite) ?? []), x])
   }
   return table(
-    ['Suite', 'Machine', 'Commit', 'Latency', 'Heap cap', 'Finished', 'Command'],
+    ['Suite', 'Machine', 'Commit', 'Latency', 'Heap cap', 'Finished (UTC)', 'Command'],
     [...bySuite].map(([suite, xs]) => {
       const lastOne = xs.sort((a, b) => String(a.at).localeCompare(String(b.at)))[xs.length - 1]!
       return [
