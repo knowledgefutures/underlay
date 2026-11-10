@@ -66,7 +66,7 @@ describe('rebuilding against the model', () => {
           adoptAfter: 1,
           ...(rand() < 0.5 ? { maxBytes: 500, typeCutBytes: 200 } : {}),
           // Sometimes cut by key and keep files nothing changed in.
-          ...(rand() < 0.5 ? { cutEvery: 4, keepUntouched: true } : {}),
+          ...(rand() < 0.5 ? { cutBytes: 400, keepUntouched: true } : {}),
         })
         expect(r.lost).toBe(false)
         expect(r.layout!.through).toBe(model.head)
@@ -455,25 +455,30 @@ describe('cutting by key and keeping untouched files', () => {
   const base = (n: number) =>
     Array.from({ length: n }, (_, i) => line(rec('t', pad(i), { i, text: 'x'.repeat(60) })))
 
-  it('picks cut keys from the key alone, about one in the number asked for', () => {
+  it('picks cut keys from the key and its row alone, so files come out near the target', () => {
     let cuts = 0
-    for (let i = 0; i < 20_000; i++) if (v3.keyCut('t', pad(i), 50)) cuts++
-    expect(cuts).toBeGreaterThan(300)
-    expect(cuts).toBeLessThan(500)
-    expect(v3.keyCut('t', pad(7), 50)).toBe(v3.keyCut('t', pad(7), 50))
-    expect(v3.keyCut('t', 'a', 1)).toBe(true)
+    for (let i = 0; i < 20_000; i++) if (v3.keyCut('t', pad(i), 99, 5000)) cuts++
+    // 20,000 rows of 100 bytes with their newlines, toward 5,000 bytes a file: about 400 cuts.
+    expect(cuts).toBeGreaterThan(330)
+    expect(cuts).toBeLessThan(470)
+    expect(v3.keyCut('t', pad(7), 99, 5000)).toBe(v3.keyCut('t', pad(7), 99, 5000))
+    // A larger row is more likely to end a file; one as large as the target always does.
+    let big = 0
+    for (let i = 0; i < 20_000; i++) if (v3.keyCut('t', pad(i), 999, 5000)) big++
+    expect(big).toBeGreaterThan(cuts * 8)
+    expect(v3.keyCut('t', 'a', 5000, 5000)).toBe(true)
   })
 
   it('gives the same files for the same stretch of keys, whatever else is in the build', async () => {
     const store = memoryStore()
     const rows = base(3000)
-    const a = await v3.buildFiles(rows, v3.storeTarget(store), { cutEvery: 100 })
+    const a = await v3.buildFiles(rows, v3.storeTarget(store), { cutBytes: 10_000 })
     expect(a.length).toBeGreaterThan(15)
     // One record changed, and one added far from it.
     const changed = rows.map((r) => (r.id === pad(1500) ? line(rec('t', pad(1500), 'new')) : r))
     changed.push(line(rec('t', pad(2990) + 'x', 'added')))
     changed.sort(v3.compareKey)
-    const b = await v3.buildFiles(changed, v3.storeTarget(store), { cutEvery: 100 })
+    const b = await v3.buildFiles(changed, v3.storeTarget(store), { cutBytes: 10_000 })
     const ids = new Set(a.map((f) => f.id))
     const fresh = b.filter((f) => !ids.has(f.id))
     // Only the files holding the changed and the added key differ (an added cut key could split one).
@@ -487,12 +492,16 @@ describe('cutting by key and keeping untouched files', () => {
     const model = new Model()
     const rows = base(3000)
     model.add(rows)
-    await commitRows(store, 'c', rows, { cutEvery: 100 })
+    await commitRows(store, 'c', rows, { cutBytes: 10_000 })
     const edit = [line(rec('t', pad(1500), 'edited')), line(rem('t', pad(1501)))]
     model.add(edit)
     await commitRows(store, 'c', edit)
     const before = (await v3.currentFiles(store, 'c')).files
-    const r = await v3.rebuild(store, 'c', { plan: v3.planAll, cutEvery: 100, keepUntouched: true })
+    const r = await v3.rebuild(store, 'c', {
+      plan: v3.planAll,
+      cutBytes: 10_000,
+      keepUntouched: true,
+    })
     // Both edits sit in one of the load's files: that one is merged, the rest are kept.
     expect(r.kept).toBe(before.length - 2)
     expect(r.filesOut).toBe(1)
@@ -523,7 +532,7 @@ describe('cutting by key and keeping untouched files', () => {
     // A second rebuild with nothing new keeps every file and writes nothing.
     const again = await v3.rebuild(store, 'c', {
       plan: v3.planAll,
-      cutEvery: 100,
+      cutBytes: 10_000,
       keepUntouched: true,
     })
     expect(again).toMatchObject({ filesOut: 0, written: 0, kept: layout.files.length })
@@ -532,12 +541,12 @@ describe('cutting by key and keeping untouched files', () => {
   it('costs a fork that edits one record one file, not the collection', async () => {
     const store = memoryStore()
     const rows = base(3000)
-    await commitRows(store, 'parent', rows, { cutEvery: 100 })
+    await commitRows(store, 'parent', rows, { cutBytes: 10_000 })
     await v3.forkCollection(store, 'parent', 'fork')
     await commitRows(store, 'fork', [line(rec('t', pad(42), 'forked'))])
     const r = await v3.rebuild(store, 'fork', {
       plan: v3.planAll,
-      cutEvery: 100,
+      cutBytes: 10_000,
       keepUntouched: true,
     })
     expect(r.filesOut).toBe(1)

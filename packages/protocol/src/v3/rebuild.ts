@@ -76,8 +76,8 @@ export interface MergeOptions extends ReadOptions {
   maxEntries?: number
   /** Close an output file where the type changes, once it holds this many bytes. Default 16 MiB. */
   typeCutBytes?: number
-  /** Cut output by key, one key in this many (`keyCut`), so equal stretches get equal files. */
-  cutEvery?: number
+  /** Cut output by key (`keyCut`) toward this many bytes of lines a file, so equal stretches get equal files. */
+  cutBytes?: number
   /**
    * Keep, as it is, any input file whose key range no other input has an entry
    * in: it has no changes, so there is nothing to merge into it. Not with
@@ -280,7 +280,8 @@ export async function mergeFiles(
   const oldest = opts.retained ? (opts.retained[0]?.[0] ?? opts.through + 1) : 1
   let draft: Draft | null = null
   let lastType: string | null = null
-  let lastKey: { type: string; id: string } | null = null
+  /** The key before the one in hand, with the size of its newest row: what decides a cut. */
+  let lastKey: { type: string; id: string; size: number } | null = null
   const hooks: MergeHooks =
     opts.keepUntouched && !opts.retained && !opts.takedown
       ? {
@@ -338,9 +339,9 @@ export async function mergeFiles(
       const c: ContentBuilder = (draft as Draft).content
       const full = c.bytes >= maxBytes || c.entries + kept.length > maxEntries
       const byKey =
-        opts.cutEvery !== undefined &&
+        opts.cutBytes !== undefined &&
         lastKey !== null &&
-        keyCut(lastKey.type, lastKey.id, opts.cutEvery)
+        keyCut(lastKey.type, lastKey.id, lastKey.size, opts.cutBytes)
       if (full || byKey || (type !== lastType && c.bytes >= typeCut)) {
         await close(draft)
         draft = null
@@ -348,7 +349,7 @@ export async function mergeFiles(
     }
     draft ??= new Draft(opts.level)
     lastType = type
-    lastKey = { type, id: kept[0]!.entry.id }
+    lastKey = { type, id: kept[0]!.entry.id, size: kept[kept.length - 1]!.entry.size }
     for (const f of kept) {
       const e = f.entry
       const withheld =

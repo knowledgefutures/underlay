@@ -122,7 +122,7 @@ async function commitVerified(
  * The first load from the generator: built in parallel parts by key range (the
  * client), verified in parallel (the server), committed once, and read at once.
  */
-export async function load(w: World, opts: { cutEvery?: number } = {}): Promise<Result> {
+export async function load(w: World, opts: { cutBytes?: number } = {}): Promise<Result> {
   const store = storeOf(w)
   await v3.createCollection(store, w.collection).catch(() => {})
   // Split points between parts, from a sample of keys.
@@ -161,7 +161,7 @@ export async function load(w: World, opts: { cutEvery?: number } = {}): Promise<
           hi: cuts[p + 1]!,
           schemas: p === 0,
           fileBytes: w.fileBytes,
-          ...(opts.cutEvery === undefined ? {} : { cutEvery: opts.cutEvery }),
+          ...(opts.cutBytes === undefined ? {} : { cutBytes: opts.cutBytes }),
           ...(w.level === undefined ? {} : { level: w.level }),
         } satisfies BuildGenSpec),
       ),
@@ -1483,9 +1483,9 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
     const cw: World = { ...w, collection, fileBytes: 1024 ** 3 }
     const store = storeOf(cw)
     const engine = engineOf(cw)
-    // A record stores at about 0.27 of its 6.8 KB of lines.
-    const cutEvery = Math.max(2, Math.round((mb * MB) / 1820))
-    const loaded = await load(cw, { cutEvery })
+    // Generated records store at about 0.27 of their lines' bytes.
+    const cutBytes = Math.round((mb * MB) / 0.27)
+    const loaded = await load(cw, { cutBytes })
     const before = await diskUsage(cw.storeDir)
     const forked = await measure(store, () => engine.fork(collection, fork))
     const wl = loadWorkload(cw)
@@ -1494,23 +1494,29 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
     const edit = await measure(store, () =>
       engine.commit(fork, [v3.rowFromRecord(edited.id, edited.type, edited.data)]),
     )
-    let t = Date.now()
+    /** What the parent lists, what the fork lists, and what the two take to store together. */
     const account = async () => {
-      for (let n = 0; n < 3; n++)
-        await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
-      const s = await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
-      const parent = s.logical.get(collection)?.bytes ?? 0
-      const forkBytes = s.logical.get(fork)?.bytes ?? 0
-      const view = await v3.openView(store, fork)
-      const runs = new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`))
+      const sizes = new Map<string, number>()
+      const listed = async (c: string) => {
+        let bytes = 0
+        const { files } = await v3.currentFiles(store.inner, c)
+        for (const f of files) {
+          const size = f.size ?? (await store.inner.head(v3.recordKey(f.id)))?.size ?? 0
+          sizes.set(f.id, size)
+          bytes += size
+        }
+        return { bytes, files }
+      }
+      const parent = await listed(collection)
+      const child = await listed(fork)
+      const together = [...sizes.values()].reduce((n, b) => n + b, 0)
       return {
-        parentBytes: parent,
-        forkBytes,
+        parentBytes: parent.bytes,
+        forkBytes: child.bytes,
         // What the fork adds to the location over its parent.
-        extraBytes: (s.logical.get(collection) ? s.records.listedBytes : 0) - parent,
-        forkFiles: view.files.length,
-        forkRuns: runs.size,
-        missing: s.records.missing.length,
+        extraBytes: together - parent.bytes,
+        forkFiles: child.files.length,
+        forkRuns: v3.runsOf(child.files).length,
       }
     }
     // Under the tier rule alone the edit sits in its own small file: nothing is rewritten.
@@ -1518,7 +1524,7 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
     const fold = await measure(store, () =>
       v3.rebuild(store, fork, {
         plan: v3.planAll,
-        cutEvery,
+        cutBytes,
         keepUntouched: true,
         cache: engine.cache,
       }),
@@ -1530,7 +1536,7 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
     const after = await diskUsage(cw.storeDir)
     const row = {
       targetMb: mb,
-      cutEvery,
+      cutBytes,
       files: loaded.files,
       storedBytes: loaded.storedBytes,
       meanFileBytes: Math.round((loaded.storedBytes as number) / (loaded.files as number)),

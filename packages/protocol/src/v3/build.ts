@@ -12,6 +12,7 @@ import { chunkLines, gunzipStream } from '../repo/gzip.js'
  * code builds on disk, in a bucket, or in memory.
  */
 import { MIN_PART_BYTES, putFromParts, readParts, type Store } from '../repo/types.js'
+import { utf8ByteLength } from '../utf8.js'
 import { MAX_FILE_ENTRIES } from './constants.js'
 import {
   type FileRef,
@@ -327,22 +328,24 @@ export interface BuildOptions extends WriterOptions {
   /** Close a file where the type changes, once it holds this many bytes of lines. Default: never. */
   typeCutBytes?: number
   /**
-   * Cut by key: also close a file after a key that `keyCut` picks, one key in
-   * this many. The same stretch of keys then lands in the same file whoever
-   * builds it, and a file whose keys did not change keeps its id.
+   * Cut by key: also close a file after a key that `keyCut` picks, so that files
+   * hold about this many bytes of lines. The same stretch of keys then lands in
+   * the same file whoever builds it, and a file whose keys did not change keeps
+   * its id.
    */
-  cutEvery?: number
+  cutBytes?: number
 }
 
 /**
- * Whether a file ends after a key, for a cut of one key in `every`: a hash of
- * the key, so the choice depends on the key alone. Which keys cut is the
- * server's choice, not the protocol's; it only has to stay the same for a
+ * Whether a file ends after a key, for files of about `cutBytes` of lines. The
+ * choice is a hash of the key against the row's own size (a row of twice the
+ * size is twice as likely to end a file), so it depends on that row alone and
+ * files come out near the target whatever the records' sizes. Which keys cut is
+ * the server's choice, not the protocol's; it only has to stay the same for a
  * collection and its forks.
  */
-export function keyCut(type: string, id: string, every: number): boolean {
-  if (every <= 1) return true
-  // FNV-1a over the key's code units, then a finishing mix so low bits are well spread.
+export function keyCut(type: string, id: string, size: number, cutBytes: number): boolean {
+  // FNV-1a over the key's code units, then a finishing mix so the bits are well spread.
   let h = 2_166_136_261
   for (let i = 0; i < type.length; i++) h = Math.imul(h ^ type.charCodeAt(i), 16_777_619)
   h = Math.imul(h ^ 0, 16_777_619)
@@ -352,7 +355,7 @@ export function keyCut(type: string, id: string, every: number): boolean {
   h ^= h >>> 13
   h = Math.imul(h, 0xc2b2ae35)
   h ^= h >>> 16
-  return (h >>> 0) % every === 0
+  return (h >>> 0) / 4_294_967_296 < (size + 1) / cutBytes
 }
 
 export const DEFAULT_FILE_BYTES = 1024 * 1024 * 1024
@@ -375,6 +378,7 @@ export async function buildFiles(
   let draft: FileDraft | null = null
   let writer: SortedFileWriter | null = null
   let last: Key | null = null
+  let lastSize = 0
   const close = async () => {
     if (!writer || !draft) return
     const w = await writer.finish()
@@ -392,7 +396,8 @@ export async function buildFiles(
     for await (const row of rows) {
       if (writer && last && (last.type !== row.type || last.id !== row.id)) {
         const full = writer.bytes >= maxBytes || writer.entries >= maxEntries
-        const byKey = opts.cutEvery !== undefined && keyCut(last.type, last.id, opts.cutEvery)
+        const byKey =
+          opts.cutBytes !== undefined && keyCut(last.type, last.id, lastSize, opts.cutBytes)
         if (full || byKey || (last.type !== row.type && writer.bytes >= typeCut)) await close()
       }
       if (!writer) {
@@ -402,6 +407,12 @@ export async function buildFiles(
       // A key's rows stay together even past the entry limit's soft cut, but never past the hard one.
       await writer.add(row)
       last = row
+      lastSize =
+        row.kind === 'w'
+          ? row.size
+          : typeof row.line === 'string'
+            ? utf8ByteLength(row.line)
+            : row.line.byteLength
     }
     await close()
   } catch (err) {

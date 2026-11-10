@@ -363,8 +363,8 @@ sweep/                            the sweep's own state
   262,144 entries, and where the type changes once a file holds 16 MiB. Replaced rows stay in
   the same file as the rows that replaced them.
 - **Cutting by key, and keeping what did not change** (built, not yet the default; to be
-  measured). A file can also end after a key picked by a hash of the key alone, one key in so
-  many, toward a target stored size. The same stretch of keys then lands in the same file with
+  measured). A file can also end after a key picked by a hash of the key against its row's size,
+  toward a target stored size. The same stretch of keys then lands in the same file with
   the same id, whoever builds it. And a merge can leave as it is any file whose key range no
   other file has an entry in: nothing changed there. The target size, the cut keys, and when
   to merge this way are the server's choice; the protocol says nothing about how large a
