@@ -39,11 +39,11 @@ the SHA-256 of those bytes, in lowercase hex (v2's record hash). A removal line 
 
 Reserved types begin with `$`:
 
-| Type | Id | Data |
-| --- | --- | --- |
-| `$schema` | a type name | that type's JSON Schema (v2 Section 5) |
-| `$asset` | an asset's SHA-256, hex | `{"size": n, "mediaType": string or null}` |
-| `$meta` | `collection` | the collection's metadata object |
+| Type      | Id                      | Data                                       |
+| --------- | ----------------------- | ------------------------------------------ |
+| `$schema` | a type name             | that type's JSON Schema (v2 Section 5)     |
+| `$asset`  | an asset's SHA-256, hex | `{"size": n, "mediaType": string or null}` |
+| `$meta`   | `collection`            | the collection's metadata object           |
 
 A publisher's own types MUST NOT begin with `$`, and no other `$` type is valid.
 
@@ -320,13 +320,13 @@ sweep/                            the sweep's own state
 
 ## 10. Constants
 
-| Name | Value |
-| --- | --- |
-| `RECORD_BLOCK_BYTES` | 262,144 |
-| `KEY_BLOCK_ENTRIES` | 1,024 |
-| `MAX_FILE_ENTRIES` | 1,048,576 |
-| Trailer magic | `UL3SRF\n\0` |
-| Version id prefix | `ulv3:` |
+| Name                 | Value             |
+| -------------------- | ----------------- |
+| `RECORD_BLOCK_BYTES` | 262,144           |
+| `KEY_BLOCK_ENTRIES`  | 1,024             |
+| `MAX_FILE_ENTRIES`   | 1,048,576         |
+| Trailer magic        | `UL3SRF\n\0`      |
+| Version id prefix    | `ulv3:`           |
 | Number width in keys | 16 decimal digits |
 
 Limits on ids, types, record size, depth, and schemas are v2's (Section 12).

@@ -105,3 +105,5 @@ export {
 } from './stores/s3.js'
 export { FileStore, fileStore, type FileStoreOptions, serveSignedBlob } from './stores/fs.js'
 export { type R2BucketLike, r2Store } from './stores/r2.js'
+// Protocol v3 (draft): docs/protocol-v3.md.
+export * as v3 from './v3/index.js'
