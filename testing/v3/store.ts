@@ -201,11 +201,11 @@ export class BenchStore implements Store {
     parts: AsyncIterable<Uint8Array>,
     opts?: PutPartsOptions,
   ): Promise<void> {
-    const self = this
     let size = 0
     let n = 0
     let first = -1
     let short = false
+    const pause = (bytes: number) => this.#wait(delayMs(this.latency.put, bytes))
     async function* checked() {
       for await (const part of parts) {
         if (short) throw new Error(`Multipart parts must be one size but the last (${key})`)
@@ -218,7 +218,7 @@ export class BenchStore implements Store {
         }
         size += part.byteLength
         if (++n > MAX_PARTS) throw new Error(`A multipart upload has at most 10,000 parts (${key})`)
-        await self.#wait(delayMs(self.latency.put, part.byteLength))
+        await pause(part.byteLength)
         yield part
       }
     }
