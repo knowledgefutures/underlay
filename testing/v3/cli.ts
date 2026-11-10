@@ -10,7 +10,13 @@ import { createReadStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { fileStore, listAll, type Store, v3 } from '../../packages/protocol/src/index.js'
+import {
+  ed25519Signer,
+  fileStore,
+  listAll,
+  type Store,
+  v3,
+} from '../../packages/protocol/src/index.js'
 import { parseArgs, refOf } from './lib.js'
 import { BenchStore, costOf, diskUsage } from './store.js'
 
@@ -18,9 +24,12 @@ const HELP = `Underlay v3, on a folder.
 
   push <file.ndjson|->   build an upload from NDJSON and commit it
         -c <collection> [--sorted] [--message m] [--no-verify] [--no-validate]
-  build <file.ndjson|->  build sorted-record-files only; prints what a commit would name
+  build <file.ndjson|->  build an upload into a session; prints the session and its files
         [--sorted] [--max-bytes n]
-  commit <refs.json>     commit files a build printed   -c <collection>
+  commit <build.json>    commit what a build printed    -c <collection>
+        push and commit take --base <version id>, --author-key and --server-key (Ed25519 seeds)
+  since-base             keys a commit wrote that others changed since its base
+        -c <collection> --commit n
   create                 create a collection            -c <collection>
   log                    the commits                    -c <collection>
   read <type> <id>       one record                     -c <collection> [--version n]
@@ -63,14 +72,32 @@ async function* input(path: string): AsyncGenerator<Uint8Array> {
   }
 }
 
+/** Build an upload into a new session: its name, and what a commit would name. */
 async function build(store: Store, path: string) {
   const rows = v3.parseUpload(input(path))
   const scratch = fileStore(join(dir, 'tmp-sort'))
   const sorted = args.sorted ? rows : v3.sortRows(rows, scratch)
-  const files = await v3.buildFiles(sorted, v3.storeTarget(store), {
+  const session = v3.newSession()
+  const files = await v3.buildFiles(sorted, v3.uploadTarget(store, session), {
     ...(flag('max-bytes') ? { maxBytes: Number(flag('max-bytes')) } : {}),
   })
-  return files.map(refOf)
+  return { session, files: files.map(refOf) }
+}
+
+/** A signer from a 32-byte Ed25519 seed (base64url) given on the command line, if any. */
+const signerOf = async (name: string) => (flag(name) ? await ed25519Signer(flag(name)!) : undefined)
+
+/** The author's change (signed with --author-key) and the options the server commits it with. */
+async function changeOf(collection: string, files: v3.FileRef[]) {
+  const author = await signerOf('author-key')
+  const server = await signerOf('server-key')
+  const base = flag('base')
+  const change = await v3.makeChange(
+    collection,
+    { files, message: flag('message') ?? null, ...(base ? { base } : {}) },
+    author,
+  )
+  return { change, ...(server ? { signer: server } : {}) }
 }
 
 async function main(): Promise<void> {
@@ -89,12 +116,18 @@ async function main(): Promise<void> {
       break
     }
     case 'push': {
-      const files = await build(store, need('a file', args._[1]))
+      const { session, files } = await build(store, need('a file', args._[1]))
+      const { change, signer } = await changeOf(c(), files)
       const made = await v3.commitUpload(
         store,
         c(),
-        { files, message: flag('message') ?? null },
-        { verify: !args['no-verify'], validate: !args['no-validate'] },
+        { change },
+        {
+          session,
+          verify: !args['no-verify'],
+          validate: !args['no-validate'],
+          ...(signer ? { signer } : {}),
+        },
       )
       out({
         number: made.commit.number,
@@ -107,11 +140,40 @@ async function main(): Promise<void> {
     }
     case 'commit': {
       const text = await new Response(
-        createReadStream(need('a refs file', args._[1])) as never,
+        createReadStream(need('a file `build` printed', args._[1])) as never,
       ).text()
-      const files = JSON.parse(text) as v3.FileRef[]
-      const made = await v3.commitUpload(store, c(), { files, message: flag('message') ?? null })
+      const { session, files } = JSON.parse(text) as { session: string; files: v3.FileRef[] }
+      const { change, signer } = await changeOf(c(), files)
+      const made = await v3.commitUpload(
+        store,
+        c(),
+        { change },
+        { session, ...(signer ? { signer } : {}) },
+      )
       out({ number: made.commit.number, semver: made.commit.semver, id: made.id })
+      break
+    }
+    case 'since-base': {
+      // The keys a commit wrote that other commits had changed since the version its author worked from.
+      const number = Number(need('--commit', flag('commit')))
+      let crossed = 0
+      for await (const x of v3.changedSinceBase(store, c(), number, { cache })) {
+        crossed++
+        out({
+          type: x.type,
+          id: x.id,
+          theirCommit: x.theirCommit,
+          theirs: x.theirs?.hash ?? null,
+          mine: x.mine?.hash ?? null,
+        })
+      }
+      const commit = (await v3.readCommit(store, c(), number))!.commit
+      out({
+        commit: number,
+        base: commit.changes[0]?.base ?? null,
+        previous: commit.previous,
+        crossed,
+      })
       break
     }
     case 'create': {
@@ -124,6 +186,8 @@ async function main(): Promise<void> {
         const files = v3.commitFiles(s.commit)
         out({
           number: s.commit.number,
+          base: s.commit.changes[0]?.base ?? null,
+          author: s.commit.changes[0]?.keyId ?? null,
           semver: s.commit.semver,
           id: s.id,
           createdAt: s.commit.createdAt,

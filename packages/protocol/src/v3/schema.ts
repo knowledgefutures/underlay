@@ -1,6 +1,6 @@
 /**
- * Checking an upload before it is committed (docs/protocol-v3.md, Sections 4.1
- * and 4.2): the files are well formed, every record is canonical and satisfies
+ * Checking an upload before it is committed (docs/protocol-v3.md, Sections 4.3
+ * to 4.5): its files came with it, are well formed, every record is canonical and satisfies
  * its type's schema, and the semver follows from the kinds of rows.
  *
  * The cost is one streaming pass over the uploaded files, plus a lookup for
@@ -15,13 +15,19 @@ import type { Store } from '../repo/types.js'
 import { schemaRelaxes } from '../schema-relax.js'
 import type { BumpType } from '../semver.js'
 import { checkSchemaFull, compileSchema, type SchemaValidator } from '../validate.js'
-import { recordKey } from './build.js'
+import { installUpload, recordKey, uploadKey } from './build.js'
 import { ASSET_TYPE, META_TYPE, SCHEMA_TYPE } from './constants.js'
 import type { FileRef } from './file.js'
 import { compareKeys, type Entry } from './lines.js'
-import { type CommitInput, type CommitOptions, createCommit, type StoredCommit } from './log.js'
+import {
+  type CommitInput,
+  type CommitOptions,
+  createCommit,
+  makeChange,
+  type StoredCommit,
+} from './log.js'
 import { type FileCache, getRecord, mergeGroups, openFile, openView, type View } from './read.js'
-import { EntryCursor } from './reader.js'
+import { EntryCursor, SortedFile } from './reader.js'
 import { verifyFile } from './verify.js'
 
 export class UploadError extends Error {
@@ -41,6 +47,24 @@ export interface CheckOptions {
   checkAssets?: boolean
   /** Problems to collect before giving up. */
   maxProblems?: number
+  /**
+   * Where the upload's files are: by default among the stored files; for an
+   * upload being checked, its session (`uploads/<session>/<id>`).
+   */
+  locate?: (id: string) => string
+}
+
+/** Open one of an upload's files where it is: the shared cache is for stored files only. */
+type OpenUploaded = (id: string) => Promise<SortedFile>
+function opener(store: Store, opts: CheckOptions): OpenUploaded {
+  const locate = opts.locate
+  if (!locate) return (id) => (opts.cache ? opts.cache.open(store, id) : openFile(store, id))
+  const opened = new Map<string, Promise<SortedFile>>()
+  return (id) => {
+    let p = opened.get(id)
+    if (!p) opened.set(id, (p = SortedFile.open(store, locate(id), { id })))
+    return p
+  }
 }
 
 export interface UploadCheck {
@@ -64,10 +88,9 @@ function dataOf(line: Uint8Array): unknown {
 
 /** The upload's entries of one type, in key order, across its files. */
 async function* uploadEntries(
-  store: Store,
+  open: OpenUploaded,
   files: FileRef[],
   type: string,
-  cache: FileCache | undefined,
 ): AsyncGenerator<{ entry: Entry; line: () => Promise<Uint8Array> }> {
   const holding = files
     .filter(
@@ -79,7 +102,7 @@ async function* uploadEntries(
     )
     .sort((a, b) => compareKeys(a.first![0], a.first![1], b.first![0], b.first![1]))
   for (const f of holding) {
-    const file = cache ? await cache.open(store, f.id) : await openFile(store, f.id)
+    const file = await open(f.id)
     const reader = file.reader({ readAhead: 1024 * 1024 })
     const cursor = new EntryCursor(reader, 1)
     await cursor.seek({ type, id: '' })
@@ -121,6 +144,7 @@ export async function checkUpload(
   }
   const read = opts.cache ? { cache: opts.cache } : {}
   const validate = opts.validate ?? true
+  const open = opener(store, opts)
 
   // The schemas the upload sets, and the ones in force before it.
   const current = new Map<string, { hash: string; body: unknown } | null>()
@@ -135,7 +159,7 @@ export async function checkUpload(
   }
   const set = new Map<string, unknown | null>()
   const changed: string[] = []
-  for await (const { entry, line } of uploadEntries(store, files, SCHEMA_TYPE, opts.cache)) {
+  for await (const { entry, line } of uploadEntries(open, files, SCHEMA_TYPE)) {
     const before = await currentSchema(entry.id)
     if (entry.kind === 'x') {
       set.set(entry.id, null)
@@ -155,7 +179,7 @@ export async function checkUpload(
   for (const [type, body] of set)
     validators.set(type, body === null ? 'removed' : compileSchema(body))
   if (validate) {
-    for (const type of await typesOf(store, files, opts.cache)) {
+    for (const type of await typesOf(open, files)) {
       if (type.startsWith('$') || validators.has(type)) continue
       const schema = await currentSchema(type)
       validators.set(type, schema ? compileSchema(schema.body) : 'none')
@@ -199,7 +223,7 @@ export async function checkUpload(
       types.add(f.last[0])
     }
     if (opts.verify ?? true) {
-      const v = await verifyFile(store, recordKey(f.id), {
+      const v = await verifyFile(store, opts.locate?.(f.id) ?? recordKey(f.id), {
         id: f.id,
         labeled: false,
         canonical: true,
@@ -218,7 +242,7 @@ export async function checkUpload(
       }
     } else if (validate && f.first) {
       // Files taken as well formed (a trusted builder): the records are still validated.
-      const file = opts.cache ? await opts.cache.open(store, f.id) : await openFile(store, f.id)
+      const file = await open(f.id)
       const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
       const cursor = new EntryCursor(reader, 1)
       await cursor.seek()
@@ -238,7 +262,7 @@ export async function checkUpload(
     if (!before) continue
     if (after !== null && after !== undefined && schemaRelaxes(before.body, after)) continue
     const v = after === null || after === undefined ? null : compileSchema(after)
-    const replaced = uploadEntries(store, files, type, opts.cache)
+    const replaced = uploadEntries(open, files, type)
     let next = await replaced.next()
     for await (const group of mergeGroups(store, view, { type }, { ...read, readAhead: 1 << 20 })) {
       const winner = group[group.length - 1]!
@@ -267,7 +291,7 @@ export async function checkUpload(
   }
 
   if (opts.checkAssets ?? true) {
-    for await (const { entry } of uploadEntries(store, files, ASSET_TYPE, opts.cache)) {
+    for await (const { entry } of uploadEntries(open, files, ASSET_TYPE)) {
       if (entry.kind !== 'r') continue
       if (!(await store.head(`assets/${entry.id}`))) fail(`Asset ${entry.id} is not stored`)
     }
@@ -286,15 +310,11 @@ export async function checkUpload(
 }
 
 /** The types that have rows in an upload, from its key entries: a seek for each type. */
-async function typesOf(
-  store: Store,
-  files: FileRef[],
-  cache: FileCache | undefined,
-): Promise<string[]> {
+async function typesOf(open: OpenUploaded, files: FileRef[]): Promise<string[]> {
   const out = new Set<string>()
   for (const f of files) {
     if (!f.first) continue
-    const file = cache ? await cache.open(store, f.id) : await openFile(store, f.id)
+    const file = await open(f.id)
     const cursor = new EntryCursor(file.reader({ readAhead: 1024 * 1024 }), 1)
     await cursor.seek()
     while (cursor.current) {
@@ -308,30 +328,66 @@ async function typesOf(
   return [...out]
 }
 
+export interface UploadOptions extends CheckOptions, CommitOptions {
+  /**
+   * The upload session the files' bytes came in. A commit may name a file only
+   * if its bytes are there: never because a file with that id is already stored.
+   * Otherwise knowing an id would be a way to test for a file, and to read it.
+   */
+  session: string
+}
+
 /**
- * Check an upload and commit it. If another commit lands first, the upload is
- * checked again against the new head, since the schemas it must satisfy may
+ * Check an upload and commit it: the server's entry for a change from outside.
+ * Every file the change names must be in the upload's session. Once checked,
+ * the files are installed among the stored files, the commit is created, and
+ * the session's copies are deleted. If another commit lands first, the upload
+ * is checked again against the new head, since the schemas it must satisfy may
  * have changed.
+ *
+ * (`createCommit` is the step beneath this, for the server's own use: a fork's
+ * copy, or files the server itself has just verified.)
  */
 export async function commitUpload(
   store: Store,
   collection: string,
   input: Omit<CommitInput, 'bump'>,
-  opts: CheckOptions & CommitOptions = {},
+  opts: UploadOptions,
 ): Promise<StoredCommit & { check: UploadCheck }> {
+  const change =
+    input.change ??
+    (await makeChange(collection, {
+      files: input.files ?? [],
+      base: input.base ?? null,
+      message: input.message ?? null,
+    }))
+  const files = change.files
+  const locate = (id: string) => uploadKey(opts.session, id)
+  for (const f of files) {
+    if (!(await store.head(locate(f.id)))) {
+      throw new UploadError([`File ${f.id} did not come with this upload`])
+    }
+  }
   let check: UploadCheck | undefined
+  let installed = false
   const made = await createCommit(
     store,
     collection,
     {
-      ...input,
+      change,
+      ...(input.baseNumber === undefined ? {} : { baseNumber: input.baseNumber }),
       bump: async (head) => {
         const view = await openView(store, collection, { version: head?.commit.number ?? 0 })
-        check = await checkUpload(store, view, input.files, opts)
+        check = await checkUpload(store, view, files, { ...opts, locate })
+        if (!installed) {
+          for (const f of files) await installUpload(store, opts.session, f.id)
+          installed = true
+        }
         return check.bump
       },
     },
     opts,
   )
+  for (const f of files) await store.delete(locate(f.id))
   return { ...made, check: check! }
 }

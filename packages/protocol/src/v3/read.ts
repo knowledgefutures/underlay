@@ -24,10 +24,12 @@ import { compareKeys, type Entry, type Key, type Kind } from './lines.js'
 import {
   commitFiles,
   commitKey,
+  findVersion,
   type Layout,
   layoutKey,
   type LayoutFile,
   probeUp,
+  readCommit,
   readLatest,
   readLayout,
   readLog,
@@ -575,4 +577,84 @@ export async function* changes(
     if (batch.length >= BATCH) yield* flush()
   }
   if (batch.length > 0) yield* flush()
+}
+
+/** A key a commit wrote that another commit had changed since the commit's base. */
+export interface Crossed {
+  type: string
+  id: string
+  /** What this commit left the key as; null if it removed it. */
+  mine: KeyState | null
+  /** What the key was just before this commit, written after the base; null if removed. */
+  theirs: KeyState | null
+  /** The commit that last wrote the key before this one. */
+  theirCommit: number
+}
+
+/**
+ * For a commit, the keys it wrote that were also changed by commits after its
+ * base and up to the commit before it: what the author had not seen when they
+ * prepared the upload. Read-only, and it refuses nothing: the newest still
+ * wins. A commit whose base is the commit before it crossed nothing.
+ *
+ * It is a diff of key entries over (base, previous], cut down to this commit's
+ * keys, so it reads only files with rows from those commits.
+ */
+export async function* changedSinceBase(
+  store: Store,
+  collection: string,
+  number: number,
+  opts: ScanOptions & { search?: number } = {},
+): AsyncGenerator<Crossed> {
+  const commit = await readCommit(store, collection, number)
+  if (!commit) throw new VersionError(`${collection} has no commit ${number}`)
+  const view = await openView(store, collection, { version: number })
+  const before = viewAt(view, number - 1)!
+  for (const change of commit.commit.changes) {
+    // A null base is "from nothing": every earlier commit counts.
+    let base = 0
+    if (change.base !== null) {
+      const found =
+        commit.commit.previous === change.base
+          ? number - 1
+          : await findVersion(store, collection, change.base, number - 1, {
+              ...(opts.search === undefined ? {} : { search: opts.search }),
+            })
+      if (found === null) throw new VersionError(`Commit ${number}'s base is not in the log`)
+      base = found
+    }
+    if (base >= number - 1) continue
+    // Both lists are in key order: walk them together.
+    const theirs = changes(store, before, base, {}, opts)
+    let other = await theirs.next()
+    for await (const mine of changes(store, view, number - 1, {}, opts)) {
+      while (!other.done && compareKeys(other.value.type, other.value.id, mine.type, mine.id) < 0) {
+        other = await theirs.next()
+      }
+      if (other.done) break
+      if (other.value.type === mine.type && other.value.id === mine.id) {
+        const last = await lastWriter(store, before, mine.type, mine.id, opts)
+        yield {
+          type: mine.type,
+          id: mine.id,
+          mine: mine.after,
+          theirs: other.value.after,
+          theirCommit: last,
+        }
+      }
+    }
+    await theirs.return(undefined)
+  }
+}
+
+/** The commit that last wrote a key in a version, removal or not; 0 if none did. */
+async function lastWriter(
+  store: Store,
+  view: View,
+  type: string,
+  id: string,
+  opts: ReadOptions,
+): Promise<number> {
+  const all = await lookupAll(store, view, type, id, opts)
+  return all[all.length - 1]?.entry.commit ?? 0
 }

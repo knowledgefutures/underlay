@@ -20,6 +20,7 @@ import {
   type Measured,
   round,
   runWorker,
+  signers,
   summary,
   type WorkerReport,
 } from './lib.js'
@@ -86,20 +87,33 @@ function split<T>(items: T[], n: number, weight: (t: T) => number): T[][] {
   return out
 }
 
-/** Commit files already built and verified: the kind of change, then the commit. */
+/**
+ * Commit an upload whose files the server has already verified in parallel:
+ * the kind of change, the files installed from their session, then the signed
+ * commit.
+ */
 async function commitVerified(
   store: BenchStore,
   collection: string,
   files: v3.FileRef[],
+  session: string,
   message: string,
 ) {
+  const { author, server } = await signers()
+  const locate = (id: string) => v3.uploadKey(session, id)
   const view = await v3.openView(store, collection)
   const check = await v3.checkUpload(store, view, files, {
     verify: false,
     validate: false,
     checkAssets: false,
+    locate,
   })
-  return v3.createCommit(store, collection, { files, bump: check.bump, message })
+  for (const f of files) {
+    await v3.installUpload(store, session, f.id)
+    await store.delete(locate(f.id))
+  }
+  const change = await v3.makeChange(collection, { files, message }, author)
+  return v3.createCommit(store, collection, { change, bump: check.bump }, { signer: server })
 }
 
 // --- Load ---
@@ -124,6 +138,7 @@ export async function load(w: World): Promise<Result> {
   for (let p = 1; p < parts; p++) cuts.push(sample[Math.floor((sample.length * p) / parts)]!)
   cuts.push(null)
 
+  const session = v3.newSession()
   log(`load: building ${w.records} records in ${parts} parts`)
   const build = await measure(store, async () => {
     const reports = await Promise.all(
@@ -136,6 +151,7 @@ export async function load(w: World): Promise<Result> {
             storedBytes: number
           }
         >('build-gen', {
+          session,
           storeDir: w.storeDir,
           scratchDir: join(w.dir, 'scratch', `build-${p}`),
           latency: w.latency,
@@ -163,6 +179,7 @@ export async function load(w: World): Promise<Result> {
     const reports = await Promise.all(
       groups.map((g) =>
         runWorker<WorkerReport & { records: number; problems: string[] }>('verify', {
+          session,
           storeDir: w.storeDir,
           latency: w.latency,
           files: g,
@@ -178,7 +195,7 @@ export async function load(w: World): Promise<Result> {
   log(`load: verified ${verify.value} records`)
 
   const commit = await measure(store, () =>
-    commitVerified(store, w.collection, files, 'first load'),
+    commitVerified(store, w.collection, files, session, 'first load'),
   )
   // Readable at commit: a record, straight away, with nothing cached.
   const wl = loadWorkload(w)
@@ -601,11 +618,9 @@ export async function schemaChange(w: World, type = 'journal-article'): Promise<
   const h = await engine.open(w.collection)
   const count = (await v3.counts(store, h.view as v3.View, { type })).get(type)
   const change = async (body: unknown) => {
-    const files = await engine.build([v3.rowFromRecord(type, v3.SCHEMA_TYPE, body)])
-    const m = await measure(store, () =>
-      v3.commitUpload(store, w.collection, { files, message: 'schema' }, { cache: engine.cache }),
-    )
-    return { ...brief(m.m), semver: m.value.commit.semver, scanned: m.value.check.scanned }
+    const upload = await engine.build([v3.rowFromRecord(type, v3.SCHEMA_TYPE, body)])
+    const m = await measure(store, () => engine.commitFiles(w.collection, upload, 'schema'))
+    return { ...brief(m.m), semver: m.value.semver, scanned: m.value.scanned }
   }
   // Dropping a required field can't reject a record: no scan.
   const relaxed = await change({ ...base, required: base.required.slice(0, -1) })
@@ -1078,6 +1093,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
   await v3.createCollection(store, w.collection).catch(() => {})
   const parts = Math.min(w.workers, files.length)
   const per = Math.ceil(files.length / parts)
+  const session = v3.newSession()
   log(`crossref: building from ${files.length} dump files in ${parts} parts`)
   const build = await measure(store, () =>
     Promise.all(
@@ -1091,6 +1107,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
             storedBytes: number
           }
         >('build-dump', {
+          session,
           storeDir: w.storeDir,
           latency: w.latency,
           dataDir: o.dataDir,
@@ -1119,6 +1136,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
     const reports = await Promise.all(
       split(refs, parts, (f) => f.bytes).map((g) =>
         runWorker<WorkerReport & { records: number; problems: string[] }>('verify', {
+          session,
           storeDir: w.storeDir,
           latency: w.latency,
           files: g,
@@ -1133,7 +1151,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
   })
   log(`crossref: verified ${verify.value} records`, { seconds: verify.m.seconds })
   const commit = await measure(store, () =>
-    commitVerified(store, w.collection, refs, 'Crossref, March 2026 public data file'),
+    commitVerified(store, w.collection, refs, session, 'Crossref, March 2026 public data file'),
   )
   const engine = engineOf(w)
   const first = await measure(store, async () => {
@@ -1386,11 +1404,9 @@ export async function crossrefSchema(w: World, type: string): Promise<Result> {
   const store = storeOf(w)
   const engine = engineOf(w)
   const change = async (body: unknown) => {
-    const files = await engine.build([v3.rowFromRecord(type, v3.SCHEMA_TYPE, body)])
-    const m = await measure(store, () =>
-      v3.commitUpload(store, w.collection, { files, message: 'schema' }, { cache: engine.cache }),
-    )
-    return { ...brief(m.m), semver: m.value.commit.semver, scanned: m.value.check.scanned }
+    const upload = await engine.build([v3.rowFromRecord(type, v3.SCHEMA_TYPE, body)])
+    const m = await measure(store, () => engine.commitFiles(w.collection, upload, 'schema'))
+    return { ...brief(m.m), semver: m.value.semver, scanned: m.value.scanned }
   }
   const relaxed = await change({ ...crossrefSchema0, required: ['DOI'] })
   const stricter = await change({ ...crossrefSchema0, required: ['DOI', 'type', 'URL'] })

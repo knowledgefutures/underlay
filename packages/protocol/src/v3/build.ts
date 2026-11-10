@@ -226,6 +226,11 @@ export interface FileTarget {
 }
 
 export const recordKey = (id: string) => `records/${id}`
+/** Where an upload's file waits to be checked: under its upload session, not among the stored files. */
+export const uploadKey = (session: string, id: string) => `uploads/${session}/${id}`
+
+/** A new upload session: a name no one can guess, under which one upload's files arrive. */
+export const newSession = (): string => crypto.randomUUID()
 
 /**
  * Files written to a store at `records/<file id>`. A small file is held in
@@ -233,8 +238,12 @@ export const recordKey = (id: string) => `records/${id}`
  * temporary key as it is written, then copied to its name: its id is known only
  * at the end, and a bucket cannot rename.
  */
-export function storeTarget(store: Store, opts: { memoryBytes?: number } = {}): FileTarget {
+export function storeTarget(
+  store: Store,
+  opts: { memoryBytes?: number; keyOf?: (id: string) => string } = {},
+): FileTarget {
   const limit = opts.memoryBytes ?? 16 * 1024 * 1024
+  const keyOf = opts.keyOf ?? recordKey
   return {
     async begin() {
       let held: Uint8Array[] = []
@@ -258,7 +267,7 @@ export function storeTarget(store: Store, opts: { memoryBytes?: number } = {}): 
           held = []
         },
         async keep(id) {
-          const key = recordKey(id)
+          const key = keyOf(id)
           if (!channel) {
             const bytes = concatBytes(held.length > 0 ? held : [new Uint8Array(0)], size)
             if (store.create) await store.create(key, bytes)
@@ -282,6 +291,32 @@ export function storeTarget(store: Store, opts: { memoryBytes?: number } = {}): 
       }
     },
   }
+}
+
+/**
+ * Files written into an upload session (`uploads/<session>/<file id>`), as a
+ * client's upload arrives. A commit may name a file only if its bytes are in
+ * the session the commit is made from; the server installs them among the
+ * stored files once they are checked (`commitUpload`).
+ */
+export const uploadTarget = (
+  store: Store,
+  session: string,
+  opts: { memoryBytes?: number } = {},
+): FileTarget => storeTarget(store, { ...opts, keyOf: (id) => uploadKey(session, id) })
+
+/**
+ * Move a checked file from its upload session to the stored files. A file
+ * already stored under that id is left as it is, and the uploader is not told.
+ */
+export async function installUpload(store: Store, session: string, id: string): Promise<void> {
+  const from = uploadKey(session, id)
+  const to = recordKey(id)
+  if (await store.head(to)) return
+  const head = await store.head(from)
+  if (!head) throw new Error(`${from} is missing`)
+  if (store.copy) await store.copy(from, to, head.size)
+  else await putFromParts(store, to, equalParts(readParts(store, from, head.size, PART_BYTES)))
 }
 
 export interface BuildOptions extends WriterOptions {

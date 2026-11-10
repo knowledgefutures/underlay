@@ -6,10 +6,17 @@
  * directly, through the bench store.
  */
 import { v3 } from '../../packages/protocol/src/index.js'
-import { clientTarget, refOf } from './lib.js'
+import { clientTarget, refOf, signers } from './lib.js'
 import { type BenchStore, diskUsage } from './store.js'
 
 export type Rows = AsyncIterable<v3.LineRow> | Iterable<v3.LineRow>
+
+/** One upload: its session, what a commit would name, and what it stored. */
+export interface Upload {
+  session: string
+  files: v3.FileRef[]
+  storedBytes: number
+}
 
 export interface CommitResult {
   number: number
@@ -20,6 +27,8 @@ export interface CommitResult {
   lineBytes: number
   storedBytes: number
   validated: number
+  /** Existing records the server scanned because a schema changed. */
+  scanned: number
 }
 
 export interface MaintainResult {
@@ -88,42 +97,58 @@ export class V3Engine implements Engine {
     this.cache = new v3.FileCache()
   }
 
-  /** The client's half: sort and build files on local disk, and upload them. */
-  async build(rows: Rows): Promise<v3.FileRef[]> {
+  /** The version each collection was last seen at: the base of the next change to it. */
+  readonly #seen = new Map<string, string>()
+
+  /** The client's half: sort and build files on local disk, and upload them into a session. */
+  async build(rows: Rows): Promise<Upload> {
     const scratch = this.opts.scratch
     const sorted = scratch ? v3.sortRows(rows, scratch) : v3.sortRows(rows, this.store)
-    const files = await v3.buildFiles(sorted, clientTarget(this.store), {
+    const session = v3.newSession()
+    const files = await v3.buildFiles(sorted, clientTarget(this.store, session), {
       ...(this.opts.level === undefined ? {} : { level: this.opts.level }),
     })
-    this.#sizes = files.reduce((n, f) => n + f.size, 0)
-    return files.map(refOf)
+    return {
+      session,
+      files: files.map(refOf),
+      storedBytes: files.reduce((n, f) => n + f.size, 0),
+    }
   }
-  #sizes = 0
 
-  /** The server's half: check the files and create the commit. */
-  async commitFiles(
-    collection: string,
-    files: v3.FileRef[],
-    message?: string,
-  ): Promise<CommitResult> {
+  /**
+   * The author's signed change for an upload, then the server's half: check the
+   * files where they were uploaded, install them, and create the signed commit.
+   */
+  async commitFiles(collection: string, upload: Upload, message?: string): Promise<CommitResult> {
+    const { author, server } = await signers()
+    const change = await v3.makeChange(
+      collection,
+      { files: upload.files, base: this.#seen.get(collection) ?? null, message: message ?? null },
+      author,
+    )
     const made = await v3.commitUpload(
       this.store,
       collection,
-      { files, message: message ?? null },
+      { change },
       {
+        session: upload.session,
         cache: this.cache,
         verify: this.opts.verify ?? true,
         validate: this.opts.validate ?? true,
+        signer: server,
+        authorKeys: [author.publicKey],
       },
     )
+    this.#seen.set(collection, made.id)
     return {
       number: made.commit.number,
       semver: made.commit.semver,
-      files: files.length,
-      entries: files.reduce((n, f) => n + f.entries, 0),
-      lineBytes: files.reduce((n, f) => n + f.bytes, 0),
-      storedBytes: this.#sizes,
+      files: upload.files.length,
+      entries: upload.files.reduce((n, f) => n + f.entries, 0),
+      lineBytes: upload.files.reduce((n, f) => n + f.bytes, 0),
+      storedBytes: upload.storedBytes,
       validated: made.check.validated,
+      scanned: made.check.scanned,
     }
   }
 
@@ -132,8 +157,7 @@ export class V3Engine implements Engine {
     rows: Rows,
     opts: { message?: string } = {},
   ): Promise<CommitResult> {
-    const files = await this.build(rows)
-    return this.commitFiles(collection, files, opts.message)
+    return this.commitFiles(collection, await this.build(rows), opts.message)
   }
 
   async open(collection: string, version?: number): Promise<Handle> {

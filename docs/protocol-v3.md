@@ -170,10 +170,17 @@ A commit is the JCS of:
  "previous": version id | null,     of commit n − 1
  "semver": "v1.0.0",
  "createdAt": ISO 8601 UTC,
- "changes": [{"files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
-              "message": string | null, "by": string | null}, …],
+ "changes": [{"collection": collection id,
+              "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
+              "base": version id | null,
+              "message": string | null,
+              "keyId": string | null, "sig": string | null}, …],
  "keyId": string | null, "sig": string | null}
 ```
+
+A commit has two parts. A **change** is what an author sent: the files of one upload, the
+version they were working from, and a message. The rest is what the server adds when the change
+lands: its number, the commit before it, the semver, and the time.
 
 - **Version id** = `ulv3:` + SHA-256 hex of the commit's bytes.
 - The files a commit names are unlabeled. Within one commit their key ranges MUST NOT overlap.
@@ -182,12 +189,48 @@ A commit is the JCS of:
   and only if commit `n − 1` exists and has version id `previous`.
 - `first` and `last` are each file's first and last keys, and `bytes` its footer's `bytes`.
   With them the commit's rows can be cut into the same files again (Section 7).
-- Signing (`keyId`, `sig`) follows v2 Section 11.1 and is not yet specified for v3; both are
-  `null` until it is.
-- `changes` is a list so that one commit can later carry several publishers' uploads. A writer
+- A change's `collection` is the commit's.
+- `changes` is a list so that one commit can later carry several authors' uploads. A writer
   today makes one change per commit.
 
-### 4.1 Semver
+### 4.1 Base
+
+`base` is the version id the author was working from when they prepared the upload, or `null`.
+The author sets it; the server sets `previous`. The two are equal unless another commit landed
+in between.
+
+- The server records `base` as given. It MUST refuse a base that is not the version id of an
+  earlier commit in this collection's log (which, for a fork, includes the commits of the
+  collections it was forked from).
+- Nothing else depends on it. A commit is never refused because of its base, and reading is
+  unchanged: the newest entry wins (Section 6).
+- What it gives: for any commit, the keys it wrote that other commits changed after its base
+  and up to its `previous` can be listed from key entries alone. Those are the changes the
+  author had not seen.
+
+### 4.2 Signatures
+
+Both signatures are Ed25519 over the JCS of the signed object without its `sig` member, base64url
+without padding, as v2 Section 11.1. `keyId` is the first 16 hex characters of the SHA-256 of
+the raw public key. `keyId` and `sig` are both `null`, or neither is.
+
+- **The author signs the change:** its `collection`, `files`, `base`, `message`, and `keyId`.
+  The signature does not cover the commit's `number` or `previous`.
+- **The server signs the commit:** every member but its own `sig`, the changes and their
+  signatures included.
+- A change that loses the race for a number is committed at the next free number with the
+  author's signature unchanged. Only the server's part is made again.
+- Which keys a reader trusts, for either signature, is not part of this protocol.
+
+### 4.3 Naming a file
+
+A server MUST NOT accept a change that names a file unless the file's bytes came with that
+upload and check out against the file id (3.7). That a file with the id is already stored is
+never enough: otherwise knowing an id would be a way to test whether a file exists, and then to
+read it through a collection of one's own. The one exception is the server's own copy of
+commits from a collection the caller may read, which is how a fork begins (Section 8).
+
+### 4.4 Semver
 
 As v2 Section 10.1, from what the commit changes relative to the version before it:
 
@@ -202,7 +245,7 @@ before. For other rows a committer MAY make the same comparison, and otherwise c
 as a change. The comparison costs a lookup per row, and nothing else about a commit reads the
 collection. A commit that changes nothing SHOULD NOT be made.
 
-### 4.2 Schemas
+### 4.5 Schemas
 
 A record of a publisher's type `T` in a version MUST satisfy the `$schema` row for `T` in that
 version. A type with records MUST have a `$schema` row. When a commit changes a schema, every
@@ -290,6 +333,7 @@ made in and are valid under `lineage`. The fork point is at or after the copied 
 ## 9. The reference server's storage (informative)
 
 ```
+uploads/<session>/<file id>       an upload's files, until its commit checks and installs them
 records/<file id>                 sorted-record-files, shared by every collection naming them
 assets/<sha256>                   assets, shared the same way
 collections/<id>/collection.json
@@ -308,8 +352,9 @@ sweep/                            the sweep's own state
   `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
   key is written twice when a layout follows a commit. A reader starts from them and probes
   upward; without them, a reader probes from 1. A failed write of either is ignored.
-- A file or asset is stored once. An upload of one already stored is not written again, and the
-  uploader is not told.
+- A file or asset is stored once. An upload always sends its bytes, into its own session; the
+  commit checks them there (4.3) and installs them among the stored files. A file already
+  stored under that id is left as it is, and the uploader is not told.
 - **Rebuild policy.** Each layout file carries `run`, a number shared by the files one merge
   wrote (0 for a commit's own file, whose run is its commit). Runs are kept in commit order,
   and cover commit ranges that don't overlap. Size tiers are a factor of 10 apart. For each

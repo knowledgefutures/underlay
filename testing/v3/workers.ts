@@ -24,6 +24,8 @@ const inRange = (type: string, id: string, lo: KeyPair | null, hi: KeyPair | nul
 // --- A part of a parallel build from the generator ---
 
 export interface BuildGenSpec {
+  /** The upload session the built files go into. */
+  session: string
   storeDir: string
   scratchDir: string
   latency: string
@@ -51,7 +53,7 @@ async function buildGen(): Promise<void> {
     }
   }
   const sorted = v3.sortRows(rows(), fileStore(s.scratchDir))
-  const files = await v3.buildFiles(sorted, clientTarget(store), {
+  const files = await v3.buildFiles(sorted, clientTarget(store, s.session), {
     maxBytes: s.fileBytes,
     ...(s.level === undefined ? {} : { level: s.level }),
   })
@@ -66,6 +68,7 @@ async function buildGen(): Promise<void> {
 // --- A part of a parallel build from the sorted Crossref dump ---
 
 export interface BuildDumpSpec {
+  session: string
   storeDir: string
   latency: string
   dataDir: string
@@ -146,7 +149,7 @@ async function buildDump(): Promise<void> {
         log(`build-dump ${s.start}: ${i - s.start + 1}/${s.end - s.start} files`)
     }
   }
-  const files = await v3.buildFiles(rows(), clientTarget(store), {
+  const files = await v3.buildFiles(rows(), clientTarget(store, s.session), {
     maxBytes: s.fileBytes,
     ...(s.level === undefined ? {} : { level: s.level }),
   })
@@ -162,6 +165,8 @@ async function buildDump(): Promise<void> {
 // --- A part of a server's verification of an upload ---
 
 export interface VerifySpec {
+  /** The upload session the files are checked in, before they are installed. */
+  session: string
   storeDir: string
   latency: string
   files: v3.FileRef[]
@@ -179,7 +184,7 @@ async function verify(): Promise<void> {
   let done = 0
   const problems: string[] = []
   for (const f of s.files) {
-    const v = await v3.verifyFile(store, v3.recordKey(f.id), {
+    const v = await v3.verifyFile(store, v3.uploadKey(s.session, f.id), {
       id: f.id,
       labeled: false,
       canonical: true,
@@ -345,12 +350,16 @@ async function race(): Promise<void> {
             n: Math.floor(r() * 1e9),
           }),
         ).sort(v3.compareKey)
-        const files = await v3.buildFiles(rows, clientTarget(store), { level: 1 })
+        const session = v3.newSession()
+        const files = await v3.buildFiles(rows, clientTarget(store, session), { level: 1 })
         const t0 = performance.now()
-        const commit = await v3.createCommit(store, s.collection, {
-          files: files.map(refOf),
-          bump: 'minor',
-        })
+        // The whole server path, raced: check the upload, install it, claim a number.
+        const commit = await v3.commitUpload(
+          store,
+          s.collection,
+          { files: files.map(refOf) },
+          { session, validate: false },
+        )
         ms.push(performance.now() - t0)
         made.push({ number: commit.commit.number, file: files[0]!.id })
       }

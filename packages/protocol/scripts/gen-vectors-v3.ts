@@ -8,7 +8,7 @@ import { writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { hashRecord, sha256Hex, v3 } from '../src/index.js'
+import { ed25519Signer, hashRecord, sha256Hex, v3 } from '../src/index.js'
 
 const rec = (type: string, id: string, data: unknown, commit?: number) => ({
   kind: 'r' as const,
@@ -100,3 +100,64 @@ if (import.meta.url !== `file://${process.argv[1]}`) throw new Error('run as a s
 const path = resolve(dirname(fileURLToPath(import.meta.url)), '../test/vectors/v3-files.json')
 writeFileSync(path, JSON.stringify({ underlay: 3, cases: out }, null, 1) + '\n')
 console.log(`wrote ${out.length} cases to ${path}`)
+
+// --- Commits: the bytes, the version id, and both signatures, from fixed keys ---
+
+const seed = (n: number) => Buffer.from(new Uint8Array(32).fill(n)).toString('base64url')
+const author = await ed25519Signer(seed(1))
+const server = await ed25519Signer(seed(2))
+const file = out[1]!
+const ref = v3.fileRef(file.id, file.content as v3.FileContent)
+const unsignedCommit: v3.Commit = {
+  underlay: 3,
+  collection: 'vectors',
+  number: 1,
+  previous: null,
+  semver: 'v1.0.0',
+  createdAt: '2026-11-10T00:00:00.000Z',
+  changes: [await v3.makeChange('vectors', { files: [ref], message: 'first' })],
+  keyId: null,
+  sig: null,
+}
+const firstId = v3.versionId(v3.commitBytes(unsignedCommit))
+const signedChange = await v3.makeChange(
+  'vectors',
+  { files: [], base: firstId, message: null },
+  author,
+)
+const signedCommit = await v3.signObject(
+  {
+    underlay: 3,
+    collection: 'vectors',
+    number: 2,
+    previous: firstId,
+    semver: 'v1.0.1',
+    createdAt: '2026-11-10T00:00:01.000Z',
+    changes: [signedChange],
+    keyId: null,
+    sig: null,
+  } as v3.Commit,
+  server,
+)
+const commits = [unsignedCommit, signedCommit].map((commit) => ({
+  commit,
+  id: v3.versionId(v3.commitBytes(commit)),
+}))
+const commitsPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../test/vectors/v3-commits.json',
+)
+writeFileSync(
+  commitsPath,
+  JSON.stringify(
+    {
+      underlay: 3,
+      note: 'A commit is the JCS of `commit`; its version id is ulv3: and the SHA-256 of those bytes. Signatures are Ed25519 over the JCS of the signed object without `sig`; the private keys are 32 bytes of 0x01 (author) and 0x02 (server).',
+      keys: { author: author.publicKey, server: server.publicKey },
+      commits,
+    },
+    null,
+    1,
+  ) + '\n',
+)
+console.log(`wrote ${commits.length} commits to ${commitsPath}`)

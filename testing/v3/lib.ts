@@ -8,7 +8,7 @@ import { createWriteStream, existsSync } from 'node:fs'
 import { mkdir, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { v3 } from '../../packages/protocol/src/index.js'
+import { ed25519Signer, v3 } from '../../packages/protocol/src/index.js'
 import { delayMs, wait } from '../src/latency.js'
 import { addCounts, type BenchStore, type Counts, costOf, subCounts, zeroCounts } from './store.js'
 
@@ -107,11 +107,12 @@ export const round = (n: number, digits = 2): number => {
 // --- A client's local build ---
 
 /**
- * Files built straight into the store's folder, as a client builds them on its
- * own disk and then uploads them. The upload is counted on the store (one put,
- * or a multipart upload in 8 MiB parts) and waits as an upload would.
+ * Files built on local disk, as a client builds them, and then uploaded into an
+ * upload session (`uploads/<session>/<file id>`). The upload is counted on the
+ * store (one put, or a multipart upload in 8 MiB parts) and waits as an upload
+ * would. The server installs the files when it has checked them.
  */
-export function clientTarget(store: BenchStore): v3.FileTarget {
+export function clientTarget(store: BenchStore, session: string): v3.FileTarget {
   return {
     async begin() {
       const tmpDir = join(store.dir, 'tmp')
@@ -131,15 +132,13 @@ export function clientTarget(store: BenchStore): v3.FileTarget {
         async keep(id) {
           out.end()
           await closed
-          const key = v3.recordKey(id)
+          const key = v3.uploadKey(session, id)
           const path = join(store.dir, key)
           const parts = size > 5 * MB ? Math.ceil(size / v3.PART_BYTES) + 2 : 1
           store.counts.classA += parts
-          if (existsSync(path)) {
-            // Already stored: the server takes the upload and keeps what it has.
-            await rm(tmp, { force: true })
-          } else {
-            await mkdir(join(store.dir, 'records'), { recursive: true })
+          if (existsSync(path)) await rm(tmp, { force: true })
+          else {
+            await mkdir(join(store.dir, 'uploads', session), { recursive: true })
             await rename(tmp, path)
           }
           store.counts.bytesIn += size
@@ -168,6 +167,19 @@ export const refOf = (
   removals: f.removals,
   bytes: f.bytes,
 })
+
+/**
+ * The bench's signing keys: an author's and the server's, fixed so runs repeat.
+ * Every commit the bench makes is signed twice, as a real one would be.
+ */
+let signing: Promise<{ author: v3.Signer; server: v3.Signer }> | undefined
+export function signers(): Promise<{ author: v3.Signer; server: v3.Signer }> {
+  const seed = (n: number) => Buffer.from(new Uint8Array(32).fill(n)).toString('base64url')
+  return (signing ??= (async () => ({
+    author: await ed25519Signer(seed(1)),
+    server: await ed25519Signer(seed(2)),
+  }))())
+}
 
 // --- Workers ---
 

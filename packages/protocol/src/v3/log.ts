@@ -17,12 +17,23 @@ import { NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
 import type { FileRef, KeyPair } from './file.js'
 import { compareKeys, FormatError } from './lines.js'
 import { SortedFile } from './reader.js'
+import { type PublicKeyInfo, type Signer, signObject, verifyObject } from './sign.js'
 import { inParallel } from './util.js'
 
+/**
+ * What an author sends: the files of one upload, for one collection, with the
+ * version they were working from. The author signs it (`keyId`, `sig`, over the
+ * change without `sig`); the signature does not cover where the change lands.
+ */
 export interface Change {
+  collection: string
   files: FileRef[]
+  /** The version id the author was working from, or null. Recorded, never enforced. */
+  base: string | null
   message: string | null
-  by: string | null
+  /** The author's key and signature; both null for an unsigned change. */
+  keyId: string | null
+  sig: string | null
 }
 
 export interface Commit {
@@ -34,6 +45,7 @@ export interface Commit {
   semver: string
   createdAt: string
   changes: Change[]
+  /** The server's key and signature, over the whole commit without this `sig`. */
   keyId: string | null
   sig: string | null
 }
@@ -103,6 +115,9 @@ const isNumber = (v: unknown): v is number =>
 const isKeyPair = (v: unknown): v is KeyPair =>
   Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string'
 const nullOrString = (v: unknown) => v === null || typeof v === 'string'
+const VERSION_ID = /^ulv3:[0-9a-f]{64}$/
+/** Whether a string has the shape of a version id. */
+export const isVersionId = (v: unknown): v is string => typeof v === 'string' && VERSION_ID.test(v)
 
 function checkFileRef(f: unknown, what: string): asserts f is FileRef {
   if (
@@ -138,8 +153,11 @@ export function parseCommit(bytes: Uint8Array): Commit {
     !/^v\d+\.\d+\.\d+$/.test(c.semver) ||
     typeof c.createdAt !== 'string' ||
     !Array.isArray(c.changes) ||
+    !(c.number === 1 || isVersionId(c.previous)) ||
     !nullOrString(c.keyId) ||
-    !nullOrString(c.sig)
+    !nullOrString(c.sig) ||
+    (c.keyId === null) !== (c.sig === null) ||
+    (c.changes as unknown[]).length === 0
   ) {
     throw new FormatError('Bad commit')
   }
@@ -147,9 +165,14 @@ export function parseCommit(bytes: Uint8Array): Commit {
   for (const ch of c.changes as unknown[]) {
     if (
       !isObject(ch) ||
+      Object.keys(ch).sort().join() !== 'base,collection,files,keyId,message,sig' ||
+      ch.collection !== c.collection ||
       !Array.isArray(ch.files) ||
+      !(ch.base === null || isVersionId(ch.base)) ||
       !nullOrString(ch.message) ||
-      !nullOrString(ch.by)
+      !nullOrString(ch.keyId) ||
+      !nullOrString(ch.sig) ||
+      (ch.keyId === null) !== (ch.sig === null)
     ) {
       throw new FormatError('Bad commit change')
     }
@@ -359,9 +382,16 @@ export function nextSemver(previous: string | null, bump: BumpType): string {
 }
 
 export interface CommitInput {
-  files: FileRef[]
+  /**
+   * The change to commit: one the author prepared (and signed) with `makeChange`,
+   * or its parts, from which an unsigned change is made here.
+   */
+  change?: Change
+  files?: FileRef[]
+  base?: string | null
   message?: string | null
-  by?: string | null
+  /** Where the base is in the log, if the caller knows: saves the search for it. */
+  baseNumber?: number
   /**
    * What kind of change this is, for the semver: a value, or a function of the
    * commit it would follow (asked again if another commit lands first).
@@ -373,6 +403,71 @@ export interface CommitOptions {
   now?: () => Date
   /** Times to try again after losing the number to another committer. */
   attempts?: number
+  /** The server's key: signs the whole commit where it lands. */
+  signer?: Signer
+  /** If given, the change must be signed by one of these keys. */
+  authorKeys?: PublicKeyInfo[]
+  /** Commits to look back through for a base whose number was not given. Default 1,000. */
+  baseSearch?: number
+}
+
+/**
+ * Make a change, as its author: the files of one upload and the version worked
+ * from. With a signer it is signed; the signature stays valid wherever the
+ * change lands in the log.
+ */
+export async function makeChange(
+  collection: string,
+  parts: { files: FileRef[]; base?: string | null; message?: string | null },
+  signer?: Signer,
+): Promise<Change> {
+  const change: Change = {
+    collection,
+    files: parts.files,
+    base: parts.base ?? null,
+    message: parts.message ?? null,
+    keyId: null,
+    sig: null,
+  }
+  return signer ? signObject(change, signer) : change
+}
+
+/** Does one of these keys sign the change (the author) or the commit (the server)? */
+export const verifyChange = (change: Change, keys: PublicKeyInfo[]) => verifyObject(change, keys)
+export const verifyCommit = (commit: Commit, keys: PublicKeyInfo[]) => verifyObject(commit, keys)
+
+export class BaseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BaseError'
+  }
+}
+
+/**
+ * The number of the commit with a version id, looking back from `from`; null if
+ * it is not among the `search` commits before it. A fork's log holds the
+ * commits of the collections it came from, so its lineage is found the same way.
+ */
+export async function findVersion(
+  store: Store,
+  collection: string,
+  id: string,
+  from: number,
+  opts: { hint?: number; search?: number } = {},
+): Promise<number | null> {
+  if (opts.hint !== undefined && opts.hint >= 1 && opts.hint <= from) {
+    const c = await readCommit(store, collection, opts.hint)
+    if (c?.id === id) return opts.hint
+  }
+  const stop = Math.max(1, from - (opts.search ?? 1000) + 1)
+  for (let n = from; n >= stop; n--) {
+    const c = await readCommit(store, collection, n)
+    if (!c) return null
+    if (c.id === id) return n
+    // Each commit names the one before it, so the walk needs only every other read.
+    if (c.commit.previous === id) return n - 1
+  }
+  return null
 }
 
 export class CommitRaceError extends Error {
@@ -401,24 +496,57 @@ export async function createCommit(
 ): Promise<StoredCommit> {
   checkCollectionId(collection)
   const attempts = opts.attempts ?? 50
+  const change =
+    input.change ??
+    (await makeChange(collection, {
+      files: input.files ?? [],
+      base: input.base ?? null,
+      message: input.message ?? null,
+    }))
+  if (change.collection !== collection) {
+    throw new BaseError(`The change is for collection ${change.collection}, not ${collection}`)
+  }
+  if (opts.authorKeys && !(await verifyChange(change, opts.authorKeys))) {
+    throw new BaseError('The change is not signed by a key this collection accepts')
+  }
+  let baseChecked = change.base === null
   const hinted = await readCommitHint(store, collection)
   // The hinted commit, if it is there; the create below finds out whether it is the newest.
   let head: StoredCommit | null = null
   if (hinted !== null && hinted > 0) head = await readCommit(store, collection, hinted)
   if (!head && hinted !== 0) head = await findHead(store, collection, null)
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (!baseChecked) {
+      // The base is recorded as given, but it has to be a version of this collection or of
+      // the collections it was forked from. Newer commits never make it invalid, so once.
+      const at =
+        head && head.id === change.base
+          ? head.commit.number
+          : head
+            ? await findVersion(store, collection, change.base!, head.commit.number, {
+                ...(input.baseNumber === undefined ? {} : { hint: input.baseNumber }),
+                ...(opts.baseSearch === undefined ? {} : { search: opts.baseSearch }),
+              })
+            : null
+      if (at === null) {
+        throw new BaseError(`Base ${change.base} is not a version of ${collection}`)
+      }
+      baseChecked = true
+    }
     const bump = typeof input.bump === 'function' ? await input.bump(head) : input.bump
-    const commit: Commit = {
+    const unsigned: Commit = {
       underlay: 3,
       collection,
       number: (head?.commit.number ?? 0) + 1,
       previous: head?.id ?? null,
       semver: nextSemver(head?.commit.semver ?? null, bump),
       createdAt: (opts.now?.() ?? new Date()).toISOString(),
-      changes: [{ files: input.files, message: input.message ?? null, by: input.by ?? null }],
+      // The author's change goes in as it came, signature and all, at whatever number is free.
+      changes: [change],
       keyId: null,
       sig: null,
     }
+    const commit = opts.signer ? await signObject(unsigned, opts.signer) : unsigned
     const bytes = commitBytes(commit)
     const key = commitKey(collection, commit.number)
     const won = await createObject(store, key, bytes, { contentType: 'application/json' })
@@ -483,12 +611,17 @@ export interface VerifyLogOptions {
   from?: number
   /** The version id `from`'s `previous` must be, when `from` is above 1. */
   previous?: string
+  /** If given, every commit must be signed by one of these keys (the server's). */
+  serverKeys?: PublicKeyInfo[]
+  /** If given, every change must be signed by one of these keys (authors'). */
+  authorKeys?: PublicKeyInfo[]
 }
 
 /**
  * Check the chain: numbers without gaps, each commit canonical, naming the
- * commit before it by version id, carrying the right collection id, and with a
- * semver that follows from the one before. Returns the head.
+ * commit before it by version id, carrying the right collection id, with a
+ * semver that follows from the one before, each base an earlier version, and,
+ * given keys, signed by the server and by its author. Returns the head.
  */
 export async function verifyLog(
   store: Store,
@@ -498,6 +631,7 @@ export async function verifyLog(
   const head = await headNumber(store, collection)
   const from = opts.from ?? 1
   let prev: StoredCommit | null = null
+  const seen = new Set<string>()
   for await (const c of readLog(store, collection, from, head)) {
     const n = c.commit.number
     const bad = (what: string) => new FormatError(`Commit ${n} of ${collection}: ${what}`)
@@ -506,6 +640,19 @@ export async function verifyLog(
     const wantPrev = prev ? prev.id : n === 1 ? null : opts.previous
     if (wantPrev !== undefined && c.commit.previous !== wantPrev)
       throw bad('previous does not match')
+    for (const ch of c.commit.changes) {
+      // A base is a version of this log before the commit: recorded as given, never enforced.
+      if (ch.base !== null && from === 1 && !seen.has(ch.base)) {
+        throw bad(`base ${ch.base} is not an earlier version of this collection`)
+      }
+      if (opts.authorKeys && !(await verifyChange(ch, opts.authorKeys))) {
+        throw bad('a change is not signed by an accepted author key')
+      }
+    }
+    if (opts.serverKeys && !(await verifyCommit(c.commit, opts.serverKeys))) {
+      throw bad('the commit is not signed by an accepted server key')
+    }
+    seen.add(c.id)
     if (prev) {
       const ok = (['major', 'minor', 'patch'] as const).some(
         (b) => nextSemver(prev!.commit.semver, b) === c.commit.semver,

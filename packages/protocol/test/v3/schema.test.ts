@@ -22,9 +22,18 @@ async function upload(
       return r
     })
     .sort(v3.compareKey)
-  const files = await v3.buildFiles(sorted, v3.storeTarget(store), opts)
+  // The bytes arrive in an upload session; the commit installs them once they are checked.
+  const session = v3.newSession()
+  const files = await v3.buildFiles(sorted, v3.uploadTarget(store, session), opts)
   const refs = files.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
-  return v3.commitUpload(store, 'c', { files: refs }, opts)
+  return v3.commitUpload(store, 'c', { files: refs }, { ...opts, session })
+}
+
+/** Build rows into an upload session without committing: the session and what a commit would name. */
+async function staged(store: MemoryStore, rows: v3.WriteRow[], opts: v3.BuildOptions = {}) {
+  const session = v3.newSession()
+  const files = await v3.buildFiles(rows, v3.uploadTarget(store, session), opts)
+  return { session, refs: files.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref) }
 }
 
 const work = (id: string, data: unknown) => rec('work', id, data)
@@ -203,49 +212,81 @@ describe('checking files', () => {
   it('refuses a file that is not what the upload says, or not well formed', async () => {
     const store = memoryStore()
     await upload(store, [schema('work', workSchema)])
-    const [f] = await v3.buildFiles([work('a', { title: 'A' })], v3.storeTarget(store))
-    const { size: _s, labeled: _l, commits: _c, ...ref } = f!
-    await expect(v3.commitUpload(store, 'c', { files: [{ ...ref, entries: 2 }] })).rejects.toThrow(
-      /not as the upload describes/,
-    )
+    const { session, refs } = await staged(store, [work('a', { title: 'A' })])
+    const ref = refs[0]!
     await expect(
-      v3.commitUpload(store, 'c', { files: [{ ...ref, id: 'f'.repeat(64) }] }),
-    ).rejects.toThrow(v3.MissingFileError)
+      v3.commitUpload(store, 'c', { files: [{ ...ref, entries: 2 }] }, { session }),
+    ).rejects.toThrow(/not as the upload describes/)
     // A labeled file cannot be uploaded.
-    const [labeled] = await v3.buildFiles(
-      [rec('work', 'a', { title: 'A' }, 1)],
-      v3.storeTarget(store),
-      {
-        labeled: true,
-      },
-    )
-    const { size: _s2, labeled: _l2, commits: _c2, ...lref } = labeled!
-    await expect(v3.commitUpload(store, 'c', { files: [lref] })).rejects.toThrow(/labeled/)
+    const labeled = await staged(store, [rec('work', 'a', { title: 'A' }, 1)], { labeled: true })
+    await expect(
+      v3.commitUpload(store, 'c', { files: labeled.refs }, { session: labeled.session }),
+    ).rejects.toThrow(/labeled/)
     expect(await v3.headNumber(store, 'c')).toBe(1)
-    await v3.commitUpload(store, 'c', { files: [ref] })
+    await v3.commitUpload(store, 'c', { files: [ref] }, { session })
+    expect(await v3.headNumber(store, 'c')).toBe(2)
+  })
+
+  it('lets a commit name a file only if its bytes came with the upload', async () => {
+    const store = memoryStore()
+    await upload(store, [schema('work', workSchema), work('a', { title: 'A' })])
+    // The first commit's file is stored. Knowing its id is not enough to name it again.
+    const stored = v3.commitFiles((await v3.readCommit(store, 'c', 1))!.commit)[0]!
+    expect(await store.head(v3.recordKey(stored.id))).not.toBe(null)
+    await expect(
+      v3.commitUpload(store, 'other', { files: [stored] }, { session: v3.newSession() }),
+    ).rejects.toThrow(/did not come with this upload/)
+    expect(await v3.headNumber(store, 'other')).toBe(0)
+    // Nor is a file in someone else's session.
+    const theirs = await staged(store, [work('b', { title: 'B' })])
+    await expect(
+      v3.commitUpload(store, 'c', { files: theirs.refs }, { session: v3.newSession() }),
+    ).rejects.toThrow(/did not come with this upload/)
+
+    // Sending the same bytes again is fine: the upload is checked, the stored file is left
+    // as it is, and the session's copy is gone afterwards.
+    const before = (await (await store.get(v3.recordKey(stored.id)))!.bytes()).slice()
+    const again = await staged(
+      store,
+      [schema('work', workSchema), work('a', { title: 'A' })].sort(v3.compareKey),
+      { level: 1 },
+    )
+    expect(again.refs[0]!.id).toBe(stored.id)
+    const made = await v3.commitUpload(store, 'c2', { files: again.refs }, again)
+    expect(made.commit.number).toBe(1)
+    expect(await (await store.get(v3.recordKey(stored.id)))!.bytes()).toEqual(before)
+    expect(await store.head(v3.uploadKey(again.session, stored.id))).toBe(null)
+  })
+
+  it('installs an uploaded file among the stored files only once it is checked', async () => {
+    const store = memoryStore()
+    await upload(store, [schema('work', workSchema)])
+    const bad = await staged(store, [work('x', { year: 1 })])
+    await expect(v3.commitUpload(store, 'c', { files: bad.refs }, bad)).rejects.toThrow(/work "x"/)
+    expect(await store.head(v3.recordKey(bad.refs[0]!.id))).toBe(null)
+    const good = await staged(store, [work('x', { title: 'X' })])
+    await v3.commitUpload(store, 'c', { files: good.refs }, good)
+    expect(await store.head(v3.recordKey(good.refs[0]!.id))).not.toBe(null)
+    expect(await store.head(v3.uploadKey(good.session, good.refs[0]!.id))).toBe(null)
   })
 
   it('checks again against the new head when another commit lands first', async () => {
     const store = memoryStore()
     await upload(store, [schema('work', workSchema)])
-    const [f] = await v3.buildFiles([work('late', { title: 'no year' })], v3.storeTarget(store))
-    const { size: _s, labeled: _l, commits: _c, ...ref } = f!
+    const late = await staged(store, [work('late', { title: 'no year' })])
     // While this upload is being checked, a stricter schema is committed.
     let first = true
     const inner = store.tail.bind(store)
     store.tail = async (key, length) => {
-      if (first && key.startsWith('records/')) {
+      if (first && key.startsWith(`uploads/${late.session}/`)) {
         first = false
-        const strict = [schema('work', { ...workSchema, required: ['title', 'year'] })]
-        const files = await v3.buildFiles(strict, v3.storeTarget(store))
-        await v3.createCommit(store, 'c', {
-          files: files.map(({ size: _a, labeled: _b, commits: _d, ...r }) => r),
-          bump: 'major',
-        })
+        await upload(store, [schema('work', { ...workSchema, required: ['title', 'year'] })])
       }
       return inner(key, length)
     }
-    await expect(v3.commitUpload(store, 'c', { files: [ref] })).rejects.toThrow(/work "late"/)
+    await expect(v3.commitUpload(store, 'c', { files: late.refs }, late)).rejects.toThrow(
+      /work "late"/,
+    )
     expect(first).toBe(false)
     expect(await v3.headNumber(store, 'c')).toBe(2)
     expect(jcs((await v3.readCommit(store, 'c', 2))!.commit.semver)).toBe('"v2.0.0"')
