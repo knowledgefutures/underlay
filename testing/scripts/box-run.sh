@@ -5,15 +5,15 @@
 #
 #   nohup sh scripts/box-run.sh r1 > /dev/null 2>&1 &
 #
-# The sized suites keep their bulk under ~/underlay-v3-bench (on /), and Crossref under
-# /data/underlay-v3-core, so /data keeps room for the full load with nothing deleted between
-# suites. Nothing on the box is deleted by this script.
+# The sized suites keep their bulk under ~/underlay-v3-bench-<round> (on /), and Crossref under
+# /data/underlay-v3-core/<round>, so /data keeps room for the full load, and a new round never
+# touches an earlier round's files. Nothing on the box is deleted by this script.
 cd "$(dirname "$0")/.." || exit 1
 export PATH=$HOME/node/bin:$PATH
 export BENCH=dist/bench.mjs NICE="nice -n 10 ionice -c2 -n7"
 gen=${1:-r1}
-UL_BENCH_DIR=$HOME/underlay-v3-bench sh scripts/chain.sh "$gen" \
+UL_BENCH_DIR=$HOME/underlay-v3-bench-$gen sh scripts/chain.sh "$gen" \
   many:--collections,3000,--burst,300 quick 1m \
   crossref:--label,crossref-mid,--files,2000,--days,6,--fork-days,2 \
   5m 12m many racing policy || exit 1
-UL_BENCH_DIR=/data/underlay-v3-core sh scripts/chain.sh "$gen" crossref
+UL_BENCH_DIR=/data/underlay-v3-core/$gen sh scripts/chain.sh "$gen" crossref

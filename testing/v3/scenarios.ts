@@ -764,13 +764,21 @@ export async function many(w: World, o: ManyOptions): Promise<Result> {
 }
 
 /** Sweep passes over the whole location, each measured. */
-export async function sweepPasses(w: World, passes: number, graceMs = 0): Promise<Result[]> {
+export async function sweepPasses(
+  w: World,
+  passes: number,
+  graceMs = 0,
+  /** Other steps' workers are running: count only this process's own work. */
+  own = false,
+): Promise<Result[]> {
   const store = storeOf(w)
   const out: Result[] = []
   let t = Date.now()
   for (let i = 0; i < passes; i++) {
-    const m = await measure(store, () =>
-      v3.sweep(store, { graceMs, trashMs: graceMs, now: () => t }),
+    const m = await measure(
+      store,
+      () => v3.sweep(store, { graceMs, trashMs: graceMs, now: () => t }),
+      own,
     )
     t += 1
     const s = m.value
@@ -825,7 +833,7 @@ export async function sweepUnderLoad(w: World, o: ManyOptions): Promise<Result> 
     Math.min(n, 3 * doomed),
     o.streams,
   )
-  const during = await sweepPasses(w, 2)
+  const during = await sweepPasses(w, 2, 0, true)
   const thinned = await work
   const committed = await commits
   const after = await sweepPasses(w, 3)
