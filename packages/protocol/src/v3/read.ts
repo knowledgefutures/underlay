@@ -32,7 +32,13 @@ import {
   readLayout,
   readLog,
 } from './log.js'
-import { EntryCursor, type FileReader, MissingFileError, SortedFile } from './reader.js'
+import {
+  EntryCursor,
+  type FileReader,
+  lookupEntries,
+  MissingFileError,
+  SortedFile,
+} from './reader.js'
 import { Heap, inParallel } from './util.js'
 
 /** A file of a view: what a reader needs to know before opening it. */
@@ -504,51 +510,69 @@ export async function* changes(
   const older = range.before
     ? view.files.filter((f) => f.commits[1] <= since).sort((a, b) => b.commits[1] - a.commits[1])
     : []
-  const cursors = new Map<string, EntryCursor>()
+  const readerOpts = opts.verify === undefined ? {} : { verify: opts.verify }
+  /** Key blocks of the older files fetched for the batch in hand, each once. */
+  let blocks = new Map<string, Promise<Entry[]>>()
   const stateBefore = async (
     group: Found[],
     type: string,
     id: string,
   ): Promise<KeyState | null> => {
-    let best: Found | undefined
-    for (const f of group) if (f.entry.commit <= since) best = f
+    let best: (Entry & { commit: number }) | undefined
+    for (const f of group) if (f.entry.commit <= since) best = f.entry
     for (const file of older) {
       if (!covers(file, type, id)) continue
-      // Files are newest first: nothing in this one or after can beat a newer row already found.
-      if (best && best.entry.commit > file.commits[1]) continue
-      let cursor = cursors.get(file.id)
-      if (!cursor) {
-        const f = await open(store, file.id, opts)
-        const reader = f.reader(opts.verify === undefined ? {} : { verify: opts.verify })
-        cursor = new EntryCursor(reader, file.labeled ? null : file.commits[0])
-        cursors.set(file.id, cursor)
-      }
-      await cursor.seek({ type, id })
-      while (cursor.current && cursor.current.type === type && cursor.current.id === id) {
-        const e = cursor.current as Entry & { commit: number }
-        if (e.commit <= since && (!best || e.commit > best.entry.commit)) {
-          best = { entry: e, reader: cursor.reader }
-        }
-        await cursor.next()
+      // Files are newest first: nothing in this one can beat a newer row already found.
+      if (best && best.commit > file.commits[1]) continue
+      const f = await open(store, file.id, opts)
+      const entries = await lookupEntries(f, type, id, (i) => {
+        const k = `${file.id}/${i}`
+        let p = blocks.get(k)
+        if (!p) blocks.set(k, (p = f.reader(readerOpts).keyBlock(i)))
+        return p
+      })
+      for (const e of entries) {
+        const commit = file.labeled ? e.commit! : file.commits[0]
+        if (commit <= since && (!best || commit > best.commit)) best = { ...e, commit }
       }
     }
-    return stateOf(best)
+    return best && best.kind !== 'x'
+      ? { hash: best.hash!, commit: best.commit, withheld: best.kind === 'w' }
+      : null
+  }
+  /** Changed keys are looked up in the older files a batch at a time, several at once. */
+  const BATCH = 64
+  let batch: { row: ChangeRow; group: Found[] }[] = []
+  const flush = async function* (): AsyncGenerator<ChangeRow> {
+    const befores = await inParallel(
+      batch.map((b) => () => stateBefore(b.group, b.row.type, b.row.id)),
+      16,
+    )
+    for (let i = 0; i < batch.length; i++) {
+      const row = batch[i]!.row
+      const before = befores[i]!
+      if ((before?.hash ?? null) === (row.after?.hash ?? null)) continue
+      row.before = before
+      yield row
+    }
+    batch = []
+    blocks = new Map()
   }
   for await (const group of mergeGroups(store, view, range, opts, recent)) {
     const winner = group[group.length - 1]!
     if (winner.entry.commit <= since) continue
-    const after = stateOf(winner)
     const row: ChangeRow = {
       type: winner.entry.type,
       id: winner.entry.id,
-      after,
+      after: stateOf(winner),
       line: async () => (winner.entry.kind === 'r' ? winner.reader.line(winner.entry) : null),
     }
-    if (range.before) {
-      const before = await stateBefore(group, row.type, row.id)
-      if ((before?.hash ?? null) === (after?.hash ?? null)) continue
-      row.before = before
+    if (!range.before) {
+      yield row
+      continue
     }
-    yield row
+    batch.push({ row, group })
+    if (batch.length >= BATCH) yield* flush()
   }
+  if (batch.length > 0) yield* flush()
 }

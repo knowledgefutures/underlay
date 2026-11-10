@@ -311,33 +311,46 @@ export class FileReader {
   }
 
   /** Every entry with a key, in commit order (one at most in an unlabeled file). */
-  async lookup(type: string, id: string): Promise<Entry[]> {
-    const f = this.file
-    if (!f.covers(type, id)) return []
-    const out: Entry[] = []
-    const kb = f.content.keyBlocks
-    for (let i = f.blockFor(type, id); i < kb.length; i++) {
-      if (i > 0 && out.length === 0 && compareKeys(kb[i]![0], kb[i]![1], type, id) > 0) break
-      const entries = await this.keyBlock(i)
-      let lo = 0
-      let hi = entries.length
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1
-        const e = entries[mid]!
-        if (compareKeys(e.type, e.id, type, id) < 0) lo = mid + 1
-        else hi = mid
-      }
-      let j = lo
-      for (; j < entries.length; j++) {
-        const e = entries[j]!
-        if (e.type !== type || e.id !== id) break
-        out.push(e)
-      }
-      // The key's entries go on in the next block only if they ran to this one's end.
-      if (j < entries.length) break
-    }
-    return out
+  lookup(type: string, id: string): Promise<Entry[]> {
+    return lookupEntries(this.file, type, id, (i) => this.keyBlock(i))
   }
+}
+
+/**
+ * Every entry a file has for a key, in commit order, given a way to get a key
+ * block. A caller that looks up many keys at once passes a getter that fetches
+ * each block once.
+ */
+export async function lookupEntries(
+  f: SortedFile,
+  type: string,
+  id: string,
+  keyBlock: (i: number) => Promise<Entry[]>,
+): Promise<Entry[]> {
+  if (!f.covers(type, id)) return []
+  const out: Entry[] = []
+  const kb = f.content.keyBlocks
+  for (let i = f.blockFor(type, id); i < kb.length; i++) {
+    if (i > 0 && out.length === 0 && compareKeys(kb[i]![0], kb[i]![1], type, id) > 0) break
+    const entries = await keyBlock(i)
+    let lo = 0
+    let hi = entries.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      const e = entries[mid]!
+      if (compareKeys(e.type, e.id, type, id) < 0) lo = mid + 1
+      else hi = mid
+    }
+    let j = lo
+    for (; j < entries.length; j++) {
+      const e = entries[j]!
+      if (e.type !== type || e.id !== id) break
+      out.push(e)
+    }
+    // The key's entries go on in the next block only if they ran to this one's end.
+    if (j < entries.length) break
+  }
+  return out
 }
 
 /**
