@@ -316,8 +316,8 @@ function claims(r: Results): string {
         : '',
     ),
     row(
-      'Every job fits a 128 MB heap',
-      heap > 0 ? heap <= 135 : null,
+      'Every job fits a Worker’s memory (a heap of 120 MB at most)',
+      heap > 0 ? heap <= 120 : null,
       heap > 0 ? `every process ran under the cap; the most heap in use was ${n0(heap)} MB` : '',
     ),
     row(
@@ -593,7 +593,7 @@ function policy(r: Results): string {
         'Runs a record may sit in, mean',
         'Most',
         'Lines rewritten a day',
-        'Stored, at 0.25',
+        'Stored a day, at a quarter of lines',
         'Times each byte is rewritten',
         'Largest single merge',
       ],
@@ -675,7 +675,9 @@ function suiteDetail(r: Results, suite: string, label: string): string {
     ],
     { num: [] },
   )
-  const dailies = r.all.filter((x) => x.suite === suite && x.scenario === 'daily')
+  const dailies = r.all
+    .filter((x) => x.suite === suite && x.scenario === 'daily')
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)))
   if (dailies.length > 0) {
     out += table(
       [
