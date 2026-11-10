@@ -34,7 +34,7 @@ interface R2ObjectBodyLike extends R2ObjectLike {
 export interface R2BucketLike {
   get(
     key: string,
-    options?: { range?: { offset: number; length?: number } },
+    options?: { range?: { offset: number; length?: number } | { suffix: number } },
   ): Promise<R2ObjectBodyLike | null>
   head(key: string): Promise<R2ObjectLike | null>
   put(
@@ -126,6 +126,26 @@ class R2Store implements Store {
 
   async put(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<void> {
     await this.#put(key, body, opts)
+  }
+
+  /** `onlyIf` with `If-None-Match: *`: the binding returns null when the key existed, a loss. */
+  async create(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<boolean> {
+    return (await this.#put(key, body, { ...opts, ifAbsent: true })) !== null
+  }
+
+  /**
+   * A suffix range. Miniflare refuses a suffix longer than the object (error
+   * 10039, "range is not satisfiable"); the whole object is read then.
+   */
+  async tail(key: string, length: number): Promise<BlobObject | null> {
+    let obj: R2ObjectBodyLike | null
+    try {
+      obj = await this.bucket.get(key, { range: { suffix: length } })
+    } catch (err) {
+      if (!/range/i.test(String((err as Error).message))) throw err
+      return this.get(key)
+    }
+    return obj ? this.#object(obj, Math.min(length, obj.size)) : null
   }
 
   #put(key: string, body: Uint8Array | string | ReadableStream<Uint8Array>, opts: PutOptions) {

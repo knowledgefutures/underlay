@@ -174,6 +174,12 @@ export async function startFakeS3(
             .end(req.method === 'GET' ? '<Error><Code>NoSuchKey</Code></Error>' : undefined)
         let bytes = obj.bytes
         let status = 200
+        const suffix = /^bytes=-(\d+)$/.exec(req.headers.range ?? '')
+        if (suffix) {
+          if (bytes.length === 0) return void res.writeHead(416).end()
+          bytes = bytes.subarray(Math.max(0, bytes.length - Number(suffix[1])))
+          status = 206
+        }
         const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '')
         if (range) {
           const start = Number(range[1])

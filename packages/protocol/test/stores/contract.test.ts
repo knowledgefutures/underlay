@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
   copyObject,
+  createObject,
   fileStore,
   listAll,
   memoryStore,
@@ -20,6 +21,7 @@ import {
   putFromParts,
   type R2BucketLike,
   readParts,
+  readTail,
   r2Store,
   s3CopyLimits,
   s3Store,
@@ -133,6 +135,39 @@ for (const [name, make] of makers) {
       )
       const won = await (await store.get('lease'))!.text()
       expect(seen).toEqual(seen.map(() => won))
+    })
+
+    it('creates only if absent, and exactly one of 50 racing creates wins', async () => {
+      expect(await createObject(store, 'create/a', 'first')).toBe(true)
+      expect(await createObject(store, 'create/a', 'second')).toBe(false)
+      expect(await (await store.get('create/a'))!.text()).toBe('first')
+      const wins = await Promise.all(
+        Array.from({ length: 50 }, (_, i) => createObject(store, 'create/race', `w${i}`)),
+      )
+      const winners = wins.flatMap((won, i) => (won ? [i] : []))
+      expect(winners.length).toBe(1)
+      expect(await (await store.get('create/race'))!.text()).toBe(`w${winners[0]}`)
+    })
+
+    it('reads the tail of an object in one call', async () => {
+      await store.put('tail/obj', 'hello world')
+      expect(await (await readTail(store, 'tail/obj', 5))!.text()).toBe('world')
+      const all = await readTail(store, 'tail/obj', 100)
+      expect(all!.size).toBe(11)
+      expect(await all!.text()).toBe('hello world')
+      await store.put('tail/empty', '')
+      expect((await (await readTail(store, 'tail/empty', 16))!.bytes()).length).toBe(0)
+      expect(await readTail(store, 'tail/absent', 5)).toBe(null)
+      // The fallback (head, then a ranged get) for a store without `tail`.
+      const plain: Store = {
+        get: (k, r) => store.get(k, r),
+        head: (k) => store.head(k),
+        put: (k, b, o) => store.put(k, b, o),
+        list: (p, c) => store.list(p, c),
+        delete: (k) => store.delete(k),
+      }
+      expect(await (await readTail(plain, 'tail/obj', 5))!.text()).toBe('world')
+      expect(await (await readTail(plain, 'tail/obj', 100))!.text()).toBe('hello world')
     })
 
     it('streams bodies', async () => {

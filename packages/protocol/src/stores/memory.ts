@@ -64,6 +64,20 @@ export class MemoryStore implements Store {
     })
   }
 
+  async create(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<boolean> {
+    if (this.objects.has(key)) return false
+    await this.put(key, body, opts)
+    return true
+  }
+
+  async tail(key: string, length: number) {
+    this.gets++
+    const o = this.objects.get(key)
+    if (!o) return null
+    const bytes = o.bytes.subarray(Math.max(0, o.bytes.byteLength - length))
+    return blobObject(bytes, { etag: `"${key}"`, contentType: o.contentType })
+  }
+
   async putParts(key: string, parts: AsyncIterable<Uint8Array>, opts: PutPartsOptions = {}) {
     const bytes = await joinParts(parts)
     await opts.check?.()
