@@ -632,6 +632,37 @@ function policy(r: Results): string {
   return out
 }
 
+/** Fork, edit one record, rebuild: what the fork costs to store, by target file size. */
+function forkEdit(r: Results): string {
+  const x = r.all.find((q) => q.scenario === 'fork-edit' && q.suite !== 'gate')
+  if (!x) return ''
+  const rows = (x.targets as R[]).map((t) => [
+    `${num(t.targetMb)} MB`,
+    n0(t.files),
+    bytes(t.meanFileBytes),
+    `${bytes(t.tiered.extraBytes)}, ${t.tiered.forkRuns} runs`,
+    `${bytes(t.folded.extraBytes)}, ${t.folded.forkRuns} run`,
+    `${n0(t.fold.filesIn - t.fold.kept)} of ${n0(t.fold.filesIn)}`,
+    secs(t.fold.seconds),
+  ])
+  return (
+    `<h3>Fork, edit one record, rebuild (${n0(x.records)} records, ${bytes(x.targets[0].storedBytes)} stored)</h3>` +
+    table(
+      [
+        'Target file size',
+        'Files',
+        'Mean file',
+        'Fork adds, tier rule alone',
+        'Fork adds, merged to one run',
+        'Files rewritten',
+        'Merge time',
+      ],
+      rows,
+    ) +
+    `<p class="note">${FINDINGS.forkEdit}</p>`
+  )
+}
+
 function suiteDetail(r: Results, suite: string, label: string): string {
   const load = r.get(suite, 'load')
   if (!load) return ''
@@ -974,6 +1005,7 @@ td:first-child { padding-right: 16px; }
 
   <h2>Forks and many collections</h2>
   <div class="charts">${forkChart(r)}${manyChart(r)}</div>
+  ${forkEdit(r)}
   ${manyDetail(r)}
 
   <h2>Beside layout F</h2>
