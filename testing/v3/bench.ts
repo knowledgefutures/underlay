@@ -125,7 +125,7 @@ async function suite(name: string): Promise<void> {
   const base = { latency, workers, ...(args.level ? { level: num('level', 6) } : {}) }
   // A suite's folder is its name, or `--label` (a trial of a suite beside the real run).
   const folder = suiteOf(name)
-  if (!args.keep && !args.resume) {
+  if (!args.keep && !args.resume && name !== 'crossref-extra') {
     await rm(join(benchDir(), 'v3', folder), { recursive: true, force: true })
   }
   switch (name) {
@@ -237,6 +237,29 @@ async function suite(name: string): Promise<void> {
       await step(w, 'recreate', '', () => S.recreate(w, { write: 2 }))
       await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
       await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
+      break
+    }
+    case 'crossref-extra': {
+      // More steps on a Crossref store an earlier chain left (`--label` names its folder; it is
+      // never emptied here): days with the rebuild policy on, then reads.
+      const w = world(str('label', 'crossref'), {
+        ...base,
+        records: num('records', 179_518_552),
+        fileBytes: 1024 ** 3,
+      })
+      const o = {
+        dataDir: str('data', '/data/crossref-sort/sorted'),
+        plan: str('plan', '/data/crossref-sort/plan.json'),
+        ...(args.files ? { files: num('files', 0) } : {}),
+      }
+      const days = num('days', 5)
+      await step(w, 'daily', `maintained-${days}`, () => S.crossrefDaily(w, o, days, true))
+      await step(w, 'reads', 'after-policy', async () =>
+        S.reads(w, 'after-policy', {
+          profiles: ['r2', 'r2-slow'],
+          keys: await S.crossrefKeys(w, 200),
+        }),
+      )
       break
     }
     default:

@@ -255,9 +255,9 @@ function claims(r: Results): string {
   const sweeps = r.all.filter((x) => x.scenario === 'sweep' && x.suite !== 'gate')
   const forks = suites.map((s) => r.get(s, 'forks')).filter(Boolean) as R[]
   const loads = SIZES.map(([s]) => r.get(s, 'load')).filter(Boolean) as R[]
-  const dailies = SIZES.map(([s, label]) => [label, r.like(s, 'daily', 'first-')] as const).filter(
-    ([, d]) => d,
-  )
+  const dailies = SIZES.map(
+    ([s, label]) => [label, r.like(s, 'daily', 'maintained-')] as const,
+  ).filter(([, d]) => d)
   const flat = dailies.length >= 2
   const first = dailies[0]?.[1]
   const last = dailies[dailies.length - 1]?.[1]
@@ -472,7 +472,7 @@ function commitChart(r: Results): string {
   const seconds: (number | null)[] = []
   const requests: (number | null)[] = []
   for (const [suite, label] of SIZES) {
-    const d = r.like(suite, 'daily', 'first-')
+    const d = r.like(suite, 'daily', 'maintained-')
     if (!d) continue
     cats.push(label)
     seconds.push(d.serverSeconds.p50)
@@ -485,7 +485,7 @@ function commitChart(r: Results): string {
       cats,
       [{ name: 'requests', values: requests }],
       (v) => num(v, 0),
-      'Checking the files and creating the commit. It does not grow with the collection.',
+      'Checking the files and creating the commit, with the rebuild policy running after each day. It does not grow with the collection.',
     ) +
     columns(
       'Server seconds to commit a day’s upload, by collection size',
