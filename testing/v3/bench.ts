@@ -115,6 +115,8 @@ async function sized(
   await step(w, 'forks', '', () => S.forks(w, o.forkDays))
   // Two days at the rate layout F's bench used (240,000 a day at Crossref's size), to set beside its.
   await step(w, 'daily', 'f-rate-2', () => S.daily(w, 2, true, 240_000 / 180_000_000))
+  // The same 1,000-change upload at every size: what a commit costs apart from its own upload.
+  await step(w, 'daily', 'fixed-1000', () => S.daily(w, 3, true, 1000 / w.records))
   await step(w, 'storage', '', () => S.storageSplit(w))
 }
 
@@ -252,6 +254,13 @@ async function suite(name: string): Promise<void> {
       const w = world(folder, { ...base, records })
       const targets = str('targets', '8,32,128').split(',').map(Number)
       await step(w, 'fork-edit', '', () => S.forkEdit(w, targets))
+      // The 1,000-change upload every sized suite commits, on the first target's parent.
+      const parent: World = {
+        ...w,
+        collection: `cut${String(targets[0]).replace('.', '_')}`,
+        fileBytes: 1024 ** 3,
+      }
+      await step(w, 'daily', 'fixed-1000', () => S.daily(parent, 3, true, 1000 / records))
       break
     }
     case 'split': {

@@ -30,6 +30,9 @@ const esc = (s: unknown) =>
 const GB = 1024 ** 3
 const MB = 1024 ** 2
 const n0 = (v: number) => Math.round(v).toLocaleString('en-US')
+/** A record count in a few characters: 100k, 1M, 12M. */
+const short = (v: number) =>
+  v >= 1e6 ? `${+(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${Math.round(v / 1e3)}k` : String(v)
 function num(v: unknown, digits = 1): string {
   if (typeof v !== 'number' || !Number.isFinite(v)) return ''
   if (Math.abs(v) >= 100 || Number.isInteger(v)) return n0(v)
@@ -65,6 +68,30 @@ const SIZES: [suite: string, label: string][] = [
   ['12m', '12M'],
   ['crossref', 'Crossref, 180M'],
 ]
+
+/** The sizes with a detail section: every size, and the sample of Crossref tried before the whole. */
+const DETAILS: [suite: string, label: string][] = [
+  ...SIZES.slice(0, 4),
+  ['crossref-mid', 'Crossref sample (2,000 of the dump’s 36,626 files)'],
+  ['crossref', 'Crossref, all of it'],
+]
+
+/** Where the same 1,000-change upload was committed, smallest collection first. */
+const FIXED: [suite: string, label: string][] = [
+  ['quick', '100k'],
+  ['1m', '1M'],
+  ['5m', '5M'],
+  ['12m', '12M'],
+  ['fork-edit', ''],
+]
+
+/** A reads step's name, from its label. */
+function readName(label: string): string {
+  const fixed = READ_STATES.find(([l]) => l === label)?.[1]
+  if (fixed) return fixed
+  const m = /^(\d+)-since-rebuild$/.exec(label)
+  return m ? `${m[1]} commits later` : label
+}
 
 class Results {
   constructor(readonly all: R[]) {}
@@ -251,7 +278,7 @@ function claims(r: Results): string {
   const row = (claim: string, held: boolean | null, evidence: string) => [
     esc(claim),
     held === null
-      ? '<span class="pill wait">not run yet</span>'
+      ? '<span class="pill wait">not measured yet</span>'
       : held
         ? '<span class="pill ok">✓ held</span>'
         : '<span class="pill bad">✕ did not hold</span>',
@@ -265,18 +292,28 @@ function claims(r: Results): string {
   const dailies = SIZES.map(
     ([s, label]) => [label, r.like(s, 'daily', 'maintained-')] as const,
   ).filter(([, d]) => d)
-  const flat = dailies.length >= 2
-  const first = dailies[0]?.[1]
-  const last = dailies[dailies.length - 1]?.[1]
+  // The same upload at each size is the fair test: a day's upload grows with the collection.
+  const fixed = FIXED.map(([s, label]) => {
+    const d = r.get(s, 'daily', 'fixed-1000')
+    return d ? ([label || short(d.records), d] as const) : null
+  }).filter(Boolean) as (readonly [string, R])[]
+  const flat = fixed.length >= 2
+  const first = fixed[0]?.[1]
+  const last = fixed[fixed.length - 1]?.[1]
   const heap = Math.max(0, ...r.all.filter((x) => x.suite !== 'gate').flatMap((x) => peaks(x)))
   const many = r.many()
   const rows = [
     row(
       'A commit costs the same whatever the collection holds',
-      flat ? last!.serverRequests.p50 <= first!.serverRequests.p50 + 4 : null,
       flat
-        ? `${dailies.map(([l, d]) => `${l}: ${num(d!.serverRequests.p50)} requests`).join('; ')} for a day's commit`
-        : '',
+        ? last!.serverRequests.p50 <= first!.serverRequests.p50 + 3 &&
+            last!.serverSeconds.p50 <= first!.serverSeconds.p50 * 1.5 + 0.2
+        : null,
+      flat
+        ? `the same 1,000-change upload: ${fixed.map(([l, d]) => `${l}: ${num(d.serverRequests.p50)} requests, ${secs(d.serverSeconds.p50)}`).join('; ')}`
+        : dailies.length > 0
+          ? `a day’s upload, which grows with the collection: ${dailies.map(([l, d]) => `${l}: ${num(d!.serverRequests.p50)} requests`).join('; ')}. The same upload at each size comes in the next round`
+          : '',
     ),
     row(
       'A first load is readable the moment it commits',
@@ -492,7 +529,7 @@ function commitChart(r: Results): string {
       cats,
       [{ name: 'requests', values: requests }],
       (v) => num(v, 0),
-      'Checking the files and creating the commit, with the rebuild policy running after each day. It does not grow with the collection.',
+      'Checking the files and creating the commit, with the rebuild policy on. A day is the same share of the collection at every size, so the upload grows with each column; the requests barely do.',
     ) +
     columns(
       'Server seconds to commit a day’s upload, by collection size',
@@ -536,7 +573,7 @@ function readsChart(r: Results): string {
       cats,
       series,
       (v) => num(v, 1),
-      'Mean over 200 records. Each file whose key range covers the record costs a key block, unless the file is small enough to sit whole in its cached tail; then the record block.',
+      'Mean over 200 records. Each file whose key range covers the record costs a key block, then the record block. A small file’s key blocks come with its footer (the last 64 KB, read once and cached), so at these sizes a day’s file costs nothing more; from about 1,000 changes a day it costs a request.',
     ) +
     lines(
       'Sorted-record-files a read of one record checks',
@@ -745,9 +782,9 @@ function suiteDetail(r: Results, suite: string, label: string): string {
   const reads = r.all.filter((x) => x.suite === suite && x.scenario === 'reads')
   if (reads.length > 0) {
     const rows: (string | number | undefined)[][] = []
-    for (const [l, name] of READ_STATES) {
-      const x = reads.find((q) => q.label === l)
-      if (!x) continue
+    reads.sort((a, b) => String(a.at).localeCompare(String(b.at)))
+    for (const x of reads) {
+      const name = readName(x.label)
       for (const profile of ['r2', 'r2-slow', 'none']) {
         const p = x[profile] as R | undefined
         if (!p) continue
@@ -784,7 +821,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
       out += table(
         ['Export', 'Records', 'Lines', 'Time', 'Processes', 'MB a second', 'Requests', 'Most heap'],
         ex.map((x) => [
-          esc(READ_STATES.find(([l]) => l === x.label)?.[1] ?? x.label),
+          esc(readName(x.label)),
           n0(x.export.records),
           bytes(x.export.bytes),
           secs(x.export.seconds),
@@ -909,7 +946,7 @@ function suitesTable(r: Results): string {
 
 export function buildReport(results: R[]): string {
   const r = new Results(results)
-  const details = SIZES.map(([s, l]) => suiteDetail(r, s, l)).join('')
+  const details = DETAILS.map(([s, l]) => suiteDetail(r, s, l)).join('')
   return `<title>Underlay v3 Scale Bench</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
