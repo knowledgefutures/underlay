@@ -109,6 +109,11 @@ export interface CheckOptions {
   cache?: v3.FileCache
   /** Rows the engine withholds: their lines read as null. */
   withheld?: (r: ModelRow) => boolean
+  /**
+   * History has been thinned: rows only older versions saw are gone, so a key's
+   * history and the list of keys touched are not compared, only real differences.
+   */
+  thinned?: boolean
 }
 
 /** Every read, at every version, against the model. */
@@ -182,7 +187,7 @@ export async function checkReads(
     expect(await v3.counts(store, view, {}, ro), what).toEqual(counted)
 
     // History of a few keys.
-    for (let i = 0; i < 4 && keys.length > 0; i++) {
+    for (let i = 0; i < 4 && keys.length > 0 && !opts.thinned; i++) {
       const k = keys[Math.floor(rand() * keys.length)]!
       expect(await v3.history(store, view, k.type, k.id, ro), `${what} ${keyOf(k)}`).toEqual(
         model.history(k.type, k.id, version).map((r) => ({
@@ -201,10 +206,12 @@ export async function checkReads(
       if (since > 0 && opts.versions && !opts.versions.includes(since)) continue
       const touched = model.touched(since, version)
       const got = await collect(v3.changes(store, view, since, {}, ro))
-      expect(
-        got.map((c) => [c.type, c.id, c.after?.hash ?? null, c.after?.commit ?? null]),
-        `${what} since ${since}`,
-      ).toEqual(touched.map((r) => [r.type, r.id, r.hash, r.kind === 'r' ? r.commit : null]))
+      if (!opts.thinned) {
+        expect(
+          got.map((c) => [c.type, c.id, c.after?.hash ?? null, c.after?.commit ?? null]),
+          `${what} since ${since}`,
+        ).toEqual(touched.map((r) => [r.type, r.id, r.hash, r.kind === 'r' ? r.commit : null]))
+      }
       for (const c of got.slice(0, 3)) {
         const line = await c.line()
         const r = touched.find((t) => t.type === c.type && t.id === c.id)!

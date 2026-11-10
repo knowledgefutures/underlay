@@ -256,8 +256,9 @@ are. A rebuild MUST preserve every retained version: each reads the same before 
 
 - **Thinning.** An entry with commit `c` is seen by versions `c` up to, but not including, the
   commit of the next entry for its key. A rebuild MAY drop an entry that no retained version
-  sees. It MAY drop a removal that would then be the oldest entry for its key only if no file
-  it leaves out can hold an older entry for that key.
+  sees. It MAY drop a removal that would then be the oldest entry for its key only if the
+  removal's commit is before the oldest retained version, and no file it leaves out can hold an
+  older entry for that key.
 - **Takedown.** A rebuild MAY replace a record entry by a `"w"` entry with the same hash, size,
   and commit, and leave out its line. Every file holding the row has to be rebuilt for the
   bytes to be gone.
