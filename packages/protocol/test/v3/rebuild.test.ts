@@ -65,6 +65,8 @@ describe('rebuilding against the model', () => {
           tiers: { ratio: 2, baseBytes: 2000 },
           adoptAfter: 1,
           ...(rand() < 0.5 ? { maxBytes: 500, typeCutBytes: 200 } : {}),
+          // Sometimes cut by key and keep files nothing changed in.
+          ...(rand() < 0.5 ? { cutEvery: 4, keepUntouched: true } : {}),
         })
         expect(r.lost).toBe(false)
         expect(r.layout!.through).toBe(model.head)
@@ -445,5 +447,110 @@ describe('recreating originals', () => {
       }
     }
     await v3.verifyLog(store, 'c', { files: true })
+  })
+})
+
+describe('cutting by key and keeping untouched files', () => {
+  const pad = (i: number) => String(i).padStart(5, '0')
+  const base = (n: number) =>
+    Array.from({ length: n }, (_, i) => line(rec('t', pad(i), { i, text: 'x'.repeat(60) })))
+
+  it('picks cut keys from the key alone, about one in the number asked for', () => {
+    let cuts = 0
+    for (let i = 0; i < 20_000; i++) if (v3.keyCut('t', pad(i), 50)) cuts++
+    expect(cuts).toBeGreaterThan(300)
+    expect(cuts).toBeLessThan(500)
+    expect(v3.keyCut('t', pad(7), 50)).toBe(v3.keyCut('t', pad(7), 50))
+    expect(v3.keyCut('t', 'a', 1)).toBe(true)
+  })
+
+  it('gives the same files for the same stretch of keys, whatever else is in the build', async () => {
+    const store = memoryStore()
+    const rows = base(3000)
+    const a = await v3.buildFiles(rows, v3.storeTarget(store), { cutEvery: 100 })
+    expect(a.length).toBeGreaterThan(15)
+    // One record changed, and one added far from it.
+    const changed = rows.map((r) => (r.id === pad(1500) ? line(rec('t', pad(1500), 'new')) : r))
+    changed.push(line(rec('t', pad(2990) + 'x', 'added')))
+    changed.sort(v3.compareKey)
+    const b = await v3.buildFiles(changed, v3.storeTarget(store), { cutEvery: 100 })
+    const ids = new Set(a.map((f) => f.id))
+    const fresh = b.filter((f) => !ids.has(f.id))
+    // Only the files holding the changed and the added key differ (an added cut key could split one).
+    expect(fresh.length).toBeGreaterThanOrEqual(2)
+    expect(fresh.length).toBeLessThanOrEqual(3)
+    expect(b.length).toBeGreaterThanOrEqual(a.length)
+  })
+
+  it('rewrites only the files a change falls in, and reads the same', async () => {
+    const store = memoryStore()
+    const model = new Model()
+    const rows = base(3000)
+    model.add(rows)
+    await commitRows(store, 'c', rows, { cutEvery: 100 })
+    const edit = [line(rec('t', pad(1500), 'edited')), line(rem('t', pad(1501)))]
+    model.add(edit)
+    await commitRows(store, 'c', edit)
+    const before = (await v3.currentFiles(store, 'c')).files
+    const r = await v3.rebuild(store, 'c', { plan: v3.planAll, cutEvery: 100, keepUntouched: true })
+    // Both edits sit in one of the load's files: that one is merged, the rest are kept.
+    expect(r.kept).toBe(before.length - 2)
+    expect(r.filesOut).toBe(1)
+    expect(r.filesIn).toBe(before.length)
+    const kept = new Set(before.map((f) => f.id))
+    const layout = r.layout!
+    expect(layout.files.filter((f) => kept.has(f.id)).length).toBe(before.length - 2)
+    // One run now, its files in key order with ranges that do not overlap.
+    expect(v3.runsOf(layout.files).length).toBe(1)
+    const sorted = [...layout.files].sort((x, y) =>
+      v3.compareKeys(x.first![0], x.first![1], y.first![0], y.first![1]),
+    )
+    for (let i = 1; i < sorted.length; i++) {
+      const p = sorted[i - 1]!.last!
+      const f = sorted[i]!.first!
+      expect(v3.compareKeys(p[0], p[1], f[0], f[1])).toBeLessThan(0)
+    }
+    await dropUnlisted(store, 'c')
+    await verifyListed(store, 'c')
+    await checkReads(store, 'c', model, rng(31), {
+      keys: [1499, 1500, 1501, 1502, 0, 2999].map((i) => ({ type: 't', id: pad(i) })),
+    })
+    // The originals still recreate from what is listed.
+    const files = (await v3.currentFiles(store, 'c')).files
+    for await (const c of v3.readLog(store, 'c', 1, 2)) {
+      expect((await v3.recreate(store, files, c.commit)).every((m) => m.matches)).toBe(true)
+    }
+    // A second rebuild with nothing new keeps every file and writes nothing.
+    const again = await v3.rebuild(store, 'c', {
+      plan: v3.planAll,
+      cutEvery: 100,
+      keepUntouched: true,
+    })
+    expect(again).toMatchObject({ filesOut: 0, written: 0, kept: layout.files.length })
+  })
+
+  it('costs a fork that edits one record one file, not the collection', async () => {
+    const store = memoryStore()
+    const rows = base(3000)
+    await commitRows(store, 'parent', rows, { cutEvery: 100 })
+    await v3.forkCollection(store, 'parent', 'fork')
+    await commitRows(store, 'fork', [line(rec('t', pad(42), 'forked'))])
+    const r = await v3.rebuild(store, 'fork', {
+      plan: v3.planAll,
+      cutEvery: 100,
+      keepUntouched: true,
+    })
+    expect(r.filesOut).toBe(1)
+    const parent = new Set((await v3.currentFiles(store, 'parent')).files.map((f) => f.id))
+    const fork = (await v3.currentFiles(store, 'fork')).files
+    // Every file but the rewritten one is still the parent's own.
+    expect(fork.filter((f) => !parent.has(f.id)).length).toBe(1)
+    expect(fork.length).toBe(parent.size)
+    const s = await v3.sweep(store, { now: () => 0 })
+    const p = s.logical.get('parent')!.bytes
+    const f = s.logical.get('fork')!.bytes
+    // Stored once: the parent, and one file of the fork's.
+    expect(s.records.listedBytes - p).toBeLessThan(p / 15)
+    expect(f).toBeGreaterThan(p * 0.95)
   })
 })

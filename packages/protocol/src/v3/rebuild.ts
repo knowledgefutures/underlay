@@ -17,7 +17,7 @@
  */
 import { putFromParts, type Store } from '../repo/types.js'
 import { sha256 } from '../sha256.js'
-import { type BuildOptions, type FileTarget, recordKey } from './build.js'
+import { type BuildOptions, type FileTarget, keyCut, recordKey } from './build.js'
 import { MAX_FILE_ENTRIES, RECORD_BLOCK_BYTES } from './constants.js'
 import {
   ContentBuilder,
@@ -41,7 +41,14 @@ import {
   readLatest,
   readLog,
 } from './log.js'
-import { type Found, mergeGroups, type ReadOptions, type View, type ViewFile } from './read.js'
+import {
+  type Found,
+  type MergeHooks,
+  mergeGroups,
+  type ReadOptions,
+  type View,
+  type ViewFile,
+} from './read.js'
 import { SortedFile } from './reader.js'
 import { equalParts } from './util.js'
 
@@ -69,10 +76,20 @@ export interface MergeOptions extends ReadOptions {
   maxEntries?: number
   /** Close an output file where the type changes, once it holds this many bytes. Default 16 MiB. */
   typeCutBytes?: number
+  /** Cut output by key, one key in this many (`keyCut`), so equal stretches get equal files. */
+  cutEvery?: number
+  /**
+   * Keep, as it is, any input file whose key range no other input has an entry
+   * in: it has no changes, so there is nothing to merge into it. Not with
+   * thinning or a takedown, which may have to rewrite any file.
+   */
+  keepUntouched?: boolean
   level?: number
 }
 
 export interface MergeResult {
+  /** Inputs left as they are (`keepUntouched`). */
+  kept: ViewFile[]
   files: LayoutFile[]
   /** Bytes of files written (stored size), and of those skipped because they were already stored. */
   written: number
@@ -144,7 +161,14 @@ export async function mergeFiles(
   const maxBytes = opts.maxBytes ?? 1024 * 1024 * 1024
   const maxEntries = Math.min(opts.maxEntries ?? REBUILD_FILE_ENTRIES, MAX_FILE_ENTRIES)
   const typeCut = opts.typeCutBytes ?? TYPE_CUT_BYTES
-  const result: MergeResult = { files: [], written: 0, skipped: 0, entriesIn: 0, dropped: 0 }
+  const result: MergeResult = {
+    kept: [],
+    files: [],
+    written: 0,
+    skipped: 0,
+    entriesIn: 0,
+    dropped: 0,
+  }
   const index = new Map(inputs.map((f, i) => [f.id, i]))
   const all: View = {
     collection: '',
@@ -256,7 +280,27 @@ export async function mergeFiles(
   const oldest = opts.retained ? (opts.retained[0]?.[0] ?? opts.through + 1) : 1
   let draft: Draft | null = null
   let lastType: string | null = null
-  for await (const group of mergeGroups(store, all, {}, { ...read, readAhead: 1024 * 1024 })) {
+  let lastKey: { type: string; id: string } | null = null
+  const hooks: MergeHooks =
+    opts.keepUntouched && !opts.retained && !opts.takedown
+      ? {
+          // A file with its key range to itself: the output so far ends before it, and it stays.
+          skipFile: async (file) => {
+            if (draft) await close(draft)
+            draft = null
+            result.kept.push(file)
+            return true
+          },
+        }
+      : {}
+  for await (const group of mergeGroups(
+    store,
+    all,
+    {},
+    { ...read, readAhead: 1024 * 1024 },
+    inputs,
+    hooks,
+  )) {
     result.entriesIn += group.length
     // Thin: keep a row only if a retained version sees it.
     let kept: Found[] = []
@@ -291,15 +335,20 @@ export async function mergeFiles(
     if (kept.length === 0) continue
     const type = kept[0]!.entry.type
     if (draft) {
-      const c = draft.content
+      const c: ContentBuilder = (draft as Draft).content
       const full = c.bytes >= maxBytes || c.entries + kept.length > maxEntries
-      if (full || (type !== lastType && c.bytes >= typeCut)) {
+      const byKey =
+        opts.cutEvery !== undefined &&
+        lastKey !== null &&
+        keyCut(lastKey.type, lastKey.id, opts.cutEvery)
+      if (full || byKey || (type !== lastType && c.bytes >= typeCut)) {
         await close(draft)
         draft = null
       }
     }
     draft ??= new Draft(opts.level)
     lastType = type
+    lastKey = { type, id: kept[0]!.entry.id }
     for (const f of kept) {
       const e = f.entry
       const withheld =
@@ -435,6 +484,8 @@ export interface RebuildResult {
   merges: number
   filesIn: number
   filesOut: number
+  /** Input files a merge left as they were, because nothing had changed in their key range. */
+  kept: number
   /** Stored bytes written, and stored bytes of outputs that already existed. */
   written: number
   skipped: number
@@ -488,6 +539,7 @@ export async function rebuild(
     merges: 0,
     filesIn: 0,
     filesOut: 0,
+    kept: 0,
     written: 0,
     skipped: 0,
     bytesIn: 0,
@@ -541,12 +593,16 @@ export async function rebuild(
     // A merge of one run keeps its run number, so a takedown does not regroup the layout.
     const run = group.length === 1 ? group[0]!.run : nextRun++
     for (const f of m.files) outputs.push({ ...f, run })
+    // Files the merge left as they are stay listed, now as part of the merged run.
+    for (const k of m.kept) outputs.push({ ...inputs.find((i) => i.id === k.id)!, run })
+    result.kept += m.kept.length
     result.merges++
     result.filesIn += inputs.length
     result.filesOut += m.files.length
     result.written += m.written
     result.skipped += m.skipped
-    result.bytesIn += inputs.reduce((n, f) => n + f.bytes, 0)
+    const keptIds = new Set(m.kept.map((k) => k.id))
+    result.bytesIn += inputs.reduce((n, f) => n + (keptIds.has(f.id) ? 0 : f.bytes), 0)
     result.dropped += m.dropped
   }
 

@@ -324,6 +324,15 @@ interface Source {
   commit: number
 }
 
+export interface MergeHooks {
+  /**
+   * Called for a file no other file's entries fall inside the key range of,
+   * before it is opened. Return true to leave it out of the merge (a rebuild
+   * keeps such a file as it is). Every group before it has been yielded by then.
+   */
+  skipFile?: (file: ViewFile) => Promise<boolean> | boolean
+}
+
 /**
  * The entries of a view's files merged by key: one group per key, its entries
  * oldest first, each at or below the view's version.
@@ -334,6 +343,7 @@ export async function* mergeGroups(
   range: KeyRange = {},
   opts: ScanOptions = {},
   files: ViewFile[] = view.files,
+  hooks: MergeHooks = {},
 ): AsyncGenerator<Found[]> {
   let from = range.from
   if (range.type !== undefined && (!from || compareKeys(from.type, from.id, range.type, '') < 0)) {
@@ -384,6 +394,21 @@ export async function* mergeGroups(
     const s = heap.pop()
     if (!s) break
     if (!s.cursor) {
+      if (hooks.skipFile && s.file.first![0] === s.type && s.file.first![1] === s.id) {
+        // A file about to be opened. If no other file has an entry before this one's last
+        // key, its key range is its own, and the caller may want to leave it out of the merge.
+        const held = group[0]?.entry
+        if (!held || held.type !== s.type || held.id !== s.id) {
+          if (group.length > 0) {
+            yield group
+            group = []
+          }
+          const other = heap.peek()
+          const alone =
+            !other || compareKeys(other.type, other.id, s.file.last![0], s.file.last![1]) > 0
+          if (alone && (await hooks.skipFile(s.file))) continue
+        }
+      }
       // The merge has reached this file's keys: open it and take its place by its first entry.
       const f = await open(store, s.file.id, opts)
       s.reader = f.reader(readerOpts)

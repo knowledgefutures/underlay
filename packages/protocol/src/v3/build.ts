@@ -326,6 +326,33 @@ export interface BuildOptions extends WriterOptions {
   maxEntries?: number
   /** Close a file where the type changes, once it holds this many bytes of lines. Default: never. */
   typeCutBytes?: number
+  /**
+   * Cut by key: also close a file after a key that `keyCut` picks, one key in
+   * this many. The same stretch of keys then lands in the same file whoever
+   * builds it, and a file whose keys did not change keeps its id.
+   */
+  cutEvery?: number
+}
+
+/**
+ * Whether a file ends after a key, for a cut of one key in `every`: a hash of
+ * the key, so the choice depends on the key alone. Which keys cut is the
+ * server's choice, not the protocol's; it only has to stay the same for a
+ * collection and its forks.
+ */
+export function keyCut(type: string, id: string, every: number): boolean {
+  if (every <= 1) return true
+  // FNV-1a over the key's code units, then a finishing mix so low bits are well spread.
+  let h = 2_166_136_261
+  for (let i = 0; i < type.length; i++) h = Math.imul(h ^ type.charCodeAt(i), 16_777_619)
+  h = Math.imul(h ^ 0, 16_777_619)
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16_777_619)
+  h ^= h >>> 16
+  h = Math.imul(h, 0x85ebca6b)
+  h ^= h >>> 13
+  h = Math.imul(h, 0xc2b2ae35)
+  h ^= h >>> 16
+  return (h >>> 0) % every === 0
 }
 
 export const DEFAULT_FILE_BYTES = 1024 * 1024 * 1024
@@ -365,7 +392,8 @@ export async function buildFiles(
     for await (const row of rows) {
       if (writer && last && (last.type !== row.type || last.id !== row.id)) {
         const full = writer.bytes >= maxBytes || writer.entries >= maxEntries
-        if (full || (last.type !== row.type && writer.bytes >= typeCut)) await close()
+        const byKey = opts.cutEvery !== undefined && keyCut(last.type, last.id, opts.cutEvery)
+        if (full || byKey || (last.type !== row.type && writer.bytes >= typeCut)) await close()
       }
       if (!writer) {
         draft = await target.begin()
