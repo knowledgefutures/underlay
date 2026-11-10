@@ -221,9 +221,19 @@ export class S3Store implements Store {
       headers,
       body: body as BodyInit,
     })
-    await res.body?.cancel()
-    if (res.status === 412) return false
+    if (res.status === 412) {
+      await res.body?.cancel()
+      return false
+    }
+    // R2 answers 429 to a second write of a key within a second, so a create that loses a
+    // close race may get that in place of 412. The key is there then, and the create lost.
+    // If it is not there, this is some other limit, and an error.
+    if (res.status === 429 && (await this.head(key)) !== null) {
+      await res.body?.cancel()
+      return false
+    }
     if (!res.ok) return this.#fail(res, `PUT ${key}`)
+    await res.body?.cancel()
     return true
   }
 

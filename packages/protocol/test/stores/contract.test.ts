@@ -273,6 +273,28 @@ describe('capabilities', () => {
   })
 })
 
+describe('s3 create under a rate limit', () => {
+  it('reads a 429 for a key that is there as a lost create, and for one that is not as an error', async () => {
+    const fake: FakeS3 = await startFakeS3()
+    cleanups.push(() => fake.close())
+    const store = s3Store({
+      endpoint: fake.url,
+      bucket: 'test',
+      accessKeyId: 'k',
+      secretAccessKey: 's',
+    })
+    expect(await createObject(store, 'c/1', 'first')).toBe(true)
+    // R2 refuses a second write of a key within a second with 429, not 412.
+    fake.limits.busy = 'existing'
+    expect(await createObject(store, 'c/1', 'second')).toBe(false)
+    expect(await (await store.get('c/1'))!.text()).toBe('first')
+    expect(await createObject(store, 'c/2', 'new')).toBe(true)
+    fake.limits.busy = 'all'
+    await expect(createObject(store, 'c/3', 'x')).rejects.toThrow(/429/)
+    expect(await store.get('c/3')).toBeNull()
+  })
+})
+
 describe('cache-control on put', () => {
   const cc = 'public, max-age=31536000, immutable'
   it('s3 sends it with the object, and it is served back', async () => {
