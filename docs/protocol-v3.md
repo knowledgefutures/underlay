@@ -272,16 +272,18 @@ cannot be recreated in full.
 
 A collection is:
 
-- a description: a JSON object with at least `id`, and optionally where it was forked from
-  (`forkedFrom`: collection id, commit number, version id);
+- a description: a JSON object with at least `id`; for a fork, where it was forked from
+  (`forkedFrom`: collection id, commit number, version id) and its `lineage`: the collections
+  whose ids its earlier commits carry, oldest first, each with the last commit number that
+  carries it;
 - its commits, numbered from 1 with no gaps;
 - its layouts;
 - the sorted-record-files and assets those name.
 
 A collection names files and assets by id only. It never refers to another collection's
 commits or layouts. A fork begins as a copy of another collection's commits up to the fork
-point, and of its current layout; those commits carry the original collection's id and are
-valid under `forkedFrom`. The fork point is at or after the copied layout's `through`, since
+point, and of its current layout; those commits carry the ids of the collections they were
+made in and are valid under `lineage`. The fork point is at or after the copied layout's `through`, since
 labeled files may hold rows of every commit up to it.
 
 ## 9. The reference server's storage (informative)
@@ -300,9 +302,9 @@ sweep/                            the sweep's own state
 
 - Commits and layouts are created with a put that fails if the key exists. Nothing else decides
   a race.
-- `latest.json` is `{"commit": n, "id": version id, "semver": …, "layout": m}`, overwritten
-  after each commit or layout. A reader starts from it and probes upward; without it, a reader
-  probes from 1. A failed write of it is ignored.
+- `latest.json` is `{"commit": n, "layout": m}`, overwritten after each commit or layout. A
+  reader starts from it and probes upward; without it, a reader probes from 1. A failed write
+  of it is ignored.
 - A file or asset is stored once. An upload of one already stored is not written again, and the
   uploader is not told.
 - **Rebuild policy.** Each layout file carries `run`, the number of the layout that wrote it (0
