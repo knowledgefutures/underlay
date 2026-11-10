@@ -5,6 +5,10 @@
 #   nohup sh testing/scripts/chain.sh r1 quick 1m > /dev/null 2>&1 &
 #   sh testing/scripts/watch.sh r1          # in the background; re-arm after every wake
 #
+# Every process runs with a heap of at most 120 MB in all (96 MB old space and three 8 MB
+# semi-spaces), under the 128 MB a Worker has. --max-old-space-size=128 alone is not a cap:
+# Node then allows 320 MB, and collects harder for it.
+#
 # On the box, everything runs at low priority (NICE below) and under the
 # watchdog (scripts/watchdog.sh). A suite name may carry options after a colon,
 # with commas for spaces: many:--collections,3000,--burst,300,--label,many-3000
@@ -18,7 +22,7 @@ L=$B/chain-$gen.log
 [ -n "$BENCH" ] || { node v3/bundle.mjs > /dev/null || exit 1; BENCH=dist/bench.mjs; }
 mkdir -p "$B/bin"
 cp "$BENCH" "$B/bin/$gen-bench.mjs"
-run="node --max-old-space-size=128 $B/bin/$gen-bench.mjs"
+run="node --max-old-space-size=96 --max-semi-space-size=8 $B/bin/$gen-bench.mjs"
 [ -n "$NICE" ] && run="$NICE $run"
 echo "=== chain $gen: $* ($(date))" >> "$L"
 for step in "$@"; do

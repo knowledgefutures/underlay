@@ -1,7 +1,7 @@
 /**
  * Run by build.test.ts in a child process with a capped heap: sorts generated,
  * unsorted NDJSON far larger than the heap into sorted-record-files on disk,
- * and prints what it used. `node --max-old-space-size=128 --import tsx sort-memory.ts <bytes> <dir>`.
+ * and prints what it used. `node --max-old-space-size=96 --max-semi-space-size=8 --import tsx sort-memory.ts <bytes> <dir>`.
  */
 import { fileStore, v3 } from '../../src/index.js'
 

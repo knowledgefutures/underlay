@@ -4,7 +4,7 @@
  *
  *   node v3/bundle.mjs        # writes dist/bench.mjs and dist/cli.mjs
  *   rsync -a dist scripts box:~/underlay-v3-core/
- *   node --max-old-space-size=128 dist/bench.mjs suite gate
+ *   node --max-old-space-size=96 --max-semi-space-size=8 dist/bench.mjs suite gate
  */
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'

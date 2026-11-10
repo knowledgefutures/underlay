@@ -193,13 +193,23 @@ describe('building files', () => {
 describe('memory', () => {
   // 2 GB with UL_V3_SORT_BYTES=2147483648 (the plan's size; about three minutes).
   const bytes = Number(process.env.UL_V3_SORT_BYTES ?? 192 * 1024 * 1024)
-  it(`sorts ${Math.round(bytes / 1048576)} MB of unsorted input under a 128 MB heap`, async () => {
+  it(`sorts ${Math.round(bytes / 1048576)} MB of unsorted input under a 120 MB heap`, async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ul-v3-sort-'))
     try {
       const script = join(dirname(fileURLToPath(import.meta.url)), 'sort-memory.ts')
       const { stdout } = await promisify(execFile)(
         process.execPath,
-        ['--max-old-space-size=128', '--import', 'tsx', script, String(bytes), dir],
+        // 96 MB of old space and three 8 MB semi-spaces: at most 120 MB of heap in all.
+        // (--max-old-space-size=128 alone lets Node take 320 MB.)
+        [
+          '--max-old-space-size=96',
+          '--max-semi-space-size=8',
+          '--import',
+          'tsx',
+          script,
+          String(bytes),
+          dir,
+        ],
         { maxBuffer: 1 << 20 },
       )
       const r = JSON.parse(stdout.trim().split('\n').pop()!) as Record<string, number | boolean>

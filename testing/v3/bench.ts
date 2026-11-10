@@ -1,9 +1,10 @@
 /**
  * The v3 scale bench: suites of scenarios, each saved as a result.
  *
- *   node --max-old-space-size=128 --import tsx v3/bench.ts suite gate
- *   node --max-old-space-size=128 --import tsx v3/bench.ts suite 1m --latency r2
- *   node --max-old-space-size=128 --import tsx v3/bench.ts run many --collections 3000 --burst 300
+ *   H="--max-old-space-size=96 --max-semi-space-size=8"    (a heap of at most 120 MB in all)
+ *   node $H --import tsx v3/bench.ts suite gate
+ *   node $H --import tsx v3/bench.ts suite 1m --latency r2
+ *   node $H --import tsx v3/bench.ts suite many --collections 3000 --burst 300
  *   node --import tsx v3/bench.ts report
  *
  * Suites: gate (20k records, no latency, every scenario small), quick (100k), 1m, 5m, 12m,
@@ -17,6 +18,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { cpus, hostname, totalmem } from 'node:os'
 import { join } from 'node:path'
+import { getHeapStatistics } from 'node:v8'
 
 import { v3 } from '../../packages/protocol/src/index.js'
 import { benchDir } from '../src/dirs.js'
@@ -69,9 +71,9 @@ function save(w: World, scenario: string, label: string, data: S.Result, seconds
   log(`saved ${name}`)
 }
 
-function v8HeapCap(): number | null {
-  const flag = process.execArgv.find((a) => a.startsWith('--max-old-space-size='))
-  return flag ? Number(flag.split('=')[1]) : null
+/** The most heap V8 will give this process, in MB: old space and the semi-spaces together. */
+function v8HeapCap(): number {
+  return Math.round(getHeapStatistics().heap_size_limit / 1024 ** 2)
 }
 
 async function step(

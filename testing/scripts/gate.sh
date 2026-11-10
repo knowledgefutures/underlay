@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 export UL_BENCH_DIR=${GATE_DIR:-${TMPDIR:-/tmp}/underlay-v3-gate-$$}
 rm -rf "$UL_BENCH_DIR"
 out="$UL_BENCH_DIR.log"
-if [ -n "$BENCH" ]; then run="node --max-old-space-size=128 $BENCH"; else run="node --max-old-space-size=128 --import tsx v3/bench.ts"; fi
+if [ -n "$BENCH" ]; then run="node --max-old-space-size=96 --max-semi-space-size=8 $BENCH"; else run="node --max-old-space-size=96 --max-semi-space-size=8 --import tsx v3/bench.ts"; fi
 ok=0
 $run suite gate > "$out" 2>&1 || ok=1
 if grep -qE "CHECK FAILED|FAILED checks|(^|[^A-Za-z])[Ee]rror:|[a-z]Error:" "$out"; then

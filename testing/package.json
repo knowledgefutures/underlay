@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "cli": "node --import tsx v3/cli.ts",
-    "bench": "node --max-old-space-size=128 --import tsx v3/bench.ts",
+    "bench": "node --max-old-space-size=96 --max-semi-space-size=8 --import tsx v3/bench.ts",
     "bundle": "node v3/bundle.mjs",
     "typecheck": "../packages/protocol/node_modules/.bin/tsc -p . --noEmit"
   }
