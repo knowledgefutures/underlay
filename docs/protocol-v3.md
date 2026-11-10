@@ -309,11 +309,12 @@ sweep/                            the sweep's own state
 - A file or asset is stored once. An upload of one already stored is not written again, and the
   uploader is not told.
 - **Rebuild policy.** Each layout file carries `run`, a number shared by the files one merge
-  wrote (0 for a commit's own file, whose run is its commit). Runs cover commit ranges that
-  don't overlap. Adjacent runs of the same size tier (a factor of 10 apart) are merged when there are
-  10 of them, into files cut at 1 GiB of lines, at 262,144 entries, and where the type changes
-  once a file holds 16 MiB.
-  Replaced rows stay in the same file as the rows that replaced them.
+  wrote (0 for a commit's own file, whose run is its commit). Runs are kept in commit order,
+  and cover commit ranges that don't overlap. Size tiers are a factor of 10 apart. For each
+  tier, lowest first: where 10 or more neighbouring runs are each at or below it, and together
+  are at least twice the largest of them, they are merged into files cut at 1 GiB of lines, at
+  262,144 entries, and where the type changes once a file holds 16 MiB. Replaced rows stay in
+  the same file as the rows that replaced them.
 - **Sweep.** A file is listed if a collection's current layout, or a commit after that
   layout's `through`, names it. An asset is listed if a `$asset` entry in a listed file names
   it. One sweeper runs in passes. A pass condemns what nothing lists; moves to `trash/` what is

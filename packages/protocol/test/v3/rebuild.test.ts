@@ -245,6 +245,25 @@ describe('the tiered policy', () => {
     expect(v3.planTiered(broken, { ratio: 4 })!.map((r) => r.commits[0])).toEqual([7, 8, 9, 10])
   })
 
+  it('merges neighbours of uneven size, and does not rewrite a large run to take in small ones', () => {
+    // Sizes that fall either side of a tier's edge: no ten are of one tier, but ten are at or below one.
+    const uneven = Array.from({ length: 10 }, (_, i) => run(i + 1, (i % 2 ? 5 : 20) * MB))
+    expect(v3.planTiered(uneven)!.length).toBe(10)
+    expect(v3.planTiered(uneven.slice(1))).toBe(null)
+    // One 600 MB run and nine small ones: merging would rewrite 600 MB to add 45.
+    const lopsided = [run(1, 600 * MB), ...Array.from({ length: 9 }, (_, i) => run(i + 2, 5 * MB))]
+    expect(v3.planTiered(lopsided)).toBe(null)
+    // A tenth small one: the small ones merge with each other, and the large run is left.
+    const more = [...lopsided, run(11, 5 * MB)]
+    expect(v3.planTiered(more)!.map((r) => r.commits[0])).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    // Small runs behind enough large ones go in with them.
+    const mixed = [
+      ...Array.from({ length: 3 }, (_, i) => run(i + 1, 5 * MB)),
+      ...Array.from({ length: 8 }, (_, i) => run(i + 4, 300 * MB)),
+    ]
+    expect(v3.planTiered(mixed)!.length).toBe(11)
+  })
+
   it('puts runs a factor of the ratio apart in different tiers', () => {
     expect(v3.tierOf(1, 10, 8 * MB)).toBe(0)
     expect(v3.tierOf(8 * MB, 10, 8 * MB)).toBe(0)
@@ -281,10 +300,15 @@ describe('the tiered policy', () => {
     }
     const { files } = await v3.currentFiles(store, 'c')
     const runs = v3.runsOf(files)
-    // 27 uploads at a ratio of 3 end as one run: 9 merges of 3, 3 of those, 1 of those.
-    expect(runs.length).toBe(1)
-    expect(merges).toBe(13)
-    expect(runs[0]!.commits).toEqual([1, 27])
+    // 27 uploads at a ratio of 3: runs merge and merge again, and never pile up.
+    expect(runs.length).toBeLessThanOrEqual(6)
+    expect(merges).toBeGreaterThanOrEqual(8)
+    expect(runs[0]!.commits[0]).toBe(1)
+    expect(runs[runs.length - 1]!.commits[1]).toBe(27)
+    // Runs stay in commit order, their ranges not overlapping.
+    for (let i = 1; i < runs.length; i++) {
+      expect(runs[i]!.commits[0]).toBeGreaterThan(runs[i - 1]!.commits[1])
+    }
     await checkReads(store, 'c', model, rand, {
       versions: [1, 9, 20, 27],
       keys: [

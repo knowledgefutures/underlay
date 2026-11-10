@@ -350,22 +350,39 @@ export const tierOf = (bytes: number, ratio: number, baseBytes: number): number 
   bytes <= baseBytes ? 0 : Math.ceil(Math.log(bytes / baseBytes) / Math.log(ratio) - 1e-9)
 
 /**
- * The starting policy: runs are in commit order; where `ratio` or more runs
- * next to each other are of one size tier, merge them. The newest such group
- * goes first. Returns the runs to merge, or null if there is nothing to do.
- * Merged runs stay in commit order, so a file's commit range still says which
- * versions it can matter to.
+ * The starting policy. Runs are in commit order. For each size tier, lowest
+ * first: where `ratio` or more neighbouring runs are each at or below the tier,
+ * merge them, the newest such group first. A group is left alone unless
+ * together it is at least twice its largest run, so one large run is not
+ * rewritten again and again to take in small ones (they merge with each other
+ * first). Returns the runs to merge, or null if there is nothing to do.
+ *
+ * Uploads of one size merge in tens, then tens of tens: each byte is rewritten
+ * about once a tier. Uploads of uneven size still merge, since a smaller run
+ * counts toward its larger neighbours' tier. Merged runs stay in commit order,
+ * so a file's commit range still says which versions it can matter to.
  */
 export function planTiered(runs: Run[], opts: TierOptions = {}): Run[] | null {
   const ratio = opts.ratio ?? 10
   const base = opts.baseBytes ?? 8 * 1024 * 1024
-  let end = runs.length
-  while (end > 0) {
-    const tier = tierOf(runs[end - 1]!.bytes, ratio, base)
-    let start = end - 1
-    while (start > 0 && tierOf(runs[start - 1]!.bytes, ratio, base) === tier) start--
-    if (end - start >= ratio) return runs.slice(start, end)
-    end = start
+  const tiers = runs.map((r) => tierOf(r.bytes, ratio, base))
+  for (const tier of [...new Set(tiers)].sort((a, b) => a - b)) {
+    let end = runs.length
+    while (end > 0) {
+      if (tiers[end - 1]! > tier) {
+        end--
+        continue
+      }
+      let start = end - 1
+      while (start > 0 && tiers[start - 1]! <= tier) start--
+      const group = runs.slice(start, end)
+      if (group.length >= ratio) {
+        const total = group.reduce((n, r) => n + r.bytes, 0)
+        const largest = group.reduce((n, r) => Math.max(n, r.bytes), 0)
+        if (total >= 2 * largest) return group
+      }
+      end = start
+    }
   }
   return null
 }
