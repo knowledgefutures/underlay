@@ -29,6 +29,14 @@ for step in "$@"; do
   # shellcheck disable=SC2086
   if $run suite $name $opts > "$B/$gen-$label.log" 2>&1; then
     echo "=== $label ended $(date)" >> "$L"
+    # With CLEAN set, a finished suite's bulk is deleted (its results are kept) to leave room
+    # for the next. The Crossref store is never deleted here.
+    if [ -n "$CLEAN" ]; then
+      folder=$(echo "$opts" | sed -n 's/.*--label \([^ ]*\).*/\1/p'); [ -n "$folder" ] || folder=$name
+      [ "$folder" = many ] && folder=many-$(echo "$opts" | sed -n 's/.*--collections \([0-9]*\).*/\1/p')
+      [ "$folder" = many- ] && folder=many-20000
+      case "$folder" in crossref) ;; *) rm -rf "${B:?}/$folder";; esac
+    fi
   else
     echo "=== $label FAILED $(date) (see $B/$gen-$label.log)" >> "$L"
     exit 1

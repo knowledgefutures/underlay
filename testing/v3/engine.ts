@@ -206,6 +206,10 @@ export class V3Engine implements Engine {
     for (;;) {
       const r = await v3.rebuild(this.store, collection, {
         cache: this.cache,
+        // Maintenance runs after each commit here, so it always leaves a layout that lists
+        // the newest commit's files: the next commit and the next cold read open one layout,
+        // not a commit for each upload since the last merge.
+        adoptAfter: 1,
         ...(this.opts.tiers ? { tiers: this.opts.tiers } : {}),
         ...(this.opts.level === undefined ? {} : { level: this.opts.level }),
       })

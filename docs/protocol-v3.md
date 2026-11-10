@@ -284,8 +284,8 @@ A collection is:
 A collection names files and assets by id only. It never refers to another collection's
 commits or layouts. A fork begins as a copy of another collection's commits up to the fork
 point, and of its current layout; those commits carry the ids of the collections they were
-made in and are valid under `lineage`. The fork point is at or after the copied layout's `through`, since
-labeled files may hold rows of every commit up to it.
+made in and are valid under `lineage`. The fork point is at or after the copied layout's
+`through`, since labeled files may hold rows of every commit up to it.
 
 ## 9. The reference server's storage (informative)
 
@@ -321,7 +321,9 @@ sweep/                            the sweep's own state
   still unlisted and has been condemned longer than a grace period; moves back anything in
   `trash/` that is listed again; and deletes from `trash/` what has been there longer than a
   second period. An object's age alone is never the test, since a fork can copy a layout just
-  before its parent's next layout drops a file.
+  before its parent's next layout drops a file. The sweep's only state is a ledger of what it
+  has condemned and trashed, written whole by each pass under the pass's number, so nothing is
+  overwritten.
 
 ## 10. Constants
 

@@ -121,11 +121,14 @@ async function suite(name: string): Promise<void> {
   const latency = str('latency', name === 'gate' ? 'none' : 'r2')
   const workers = num('workers', Math.max(2, Math.min(10, cpus().length - 2)))
   const base = { latency, workers, ...(args.level ? { level: num('level', 6) } : {}) }
-  if (!args.keep && !args.resume)
-    await rm(join(benchDir(), 'v3', name), { recursive: true, force: true })
+  // A suite's folder is its name, or `--label` (a trial of a suite beside the real run).
+  const folder = suiteOf(name)
+  if (!args.keep && !args.resume) {
+    await rm(join(benchDir(), 'v3', folder), { recursive: true, force: true })
+  }
   switch (name) {
     case 'gate': {
-      const w = world(name, { ...base, records: 20_000 })
+      const w = world(folder, { ...base, records: 20_000 })
       await sized(w, { days: [3, 7, 12], forkDays: 5, samples: 40 })
       const o = { ...MANY_DEFAULT, collections: 60, burst: 20 }
       await step(w, 'many', '', () => S.many(w, o))
@@ -138,28 +141,28 @@ async function suite(name: string): Promise<void> {
       break
     }
     case 'quick':
-      await sized(world(name, { ...base, records: 100_000 }), {
+      await sized(world(folder, { ...base, records: 100_000 }), {
         days: [10, 20, 30],
         forkDays: 30,
         samples: 100,
       })
       break
     case '1m':
-      await sized(world(name, { ...base, records: 1_000_000 }), {
+      await sized(world(folder, { ...base, records: 1_000_000 }), {
         days: [10, 20, 30],
         forkDays: 30,
         samples: 200,
       })
       break
     case '5m':
-      await sized(world(name, { ...base, records: 5_000_000 }), {
+      await sized(world(folder, { ...base, records: 5_000_000 }), {
         days: [10, 20, 30],
         forkDays: 30,
         samples: 200,
       })
       break
     case '12m':
-      await sized(world(name, { ...base, records: 12_000_000 }), {
+      await sized(world(folder, { ...base, records: 12_000_000 }), {
         days: [10, 20, 30],
         forkDays: 30,
         samples: 200,
@@ -173,15 +176,13 @@ async function suite(name: string): Promise<void> {
         records: num('records', MANY_DEFAULT.records),
         streams: num('streams', MANY_DEFAULT.streams),
       }
-      const w = world(str('label', `many-${o.collections}`), { ...base, records: o.records })
-      if (!args.keep && !args.resume) await rm(w.dir, { recursive: true, force: true })
-      const fresh = world(w.suite, { ...base, records: o.records })
-      await step(fresh, 'many', '', () => S.many(fresh, o))
-      await step(fresh, 'sweep', '', () => S.sweepUnderLoad(fresh, o))
+      const w = world(folder, { ...base, records: o.records })
+      await step(w, 'many', '', () => S.many(w, o))
+      await step(w, 'sweep', '', () => S.sweepUnderLoad(w, o))
       break
     }
     case 'racing': {
-      const w = world(name, { ...base, records: 0 })
+      const w = world(folder, { ...base, records: 0 })
       await step(w, 'racing', 'one-collection', () =>
         S.racing(w, {
           writers: num('writers', 8),
@@ -194,7 +195,7 @@ async function suite(name: string): Promise<void> {
     case 'policy': {
       // The policy by arithmetic at Crossref's size, and for real over a year at reduced scale.
       const records = num('records', 50_000)
-      const w = world(name, { ...base, records })
+      const w = world(folder, { ...base, records })
       await step(w, 'policy', '', () => S.policySim())
       await step(w, 'policy-year', '', () =>
         S.policyYear(w, { records, days: num('days', 365), ratios: [10, 4, 2] }),
@@ -202,26 +203,51 @@ async function suite(name: string): Promise<void> {
       break
     }
     case 'crossref': {
-      const w = world(name, { ...base, records: num('records', 179_518_552), fileBytes: 1024 ** 3 })
+      // All of Crossref from the sorted dump, then 30 daily commits. `--files n` reads only the
+      // first n dump files (a trial).
+      const w = world(folder, {
+        ...base,
+        records: num('records', 179_518_552),
+        fileBytes: 1024 ** 3,
+      })
       const o = {
         dataDir: str('data', '/data/crossref-sort/sorted'),
         plan: str('plan', '/data/crossref-sort/plan.json'),
         ...(args.files ? { files: num('files', 0) } : {}),
       }
+      const days = num('days', 30)
+      const first = Math.round(days / 3)
+      const profiles = ['r2', 'r2-slow']
+      const reads = (label: string, exportIt = false) =>
+        step(w, 'reads', label, async () =>
+          S.reads(w, label, { profiles, exportIt, keys: await S.crossrefKeys(w, 200) }),
+        )
       await step(w, 'load', '', () => S.crossrefLoad(w, o))
+      await reads('0-since-rebuild')
+      await step(w, 'daily', `first-${first}`, () => S.crossrefDaily(w, o, first, false))
+      await reads(`${first}-since-rebuild`)
+      await step(w, 'daily', `next-${days - first}`, () =>
+        S.crossrefDaily(w, o, days - first, false),
+      )
+      await reads(`${days}-since-rebuild`)
+      await step(w, 'maintain', 'catch-up', () => S.maintain(w))
+      await reads('rebuilt', true)
+      await step(w, 'recreate', '', () => S.recreate(w, { write: 2 }))
+      await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
+      await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
       break
     }
     default:
       throw new Error(`Unknown suite "${name}"`)
   }
-  const problems = check(join(benchDir(), 'v3', 'results'), suiteOf(name))
+  const problems = check(join(benchDir(), 'v3', 'results'), folder)
   for (const p of problems) log(`CHECK FAILED: ${p}`)
   log(problems.length > 0 ? `=== ${name}: FAILED checks` : `=== ${name}: all done`)
   if (problems.length > 0) process.exitCode = 1
 }
 
 const suiteOf = (name: string) =>
-  name === 'many' ? str('label', `many-${num('collections', 20_000)}`) : name
+  str('label', name === 'many' ? `many-${num('collections', 20_000)}` : name)
 
 /** What must hold in a suite's results, whatever its size: the design's correctness claims. */
 function check(resultsDir: string, suiteName: string): string[] {

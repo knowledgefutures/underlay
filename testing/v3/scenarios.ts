@@ -27,8 +27,9 @@ import { BenchStore, type Counts, diskUsage, subCounts } from './store.js'
 import {
   type BuildDumpSpec,
   type BuildGenSpec,
-  crossrefSchema,
+  crossrefSchema as crossrefSchema0,
   type ExportSpec,
+  gzLines,
   type ManySpec,
   manyId,
   type RaceSpec,
@@ -1113,7 +1114,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
           storeDir: w.storeDir,
           latency: w.latency,
           files: g,
-          schemas: Object.fromEntries(plan.types.map((t) => [t, crossrefSchema])),
+          schemas: Object.fromEntries(plan.types.map((t) => [t, crossrefSchema0])),
         } satisfies VerifySpec),
       ),
     )
@@ -1153,5 +1154,247 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
     },
     firstRead: { ...brief(first.m), requests: reqs(first.m.requests) },
     stored: await diskUsage(w.storeDir),
+  }
+}
+
+/**
+ * A day of Crossref-shaped changes to the real collection: records picked from
+ * dump files spread across the key space, re-sent with the fields a Crossref
+ * update changes; a few removed; a few new ones beside them. `share` is the
+ * part of the collection a day changes.
+ */
+async function* crossrefDayRows(
+  o: CrossrefOptions,
+  files: string[],
+  day: number,
+  changes: number,
+  stream: string,
+): AsyncGenerator<v3.LineRow> {
+  const r = prng(hash32(`crossref/${stream}/day/${day}`))
+  // About 480 records from each of enough files, so a day touches hundreds of key ranges.
+  const perFile = 480
+  const picks = new Set<number>()
+  const want = Math.min(files.length, Math.ceil(changes / perFile))
+  while (picks.size < want) picks.add(Math.floor(r() * files.length))
+  const share = perFile / 4900
+  let made = 0
+  for (const i of [...picks].sort((a, b) => a - b)) {
+    for await (const line of gzLines(join(o.dataDir, files[i]!))) {
+      if (r() >= share || made >= changes) continue
+      made++
+      const data = JSON.parse(line) as Record<string, unknown> & { DOI: string; type: string }
+      const id = data.DOI.toLowerCase()
+      const roll = r()
+      if (roll < 0.01) {
+        yield v3.removalRow(id, data.type)
+        continue
+      }
+      data.indexed = {
+        'date-time': `2026-12-${String(1 + (day % 28)).padStart(2, '0')}T00:00:00Z`,
+        version: day,
+      }
+      data['is-referenced-by-count'] = Number(data['is-referenced-by-count'] ?? 0) + day
+      if (roll < 0.09) {
+        // A new work, next to the one it was made from.
+        data.DOI = `${data.DOI}-bench-${stream}-${day}`
+        yield v3.rowFromRecord(data.DOI.toLowerCase(), data.type, data)
+      } else yield v3.rowFromRecord(id, data.type, data)
+    }
+  }
+}
+
+/** Days of changes to the Crossref collection (or a fork of it), one commit a day. */
+export async function crossrefDaily(
+  w: World,
+  o: CrossrefOptions,
+  days: number,
+  maintainAfter: boolean,
+  opts: { collection?: string; stream?: string; changes?: number } = {},
+): Promise<Result> {
+  const collection = opts.collection ?? w.collection
+  const stream = opts.stream ?? 'main'
+  const store = storeOf(w)
+  const engine = engineOf(w)
+  const plan = JSON.parse(readFileSync(o.plan, 'utf8')) as { files: string[] }
+  const files = o.files ? plan.files.slice(0, o.files) : plan.files
+  const changes = opts.changes ?? Math.round((CROSSREF_DAILY * files.length) / plan.files.length)
+  const at = state(w, `day-${stream}`, { day: 0 })
+  const sample = state<{ type: string; id: string }[]>(w, 'changed-keys', [])
+  const rows: Result[] = []
+  for (let n = 0; n < days; n++) {
+    const day = ++at.value.day
+    const kept: { type: string; id: string }[] = []
+    const source = (async function* () {
+      for await (const row of crossrefDayRows(o, files, day, changes, stream)) {
+        if (kept.length < 100 && row.kind === 'r') kept.push({ type: row.type, id: row.id })
+        yield row
+      }
+    })()
+    const build = await measure(store, () => engine.build(source))
+    const commit = await measure(store, () =>
+      engine.commitFiles(collection, build.value, `day ${day}`),
+    )
+    const row: Result = {
+      day,
+      commit: commit.value.number,
+      changes: commit.value.entries,
+      lineBytes: commit.value.lineBytes,
+      storedBytes: commit.value.storedBytes,
+      build: brief(build.m),
+      server: brief(commit.m),
+    }
+    if (maintainAfter) {
+      const m = await measure(store, () => engine.maintain(collection))
+      row.maintain = { ...brief(m.m), ...m.value }
+      const h = await engine.open(collection)
+      row.files = h.files
+      row.runs = h.runs
+    }
+    rows.push(row)
+    at.save()
+    if (stream === 'main') {
+      sample.value = kept
+      sample.save()
+    }
+    log(`crossref daily: day ${day}`, {
+      changes: row.changes,
+      lineMb: Math.round(commit.value.lineBytes / MB),
+      build: build.m.seconds,
+      server: commit.m.seconds,
+      heapMb: commit.m.peakHeapMb,
+    })
+  }
+  const of = (pick: (r: Result) => number) => summary(rows.map(pick))
+  const server = (r: Result) => r.server as ReturnType<typeof brief>
+  const written = rows.reduce((n, r) => n + ((r.maintain as { written?: number })?.written ?? 0), 0)
+  return {
+    days,
+    maintain: maintainAfter,
+    collection,
+    changesPerDay: of((r) => r.changes as number),
+    storedBytesPerDay: of((r) => r.storedBytes as number),
+    lineBytesPerDay: of((r) => r.lineBytes as number),
+    serverSeconds: of((r) => server(r).seconds),
+    serverCpuSeconds: of((r) => server(r).cpuSeconds),
+    serverRequests: of((r) => server(r).classA + server(r).classB),
+    serverClassA: of((r) => server(r).classA),
+    serverPeakRssMb: Math.max(...rows.map((r) => server(r).peakRssMb)),
+    serverPeakHeapMb: Math.max(...rows.map((r) => server(r).peakHeapMb)),
+    buildSeconds: of((r) => (r.build as ReturnType<typeof brief>).seconds),
+    ...(maintainAfter
+      ? {
+          rewrittenBytesPerDay: Math.round(written / days),
+          rewrittenBytesTotal: written,
+          maintainPeakRssMb: Math.max(
+            ...rows.map((r) => (r.maintain as { peakRssMb: number }).peakRssMb),
+          ),
+          maintainSeconds: of((r) => (r.maintain as { seconds: number }).seconds),
+        }
+      : {}),
+    rows,
+    stored: await diskUsage(w.storeDir),
+  }
+}
+
+/** Keys to read in the Crossref collection: records spread across it, and some a recent day changed. */
+export async function crossrefKeys(w: World, n: number): Promise<{ type: string; id: string }[]> {
+  const store = storeOf(w)
+  const view = await v3.openView(store, w.collection)
+  const r = prng(hash32('crossref/keys'))
+  const big = view.files.filter((f) => f.first && f.commits[0] === 1)
+  const keys: { type: string; id: string }[] = state<{ type: string; id: string }[]>(
+    w,
+    'changed-keys',
+    [],
+  ).value.slice(0, Math.floor(n / 4))
+  while (keys.length < n && big.length > 0) {
+    const f = big[Math.floor(r() * big.length)]!
+    const k = r() < 0.5 ? f.first! : f.last!
+    keys.push({ type: k[0], id: k[1] })
+  }
+  return keys
+}
+
+/** Fork the Crossref collection, edit 1% of the fork, then change both daily and track what is shared. */
+export async function crossrefForks(w: World, o: CrossrefOptions, days: number): Promise<Result> {
+  const store = storeOf(w)
+  const engine = engineOf(w)
+  const fork = `${w.collection}-fork`
+  const before = await diskUsage(w.storeDir)
+  const forked = await measure(store, () => engine.fork(w.collection, fork))
+  const after = await diskUsage(w.storeDir)
+  const recordBytesAdded = (after.records?.bytes ?? 0) - (before.records?.bytes ?? 0)
+  log('crossref fork', { ...forked.value, seconds: forked.m.seconds, recordBytesAdded })
+  const edit = await crossrefDaily(w, o, 1, true, {
+    collection: fork,
+    stream: 'fork-edit',
+    changes: Math.round(CROSSREF_RECORDS * 0.01),
+  })
+  let t = Date.now()
+  const account = async (day: number) => {
+    for (let i = 0; i < 3; i++)
+      await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
+    const s = await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
+    const p = s.logical.get(w.collection)?.bytes ?? 0
+    const f = s.logical.get(fork)?.bytes ?? 0
+    const physical = s.records.listedBytes
+    return {
+      day,
+      parentBytes: p,
+      forkBytes: f,
+      physicalBytes: physical,
+      sharedShare: f > 0 ? round((p + f - physical) / f, 4) : 0,
+      missing: s.records.missing.length,
+    }
+  }
+  const track = [await account(0)]
+  log('crossref forks: day 0', track[0])
+  let rewritten = edit.rewrittenBytesTotal as number
+  for (let n = 1; n <= days; n++) {
+    const a = await crossrefDaily(w, o, 1, true)
+    const b = await crossrefDaily(w, o, 1, true, { collection: fork, stream: 'fork' })
+    rewritten += (a.rewrittenBytesTotal as number) + (b.rewrittenBytesTotal as number)
+    if (n % 5 === 0 || n === days) {
+      track.push(await account(n))
+      log(`crossref forks: day ${n}`, track[track.length - 1])
+    }
+  }
+  return {
+    fork: { ...brief(forked.m), ...forked.value, recordBytesAdded },
+    edit: {
+      entries: (edit.changesPerDay as { mean: number }).mean,
+      storedBytes: (edit.storedBytesPerDay as { mean: number }).mean,
+      serverSeconds: (edit.serverSeconds as { mean: number }).mean,
+      buildSeconds: (edit.buildSeconds as { mean: number }).mean,
+    },
+    days,
+    rewrittenBytes: rewritten,
+    track,
+  }
+}
+
+/** A schema change on one Crossref type: one that only relaxes, and one that makes the server scan. */
+export async function crossrefSchema(w: World, type: string): Promise<Result> {
+  const store = storeOf(w)
+  const engine = engineOf(w)
+  const change = async (body: unknown) => {
+    const files = await engine.build([v3.rowFromRecord(type, v3.SCHEMA_TYPE, body)])
+    const m = await measure(store, () =>
+      v3.commitUpload(store, w.collection, { files, message: 'schema' }, { cache: engine.cache }),
+    )
+    return { ...brief(m.m), semver: m.value.commit.semver, scanned: m.value.check.scanned }
+  }
+  const relaxed = await change({ ...crossrefSchema0, required: ['DOI'] })
+  const stricter = await change({ ...crossrefSchema0, required: ['DOI', 'type', 'URL'] })
+  log('crossref schema', {
+    type,
+    relaxed: relaxed.seconds,
+    stricter: stricter.seconds,
+    scanned: stricter.scanned,
+  })
+  return {
+    type,
+    relaxed,
+    stricter: { ...stricter, recordsPerSecond: Math.round(stricter.scanned / stricter.seconds) },
   }
 }
