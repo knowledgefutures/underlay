@@ -25,6 +25,7 @@ import {
   removalLine,
 } from './lines.js'
 import { type OpenOptions, SortedFile } from './reader.js'
+import { inParallel } from './util.js'
 
 export interface VerifyOptions extends OpenOptions {
   /**
@@ -274,20 +275,6 @@ export async function verifyRange(
     }
   }
   return r
-}
-
-async function inParallel<T>(jobs: (() => Promise<T>)[], n: number): Promise<T[]> {
-  const out = Array.from<T>({ length: jobs.length })
-  let next = 0
-  await Promise.all(
-    Array.from({ length: Math.min(n, jobs.length) }, async () => {
-      while (next < jobs.length) {
-        const i = next++
-        out[i] = await jobs[i]!()
-      }
-    }),
-  )
-  return out
 }
 
 /**
