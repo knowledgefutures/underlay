@@ -347,7 +347,8 @@ sweep/                            the sweep's own state
 ```
 
 - Commits and layouts are created with a put that fails if the key exists. Nothing else decides
-  a race.
+  a race. A store that limits how often one key is written (R2: once a second, then a 429) may
+  answer a losing create with that refusal instead; if the key is there, the create lost.
 - `latest.json` is `{"commit": n}`, overwritten after each commit; `latest-layout.json` is
   `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
   key is written twice when a layout follows a commit. A reader starts from them and probes
