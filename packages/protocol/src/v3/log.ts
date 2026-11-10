@@ -519,15 +519,28 @@ export async function createCommit(
     if (!baseChecked) {
       // The base is recorded as given, but it has to be a version of this collection or of
       // the collections it was forked from. Newer commits never make it invalid, so once.
-      const at =
-        head && head.id === change.base
-          ? head.commit.number
-          : head
-            ? await findVersion(store, collection, change.base!, head.commit.number, {
+      const find = async (from: StoredCommit | null) =>
+        from && from.id === change.base
+          ? from.commit.number
+          : from
+            ? findVersion(store, collection, change.base!, from.commit.number, {
                 ...(input.baseNumber === undefined ? {} : { hint: input.baseNumber }),
                 ...(opts.baseSearch === undefined ? {} : { search: opts.baseSearch }),
               })
             : null
+      let at = await find(head)
+      if (at === null) {
+        // The hint may be stale, and the base newer than the commit it pointed at: look again
+        // from the true head before refusing.
+        const newest = await findHead(store, collection, {
+          commit: head?.commit.number ?? 0,
+          layout: 0,
+        })
+        if (newest && newest.commit.number !== head?.commit.number) {
+          head = newest
+          at = await find(head)
+        }
+      }
       if (at === null) {
         throw new BaseError(`Base ${change.base} is not a version of ${collection}`)
       }

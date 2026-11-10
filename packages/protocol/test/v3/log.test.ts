@@ -432,6 +432,13 @@ describe('base and the two signatures', () => {
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7)).toBe(2)
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7, { hint: 2 })).toBe(2)
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7, { search: 2 })).toBe(null)
+    // A base newer than a stale hint's commit is still found.
+    await store.put(v3.latestKey('c'), jcs({ commit: 3 }))
+    const fresh = await v3.createCommit(store, 'c', { files: [], base: old.id, bump: 'minor' })
+    expect(fresh.commit).toMatchObject({ number: 8, previous: old.id })
+    await store.delete(v3.latestKey('c'))
+    const noHint = await v3.createCommit(store, 'c', { files: [], base: fresh.id, bump: 'minor' })
+    expect(noHint.commit.number).toBe(9)
     // A version of another collection is not.
     const other = await v3.createCommit(store, 'other', { files: [], bump: 'minor' })
     await expect(
@@ -464,7 +471,7 @@ describe('base and the two signatures', () => {
         { authorKeys: [k.author.publicKey] },
       ),
     ).rejects.toThrow(/not signed/)
-    expect(await v3.headNumber(store, 'c')).toBe(7)
+    expect(await v3.headNumber(store, 'c')).toBe(9)
     await v3.verifyLog(store, 'c')
   })
 
