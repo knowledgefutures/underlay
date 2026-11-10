@@ -7,7 +7,7 @@
  *
  *   mergeFiles   the merge itself: labels, shared lines, thinning, takedown
  *   rebuild      plan, merge, and create the next layout
- *   planTiered   the starting policy: merge adjacent runs of one size tier
+ *   planTiered   the starting policy: merge neighbouring groups of files by size tier
  *   recreate     write a commit's original files again from rebuilt ones
  *
  * A merged file's id comes from its key entries alone, so the merge reads key
@@ -363,24 +363,28 @@ export async function mergeFiles(
 
 // --- Layouts and the policy ---
 
-/** A layout's files of one run: files written by one rebuild, or one commit's own files. */
-export interface Run {
+/**
+ * A group of a layout's files: the sorted-record-files one rebuild wrote, or one
+ * commit's own. Their key ranges don't overlap, so a record is in at most one
+ * file of a group, and a read checks one file for each group.
+ */
+export interface FileGroup {
   /** A number shared by the files one merge wrote; 0 for a commit's own files. */
-  run: number
+  group: number
   files: LayoutFile[]
   commits: [number, number]
   /** Bytes of lines, uncompressed. */
   bytes: number
 }
 
-/** A layout's files grouped into runs, oldest first. */
-export function runsOf(files: LayoutFile[]): Run[] {
-  const by = new Map<string, Run>()
+/** A layout's files in their groups, oldest first. */
+export function groupsOf(files: LayoutFile[]): FileGroup[] {
+  const by = new Map<string, FileGroup>()
   for (const f of files) {
-    const run = f.run ?? 0
-    const k = run === 0 ? `c${f.commits[0]}` : `r${run}`
+    const group = f.group ?? 0
+    const k = group === 0 ? `c${f.commits[0]}` : `g${group}`
     let r = by.get(k)
-    if (!r) by.set(k, (r = { run, files: [], commits: [f.commits[0], f.commits[1]], bytes: 0 }))
+    if (!r) by.set(k, (r = { group, files: [], commits: [f.commits[0], f.commits[1]], bytes: 0 }))
     r.files.push(f)
     r.commits[0] = Math.min(r.commits[0], f.commits[0])
     r.commits[1] = Math.max(r.commits[1], f.commits[1])
@@ -390,9 +394,9 @@ export function runsOf(files: LayoutFile[]): Run[] {
 }
 
 export interface TierOptions {
-  /** Runs of one tier that are merged together. Default 10. */
+  /** Groups of one tier that are merged together. Default 10. */
   ratio?: number
-  /** Runs up to this many bytes of lines are tier 0; each tier above is `ratio` times larger. */
+  /** Groups up to this many bytes of lines are tier 0; each tier above is `ratio` times larger. */
   baseBytes?: number
 }
 
@@ -400,24 +404,24 @@ export const tierOf = (bytes: number, ratio: number, baseBytes: number): number 
   bytes <= baseBytes ? 0 : Math.ceil(Math.log(bytes / baseBytes) / Math.log(ratio) - 1e-9)
 
 /**
- * The starting policy. Runs are in commit order. For each size tier, lowest
- * first: where `ratio` or more neighbouring runs are each at or below the tier,
+ * The starting policy. Groups are in commit order. For each size tier, lowest
+ * first: where `ratio` or more neighbouring groups are each at or below the tier,
  * merge them, the newest such group first. A group is left alone unless
- * together it is at least twice its largest run, so one large run is not
+ * together they are at least twice the largest of them, so one large group is not
  * rewritten again and again to take in small ones (they merge with each other
- * first). Returns the runs to merge, or null if there is nothing to do.
+ * first). Returns the groups to merge, or null if there is nothing to do.
  *
  * Uploads of one size merge in tens, then tens of tens: each byte is rewritten
- * about once a tier. Uploads of uneven size still merge, since a smaller run
- * counts toward its larger neighbours' tier. Merged runs stay in commit order,
+ * about once a tier. Uploads of uneven size still merge, since a smaller group
+ * counts toward its larger neighbours' tier. Merged groups stay in commit order,
  * so a file's commit range still says which versions it can matter to.
  */
-export function planTiered(runs: Run[], opts: TierOptions = {}): Run[] | null {
+export function planTiered(groups: FileGroup[], opts: TierOptions = {}): FileGroup[] | null {
   const ratio = opts.ratio ?? 10
   const base = opts.baseBytes ?? 8 * 1024 * 1024
-  const tiers = runs.map((r) => tierOf(r.bytes, ratio, base))
+  const tiers = groups.map((r) => tierOf(r.bytes, ratio, base))
   for (const tier of [...new Set(tiers)].sort((a, b) => a - b)) {
-    let end = runs.length
+    let end = groups.length
     while (end > 0) {
       if (tiers[end - 1]! > tier) {
         end--
@@ -425,11 +429,11 @@ export function planTiered(runs: Run[], opts: TierOptions = {}): Run[] | null {
       }
       let start = end - 1
       while (start > 0 && tiers[start - 1]! <= tier) start--
-      const group = runs.slice(start, end)
-      if (group.length >= ratio) {
-        const total = group.reduce((n, r) => n + r.bytes, 0)
-        const largest = group.reduce((n, r) => Math.max(n, r.bytes), 0)
-        if (total >= 2 * largest) return group
+      const picked = groups.slice(start, end)
+      if (picked.length >= ratio) {
+        const total = picked.reduce((n, r) => n + r.bytes, 0)
+        const largest = picked.reduce((n, r) => Math.max(n, r.bytes), 0)
+        if (total >= 2 * largest) return picked
       }
       end = start
     }
@@ -463,11 +467,11 @@ function intersectRanges(a: [number, number][], b: [number, number][]): [number,
 
 export interface RebuildOptions extends Omit<MergeOptions, 'through' | 'dropLeadingRemovals'> {
   /**
-   * Which runs to merge, given the collection's runs oldest first. Each inner
-   * list is merged into one run. Default: `planTiered`, one merge. Return an
+   * Which groups to merge, given the collection's groups oldest first. Each inner
+   * list is merged into one group. Default: `planTiered`, one merge. Return an
    * empty list to merge nothing.
    */
-  plan?: (runs: Run[]) => Run[][]
+  plan?: (groups: FileGroup[]) => FileGroup[][]
   tiers?: TierOptions
   /**
    * With nothing to merge, still write a layout once this many commits have
@@ -508,7 +512,7 @@ export async function currentFiles(
   if (head > through) {
     for await (const c of readLog(store, collection, through + 1, head)) {
       for (const f of commitFiles(c.commit)) {
-        files.push({ ...f, labeled: false, commits: [c.commit.number, c.commit.number], run: 0 })
+        files.push({ ...f, labeled: false, commits: [c.commit.number, c.commit.number], group: 0 })
       }
     }
   }
@@ -546,12 +550,12 @@ export async function rebuild(
     bytesIn: 0,
     dropped: 0,
   }
-  const runs = runsOf(files)
+  const groups = groupsOf(files)
   const plan =
-    opts.plan?.(runs) ??
+    opts.plan?.(groups) ??
     (() => {
-      const group = planTiered(runs, opts.tiers)
-      return group ? [group] : []
+      const picked = planTiered(groups, opts.tiers)
+      return picked ? [picked] : []
     })()
   const adopt = head - (old?.through ?? 0) >= (opts.adoptAfter ?? 8)
   // A change of what is retained, or a takedown, is only real once a layout states it.
@@ -572,15 +576,15 @@ export async function rebuild(
 
   const merged = new Set<string>()
   const outputs: LayoutFile[] = []
-  // A run number is only a name for the files one merge wrote: unique within the layout.
-  let nextRun = 1 + files.reduce((n, f) => Math.max(n, f.run ?? 0), 0)
-  for (const group of plan) {
-    const inputs = group.flatMap((r) => r.files)
+  // A group number is only a name for the files one merge wrote: unique within the layout.
+  let nextGroup = 1 + files.reduce((n, f) => Math.max(n, f.group ?? 0), 0)
+  for (const picked of plan) {
+    const inputs = picked.flatMap((r) => r.files)
     for (const f of inputs) {
       if (merged.has(f.id)) throw new Error('A file is in two merges')
       merged.add(f.id)
     }
-    const newest = Math.max(...group.map((r) => r.commits[1]))
+    const newest = Math.max(...picked.map((r) => r.commits[1]))
     // A removal with nothing older behind it can go only if no file left out could hold an older row.
     const older = files.some(
       (f) => !inputs.includes(f) && f.commits[0] < newest && inputs.some((i) => overlaps(f, i)),
@@ -591,11 +595,11 @@ export async function rebuild(
       dropLeadingRemovals: !older,
       ...(retained ? { retained } : {}),
     })
-    // A merge of one run keeps its run number, so a takedown does not regroup the layout.
-    const run = group.length === 1 ? group[0]!.run : nextRun++
-    for (const f of m.files) outputs.push({ ...f, run })
-    // Files the merge left as they are stay listed, now as part of the merged run.
-    for (const k of m.kept) outputs.push({ ...inputs.find((i) => i.id === k.id)!, run })
+    // A merge of one group keeps its number, so a takedown does not regroup the layout.
+    const group = picked.length === 1 ? picked[0]!.group : nextGroup++
+    for (const f of m.files) outputs.push({ ...f, group })
+    // Files the merge left as they are stay listed, now as part of the merged group.
+    for (const k of m.kept) outputs.push({ ...inputs.find((i) => i.id === k.id)!, group })
     result.kept += m.kept.length
     result.merges++
     result.filesIn += inputs.length
@@ -626,23 +630,23 @@ export async function rebuild(
 const cmpFirst = (a: LayoutFile, b: LayoutFile): number =>
   a.first && b.first ? compareKeys(a.first[0], a.first[1], b.first[0], b.first[1]) : 0
 
-/** A plan that merges everything into one run. */
-export const planAll = (runs: Run[]): Run[][] => (runs.length > 0 ? [runs] : [])
+/** A plan that merges everything into one group. */
+export const planAll = (groups: FileGroup[]): FileGroup[][] => (groups.length > 0 ? [groups] : [])
 
 /**
- * A plan that rewrites, each on its own, the runs holding rows for some keys:
- * what a takedown needs. `holds` says whether a run's files hold a key.
+ * A plan that rewrites, each on its own, the groups holding rows for some keys:
+ * what a takedown needs.
  */
-export async function planRunsHolding(
+export async function planGroupsHolding(
   store: Store,
-  runs: Run[],
+  groups: FileGroup[],
   keys: { type: string; id: string }[],
   opts: ReadOptions = {},
-): Promise<Run[][]> {
-  const out: Run[][] = []
-  for (const run of runs) {
+): Promise<FileGroup[][]> {
+  const out: FileGroup[][] = []
+  for (const g of groups) {
     let holds = false
-    for (const f of run.files) {
+    for (const f of g.files) {
       if (holds) break
       for (const k of keys) {
         if (
@@ -662,7 +666,7 @@ export async function planRunsHolding(
         }
       }
     }
-    if (holds) out.push([run])
+    if (holds) out.push([g])
   }
   return out
 }

@@ -306,7 +306,7 @@ describe('layouts', () => {
 })
 
 describe('base and the two signatures', () => {
-  // Fixed keys, so the signatures (Ed25519 is deterministic) are the same every run.
+  // Fixed keys, so the signatures (Ed25519 is deterministic) are the same every time.
   const seed = (n: number) =>
     btoa(String.fromCharCode(...new Uint8Array(32).fill(n)))
       .replace(/\+/g, '-')

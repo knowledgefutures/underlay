@@ -47,8 +47,11 @@ export interface Handle {
   collection: string
   version: number
   files: number
-  /** Runs (a rebuild's output, or a commit's own files) a key may sit in. */
-  runs: number
+  /**
+   * Groups of files (one rebuild's output, or one commit's own files). A group's key
+   * ranges don't overlap, so a read checks one sorted-record-file for each group.
+   */
+  groups: number
   view: unknown
 }
 
@@ -162,9 +165,15 @@ export class V3Engine implements Engine {
 
   async open(collection: string, version?: number): Promise<Handle> {
     const view = await v3.openView(this.store, collection, version === undefined ? {} : { version })
-    // Files of one run have key ranges that don't overlap, so a key sits in at most one per run.
-    const runs = new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`))
-    return { collection, version: view.version, files: view.files.length, runs: runs.size, view }
+    // A group's files have key ranges that don't overlap, so a key sits in at most one of them.
+    const groups = new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`))
+    return {
+      collection,
+      version: view.version,
+      files: view.files.length,
+      groups: groups.size,
+      view,
+    }
   }
 
   async readPoint(h: Handle, type: string, id: string): Promise<number> {

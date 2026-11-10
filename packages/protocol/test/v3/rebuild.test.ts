@@ -53,11 +53,11 @@ describe('rebuilding against the model', () => {
           roll < 0.35
             ? v3.planAll
             : roll < 0.7
-              ? (runs: v3.Run[]) => {
-                  // Some neighbouring runs, anywhere in the log.
-                  const from = Math.floor(rand() * runs.length)
-                  const to = from + 1 + Math.floor(rand() * (runs.length - from))
-                  return [runs.slice(from, to)]
+              ? (groups: v3.FileGroup[]) => {
+                  // Some neighbouring groups, anywhere in the log.
+                  const from = Math.floor(rand() * groups.length)
+                  const to = from + 1 + Math.floor(rand() * (groups.length - from))
+                  return [groups.slice(from, to)]
                 }
               : undefined
         const r = await v3.rebuild(store, 'c', {
@@ -115,7 +115,7 @@ describe('rebuild', () => {
     const r = await v3.rebuild(store, 'c', { plan: v3.planAll })
     expect(r).toMatchObject({ merges: 1, filesIn: 5, filesOut: 1, dropped: 0, lost: false })
     const [f] = r.layout!.files
-    expect(f).toMatchObject({ labeled: true, commits: [1, 5], run: 1 })
+    expect(f).toMatchObject({ labeled: true, commits: [1, 5], group: 1 })
     expect(r.layout).toMatchObject({ number: 1, through: 5 })
     const reader = (await v3.SortedFile.open(store, v3.recordKey(f!.id))).reader()
     const a = await reader.lookup('t', 'a')
@@ -162,7 +162,7 @@ describe('rebuild', () => {
     const adopted = await v3.rebuild(store, 'c', { adoptAfter: 2 })
     expect(adopted.layout).toMatchObject({ number: 2, through: 7 })
     expect(adopted.merges).toBe(0)
-    expect(adopted.layout!.files.map((f) => [f.labeled, f.commits, f.run])).toEqual([
+    expect(adopted.layout!.files.map((f) => [f.labeled, f.commits, f.group])).toEqual([
       [true, [1, 5], 1],
       [false, [6, 6], 0],
       [false, [7, 7], 0],
@@ -209,64 +209,64 @@ describe('rebuild', () => {
     }
     const before = await cost()
     expect(before.files).toBe(13)
-    await v3.rebuild(store, 'c', { plan: (runs) => [runs.slice(1)] })
+    await v3.rebuild(store, 'c', { plan: (groups) => [groups.slice(1)] })
     const after = await cost()
     expect(after.files).toBe(2)
     expect(after.cold).toBeLessThan(before.cold)
-    // The first load and one merged run: a footer and a key block from each, and the record block.
+    // The first load and one merged group: a footer and a key block from each, and the record block.
     expect(after.cold).toBeLessThanOrEqual(5)
   })
 })
 
 describe('the tiered policy', () => {
-  const run = (n: number, bytes: number): v3.Run => ({
-    run: 0,
+  const g = (n: number, bytes: number): v3.FileGroup => ({
+    group: 0,
     files: [],
     commits: [n, n],
     bytes,
   })
   const MB = 1024 * 1024
 
-  it('merges ten neighbouring runs of one tier, the newest group first', () => {
-    const nine = Array.from({ length: 9 }, (_, i) => run(i + 1, 5 * MB))
+  it('merges ten neighbouring groups of one tier, the newest ten first', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => g(i + 1, 5 * MB))
     expect(v3.planTiered(nine)).toBe(null)
-    const ten = [...nine, run(10, 6 * MB)]
+    const ten = [...nine, g(10, 6 * MB)]
     expect(v3.planTiered(ten)!.length).toBe(10)
     // A large first load is left alone; the ten dailies after it merge.
-    const loaded = [run(1, 100_000 * MB), ...ten.map((r, i) => run(i + 2, r.bytes))]
+    const loaded = [g(1, 100_000 * MB), ...ten.map((r, i) => g(i + 2, r.bytes))]
     expect(v3.planTiered(loaded)!.map((r) => r.commits[0])).toEqual([
       2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     ])
-    // Runs of another tier in between break a group.
+    // A group of another tier in between breaks them up.
     const broken = [
       ...nine.slice(0, 5),
-      run(6, 500 * MB),
-      ...nine.slice(5).map((r, i) => run(7 + i, r.bytes)),
+      g(6, 500 * MB),
+      ...nine.slice(5).map((r, i) => g(7 + i, r.bytes)),
     ]
     expect(v3.planTiered(broken)).toBe(null)
     expect(v3.planTiered(broken, { ratio: 4 })!.map((r) => r.commits[0])).toEqual([7, 8, 9, 10])
   })
 
-  it('merges neighbours of uneven size, and does not rewrite a large run to take in small ones', () => {
+  it('merges neighbours of uneven size, and does not rewrite a large group to take in small ones', () => {
     // Sizes that fall either side of a tier's edge: no ten are of one tier, but ten are at or below one.
-    const uneven = Array.from({ length: 10 }, (_, i) => run(i + 1, (i % 2 ? 5 : 20) * MB))
+    const uneven = Array.from({ length: 10 }, (_, i) => g(i + 1, (i % 2 ? 5 : 20) * MB))
     expect(v3.planTiered(uneven)!.length).toBe(10)
     expect(v3.planTiered(uneven.slice(1))).toBe(null)
-    // One 600 MB run and nine small ones: merging would rewrite 600 MB to add 45.
-    const lopsided = [run(1, 600 * MB), ...Array.from({ length: 9 }, (_, i) => run(i + 2, 5 * MB))]
+    // One 600 MB group and nine small ones: merging would rewrite 600 MB to add 45.
+    const lopsided = [g(1, 600 * MB), ...Array.from({ length: 9 }, (_, i) => g(i + 2, 5 * MB))]
     expect(v3.planTiered(lopsided)).toBe(null)
-    // A tenth small one: the small ones merge with each other, and the large run is left.
-    const more = [...lopsided, run(11, 5 * MB)]
+    // A tenth small one: the small ones merge with each other, and the large one is left.
+    const more = [...lopsided, g(11, 5 * MB)]
     expect(v3.planTiered(more)!.map((r) => r.commits[0])).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
-    // Small runs behind enough large ones go in with them.
+    // Small groups behind enough large ones go in with them.
     const mixed = [
-      ...Array.from({ length: 3 }, (_, i) => run(i + 1, 5 * MB)),
-      ...Array.from({ length: 8 }, (_, i) => run(i + 4, 300 * MB)),
+      ...Array.from({ length: 3 }, (_, i) => g(i + 1, 5 * MB)),
+      ...Array.from({ length: 8 }, (_, i) => g(i + 4, 300 * MB)),
     ]
     expect(v3.planTiered(mixed)!.length).toBe(11)
   })
 
-  it('puts runs a factor of the ratio apart in different tiers', () => {
+  it('puts groups a factor of the ratio apart in different tiers', () => {
     expect(v3.tierOf(1, 10, 8 * MB)).toBe(0)
     expect(v3.tierOf(8 * MB, 10, 8 * MB)).toBe(0)
     expect(v3.tierOf(8 * MB + 1, 10, 8 * MB)).toBe(1)
@@ -275,7 +275,7 @@ describe('the tiered policy', () => {
     expect(v3.tierOf(6000 * MB, 10, 8 * MB)).toBe(3)
   })
 
-  it('cascades: merged runs merge again when there are enough of them', async () => {
+  it('cascades: merged groups merge again when there are enough of them', async () => {
     const store = memoryStore()
     const model = new Model()
     const rand = rng(21)
@@ -301,15 +301,15 @@ describe('the tiered policy', () => {
       }
     }
     const { files } = await v3.currentFiles(store, 'c')
-    const runs = v3.runsOf(files)
-    // 27 uploads at a ratio of 3: runs merge and merge again, and never pile up.
-    expect(runs.length).toBeLessThanOrEqual(6)
+    const groups = v3.groupsOf(files)
+    // 27 uploads at a ratio of 3: groups merge and merge again, and never pile up.
+    expect(groups.length).toBeLessThanOrEqual(6)
     expect(merges).toBeGreaterThanOrEqual(8)
-    expect(runs[0]!.commits[0]).toBe(1)
-    expect(runs[runs.length - 1]!.commits[1]).toBe(27)
-    // Runs stay in commit order, their ranges not overlapping.
-    for (let i = 1; i < runs.length; i++) {
-      expect(runs[i]!.commits[0]).toBeGreaterThan(runs[i - 1]!.commits[1])
+    expect(groups[0]!.commits[0]).toBe(1)
+    expect(groups[groups.length - 1]!.commits[1]).toBe(27)
+    // Groups stay in commit order, their commit ranges not overlapping.
+    for (let i = 1; i < groups.length; i++) {
+      expect(groups[i]!.commits[0]).toBeGreaterThan(groups[i - 1]!.commits[1])
     }
     await checkReads(store, 'c', model, rand, {
       versions: [1, 9, 20, 27],
@@ -374,11 +374,11 @@ describe('thinning', () => {
 describe('takedown', () => {
   it("removes a record's bytes from every file and keeps its history", async () => {
     const { store, model } = await small()
-    await v3.rebuild(store, 'c', { plan: (runs) => [runs.slice(0, 3)] })
+    await v3.rebuild(store, 'c', { plan: (groups) => [groups.slice(0, 3)] })
     const secretHash = model.commits[3]!.get('["t","c"]')!.hash!
     const { files } = await v3.currentFiles(store, 'c')
-    const plan = await v3.planRunsHolding(store, v3.runsOf(files), [{ type: 't', id: 'c' }])
-    // The key has rows in the merged run (commit 1) and in commits 4 and 5.
+    const plan = await v3.planGroupsHolding(store, v3.groupsOf(files), [{ type: 't', id: 'c' }])
+    // The key has rows in the merged group (commit 1) and in commits 4 and 5.
     expect(plan.length).toBe(3)
     const before = await v3.findLayout(store, 'c')
     const r = await v3.rebuild(store, 'c', {
@@ -386,9 +386,9 @@ describe('takedown', () => {
       takedown: (type, id, hash) => type === 't' && id === 'c' && hash === secretHash,
     })
     expect(r.merges).toBe(3)
-    // Runs keep their numbers: the layout is not regrouped.
-    expect(before!.files.map((f) => f.run)).toEqual([1, 0, 0])
-    expect(r.layout!.files.map((f) => [f.run, f.labeled, f.commits])).toEqual([
+    // Groups keep their numbers: the layout is not regrouped.
+    expect(before!.files.map((f) => f.group)).toEqual([1, 0, 0])
+    expect(r.layout!.files.map((f) => [f.group, f.labeled, f.commits])).toEqual([
       [1, true, [1, 3]],
       [0, true, [4, 4]],
       [0, true, [5, 5]],
@@ -509,8 +509,8 @@ describe('cutting by key and keeping untouched files', () => {
     const kept = new Set(before.map((f) => f.id))
     const layout = r.layout!
     expect(layout.files.filter((f) => kept.has(f.id)).length).toBe(before.length - 2)
-    // One run now, its files in key order with ranges that do not overlap.
-    expect(v3.runsOf(layout.files).length).toBe(1)
+    // One group now, its files in key order with ranges that do not overlap.
+    expect(v3.groupsOf(layout.files).length).toBe(1)
     const sorted = [...layout.files].sort((x, y) =>
       v3.compareKeys(x.first![0], x.first![1], y.first![0], y.first![1]),
     )

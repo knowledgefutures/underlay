@@ -355,13 +355,14 @@ sweep/                            the sweep's own state
 - A file or asset is stored once. An upload always sends its bytes, into its own session; the
   commit checks them there (4.3) and installs them among the stored files. A file already
   stored under that id is left as it is, and the uploader is not told.
-- **Rebuild policy.** Each layout file carries `run`, a number shared by the files one merge
-  wrote (0 for a commit's own file, whose run is its commit). Runs are kept in commit order,
-  and cover commit ranges that don't overlap. Size tiers are a factor of 10 apart. For each
-  tier, lowest first: where 10 or more neighbouring runs are each at or below it, and together
-  are at least twice the largest of them, they are merged into files cut at 1 GiB of lines, at
-  262,144 entries, and where the type changes once a file holds 16 MiB. Replaced rows stay in
-  the same file as the rows that replaced them.
+- **Rebuild policy.** Each layout file carries `group`, a number shared by the files one merge
+  wrote (0 for a commit's own files, which are a group by their commit). A group's files have
+  key ranges that don't overlap, so a read checks one file for each group. Groups are kept in
+  commit order, and cover commit ranges that don't overlap. Size tiers are a factor of 10
+  apart. For each tier, lowest first: where 10 or more neighbouring groups are each at or below
+  it, and together are at least twice the largest of them, they are merged into files cut at
+  1 GiB of lines, at 262,144 entries, and where the type changes once a file holds 16 MiB.
+  Replaced rows stay in the same file as the rows that replaced them.
 - **Cutting by key, and keeping what did not change** (built, not yet the default; to be
   measured). A file can also end after a key picked by a hash of the key against its row's size,
   toward a target stored size. The same stretch of keys then lands in the same file with
@@ -371,7 +372,7 @@ sweep/                            the sweep's own state
   sorted-record-file is or where it is cut.
 - **Sweep.** A file is listed if a collection's current layout, or a commit after that
   layout's `through`, names it. An asset is listed if a `$asset` entry in a listed file names
-  it. One sweeper runs in passes. A pass condemns what nothing lists; moves to `trash/` what is
+  it. One sweeper works in passes. A pass condemns what nothing lists; moves to `trash/` what is
   still unlisted and has been condemned longer than a grace period; moves back anything in
   `trash/` that is listed again; and deletes from `trash/` what has been there longer than a
   second period. An object's age alone is never the test, since a fork can copy a layout just

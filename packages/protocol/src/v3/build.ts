@@ -123,7 +123,7 @@ async function* mergeChunks(store: Store, keys: string[]): AsyncGenerator<Keyed>
   let held: Keyed | null = null
   try {
     for await (const [row] of mergeSorted(streams, byKey)) {
-      // Ties arrive in chunk order, so the last of a run of equal keys is the newest.
+      // Ties arrive in chunk order, so the last of several equal keys is the newest.
       if (held && byKey(held, row) !== 0) yield held
       held = row
     }

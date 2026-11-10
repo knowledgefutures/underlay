@@ -272,7 +272,7 @@ export async function daily(
       row.maintain = { ...brief(m.m), ...m.value }
       const h = await engine.open(w.collection)
       row.files = h.files
-      row.runs = h.runs
+      row.groups = h.groups
     }
     rows.push(row)
     saveWorkload(w, wl)
@@ -324,14 +324,14 @@ export async function maintain(w: World): Promise<Result> {
   const before = await engine.open(w.collection)
   const m = await measure(store, () => engine.maintain(w.collection))
   const after = await engine.open(w.collection)
-  log('maintain', { ...m.value, files: after.files, runs: after.runs, seconds: m.m.seconds })
+  log('maintain', { ...m.value, files: after.files, groups: after.groups, seconds: m.m.seconds })
   return {
     ...brief(m.m),
     ...m.value,
     filesBefore: before.files,
-    runsBefore: before.runs,
+    groupsBefore: before.groups,
     files: after.files,
-    runs: after.runs,
+    groups: after.groups,
     stored: await diskUsage(w.storeDir),
   }
 }
@@ -396,7 +396,7 @@ export async function reads(
     const h = open.value
     const p: Result = {
       files: h.files,
-      runs: h.runs,
+      groups: h.groups,
       version: h.version,
       open: { seconds: open.m.seconds, requests: reqs(open.m.requests) },
     }
@@ -426,7 +426,7 @@ export async function reads(
     )
     out[profile] = p
     log(`reads ${label} ${profile}`, {
-      runs: h.runs,
+      groups: h.groups,
       warm: (p.pointWarm as ReadStats).requests.p50,
       cold: (p.pointCold as ReadStats).requests.p50,
       warmMs: (p.pointWarm as ReadStats).ms.p50,
@@ -440,7 +440,7 @@ export async function reads(
 export async function exportAll(w: World, version?: number): Promise<Result> {
   const store = storeOf(w)
   const view = await v3.openView(store, w.collection, version === undefined ? {} : { version })
-  // Cut the key space where the largest run's files begin.
+  // Cut the key space where the largest files begin.
   const firsts = view.files
     .filter((f) => f.first)
     .sort((a, b) => b.bytes - a.bytes)
@@ -949,9 +949,9 @@ export async function racing(
 // --- The rebuild policy over a long time ---
 
 /**
- * The policy at full Crossref size over years, by arithmetic: runs are sizes,
+ * The policy at full Crossref size over years, by arithmetic: groups of files are sizes,
  * a merge's output is the sum of its inputs (replaced rows are kept). Gives the
- * runs a key may sit in (a point read fetches a key block from each) and the
+ * groups a key may sit in (a point read fetches a key block from a file of each) and the
  * bytes rewritten a day, for a range of ratios.
  */
 export function policySim(
@@ -964,32 +964,32 @@ export function policySim(
   const loadBytes = opts.loadBytes ?? CROSSREF_LINE_BYTES
   const out: Result[] = []
   for (const ratio of [2, 3, 4, 6, 8, 10]) {
-    let runs: v3.Run[] = [{ run: 1, files: [], commits: [1, 1], bytes: loadBytes }]
+    let groups: v3.FileGroup[] = [{ group: 1, files: [], commits: [1, 1], bytes: loadBytes }]
     let rewritten = 0
     let largest = 0
-    let sumRuns = 0
-    let maxRuns = 0
+    let sumGroups = 0
+    let maxGroups = 0
     const perYear: number[] = []
     let yearBytes = 0
     for (let d = 1; d <= days; d++) {
-      runs.push({ run: 0, files: [], commits: [d + 1, d + 1], bytes: daily })
+      groups.push({ group: 0, files: [], commits: [d + 1, d + 1], bytes: daily })
       for (;;) {
-        const group = v3.planTiered(runs, { ratio, baseBytes: base })
-        if (!group) break
-        const bytes = group.reduce((n, r) => n + r.bytes, 0)
+        const picked = v3.planTiered(groups, { ratio, baseBytes: base })
+        if (!picked) break
+        const bytes = picked.reduce((n, r) => n + r.bytes, 0)
         rewritten += bytes
         yearBytes += bytes
         largest = Math.max(largest, bytes)
-        const at = runs.indexOf(group[0]!)
-        runs.splice(at, group.length, {
-          run: 1,
+        const at = groups.indexOf(picked[0]!)
+        groups.splice(at, picked.length, {
+          group: 1,
           files: [],
-          commits: [group[0]!.commits[0], group[group.length - 1]!.commits[1]],
+          commits: [picked[0]!.commits[0], picked[picked.length - 1]!.commits[1]],
           bytes,
         })
       }
-      sumRuns += runs.length
-      maxRuns = Math.max(maxRuns, runs.length)
+      sumGroups += groups.length
+      maxGroups = Math.max(maxGroups, groups.length)
       if (d % 365 === 0) {
         perYear.push(Math.round(yearBytes / 365))
         yearBytes = 0
@@ -997,8 +997,8 @@ export function policySim(
     }
     out.push({
       ratio,
-      meanRuns: round(sumRuns / days),
-      maxRuns,
+      meanGroups: round(sumGroups / days),
+      maxGroups,
       rewrittenLineBytesPerDay: Math.round(rewritten / days),
       rewrittenLineBytesPerDayByYear: perYear,
       largestMergeLineBytes: largest,
@@ -1011,7 +1011,7 @@ export function policySim(
 
 /**
  * The policy for real, over a year of daily commits at reduced scale, once for
- * each ratio: bytes rewritten a day, the runs a key may sit in, and what a
+ * each ratio: bytes rewritten a day, the groups of files a key may sit in, and what a
  * point read costs at the end.
  */
 export async function policyYear(
@@ -1035,17 +1035,17 @@ export async function policyYear(
     )
     let written = 0
     let lines = 0
-    let sumRuns = 0
-    let maxRuns = 0
+    let sumGroups = 0
+    let maxGroups = 0
     const m = await measure(store, async () => {
       for (let day = 1; day <= o.days; day++) {
         const c = await engine.commit(collection, dayRows(wl, day, yw.rate))
         lines += c.lineBytes
         written += (await engine.maintain(collection)).written
         const { files } = await v3.currentFiles(store, collection)
-        const runs = v3.runsOf(files).length
-        sumRuns += runs
-        maxRuns = Math.max(maxRuns, runs)
+        const groups = v3.groupsOf(files).length
+        sumGroups += groups
+        maxGroups = Math.max(maxGroups, groups)
       }
     })
     const h = await engine.open(collection)
@@ -1061,9 +1061,9 @@ export async function policyYear(
       ratio,
       days: o.days,
       seconds: m.m.seconds,
-      runsAtEnd: h.runs,
-      meanRuns: round(sumRuns / o.days),
-      maxRuns,
+      groupsAtEnd: h.groups,
+      meanGroups: round(sumGroups / o.days),
+      maxGroups,
       dailyLineBytes: Math.round(lines / o.days),
       rewrittenStoredBytesPerDay: Math.round(written / o.days),
       // Stored bytes the policy wrote for each stored byte a day's upload brought.
@@ -1275,7 +1275,7 @@ export async function crossrefDaily(
       row.maintain = { ...brief(m.m), ...m.value }
       const h = await engine.open(collection)
       row.files = h.files
-      row.runs = h.runs
+      row.groups = h.groups
     }
     rows.push(row)
     at.save()
@@ -1470,7 +1470,7 @@ export async function storageSplit(w: World): Promise<Result> {
 /**
  * The fork test for cutting by key (v3-build-plan.md, "From a collaborator's
  * review"): load a collection cut toward a target file size, fork it, edit one
- * record in the fork, and rebuild the fork into one run, keeping every file
+ * record in the fork, and rebuild the fork into one group of files, keeping every file
  * the edit did not fall in. Measures what the fork costs to store, before and
  * after that rebuild, for each target size.
  */
@@ -1516,7 +1516,7 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
         // What the fork adds to the location over its parent.
         extraBytes: together - parent.bytes,
         forkFiles: child.files.length,
-        forkRuns: v3.runsOf(child.files).length,
+        forkGroups: v3.groupsOf(child.files).length,
       }
     }
     // Under the tier rule alone the edit sits in its own small file: nothing is rewritten.

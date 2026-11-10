@@ -51,6 +51,13 @@ function secs(v: unknown): string {
 }
 const ms = (v: unknown) => (typeof v === 'number' ? secs(v / 1000) : '')
 
+/**
+ * How many groups of files a read looked in: a group is one rebuild's output or one
+ * commit's own files, and a read checks one sorted-record-file for each. (Results made
+ * before the word was dropped call this `runs`.)
+ */
+const groupsOf = (p: R | undefined): number | null => p?.groups ?? p?.runs ?? null
+
 const SIZES: [suite: string, label: string][] = [
   ['quick', '100k'],
   ['1m', '1M'],
@@ -463,7 +470,7 @@ function besideF(r: Results): string {
     )
   }
   if (rows.length === 0)
-    return '<p class="muted">The 5M, 12M, and 20,000-collection runs have not landed yet.</p>'
+    return '<p class="muted">The 5M, 12M, and 20,000-collection results have not landed yet.</p>'
   return table(['', 'v3', 'Layout F with deltas'], rows, { num: [] })
 }
 
@@ -507,7 +514,7 @@ const READ_STATES: [label: string, name: string][] = [
 
 function readsChart(r: Results): string {
   const series: Series[] = []
-  const runs: Series[] = []
+  const checked: Series[] = []
   for (const [suite, label] of SIZES) {
     const values = READ_STATES.map(
       ([l]) => r.get(suite, 'reads', l)?.r2?.pointWarm?.requests?.mean ?? null,
@@ -515,9 +522,9 @@ function readsChart(r: Results): string {
     if (values.every((v) => v === null)) continue
     if (series.length < 4) {
       series.push({ name: label, values })
-      runs.push({
+      checked.push({
         name: label,
-        values: READ_STATES.map(([l]) => r.get(suite, 'reads', l)?.r2?.runs ?? null),
+        values: READ_STATES.map(([l]) => groupsOf(r.get(suite, 'reads', l)?.r2)),
       })
     }
   }
@@ -532,11 +539,11 @@ function readsChart(r: Results): string {
       'Mean over 200 records. Each file whose key range covers the record costs a key block, unless the file is small enough to sit whole in its cached tail; then the record block.',
     ) +
     lines(
-      'Runs a record may sit in',
+      'Sorted-record-files a read of one record checks',
       cats,
-      runs,
+      checked,
       (v) => num(v, 0),
-      'A run is one rebuild’s output or one commit’s files. A point read looks in each.',
+      'The files one rebuild wrote, or one commit’s own, have key ranges that don’t overlap, so a read checks one sorted-record-file from each such group.',
     )
   )
 }
@@ -590,7 +597,7 @@ function policy(r: Results): string {
     out += table(
       [
         'Ratio',
-        'Runs a record may sit in, mean',
+        'Sorted-record-files a read checks, mean',
         'Most',
         'Lines rewritten a day',
         'Stored a day, at a quarter of lines',
@@ -599,8 +606,8 @@ function policy(r: Results): string {
       ],
       (p.ratios as R[]).map((x) => [
         x.ratio,
-        num(x.meanRuns),
-        x.maxRuns,
+        num(x.meanGroups ?? x.meanRuns),
+        x.maxGroups ?? x.maxRuns,
         bytes(x.rewrittenLineBytesPerDay),
         bytes(x.rewrittenLineBytesPerDay * 0.25),
         num(x.rewritesPerByte),
@@ -613,7 +620,7 @@ function policy(r: Results): string {
     out += table(
       [
         'Ratio',
-        'Runs, mean',
+        'Files a read checks, mean',
         'Most',
         'At the end',
         'Stored bytes rewritten a day',
@@ -621,9 +628,9 @@ function policy(r: Results): string {
       ],
       (y.ratios as R[]).map((x) => [
         x.ratio,
-        num(x.meanRuns),
-        x.maxRuns,
-        x.runsAtEnd,
+        num(x.meanGroups ?? x.meanRuns),
+        x.maxGroups ?? x.maxRuns,
+        x.groupsAtEnd ?? x.runsAtEnd,
         bytes(x.rewrittenStoredBytesPerDay),
         num(x.warmRequests.mean),
       ]),
@@ -640,8 +647,8 @@ function forkEdit(r: Results): string {
     `${num(t.targetMb)} MB`,
     n0(t.files),
     bytes(t.meanFileBytes),
-    `${bytes(t.tiered.extraBytes)}, ${t.tiered.forkRuns} runs`,
-    `${bytes(t.folded.extraBytes)}, ${t.folded.forkRuns} run`,
+    `${bytes(t.tiered.extraBytes)}; a read checks ${t.tiered.forkGroups ?? t.tiered.forkRuns} files`,
+    `${bytes(t.folded.extraBytes)}; a read checks ${t.folded.forkGroups ?? t.folded.forkRuns}`,
     `${n0(t.fold.filesIn - t.fold.kept)} of ${n0(t.fold.filesIn)}`,
     secs(t.fold.seconds),
   ])
@@ -653,7 +660,7 @@ function forkEdit(r: Results): string {
         'Files',
         'Mean file',
         'Fork adds, tier rule alone',
-        'Fork adds, merged to one run',
+        'Fork adds, once merged back together',
         'Files rewritten',
         'Merge time',
       ],
@@ -747,7 +754,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
         const cell = (s: R | undefined) => (s ? `${num(s.requests.p50)} · ${ms(s.ms.p50)}` : '')
         rows.push([
           esc(`${name} (${profile})`),
-          p.runs,
+          groupsOf(p) ?? '',
           cell(p.pointCold),
           cell(p.pointWarm),
           bytes(p.pointWarm.bytes.mean),
@@ -761,7 +768,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
     out += table(
       [
         'Reads: requests · time, medians',
-        'Runs',
+        'Files checked',
         'One record, cold',
         'One record, warm',
         'Bytes, warm',
@@ -794,7 +801,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
   if (m)
     rows.push([
       'Rebuild after 30 commits',
-      `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; runs ${m.runsBefore} to ${m.runs}; most heap ${n0(m.peakHeapMb)} MB`,
+      `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; files a read checks, ${m.groupsBefore ?? m.runsBefore} to ${m.groups ?? m.runs}; most heap ${n0(m.peakHeapMb)} MB`,
     ])
   const rc = r.get(suite, 'recreate')
   if (rc)
@@ -876,7 +883,7 @@ function manyDetail(r: Results): string {
   return table(['Many collections', ''], rows, { num: [] })
 }
 
-function runsTable(r: Results): string {
+function suitesTable(r: Results): string {
   const bySuite = new Map<string, R[]>()
   for (const x of r.all) {
     if (x.suite === 'gate') continue
@@ -1021,8 +1028,8 @@ td:first-child { padding-right: 16px; }
   <h2>Each size in detail</h2>
   ${details || '<p class="muted">No sized suite has landed yet.</p>'}
 
-  <h2>The runs</h2>
-  ${runsTable(r)}
+  <h2>What ran</h2>
+  ${suitesTable(r)}
   <p class="note">${FINDINGS.method}</p>
 </main>
 <div id="tip" hidden></div>

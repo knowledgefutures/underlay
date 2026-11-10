@@ -64,7 +64,7 @@ describe('forks', () => {
     const store = memoryStore()
     await v3.createCollection(store, 'parent')
     const { model, rand } = await seeded(store, 'parent', 2, 6)
-    await v3.rebuild(store, 'parent', { plan: (runs) => [runs.slice(0, 4)] })
+    await v3.rebuild(store, 'parent', { plan: (groups) => [groups.slice(0, 4)] })
     const records = await collect(listAll(store, 'records/'))
     const fork = await v3.forkCollection(store, 'parent', 'fork')
     // No sorted-record-file was written or copied.
@@ -101,7 +101,7 @@ describe('forks', () => {
       expect(made.commit.collection).toBe('fork')
     }
     await v3.rebuild(store, 'parent', { plan: v3.planAll })
-    await v3.rebuild(store, 'fork', { plan: (runs) => [runs.slice(1)] })
+    await v3.rebuild(store, 'fork', { plan: (groups) => [groups.slice(1)] })
     await checkReads(store, 'parent', parent, rand)
     await checkReads(store, 'fork', fork, rand)
     await v3.verifyLog(store, 'fork', { lineage: [['parent', 5]] })
@@ -118,8 +118,8 @@ describe('forks', () => {
   it('forks at an older commit only if no rebuilt file holds later rows', async () => {
     const store = memoryStore()
     const { model, rand } = await seeded(store, 'parent', 4, 6)
-    await v3.rebuild(store, 'parent', { plan: (runs) => [runs.slice(0, 3)], adoptAfter: 99 })
-    // The layout runs through 6 (it lists the later commits' files too).
+    await v3.rebuild(store, 'parent', { plan: (groups) => [groups.slice(0, 3)], adoptAfter: 99 })
+    // The layout goes through commit 6 (it lists the later commits' files too).
     await expect(v3.forkCollection(store, 'parent', 'early', { at: 4 })).rejects.toThrow(
       /at commit 6 or later/,
     )

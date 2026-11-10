@@ -66,7 +66,7 @@ export const FINDINGS = {
   reads: '',
   policy: '',
   forkEdit:
-    'Files are cut by key toward the target, so a stretch of keys nobody changed keeps its file and its id. Under the tier rule the edit stays in a small file of its own: the fork costs kilobytes, and a read looks in two runs. Merging the fork back into one run rewrites only the file the edit fell in and keeps the rest. That file is larger than the target on average, since a larger file is likelier to be hit.',
+    'Files are cut by key toward the target, so a stretch of keys nobody changed keeps its file and its id. Under the tier rule the edit stays in a small file of its own: the fork costs kilobytes, and a read of a record checks two files. Merging the fork back together rewrites only the file the edit fell in and keeps the rest, and a read checks one. That file is larger than the target on average, since a larger file is likelier to be hit.',
   besideF:
     'Layout F’s numbers are from its final runs on 2026-10-19 (commit <code>a8e4dec</code>, Travis’s Mac, latency profile <code>r2</code>). v3’s daily rows use the rate F’s bench used (240,000 changes a day at Crossref’s size), so the two are like for like. F ran through the HTTP server, with its queue and database; v3 is driven as a library, so its times leave out HTTP and queue hops.',
   r2: '<p class="muted">To be written.</p>',
