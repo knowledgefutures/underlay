@@ -115,6 +115,7 @@ async function sized(
   await step(w, 'forks', '', () => S.forks(w, o.forkDays))
   // Two days at the rate layout F's bench used (240,000 a day at Crossref's size), to set beside its.
   await step(w, 'daily', 'f-rate-2', () => S.daily(w, 2, true, 240_000 / 180_000_000))
+  await step(w, 'storage', '', () => S.storageSplit(w))
 }
 
 const MANY_DEFAULT = { records: 9, days: 2, streams: 8 }
@@ -234,9 +235,14 @@ async function suite(name: string): Promise<void> {
       await reads(`${days}-since-rebuild`)
       await step(w, 'maintain', 'catch-up', () => S.maintain(w))
       await reads('rebuilt', true)
+      // Then days with the rebuild policy on, as the sized suites have.
+      const kept = Math.max(2, Math.round(days / 6))
+      await step(w, 'daily', `maintained-${kept}`, () => S.crossrefDaily(w, o, kept, true))
+      await reads('after-policy')
       await step(w, 'recreate', '', () => S.recreate(w, { write: 2 }))
       await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
       await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
+      await step(w, 'storage', '', () => S.storageSplit(w))
       break
     }
     case 'split': {

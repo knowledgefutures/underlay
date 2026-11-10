@@ -235,15 +235,15 @@ export async function daily(
   const rows: Result[] = []
   for (let n = 0; n < days; n++) {
     const day = ++at.value.day
-    const changes = [...dayRows(wl, day, rate)]
-    const build = await measure(store, () => engine.build(changes))
+    // The day's rows are streamed into the build, never held: at 12M a day is over 100 MB.
+    const build = await measure(store, () => engine.build(dayRows(wl, day, rate)))
     const commit = await measure(store, () =>
       engine.commitFiles(w.collection, build.value, `day ${day}`),
     )
     const row: Result = {
       day,
       commit: commit.value.number,
-      changes: changes.length,
+      changes: commit.value.entries,
       lineBytes: commit.value.lineBytes,
       storedBytes: commit.value.storedBytes,
       build: brief(build.m),
@@ -261,7 +261,7 @@ export async function daily(
     at.save()
     if (day % 5 === 0 || n === days - 1) {
       log(`daily: day ${day}`, {
-        changes: changes.length,
+        changes: commit.value.entries,
         server: (row.server as { seconds: number }).seconds,
       })
     }
@@ -544,7 +544,7 @@ export async function forks(w: World, days: number): Promise<Result> {
   const parent = loadWorkload(w)
   const child = parent.fork('fork')
   // Edit 1% of the fork in one commit.
-  const edit = await measure(store, () => engine.commit(fork, [...dayRows(child, 100_000, 0.01)]))
+  const edit = await measure(store, () => engine.commit(fork, dayRows(child, 100_000, 0.01)))
   const at = state(w, 'day', { day: 0 })
   let t = Date.now()
   /** Logical and physical bytes now, after a sweep that reclaims at once. */
@@ -570,8 +570,8 @@ export async function forks(w: World, days: number): Promise<Result> {
   let rewritten = 0
   for (let n = 1; n <= days; n++) {
     const day = ++at.value.day
-    await engine.commit(w.collection, [...dayRows(parent, day, w.rate)])
-    await engine.commit(fork, [...dayRows(child, day, w.rate)])
+    await engine.commit(w.collection, dayRows(parent, day, w.rate))
+    await engine.commit(fork, dayRows(child, day, w.rate))
     rewritten += (await engine.maintain(w.collection)).written
     rewritten += (await engine.maintain(fork)).written
     if (n % 5 === 0 || n === days) {
@@ -1023,7 +1023,7 @@ export async function policyYear(
     let maxRuns = 0
     const m = await measure(store, async () => {
       for (let day = 1; day <= o.days; day++) {
-        const c = await engine.commit(collection, [...dayRows(wl, day, yw.rate)])
+        const c = await engine.commit(collection, dayRows(wl, day, yw.rate))
         lines += c.lineBytes
         written += (await engine.maintain(collection)).written
         const { files } = await v3.currentFiles(store, collection)
