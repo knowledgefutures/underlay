@@ -13,8 +13,9 @@ while true; do
   sys=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
   if [ "$avail" -lt 4 ] || [ "$data" -lt 40 ] || [ "$sys" -lt 40 ]; then
     echo "$(date -Is) watchdog: mem ${avail}G /data ${data}G / ${sys}G, killing bench runs" >> "$LOG"
-    pkill -f 'scripts/chain.sh'; pkill -f 'underlay-v3-core/dist/bench.mjs'; sleep 5
-    pkill -9 -f 'underlay-v3-core/dist/bench.mjs'
+    # A chain runs a copy of the bundle under its bench folder, so match any of ours.
+    pkill -f 'scripts/chain.sh'; pkill -f 'underlay-v3.*bench\.mjs'; sleep 5
+    pkill -9 -f 'underlay-v3.*bench\.mjs'
   fi
   sleep 10
 done
