@@ -397,7 +397,9 @@ export async function createCommit(
       await writeLatest(store, collection, { commit: commit.number, layout: latest?.layout ?? 0 })
       return mine
     }
-    // Lost, or a retried request that had in fact won: see what holds the number.
+    // Lost, or a retried request that had in fact won: see what holds the number. The
+    // same bytes there mean the same files after the same commit at the same moment,
+    // which is this commit whoever's request wrote it.
     const there = await readCommit(store, collection, commit.number)
     if (!there)
       throw new Error(`Commit ${commit.number} of ${collection} was refused but is absent`)

@@ -119,18 +119,22 @@ describe('commits', () => {
   it('finds the head with a stale hint, a missing hint, and a hint from a deleted collection', async () => {
     const store = memoryStore()
     const files = [await fileOf(store, 'x')]
-    for (let i = 0; i < 37; i++) await v3.createCommit(store, 'c', { files, bump: 'minor' })
+    // A clock that moves: these commits are otherwise identical, and made within a millisecond.
+    let t = Date.parse('2026-11-10T00:00:00Z')
+    const commit = () =>
+      v3.createCommit(store, 'c', { files, bump: 'minor' }, { now: () => new Date((t += 1000)) })
+    for (let i = 0; i < 37; i++) await commit()
     await store.put(v3.latestKey('c'), jcs({ commit: 3, layout: 0 }))
     expect((await v3.findHead(store, 'c'))!.commit.number).toBe(37)
-    expect((await v3.createCommit(store, 'c', { files, bump: 'minor' })).commit.number).toBe(38)
+    expect((await commit()).commit.number).toBe(38)
     await store.delete(v3.latestKey('c'))
     expect(await v3.headNumber(store, 'c')).toBe(38)
-    expect((await v3.createCommit(store, 'c', { files, bump: 'minor' })).commit.number).toBe(39)
+    expect((await commit()).commit.number).toBe(39)
     await store.put(v3.latestKey('c'), 'not json')
     expect(await v3.headNumber(store, 'c')).toBe(39)
     await store.put(v3.latestKey('c'), jcs({ commit: 500, layout: 0 }))
     expect(await v3.headNumber(store, 'c')).toBe(39)
-    expect((await v3.createCommit(store, 'c', { files, bump: 'minor' })).commit.number).toBe(40)
+    expect((await commit()).commit.number).toBe(40)
     await v3.verifyLog(store, 'c')
   })
 
