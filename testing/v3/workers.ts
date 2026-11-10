@@ -36,6 +36,8 @@ export interface BuildGenSpec {
   hi: KeyPair | null
   schemas: boolean
   fileBytes: number
+  /** Cut files by key, one key in this many. */
+  cutEvery?: number
   level?: number
 }
 
@@ -55,6 +57,7 @@ async function buildGen(): Promise<void> {
   const sorted = v3.sortRows(rows(), fileStore(s.scratchDir))
   const files = await v3.buildFiles(sorted, clientTarget(store, s.session), {
     maxBytes: s.fileBytes,
+    ...(s.cutEvery === undefined ? {} : { cutEvery: s.cutEvery }),
     ...(s.level === undefined ? {} : { level: s.level }),
   })
   report(store, {

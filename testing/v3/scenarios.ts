@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { listAll, v3 } from '../../packages/protocol/src/index.js'
-import { hash32, idOf, prng, schemas, typeOf } from '../src/gen.js'
+import { hash32, idOf, prng, record, schemas, typeOf } from '../src/gen.js'
 import { V3Engine } from './engine.js'
 import {
   GB,
@@ -122,7 +122,7 @@ async function commitVerified(
  * The first load from the generator: built in parallel parts by key range (the
  * client), verified in parallel (the server), committed once, and read at once.
  */
-export async function load(w: World): Promise<Result> {
+export async function load(w: World, opts: { cutEvery?: number } = {}): Promise<Result> {
   const store = storeOf(w)
   await v3.createCollection(store, w.collection).catch(() => {})
   // Split points between parts, from a sample of keys.
@@ -161,6 +161,7 @@ export async function load(w: World): Promise<Result> {
           hi: cuts[p + 1]!,
           schemas: p === 0,
           fileBytes: w.fileBytes,
+          ...(opts.cutEvery === undefined ? {} : { cutEvery: opts.cutEvery }),
           ...(w.level === undefined ? {} : { level: w.level }),
         } satisfies BuildGenSpec),
       ),
@@ -1464,4 +1465,99 @@ export async function storageSplit(w: World): Promise<Result> {
     storedOverLines: round(out.bytes / Math.max(1, out.lines), 4),
     stored: disk,
   }
+}
+
+/**
+ * The fork test for cutting by key (v3-build-plan.md, "From a collaborator's
+ * review"): load a collection cut toward a target file size, fork it, edit one
+ * record in the fork, and rebuild the fork into one run, keeping every file
+ * the edit did not fall in. Measures what the fork costs to store, before and
+ * after that rebuild, for each target size.
+ */
+export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
+  const rows: Result[] = []
+  for (const mb of targetsMb) {
+    const collection = `cut${String(mb).replace('.', '_')}`
+    const fork = `${collection}-fork`
+    // Only the key cut decides where files end.
+    const cw: World = { ...w, collection, fileBytes: 1024 ** 3 }
+    const store = storeOf(cw)
+    const engine = engineOf(cw)
+    // A record stores at about 0.27 of its 6.8 KB of lines.
+    const cutEvery = Math.max(2, Math.round((mb * MB) / 1820))
+    const loaded = await load(cw, { cutEvery })
+    const before = await diskUsage(cw.storeDir)
+    const forked = await measure(store, () => engine.fork(collection, fork))
+    const wl = loadWorkload(cw)
+    const i = wl.pick(prng(hash32(`fork-edit/${mb}`)))
+    const edited = record(wl.seed, i, 1)
+    const edit = await measure(store, () =>
+      engine.commit(fork, [v3.rowFromRecord(edited.id, edited.type, edited.data)]),
+    )
+    let t = Date.now()
+    const account = async () => {
+      for (let n = 0; n < 3; n++)
+        await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
+      const s = await v3.sweep(store, { graceMs: 0, trashMs: 0, now: () => (t += 1) })
+      const parent = s.logical.get(collection)?.bytes ?? 0
+      const forkBytes = s.logical.get(fork)?.bytes ?? 0
+      const view = await v3.openView(store, fork)
+      const runs = new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`))
+      return {
+        parentBytes: parent,
+        forkBytes,
+        // What the fork adds to the location over its parent.
+        extraBytes: (s.logical.get(collection) ? s.records.listedBytes : 0) - parent,
+        forkFiles: view.files.length,
+        forkRuns: runs.size,
+        missing: s.records.missing.length,
+      }
+    }
+    // Under the tier rule alone the edit sits in its own small file: nothing is rewritten.
+    const tiered = await account()
+    const fold = await measure(store, () =>
+      v3.rebuild(store, fork, {
+        plan: v3.planAll,
+        cutEvery,
+        keepUntouched: true,
+        cache: engine.cache,
+      }),
+    )
+    const folded = await account()
+    const key = { type: edited.type, id: edited.id }
+    const h = await engine.open(fork)
+    const read = await timed(store, 20, () => engine.readPoint(h, key.type, key.id))
+    const after = await diskUsage(cw.storeDir)
+    const row = {
+      targetMb: mb,
+      cutEvery,
+      files: loaded.files,
+      storedBytes: loaded.storedBytes,
+      meanFileBytes: Math.round((loaded.storedBytes as number) / (loaded.files as number)),
+      fork: { ...brief(forked.m), ...forked.value },
+      edit: { ...brief(edit.m), storedBytes: edit.value.storedBytes },
+      tiered,
+      fold: {
+        ...brief(fold.m),
+        kept: fold.value.kept,
+        filesIn: fold.value.filesIn,
+        filesOut: fold.value.filesOut,
+        written: fold.value.written,
+      },
+      folded,
+      readAfter: read,
+      recordBytesAdded: (after.records?.bytes ?? 0) - (before.records?.bytes ?? 0),
+    }
+    rows.push(row)
+    log(`fork edit, ${mb} MB files`, {
+      files: row.files,
+      meanFileMb: round(row.meanFileBytes / MB),
+      tieredExtra: tiered.extraBytes,
+      foldedExtra: folded.extraBytes,
+      rewritten: row.fold.written,
+      kept: row.fold.kept,
+      foldSeconds: fold.m.seconds,
+    })
+  }
+  return { records: w.records, targets: rows }
 }

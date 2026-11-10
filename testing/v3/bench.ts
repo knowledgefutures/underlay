@@ -141,6 +141,7 @@ async function suite(name: string): Promise<void> {
       await step(w, 'policy-year', '', () =>
         S.policyYear(w, { records: 3000, days: 40, ratios: [10, 4] }),
       )
+      await step(w, 'fork-edit', '', () => S.forkEdit(w, [0.25, 1]))
       break
     }
     case 'quick':
@@ -243,6 +244,14 @@ async function suite(name: string): Promise<void> {
       await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
       await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
       await step(w, 'storage', '', () => S.storageSplit(w))
+      break
+    }
+    case 'fork-edit': {
+      // Fork, edit one record, rebuild keeping untouched files: what is stored, by file size.
+      const records = num('records', 1_000_000)
+      const w = world(folder, { ...base, records })
+      const targets = str('targets', '8,32,128').split(',').map(Number)
+      await step(w, 'fork-edit', '', () => S.forkEdit(w, targets))
       break
     }
     case 'split': {
