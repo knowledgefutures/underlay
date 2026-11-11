@@ -58,17 +58,17 @@ export const LAYOUT_F: { '5m': FSize; '12m': FSize; many: Record<string, string>
 }
 
 export const FINDINGS = {
-  date: '2026-11-10',
+  date: '2026-11-11',
   lede: 'The v3 core (sorted-record-files, commits, layout files, rebuilds, forks, and the deletion sweep) built as a library, and measured at scale on a store that waits, limits, and counts as R2 is documented to.',
   status:
-    'In so far, from round 3 on the LighterAPI box (commit <code>37ca762</code>): the 3,000-collection check, 100k, 1M, and a 7.2M-record sample of Crossref. Still to land in that round: 5M, 12M, 20,000 collections, racing writers, the policy over a year, and all of Crossref. The fork test is from the Mac at 1M (commit <code>8d24453</code>) and is repeated at 12M in a short round 4.',
+    'In so far, from round 3 on the LighterAPI box (commit <code>37ca762</code>): the 3,000-collection check, 100k, 1M, 5M, and a 7.2M-record sample of Crossref. Still to land in that round: 12M, 20,000 collections, racing writers, the policy over a year, and all of Crossref. The fork test is from the Mac at 1M (commit <code>8d24453</code>) and is repeated at 12M in a short round 4.',
   verdict: `<ul>
-<li>Everything measured so far held. A day’s commit is a few dozen requests and about a second at 100k and at 1M; a first load reads the moment it commits; every commit’s files were made again to the ids in the log; a fork copied no records; the sweep deleted nothing a collection lists; and no process needed more than 65 MB of heap.</li>
+<li>Everything measured so far held. A day’s commit is a few dozen requests and one to two seconds from 100k to 5M; a first load reads the moment it commits; every commit’s files were made again to the ids in the log; a fork copied no records; the sweep deleted nothing a collection lists; and no process needed more than 79 MB of heap.</li>
 <li>One finding changed the plan’s starting rebuild policy. Merging ten neighbours of exactly one size left too many sorted-record-files for a read to check (14 on average at Crossref’s size, by arithmetic). The rule now in force leaves about 9, so a point read is about 10 requests with footers cached. That sits on the plan’s line, not under it; a ratio of 4 brings it to about 7 for a fifth more rewriting.</li>
 <li>The recommendation waits for the large sizes.</li>
 </ul>`,
   reads:
-    '<p class="note">With nothing cached a read also fetches each file’s footer: 9 to 14 requests once rebuilt, 67 with 30 commits not yet merged. In the Crossref sample a day’s file is too large for its key blocks to come with the footer, so each file checked is a request: 7 to 8 warm with 7 to 9 files to check, 20 to 26 cold.</p>',
+    '<p class="note">With nothing cached a read also fetches each file’s footer: 9 to 16 requests once rebuilt, and 67 to 98 with 30 commits not yet merged. At 5M and in the Crossref sample a day’s file is too large for its key blocks to come with the footer, so each file checked is a request: at 5M, 6 warm with the policy on and 32 with 30 commits not yet merged; in the sample, 7 to 8 warm with 7 to 9 files to check.</p>',
   policy:
     '<p class="note">The rule in force: for each size tier, lowest first, merge ten or more neighbouring groups of files that are each at or below the tier, if together they are at least twice the largest. The plan’s first rule (ten neighbours of exactly one tier) left 14 files to check on average and 28 at most by this arithmetic, and more when uploads were uneven. Layout F’s leveled policy rewrote about 8.5 GB a day, simulated. The largest merges (hundreds of GB of lines, a few times in three years) are one sequential pass today and need splitting by key range first.</p>',
   forkEdit:

@@ -573,7 +573,7 @@ function readsChart(r: Results): string {
       cats,
       series,
       (v) => num(v, 1),
-      'Mean over 200 records. Each file whose key range covers the record costs a key block, then the record block. A small file’s key blocks come with its footer (the last 64 KB, read once and cached), so at these sizes a day’s file costs nothing more; from about 1,000 changes a day it costs a request.',
+      'Mean over 200 records. Each file whose key range covers the record costs a key block, then the record block. A small file’s key blocks come with its footer (the last 64 KB, read once and cached), so below about 1,000 changes a day a day’s file costs nothing more. Above that it costs a request, which is why 5M climbs until the rebuild.',
     ) +
     lines(
       'Sorted-record-files a read of one record checks',
