@@ -1182,6 +1182,9 @@ function hero(r: Results): string {
 }
 
 /** The few numbers that say how v3 does at Crossref's size. */
+/** Millions to one place, whatever the size: 171.8, 7.8. */
+const millions = (v: number) => (v / 1e6).toFixed(1)
+
 function tiles(r: Results): string {
   const load = r.get('crossref', 'load')
   if (!load) return ''
@@ -1200,9 +1203,9 @@ function tiles(r: Results): string {
   const out = [
     tile(
       'Records',
-      `${num(records / 1e6)}M`,
+      `${millions(records)}M`,
       rest
-        ? `all of Crossref: ${num(load.records / 1e6)}M in the first load, ${num(rest.records / 1e6)}M in a second upload`
+        ? `all of Crossref: ${millions(load.records)}M in the first load, ${millions(rest.records)}M in a second upload`
         : `real Crossref records, ${num((load.records / F_NUMBERS.crossrefRecords) * 100)}% of the dump`,
     ),
     tile(
@@ -1213,7 +1216,7 @@ function tiles(r: Results): string {
     tile(
       'Upload to readable',
       hm(total),
-      `the first ${num(load.records / 1e6)}M; layout F on staging: ${F_NUMBERS.crossrefLoad}`,
+      `the first ${millions(load.records)}M; layout F on staging: ${F_NUMBERS.crossrefLoad}`,
     ),
   ]
   if (daily) {
