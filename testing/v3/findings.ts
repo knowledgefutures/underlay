@@ -57,7 +57,56 @@ export const LAYOUT_F: { '5m': FSize; '12m': FSize; many: Record<string, string>
   },
 }
 
+/** Layout F's numbers as numbers, for the summary's bars (the same sources as above). */
+export const F_NUMBERS = {
+  '5m': {
+    loadSeconds: 1012,
+    dailySeconds: [31, 43],
+    dailyRequests: [18_100, 19_200],
+    warmMs: 259,
+    diffSeconds: 41.6,
+    exportSeconds: 13.4 * 60,
+  },
+  '12m': {
+    loadSeconds: 2903,
+    dailySeconds: [70, 93],
+    dailyRequests: [40_900, 45_800],
+    warmMs: 294,
+    diffSeconds: 39.2,
+    exportSeconds: 31.9 * 60,
+  },
+  many: { loadSeconds: 1.7 * 3600, burstSeconds: 5.7 * 60, commitRequests: 76 },
+  /** The full-dump commit on staging's `crossref-demo/works-f`, 2026-10-22: real R2, not this bench. */
+  crossrefLoad: '10 h 28 min',
+  crossrefRecords: 179_518_552,
+}
+
 export const FINDINGS = {
+  bottomLine:
+    'The v3 core held from 100k records to Crossref’s size and across 20,000 collections, and it is ahead of layout F on every measure the two share. The recommendation is to go on to server integration, settling the four things listed under “What to do next” on the way.',
+  cards: {
+    policy: {
+      head: 'A read costs a request for each group of files, so the rebuild policy sets what a read costs',
+      body: 'Each commit adds a group of sorted-record-files, and a read checks one file in each group until a rebuild merges them. The plan’s starting policy left about 14 groups at Crossref’s size. The rule now in force leaves about 9, which puts one record at about 10 requests. A ratio of 4 makes it about 7, for a fifth more rewriting.',
+      todo: 'Pick the ratio (10 is in force). Split the largest merges across processes: they are one pass on one process today.',
+    },
+    forks: {
+      head: 'Keeping untouched files pays for narrow edits, not for daily changes',
+      body: 'The review proposed keeping any file no change fell in. Daily changes are spread over the keys, so they fall in every file: a full merge each day then rewrites everything, and a fork stops sharing with its parent. The tier rule leaves shared files alone.',
+      todo: 'Keep the tier rule for what arrives each day. Use the key cut and kept files to fold a lightly edited fork back together.',
+    },
+    racing: {
+      head: 'Racing writers are correct and wasteful',
+      body: 'Only one writer can win a commit number. With 64 writing to one collection every commit landed once and none was lost, but each cost many times the requests, and a writer that loses 50 times running is refused and has to send again. Commits to different collections do not contend.',
+      todo: 'Queue commits to a collection in the server, and land them in turn.',
+    },
+  },
+  next: `<ol>
+<li><b>Queue commits to a collection</b> in the server, where today they race.</li>
+<li><b>Decide the rebuild ratio.</b> 10 keeps one record at about 10 requests at Crossref’s size; 4 makes it about 7 for a fifth more rewriting.</li>
+<li><b>Split large merges and schema scans across processes.</b> Both are one pass on one process: fine to 12M, slow at Crossref’s size (15 minutes to merge 30 days; 33 minutes to scan 6.8M records).</li>
+<li><b>Try on real R2</b> the three things its documentation does not spell out: one winner when two creates of a new key collide, what the loser is told, and ten or more new keys a second under one prefix.</li>
+</ol>`,
   date: '2026-11-11',
   lede: 'The v3 core (sorted-record-files, commits, layout files, rebuilds, forks, and the deletion sweep) built as a library, and measured at scale on a store that waits, limits, and counts as R2 is documented to.',
   status:

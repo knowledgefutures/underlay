@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { FINDINGS, LAYOUT_F } from './findings.js'
+import { F_NUMBERS, FINDINGS, LAYOUT_F } from './findings.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type R = Record<string, any>
@@ -66,14 +66,14 @@ const SIZES: [suite: string, label: string][] = [
   ['1m', '1M'],
   ['5m', '5M'],
   ['12m', '12M'],
-  ['crossref', 'Crossref, 180M'],
+  ['crossref', 'Crossref'],
 ]
 
 /** The sizes with a detail section: every size, and the sample of Crossref tried before the whole. */
 const DETAILS: [suite: string, label: string][] = [
   ...SIZES.slice(0, 4),
   ['crossref-mid', 'Crossref sample (2,000 of the dump’s 36,626 files)'],
-  ['crossref', 'Crossref, all of it'],
+  ['crossref', 'Crossref (171.8M of its 179.5M records)'],
 ]
 
 /** Where the same 1,000-change upload was committed, smallest collection first. */
@@ -226,6 +226,7 @@ function lines(
   categories.forEach((c, i) => {
     marks += `<text x="${x(i)}" y="${h - bottom + 18}" text-anchor="middle" class="tick">${esc(c)}</text>`
   })
+  const ends: { x: number; y: number; text: string }[] = []
   series.forEach((s, si) => {
     const pts = s.values.map((v, i) => (v === null ? null : ([x(i), y(v)] as const)))
     const path = pts.reduce(
@@ -240,9 +241,20 @@ function lines(
     const lastIndex = s.values.reduce<number>((li, v, i) => (v === null ? li : i), -1)
     if (lastIndex >= 0) {
       const p = pts[lastIndex]!
-      marks += `<text x="${p[0] + 9}" y="${p[1] + 4}" class="val">${esc(unit(s.values[lastIndex]!))}</text>`
+      ends.push({ x: p[0] + 9, y: p[1] + 4, text: unit(s.values[lastIndex]!) })
     }
   })
+  // End labels: one for each distinct value, moved apart where the lines end together.
+  ends.sort((a, b) => a.y - b.y)
+  let lastY = -Infinity
+  const shown = new Set<string>()
+  for (const e of ends) {
+    if (shown.has(`${e.x}/${e.text}`)) continue
+    shown.add(`${e.x}/${e.text}`)
+    const yy = Math.max(e.y, lastY + 12)
+    lastY = yy
+    marks += `<text x="${e.x}" y="${yy}" class="val">${esc(e.text)}</text>`
+  }
   return figure(
     title,
     `${legend(series)}<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}">${ax}${marks}</svg>`,
@@ -336,10 +348,7 @@ function claims(r: Results): string {
         .sort((a, b) => a.writers - b.writers)
         .map(
           (x) =>
-            `${x.writers} writers to one collection: ${n0(x.commits)} commits, ${num(x.commitsPerSecond)} a second` +
-            (x.requestsPerCommit === undefined
-              ? ''
-              : `, ${num(x.lossesPerCommit)} lost tries and ${n0(x.requestsPerCommit)} requests a commit, ${n0(x.refused)} refused after 50 lost tries and sent again`),
+            `${x.writers} writers to one collection: ${n0(x.commits)} commits, each number won once, ${num(x.commitsPerSecond)} a second`,
         )
         .join('; '),
     ),
@@ -550,13 +559,16 @@ const READ_STATES: [label: string, name: string][] = [
   ['10-since-rebuild', '10 commits later'],
   ['30-since-rebuild', '30 commits later'],
   ['rebuilt', 'rebuilt'],
-  ['after-policy', '30 more days, policy on'],
+  ['after-policy', 'more days, policy on'],
 ]
 
-function readsChart(r: Results): string {
+function readsChart(
+  r: Results,
+  opts: { sizes?: [string, string][]; only?: 'requests' } = {},
+): string {
   const series: Series[] = []
   const checked: Series[] = []
-  for (const [suite, label] of SIZES) {
+  for (const [suite, label] of opts.sizes ?? SIZES) {
     const values = READ_STATES.map(
       ([l]) => r.get(suite, 'reads', l)?.r2?.pointWarm?.requests?.mean ?? null,
     )
@@ -571,13 +583,22 @@ function readsChart(r: Results): string {
   }
   if (series.length === 0) return ''
   const cats = READ_STATES.map(([, n]) => n)
+  if (opts.only === 'requests') {
+    return lines(
+      'Requests for one record, footers cached, as commits pile up and are rebuilt',
+      cats,
+      series,
+      (v) => num(v, 1),
+      'Mean over 200 records. With no rebuild, every commit is one more request; the rebuild brings it back down.',
+    )
+  }
   return (
     lines(
       'Requests for one record, footers cached, as commits pile up and are rebuilt',
       cats,
       series,
       (v) => num(v, 1),
-      'Mean over 200 records. Each file whose key range covers the record costs a key block, then the record block. A small file’s key blocks come with its footer (the last 64 KB, read once and cached), so below about 1,000 changes a day a day’s file costs nothing more. Above that it costs a request, which is why 5M climbs until the rebuild.',
+      'Mean over 200 records. Each file whose key range covers the record costs a key block, then the record block. A small file’s key blocks come with its footer (the last 64 KB, read once and cached), so below about 1,000 changes a day a day’s file costs nothing more. Above that it costs a request, which is why the larger sizes climb until the rebuild.',
     ) +
     lines(
       'Sorted-record-files a read of one record checks',
@@ -695,12 +716,12 @@ function forkEdit(r: Results): string {
       bytes(t.meanFileBytes),
       `${bytes(t.tiered.extraBytes)}; a read checks ${t.tiered.forkGroups ?? t.tiered.forkRuns} files`,
       `${bytes(t.folded.extraBytes)}; a read checks ${t.folded.forkGroups ?? t.folded.forkRuns}`,
-      `${n0(t.fold.filesIn - t.fold.kept)} of ${n0(t.fold.filesIn)}`,
+      `${n0(t.files - t.fold.kept)} of ${n0(t.files)}`,
       secs(t.fold.seconds),
       ...(near
         ? [
             t.near
-              ? `${bytes(t.near.extraBytes)} for an edit of ${bytes(t.near.editBytes)}; ${n0(t.near.filesIn - t.near.kept)} files rewritten`
+              ? `${bytes(t.near.extraBytes)} for an edit of ${bytes(t.near.editBytes)}; ${n0(t.files - t.near.kept)} of the parent’s files rewritten`
               : '',
           ]
         : []),
@@ -714,7 +735,7 @@ function forkEdit(r: Results): string {
           'Mean file',
           'Fork adds, tier rule alone',
           'Fork adds, once merged back together',
-          'Files rewritten',
+          'Of the parent’s files, rewritten',
           'Merge time',
           ...(near ? ['Fork adds: 1% edited side by side, merged'] : []),
         ],
@@ -1004,6 +1025,343 @@ function suitesTable(r: Results): string {
   )
 }
 
+// --- The summary ---
+
+interface Pair {
+  label: string
+  /** The same unit for both. */
+  v3: number
+  f: number
+  show: (v: number) => string
+  /** Layout F's value as text, where it was two days' numbers. */
+  fText?: string
+  /** What less of it is: faster, fewer. */
+  word: string
+}
+
+const times = (x: number) => (x >= 10 ? n0(x) : num(x, 1))
+
+/** Hours and minutes, for a time people plan around. */
+function hm(seconds: number): string {
+  if (seconds < 3600) return secs(seconds)
+  const m = Math.round(seconds / 60)
+  return `${Math.floor(m / 60)} h ${m % 60} min`
+}
+
+/** Pairs of bars, v3 over layout F, each pair on a scale of its own, with how many times less. */
+function compare(title: string, pairs: Pair[]): string {
+  if (pairs.length === 0) return ''
+  const rows = pairs.map((p) => {
+    const max = Math.max(p.v3, p.f)
+    const w = (v: number) => Math.max(0.6, (v / max) * 100).toFixed(1)
+    const fText = p.fText ?? p.show(p.f)
+    const gain = p.f / p.v3
+    return `<div class="cmp-row">
+<div class="cmp-label">${p.label}</div>
+<div class="cmp-bars">
+<div class="cmp-bar" data-tip="${esc(`v3: ${p.show(p.v3)}`)}"><span class="track"><i class="bar v3" style="width:${w(p.v3)}%"></i></span><span class="cmp-val">${esc(p.show(p.v3))}</span></div>
+<div class="cmp-bar" data-tip="${esc(`Layout F: ${fText}`)}"><span class="track"><i class="bar f" style="width:${w(p.f)}%"></i></span><span class="cmp-val f">${esc(fText)}</span></div>
+</div>
+<div class="cmp-gain">${gain >= 1.05 ? `<b>${times(gain)}×</b> ${p.word}` : 'about the same'}</div>
+</div>`
+  })
+  return `<h3>${title}</h3>${rows.join('')}`
+}
+
+function hero(r: Results): string {
+  const mid = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+  const size = r.get('12m', 'load') ? '12m' : r.get('5m', 'load') ? '5m' : null
+  let out = ''
+  if (size) {
+    const f = F_NUMBERS[size]
+    const load = r.get(size, 'load')!
+    const daily = r.get(size, 'daily', 'f-rate-2')
+    const reads = r.get(size, 'reads', 'after-policy')?.r2
+    const rebuilt = r.get(size, 'reads', 'rebuilt')
+    const pairs: Pair[] = [
+      {
+        label: 'First load, upload to readable',
+        v3: load.build.seconds + load.verify.seconds + load.commit.seconds,
+        f: f.loadSeconds,
+        show: secs,
+        word: 'faster',
+      },
+    ]
+    if (daily) {
+      pairs.push(
+        {
+          label: 'A day’s commit, server time',
+          v3: daily.serverSeconds.p50,
+          f: mid(f.dailySeconds),
+          show: secs,
+          fText: `${f.dailySeconds[0]} and ${f.dailySeconds[1]} s`,
+          word: 'faster',
+        },
+        {
+          label: 'A day’s commit, storage requests',
+          v3: daily.serverRequests.p50,
+          f: mid(f.dailyRequests),
+          show: n0,
+          fText: `${n0(f.dailyRequests[0]!)} and ${n0(f.dailyRequests[1]!)}`,
+          word: 'fewer',
+        },
+      )
+    }
+    if (reads) {
+      pairs.push({
+        label: 'One record, footers cached',
+        v3: reads.pointWarm.ms.p50,
+        f: f.warmMs,
+        show: (v) => `${n0(v)} ms`,
+        word: 'faster',
+      })
+      if (reads.diffPage500Before) {
+        pairs.push({
+          label: 'A diff page of 500, with what each record was before',
+          v3: reads.diffPage500Before.ms.p50 / 1000,
+          f: f.diffSeconds,
+          show: secs,
+          word: 'faster',
+        })
+      }
+    }
+    if (rebuilt?.export) {
+      pairs.push({
+        label: `Full export <span class="muted">v3 on ${rebuilt.export.parts} processes, F on one</span>`,
+        v3: rebuilt.export.seconds,
+        f: f.exportSeconds,
+        show: secs,
+        word: 'faster',
+      })
+    }
+    out += compare(`${size === '12m' ? '12M' : '5M'} records`, pairs)
+  }
+  const many = r.many()
+  if (many && many.collections >= 20_000) {
+    const f = F_NUMBERS.many
+    out += compare(`${n0(many.collections)} collections`, [
+      {
+        label: 'Loading them all',
+        v3: many.load.seconds,
+        f: f.loadSeconds,
+        show: secs,
+        word: 'faster',
+      },
+      {
+        label: `A burst of ${n0(many.burst.commits)} commits at once`,
+        v3: many.burst.seconds,
+        f: f.burstSeconds,
+        show: secs,
+        word: 'faster',
+      },
+    ])
+  }
+  if (!out) return ''
+  return `<div class="cmp"><div class="legend"><span><i class="sw v3"></i>v3</span><span><i class="sw f"></i>Layout F with deltas</span></div>${out}</div>`
+}
+
+/** The few numbers that say how v3 does at Crossref's size. */
+function tiles(r: Results): string {
+  const load = r.get('crossref', 'load')
+  if (!load) return ''
+  const tile = (label: string, value: string, sub: string) =>
+    `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div><div class="tile-sub">${sub}</div></div>`
+  const daily = r.like('crossref', 'daily', 'first-')
+  const rebuilt = r.get('crossref', 'reads', 'rebuilt')?.r2
+  const heap = Math.max(0, ...r.all.filter((x) => x.suite !== 'gate').flatMap((x) => peaks(x)))
+  const total = load.build.seconds + load.verify.seconds + load.commit.seconds
+  const out = [
+    tile(
+      'Records',
+      `${num(load.records / 1e6)}M`,
+      `real Crossref records, ${num((load.records / F_NUMBERS.crossrefRecords) * 100)}% of the dump`,
+    ),
+    tile(
+      'Stored',
+      bytes(load.storedBytes),
+      `${num(load.storedOverLines * 100)}% of the records’ ${bytes(load.lineBytes)}`,
+    ),
+    tile('Upload to readable', hm(total), `layout F on staging: ${F_NUMBERS.crossrefLoad}`),
+  ]
+  if (daily) {
+    out.push(
+      tile(
+        'A day’s commit',
+        secs(daily.serverSeconds.p50),
+        `${n0(daily.changesPerDay.mean)} real changes, ${n0(daily.serverRequests.p50)} requests, ${n0(daily.serverPeakHeapMb)} MB of heap`,
+      ),
+    )
+  }
+  if (rebuilt) {
+    out.push(
+      tile(
+        'One record',
+        `${num(rebuilt.pointWarm.requests.p50)} requests`,
+        `${ms(rebuilt.pointWarm.ms.p50)} once rebuilt, footers cached; ${num(rebuilt.pointCold.requests.p50)} requests cold`,
+      ),
+    )
+  }
+  out.push(tile('Most heap, any process', `${n0(heap)} MB`, 'under a 120 MB cap; a Worker has 128'))
+  return `<div class="tiles">${out.join('')}</div>`
+}
+
+function card(n: number, c: { head: string; body: string; todo: string }, inner: string): string {
+  return `<section class="finding"><div class="tag">Finding ${n}</div><h3>${c.head}</h3><p>${c.body}</p>${inner}<p class="do"><b>To do:</b> ${c.todo}</p></section>`
+}
+
+function policyCard(r: Results): string {
+  const p = r.all.find((x) => x.scenario === 'policy' && x.suite !== 'gate')
+  const y = r.all.find((x) => x.scenario === 'policy-year' && x.suite !== 'gate')
+  let inner = readsChart(r, { sizes: SIZES.slice(2), only: 'requests' })
+  if (p) {
+    const rows = [10, 4].flatMap((ratio) => {
+      const a = (p.ratios as R[]).find((x) => x.ratio === ratio)
+      const b = (y?.ratios as R[] | undefined)?.find((x) => x.ratio === ratio)
+      if (!a) return []
+      return [
+        [
+          `${ratio}${ratio === 10 ? ' (in force)' : ''}`,
+          `${num(a.meanGroups ?? a.meanRuns)}, at most ${a.maxGroups ?? a.maxRuns}`,
+          b ? `${num(b.meanGroups ?? b.meanRuns)}, at most ${b.maxGroups ?? b.maxRuns}` : '',
+          bytes(a.rewrittenLineBytesPerDay),
+        ],
+      ]
+    })
+    inner += table(
+      [
+        'Ratio',
+        'Files a read checks, by arithmetic (Crossref, 3 years)',
+        'Files a read checks, measured (a year at 50,000 records)',
+        'Rewritten a day at Crossref’s size',
+      ],
+      rows,
+    )
+  }
+  return card(1, FINDINGS.cards.policy, inner)
+}
+
+function forksCard(r: Results): string {
+  const all = r.all
+    .filter((q) => q.scenario === 'fork-edit' && q.suite !== 'gate')
+    .sort((a, b) => a.records - b.records)
+  const withKeep = all.find((x) => (x.targets as R[]).some((t) => t.fadeKeep))
+  const big = all[all.length - 1]
+  const rows: string[][] = []
+  const share = (t: R, k: string) => {
+    const track = t[k].track as R[]
+    return track[track.length - 1]!
+  }
+  if (withKeep) {
+    const ts = (withKeep.targets as R[]).filter((t) => t.fadeTier && t.fadeKeep)
+    const range = (vs: number[]) => {
+      const lo = Math.min(...vs)
+      const hi = Math.max(...vs)
+      return num(lo) === num(hi) ? `${num(lo)}%` : `${num(lo)} to ${num(hi)}%`
+    }
+    rows.push(
+      [
+        `Tier rule (in force), ${n0(withKeep.records)} records`,
+        `${range(ts.map((t) => share(t, 'fadeTier').sharedShare * 100))} on day ${share(ts[0]!, 'fadeTier').day}`,
+        bytes(Math.max(...ts.map((t) => t.fadeTier.rewrittenBytes / t.fadeTier.days))),
+      ],
+      [
+        `Merge everything daily, keep untouched files, ${n0(withKeep.records)} records`,
+        `${range(ts.map((t) => share(t, 'fadeKeep').sharedShare * 100))} on day ${share(ts[0]!, 'fadeKeep').day}`,
+        `${bytes(Math.max(...ts.map((t) => t.fadeKeep.rewrittenBytes / t.fadeKeep.days)))}, twice the collection`,
+      ],
+    )
+  }
+  if (big && big !== withKeep) {
+    const ts = (big.targets as R[]).filter((t) => t.fadeTier)
+    if (ts.length > 0) {
+      rows.push([
+        `Tier rule (in force), ${n0(big.records)} records`,
+        `${num(share(ts[0]!, 'fadeTier').sharedShare * 100)}% on day ${share(ts[0]!, 'fadeTier').day}`,
+        bytes(ts[0]!.fadeTier.rewrittenBytes / ts[0]!.fadeTier.days),
+      ])
+    }
+  }
+  let inner = ''
+  if (rows.length > 0) {
+    inner += table(
+      [
+        'A fork edited by 1%, then daily changes to it and its parent',
+        'Fork still stored once with its parent',
+        'Rewritten a day',
+      ],
+      rows,
+    )
+  }
+  if (big) {
+    const t = (big.targets as R[])[0]!
+    const narrow = [
+      [
+        'One record edited, fork merged back together',
+        `${n0(t.files - t.fold.kept)} of ${n0(t.files)} files rewritten`,
+        bytes(t.folded.extraBytes),
+      ],
+    ]
+    if (t.near) {
+      narrow.push([
+        '1% of the records edited side by side in key order, merged',
+        `${n0(t.files - t.near.kept)} of ${n0(t.files)} files rewritten`,
+        bytes(t.near.extraBytes),
+      ])
+    }
+    inner += table(
+      [
+        `A narrow edit on a fork of ${n0(big.records)} records (${num(t.targetMb)} MB files)`,
+        'With untouched files kept',
+        'The fork adds',
+      ],
+      narrow,
+    )
+  }
+  return card(2, FINDINGS.cards.forks, inner)
+}
+
+function racingCard(r: Results): string {
+  const racing = r.all
+    .filter((x) => x.scenario === 'racing' && x.suite !== 'gate')
+    .sort((a, b) => a.writers - b.writers)
+  const many = r.many()
+  const rows = racing.map((x) => [
+    `${x.writers} to one collection`,
+    `${n0(x.commits)}, one for each number, ${x.lostUploads === 0 ? 'none lost' : `${x.lostUploads} lost`}`,
+    num(x.commitsPerSecond),
+    x.requestsPerCommit === undefined ? '' : n0(x.requestsPerCommit),
+    x.refused === undefined ? '' : n0(x.refused),
+  ])
+  if (many) {
+    rows.push([
+      `${n0(many.burst.commits)} to ${n0(many.burst.commits)} collections`,
+      `${n0(many.burst.commits)}, ${many.burst.failed} failed`,
+      n0(many.burst.commitsPerSecond),
+      n0((many.burst.classA + many.burst.classB) / many.burst.commits),
+      '0',
+    ])
+  }
+  const inner =
+    rows.length > 0
+      ? table(
+          [
+            'Writers at once',
+            'Commits',
+            'A second',
+            'Requests a commit',
+            'Refused after 50 lost tries, sent again',
+          ],
+          rows,
+        )
+      : ''
+  return card(3, FINDINGS.cards.racing, inner)
+}
+
+const more = (title: string, hint: string, body: string) =>
+  body.trim()
+    ? `<details class="more"><summary>${title} <span>${hint}</span></summary>${body}</details>`
+    : ''
+
 export function buildReport(results: R[]): string {
   const r = new Results(results)
   const details = DETAILS.map(([s, l]) => suiteDetail(r, s, l)).join('')
@@ -1013,7 +1371,7 @@ export function buildReport(results: R[]): string {
 /* Layout: one plain column, dense tables, charts first in each section; an internal review page. */
 :root {
   --bg: #f9f9f7; --surface: #fcfcfb; --fg: #0b0b0b; --fg2: #52514e; --muted: #898781;
-  --line: #e1e0d9; --base: #c3c2b7; --accent: #2a78d6;
+  --line: #e1e0d9; --base: #c3c2b7; --accent: #2a78d6; --fbar: #b0aea3;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
   --ok: #006300; --ok-bg: #e4f3e2; --bad: #b02a2a; --bad-bg: #fbe6e4; --wait-bg: #eeede8;
   --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -1022,7 +1380,7 @@ export function buildReport(results: R[]): string {
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0d0d0d; --surface: #1a1a19; --fg: #f0efec; --fg2: #c3c2b7; --muted: #898781;
-    --line: #2c2c2a; --base: #383835; --accent: #3987e5;
+    --line: #2c2c2a; --base: #383835; --accent: #3987e5; --fbar: #62615a;
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
     --ok: #0ca30c; --ok-bg: #12290f; --bad: #e66767; --bad-bg: #331615; --wait-bg: #262624;
     color-scheme: dark;
@@ -1030,7 +1388,7 @@ export function buildReport(results: R[]): string {
 }
 :root[data-theme="dark"] {
   --bg: #0d0d0d; --surface: #1a1a19; --fg: #f0efec; --fg2: #c3c2b7; --muted: #898781;
-  --line: #2c2c2a; --base: #383835; --accent: #3987e5;
+  --line: #2c2c2a; --base: #383835; --accent: #3987e5; --fbar: #62615a;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   --ok: #0ca30c; --ok-bg: #12290f; --bad: #e66767; --bad-bg: #331615; --wait-bg: #262624;
   color-scheme: dark;
@@ -1059,6 +1417,8 @@ th, td { text-align: left; vertical-align: top; padding: 5px 10px 5px 0; border-
 th { font-weight: 600; color: var(--fg2); border-bottom-color: var(--base); white-space: nowrap; }
 td.n, th.n { text-align: right; white-space: nowrap; padding-right: 14px; }
 td:first-child { padding-right: 16px; }
+.finding td:first-child { min-width: 7em; }
+.finding th { white-space: normal; }
 .pill { display: inline-block; white-space: nowrap; padding: 0 7px; border-radius: 3px; font-size: 12.5px; font-weight: 600; }
 .pill.ok { color: var(--ok); background: var(--ok-bg); }
 .pill.bad { color: var(--bad); background: var(--bad-bg); }
@@ -1082,52 +1442,87 @@ td:first-child { padding-right: 16px; }
 .tick { fill: var(--muted); font: 11px var(--sans); font-variant-numeric: tabular-nums; }
 .val { fill: var(--fg2); font: 11px var(--sans); font-variant-numeric: tabular-nums; }
 .mark, .dot { cursor: default; }
+.lead { font-size: 16px; line-height: 1.45; max-width: 72ch; }
+.cmp { display: grid; }
+.cmp h3 { margin: 14px 0 2px; }
+.cmp .legend { margin: 0; }
+.cmp-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 2.2fr) 8em; gap: 4px 16px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.cmp-label { font-weight: 600; font-size: 13.5px; }
+.cmp-label .muted { font-weight: 400; display: block; font-size: 12.5px; }
+.cmp-bars { display: grid; gap: 3px; min-width: 0; }
+.cmp-bar { display: grid; grid-template-columns: minmax(0, 1fr) 9.5em; gap: 8px; align-items: center; }
+.track { display: block; height: 10px; }
+.bar { display: block; height: 10px; min-width: 3px; border-radius: 0 4px 4px 0; }
+.bar.v3, .sw.v3 { background: var(--s1); }
+.bar.f, .sw.f { background: var(--fbar); }
+.cmp-val { font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cmp-val.f { color: var(--fg2); }
+.cmp-gain { font-size: 13px; color: var(--fg2); white-space: nowrap; }
+.cmp-gain b { color: var(--fg); font-size: 16px; font-variant-numeric: tabular-nums; }
+@media (max-width: 620px) {
+  .cmp-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .cmp-bars { grid-column: 1 / -1; grid-row: 2; }
+  .cmp-bar { grid-template-columns: minmax(0, 1fr) 8em; }
+}
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; min-width: 0; }
+.tile-label { font-size: 12.5px; color: var(--fg2); }
+.tile-value { font-size: 22px; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.tile-sub { font-size: 12.5px; color: var(--fg2); }
+.findings { display: grid; gap: 12px; }
+.finding { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.finding > * { min-width: 0; }
+.finding h3 { margin: 0; font-size: 15px; text-wrap: balance; }
+.finding .tag { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.finding .chart { border: 0; padding: 0; background: none; max-width: 640px; }
+.do { border-left: 3px solid var(--accent); padding-left: 10px; }
+ol { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+details.more { border-top: 1px solid var(--line); padding: 9px 0; }
+details.more:last-of-type { border-bottom: 1px solid var(--line); }
+details.more > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+details.more > summary span { font-weight: 400; color: var(--fg2); font-size: 13px; }
+details.more[open] > summary { margin-bottom: 10px; }
+details.more > * + * { margin-top: 10px; }
 #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12.5px; padding: 3px 8px; border-radius: 3px; z-index: 5; max-width: 280px; }
 </style>
 <main>
   <div class="meta">kf/underlay · protocol v3 · ${esc(FINDINGS.date)}</div>
   <h1>Underlay v3 Scale Bench</h1>
-  <p>${FINDINGS.lede}</p>
-  <p class="meta">${FINDINGS.status}</p>
+  <p class="lead">${FINDINGS.bottomLine}</p>
 
-  <h2>Where it stands</h2>
-  ${FINDINGS.verdict}
+  <h2>v3 beside layout F</h2>
+  ${hero(r)}
+  <p class="note">The same simulated R2 latency for both. Layout F ran through its HTTP server, queue, and database; v3 is driven as a library, so its times leave out HTTP and queue hops. Each pair of bars has a scale of its own.</p>
 
-  <h2>The design’s claims</h2>
+  <h2>At Crossref’s size</h2>
+  ${tiles(r) || '<p class="muted">The Crossref load has not landed yet.</p>'}
+
+  <h2>What the design claims, and whether it held</h2>
   ${claims(r)}
 
-  <h2>Commits</h2>
-  <div class="charts">${commitChart(r)}</div>
+  <h2>Three findings</h2>
+  <div class="findings">
+  ${policyCard(r)}
+  ${forksCard(r)}
+  ${racingCard(r)}
+  </div>
 
-  <h2>Reads and rebuilds</h2>
-  <div class="charts">${readsChart(r)}</div>
-  ${FINDINGS.reads}
+  <h2>What to do next</h2>
+  ${FINDINGS.next}
 
-  <h2>The rebuild policy over years</h2>
-  ${policy(r)}
-  ${FINDINGS.policy}
-
-  <h2>Forks and many collections</h2>
-  <div class="charts">${forkChart(r)}${manyChart(r)}</div>
-  ${forkEdit(r)}
-  ${manyDetail(r)}
-
-  <h2>Beside layout F</h2>
-  ${besideF(r)}
-  <p class="note">${FINDINGS.besideF}</p>
-
-  <h2>Against R2’s documented limits</h2>
-  ${FINDINGS.r2}
-
-  <h2>Not built, and what to change first</h2>
-  ${FINDINGS.open}
-
-  <h2>Each size in detail</h2>
-  ${details || '<p class="muted">No sized suite has landed yet.</p>'}
-
-  <h2>What ran</h2>
-  ${suitesTable(r)}
-  <p class="note">${FINDINGS.method}</p>
+  <h2>The rest of the measurements</h2>
+  <div>
+  ${more('Commits by collection size', 'requests and server time for a day’s commit', `<div class="charts">${commitChart(r)}</div>`)}
+  ${more('Reads at every size', 'requests for one record, and files checked', `<div class="charts">${readsChart(r)}</div>${FINDINGS.reads}`)}
+  ${more('The rebuild policy, every ratio', 'by arithmetic and over a real year', `${policy(r)}${FINDINGS.policy}`)}
+  ${more('The fork test, every target size', '8, 32, and 128 MB files', `<div class="charts">${forkChart(r)}</div>${forkEdit(r)}`)}
+  ${more('Many collections', 'loading, a burst, and the sweep', `<div class="charts">${manyChart(r)}</div>${manyDetail(r)}`)}
+  ${more('Beside layout F, every row', '5M, 12M, and 20,000 collections', `${besideF(r)}<p class="note">${FINDINGS.besideF}</p>`)}
+  ${more('Against R2’s documented limits', 'and what R2 does not spell out', FINDINGS.r2)}
+  ${more('Not built, and what to change first', '', FINDINGS.open)}
+  ${more('Each size in detail', 'loads, daily commits, reads, exports', details)}
+  ${more('What was measured, where, and how', 'machines, commits, commands', `<p class="note">${FINDINGS.status}</p>${suitesTable(r)}<p class="note">${FINDINGS.method}</p>`)}
+  </div>
 </main>
 <div id="tip" hidden></div>
 <script>
