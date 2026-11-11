@@ -1539,7 +1539,10 @@ export async function forkEdit(
       await engine.fork(collection, p)
       await engine.fork(p, f)
       const pw = loadWorkload(cw)
-      const fw = pw.fork(`fade-${policy}`)
+      const fw = pw.fork(`fade-${policy}-${mb}`)
+      // Days of their own for each target and policy: the same day's rows would build the
+      // same files, which are stored once, and nothing would count as rewritten.
+      const first = 1000 * (1 + targetsMb.indexOf(mb) * 2 + (policy === 'keep' ? 1 : 0))
       const settle = async (c: string) =>
         policy === 'tier'
           ? (await engine.maintain(c)).written
@@ -1552,12 +1555,12 @@ export async function forkEdit(
               })
             ).written
       const t0 = performance.now()
-      await engine.commit(f, dayRows(fw, 100_000, 0.01))
+      await engine.commit(f, dayRows(fw, 100_000 + first, 0.01))
       let rewritten = await settle(f)
       const track = [{ day: 0, rewrittenBytes: rewritten, ...(await account(p, f)) }]
       for (let day = 1; day <= n; day++) {
-        await engine.commit(p, dayRows(pw, day, w.rate))
-        await engine.commit(f, dayRows(fw, day, w.rate))
+        await engine.commit(p, dayRows(pw, first + day, w.rate))
+        await engine.commit(f, dayRows(fw, first + day, w.rate))
         rewritten += (await settle(p)) + (await settle(f))
         if (day <= 2 || day % 5 === 0 || day === n) {
           track.push({ day, rewrittenBytes: rewritten, ...(await account(p, f)) })
