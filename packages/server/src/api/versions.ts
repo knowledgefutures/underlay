@@ -37,6 +37,16 @@ import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import type { Db } from '../ports.js'
 import {
+  notOnV3,
+  v3Detail,
+  v3Diff,
+  v3Files,
+  v3History,
+  v3Ndjson,
+  v3Record,
+  v3Records,
+} from '../v3/reads.js'
+import {
   countAfter,
   findVersion,
   getRecord,
@@ -188,6 +198,8 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3')
+      return v3Detail(c, access, () => clamp(c.req.query('limit'), 100, 2000))
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     // ?records=<type> (empty: the first type) is a records page's one call: the
@@ -239,12 +251,20 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/records', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
-    const view = await viewFor(c, access)
+    const view = access.collection.recordLayout === 'v3' ? null : await viewFor(c, access)
     if (view instanceof Response) return view
     const type = c.req.query('type')
     const limit = clamp(c.req.query('limit'), 100, 2000)
     const cursor = decodeCursor(c.req.query('cursor') ?? c.req.query('after'), type)
     const offset = cursor ? 0 : Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
+    if (access.collection.recordLayout === 'v3')
+      return v3Records(
+        c,
+        access,
+        { ...(type ? { type } : {}), cursor, offset, limit },
+        encodeCursor,
+      )
+    if (!view) return jsonError(c, 500, 'No view')
     let source: AsyncIterable<VisibleRecord>
     let total: number
     if (type) {
@@ -288,6 +308,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/records/:type/:id', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') return v3Record(c, access)
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const t = view.types.find((x) => x.slug === c.req.param('type'))
@@ -304,6 +325,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/records/:type/:id/history', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') return v3History(c, access)
     const { db } = c.var.ports
     const versions = (
       await db
@@ -365,6 +387,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/records.ndjson.gz', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') return notOnV3(c, 'records.ndjson.gz')
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const want = c.req.query('type')
@@ -416,7 +439,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/records.ndjson', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
-    const view = await viewFor(c, access)
+    const view = access.collection.recordLayout === 'v3' ? null : await viewFor(c, access)
     if (view instanceof Response) return view
     const type = c.req.query('type')
     // A resume names the last line read: ?after_type=T&after=id continues after
@@ -432,6 +455,7 @@ export function versionRoutes() {
         'after needs after_type: pass ?after_type=<type>&after=<id> to resume after that record',
       )
     const from = after ? { t: (afterType || type)!, k: after } : null
+    if (!view) return v3Ndjson(c, access, { ...(type ? { type } : {}), from })
     const types = (type ? view.types.filter((t) => t.slug === type) : view.types).filter(
       (t) => !from || compareUtf8(t.slug, from.t) >= 0,
     )
@@ -464,6 +488,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/manifest', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') return notOnV3(c, 'The manifest')
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     // Pages and the file list are bounded for a 128 MB isolate: tens of MB of JSON otherwise.
@@ -562,6 +587,19 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/diff', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') {
+      const fromParam = c.req.query('from')
+      return v3Diff(
+        c,
+        access,
+        {
+          ...(fromParam ? { fromParam } : {}),
+          cursor: decodeCursor(c.req.query('cursor'), undefined),
+          limit: clamp(c.req.query('limit'), 500, 5000),
+        },
+        encodeCursor,
+      )
+    }
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const limit = clamp(c.req.query('limit'), 500, 5000)
@@ -640,6 +678,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/files', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    if (access.collection.recordLayout === 'v3') return v3Files(c, access)
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const hashes = await visibleFiles(view, 10_000)

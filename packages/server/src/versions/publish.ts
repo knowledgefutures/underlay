@@ -143,6 +143,8 @@ export async function publishVersion(
           createdAt: lit<number>(createdAt).as('created_at'),
           publishedAt: lit<number>(now).as('published_at'),
           pushSessionId: lit<string | null>(v.pushSessionId ?? null).as('push_session_id'),
+          assetBytes: lit<number | null>(null).as('asset_bytes'),
+          v2Hash: lit<string | null>(null).as('v2_hash'),
         })
         .from(schema.collections)
         .where(and(headIsBase, fenceHolds(p.fence))) as never,
