@@ -291,6 +291,22 @@ async function suite(name: string): Promise<void> {
         plan: str('plan', '/data/crossref-sort/plan.json'),
         ...(args.files ? { files: num('files', 0) } : {}),
       }
+      if (args.rest) {
+        // The dump's files from `--rest` on, as one upload onto the collection: what a load
+        // that stopped short left out, and a large commit onto a large collection.
+        const rest = { ...o, from: num('rest', 0), files: 0 }
+        await step(w, 'load', 'rest', () =>
+          S.crossrefLoad(w, rest, { append: true, message: 'The rest of the dump' }),
+        )
+        await step(w, 'maintain', 'rest', () => S.maintain(w))
+        await step(w, 'reads', 'with-rest', async () =>
+          S.reads(w, 'with-rest', {
+            profiles: ['r2', 'r2-slow'],
+            keys: await S.crossrefKeys(w, 200),
+          }),
+        )
+        break
+      }
       const days = num('days', 5)
       await step(w, 'daily', `maintained-${days}`, () => S.crossrefDaily(w, o, days, true))
       await step(w, 'reads', 'after-policy', async () =>

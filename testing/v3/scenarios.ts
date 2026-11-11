@@ -6,7 +6,7 @@
  * held, requests by R2 class, and bytes. Reads also give requests and bytes per
  * read, cold and warm.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { listAll, v3 } from '../../packages/protocol/src/index.js'
@@ -108,11 +108,16 @@ async function commitVerified(
     checkAssets: false,
     locate,
   })
-  for (const f of files) {
-    await v3.installUpload(store, session, f.id)
-    await store.delete(locate(f.id))
-  }
-  const change = await v3.makeChange(collection, { files, message }, author)
+  // A first load names hundreds of files: install them a few at a time, as `commitUpload` does.
+  await v3.inParallel(
+    files.map((f) => async () => {
+      await v3.installUpload(store, session, f.id)
+      await store.delete(locate(f.id))
+    }),
+    16,
+  )
+  const head = await v3.findHead(store, collection, null)
+  const change = await v3.makeChange(collection, { files, base: head?.id ?? null, message }, author)
   return v3.createCommit(store, collection, { change, bump: check.bump }, { signer: server })
 }
 
@@ -1095,14 +1100,34 @@ export interface CrossrefOptions {
   plan: string
   /** Read only this many of the dump's files (a trial). */
   files?: number
+  /** Start at this file of the dump (the rest of a load that stopped short). */
+  from?: number
+}
+
+/**
+ * The sorted dump's files in key order: `<n>.jsonl.gz`, n from 0. The plan file's own `files`
+ * lists the source dump's files, which are fewer (35,908 against 36,626): round 4's load took
+ * its list from there and so left out the last 718.
+ */
+function dumpFiles(o: CrossrefOptions): { all: string[]; files: string[] } {
+  const all = readdirSync(o.dataDir)
+    .filter((f) => /^\d+\.jsonl\.gz$/.test(f))
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+  const from = o.from ?? 0
+  return { all, files: all.slice(from, o.files ? from + o.files : undefined) }
 }
 
 /** The full Crossref load from the sorted dump: single-pass parts in parallel, verified, committed. */
-export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result> {
+export async function crossrefLoad(
+  w: World,
+  o: CrossrefOptions,
+  /** `append`: an upload onto a collection that is already there (the rest of the dump). */
+  opts: { append?: boolean; message?: string } = {},
+): Promise<Result> {
   const store = storeOf(w)
-  const plan = JSON.parse(readFileSync(o.plan, 'utf8')) as { files: string[]; types: string[] }
-  const files = o.files ? plan.files.slice(0, o.files) : plan.files
-  await v3.createCollection(store, w.collection).catch(() => {})
+  const plan = JSON.parse(readFileSync(o.plan, 'utf8')) as { types: string[] }
+  const { files } = dumpFiles(o)
+  if (!opts.append) await v3.createCollection(store, w.collection).catch(() => {})
   const parts = Math.min(w.workers, files.length)
   const per = Math.ceil(files.length / parts)
   const session = v3.newSession()
@@ -1126,7 +1151,7 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
           files,
           start: p * per,
           end: Math.min(files.length, (p + 1) * per),
-          schemaTypes: p === 0 ? plan.types : null,
+          schemaTypes: p === 0 && !opts.append ? plan.types : null,
           fileBytes: w.fileBytes,
           ...(w.level === undefined ? {} : { level: w.level }),
         } satisfies BuildDumpSpec),
@@ -1163,7 +1188,13 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
   })
   log(`crossref: verified ${verify.value} records`, { seconds: verify.m.seconds })
   const commit = await measure(store, () =>
-    commitVerified(store, w.collection, refs, session, 'Crossref, March 2026 public data file'),
+    commitVerified(
+      store,
+      w.collection,
+      refs,
+      session,
+      opts.message ?? 'Crossref, March 2026 public data file',
+    ),
   )
   const engine = engineOf(w)
   const first = await measure(store, async () => {
@@ -1171,9 +1202,10 @@ export async function crossrefLoad(w: World, o: CrossrefOptions): Promise<Result
     const got = await v3.page(store, h.view as v3.View, { type: 'journal-article', limit: 1 })
     return got.length
   })
-  state(w, 'crossref', { files: 0 }).save()
+  if (!opts.append) state(w, 'crossref', { files: 0 }).save()
   return {
     records,
+    dumpFiles: files.length,
     duplicates: build.value.reduce((n, b) => n + b.duplicates, 0),
     files: refs.length,
     lineBytes,
@@ -1253,9 +1285,8 @@ export async function crossrefDaily(
   const stream = opts.stream ?? 'main'
   const store = storeOf(w)
   const engine = engineOf(w)
-  const plan = JSON.parse(readFileSync(o.plan, 'utf8')) as { files: string[] }
-  const files = o.files ? plan.files.slice(0, o.files) : plan.files
-  const changes = opts.changes ?? Math.round((CROSSREF_DAILY * files.length) / plan.files.length)
+  const { all, files } = dumpFiles(o)
+  const changes = opts.changes ?? Math.round((CROSSREF_DAILY * files.length) / all.length)
   const at = state(w, `day-${stream}`, { day: 0 })
   const sample = state<{ type: string; id: string }[]>(w, 'changed-keys', [])
   const rows: Result[] = []
