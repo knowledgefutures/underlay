@@ -80,6 +80,7 @@ async function build(store: Store, path: string) {
   const session = v3.newSession()
   const files = await v3.buildFiles(sorted, v3.uploadTarget(store, session), {
     ...(flag('max-bytes') ? { maxBytes: Number(flag('max-bytes')) } : {}),
+    ...(flag('cut-bytes') ? { cutBytes: Number(flag('cut-bytes')) } : {}),
   })
   return { session, files: files.map(refOf) }
 }

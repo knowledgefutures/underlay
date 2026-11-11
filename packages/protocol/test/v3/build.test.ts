@@ -138,6 +138,54 @@ describe('building files', () => {
     )
   })
 
+  it('gives the same files for the same rows, however the work was split', async () => {
+    const store = memoryStore()
+    const rows: v3.LineRow[] = []
+    for await (const r of v3.sortRows(v3.parseUpload([upload(6000, 9).bytes]), store)) rows.push(r)
+    const N = rows.length
+    // Small targets so a few thousand rows make dozens of files, with the cap in play too.
+    const opts = { cutBytes: 20_000, maxBytes: 60_000, typeCutBytes: 10_000 }
+    const ids = async (parts: (v3.WriteRow[] | AsyncIterable<v3.WriteRow>)[], o: v3.BuildOptions) =>
+      (await Promise.all(parts.map((p) => v3.buildFiles(p, v3.storeTarget(memoryStore()), o))))
+        .flat()
+        .map((f) => f.id)
+    const one = await ids([rows], opts)
+    expect(one.length).toBeGreaterThan(20)
+    // Another gzip level, the same files.
+    expect(await ids([rows], { ...opts, level: 1 })).toEqual(one)
+    // Parts that end wherever they end: the files at each seam differ.
+    const split = (n: number) =>
+      Array.from({ length: n }, (_, k) =>
+        rows.slice(Math.floor((k * N) / n), Math.floor(((k + 1) * N) / n)),
+      )
+    expect(await ids(split(7), opts)).not.toEqual(one)
+    // Parts moved to end on cut keys: the same files, for any number of parts.
+    for (const n of [2, 7, 40]) {
+      const parts = Array.from({ length: n }, (_, k) => {
+        const start = Math.floor((k * N) / n)
+        const end = Math.floor(((k + 1) * N) / n)
+        let i = start
+        const from = {
+          *[Symbol.iterator]() {
+            for (; i < N; i++) yield rows[i]!
+          },
+        }
+        return v3.partOnCuts(from, {
+          first: k === 0,
+          past: () => i >= end,
+          cutBytes: opts.cutBytes,
+        })
+      })
+      expect(await ids(parts, opts)).toEqual(one)
+    }
+    // A row added changes the file it falls in and no other.
+    const extra = rec('work', 'k0-added', { a: 'new' })
+    const more = [...rows, extra].sort(v3.compareKey)
+    const after = await ids([more], opts)
+    expect(after.filter((id) => !one.includes(id)).length).toBeLessThanOrEqual(2)
+    expect(one.filter((id) => !after.includes(id)).length).toBeLessThanOrEqual(2)
+  })
+
   it('cuts where the type changes once a file is large enough, and keeps a key together', async () => {
     const store = memoryStore()
     const rows = [

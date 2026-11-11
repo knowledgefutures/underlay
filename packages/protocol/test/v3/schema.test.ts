@@ -253,6 +253,15 @@ describe('checking files', () => {
     await expect(
       v3.commitUpload(store, 'c', { files: labeled.refs }, { session: labeled.session }),
     ).rejects.toThrow(/labeled/)
+    // Not even from a builder whose files are otherwise taken as well formed.
+    await expect(
+      v3.commitUpload(
+        store,
+        'c',
+        { files: labeled.refs },
+        { session: labeled.session, verify: false },
+      ),
+    ).rejects.toThrow(/labeled/)
     expect(await v3.headNumber(store, 'c')).toBe(1)
     await v3.commitUpload(store, 'c', { files: [ref] }, { session })
     expect(await v3.headNumber(store, 'c')).toBe(2)

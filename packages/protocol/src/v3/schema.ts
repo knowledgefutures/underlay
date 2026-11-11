@@ -243,16 +243,23 @@ export async function checkUpload(
       ) {
         fail(`File ${f.id} is not as the upload describes it`)
       }
-    } else if (validate && f.first) {
-      // Files taken as well formed (a trusted builder): the records are still validated.
+    } else {
+      // Files taken as well formed (a trusted builder). One thing is still checked, since
+      // version ids rest on it: a commit names only files as their author built them, with
+      // no commit numbers inside (Section 4). The footer says which, and it is read anyway.
       const file = await open(f.id)
-      const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
-      const cursor = new EntryCursor(reader, 1)
-      await cursor.seek()
-      while (cursor.current) {
-        const e = cursor.current
-        if (e.kind === 'r') onRecord(e.type, e.id, dataOf(await reader.line(e)))
-        await cursor.next()
+      if (file.content.labeled) {
+        fail(`File ${f.id} is labeled: a commit names only files with no commit numbers in them`)
+      } else if (validate && f.first) {
+        // The records are still validated.
+        const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
+        const cursor = new EntryCursor(reader, 1)
+        await cursor.seek()
+        while (cursor.current) {
+          const e = cursor.current
+          if (e.kind === 'r') onRecord(e.type, e.id, dataOf(await reader.line(e)))
+          await cursor.next()
+        }
       }
     }
   }

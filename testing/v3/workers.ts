@@ -31,41 +31,88 @@ export interface BuildGenSpec {
   latency: string
   seed: number
   records: number
-  /** This part's key range: from `lo` up to, not including, `hi`. */
+  /**
+   * `part`: the rows from `lo` up to, not including, `hi`, moved in to end on cut keys: after
+   * the part's first cut key (unless it is the first part) through its last (unless it is the
+   * last). `seam`: the rows two neighbouring parts left between them, after `lo` through `hi`.
+   * Built that way the files are the ones a single pass over all the rows would write.
+   */
+  mode: 'part' | 'seam'
   lo: KeyPair | null
   hi: KeyPair | null
+  first: boolean
+  last: boolean
   schemas: boolean
-  fileBytes: number
-  /** Cut files by key, toward this many bytes of lines a file. */
-  cutBytes?: number
+  /** Cut files by key toward this many bytes of lines a file; the cap is four times it. */
+  cutBytes: number
   level?: number
+}
+
+export interface BuildGenReport {
+  records: number
+  files: v3.FileRef[]
+  lineBytes: number
+  storedBytes: number
+  /** The part's first and last cut keys: where its neighbours' seams end and begin. */
+  firstCut: KeyPair | null
+  lastCut: KeyPair | null
 }
 
 async function buildGen(): Promise<void> {
   const s = await readSpec<BuildGenSpec>()
   const store = new BenchStore(s.storeDir, s.latency)
-  let made = 0
+  const before = (a: KeyPair, type: string, id: string) => v3.compareKeys(a[0], a[1], type, id) < 0
+  const want =
+    s.mode === 'part'
+      ? (type: string, id: string) => inRange(type, id, s.lo, s.hi)
+      : // A seam: after `lo`, through `hi`.
+        (type: string, id: string) =>
+          (s.lo === null || before(s.lo, type, id)) && (s.hi === null || !before(s.hi, type, id))
+  let firstCut: KeyPair | null = null
+  let lastCut: KeyPair | null = null
   function* rows(): Generator<v3.LineRow> {
     if (s.schemas) yield* schemaRows()
     for (let i = 0; i < s.records; i++) {
       // The key is cheap to work out; the record is built only if it falls in this part.
-      if (!inRange(typeOf(s.seed, i), idOf(s.seed, i), s.lo, s.hi)) continue
-      made++
-      yield rowOf(record(s.seed, i, 0))
+      if (!want(typeOf(s.seed, i), idOf(s.seed, i))) continue
+      const row = rowOf(record(s.seed, i, 0))
+      if (s.mode === 'part' && v3.keyCut(row.type, row.id, v3.rowSize(row), s.cutBytes)) {
+        if (!firstCut || before([row.type, row.id], firstCut[0], firstCut[1])) {
+          firstCut = [row.type, row.id]
+        }
+        if (!lastCut || before(lastCut, row.type, row.id)) lastCut = [row.type, row.id]
+      }
+      yield row
     }
   }
-  const sorted = v3.sortRows(rows(), fileStore(s.scratchDir))
-  const files = await v3.buildFiles(sorted, clientTarget(store, s.session), {
-    maxBytes: s.fileBytes,
-    ...(s.cutBytes === undefined ? {} : { cutBytes: s.cutBytes }),
+  let made = 0
+  // The sort reads every row before it gives the first back, so the cut keys are known by then.
+  async function* trimmed(): AsyncGenerator<v3.LineRow> {
+    for await (const row of v3.sortRows(rows(), fileStore(s.scratchDir))) {
+      if (s.mode === 'part') {
+        if (!s.first && (!firstCut || !before(firstCut, row.type, row.id))) continue
+        if (!s.last && (!lastCut || before(lastCut, row.type, row.id))) continue
+      }
+      if (row.type !== v3.SCHEMA_TYPE) made++
+      yield row
+    }
+  }
+  const files = await v3.buildFiles(trimmed(), clientTarget(store, s.session), {
+    cutBytes: s.cutBytes,
+    maxBytes: 4 * s.cutBytes,
     ...(s.level === undefined ? {} : { level: s.level }),
   })
+  if (s.mode === 'part' && !(s.first && s.last) && !firstCut) {
+    throw new Error('build-gen: a part with no cut key in it; use fewer parts or a smaller cut')
+  }
   report(store, {
     records: made,
     files: files.map(refOf),
     lineBytes: files.reduce((n, f) => n + f.bytes, 0),
     storedBytes: files.reduce((n, f) => n + f.size, 0),
-  })
+    firstCut,
+    lastCut,
+  } satisfies BuildGenReport)
 }
 
 // --- A part of a parallel build from the sorted Crossref dump ---
@@ -75,13 +122,19 @@ export interface BuildDumpSpec {
   storeDir: string
   latency: string
   dataDir: string
-  /** Dump files, in key order: this part reads files [start, end). */
+  /**
+   * Dump files, in key order: this part's own are files [start, end). It gives up its rows
+   * through the first cut key (unless it is the upload's first part) and reads on past `end`
+   * through the next one, so the parts end on cut keys and the files are those of one pass.
+   */
   files: string[]
   start: number
   end: number
+  first: boolean
   /** Add the schema rows (the first part only). */
   schemaTypes: string[] | null
-  fileBytes: number
+  /** Cut files by key toward this many bytes of lines a file; the cap is four times it. */
+  cutBytes: number
   level?: number
 }
 
@@ -123,37 +176,48 @@ async function buildDump(): Promise<void> {
   const store = new BenchStore(s.storeDir, s.latency)
   let records = 0
   let duplicates = 0
-  let lineBytes = 0
-  async function* rows(): AsyncGenerator<v3.LineRow> {
-    if (s.schemaTypes) {
-      for (const type of [...s.schemaTypes].sort((a, b) => v3.compareKeys(a, '', b, ''))) {
-        yield v3.rowFromRecord(type, v3.SCHEMA_TYPE, crossrefSchema)
-      }
-    }
+  /** The dump file the row in hand came from: at `end` or after, it is past this part's own. */
+  let at = s.start
+  async function* dump(): AsyncGenerator<v3.LineRow> {
     // The dump holds a few keys twice, in neighbouring lines or files: the first is kept.
     let last: v3.LineRow | null = null
     if (s.start > 0) {
       for await (const line of gzLines(join(s.dataDir, s.files[s.start - 1]!)))
         last = crossrefRow(line)
     }
-    for (let i = s.start; i < s.end; i++) {
+    for (let i = s.start; i < s.files.length; i++) {
+      at = i
       for await (const line of gzLines(join(s.dataDir, s.files[i]!))) {
         const row = crossrefRow(line)
         if (last && last.type === row.type && last.id === row.id) {
-          duplicates++
+          if (i < s.end) duplicates++
           continue
         }
         last = row
-        records++
-        lineBytes += row.line.length
         yield row
       }
-      if ((i - s.start) % 200 === 199)
+      if (i < s.end && (i - s.start) % 200 === 199)
         log(`build-dump ${s.start}: ${i - s.start + 1}/${s.end - s.start} files`)
     }
   }
+  async function* rows(): AsyncGenerator<v3.LineRow> {
+    if (s.schemaTypes) {
+      for (const type of [...s.schemaTypes].sort((a, b) => v3.compareKeys(a, '', b, ''))) {
+        yield v3.rowFromRecord(type, v3.SCHEMA_TYPE, crossrefSchema)
+      }
+    }
+    for await (const row of v3.partOnCuts(dump(), {
+      first: s.first,
+      past: () => at >= s.end,
+      cutBytes: s.cutBytes,
+    })) {
+      records++
+      yield row
+    }
+  }
   const files = await v3.buildFiles(rows(), clientTarget(store, s.session), {
-    maxBytes: s.fileBytes,
+    cutBytes: s.cutBytes,
+    maxBytes: 4 * s.cutBytes,
     ...(s.level === undefined ? {} : { level: s.level }),
   })
   report(store, {

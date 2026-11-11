@@ -34,8 +34,12 @@ export interface World {
   rate: number
   /** The rebuild policy's tiers, scaled so a day's upload sits in the tier it does at Crossref's size. */
   tiers: v3.TierOptions
-  /** Bytes of lines a built file holds at most. */
-  fileBytes: number
+  /**
+   * Files are cut by key toward this many bytes of lines: the reference client's 128 MiB at
+   * Crossref's size, scaled down with the collection (never under 4 MiB) so that a smaller
+   * load still has files by the thousand, as Crossref's has.
+   */
+  cutBytes: number
   /** Gzip level for built files. */
   level?: number
 }
@@ -59,9 +63,9 @@ export function world(suite: string, opts: Partial<World> & { records: number })
     rate: DAILY_RATE,
     // At Crossref's size a day's upload (0.6 GB of lines) is two tiers above the 8 MiB base.
     tiers: { ratio: 10, baseBytes: Math.max(4096, Math.round(8 * 1024 * 1024 * scale)) },
-    fileBytes: Math.min(
-      1024 ** 3,
-      Math.max(8 * 1024 * 1024, Math.round((CROSSREF_LINE_BYTES * scale) / 256)),
+    cutBytes: Math.min(
+      v3.CUT_BYTES,
+      Math.max(4 * 1024 * 1024, Math.round((CROSSREF_LINE_BYTES * scale) / 8192)),
     ),
     ...opts,
   }
@@ -79,6 +83,7 @@ export function storeOf(w: World, latency = w.latency): BenchStore {
 export function engineOf(w: World, latency = w.latency, opts: { verify?: boolean } = {}): V3Engine {
   return new V3Engine(storeOf(w, latency), {
     tiers: w.tiers,
+    cutBytes: w.cutBytes,
     scratch: fileStore(join(w.dir, 'scratch')),
     ...(w.level === undefined ? {} : { level: w.level }),
     ...opts,

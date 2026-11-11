@@ -183,8 +183,13 @@ version they were working from, and a message. The rest is what the server adds 
 lands: its number, the commit before it, the semver, and the time.
 
 - **Version id** = `ulv3:` + SHA-256 hex of the commit's bytes.
-- The files a commit names are unlabeled. Within one commit their key ranges MUST NOT overlap.
-  Every row in them counts as written by this commit.
+- The files a commit names MUST be unlabeled: files as their author built them, with no commit
+  numbers inside. A server MUST refuse a change that names a labeled file. Within one commit
+  their key ranges MUST NOT overlap. Every row in them counts as written by this commit.
+- Version ids and signatures rest on commits, and through them on the unlabeled files commits
+  name, and on nothing else. None rests on a labeled file or a layout file, so how those are
+  written can change at the cost of a rebuild. A change to a line, an unlabeled file, or a
+  commit means a second format beside the first.
 - A commit with number `n` exists only once. A writer creates it only if no commit `n` exists,
   and only if commit `n − 1` exists and has version id `previous`.
 - `first` and `last` are each file's first and last keys, and `bytes` its footer's `bytes`.
@@ -271,7 +276,9 @@ The JCS of:
 - A labeled file's `commits` is its footer's. An unlabeled file in a layout has `commits`
   `[c, c]`: all its rows count as written by `c`.
 - A layout MAY carry other members for the server's own use, on itself or on a file. A reader
-  ignores those it does not know.
+  ignores those it does not know, so such a member never changes what a version reads as. A
+  reader MUST refuse a layout whose `underlay` number it does not know; a member that changes
+  how the listed files are read comes with a new number.
 - A layout with number `n` exists only once, and is created only if absent. The layout with the
   highest number is current. Each layout is complete; earlier ones are not needed.
 
@@ -361,16 +368,25 @@ sweep/                            the sweep's own state
   key ranges that don't overlap, so a read checks one file for each group. Groups are kept in
   commit order, and cover commit ranges that don't overlap. Size tiers are a factor of 10
   apart. For each tier, lowest first: where 10 or more neighbouring groups are each at or below
-  it, and together are at least twice the largest of them, they are merged into files cut at
-  1 GiB of lines, at 262,144 entries, and where the type changes once a file holds 16 MiB.
-  Replaced rows stay in the same file as the rows that replaced them.
-- **Cutting by key, and keeping what did not change** (built, not yet the default; to be
-  measured). A file can also end after a key picked by a hash of the key against its row's size,
-  toward a target stored size. The same stretch of keys then lands in the same file with
-  the same id, whoever builds it. And a merge can leave as it is any file whose key range no
-  other file has an entry in: nothing changed there. The target size, the cut keys, and when
-  to merge this way are the server's choice; the protocol says nothing about how large a
-  sorted-record-file is or where it is cut.
+  it, and together are at least twice the largest of them, they are merged into files cut as an
+  upload's are (below). Replaced rows stay in the same file as the rows that replaced them.
+- **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by
+  one rule. A file ends after a key picked by a hash of the key against its row's size in
+  bytes of lines, toward 128 MiB of lines a file (about 32 MB stored); at a cap of four times
+  that, or 524,288 entries (262,144 in a rebuild); and where the type changes once the file
+  holds 16 MiB. The rule looks only at the rows, never at how they compress or how the work
+  was split: a client that builds an upload in parts ends each part on a key the hash picks.
+  So the same rows give the same files, with the same ids, on any machine; a row added
+  changes the file it falls in and no other; and an upload that was interrupted can be taken
+  up again. A first load is not rewritten by the policy above for as long as what arrives
+  after it stays small beside it, so the upload's cut is how most of a collection lies.
+  The target, the hash, and the caps are this client's and this server's choice. The protocol
+  says nothing about how large a sorted-record-file is or where it is cut, and a server
+  accepts any cut.
+- **Keeping what did not change** (built, not the default). A merge can leave as it is any
+  file whose key range no other file has an entry in: nothing changed there. Measured, it
+  pays for a narrow edit (one record, or a stretch of neighbouring keys, on a fork) and not
+  for daily changes spread over the keys, which fall in every file.
 - **Sweep.** A file is listed if a collection's current layout, or a commit after that
   layout's `through`, names it. An asset is listed if a `$asset` entry in a listed file names
   it. One sweeper works in passes. A pass condemns what nothing lists; moves to `trash/` what is

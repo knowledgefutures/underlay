@@ -144,6 +144,8 @@ async function suite(name: string): Promise<void> {
         S.policyYear(w, { records: 3000, days: 40, ratios: [10, 4] }),
       )
       await step(w, 'fork-edit', '', () => S.forkEdit(w, [0.25, 1], { tier: 6, keep: 3 }))
+      // The same rows in one part and in three: the same files.
+      await step(w, 'routes', '', () => S.routes(w, [1, 3]))
       break
     }
     case 'quick':
@@ -219,7 +221,6 @@ async function suite(name: string): Promise<void> {
       const w = world(folder, {
         ...base,
         records: num('records', 179_518_552),
-        fileBytes: 1024 ** 3,
       })
       const o = {
         dataDir: str('data', '/data/crossref-sort/sorted'),
@@ -266,7 +267,6 @@ async function suite(name: string): Promise<void> {
       const parent: World = {
         ...w,
         collection: `cut${String(targets[0]).replace('.', '_')}`,
-        fileBytes: 1024 ** 3,
       }
       await step(w, 'daily', 'fixed-1000', () => S.daily(parent, 3, true, 1000 / records))
       break
@@ -284,7 +284,6 @@ async function suite(name: string): Promise<void> {
       const w = world(str('label', 'crossref'), {
         ...base,
         records: num('records', 179_518_552),
-        fileBytes: 1024 ** 3,
       })
       const o = {
         dataDir: str('data', '/data/crossref-sort/sorted'),
@@ -345,6 +344,9 @@ function check(resultsDir: string, suiteName: string): string[] {
       (!r.oneWinnerPerNumber || r.lostUploads > 0 || r.commits !== r.expected)
     ) {
       out.push(`${what}: commits ${r.commits}/${r.expected}, lost uploads ${r.lostUploads}`)
+    }
+    if (r.scenario === 'routes' && !r.sameFiles) {
+      out.push(`${what}: the same rows built in other parts gave other files`)
     }
     if (r.scenario === 'sweep' && (r.broken > 0 || r.missing > 0 || r.commitFailures > 0)) {
       out.push(`${what}: ${r.broken} collections broken, ${r.missing} listed files missing`)

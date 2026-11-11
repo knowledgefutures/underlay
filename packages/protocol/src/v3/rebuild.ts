@@ -17,7 +17,15 @@
  */
 import { putFromParts, type Store } from '../repo/types.js'
 import { sha256 } from '../sha256.js'
-import { type BuildOptions, type FileTarget, keyCut, recordKey } from './build.js'
+import {
+  type BuildOptions,
+  CUT_BYTES,
+  DEFAULT_FILE_BYTES,
+  type FileTarget,
+  keyCut,
+  recordKey,
+  TYPE_CUT_BYTES,
+} from './build.js'
 import { MAX_FILE_ENTRIES, RECORD_BLOCK_BYTES } from './constants.js'
 import {
   ContentBuilder,
@@ -70,13 +78,13 @@ export interface MergeOptions extends ReadOptions {
   dropLeadingRemovals?: boolean
   /** Records to withhold: their lines are left out and their entries kept, marked. */
   takedown?: (type: string, id: string, hash: string) => boolean
-  /** Close an output file once its lines reach this many bytes. Default 1 GiB. */
+  /** The cap: close an output file once its lines reach this many bytes. Default four times `CUT_BYTES`. */
   maxBytes?: number
   /** Close an output file once it has this many entries. Default 262,144. */
   maxEntries?: number
   /** Close an output file where the type changes, once it holds this many bytes. Default 16 MiB. */
   typeCutBytes?: number
-  /** Cut output by key (`keyCut`) toward this many bytes of lines a file, so equal stretches get equal files. */
+  /** Cut output by key (`keyCut`) toward this many bytes of lines a file, so equal stretches get equal files. Default `CUT_BYTES`, as for an upload. */
   cutBytes?: number
   /**
    * Keep, as it is, any input file whose key range no other input has an entry
@@ -100,7 +108,6 @@ export interface MergeResult {
 }
 
 export const REBUILD_FILE_ENTRIES = 262_144
-export const TYPE_CUT_BYTES = 16 * 1024 * 1024
 
 /** Whether any retained version sees a row written by `commit` and replaced by `next`. */
 function seen(
@@ -158,7 +165,9 @@ export async function mergeFiles(
   inputs: ViewFile[],
   opts: MergeOptions,
 ): Promise<MergeResult> {
-  const maxBytes = opts.maxBytes ?? 1024 * 1024 * 1024
+  // The same cut as an upload's, so one rule says where every file ends.
+  const cutBytes = opts.cutBytes ?? CUT_BYTES
+  const maxBytes = opts.maxBytes ?? DEFAULT_FILE_BYTES
   const maxEntries = Math.min(opts.maxEntries ?? REBUILD_FILE_ENTRIES, MAX_FILE_ENTRIES)
   const typeCut = opts.typeCutBytes ?? TYPE_CUT_BYTES
   const result: MergeResult = {
@@ -338,10 +347,7 @@ export async function mergeFiles(
     if (draft) {
       const c: ContentBuilder = (draft as Draft).content
       const full = c.bytes >= maxBytes || c.entries + kept.length > maxEntries
-      const byKey =
-        opts.cutBytes !== undefined &&
-        lastKey !== null &&
-        keyCut(lastKey.type, lastKey.id, lastKey.size, opts.cutBytes)
+      const byKey = lastKey !== null && keyCut(lastKey.type, lastKey.id, lastKey.size, cutBytes)
       if (full || byKey || (type !== lastType && c.bytes >= typeCut)) {
         await close(draft)
         draft = null

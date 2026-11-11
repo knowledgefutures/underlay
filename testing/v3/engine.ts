@@ -85,6 +85,8 @@ export interface V3Options {
   scratch?: import('../../packages/protocol/src/index.js').Store
   /** Gzip level for built files. */
   level?: number
+  /** Cut files by key toward this many bytes of lines (uploads and rebuilds). Default: the library's. */
+  cutBytes?: number
 }
 
 export class V3Engine implements Engine {
@@ -100,6 +102,12 @@ export class V3Engine implements Engine {
     this.cache = new v3.FileCache()
   }
 
+  /** Where files end: by key toward the target, with the cap at four times it. */
+  #cut(): { cutBytes?: number; maxBytes?: number } {
+    const c = this.opts.cutBytes
+    return c === undefined ? {} : { cutBytes: c, maxBytes: 4 * c }
+  }
+
   /** The version each collection was last seen at: the base of the next change to it. */
   readonly #seen = new Map<string, string>()
 
@@ -109,6 +117,7 @@ export class V3Engine implements Engine {
     const sorted = scratch ? v3.sortRows(rows, scratch) : v3.sortRows(rows, this.store)
     const session = v3.newSession()
     const files = await v3.buildFiles(sorted, clientTarget(this.store, session), {
+      ...this.#cut(),
       ...(this.opts.level === undefined ? {} : { level: this.opts.level }),
     })
     return {
@@ -250,6 +259,7 @@ export class V3Engine implements Engine {
         // the newest commit's files: the next commit and the next cold read open one layout,
         // not a commit for each upload since the last merge.
         adoptAfter: 1,
+        ...this.#cut(),
         ...(this.opts.tiers ? { tiers: this.opts.tiers } : {}),
         ...(this.opts.level === undefined ? {} : { level: this.opts.level }),
       })

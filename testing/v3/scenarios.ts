@@ -27,6 +27,7 @@ import {
 import { BenchStore, type Counts, diskUsage, subCounts } from './store.js'
 import {
   type BuildDumpSpec,
+  type BuildGenReport,
   type BuildGenSpec,
   crossrefSchema as crossrefSchema0,
   type ExportSpec,
@@ -124,12 +125,16 @@ async function commitVerified(
 // --- Load ---
 
 /**
- * The first load from the generator: built in parallel parts by key range (the
- * client), verified in parallel (the server), committed once, and read at once.
+ * Build the generator's rows as an upload, in parallel: parts by key range, each moved in
+ * to end on cut keys, then the seams between them. The files are the ones a single pass
+ * over all the rows would write, whatever the number of parts.
  */
-export async function load(w: World, opts: { cutBytes?: number } = {}): Promise<Result> {
-  const store = storeOf(w)
-  await v3.createCollection(store, w.collection).catch(() => {})
+async function buildGenerated(
+  w: World,
+  session: string,
+  parts: number,
+  name = 'build',
+): Promise<{ files: v3.FileRef[]; records: number; lineBytes: number; storedBytes: number }> {
   // Split points between parts, from a sample of keys.
   const sample: KeyPair[] = []
   const r = prng(hash32(`split/${w.seed}`))
@@ -138,44 +143,107 @@ export async function load(w: World, opts: { cutBytes?: number } = {}): Promise<
     sample.push([typeOf(w.seed, i), idOf(w.seed, i)])
   }
   sample.sort((a, b) => v3.compareKeys(a[0], a[1], b[0], b[1]))
-  const parts = Math.max(1, Math.min(w.workers, Math.ceil(w.records / 20_000)))
   const cuts: (KeyPair | null)[] = [null]
   for (let p = 1; p < parts; p++) cuts.push(sample[Math.floor((sample.length * p) / parts)]!)
   cuts.push(null)
-
-  const session = v3.newSession()
-  log(`load: building ${w.records} records in ${parts} parts`)
-  const build = await measure(store, async () => {
-    const reports = await Promise.all(
-      Array.from({ length: parts }, (_, p) =>
-        runWorker<
-          WorkerReport & {
-            records: number
-            files: v3.FileRef[]
-            lineBytes: number
-            storedBytes: number
-          }
-        >('build-gen', {
-          session,
-          storeDir: w.storeDir,
-          scratchDir: join(w.dir, 'scratch', `build-${p}`),
-          latency: w.latency,
-          seed: w.seed,
-          records: w.records,
+  const worker = (
+    spec: Pick<BuildGenSpec, 'mode' | 'lo' | 'hi' | 'first' | 'last' | 'schemas'>,
+    n: string,
+  ) =>
+    runWorker<WorkerReport & BuildGenReport>('build-gen', {
+      session,
+      storeDir: w.storeDir,
+      scratchDir: join(w.dir, 'scratch', `${name}-${n}`),
+      latency: w.latency,
+      seed: w.seed,
+      records: w.records,
+      cutBytes: w.cutBytes,
+      ...spec,
+      ...(w.level === undefined ? {} : { level: w.level }),
+    } satisfies BuildGenSpec)
+  const built = await Promise.all(
+    Array.from({ length: parts }, (_, p) =>
+      worker(
+        {
+          mode: 'part',
           lo: cuts[p]!,
           hi: cuts[p + 1]!,
+          first: p === 0,
+          last: p === parts - 1,
           schemas: p === 0,
-          fileBytes: w.fileBytes,
-          ...(opts.cutBytes === undefined ? {} : { cutBytes: opts.cutBytes }),
-          ...(w.level === undefined ? {} : { level: w.level }),
-        } satisfies BuildGenSpec),
+        },
+        String(p),
       ),
-    )
-    return reports
-  })
-  const files = build.value.flatMap((b) => b.files)
-  const lineBytes = build.value.reduce((n, b) => n + b.lineBytes, 0)
-  const storedBytes = build.value.reduce((n, b) => n + b.storedBytes, 0)
+    ),
+  )
+  // What two neighbours left between them: after one's last cut key, through the other's first.
+  const seams = await Promise.all(
+    built.slice(0, -1).map((b, p) =>
+      worker(
+        {
+          mode: 'seam',
+          lo: b.lastCut,
+          hi: built[p + 1]!.firstCut,
+          first: false,
+          last: false,
+          schemas: false,
+        },
+        `seam-${p}`,
+      ),
+    ),
+  )
+  const all = [...built, ...seams]
+  const files = all
+    .flatMap((b) => b.files)
+    .sort((a, b) => v3.compareKeys(a.first![0], a.first![1], b.first![0], b.first![1]))
+  const records = all.reduce((n, b) => n + b.records, 0)
+  if (records !== w.records) {
+    throw new Error(`build: ${records} records in the parts and seams, of ${w.records}`)
+  }
+  return {
+    files,
+    records,
+    lineBytes: all.reduce((n, b) => n + b.lineBytes, 0),
+    storedBytes: all.reduce((n, b) => n + b.storedBytes, 0),
+  }
+}
+
+/**
+ * The same rows built in one part and in several: do they give the same files? They should,
+ * since a file ends only where the rows say, and parts end on cut keys.
+ */
+export async function routes(w: World, partCounts: number[]): Promise<Result> {
+  const store = storeOf(w)
+  const out: { parts: number; files: number; ids: string }[] = []
+  for (const n of partCounts) {
+    const session = v3.newSession()
+    const b = await buildGenerated(w, session, n, `routes-${n}`)
+    out.push({ parts: n, files: b.files.length, ids: b.files.map((f) => f.id).join(',') })
+    // These uploads are never committed: take them out of the store again.
+    for (const f of b.files) await store.inner.delete(v3.uploadKey(session, f.id))
+  }
+  const sameFiles = out.every((o) => o.ids === out[0]!.ids)
+  log('routes', { parts: partCounts, files: out.map((o) => o.files), sameFiles })
+  return {
+    records: w.records,
+    cutBytes: w.cutBytes,
+    routes: out.map(({ parts, files }) => ({ parts, files })),
+    sameFiles,
+  }
+}
+
+/**
+ * The first load from the generator: built in parallel parts by key range (the
+ * client), verified in parallel (the server), committed once, and read at once.
+ */
+export async function load(w: World): Promise<Result> {
+  const store = storeOf(w)
+  await v3.createCollection(store, w.collection).catch(() => {})
+  const parts = Math.max(1, Math.min(w.workers, Math.ceil(w.records / 20_000)))
+  const session = v3.newSession()
+  log(`load: building ${w.records} records in ${parts} parts`)
+  const build = await measure(store, () => buildGenerated(w, session, parts))
+  const { files, lineBytes, storedBytes } = build.value
   log(
     `load: built ${files.length} files, ${round(lineBytes / GB)} GB of lines, ${round(storedBytes / GB)} GB stored`,
   )
@@ -1151,8 +1219,9 @@ export async function crossrefLoad(
           files,
           start: p * per,
           end: Math.min(files.length, (p + 1) * per),
+          first: p === 0,
           schemaTypes: p === 0 && !opts.append ? plan.types : null,
-          fileBytes: w.fileBytes,
+          cutBytes: w.cutBytes,
           ...(w.level === undefined ? {} : { level: w.level }),
         } satisfies BuildDumpSpec),
       ),
@@ -1526,13 +1595,12 @@ export async function forkEdit(
   for (const mb of targetsMb) {
     const collection = `cut${String(mb).replace('.', '_')}`
     const fork = `${collection}-fork`
-    // Only the key cut decides where files end.
-    const cw: World = { ...w, collection, fileBytes: 1024 ** 3 }
-    const store = storeOf(cw)
-    const engine = engineOf(cw)
     // Generated records store at about 0.27 of their lines' bytes.
     const cutBytes = Math.round((mb * MB) / 0.27)
-    const loaded = await load(cw, { cutBytes })
+    const cw: World = { ...w, collection, cutBytes }
+    const store = storeOf(cw)
+    const engine = engineOf(cw)
+    const loaded = await load(cw)
     const before = await diskUsage(cw.storeDir)
     const forked = await measure(store, () => engine.fork(collection, fork))
     const wl = loadWorkload(cw)
@@ -1592,6 +1660,7 @@ export async function forkEdit(
               await v3.rebuild(store, c, {
                 plan: v3.planAll,
                 cutBytes,
+                maxBytes: 4 * cutBytes,
                 keepUntouched: true,
                 cache: engine.cache,
               })
@@ -1644,6 +1713,7 @@ export async function forkEdit(
         v3.rebuild(store, f, {
           plan: v3.planAll,
           cutBytes,
+          maxBytes: 4 * cutBytes,
           keepUntouched: true,
           cache: engine.cache,
         }),
@@ -1671,6 +1741,7 @@ export async function forkEdit(
       v3.rebuild(store, fork, {
         plan: v3.planAll,
         cutBytes,
+        maxBytes: 4 * cutBytes,
         keepUntouched: true,
         cache: engine.cache,
       }),

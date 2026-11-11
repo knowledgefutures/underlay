@@ -321,20 +321,41 @@ export async function installUpload(store: Store, session: string, id: string): 
 }
 
 export interface BuildOptions extends WriterOptions {
-  /** Close a file once its lines reach this many bytes. Default 1 GiB. */
+  /**
+   * Cut by key: close a file after a key that `keyCut` picks, so that files hold
+   * about this many bytes of lines. The same stretch of keys then lands in the
+   * same file whoever builds it and however the work was split, and a file whose
+   * keys did not change keeps its id. Default `CUT_BYTES`; `Infinity` for no cut
+   * by key.
+   */
+  cutBytes?: number
+  /** The cap: close a file once its lines reach this many bytes. Default four times `CUT_BYTES`. */
   maxBytes?: number
   /** Close a file once it has this many entries. Default 524,288. */
   maxEntries?: number
-  /** Close a file where the type changes, once it holds this many bytes of lines. Default: never. */
+  /** Close a file where the type changes, once it holds this many bytes of lines. Default 16 MiB. */
   typeCutBytes?: number
-  /**
-   * Cut by key: also close a file after a key that `keyCut` picks, so that files
-   * hold about this many bytes of lines. The same stretch of keys then lands in
-   * the same file whoever builds it, and a file whose keys did not change keeps
-   * its id.
-   */
-  cutBytes?: number
 }
+
+/**
+ * The reference client's target for an upload's files: 128 MiB of lines, which
+ * stores as about 32 MB (records store at a fifth to a quarter of their lines).
+ * It is counted in lines so that the cut depends on the rows alone, never on how
+ * they compress. A server accepts any cut; this is only what this client does.
+ */
+export const CUT_BYTES = 128 * 1024 * 1024
+/** A file's cap, for a stretch of keys the hash happens not to cut. */
+export const DEFAULT_FILE_BYTES = 4 * CUT_BYTES
+export const DEFAULT_FILE_ENTRIES = 524_288
+export const TYPE_CUT_BYTES = 16 * 1024 * 1024
+
+/** A row's size as the cut weighs it: the bytes of its line. */
+export const rowSize = (row: WriteRow): number =>
+  row.kind === 'w'
+    ? row.size
+    : typeof row.line === 'string'
+      ? utf8ByteLength(row.line)
+      : row.line.byteLength
 
 /**
  * Whether a file ends after a key, for files of about `cutBytes` of lines. The
@@ -358,12 +379,38 @@ export function keyCut(type: string, id: string, size: number, cutBytes: number)
   return (h >>> 0) / 4_294_967_296 < (size + 1) / cutBytes
 }
 
-export const DEFAULT_FILE_BYTES = 1024 * 1024 * 1024
-export const DEFAULT_FILE_ENTRIES = 524_288
+/**
+ * One part of an upload that is built in parts, moved so that it ends on cut
+ * keys: then the files are the same however many parts there were. `rows` are
+ * the part's rows in key order, followed by the rows after it for as far as it
+ * takes; `past` says a row is beyond the part's own end. The part gives up its
+ * rows through the first cut key (the part before takes them), unless it is the
+ * first, and runs on past its end through the next cut key.
+ */
+export async function* partOnCuts<R extends WriteRow>(
+  rows: AsyncIterable<R> | Iterable<R>,
+  opts: { first: boolean; past: (row: R) => boolean; cutBytes?: number },
+): AsyncGenerator<R> {
+  const cutBytes = opts.cutBytes ?? CUT_BYTES
+  let skipping = !opts.first
+  for await (const row of rows) {
+    const past = opts.past(row)
+    const cut = keyCut(row.type, row.id, rowSize(row), cutBytes)
+    if (skipping) {
+      // No cut key in the whole part: the part before runs through it, and this one is empty.
+      if (past) return
+      if (cut) skipping = false
+      continue
+    }
+    yield row
+    if (past && cut) return
+  }
+}
 
 /**
- * Write rows, in key order, as one or more files cut by size. A cut falls only
- * between keys, so a key's rows are never split across files. Returns each
+ * Write rows, in key order, as one or more files. A file ends after a key the
+ * hash picks (`cutBytes`), at the cap, or where the type changes. A cut falls
+ * only between keys, so a key's rows are never split across files. Returns each
  * file as a commit or layout names it, with its stored size.
  */
 export async function buildFiles(
@@ -371,9 +418,10 @@ export async function buildFiles(
   target: FileTarget,
   opts: BuildOptions = {},
 ): Promise<(FileRef & { size: number; labeled: boolean; commits: [number, number] | null })[]> {
+  const cutBytes = opts.cutBytes ?? CUT_BYTES
   const maxBytes = opts.maxBytes ?? DEFAULT_FILE_BYTES
   const maxEntries = Math.min(opts.maxEntries ?? DEFAULT_FILE_ENTRIES, MAX_FILE_ENTRIES)
-  const typeCut = opts.typeCutBytes ?? Infinity
+  const typeCut = opts.typeCutBytes ?? TYPE_CUT_BYTES
   const out: (FileRef & { size: number; labeled: boolean; commits: [number, number] | null })[] = []
   let draft: FileDraft | null = null
   let writer: SortedFileWriter | null = null
@@ -396,8 +444,7 @@ export async function buildFiles(
     for await (const row of rows) {
       if (writer && last && (last.type !== row.type || last.id !== row.id)) {
         const full = writer.bytes >= maxBytes || writer.entries >= maxEntries
-        const byKey =
-          opts.cutBytes !== undefined && keyCut(last.type, last.id, lastSize, opts.cutBytes)
+        const byKey = keyCut(last.type, last.id, lastSize, cutBytes)
         if (full || byKey || (last.type !== row.type && writer.bytes >= typeCut)) await close()
       }
       if (!writer) {
@@ -407,12 +454,7 @@ export async function buildFiles(
       // A key's rows stay together even past the entry limit's soft cut, but never past the hard one.
       await writer.add(row)
       last = row
-      lastSize =
-        row.kind === 'w'
-          ? row.size
-          : typeof row.line === 'string'
-            ? utf8ByteLength(row.line)
-            : row.line.byteLength
+      lastSize = rowSize(row)
     }
     await close()
   } catch (err) {
