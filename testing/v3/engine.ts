@@ -166,12 +166,18 @@ export class V3Engine implements Engine {
   async open(collection: string, version?: number): Promise<Handle> {
     const view = await v3.openView(this.store, collection, version === undefined ? {} : { version })
     // A group's files have key ranges that don't overlap, so a key sits in at most one of them.
-    const groups = new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`))
+    // For the newest version the layout says which group each file is in (asked of the store
+    // underneath, so it is not counted as a request). One rebuild's files can hold different
+    // commit ranges, so counting distinct ranges, as for an older version here, can overcount.
+    const groups =
+      version === undefined
+        ? v3.groupsOf((await v3.currentFiles(this.store.inner, collection)).files).length
+        : new Set(view.files.map((f) => `${f.commits[0]}-${f.commits[1]}-${f.labeled}`)).size
     return {
       collection,
       version: view.version,
       files: view.files.length,
-      groups: groups.size,
+      groups,
       view,
     }
   }
