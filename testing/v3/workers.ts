@@ -468,6 +468,10 @@ export async function runJob(job: string): Promise<void> {
   const fn = JOBS[job]
   if (!fn) throw new Error(`Unknown worker job "${job}"`)
   await fn()
+  // The report is the last thing written, and the process exits next. A write to a pipe that
+  // is longer than the pipe holds finishes later, and an exit cuts it off (at 146,166 bytes
+  // on the box: a part of 12M names enough files to pass that). Wait for it to be flushed.
+  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()))
 }
 
 export { schemas }
