@@ -1474,7 +1474,12 @@ export async function storageSplit(w: World): Promise<Result> {
  * the edit did not fall in. Measures what the fork costs to store, before and
  * after that rebuild, for each target size.
  */
-export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
+export async function forkEdit(
+  w: World,
+  targetsMb: number[],
+  /** Days to follow a fork's sharing: under the tier rule, and merging all, untouched files kept. */
+  days: { tier: number; keep: number } = { tier: 0, keep: 0 },
+): Promise<Result> {
   const rows: Result[] = []
   for (const mb of targetsMb) {
     const collection = `cut${String(mb).replace('.', '_')}`
@@ -1495,7 +1500,7 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
       engine.commit(fork, [v3.rowFromRecord(edited.id, edited.type, edited.data)]),
     )
     /** What the parent lists, what the fork lists, and what the two take to store together. */
-    const account = async () => {
+    const account = async (parentName = collection, forkName = fork) => {
       const sizes = new Map<string, number>()
       const listed = async (c: string) => {
         let bytes = 0
@@ -1507,16 +1512,112 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
         }
         return { bytes, files }
       }
-      const parent = await listed(collection)
-      const child = await listed(fork)
+      const parent = await listed(parentName)
+      const child = await listed(forkName)
       const together = [...sizes.values()].reduce((n, b) => n + b, 0)
       return {
         parentBytes: parent.bytes,
         forkBytes: child.bytes,
         // What the fork adds to the location over its parent.
         extraBytes: together - parent.bytes,
+        // Of what the fork lists, the share stored once for both.
+        sharedShare:
+          child.bytes > 0 ? round((parent.bytes + child.bytes - together) / child.bytes, 4) : 0,
         forkFiles: child.files.length,
         forkGroups: v3.groupsOf(child.files).length,
+      }
+    }
+    /**
+     * How sharing fades: a parent and its fork (forks of the loaded collection, so nothing is
+     * loaded again), the fork edited by 1%, then a day's changes to each and a rebuild of
+     * each, day after day. `tier` rebuilds by the policy in force; `keep` merges everything
+     * each day, leaving files no change fell in as they are.
+     */
+    const fade = async (policy: 'tier' | 'keep', n: number) => {
+      const p = `${collection}-${policy}`
+      const f = `${p}-fork`
+      await engine.fork(collection, p)
+      await engine.fork(p, f)
+      const pw = loadWorkload(cw)
+      const fw = pw.fork(`fade-${policy}`)
+      const settle = async (c: string) =>
+        policy === 'tier'
+          ? (await engine.maintain(c)).written
+          : (
+              await v3.rebuild(store, c, {
+                plan: v3.planAll,
+                cutBytes,
+                keepUntouched: true,
+                cache: engine.cache,
+              })
+            ).written
+      const t0 = performance.now()
+      await engine.commit(f, dayRows(fw, 100_000, 0.01))
+      let rewritten = await settle(f)
+      const track = [{ day: 0, rewrittenBytes: rewritten, ...(await account(p, f)) }]
+      for (let day = 1; day <= n; day++) {
+        await engine.commit(p, dayRows(pw, day, w.rate))
+        await engine.commit(f, dayRows(fw, day, w.rate))
+        rewritten += (await settle(p)) + (await settle(f))
+        if (day <= 2 || day % 5 === 0 || day === n) {
+          track.push({ day, rewrittenBytes: rewritten, ...(await account(p, f)) })
+          log(`fork fade, ${mb} MB files, ${policy}: day ${day}`, track[track.length - 1])
+        }
+      }
+      return {
+        days: n,
+        seconds: round((performance.now() - t0) / 1000, 1),
+        rewrittenBytes: rewritten,
+        track,
+      }
+    }
+    /**
+     * The other end from an edit spread over the whole collection: 1% of the records, next
+     * to each other in key order, edited on a fork and merged keeping untouched files.
+     */
+    const near = async () => {
+      const f = `${collection}-near`
+      await engine.fork(collection, f)
+      const h = await engine.open(collection)
+      const want = Math.max(1, Math.round(w.records * 0.01))
+      const text = new TextDecoder()
+      async function* rows(): AsyncGenerator<v3.LineRow> {
+        let made = 0
+        const from = { type: edited.type, id: edited.id }
+        for await (const rec of v3.exportAll(store, h.view as v3.View, { from })) {
+          if (!rec.line) continue
+          const { data } = JSON.parse(text.decode(rec.line)) as { data: Record<string, unknown> }
+          yield v3.rowFromRecord(rec.id, rec.type, {
+            ...data,
+            version: Number(data.version ?? 0) + 1,
+          })
+          if (++made >= want) return
+        }
+      }
+      const made = await engine.commit(f, rows())
+      const m = await measure(store, () =>
+        v3.rebuild(store, f, {
+          plan: v3.planAll,
+          cutBytes,
+          keepUntouched: true,
+          cache: engine.cache,
+        }),
+      )
+      const a = await account(collection, f)
+      log(`fork edit, ${mb} MB files, 1% side by side`, {
+        entries: made.entries,
+        extra: a.extraBytes,
+        kept: m.value.kept,
+        filesIn: m.value.filesIn,
+      })
+      return {
+        entries: made.entries,
+        editBytes: made.storedBytes,
+        seconds: m.m.seconds,
+        kept: m.value.kept,
+        filesIn: m.value.filesIn,
+        written: m.value.written,
+        ...a,
       }
     }
     // Under the tier rule alone the edit sits in its own small file: nothing is rewritten.
@@ -1553,6 +1654,9 @@ export async function forkEdit(w: World, targetsMb: number[]): Promise<Result> {
       folded,
       readAfter: read,
       recordBytesAdded: (after.records?.bytes ?? 0) - (before.records?.bytes ?? 0),
+      ...(days.tier > 0 || days.keep > 0 ? { near: await near() } : {}),
+      ...(days.tier > 0 ? { fadeTier: await fade('tier', days.tier) } : {}),
+      ...(days.keep > 0 ? { fadeKeep: await fade('keep', days.keep) } : {}),
     }
     rows.push(row)
     log(`fork edit, ${mb} MB files`, {

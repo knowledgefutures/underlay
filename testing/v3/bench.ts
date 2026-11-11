@@ -143,7 +143,7 @@ async function suite(name: string): Promise<void> {
       await step(w, 'policy-year', '', () =>
         S.policyYear(w, { records: 3000, days: 40, ratios: [10, 4] }),
       )
-      await step(w, 'fork-edit', '', () => S.forkEdit(w, [0.25, 1]))
+      await step(w, 'fork-edit', '', () => S.forkEdit(w, [0.25, 1], { tier: 6, keep: 3 }))
       break
     }
     case 'quick':
@@ -253,7 +253,10 @@ async function suite(name: string): Promise<void> {
       const records = num('records', 1_000_000)
       const w = world(folder, { ...base, records })
       const targets = str('targets', '8,32,128').split(',').map(Number)
-      await step(w, 'fork-edit', '', () => S.forkEdit(w, targets))
+      // Then how sharing fades over days, under the tier rule and under a full merge each
+      // day that keeps untouched files (`--keep-days 0` leaves that out: it rewrites a lot).
+      const days = { tier: num('tier-days', 30), keep: num('keep-days', 4) }
+      await step(w, 'fork-edit', '', () => S.forkEdit(w, targets, days))
       // The 1,000-change upload every sized suite commits, on the first target's parent.
       const parent: World = {
         ...w,

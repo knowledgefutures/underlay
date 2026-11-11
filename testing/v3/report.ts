@@ -678,33 +678,87 @@ function policy(r: Results): string {
 
 /** Fork, edit one record, rebuild: what the fork costs to store, by target file size. */
 function forkEdit(r: Results): string {
-  const x = r.all.find((q) => q.scenario === 'fork-edit' && q.suite !== 'gate')
-  if (!x) return ''
-  const rows = (x.targets as R[]).map((t) => [
-    `${num(t.targetMb)} MB`,
-    n0(t.files),
-    bytes(t.meanFileBytes),
-    `${bytes(t.tiered.extraBytes)}; a read checks ${t.tiered.forkGroups ?? t.tiered.forkRuns} files`,
-    `${bytes(t.folded.extraBytes)}; a read checks ${t.folded.forkGroups ?? t.folded.forkRuns}`,
-    `${n0(t.fold.filesIn - t.fold.kept)} of ${n0(t.fold.filesIn)}`,
-    secs(t.fold.seconds),
-  ])
-  return (
-    `<h3>Fork, edit one record, rebuild (${n0(x.records)} records, ${bytes(x.targets[0].storedBytes)} stored)</h3>` +
-    table(
-      [
-        'Target file size',
-        'Files',
-        'Mean file',
-        'Fork adds, tier rule alone',
-        'Fork adds, once merged back together',
-        'Files rewritten',
-        'Merge time',
-      ],
-      rows,
-    ) +
-    `<p class="note">${FINDINGS.forkEdit}</p>`
-  )
+  const all = r.all
+    .filter((q) => q.scenario === 'fork-edit' && q.suite !== 'gate')
+    .sort((a, b) => a.records - b.records)
+  if (all.length === 0) return ''
+  let out = ''
+  for (const x of all) {
+    const near = (x.targets as R[]).some((t) => t.near)
+    const rows = (x.targets as R[]).map((t) => [
+      `${num(t.targetMb)} MB`,
+      n0(t.files),
+      bytes(t.meanFileBytes),
+      `${bytes(t.tiered.extraBytes)}; a read checks ${t.tiered.forkGroups ?? t.tiered.forkRuns} files`,
+      `${bytes(t.folded.extraBytes)}; a read checks ${t.folded.forkGroups ?? t.folded.forkRuns}`,
+      `${n0(t.fold.filesIn - t.fold.kept)} of ${n0(t.fold.filesIn)}`,
+      secs(t.fold.seconds),
+      ...(near
+        ? [
+            t.near
+              ? `${bytes(t.near.extraBytes)} for an edit of ${bytes(t.near.editBytes)}; ${n0(t.near.filesIn - t.near.kept)} files rewritten`
+              : '',
+          ]
+        : []),
+    ])
+    out +=
+      `<h3>Fork, edit one record, rebuild (${n0(x.records)} records, ${bytes(x.targets[0].storedBytes)} stored)</h3>` +
+      table(
+        [
+          'Target file size',
+          'Files',
+          'Mean file',
+          'Fork adds, tier rule alone',
+          'Fork adds, once merged back together',
+          'Files rewritten',
+          'Merge time',
+          ...(near ? ['Fork adds: 1% edited side by side, merged'] : []),
+        ],
+        rows,
+      )
+    // How sharing fades over days, by policy.
+    const fades = (x.targets as R[]).flatMap((t) =>
+      (
+        [
+          ['fadeTier', 'tier rule'],
+          ['fadeKeep', 'merge all daily, keep untouched files'],
+        ] as const
+      )
+        .filter(([k]) => t[k])
+        .map(([k, name]) => ({ t, f: t[k] as R, name })),
+    )
+    if (fades.length > 0) {
+      const days = [...new Set(fades.flatMap(({ f }) => (f.track as R[]).map((p) => p.day)))].sort(
+        (a, b) => a - b,
+      )
+      out +=
+        `<h3>Share of a fork still stored once with its parent (${n0(x.records)} records; 1% edited on day 0, then a day’s changes to both)</h3>` +
+        table(
+          [
+            'Target file size',
+            'Rebuild',
+            ...days.map((d) => `Day ${d}`),
+            'Rewritten a day',
+            'Files a read checks at the end',
+          ],
+          fades.map(({ t, f, name }) => {
+            const track = f.track as R[]
+            const last = track[track.length - 1]!
+            return [
+              `${num(t.targetMb)} MB`,
+              name,
+              ...days.map((d) => {
+                const p = track.find((q) => q.day === d)
+                return p ? `${num(p.sharedShare * 100)}%` : ''
+              }),
+              bytes(f.rewrittenBytes / Math.max(1, f.days)),
+              last.forkGroups,
+            ]
+          }),
+        )
+    }
+  }
+  return out + `<p class="note">${FINDINGS.forkEdit}</p>`
 }
 
 function suiteDetail(r: Results, suite: string, label: string): string {
