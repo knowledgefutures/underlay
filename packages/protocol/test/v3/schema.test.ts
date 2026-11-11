@@ -139,6 +139,37 @@ describe('validating records', () => {
     await expect(upload(store, [rec('$meta', 'collection', 'text')])).rejects.toThrow(/object/)
   })
 
+  it('fetches the block holding the schemas once, however many types an upload has', async () => {
+    const store = memoryStore()
+    const types = ['t1', 't2', 't3', 't4', 't5']
+    const rows = types.map((t) => schema(t, { type: 'object' }))
+    // Enough that the first record block does not come with the footer's 64 KiB.
+    let pad = 'x'
+    for (let i = 0; i < 80; i++) {
+      pad = sha256Hex(pad)
+      rows.push(
+        rec('t1', `pad${i}`, {
+          text: Array.from({ length: 60 }, (_, j) => sha256Hex(pad + j)).join(''),
+        }),
+      )
+    }
+    await upload(store, rows)
+    const gets: string[] = []
+    const get = store.get.bind(store)
+    store.get = (key, range) => {
+      if (key.startsWith('records/')) gets.push(`${key} ${range?.offset}`)
+      return get(key, range)
+    }
+    const r = await upload(
+      store,
+      types.map((t) => rec(t, 'new', {})),
+      { verify: false },
+    )
+    expect(r.check.validated).toBe(5)
+    // One read of the stored file's first record block, for five schemas.
+    expect(gets.filter((g) => g.endsWith(' 0'))).toHaveLength(1)
+  })
+
   it('validates without re-verifying files from a trusted builder', async () => {
     const store = memoryStore()
     await upload(store, [schema('work', workSchema), work('a', { title: 'A' })], { verify: false })

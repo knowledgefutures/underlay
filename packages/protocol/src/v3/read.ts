@@ -124,6 +124,12 @@ export interface ReadOptions {
   cache?: FileCache
   /** Check blocks and lines against their hashes as they are read. Default true. */
   verify?: boolean
+  /**
+   * Readers for point lookups to share, by file id. A reader keeps the last key block and
+   * record block it fetched, so one job's lookups of neighbouring keys (a collection's
+   * schemas) fetch them once. For lookups made one after another, not at once.
+   */
+  readers?: Map<string, FileReader>
 }
 
 const open = (store: Store, id: string, opts: ReadOptions): Promise<SortedFile> =>
@@ -223,7 +229,11 @@ async function lookupAll(
   const found = await inParallel(
     files.map((f) => async () => {
       const file = await open(store, f.id, opts)
-      const reader = file.reader(opts.verify === undefined ? {} : { verify: opts.verify })
+      let reader = opts.readers?.get(f.id)
+      if (!reader) {
+        reader = file.reader(opts.verify === undefined ? {} : { verify: opts.verify })
+        opts.readers?.set(f.id, reader)
+      }
       const entries = await reader.lookup(type, id)
       return entries.map((e) => ({
         entry: (f.labeled ? e : { ...e, commit: f.commits[0] }) as Entry & { commit: number },

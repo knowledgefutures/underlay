@@ -27,7 +27,7 @@ import {
   type StoredCommit,
 } from './log.js'
 import { type FileCache, getRecord, mergeGroups, openFile, openView, type View } from './read.js'
-import { EntryCursor, SortedFile } from './reader.js'
+import { EntryCursor, type FileReader, SortedFile } from './reader.js'
 import { verifyFile } from './verify.js'
 
 export class UploadError extends Error {
@@ -143,6 +143,8 @@ export async function checkUpload(
     if (problems.length >= max) throw new UploadError(problems)
   }
   const read = opts.cache ? { cache: opts.cache } : {}
+  // The schemas sit next to each other, so their lookups share readers and fetch a block once.
+  const schemaRead = { ...read, readers: new Map<string, FileReader>() }
   const validate = opts.validate ?? true
   const open = opener(store, opts)
 
@@ -151,7 +153,7 @@ export async function checkUpload(
   const currentSchema = async (type: string) => {
     let c = current.get(type)
     if (c === undefined) {
-      const r = await getRecord(store, view, SCHEMA_TYPE, type, read)
+      const r = await getRecord(store, view, SCHEMA_TYPE, type, schemaRead)
       c = r && r.line ? { hash: r.hash, body: dataOf(r.line) } : null
       current.set(type, c)
     }
