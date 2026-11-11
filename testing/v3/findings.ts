@@ -81,6 +81,17 @@ export const F_NUMBERS = {
   crossrefRecords: 179_518_552,
 }
 
+/**
+ * Files a read checks, where the bench that made a result miscounted. Until `bbcc3b7` it
+ * counted distinct commit ranges, and one rebuild's files can carry different ranges. These
+ * are counted from the layout files the Crossref store kept (layouts 1 and 6, 2026-11-11).
+ */
+export const GROUPS_FIX: Record<string, number> = {
+  'crossref/reads/rebuilt': 2,
+  'crossref/reads/after-policy': 7,
+  'crossref/maintain/catch-up': 2,
+}
+
 export const FINDINGS = {
   bottomLine:
     'The v3 core held from 100k records to Crossref’s size and across 20,000 collections, and it is ahead of layout F on every measure the two share. The recommendation is to go on to server integration, settling the four things listed under “What to do next” on the way.',
@@ -104,13 +115,13 @@ export const FINDINGS = {
   next: `<ol>
 <li><b>Queue commits to a collection</b> in the server, where today they race.</li>
 <li><b>Decide the rebuild ratio.</b> 10 keeps one record at about 10 requests at Crossref’s size; 4 makes it about 7 for a fifth more rewriting.</li>
-<li><b>Split large merges and schema scans across processes.</b> Both are one pass on one process: fine to 12M, slow at Crossref’s size (15 minutes to merge 30 days; 33 minutes to scan 6.8M records).</li>
+<li><b>Split large merges and schema scans across processes.</b> Both are one pass on one process: fine to 12M, slow at Crossref’s size (16 minutes to merge 30 days, 34 minutes to merge a 7.8M-record upload with them; 33 minutes to scan 6.8M records at 12M).</li>
 <li><b>Try on real R2</b> the three things its documentation does not spell out: one winner when two creates of a new key collide, what the loser is told, and ten or more new keys a second under one prefix.</li>
 </ol>`,
   date: '2026-11-11',
   lede: 'The v3 core (sorted-record-files, commits, layout files, rebuilds, forks, and the deletion sweep) built as a library, and measured at scale on a store that waits, limits, and counts as R2 is documented to.',
   status:
-    'Measured on the LighterAPI box under simulated R2 latency. Round 3 (commit <code>37ca762</code>): a 7.2M-record sample of Crossref, 5M, 12M, and 20,000 collections; it stopped at racing writers (below). Round 4 (commit <code>88269d4</code>): the 3,000-collection check, 100k, 1M, the fork test at 12M, racing, and the policy over a year. All of Crossref is loading now, as the last step of round 4. The fork test at 1M, which also tries a full merge every day, is from the Mac.',
+    'Measured on the LighterAPI box under simulated R2 latency. Round 3 (commit <code>37ca762</code>): a 7.2M-record sample of Crossref, 5M, 12M, and 20,000 collections; it stopped at racing writers. Round 4 (commit <code>88269d4</code>): the 3,000-collection check, 100k, 1M, the fork test at 12M, racing, and the policy over a year; then Crossref (commit <code>430f3c2</code>), whose first load, by a mistake in the bench, held the first 35,908 of the sorted dump’s 36,626 files (171.8M of its 179.5M records); the other 718 went on afterwards as one upload (commit <code>4df47ea</code>). The fork test at 1M, which also tries a full merge every day, is from the Mac.',
   verdict: `<ul>
 <li>What the design claims held from 100k to 12M records and across 20,000 collections. The same 1,000-change upload committed in 1.1 s and about 20 requests at 100k, 1M, and 12M alike; a day’s commit, which grows with the collection, took 0.6 to 3 s and 17 to 35 requests; a first load read the moment it committed; 253 of 253 commits were made again to the ids in the log; a fork copied no records and was 94.5% shared after 30 days; the sweep deleted nothing a collection lists while 2,000 collections were deleted and 2,000 thinned under it; and no process needed more than 79 MB of heap.</li>
 <li>Beside layout F at 12M: a load is readable in 31 minutes against 48, a day’s commit takes 6 s and 56 requests against 70 to 93 s and over 40,000, and 20,000 collections load in 3 minutes against 1.7 hours.</li>
@@ -120,7 +131,7 @@ export const FINDINGS = {
 <li>The recommendation waits for all of Crossref.</li>
 </ul>`,
   reads:
-    '<p class="note">With nothing cached a read also fetches each file’s footer: 9 to 16 requests once rebuilt, and 67 to 98 with 30 commits not yet merged. At 5M and in the Crossref sample a day’s file is too large for its key blocks to come with the footer, so each file checked is a request: at 5M, 6 warm with the policy on and 32 with 30 commits not yet merged; in the sample, 7 to 8 warm with 7 to 9 files to check.</p>',
+    '<p class="note">With nothing cached a read also fetches each file’s footer: 9 to 16 requests once rebuilt, and 67 to 98 with 30 commits not yet merged. At Crossref’s size: 3 requests with footers cached once rebuilt and 10 cold; 7 and 12 five days later; 31 and 68 with 30 commits not yet merged. At 5M and in the Crossref sample a day’s file is too large for its key blocks to come with the footer, so each file checked is a request: at 5M, 6 warm with the policy on and 32 with 30 commits not yet merged; in the sample, 7 to 8 warm with 7 to 9 files to check.</p>',
   policy:
     '<p class="note">The rule in force: for each size tier, lowest first, merge ten or more neighbouring groups of files that are each at or below the tier, if together they are at least twice the largest. The plan’s first rule (ten neighbours of exactly one tier) left 14 files to check on average and 28 at most by this arithmetic, and more when uploads were uneven. Layout F’s leveled policy rewrote about 8.5 GB a day, simulated. The largest merges (hundreds of GB of lines, a few times in three years) are one sequential pass today and need splitting by key range first.</p>',
   forkEdit:

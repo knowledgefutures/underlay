@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { F_NUMBERS, FINDINGS, LAYOUT_F } from './findings.js'
+import { F_NUMBERS, FINDINGS, GROUPS_FIX, LAYOUT_F } from './findings.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type R = Record<string, any>
@@ -60,6 +60,9 @@ const ms = (v: unknown) => (typeof v === 'number' ? secs(v / 1000) : '')
  * before the word was dropped call this `runs`.)
  */
 const groupsOf = (p: R | undefined): number | null => p?.groups ?? p?.runs ?? null
+/** The same for a named result, with the bench's known miscounts put right. */
+const groupsAt = (x: R | undefined, p: R | undefined): number | null =>
+  (x && GROUPS_FIX[`${x.suite}/${x.scenario}/${x.label ?? ''}`]) ?? groupsOf(p)
 
 const SIZES: [suite: string, label: string][] = [
   ['quick', '100k'],
@@ -73,7 +76,7 @@ const SIZES: [suite: string, label: string][] = [
 const DETAILS: [suite: string, label: string][] = [
   ...SIZES.slice(0, 4),
   ['crossref-mid', 'Crossref sample (2,000 of the dump’s 36,626 files)'],
-  ['crossref', 'Crossref (171.8M of its 179.5M records)'],
+  ['crossref', 'Crossref (171.8M of its 179.5M records, then the rest)'],
 ]
 
 /** Where the same 1,000-change upload was committed, smallest collection first. */
@@ -577,7 +580,10 @@ function readsChart(
       series.push({ name: label, values })
       checked.push({
         name: label,
-        values: READ_STATES.map(([l]) => groupsOf(r.get(suite, 'reads', l)?.r2)),
+        values: READ_STATES.map(([l]) => {
+          const x = r.get(suite, 'reads', l)
+          return groupsAt(x, x?.r2)
+        }),
       })
     }
   }
@@ -870,7 +876,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
         const cell = (s: R | undefined) => (s ? `${num(s.requests.p50)} · ${ms(s.ms.p50)}` : '')
         rows.push([
           esc(`${name} (${profile})`),
-          groupsOf(p) ?? '',
+          groupsAt(x, p) ?? '',
           cell(p.pointCold),
           cell(p.pointWarm),
           bytes(p.pointWarm.bytes.mean),
@@ -918,9 +924,24 @@ function suiteDetail(r: Results, suite: string, label: string): string {
     rows.push([
       'The rebuild policy, catching up on the commits so far',
       m.merges > 0
-        ? `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; files a read checks, ${m.groupsBefore ?? m.runsBefore} to ${m.groups ?? m.runs}; most heap ${n0(m.peakHeapMb)} MB`
+        ? `${secs(m.seconds)}: ${m.merges} merges of ${m.filesIn} files into ${m.filesOut}, ${bytes(m.written)} written; files a read checks, ${m.groupsBefore ?? m.runsBefore} to ${groupsAt(m, m)}; most heap ${n0(m.peakHeapMb)} MB`
         : `${secs(m.seconds)}: nothing to merge yet (fewer than ten groups of files at one tier), so one layout file listing them all; files a read checks, ${m.groups ?? m.runs}`,
     ])
+  const rest = r.get(suite, 'load', 'rest')
+  if (rest) {
+    const rm = r.get(suite, 'maintain', 'rest')
+    const rr = r.get(suite, 'reads', 'with-rest')?.r2
+    rows.push([
+      'The rest of the dump, as one upload onto the collection',
+      `${n0(rest.records)} records from ${n0(rest.dumpFiles)} dump files, ${bytes(rest.storedBytes)} stored in ${n0(rest.files)} files: built in ${secs(rest.build.seconds)}, verified in ${secs(rest.verify.seconds)}, committed in ${secs(rest.commit.seconds)} and ${n0(rest.commit.classA + rest.commit.classB)} requests` +
+        (rm
+          ? `. The rebuild policy then merged ${n0(rm.filesIn)} files into ${n0(rm.filesOut)} in ${secs(rm.seconds)} on one process (${bytes(rm.written)} written, ${n0(rm.peakHeapMb)} MB of heap)`
+          : '') +
+        (rr
+          ? `. One record after that: ${num(rr.pointWarm.requests.p50)} requests warm (${ms(rr.pointWarm.ms.p50)}), ${num(rr.pointCold.requests.p50)} cold`
+          : ''),
+    ])
+  }
   const rc = r.get(suite, 'recreate')
   if (rc)
     rows.push([
@@ -931,7 +952,7 @@ function suiteDetail(r: Results, suite: string, label: string): string {
   if (sc)
     rows.push([
       'Schema change',
-      `relaxing: ${secs(sc.relaxed.seconds)}, no records read. Tightening: ${secs(sc.stricter.seconds)} to scan ${n0(sc.stricter.scanned)} records of ${esc(sc.type)} (${n0(sc.stricter.recordsPerSecond)} a second, ${num(sc.stricter.mbPerCpuSecond)} MB a CPU second, one process)`,
+      `relaxing: ${secs(sc.relaxed.seconds)}, no records read. Tightening: ${secs(sc.stricter.seconds)} to scan ${n0(sc.stricter.scanned)} records of ${esc(sc.type)} (${n0(sc.stricter.recordsPerSecond)} a second${sc.stricter.mbPerCpuSecond === undefined ? '' : `, ${num(sc.stricter.mbPerCpuSecond)} MB a CPU second`}, one process)`,
     ])
   const fk = r.get(suite, 'forks')
   if (fk) {
@@ -1168,20 +1189,32 @@ function tiles(r: Results): string {
     `<div class="tile"><div class="tile-label">${label}</div><div class="tile-value">${value}</div><div class="tile-sub">${sub}</div></div>`
   const daily = r.like('crossref', 'daily', 'first-')
   const rebuilt = r.get('crossref', 'reads', 'rebuilt')?.r2
+  const after = r.get('crossref', 'reads', 'after-policy')?.r2
   const heap = Math.max(0, ...r.all.filter((x) => x.suite !== 'gate').flatMap((x) => peaks(x)))
   const total = load.build.seconds + load.verify.seconds + load.commit.seconds
+  // The first load stopped short of the dump's last files; they went on as a second upload.
+  const rest = r.get('crossref', 'load', 'rest')
+  const records = load.records + (rest?.records ?? 0)
+  const stored = load.storedBytes + (rest?.storedBytes ?? 0)
+  const lineBytes = load.lineBytes + (rest?.lineBytes ?? 0)
   const out = [
     tile(
       'Records',
-      `${num(load.records / 1e6)}M`,
-      `real Crossref records, ${num((load.records / F_NUMBERS.crossrefRecords) * 100)}% of the dump`,
+      `${num(records / 1e6)}M`,
+      rest
+        ? `all of Crossref: ${num(load.records / 1e6)}M in the first load, ${num(rest.records / 1e6)}M in a second upload`
+        : `real Crossref records, ${num((load.records / F_NUMBERS.crossrefRecords) * 100)}% of the dump`,
     ),
     tile(
       'Stored',
-      bytes(load.storedBytes),
-      `${num(load.storedOverLines * 100)}% of the records’ ${bytes(load.lineBytes)}`,
+      bytes(stored),
+      `${num((stored / lineBytes) * 100)}% of the records’ ${bytes(lineBytes)}`,
     ),
-    tile('Upload to readable', hm(total), `layout F on staging: ${F_NUMBERS.crossrefLoad}`),
+    tile(
+      'Upload to readable',
+      hm(total),
+      `the first ${num(load.records / 1e6)}M; layout F on staging: ${F_NUMBERS.crossrefLoad}`,
+    ),
   ]
   if (daily) {
     out.push(
@@ -1197,7 +1230,7 @@ function tiles(r: Results): string {
       tile(
         'One record',
         `${num(rebuilt.pointWarm.requests.p50)} requests`,
-        `${ms(rebuilt.pointWarm.ms.p50)} once rebuilt, footers cached; ${num(rebuilt.pointCold.requests.p50)} requests cold`,
+        `${ms(rebuilt.pointWarm.ms.p50)} once rebuilt, footers cached; ${after ? `${num(after.pointWarm.requests.p50)} requests five days on; ` : ''}${num(rebuilt.pointCold.requests.p50)} cold`,
       ),
     )
   }
