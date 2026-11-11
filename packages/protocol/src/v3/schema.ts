@@ -28,6 +28,7 @@ import {
 } from './log.js'
 import { type FileCache, getRecord, mergeGroups, openFile, openView, type View } from './read.js'
 import { EntryCursor, type FileReader, SortedFile } from './reader.js'
+import { inParallel } from './util.js'
 import { verifyFile } from './verify.js'
 
 export class UploadError extends Error {
@@ -365,11 +366,17 @@ export async function commitUpload(
     }))
   const files = change.files
   const locate = (id: string) => uploadKey(opts.session, id)
-  for (const f of files) {
+  // A first load names hundreds of files: check, install, and clear them a few at a time.
+  const each = (fn: (f: FileRef) => Promise<void>) =>
+    inParallel(
+      files.map((f) => () => fn(f)),
+      16,
+    )
+  await each(async (f) => {
     if (!(await store.head(locate(f.id)))) {
       throw new UploadError([`File ${f.id} did not come with this upload`])
     }
-  }
+  })
   let check: UploadCheck | undefined
   /** The major version of the head the check was made against (null: no commits yet). */
   let checkedMajor: number | null | undefined
@@ -392,7 +399,7 @@ export async function commitUpload(
           checkedMajor = major
         }
         if (!installed) {
-          for (const f of files) await installUpload(store, opts.session, f.id)
+          await each((f) => installUpload(store, opts.session, f.id))
           installed = true
         }
         return check.bump
@@ -400,6 +407,6 @@ export async function commitUpload(
     },
     opts,
   )
-  for (const f of files) await store.delete(locate(f.id))
+  await each((f) => store.delete(locate(f.id)))
   return { ...made, check: check! }
 }
