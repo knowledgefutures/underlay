@@ -294,7 +294,7 @@ async function suite(name: string): Promise<void> {
       if (args.rest) {
         // The dump's files from `--rest` on, as one upload onto the collection: what a load
         // that stopped short left out, and a large commit onto a large collection.
-        const rest = { ...o, from: num('rest', 0), files: 0 }
+        const rest = { ...o, from: num('rest', 0), files: num('rest-files', 0) }
         await step(w, 'load', 'rest', () =>
           S.crossrefLoad(w, rest, { append: true, message: 'The rest of the dump' }),
         )
