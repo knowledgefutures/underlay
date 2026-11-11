@@ -9,6 +9,7 @@
  *   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION
  *   BLOB_URL_SECRET   HMAC key for filesystem presigned URLs
  *   REPO_PREFIX (repo), INTERNAL_PREFIX (internal)   key prefixes in the platform bucket
+ *   NEW_COLLECTION_LAYOUT (today)                     record layout of new collections: today, f, or v3
  *   SIGNING_KEY       Ed25519 private key seed (base64url) that signs version logs
  *   LOCATION_KEY      32 bytes (base64url) that encrypt customer storage credentials
  *   S3_PUBLIC_BUCKET, ASSETS_BASE_URL     world-readable bucket for org logos (same S3
@@ -46,7 +47,7 @@ import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import { memoryRateLimiter } from '../lib/limits.js'
 import { requestInit } from '../locations/locations.js'
 import type { Ports, PresigningStore, PublicAssets } from '../ports.js'
-import { createStores } from '../stores.js'
+import { createStores, newCollectionsFrom } from '../stores.js'
 import { guardedFetch } from './guarded-fetch.js'
 
 const env = process.env
@@ -103,6 +104,7 @@ const ports: Ports = {
     bucket: blobs,
     repoPrefix: env.REPO_PREFIX ?? 'repo',
     internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+    ...newCollectionsFrom(env.NEW_COLLECTION_LAYOUT),
   }),
   cache,
   signer: () => signer,

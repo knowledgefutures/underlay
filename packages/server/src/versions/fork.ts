@@ -9,12 +9,12 @@
  * the public set only. Both collections must share a primary location, since a
  * repository never references another location.
  */
-import { type LayoutName, makeRoot, newSalt } from '@underlay/protocol'
+import { makeRoot, newSalt } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import { FenceError, fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
-import type { Ports } from '../ports.js'
+import type { CollectionLayout, Ports } from '../ports.js'
 import { appendVersionLog } from './commit.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
 
@@ -29,7 +29,7 @@ export async function createCollectionRows(
     /** Until the first version's metadata replaces it. */
     summary?: schema.CollectionSummary
     /** Its record layout: the platform's for new collections (`Stores.newCollections`). */
-    recordLayout?: LayoutName
+    recordLayout?: CollectionLayout
   },
 ): Promise<typeof schema.collections.$inferSelect> {
   const id = crypto.randomUUID()

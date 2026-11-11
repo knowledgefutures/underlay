@@ -274,10 +274,11 @@ export const collections = sqliteTable(
     /**
      * Where its record bytes live (record-storage-layout.md): `today`, inside leaf
      * bodies, or `f`, in packs found through the collection's own index under
-     * `runs/<collection>/`. Set at creation (forks take their parent's); existing
-     * collections are `today` until converted.
+     * `runs/<collection>/`, or `v3`, a log of commits naming sorted-record-files in
+     * the bucket's v3 area (docs/protocol-v3.md; v3/ here). Set at creation (forks
+     * take their parent's); existing collections are `today` until converted.
      */
-    recordLayout: text('record_layout', { enum: ['today', 'f'] })
+    recordLayout: text('record_layout', { enum: ['today', 'f', 'v3'] })
       .notNull()
       .default('today'),
     deletedAt: ts('deleted_at'),
@@ -787,7 +788,7 @@ export const collectionTombstones = sqliteTable('collection_tombstones', {
     .notNull()
     .$defaultFn(() => new Date()),
   /** The collection's record layout: layout F's files (`runs/<id>/`) go once its grace is over. */
-  recordLayout: text('record_layout', { enum: ['today', 'f'] })
+  recordLayout: text('record_layout', { enum: ['today', 'f', 'v3'] })
     .notNull()
     .default('today'),
   /** When cleanup dropped its layout F files (null: not yet, or none). */

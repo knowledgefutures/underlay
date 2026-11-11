@@ -338,6 +338,14 @@ export function createApp(setup: Setup) {
       c.header('Retry-After', '60')
       return c.json({ error: err.message, statusCode: 429 }, 429)
     }
+    // A route or job built on v2's repository reached a v3 collection: not ported yet
+    // (v3-deploy-plan.md, Phase 3), so say so rather than fail.
+    if (err.name === 'V3CollectionError') {
+      return c.json(
+        { error: 'Not available for v3 collections yet', code: 'not_on_v3', statusCode: 501 },
+        501,
+      )
+    }
     // Storage cleanup held a write past its patience (cleanup/fence.ts): brief.
     if (err.name === 'StorageBusyError' || err.name === 'FenceError') {
       c.header('Retry-After', '30')

@@ -102,7 +102,7 @@ async function addLocation(
 function mirrorRepo(
   f: FakeS3,
   prefix: string,
-  c?: { id: string; recordLayout: 'today' | 'f' },
+  c?: { id: string; recordLayout: 'today' | 'f' | 'v3' },
 ): Repo {
   const store = s3Store({
     endpoint: f.url,

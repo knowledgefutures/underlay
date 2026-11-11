@@ -38,11 +38,24 @@ export interface Jobs {
  * Where repositories live. A collection's objects are read and written through
  * the repository of its primary placement; mirrors are written by sync jobs.
  */
+/** A collection's record layout: one of v2's two (`today`, `f`), or `v3`. */
+export type CollectionLayout = LayoutName | 'v3'
+
 export interface Stores {
-  /** The repository of a collection's primary placement, in the collection's record layout. */
+  /**
+   * The repository of a collection's primary placement, in the collection's record layout.
+   * v2 only: a v3 collection throws `V3CollectionError` (read it through `v3`).
+   */
   forCollection(collectionId: string): Promise<Repo>
+  /** A collection's record layout (cached briefly per isolate, as the primary is). */
+  layoutOf(collectionId: string): Promise<CollectionLayout>
+  /**
+   * The v3 area of the platform bucket (docs/protocol-v3.md, Section 9): sorted-record-files,
+   * assets, and each v3 collection's commits and layouts. Shared by every v3 collection.
+   */
+  v3: Store
   /** The record layout a new collection gets (a fork takes its parent's). */
-  newCollections: LayoutName
+  newCollections: CollectionLayout
   /** The repository at a storage location. */
   forLocation(locationId: string): Promise<Repo>
   /**

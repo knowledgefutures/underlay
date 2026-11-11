@@ -25,7 +25,7 @@ import { isBulk, QueueJobs, runJob } from './jobs.js'
 import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports, PublicAssets } from './ports.js'
-import { createStores } from './stores.js'
+import { createStores, newCollectionsFrom } from './stores.js'
 
 export interface Env {
   /** 'bulk' in the bulk job Worker (wrangler.bulk.jsonc). */
@@ -65,6 +65,8 @@ export interface Env {
   /** Anonymous pages, ARK and the auth routes (lib/limits.ts). */
   RL_PAGE?: RateLimitBinding
   REPO_PREFIX?: string
+  /** The record layout new collections get: today (default), f, or v3. */
+  NEW_COLLECTION_LAYOUT?: string
   INTERNAL_PREFIX?: string
   /**
    * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
@@ -136,6 +138,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
       files: s3,
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+      ...newCollectionsFrom(env.NEW_COLLECTION_LAYOUT),
       // The bulk Worker's isolates run jobs, whose reads rarely repeat.
       ...(env.ROLE === 'bulk' ? { memoryBytes: 8 * 1024 * 1024 } : {}),
     }),
