@@ -42,6 +42,7 @@ import {
   v3Diff,
   v3Files,
   v3History,
+  v3Manifest,
   v3Ndjson,
   v3Record,
   v3Records,
@@ -488,7 +489,20 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/manifest', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
-    if (access.collection.recordLayout === 'v3') return notOnV3(c, 'The manifest')
+    if (access.collection.recordLayout === 'v3') {
+      const since = c.req.query('since')
+      return v3Manifest(
+        c,
+        access,
+        {
+          ...(since ? { since } : {}),
+          cursor: decodeCursor(c.req.query('cursor'), undefined),
+          limit: clamp(c.req.query('limit'), 10_000, MANIFEST_MAX),
+          maxFiles: MANIFEST_MAX,
+        },
+        encodeCursor,
+      )
+    }
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     // Pages and the file list are bounded for a 128 MB isolate: tens of MB of JSON otherwise.

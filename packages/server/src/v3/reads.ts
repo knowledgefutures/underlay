@@ -14,7 +14,7 @@
  * access decides which (api/access.ts). Records on the deny list are left out, as in v2.
  * Reserved types (`$schema`, `$asset`, `$meta`) are never listed as records.
  */
-import { compareUtf8, v3 } from '@underlay/protocol'
+import { compareUtf8, hashSchema, v3 } from '@underlay/protocol'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { Context } from 'hono'
 
@@ -429,3 +429,92 @@ export const notOnV3 = (c: Context<AppEnv>, what: string) =>
   )
 
 export { dataOf }
+
+/**
+ * The manifest (protocol-v2 Section 11.3.6): a version's record ids and hashes, from key
+ * entries alone, paged by key; with `since`, what changed after that version. The file
+ * list (its `$asset` rows) rides on the first page only.
+ */
+export async function v3Manifest(
+  c: Context<AppEnv>,
+  access: CollectionAccess,
+  q: { since?: string; cursor: { t: string; k: string } | null; limit: number; maxFiles: number },
+  encodeCursor: (t: string, k: string) => string,
+) {
+  const v = await v3VersionFor(c, access)
+  if (v instanceof Response) return v
+  const store = c.var.ports.stores.v3
+  const all = await schemasOf(store, v.view)
+  const schemas = Object.fromEntries(
+    Object.keys(all)
+      .sort(compareUtf8)
+      .map((t) => [t, hashSchema(all[t])]),
+  )
+  const fileList = async () => {
+    if (q.cursor) return {}
+    const files = [...(await assetsOf(store, v.view)).keys()].sort(compareUtf8)
+    return files.length > q.maxFiles
+      ? { files: files.slice(0, q.maxFiles), filesTruncated: true }
+      : { files }
+  }
+  const after = q.cursor ? { type: q.cursor.t, id: q.cursor.k } : null
+  let next: string | null = null
+
+  if (q.since) {
+    const from = await findVersion(c.var.ports.db, access.collection.id, q.since, null)
+    if (!from) return jsonError(c, 404, `Version ${q.since} not found`)
+    if (from.seq > v.row.seq)
+      return jsonError(c, 400, '`since` must be at or before the version read')
+    const delta = { added: [] as object[], updated: [] as object[], removed: [] as object[] }
+    let n = 0
+    let last: { type: string; id: string } | null = null
+    const range = after ? { after, before: true } : { from: PAST_RESERVED, before: true }
+    for await (const ch of v3.changes(store, v.view, from.seq, range)) {
+      if (ch.type.startsWith('$')) continue
+      if (n === q.limit) {
+        next = encodeCursor(last!.type, last!.id)
+        break
+      }
+      n++
+      last = { type: ch.type, id: ch.id }
+      if (!ch.before) delta.added.push({ id: ch.id, type: ch.type, hash: ch.after!.hash })
+      else if (!ch.after) delta.removed.push({ id: ch.id, type: ch.type, hash: ch.before.hash })
+      else
+        delta.updated.push({
+          id: ch.id,
+          type: ch.type,
+          hash: ch.after.hash,
+          previousHash: ch.before.hash,
+        })
+    }
+    return c.json({
+      semver: v.row.semver,
+      hash: v.row.hash,
+      since: from.semver,
+      schemas,
+      delta,
+      files: [],
+      ...(await fileList()),
+      pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
+    })
+  }
+
+  const records: { id: string; type: string; hash: string }[] = []
+  for await (const w of liveRecords(c, v.view, after ? { after } : {})) {
+    if (records.length === q.limit) {
+      const last = records[records.length - 1]!
+      next = encodeCursor(last.type, last.id)
+      break
+    }
+    records.push({ id: w.entry.id, type: w.entry.type, hash: w.entry.hash! })
+  }
+  return c.json({
+    semver: v.row.semver,
+    hash: v.row.hash,
+    schemas,
+    records,
+    files: [],
+    ...(await fileList()),
+    pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
+  })
+}

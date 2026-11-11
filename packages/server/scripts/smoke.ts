@@ -45,9 +45,16 @@ function expect(cond: unknown, what: string) {
   }
 }
 
+// `9` and `10` are in Grace's record below to check canonical key order; the schema
+// declares them, since a push refuses fields its schema does not name.
 const Author = {
   type: 'object',
-  properties: { name: { type: 'string' }, born: { type: 'integer' } },
+  properties: {
+    name: { type: 'string' },
+    born: { type: 'integer' },
+    9: { type: 'string' },
+    10: { type: 'string' },
+  },
 }
 const stamp = Date.now()
 
@@ -96,9 +103,11 @@ expect(r.status === 200, 'manifest')
 type Line = { id: string; type: string; hash: string; private?: boolean }
 const keyOf = (x: { type: string; id: string }) => JSON.stringify([x.type, x.id])
 const have = new Map((r.json.records as Line[]).map((m) => [keyOf(m), m]))
+// A v3 collection is private or public as a whole: its manifest has no per-record flag.
+const v3 = String(r.json.hash).startsWith('ulv3:')
 const upserts = snapshot.filter((x) => {
   const m = have.get(keyOf(x))
-  return m?.hash !== hashRecord(x.id, x.type, x.data).hash || !!m.private !== !!x.private
+  return m?.hash !== hashRecord(x.id, x.type, x.data).hash || (!v3 && !!m.private !== !!x.private)
 })
 const keep = new Set(snapshot.map(keyOf))
 const deletes = [...have.values()].filter((m) => !keep.has(keyOf(m)))

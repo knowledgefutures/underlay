@@ -265,7 +265,34 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(
       (await json(await h.request(`${base}/versions`))).map((v: { semver: string }) => v.semver),
     ).toEqual(['v1.1.0', 'v1.0.0'])
-    res = await h.request(`${base}/versions/latest/manifest`)
+
+    // The manifest: ids and hashes in key order, paged; and what changed since a version.
+    let m = await json(await h.request(`${base}/versions/latest/manifest?limit=20`))
+    expect(m.records).toHaveLength(20)
+    expect(m.records[0]).toEqual({
+      id: 'a00',
+      type: 'Author',
+      hash: hashRecord('a00', 'Author', { name: 'Author 0' }).hash,
+    })
+    expect(Object.keys(m.schemas)).toEqual(['Author', 'Book'])
+    const listed = m.records.map((r: { id: string }) => r.id)
+    m = await json(
+      await h.request(
+        `${base}/versions/latest/manifest?limit=20&cursor=${m.pagination.nextCursor}`,
+      ),
+    )
+    listed.push(...m.records.map((r: { id: string }) => r.id))
+    expect(listed).toHaveLength(34)
+    expect(m.pagination.hasMore).toBe(false)
+    m = await json(await h.request(`${base}/versions/latest/manifest?since=v1.0.0`))
+    expect(m.delta).toMatchObject({
+      added: [],
+      updated: [{ id: 'a05', type: 'Author', previousHash: one.hash }],
+      removed: [{ id: 'b0', type: 'Book' }],
+    })
+
+    // What v3 does not serve yet says so.
+    res = await h.request(`${base}/versions/latest/records.ndjson.gz`)
     expect(res.status).toBe(501)
     expect(await json(res)).toMatchObject({ code: 'not_on_v3' })
   })
