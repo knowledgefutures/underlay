@@ -388,3 +388,29 @@ export async function syncCatalog(ports: Ports, collectionId: string): Promise<n
   }
   return wrote
 }
+
+/** A record's data and hash at a version, or null; reserved types are not records. */
+export async function recordAt(
+  store: Store,
+  collectionId: string,
+  seq: number,
+  type: string,
+  id: string,
+): Promise<{ data: unknown; hash: string } | null> {
+  if (type.startsWith('$')) return null
+  const view = await viewOf(store, collectionId, seq)
+  const rec = view && (await v3.getRecord(store, view, type, id))
+  return rec?.line ? { data: dataOf(rec.line), hash: rec.hash } : null
+}
+
+/** A type's schema at a version, or null. */
+export async function schemaAt(
+  store: Store,
+  collectionId: string,
+  seq: number,
+  type: string,
+): Promise<Record<string, unknown> | null> {
+  const view = await viewOf(store, collectionId, seq)
+  const rec = view && (await v3.getRecord(store, view, v3.SCHEMA_TYPE, type))
+  return rec?.line ? (dataOf(rec.line) as Record<string, unknown>) : null
+}

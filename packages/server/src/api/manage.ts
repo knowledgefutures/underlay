@@ -19,6 +19,8 @@ import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
+import { headView, metadataOf } from '../v3/catalog.js'
+import { commitV3Metadata } from '../v3/commit.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
 import { capRole, jsonError, keyCannotManage, requireCollection } from './access.js'
@@ -278,6 +280,20 @@ export function manageRoutes() {
     const ports = c.var.ports
     const base = await headBase(ports, access.collection.id)
     if (!base) return jsonError(c, 422, 'No versions exist yet')
+    if (access.collection.recordLayout === 'v3') {
+      const store = ports.stores.v3
+      const current = await metadataOf(store, await headView(store, access.collection.id))
+      const merged: Record<string, unknown> = { ...(current ?? {}), ...patch }
+      for (const [k, v] of Object.entries(merged)) if (v === null) delete merged[k]
+      const r = await commitV3Metadata(
+        ports,
+        access.collection.id,
+        Object.keys(merged).length ? merged : null,
+        c.var.principal?.userId ?? null,
+      )
+      if (!r) return c.json({ semver: base.semver, unchanged: true })
+      return c.json({ semver: r.version.semver, hash: r.version.hash, status: 'completed' }, 201)
+    }
     const repo = await ports.stores.forCollection(access.collection.id)
     const root = await repo.root(base.hash)
     const priv = root.private ? await repo.privateSet(root.private) : null

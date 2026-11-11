@@ -12,12 +12,14 @@
  * caller's orgs. `q` matches labels and type slugs; schema bodies live in the
  * repository, not SQLite, so there is no full-text search over them.
  */
+import { hashSchema } from '@underlay/protocol'
 import { and, desc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { schemaAt, schemasOf, viewOf } from '../v3/catalog.js'
 import { findVersion, loadView } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 import { stewardOnly } from './admin.js'
@@ -71,11 +73,18 @@ async function schemaBody(
   hash: string,
 ): Promise<Record<string, unknown> | null> {
   const [u] = await c.var.ports.db
-    .select({ collectionId: schema.schemaUsage.collectionId })
+    .select({
+      collectionId: schema.schemaUsage.collectionId,
+      typeSlug: schema.schemaUsage.typeSlug,
+      fromSeq: schema.schemaUsage.fromSeq,
+    })
     .from(schema.schemaUsage)
     .where(eq(schema.schemaUsage.schemaHash, hash))
     .limit(1)
   if (!u) return null
+  // A v3 collection keeps a schema as its type's `$schema` row, in force from `fromSeq`.
+  if ((await c.var.ports.stores.layoutOf(u.collectionId)) === 'v3')
+    return schemaAt(c.var.ports.stores.v3, u.collectionId, u.fromSeq, u.typeSlug)
   const repo = await c.var.ports.stores.forCollection(u.collectionId)
   return repo.schema(hash)
 }
@@ -93,9 +102,37 @@ export function schemaRoutes() {
       access.collection.headVersionId,
     )
     if (!v) return jsonError(c, 404, 'No versions found')
+    const raw = c.req.query('raw') === 'true'
+    if (access.collection.recordLayout === 'v3') {
+      const store = c.var.ports.stores.v3
+      const all = await schemasOf(store, await viewOf(store, access.collection.id, v.seq))
+      const types = Object.keys(all)
+        .sort()
+        .map((slug) => ({ slug, body: all[slug]!, hash: hashSchema(all[slug]) }))
+      const labels = raw
+        ? new Map()
+        : await labelsFor(
+            c,
+            types.map((t) => t.hash),
+          )
+      return c.json({
+        version: v.semver,
+        semver: v.semver,
+        schemas: types.map((t) => {
+          const l = labels.get(t.hash)
+          return {
+            slug: t.slug,
+            schemaId: t.hash,
+            schemaHash: t.hash,
+            schema: l?.length
+              ? { ...t.body, 'x-underlay-labels': l.map((x: { label: string }) => x.label) }
+              : t.body,
+          }
+        }),
+      })
+    }
     const repo = await c.var.ports.stores.forCollection(access.collection.id)
     const view = await loadView(repo, v, access.isMember)
-    const raw = c.req.query('raw') === 'true'
     const labels = raw
       ? new Map()
       : await labelsFor(

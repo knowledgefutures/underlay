@@ -378,3 +378,54 @@ async function copyAsset(ports: Ports, storageKey: string, hash: string, size: n
   if (!obj) throw new Error(`File ${hash} is recorded but its bytes are missing`)
   await store.put(assetKey(hash), await obj.bytes())
 }
+
+/**
+ * A commit that changes only the collection's metadata (the metadata edit in the web app):
+ * one `$meta` row, or its removal. Returns null when the metadata is already that.
+ */
+export async function commitV3Metadata(
+  ports: Ports,
+  collectionId: string,
+  metadata: Record<string, unknown> | null,
+  pushedBy: string | null,
+): Promise<{ status: 'committed'; version: typeof schema.versions.$inferSelect } | null> {
+  return commitQueue.run(collectionId, async () => {
+    const store = ports.stores.v3
+    await syncCatalog(ports, collectionId)
+    const view = await headView(store, collectionId)
+    if (canonical(metadata) === canonical(await metadataOf(store, view))) return null
+    const row =
+      metadata === null
+        ? v3.removalRow(v3.META_ID, v3.META_TYPE)
+        : v3.rowFromRecord(v3.META_ID, v3.META_TYPE, metadata)
+    const session = v3.newSession()
+    const files = await v3.buildFiles([row], v3.uploadTarget(store, session))
+    const base = await headBase(ports, collectionId)
+    const change = await v3.makeChange(collectionId, {
+      files: files.map(refOf),
+      base: base?.hash ?? null,
+      message: 'Metadata update',
+    })
+    const stored = await v3.commitUpload(
+      store,
+      collectionId,
+      { change },
+      { session, signer: await ports.signer(), verify: false },
+    )
+    const before = await lastRow(ports, collectionId)
+    const version = await recordCommit(ports, {
+      collectionId,
+      stored,
+      stats: before ? statsOfRow(before) : emptyStats(),
+      changes: { added: 0, removed: 0, updated: 0 },
+      schemaChanges: new Map(),
+      metadata,
+      pushedBy,
+      appId: null,
+      actorId: null,
+      pushSessionId: null,
+    })
+    await ports.jobs.enqueue({ type: 'version.published', versionId: version.id, bump: 'patch' })
+    return { status: 'committed' as const, version }
+  })
+}

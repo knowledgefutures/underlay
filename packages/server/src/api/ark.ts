@@ -30,6 +30,7 @@ import {
 } from '../lib/ark.js'
 import { deniedHashes } from '../lib/limits.js'
 import type { Db, Ports } from '../ports.js'
+import { recordAt, schemaAt } from '../v3/catalog.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
 import {
   capRole,
@@ -221,14 +222,24 @@ export async function resolveArk(
       .limit(1)
     if (!rt || !v) return notFound
 
-    // Non-members get the public set only: a private-set record is not found.
-    const repo = await ports.stores.forCollection(collection.id)
-    const view = await loadView(repo, v, member, await deniedHashes(db))
-    const type = view.types.find((t) => t.slug === recordType)
-    const rec = type ? await getRecord(view, type, recordId) : null
-    if (!type || !rec) return notFound
-    const { data } = JSON.parse(rec.body!) as { data: Record<string, unknown> }
-    const typeSchema = await repo.schema(type.schemaHash)
+    let data: Record<string, unknown>
+    let typeSchema: Record<string, unknown> | null
+    if (collection.recordLayout === 'v3') {
+      // A v3 collection has no private records: who may read it was decided above.
+      const rec = await recordAt(ports.stores.v3, collection.id, v.seq, recordType, recordId)
+      if (!rec || (await deniedHashes(db)).has(rec.hash)) return notFound
+      data = rec.data as Record<string, unknown>
+      typeSchema = await schemaAt(ports.stores.v3, collection.id, v.seq, recordType)
+    } else {
+      // Non-members get the public set only: a private-set record is not found.
+      const repo = await ports.stores.forCollection(collection.id)
+      const view = await loadView(repo, v, member, await deniedHashes(db))
+      const type = view.types.find((t) => t.slug === recordType)
+      const rec = type ? await getRecord(view, type, recordId) : null
+      if (!type || !rec) return notFound
+      data = (JSON.parse(rec.body!) as { data: Record<string, unknown> }).data
+      typeSchema = await repo.schema(type.schemaHash)
+    }
 
     // Only http(s) targets: anything else (javascript:, data:) is an open redirect.
     const redirectUrl = data?.[rt.redirectUrlField]

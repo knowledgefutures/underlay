@@ -31,6 +31,7 @@ import {
   storeSmallFile,
 } from '../files/files.js'
 import { isDenied } from '../lib/limits.js'
+import { v3PresignDownloads, v3ReadableFiles } from '../v3/files.js'
 import { fileSizes } from '../versions/file-refs.js'
 import { jsonError, requireCollection } from './access.js'
 
@@ -43,6 +44,27 @@ export function fileRoutes() {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return head ? c.body(null, 404) : access
     const hash = cleanHash(c.req.param('hash'))
+    if (access.collection.recordLayout === 'v3') {
+      const found = isHash(hash)
+        ? await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, [hash])
+        : new Map()
+      if (!found.has(hash)) return head ? c.body(null, 404) : jsonError(c, 404, 'File not found')
+      if (await isDenied(c.var.ports.db, hash))
+        return head ? c.body(null, 451) : jsonError(c, 451, 'This file is unavailable')
+      const data = found.get(hash) ?? null
+      const size = data?.size ?? (await fileSizes(c.var.ports.db, [hash])).get(hash) ?? 0
+      if (head)
+        return c.body(null, 200, {
+          'content-length': String(size),
+          'content-type': data?.mediaType ?? 'application/octet-stream',
+        })
+      meter(c.var.meter, 'file_downloads', 1)
+      meter(c.var.meter, 'file_bytes', size)
+      c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
+      const urls = await v3PresignDownloads(c.var.ports, found, PRESIGN_SECONDS)
+      const url = urls.get(hash)
+      return url ? c.redirect(url, 302) : jsonError(c, 404, 'File not found')
+    }
     // Access before the denylist: a 451 would confirm the file exists to anyone.
     if (
       !isHash(hash) ||
@@ -78,8 +100,16 @@ export function fileRoutes() {
     // The head's trees and the file rows are read once, not per hash (D1: 1,000 queries).
     const requested = body.hashes.filter((h): h is string => typeof h === 'string')
     const valid = requested.map(cleanHash).filter(isHash)
-    const readable = await readableFiles(c.var.ports, access.collection, access.isMember, valid)
-    const urls = await presignDownloads(c.var.ports, [...readable])
+    const urls =
+      access.collection.recordLayout === 'v3'
+        ? await v3PresignDownloads(
+            c.var.ports,
+            await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, valid),
+            PRESIGN_SECONDS,
+          )
+        : await presignDownloads(c.var.ports, [
+            ...(await readableFiles(c.var.ports, access.collection, access.isMember, valid)),
+          ])
     const out: Record<string, string | null> = {}
     for (const r of requested) out[r] = urls.get(cleanHash(r)) ?? null
     // A presigned URL is a download handed out: metered as one, at the file's size.
