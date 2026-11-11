@@ -9,17 +9,18 @@ import {
   type Repo,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: { type: 'object' } } }
 
-describe('fsck', () => {
+describeNotOnV3('not on v3 yet: fsck (Phase 3)')('fsck', () => {
   it('passes a healthy collection and names what breaks', async () => {
     const h = await harness()
     const user = await h.member()
@@ -130,7 +131,7 @@ async function steps(repo: Repo, collectionId: string, trustedKeys: PublicKeyInf
   return total
 }
 
-describe('fsck for stewards', () => {
+describeNotOnV3('not on v3 yet: fsck (Phase 3)')('fsck for stewards', () => {
   it('queues a check and serves its report', async () => {
     const { setup } = await import('./kf-app.js')
     const { h, call, user } = await setup()

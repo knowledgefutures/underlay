@@ -6,11 +6,12 @@ import {
   type RecordEntry,
   utf8ByteLength,
 } from '@underlay/protocol'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 
 import { commitVersion } from '../src/versions/commit.js'
 import { getRecord, loadView, typeRecords } from '../src/versions/view.js'
 import { cleanup, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -26,7 +27,7 @@ async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
   return out
 }
 
-describe('version views', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('version views', () => {
   it("closes both sets' leaf bodies when a reader stops early", async () => {
     const h = await harness()
     const c = await h.collection()

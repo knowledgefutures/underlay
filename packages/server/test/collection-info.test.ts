@@ -8,6 +8,7 @@ import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
 import { INFO_BACKFILL_MARKER, queueInfoBackfill } from '../src/versions/collection-info.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3, onV3 } from './layouts.js'
 
 const fakes: FakeS3[] = []
 afterAll(async () => {
@@ -49,11 +50,12 @@ async function setup(opts: { public?: boolean } = {}) {
   }
   const path = '/api/collections/org/books'
   const v1 = await push(h, user, path, { schemas: { Book } }, [book('a'), book('b')])
-  const repo = await h.ports.stores.forCollection(c.id)
+  // A v3 collection has no v2 repository; only the collection.json tests use it.
+  const repo = onV3 ? (null as never) : await h.ports.stores.forCollection(c.id)
   return { h, user, c, path, v1, repo }
 }
 
-describe('collection.json', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('collection.json', () => {
   it('a commit writes the owner, visibility and description (spec 11.1)', async () => {
     const { h, c, repo } = await setup()
     const info = await readCollectionInfo(repo, c.id)

@@ -21,6 +21,7 @@ import { startUpload } from '../src/files/files.js'
 import { isBulk } from '../src/jobs.js'
 import { commitVersion } from '../src/versions/commit.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -159,289 +160,294 @@ describe('storage cleanup, step 1: sessions and uploads', () => {
   })
 })
 
-describe('storage cleanup, steps 2 and 3: mark and sweep', () => {
-  it("frees a deleted collection's objects after its grace, and keeps what others share", async () => {
-    const h = await harness()
-    const user = await h.member()
-    const a = await h.collection('a')
-    await h.collection('c')
-    await push(h, user, 'a', docs('a', 50, 'shared pdf'), 'shared pdf')
-    // b is a fork of a: it shares a's trees outright.
-    const fork = await h.request('/api/collections/org/a/fork', {
-      method: 'POST',
-      user,
-      json: { targetOrg: 'org', slug: 'forked' },
-    })
-    expect(fork.status).toBeLessThan(300)
-    const [b] = await h.ports.db
-      .select()
-      .from(schema.collections)
-      .where(eq(schema.collections.slug, 'forked'))
-    const cSession = await push(h, user, 'c', docs('c', 40, 'only c'), 'only c')
-    const [cRow] = await h.ports.db
-      .select()
-      .from(schema.collections)
-      .where(eq(schema.collections.slug, 'c'))
-    expect(cSession).toBeTruthy()
-    for (const slug of ['a', 'c']) {
-      const del = await h.request(`/api/collections/org/${slug}`, { method: 'DELETE', user })
-      expect(del.status).toBe(200)
-    }
-    ageAll(h)
-    const before = h.bucket.objects.size
-    const fileRows = async () =>
-      (await h.ports.db.select({ hash: schema.files.hash }).from(schema.files)).map((f) => f.hash)
-    expect((await fileRows()).sort()).toEqual([sha('only c'), sha('shared pdf')].sort())
-
-    // In the grace period: nothing of a or c goes.
-    const mark1 = await run(h, 'mark')
-    expect(mark1.status).toBe('done')
-    expect(mark1.stats!.collections).toBe(3) // b live; a and c from their logs
-    const sweep1 = await run(h, 'sweep')
-    expect(sweep1.status).toBe('done')
-    expect(sweep1.stats!.deleted.files).toBeUndefined()
-    expect(sweep1.stats!.deleted.roots).toBeUndefined()
-    expect(sweep1.stats!.deleted.collections).toBeUndefined()
-    expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
-    // Every version a deleted collection's log names still checks out in full. (Its
-    // derived trees, file reference counts and the cumulative public files tree,
-    // aren't kept: they're bookkeeping for new commits.)
-    const platform = await h.ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
-    for (const id of [a.id, cRow!.id]) {
-      // Its row is gone: opened in the layout it was made in (layout F: its own files).
-      const repo =
-        h.ports.stores.newCollections === 'f'
-          ? openRepo(platform.blobs, { layout: 'f', recordScope: id, nodes: 'delta' })
-          : platform
-      const report = await fsck(repo, {
-        collectionId: id,
-        trustedKeys: [h.signer.publicKey],
-        fileBytes: true,
-      })
-      expect(report.errors).toEqual([])
-    }
-
-    // Past it: a dry run counts, and deletes nothing.
-    await pastGrace(h)
-    await run(h, 'mark')
-    const dry = await run(h, 'sweep', { dryRun: true })
-    expect(dry.stats!.deleted.files).toMatchObject({ objects: 1 })
-    expect(dry.stats!.deleted.nodes!.objects).toBeGreaterThan(0)
-    expect(dry.stats!.deleted.collections!.objects).toBeGreaterThan(0)
-    expect(dry.stats!.windows).toBe(0)
-    expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
-    // It keeps samples of what it would delete, a collection's prefix once.
-    expect(dry.stats!.samples!.files).toEqual([`files/${sha('only c')}`])
-    expect(dry.stats!.samples!.collections!.sort()).toEqual(
-      [`collections/${a.id}/`, `collections/${cRow!.id}/`].sort(),
-    )
-    expect(dry.stats!.samples!.nodes!.length).toBeGreaterThan(0)
-
-    // The real sweep: c's own objects and file go; what b reaches stays.
-    const sweep = await run(h, 'sweep')
-    expect(sweep.status).toBe('done')
-    expect(sweep.stats!.windows).toBeGreaterThan(0)
-    expect(sweep.stats!.deleted.files).toMatchObject({ objects: 1 })
-    expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(false)
-    expect(h.bucket.objects.has(`repo/files/${sha('shared pdf')}`)).toBe(true)
-    expect(await fileRows()).toEqual([sha('shared pdf')])
-    expect(keys(h, `repo/collections/${cRow!.id}/`)).toEqual([])
-    expect(keys(h, `repo/collections/${a.id}/`)).toEqual([])
-    expect(h.bucket.objects.size).toBeLessThan(before)
-    await healthy(h, b!.id)
-    const read = await h.request('/api/collections/org/forked/versions/1/records.ndjson', { user })
-    expect(read.status).toBe(200)
-    expect((await read.text()).trim().split('\n')).toHaveLength(50)
-
-    // Schemas are never swept; unknown shapes are counted and kept.
-    expect(keys(h, 'repo/schemas/').length).toBeGreaterThan(0)
-    await h.bucket.put('repo/nodes/not-a-hash', 'x')
-    ageAll(h)
-    await run(h, 'mark')
-    const again = await run(h, 'sweep')
-    expect(again.stats!.unknown).toBeGreaterThan(0)
-    expect(h.bucket.objects.has('repo/nodes/not-a-hash')).toBe(true)
-    expect(again.stats!.deleted.nodes).toBeUndefined()
-  })
-
-  it('gives a collection deleted with its org a tombstone and its grace period', async () => {
-    const h = await harness()
-    const user = await h.member()
-    const a = await h.collection('a')
-    await push(h, user, 'a', docs('a', 20, 'org pdf'), 'org pdf')
-    // However the org row goes, its collections cascade with it.
-    await h.ports.db.delete(schema.organization).where(eq(schema.organization.id, 'org1'))
-    const [stone] = await h.ports.db
-      .select()
-      .from(schema.collectionTombstones)
-      .where(eq(schema.collectionTombstones.collectionId, a.id))
-    expect(stone).toMatchObject({ organizationId: 'org1', slug: 'a', versions: 1 })
-    expect(stone!.totalBytes).toBeGreaterThan(0)
-    ageAll(h)
-    const mark = await run(h, 'mark')
-    expect(mark.stats!.collections).toBe(1)
-    const sweep = await run(h, 'sweep')
-    expect(sweep.stats!.deleted.files).toBeUndefined()
-    expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(true)
-    await pastGrace(h)
-    await run(h, 'mark')
-    await run(h, 'sweep')
-    expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(false)
-  })
-
-  it("keeps a deleted collection's leftovers that a later push reuses", async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('old')
-    const records = docs('r', 30, 'the pdf')
-    await push(h, user, 'old', records, 'the pdf')
-    expect((await h.request('/api/collections/org/old', { method: 'DELETE', user })).status).toBe(
-      200,
-    )
-    await pastGrace(h)
-    // The mark runs while nothing uses old's objects.
-    const mark = await run(h, 'mark')
-    expect(mark.status).toBe('done')
-
-    // Then a new collection pushes the same records and file: writers skip the
-    // nodes, bodies and bytes that are already there.
-    const fresh = await h.collection('new')
-    const puts = h.bucket.puts
-    await push(h, user, 'new', records, 'the pdf')
-    expect(h.bucket.puts - puts).toBeLessThan(15) // mostly reused
-    ageAll(h)
-
-    const sweep = await run(h, 'sweep')
-    expect(sweep.status).toBe('done')
-    await healthy(h, fresh.id)
-    expect(h.bucket.objects.has(`repo/files/${sha('the pdf')}`)).toBe(true)
-  })
-
-  // Today's layout: on layout F an upload writes a large record into the collection's
-  // packs instead (push/packs.ts), and cleanup deletes those only for a push that never
-  // published (upload-packs.test.ts).
-  it.skipIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')(
-    'keeps a large record a push uploaded while the sweep ran',
-    async () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")(
+  'storage cleanup, steps 2 and 3: mark and sweep',
+  () => {
+    it("frees a deleted collection's objects after its grace, and keeps what others share", async () => {
       const h = await harness()
       const user = await h.member()
-      // Over OUT_OF_LINE_BYTES: stored as its own records/ object.
-      const big = { id: 'big', type: 'Doc', data: { title: 'x'.repeat(70_000) } }
-      await h.collection('old')
-      await push(h, user, 'old', [big])
-      const recordKeys = () => keys(h, 'repo/records/')
-      expect(recordKeys()).toHaveLength(1)
-      await h.request('/api/collections/org/old', { method: 'DELETE', user })
-      await pastGrace(h)
-      await run(h, 'mark')
-
-      // A new push uploads the same record and stays open while the sweep runs.
-      const fresh = await h.collection('new')
-      const base = '/api/collections/org/new'
-      const open = await h.request(`${base}/push`, {
+      const a = await h.collection('a')
+      await h.collection('c')
+      await push(h, user, 'a', docs('a', 50, 'shared pdf'), 'shared pdf')
+      // b is a fork of a: it shares a's trees outright.
+      const fork = await h.request('/api/collections/org/a/fork', {
         method: 'POST',
         user,
-        json: { schemas: { Doc } },
+        json: { targetOrg: 'org', slug: 'forked' },
       })
-      const sid = ((await open.json()) as { session_id: string }).session_id
-      await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: [big] })
-      // Staged in the session's area, not written to the repository yet.
-      expect(keys(h, `internal/sessions/${sid}/records/`)).toHaveLength(1)
-      ageAll(h)
-      const sweep = await run(h, 'sweep')
-      expect(sweep.stats!.deleted.records).toMatchObject({ objects: 1 })
-      expect(recordKeys()).toEqual([])
-
-      // The commit puts it back, under its fence.
-      const commit = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
-      expect(commit.status).toBe(201)
-      expect(recordKeys()).toHaveLength(1)
-      await healthy(h, fresh.id)
-    },
-  )
-
-  it('gives the same result in many small jobs, shards and windows', async () => {
-    const saved = { ...cleanupConfig }
-    Object.assign(cleanupConfig, {
-      markNodeBudget: 1,
-      markCollections: 1,
-      sweepPages: 1,
-      windowObjects: 3,
-      sweepDeletes: 5,
-    })
-    try {
-      const h = await harness()
-      const user = await h.member()
-      const keep = await h.collection('keep')
-      await push(h, user, 'keep', docs('k', 1500, 'kept file'), 'kept file')
-      const keep2 = await h.collection('keep2')
-      await push(h, user, 'keep2', docs('q', 800))
-      for (const slug of ['gone1', 'gone2']) {
-        await h.collection(slug)
-        await push(h, user, slug, docs(slug, 1200, `${slug} file`), `${slug} file`)
-        await h.request(`/api/collections/org/${slug}`, { method: 'DELETE', user })
+      expect(fork.status).toBeLessThan(300)
+      const [b] = await h.ports.db
+        .select()
+        .from(schema.collections)
+        .where(eq(schema.collections.slug, 'forked'))
+      const cSession = await push(h, user, 'c', docs('c', 40, 'only c'), 'only c')
+      const [cRow] = await h.ports.db
+        .select()
+        .from(schema.collections)
+        .where(eq(schema.collections.slug, 'c'))
+      expect(cSession).toBeTruthy()
+      for (const slug of ['a', 'c']) {
+        const del = await h.request(`/api/collections/org/${slug}`, { method: 'DELETE', user })
+        expect(del.status).toBe(200)
       }
-      await pastGrace(h)
       ageAll(h)
-      const mark = await run(h, 'mark')
-      expect(mark.status).toBe('done')
-      expect(mark.seq).toBeGreaterThan(2) // it took more than one job
-      expect(keys(h, `internal/cleanup/${mark.id}/`).length).toBeGreaterThan(1)
+      const before = h.bucket.objects.size
+      const fileRows = async () =>
+        (await h.ports.db.select({ hash: schema.files.hash }).from(schema.files)).map((f) => f.hash)
+      expect((await fileRows()).sort()).toEqual([sha('only c'), sha('shared pdf')].sort())
+
+      // In the grace period: nothing of a or c goes.
+      const mark1 = await run(h, 'mark')
+      expect(mark1.status).toBe('done')
+      expect(mark1.stats!.collections).toBe(3) // b live; a and c from their logs
+      const sweep1 = await run(h, 'sweep')
+      expect(sweep1.status).toBe('done')
+      expect(sweep1.stats!.deleted.files).toBeUndefined()
+      expect(sweep1.stats!.deleted.roots).toBeUndefined()
+      expect(sweep1.stats!.deleted.collections).toBeUndefined()
+      expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
+      // Every version a deleted collection's log names still checks out in full. (Its
+      // derived trees, file reference counts and the cumulative public files tree,
+      // aren't kept: they're bookkeeping for new commits.)
+      const platform = await h.ports.stores.forLocation(schema.PLATFORM_LOCATION_ID)
+      for (const id of [a.id, cRow!.id]) {
+        // Its row is gone: opened in the layout it was made in (layout F: its own files).
+        const repo =
+          h.ports.stores.newCollections === 'f'
+            ? openRepo(platform.blobs, { layout: 'f', recordScope: id, nodes: 'delta' })
+            : platform
+        const report = await fsck(repo, {
+          collectionId: id,
+          trustedKeys: [h.signer.publicKey],
+          fileBytes: true,
+        })
+        expect(report.errors).toEqual([])
+      }
+
+      // Past it: a dry run counts, and deletes nothing.
+      await pastGrace(h)
+      await run(h, 'mark')
+      const dry = await run(h, 'sweep', { dryRun: true })
+      expect(dry.stats!.deleted.files).toMatchObject({ objects: 1 })
+      expect(dry.stats!.deleted.nodes!.objects).toBeGreaterThan(0)
+      expect(dry.stats!.deleted.collections!.objects).toBeGreaterThan(0)
+      expect(dry.stats!.windows).toBe(0)
+      expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(true)
+      // It keeps samples of what it would delete, a collection's prefix once.
+      expect(dry.stats!.samples!.files).toEqual([`files/${sha('only c')}`])
+      expect(dry.stats!.samples!.collections!.sort()).toEqual(
+        [`collections/${a.id}/`, `collections/${cRow!.id}/`].sort(),
+      )
+      expect(dry.stats!.samples!.nodes!.length).toBeGreaterThan(0)
+
+      // The real sweep: c's own objects and file go; what b reaches stays.
       const sweep = await run(h, 'sweep')
       expect(sweep.status).toBe('done')
-      expect(sweep.stats!.windows).toBeGreaterThan(3)
-      await healthy(h, keep.id)
-      await healthy(h, keep2.id)
-      for (const slug of ['gone1', 'gone2'])
-        expect(h.bucket.objects.has(`repo/files/${sha(`${slug} file`)}`)).toBe(false)
-      // Nothing left for another pass.
+      expect(sweep.stats!.windows).toBeGreaterThan(0)
+      expect(sweep.stats!.deleted.files).toMatchObject({ objects: 1 })
+      expect(h.bucket.objects.has(`repo/files/${sha('only c')}`)).toBe(false)
+      expect(h.bucket.objects.has(`repo/files/${sha('shared pdf')}`)).toBe(true)
+      expect(await fileRows()).toEqual([sha('shared pdf')])
+      expect(keys(h, `repo/collections/${cRow!.id}/`)).toEqual([])
+      expect(keys(h, `repo/collections/${a.id}/`)).toEqual([])
+      expect(h.bucket.objects.size).toBeLessThan(before)
+      await healthy(h, b!.id)
+      const read = await h.request('/api/collections/org/forked/versions/1/records.ndjson', {
+        user,
+      })
+      expect(read.status).toBe(200)
+      expect((await read.text()).trim().split('\n')).toHaveLength(50)
+
+      // Schemas are never swept; unknown shapes are counted and kept.
+      expect(keys(h, 'repo/schemas/').length).toBeGreaterThan(0)
+      await h.bucket.put('repo/nodes/not-a-hash', 'x')
+      ageAll(h)
       await run(h, 'mark')
       const again = await run(h, 'sweep')
-      expect(Object.keys(again.stats!.deleted)).toEqual([])
-      await healthy(h, keep.id)
-    } finally {
-      Object.assign(cleanupConfig, saved)
-    }
-  })
+      expect(again.stats!.unknown).toBeGreaterThan(0)
+      expect(h.bucket.objects.has('repo/nodes/not-a-hash')).toBe(true)
+      expect(again.stats!.deleted.nodes).toBeUndefined()
+    })
 
-  it('waits while a push is committing', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('gone')
-    await push(h, user, 'gone', docs('g', 10))
-    await h.request('/api/collections/org/gone', { method: 'DELETE', user })
-    await pastGrace(h)
-    const c = await h.collection('busy')
-    const [session] = await h.ports.db
-      .insert(schema.pushSessions)
-      .values({
-        collectionId: c.id,
-        userId: user,
-        status: 'committing',
-        finalizeStartedAt: new Date(),
-        expiresAt: new Date(Date.now() + DAY),
+    it('gives a collection deleted with its org a tombstone and its grace period', async () => {
+      const h = await harness()
+      const user = await h.member()
+      const a = await h.collection('a')
+      await push(h, user, 'a', docs('a', 20, 'org pdf'), 'org pdf')
+      // However the org row goes, its collections cascade with it.
+      await h.ports.db.delete(schema.organization).where(eq(schema.organization.id, 'org1'))
+      const [stone] = await h.ports.db
+        .select()
+        .from(schema.collectionTombstones)
+        .where(eq(schema.collectionTombstones.collectionId, a.id))
+      expect(stone).toMatchObject({ organizationId: 'org1', slug: 'a', versions: 1 })
+      expect(stone!.totalBytes).toBeGreaterThan(0)
+      ageAll(h)
+      const mark = await run(h, 'mark')
+      expect(mark.stats!.collections).toBe(1)
+      const sweep = await run(h, 'sweep')
+      expect(sweep.stats!.deleted.files).toBeUndefined()
+      expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(true)
+      await pastGrace(h)
+      await run(h, 'mark')
+      await run(h, 'sweep')
+      expect(h.bucket.objects.has(`repo/files/${sha('org pdf')}`)).toBe(false)
+    })
+
+    it("keeps a deleted collection's leftovers that a later push reuses", async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('old')
+      const records = docs('r', 30, 'the pdf')
+      await push(h, user, 'old', records, 'the pdf')
+      expect((await h.request('/api/collections/org/old', { method: 'DELETE', user })).status).toBe(
+        200,
+      )
+      await pastGrace(h)
+      // The mark runs while nothing uses old's objects.
+      const mark = await run(h, 'mark')
+      expect(mark.status).toBe('done')
+
+      // Then a new collection pushes the same records and file: writers skip the
+      // nodes, bodies and bytes that are already there.
+      const fresh = await h.collection('new')
+      const puts = h.bucket.puts
+      await push(h, user, 'new', records, 'the pdf')
+      expect(h.bucket.puts - puts).toBeLessThan(15) // mostly reused
+      ageAll(h)
+
+      const sweep = await run(h, 'sweep')
+      expect(sweep.status).toBe('done')
+      await healthy(h, fresh.id)
+      expect(h.bucket.objects.has(`repo/files/${sha('the pdf')}`)).toBe(true)
+    })
+
+    // Today's layout: on layout F an upload writes a large record into the collection's
+    // packs instead (push/packs.ts), and cleanup deletes those only for a push that never
+    // published (upload-packs.test.ts).
+    it.skipIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')(
+      'keeps a large record a push uploaded while the sweep ran',
+      async () => {
+        const h = await harness()
+        const user = await h.member()
+        // Over OUT_OF_LINE_BYTES: stored as its own records/ object.
+        const big = { id: 'big', type: 'Doc', data: { title: 'x'.repeat(70_000) } }
+        await h.collection('old')
+        await push(h, user, 'old', [big])
+        const recordKeys = () => keys(h, 'repo/records/')
+        expect(recordKeys()).toHaveLength(1)
+        await h.request('/api/collections/org/old', { method: 'DELETE', user })
+        await pastGrace(h)
+        await run(h, 'mark')
+
+        // A new push uploads the same record and stays open while the sweep runs.
+        const fresh = await h.collection('new')
+        const base = '/api/collections/org/new'
+        const open = await h.request(`${base}/push`, {
+          method: 'POST',
+          user,
+          json: { schemas: { Doc } },
+        })
+        const sid = ((await open.json()) as { session_id: string }).session_id
+        await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson: [big] })
+        // Staged in the session's area, not written to the repository yet.
+        expect(keys(h, `internal/sessions/${sid}/records/`)).toHaveLength(1)
+        ageAll(h)
+        const sweep = await run(h, 'sweep')
+        expect(sweep.stats!.deleted.records).toMatchObject({ objects: 1 })
+        expect(recordKeys()).toEqual([])
+
+        // The commit puts it back, under its fence.
+        const commit = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+        expect(commit.status).toBe(201)
+        expect(recordKeys()).toHaveLength(1)
+        await healthy(h, fresh.id)
+      },
+    )
+
+    it('gives the same result in many small jobs, shards and windows', async () => {
+      const saved = { ...cleanupConfig }
+      Object.assign(cleanupConfig, {
+        markNodeBudget: 1,
+        markCollections: 1,
+        sweepPages: 1,
+        windowObjects: 3,
+        sweepDeletes: 5,
       })
-      .returning()
-    ageAll(h)
-    await run(h, 'mark')
-    const nodes = keys(h, 'repo/nodes/').length
-    const waiting = await run(h, 'sweep')
-    expect(waiting.status).toBe('waiting')
-    expect(keys(h, 'repo/nodes/').length).toBe(nodes)
+      try {
+        const h = await harness()
+        const user = await h.member()
+        const keep = await h.collection('keep')
+        await push(h, user, 'keep', docs('k', 1500, 'kept file'), 'kept file')
+        const keep2 = await h.collection('keep2')
+        await push(h, user, 'keep2', docs('q', 800))
+        for (const slug of ['gone1', 'gone2']) {
+          await h.collection(slug)
+          await push(h, user, slug, docs(slug, 1200, `${slug} file`), `${slug} file`)
+          await h.request(`/api/collections/org/${slug}`, { method: 'DELETE', user })
+        }
+        await pastGrace(h)
+        ageAll(h)
+        const mark = await run(h, 'mark')
+        expect(mark.status).toBe('done')
+        expect(mark.seq).toBeGreaterThan(2) // it took more than one job
+        expect(keys(h, `internal/cleanup/${mark.id}/`).length).toBeGreaterThan(1)
+        const sweep = await run(h, 'sweep')
+        expect(sweep.status).toBe('done')
+        expect(sweep.stats!.windows).toBeGreaterThan(3)
+        await healthy(h, keep.id)
+        await healthy(h, keep2.id)
+        for (const slug of ['gone1', 'gone2'])
+          expect(h.bucket.objects.has(`repo/files/${sha(`${slug} file`)}`)).toBe(false)
+        // Nothing left for another pass.
+        await run(h, 'mark')
+        const again = await run(h, 'sweep')
+        expect(Object.keys(again.stats!.deleted)).toEqual([])
+        await healthy(h, keep.id)
+      } finally {
+        Object.assign(cleanupConfig, saved)
+      }
+    })
 
-    await h.ports.db
-      .update(schema.pushSessions)
-      .set({ status: 'failed' })
-      .where(eq(schema.pushSessions.id, session!.id))
-    await h.ports.db.update(schema.jobs).set({ runAt: new Date() })
-    await h.drain()
-    const done = (await getRun(h.ports.db, waiting.id))!
-    expect(done.status).toBe('done')
-    expect(keys(h, 'repo/nodes/').length).toBeLessThan(nodes)
-  })
-})
+    it('waits while a push is committing', async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('gone')
+      await push(h, user, 'gone', docs('g', 10))
+      await h.request('/api/collections/org/gone', { method: 'DELETE', user })
+      await pastGrace(h)
+      const c = await h.collection('busy')
+      const [session] = await h.ports.db
+        .insert(schema.pushSessions)
+        .values({
+          collectionId: c.id,
+          userId: user,
+          status: 'committing',
+          finalizeStartedAt: new Date(),
+          expiresAt: new Date(Date.now() + DAY),
+        })
+        .returning()
+      ageAll(h)
+      await run(h, 'mark')
+      const nodes = keys(h, 'repo/nodes/').length
+      const waiting = await run(h, 'sweep')
+      expect(waiting.status).toBe('waiting')
+      expect(keys(h, 'repo/nodes/').length).toBe(nodes)
 
-describe('the mark’s budget', () => {
+      await h.ports.db
+        .update(schema.pushSessions)
+        .set({ status: 'failed' })
+        .where(eq(schema.pushSessions.id, session!.id))
+      await h.ports.db.update(schema.jobs).set({ runAt: new Date() })
+      await h.drain()
+      const done = (await getRun(h.ports.db, waiting.id))!
+      expect(done.status).toBe('done')
+      expect(keys(h, 'repo/nodes/').length).toBeLessThan(nodes)
+    })
+  },
+)
+
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('the mark’s budget', () => {
   /** Every token a full, unbudgeted mark of these versions holds. */
   async function fullMark(h: Harness, hashes: string[]) {
     const marks = new MarkSet()
@@ -575,7 +581,7 @@ describe('the mark’s budget', () => {
   })
 })
 
-describe('what the mark trusts', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('what the mark trusts', () => {
   it("doesn't take a file whose bytes are a node for that node", async () => {
     const h = await harness()
     const user = await h.member()
@@ -638,7 +644,7 @@ describe('what the mark trusts', () => {
   })
 })
 
-describe('the write fence', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('the write fence', () => {
   it('makes a write phase that spans a deletion window redo', async () => {
     const h = await harness()
     const user = await h.member()

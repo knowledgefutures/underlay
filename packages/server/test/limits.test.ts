@@ -7,6 +7,7 @@ import * as schema from '../src/db/schema.js'
 import { memoryRateLimiter, requestCost } from '../src/lib/limits.js'
 import { cleanup, harness } from './harness.js'
 import { setup } from './kf-app.js'
+import { itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -89,124 +90,129 @@ describe('rate limits', () => {
 })
 
 describe('denylist and abuse reports', () => {
-  it('withholds blocked files and records everywhere they are served', async () => {
-    const { h, call, user } = await setup()
-    await user('u1') // a steward in the fake KF Auth
-    const owner = await h.member('u1')
-    await h.collection('docs')
-    await h.ports.db.update(schema.collections).set({ public: true })
-    const base = '/api/collections/org/docs'
-    const bad = 'bad bytes'
-    const good = 'good bytes'
-    for (const b of [bad, good]) {
-      await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user: owner, body: b })
-    }
-    const open = await h.request(`${base}/push`, {
-      method: 'POST',
-      user: owner,
-      json: { schemas: { Doc } },
-    })
-    const sid = (await open.json()).session_id
-    await h.request(`${base}/push/${sid}/records`, {
-      method: 'POST',
-      user: owner,
-      ndjson: [
-        { id: 'a', type: 'Doc', data: { title: 'Spam', pdf: { $file: `sha256:${sha(bad)}` } } },
-        { id: 'b', type: 'Doc', data: { title: 'Fine', pdf: { $file: `sha256:${sha(good)}` } } },
-      ],
-    })
-    expect(
-      (await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user: owner })).status,
-    ).toBe(201)
-    const listing = async () =>
-      ((await (await call(`${base}/versions/latest/records?type=Doc`)).json()).records ?? []) as {
-        id: string
-        hash: string
-      }[]
-    const spam = (await listing()).find((r) => r.id === 'a')!
-
-    // Anyone may report; only stewards see reports or change the denylist.
-    expect(
-      (await call('/api/abuse-reports', { method: 'POST', json: { reason: 'spam' } })).status,
-    ).toBe(400)
-    const report = await call('/api/abuse-reports', {
-      method: 'POST',
-      json: { hash: `sha256:${sha(bad)}`, reason: 'spam file', contact: 'x@example.org' },
-    })
-    expect(report.status).toBe(201)
-    const { id: reportId } = await report.json()
-    await user('u2')
-    expect((await call('/api/admin/abuse-reports', { user: 'u2' })).status).toBe(403)
-    const open1 = await (await call('/api/admin/abuse-reports', { user: 'u1' })).json()
-    expect(open1.reports.map((r: { id: string }) => r.id)).toEqual([reportId])
-    const block = (json: unknown, u = 'u1') =>
-      call('/api/admin/denylist', { method: 'POST', user: u, json })
-    expect((await block({ hash: sha(bad), kind: 'file', reason: 'x' }, 'u2')).status).toBe(403)
-    expect((await block({ hash: 'nope', kind: 'file', reason: 'x' })).status).toBe(400)
-
-    // The global route finds files through the reference log.
-    await h.drain()
-    expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
-    expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(302)
-    expect((await block({ hash: sha(bad), kind: 'file', reason: 'spam' })).status).toBe(201)
-    expect((await block({ hash: spam.hash, kind: 'record', reason: 'spam' })).status).toBe(201)
-
-    // The block resolved the report.
-    expect((await (await call('/api/admin/abuse-reports', { user: 'u1' })).json()).reports).toEqual(
-      [],
-    )
-
-    // Files: the redirect, the global route and presign all refuse it.
-    expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(451)
-    expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(451)
-    const presigned = await (
-      await call(`${base}/files/presign`, {
+  itNotOnV3('not on v3 yet: the reference index (decision 6)')(
+    'withholds blocked files and records everywhere they are served',
+    async () => {
+      const { h, call, user } = await setup()
+      await user('u1') // a steward in the fake KF Auth
+      const owner = await h.member('u1')
+      await h.collection('docs')
+      await h.ports.db.update(schema.collections).set({ public: true })
+      const base = '/api/collections/org/docs'
+      const bad = 'bad bytes'
+      const good = 'good bytes'
+      for (const b of [bad, good]) {
+        await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user: owner, body: b })
+      }
+      const open = await h.request(`${base}/push`, {
         method: 'POST',
-        json: { hashes: [sha(bad), sha(good)] },
+        user: owner,
+        json: { schemas: { Doc } },
       })
-    ).json()
-    expect(presigned[sha(bad)]).toBeNull()
-    expect(presigned[sha(good)]).toEqual(expect.any(String))
-    // Only to those who may read it: anyone else gets the 404 an unknown file
-    // gets, so a 451 never confirms a file exists or is blocked.
-    await h.collection('empty')
-    await h.ports.db.update(schema.collections).set({ public: true })
-    expect((await call(`/api/collections/org/empty/files/${sha(bad)}`)).status).toBe(404)
-    expect(
-      (await call(`/api/collections/org/empty/files/${sha(bad)}`, { method: 'HEAD' })).status,
-    ).toBe(404)
-    expect((await call(`${base}/files/${sha(bad)}`, { method: 'HEAD' })).status).toBe(451)
-    expect((await block({ hash: sha('unheld'), kind: 'file', reason: 'x' })).status).toBe(201)
-    expect((await call(`${base}/files/${sha('unheld')}`)).status).toBe(404)
-    expect((await call(`/api/collections/files/${sha('unheld')}`)).status).toBe(404)
-    expect((await call('/api/collections/files/not-a-hash')).status).toBe(404)
-    // Records: listings and NDJSON leave it out; the batch read returns nothing for it.
-    expect((await listing()).map((r) => r.id)).toEqual(['b'])
-    const ndjson = await (await call(`${base}/versions/latest/records.ndjson`)).text()
-    expect(ndjson).toContain('Fine')
-    expect(ndjson).not.toContain('Spam')
-    const batch = await (
-      await call('/api/records/batch', { method: 'POST', json: { hashes: [spam.hash] } })
-    ).text()
-    expect(batch).toBe('')
-    // Export: the archive is whole, the record left out and the file listed as withheld.
-    const tar = untar(new Uint8Array(await (await call(`${base}/export?format=tar`)).arrayBuffer()))
-    const lines = tar.get('records/Doc.ndjson')!.trim().split('\n')
-    expect(lines.map((l) => JSON.parse(l).id)).toEqual(['b'])
-    expect(tar.has(`files/${sha(bad)}`)).toBe(false)
-    expect(tar.get(`files/${sha(good)}`)).toBe(good)
-    const manifest = JSON.parse(tar.get('manifest.json')!)
-    expect(manifest.files_withheld).toEqual([sha(bad)])
-    expect(manifest.version.recordCount).toBe(1)
+      const sid = (await open.json()).session_id
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user: owner,
+        ndjson: [
+          { id: 'a', type: 'Doc', data: { title: 'Spam', pdf: { $file: `sha256:${sha(bad)}` } } },
+          { id: 'b', type: 'Doc', data: { title: 'Fine', pdf: { $file: `sha256:${sha(good)}` } } },
+        ],
+      })
+      expect(
+        (await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user: owner })).status,
+      ).toBe(201)
+      const listing = async () =>
+        ((await (await call(`${base}/versions/latest/records?type=Doc`)).json()).records ?? []) as {
+          id: string
+          hash: string
+        }[]
+      const spam = (await listing()).find((r) => r.id === 'a')!
 
-    // Unblocking serves it again.
-    expect(
-      (await call(`/api/admin/denylist/${sha(bad)}`, { method: 'DELETE', user: 'u1' })).status,
-    ).toBe(200)
-    expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
-    const entries = (await (await call('/api/admin/denylist', { user: 'u1' })).json()).entries
-    expect(entries.map((e: { kind: string }) => e.kind).sort()).toEqual(['file', 'record'])
-  })
+      // Anyone may report; only stewards see reports or change the denylist.
+      expect(
+        (await call('/api/abuse-reports', { method: 'POST', json: { reason: 'spam' } })).status,
+      ).toBe(400)
+      const report = await call('/api/abuse-reports', {
+        method: 'POST',
+        json: { hash: `sha256:${sha(bad)}`, reason: 'spam file', contact: 'x@example.org' },
+      })
+      expect(report.status).toBe(201)
+      const { id: reportId } = await report.json()
+      await user('u2')
+      expect((await call('/api/admin/abuse-reports', { user: 'u2' })).status).toBe(403)
+      const open1 = await (await call('/api/admin/abuse-reports', { user: 'u1' })).json()
+      expect(open1.reports.map((r: { id: string }) => r.id)).toEqual([reportId])
+      const block = (json: unknown, u = 'u1') =>
+        call('/api/admin/denylist', { method: 'POST', user: u, json })
+      expect((await block({ hash: sha(bad), kind: 'file', reason: 'x' }, 'u2')).status).toBe(403)
+      expect((await block({ hash: 'nope', kind: 'file', reason: 'x' })).status).toBe(400)
+
+      // The global route finds files through the reference log.
+      await h.drain()
+      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
+      expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(302)
+      expect((await block({ hash: sha(bad), kind: 'file', reason: 'spam' })).status).toBe(201)
+      expect((await block({ hash: spam.hash, kind: 'record', reason: 'spam' })).status).toBe(201)
+
+      // The block resolved the report.
+      expect(
+        (await (await call('/api/admin/abuse-reports', { user: 'u1' })).json()).reports,
+      ).toEqual([])
+
+      // Files: the redirect, the global route and presign all refuse it.
+      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(451)
+      expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(451)
+      const presigned = await (
+        await call(`${base}/files/presign`, {
+          method: 'POST',
+          json: { hashes: [sha(bad), sha(good)] },
+        })
+      ).json()
+      expect(presigned[sha(bad)]).toBeNull()
+      expect(presigned[sha(good)]).toEqual(expect.any(String))
+      // Only to those who may read it: anyone else gets the 404 an unknown file
+      // gets, so a 451 never confirms a file exists or is blocked.
+      await h.collection('empty')
+      await h.ports.db.update(schema.collections).set({ public: true })
+      expect((await call(`/api/collections/org/empty/files/${sha(bad)}`)).status).toBe(404)
+      expect(
+        (await call(`/api/collections/org/empty/files/${sha(bad)}`, { method: 'HEAD' })).status,
+      ).toBe(404)
+      expect((await call(`${base}/files/${sha(bad)}`, { method: 'HEAD' })).status).toBe(451)
+      expect((await block({ hash: sha('unheld'), kind: 'file', reason: 'x' })).status).toBe(201)
+      expect((await call(`${base}/files/${sha('unheld')}`)).status).toBe(404)
+      expect((await call(`/api/collections/files/${sha('unheld')}`)).status).toBe(404)
+      expect((await call('/api/collections/files/not-a-hash')).status).toBe(404)
+      // Records: listings and NDJSON leave it out; the batch read returns nothing for it.
+      expect((await listing()).map((r) => r.id)).toEqual(['b'])
+      const ndjson = await (await call(`${base}/versions/latest/records.ndjson`)).text()
+      expect(ndjson).toContain('Fine')
+      expect(ndjson).not.toContain('Spam')
+      const batch = await (
+        await call('/api/records/batch', { method: 'POST', json: { hashes: [spam.hash] } })
+      ).text()
+      expect(batch).toBe('')
+      // Export: the archive is whole, the record left out and the file listed as withheld.
+      const tar = untar(
+        new Uint8Array(await (await call(`${base}/export?format=tar`)).arrayBuffer()),
+      )
+      const lines = tar.get('records/Doc.ndjson')!.trim().split('\n')
+      expect(lines.map((l) => JSON.parse(l).id)).toEqual(['b'])
+      expect(tar.has(`files/${sha(bad)}`)).toBe(false)
+      expect(tar.get(`files/${sha(good)}`)).toBe(good)
+      const manifest = JSON.parse(tar.get('manifest.json')!)
+      expect(manifest.files_withheld).toEqual([sha(bad)])
+      expect(manifest.version.recordCount).toBe(1)
+
+      // Unblocking serves it again.
+      expect(
+        (await call(`/api/admin/denylist/${sha(bad)}`, { method: 'DELETE', user: 'u1' })).status,
+      ).toBe(200)
+      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
+      const entries = (await (await call('/api/admin/denylist', { user: 'u1' })).json()).entries
+      expect(entries.map((e: { kind: string }) => e.kind).sort()).toEqual(['file', 'record'])
+    },
+  )
 
   it('lets stewards dismiss a report', async () => {
     const { call, user } = await setup()

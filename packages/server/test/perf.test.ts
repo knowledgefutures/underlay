@@ -12,6 +12,7 @@ import { deniedHashes } from '../src/lib/limits.js'
 import type { Db } from '../src/ports.js'
 import { createStores } from '../src/stores.js'
 import { cleanup, harness } from './harness.js'
+import { itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -55,46 +56,49 @@ async function setup() {
 }
 
 describe('page performance', () => {
-  it('serves a type as concatenated gzip bodies, matching records.ndjson', async () => {
-    const { h, base } = await setup()
-    const ndjson = (
-      await (await h.request(`${base}/versions/latest/records.ndjson?type=Doc`)).text()
-    )
-      .split('\n')
-      .filter(Boolean)
-      .map((l) => {
-        const { hash: _, ...rest } = JSON.parse(l) as Record<string, unknown>
-        return JSON.stringify(rest)
-      })
-    const res = await h.request(`${base}/versions/latest/records.ndjson.gz?type=Doc`)
-    expect(res.headers.get('content-type')).toBe('application/gzip')
-    const lines = gunzipSync(Buffer.from(await res.arrayBuffer()))
-      .toString('utf8')
-      .split('\n')
-      .filter(Boolean)
-    expect(lines).toHaveLength(3001)
-    expect(lines).toEqual(ndjson)
-    // A blocked record is left out.
-    const blocked = sha(lines[5]!)
-    await h.ports.db
-      .insert(schema.denylist)
-      .values({ hash: blocked, kind: 'record', reason: 'test' })
-    const { forgetDenylist } = await import('../src/lib/limits.js')
-    forgetDenylist(h.ports.db)
-    const again = gunzipSync(
-      Buffer.from(
-        await (await h.request(`${base}/versions/latest/records.ndjson.gz`)).arrayBuffer(),
-      ),
-    )
-      .toString('utf8')
-      .split('\n')
-      .filter(Boolean)
-    expect(again).toHaveLength(3000)
-    expect(again).not.toContain(lines[5])
-    expect((await h.request(`${base}/versions/latest/records.ndjson.gz?type=Nope`)).status).toBe(
-      404,
-    )
-  })
+  itNotOnV3('not on v3 yet: records.ndjson.gz (Phase 3)')(
+    'serves a type as concatenated gzip bodies, matching records.ndjson',
+    async () => {
+      const { h, base } = await setup()
+      const ndjson = (
+        await (await h.request(`${base}/versions/latest/records.ndjson?type=Doc`)).text()
+      )
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const { hash: _, ...rest } = JSON.parse(l) as Record<string, unknown>
+          return JSON.stringify(rest)
+        })
+      const res = await h.request(`${base}/versions/latest/records.ndjson.gz?type=Doc`)
+      expect(res.headers.get('content-type')).toBe('application/gzip')
+      const lines = gunzipSync(Buffer.from(await res.arrayBuffer()))
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean)
+      expect(lines).toHaveLength(3001)
+      expect(lines).toEqual(ndjson)
+      // A blocked record is left out.
+      const blocked = sha(lines[5]!)
+      await h.ports.db
+        .insert(schema.denylist)
+        .values({ hash: blocked, kind: 'record', reason: 'test' })
+      const { forgetDenylist } = await import('../src/lib/limits.js')
+      forgetDenylist(h.ports.db)
+      const again = gunzipSync(
+        Buffer.from(
+          await (await h.request(`${base}/versions/latest/records.ndjson.gz`)).arrayBuffer(),
+        ),
+      )
+        .toString('utf8')
+        .split('\n')
+        .filter(Boolean)
+      expect(again).toHaveLength(3000)
+      expect(again).not.toContain(lines[5])
+      expect((await h.request(`${base}/versions/latest/records.ndjson.gz?type=Nope`)).status).toBe(
+        404,
+      )
+    },
+  )
 
   it('lets a published version be cached, but not latest', async () => {
     const { h, user, base, pdf } = await setup()

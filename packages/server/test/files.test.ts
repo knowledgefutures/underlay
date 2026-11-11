@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { inertBlobResponse } from '../src/files/files.js'
 import { cleanup, harness } from './harness.js'
+import { itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -203,53 +204,56 @@ describe('files', () => {
     ).toBe('pending')
   })
 
-  it('lets members read any file the collection holds, not only the head’s', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('docs')
-    await h.ports.db.update(schema.collections).set({ public: true })
-    const base = '/api/collections/org/docs'
-    const old = 'private bytes of an earlier version'
-    const staged = 'uploaded, not yet in any version'
-    for (const b of [old, staged]) {
-      await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })
-    }
-    const push = async (ndjson: unknown[], deletes?: unknown[]) => {
-      const sid = (
-        await json(
-          await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
-        )
-      ).session_id
-      if (ndjson.length)
-        await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson })
-      if (deletes)
-        await h.request(`${base}/push/${sid}/deletes`, { method: 'POST', user, ndjson: deletes })
-      return (await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status
-    }
-    expect(
-      await push([
-        { id: 'p', type: 'Doc', data: { pdf: { $file: `sha256:${sha(old)}` } }, private: true },
-        { id: 'q', type: 'Doc', data: { title: 'stays' } },
-      ]),
-    ).toBe(201)
-    // The next version drops the record: the file is no longer in the head.
-    expect(await push([], [{ type: 'Doc', id: 'p' }])).toBe(201)
+  itNotOnV3('private records or types: a v3 collection is private or public as a whole')(
+    'lets members read any file the collection holds, not only the head’s',
+    async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('docs')
+      await h.ports.db.update(schema.collections).set({ public: true })
+      const base = '/api/collections/org/docs'
+      const old = 'private bytes of an earlier version'
+      const staged = 'uploaded, not yet in any version'
+      for (const b of [old, staged]) {
+        await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })
+      }
+      const push = async (ndjson: unknown[], deletes?: unknown[]) => {
+        const sid = (
+          await json(
+            await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
+          )
+        ).session_id
+        if (ndjson.length)
+          await h.request(`${base}/push/${sid}/records`, { method: 'POST', user, ndjson })
+        if (deletes)
+          await h.request(`${base}/push/${sid}/deletes`, { method: 'POST', user, ndjson: deletes })
+        return (await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status
+      }
+      expect(
+        await push([
+          { id: 'p', type: 'Doc', data: { pdf: { $file: `sha256:${sha(old)}` } }, private: true },
+          { id: 'q', type: 'Doc', data: { title: 'stays' } },
+        ]),
+      ).toBe(201)
+      // The next version drops the record: the file is no longer in the head.
+      expect(await push([], [{ type: 'Doc', id: 'p' }])).toBe(201)
 
-    for (const b of [old, staged]) {
-      expect((await h.request(`${base}/files/${sha(b)}`, { user })).status).toBe(302)
-      expect((await h.request(`${base}/files/${sha(b)}`)).status).toBe(404)
-    }
-    const presign = async (u?: string) =>
-      json(
-        await h.request(`${base}/files/presign`, {
-          method: 'POST',
-          ...(u ? { user: u } : {}),
-          json: { hashes: [sha(old), sha(staged)] },
-        }),
-      )
-    expect(Object.values(await presign(user)).every((u) => typeof u === 'string')).toBe(true)
-    expect(Object.values(await presign())).toEqual([null, null])
-  })
+      for (const b of [old, staged]) {
+        expect((await h.request(`${base}/files/${sha(b)}`, { user })).status).toBe(302)
+        expect((await h.request(`${base}/files/${sha(b)}`)).status).toBe(404)
+      }
+      const presign = async (u?: string) =>
+        json(
+          await h.request(`${base}/files/presign`, {
+            method: 'POST',
+            ...(u ? { user: u } : {}),
+            json: { hashes: [sha(old), sha(staged)] },
+          }),
+        )
+      expect(Object.values(await presign(user)).every((u) => typeof u === 'string')).toBe(true)
+      expect(Object.values(await presign())).toEqual([null, null])
+    },
+  )
 
   it('serves filesystem blobs as inert attachments', async () => {
     const html = new Response('<script>alert(1)</script>', {
@@ -267,73 +271,82 @@ describe('files', () => {
     expect(inertBlobResponse(new Response('Forbidden', { status: 403 })).status).toBe(403)
   })
 
-  it('serves files by redirect only to those who may read them', async () => {
-    const h = await harness()
-    const user = await h.member()
-    const c = await h.collection('docs')
-    await h.ports.db.update(schema.collections).set({ public: true })
-    const base = '/api/collections/org/docs'
-    const pub = 'public pdf bytes'
-    const priv = 'private pdf bytes'
-    for (const b of [pub, priv]) {
-      expect(
-        (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
-      ).toBe(201)
-    }
-    const sid = (
-      await json(
-        await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
+  itNotOnV3('private records or types: a v3 collection is private or public as a whole')(
+    'serves files by redirect only to those who may read them',
+    async () => {
+      const h = await harness()
+      const user = await h.member()
+      const c = await h.collection('docs')
+      await h.ports.db.update(schema.collections).set({ public: true })
+      const base = '/api/collections/org/docs'
+      const pub = 'public pdf bytes'
+      const priv = 'private pdf bytes'
+      for (const b of [pub, priv]) {
+        expect(
+          (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
+        ).toBe(201)
+      }
+      const sid = (
+        await json(
+          await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } }),
+        )
+      ).session_id
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [
+          {
+            id: 'd1',
+            type: 'Doc',
+            data: { title: 'Public', pdf: { $file: `sha256:${sha(pub)}` } },
+          },
+          {
+            id: 'd2',
+            type: 'Doc',
+            data: { title: 'Private', pdf: { $file: `sha256:${sha(priv)}` } },
+            private: true,
+          },
+          { id: 'd3', type: 'Doc', data: { title: 'Again', pdf: { $file: `sha256:${sha(pub)}` } } },
+          {
+            id: 'd4',
+            type: 'Doc',
+            data: { title: 'Hidden', pdf: { $file: `sha256:${sha(pub)}` } },
+            private: true,
+          },
+        ],
+      })
+      expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
+        201,
       )
-    ).session_id
-    await h.request(`${base}/push/${sid}/records`, {
-      method: 'POST',
-      user,
-      ndjson: [
-        { id: 'd1', type: 'Doc', data: { title: 'Public', pdf: { $file: `sha256:${sha(pub)}` } } },
-        {
-          id: 'd2',
-          type: 'Doc',
-          data: { title: 'Private', pdf: { $file: `sha256:${sha(priv)}` } },
-          private: true,
-        },
-        { id: 'd3', type: 'Doc', data: { title: 'Again', pdf: { $file: `sha256:${sha(pub)}` } } },
-        {
-          id: 'd4',
-          type: 'Doc',
-          data: { title: 'Hidden', pdf: { $file: `sha256:${sha(pub)}` } },
-          private: true,
-        },
-      ],
-    })
-    expect((await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })).status).toBe(
-      201,
-    )
 
-    const anonPub = await h.request(`${base}/files/${sha(pub)}`)
-    expect(anonPub.status).toBe(302)
-    expect(anonPub.headers.get('location')).toContain(`repo/files/${sha(pub)}`)
-    expect((await h.request(`${base}/files/${sha(priv)}`)).status).toBe(404)
-    expect((await h.request(`${base}/files/${sha(priv)}`, { user })).status).toBe(302)
-    expect(
-      (await h.request(`${base}/files/${sha(pub)}`, { method: 'HEAD' })).headers.get(
-        'content-length',
-      ),
-    ).toBe(String(pub.length))
+      const anonPub = await h.request(`${base}/files/${sha(pub)}`)
+      expect(anonPub.status).toBe(302)
+      expect(anonPub.headers.get('location')).toContain(`repo/files/${sha(pub)}`)
+      expect((await h.request(`${base}/files/${sha(priv)}`)).status).toBe(404)
+      expect((await h.request(`${base}/files/${sha(priv)}`, { user })).status).toBe(302)
+      expect(
+        (await h.request(`${base}/files/${sha(pub)}`, { method: 'HEAD' })).headers.get(
+          'content-length',
+        ),
+      ).toBe(String(pub.length))
 
-    // The files listing follows the same sets.
-    const anonList = await json(await h.request(`${base}/versions/latest/files`))
-    expect(anonList.map((f: any) => f.hash)).toEqual([sha(pub)])
-    const ownerList = await json(await h.request(`${base}/versions/latest/files`, { user }))
-    expect(ownerList.length).toBe(2)
-    // Reference counts follow the sets too: private references only for members.
-    const countsOf = (list: any[]) =>
-      Object.fromEntries(list.map((f: any) => [f.hash, f.referenceCount]))
-    expect(countsOf(anonList)).toEqual({ [sha(pub)]: 2 })
-    expect(countsOf(ownerList)).toEqual({ [sha(pub)]: 3, [sha(priv)]: 1 })
-    void c
-  })
+      // The files listing follows the same sets.
+      const anonList = await json(await h.request(`${base}/versions/latest/files`))
+      expect(anonList.map((f: any) => f.hash)).toEqual([sha(pub)])
+      const ownerList = await json(await h.request(`${base}/versions/latest/files`, { user }))
+      expect(ownerList.length).toBe(2)
+      // Reference counts follow the sets too: private references only for members.
+      const countsOf = (list: any[]) =>
+        Object.fromEntries(list.map((f: any) => [f.hash, f.referenceCount]))
+      expect(countsOf(anonList)).toEqual({ [sha(pub)]: 2 })
+      expect(countsOf(ownerList)).toEqual({ [sha(pub)]: 3, [sha(priv)]: 1 })
+      void c
+    },
+  )
 
-  it('counts the file references of records stored out of line', async () => {
+  itNotOnV3(
+    'differs on v3: an asset stays until a push removes it; removing the records that referenced it does not',
+  )('counts the file references of records stored out of line', async () => {
     // Over 64 KB, a record's body is a pointer when written but the full JSON
     // when read back, so its references must be counted through the pointer.
     const h = await harness()

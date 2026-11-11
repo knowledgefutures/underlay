@@ -7,7 +7,6 @@
  * credential encryption lands with bucket mirrors (phase 11).
  */
 import {
-  type LayoutName,
   type Cache,
   PrefixedStore,
   type PresigningStore,

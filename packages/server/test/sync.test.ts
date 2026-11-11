@@ -13,10 +13,11 @@ import {
   type CollectionInfo,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -71,7 +72,7 @@ async function setup() {
   return { h, user, c, path, v1, v2 }
 }
 
-describe('sync endpoints', () => {
+describeNotOnV3('not on v3 yet: the CLI sync routes (decision 7)')('sync endpoints', () => {
   it('serves packs a client can receive, whole and incremental', async () => {
     const { h, path, v1, v2 } = await setup()
     const local = openRepo(memoryStore())

@@ -4,10 +4,11 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -17,7 +18,7 @@ async function json(res: Response) {
   return (await res.json()) as any
 }
 
-describe('export', () => {
+describeNotOnV3('not on v3 yet: export (Phase 3)')('export', () => {
   it('streams a valid tar.gz of what the caller may read', async () => {
     const h = await harness()
     const user = await h.member()
