@@ -901,22 +901,26 @@ export async function racing(
   o: { writers: number; streams: number; commits: number },
 ): Promise<Result> {
   const store = storeOf(w)
-  const collection = 'race'
+  const collection = `race${o.writers * o.streams}`
   await v3.createCollection(store, collection).catch(() => {})
   const m = await measure(store, async () =>
     Promise.all(
       Array.from({ length: o.writers }, (_, writer) =>
-        runWorker<WorkerReport & { made: { number: number; file: string }[]; ms: number[] }>(
-          'race',
-          {
-            storeDir: w.storeDir,
-            latency: w.latency,
-            collection,
-            writer,
-            streams: o.streams,
-            commits: o.commits,
-          } satisfies RaceSpec,
-        ),
+        runWorker<
+          WorkerReport & {
+            made: { number: number; file: string }[]
+            ms: number[]
+            refused: number
+            layouts: number
+          }
+        >('race', {
+          storeDir: w.storeDir,
+          latency: w.latency,
+          collection,
+          writer,
+          streams: o.streams,
+          commits: o.commits,
+        } satisfies RaceSpec),
       ),
     ),
   )
@@ -938,6 +942,13 @@ export async function racing(
     distinctNumbers: numbers.size,
     oneWinnerPerNumber: numbers.size === made.length && (head?.commit.number ?? 0) === made.length,
     lostUploads: lost,
+    // Commits refused after 50 lost tries and sent again, and tries lost for each commit made.
+    refused: m.value.reduce((n, r) => n + r.refused, 0),
+    layouts: m.value.reduce((n, r) => n + r.layouts, 0),
+    lossesPerCommit: round(m.m.requests.createsLost / Math.max(1, made.length)),
+    requestsPerCommit: round(
+      (m.m.requests.classA + m.m.requests.classB) / Math.max(1, made.length),
+    ),
     commitsPerSecond: round(made.length / m.m.seconds),
     commitMs: summary(m.value.flatMap((r) => r.ms)),
     ...brief(m.m),

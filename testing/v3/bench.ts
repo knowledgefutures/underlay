@@ -189,7 +189,12 @@ async function suite(name: string): Promise<void> {
     }
     case 'racing': {
       const w = world(folder, { ...base, records: 0 })
-      await step(w, 'racing', 'one-collection', () =>
+      // Eight writers to one collection, then sixty-four: one winner for each number either
+      // way, and what the losers cost.
+      await step(w, 'racing', 'eight', () =>
+        S.racing(w, { writers: num('writers', 8), streams: 1, commits: num('commits', 10) }),
+      )
+      await step(w, 'racing', 'sixty-four', () =>
         S.racing(w, {
           writers: num('writers', 8),
           streams: num('streams', 8),

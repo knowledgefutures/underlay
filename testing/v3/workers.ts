@@ -339,6 +339,8 @@ async function race(): Promise<void> {
   const r = prng(hash32(`race/${s.writer}`))
   const made: { number: number; file: string }[] = []
   const ms: number[] = []
+  let refused = 0
+  let layouts = 0
   await Promise.all(
     Array.from({ length: s.streams }, async (_, stream) => {
       for (let c = 0; c < s.commits; c++) {
@@ -356,19 +358,35 @@ async function race(): Promise<void> {
         const session = v3.newSession()
         const files = await v3.buildFiles(rows, clientTarget(store, session), { level: 1 })
         const t0 = performance.now()
-        // The whole server path, raced: check the upload, install it, claim a number.
-        const commit = await v3.commitUpload(
-          store,
-          s.collection,
-          { files: files.map(refOf) },
-          { session, validate: false },
-        )
+        // The whole server path, raced: check the upload, install it, claim a number. A
+        // writer that loses 50 times running is refused, and sends the commit again, as a
+        // client told to try again would.
+        let commit: Awaited<ReturnType<typeof v3.commitUpload>> | undefined
+        while (!commit) {
+          try {
+            commit = await v3.commitUpload(
+              store,
+              s.collection,
+              { files: files.map(refOf) },
+              { session, validate: false },
+            )
+          } catch (err) {
+            if (!(err instanceof v3.CommitRaceError)) throw err
+            refused++
+          }
+        }
         ms.push(performance.now() - t0)
         made.push({ number: commit.commit.number, file: files[0]!.id })
+        // As a server would, whoever lands every eighth commit runs the rebuild policy, which
+        // at least writes a layout file: without one, opening the collection reads every commit.
+        if (commit.commit.number % 8 === 0) {
+          const r = await v3.rebuild(store, s.collection)
+          if (r.layout) layouts++
+        }
       }
     }),
   )
-  report(store, { made, ms })
+  report(store, { made, ms, refused, layouts })
 }
 
 // --- Dispatch ---

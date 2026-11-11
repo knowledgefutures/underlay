@@ -13,7 +13,7 @@ import { parseStrict } from '../input-rules.js'
 import { jcs } from '../jcs.js'
 import type { Store } from '../repo/types.js'
 import { schemaRelaxes } from '../schema-relax.js'
-import type { BumpType } from '../semver.js'
+import { type BumpType, parseSemver } from '../semver.js'
 import { checkSchemaFull, compileSchema, type SchemaValidator } from '../validate.js'
 import { installUpload, recordKey, uploadKey } from './build.js'
 import { ASSET_TYPE, META_TYPE, SCHEMA_TYPE } from './constants.js'
@@ -371,6 +371,8 @@ export async function commitUpload(
     }
   }
   let check: UploadCheck | undefined
+  /** The major version of the head the check was made against (null: no commits yet). */
+  let checkedMajor: number | null | undefined
   let installed = false
   const made = await createCommit(
     store,
@@ -379,8 +381,16 @@ export async function commitUpload(
       change,
       ...(input.baseNumber === undefined ? {} : { baseNumber: input.baseNumber }),
       bump: async (head) => {
-        const view = await openView(store, collection, { version: head?.commit.number ?? 0 })
-        check = await checkUpload(store, view, files, { ...opts, locate })
+        // Asked again when another commit took the number. The check stands if no schema has
+        // changed since (a schema change is a major version, 4.4) and this upload changes
+        // none: nothing else in it depends on the head. So a lost race costs no second pass
+        // over the upload.
+        const major = head ? parseSemver(head.commit.semver).major : null
+        if (!check || check.schemasChanged.length > 0 || major !== checkedMajor) {
+          const view = await openView(store, collection, { version: head?.commit.number ?? 0 })
+          check = await checkUpload(store, view, files, { ...opts, locate })
+          checkedMajor = major
+        }
         if (!installed) {
           for (const f of files) await installUpload(store, opts.session, f.id)
           installed = true

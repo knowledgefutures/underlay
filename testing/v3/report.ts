@@ -333,9 +333,13 @@ function claims(r: Results): string {
       'Racing writers: one winner for each number, no upload lost',
       racing.length > 0 ? racing.every((x) => x.oneWinnerPerNumber && x.lostUploads === 0) : null,
       racing
+        .sort((a, b) => a.writers - b.writers)
         .map(
           (x) =>
-            `${x.writers} writers, ${n0(x.commits)} commits, ${num(x.commitsPerSecond)} a second`,
+            `${x.writers} writers to one collection: ${n0(x.commits)} commits, ${num(x.commitsPerSecond)} a second` +
+            (x.requestsPerCommit === undefined
+              ? ''
+              : `, ${num(x.lossesPerCommit)} lost tries and ${n0(x.requestsPerCommit)} requests a commit, ${n0(x.refused)} refused after 50 lost tries and sent again`),
         )
         .join('; '),
     ),

@@ -301,6 +301,38 @@ describe('checking files', () => {
     expect(await store.head(v3.uploadKey(good.session, good.refs[0]!.id))).toBe(null)
   })
 
+  it('does not check an upload twice when the commit that beat it changed no schema', async () => {
+    const store = memoryStore()
+    await upload(store, [schema('work', workSchema)])
+    const late = await staged(store, [work('late', { title: 'Late' })])
+    // While this upload is being checked, another upload of records is committed.
+    let first = true
+    const reads: string[] = []
+    const inner = store.tail.bind(store)
+    store.tail = async (key, length) => {
+      if (key.startsWith(`uploads/${late.session}/`)) reads.push(key)
+      if (first && key.startsWith(`uploads/${late.session}/`)) {
+        first = false
+        await upload(store, [work('early', { title: 'Early' })])
+      }
+      return inner(key, length)
+    }
+    const made = await v3.commitUpload(store, 'c', { files: late.refs }, late)
+    expect(made.commit.number).toBe(3)
+    expect(made.commit.semver).toBe('v1.2.0')
+    expect(made.check.validated).toBe(1)
+    const once = [...reads]
+    // The same upload with nothing racing it reads its file as many times.
+    const calm = await staged(store, [work('calm', { title: 'Calm' })])
+    reads.length = 0
+    store.tail = async (key, length) => {
+      if (key.startsWith(`uploads/${calm.session}/`)) reads.push(key)
+      return inner(key, length)
+    }
+    await v3.commitUpload(store, 'c', { files: calm.refs }, calm)
+    expect(once).toHaveLength(reads.length)
+  })
+
   it('checks again against the new head when another commit lands first', async () => {
     const store = memoryStore()
     await upload(store, [schema('work', workSchema)])
