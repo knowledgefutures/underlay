@@ -41,16 +41,23 @@ import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
+import './v3/jobs.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
 registerJob('version.published', async (job, ports) => {
   await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
-  await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })
   const [v] = await ports.db
     .select({ collectionId: schema.versions.collectionId, hash: schema.versions.hash })
     .from(schema.versions)
     .where(eq(schema.versions.id, String(job.versionId)))
+  // v3: the rebuild policy, then nothing else yet. No reference index (decision 6) and no
+  // mirrors (decision 8) for v3 collections.
+  if (v && (await ports.stores.layoutOf(v.collectionId)) === 'v3') {
+    await ports.jobs.enqueue({ type: 'v3.rebuild', collectionId: v.collectionId })
+    return
+  }
+  await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })
   if (v) await queueMirrors(ports, v.collectionId)
   // Layout F merges a collection's packs and index runs after a commit, a set a job. The
   // private set's only when the version has one: an idle job is a bulk slot and a dozen
@@ -126,6 +133,8 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await ports.jobs.enqueueBatch(
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
+  // v3: one pass of the deletion sweep over the v3 area, and stale uploads cleared.
+  await ports.jobs.enqueue({ type: 'v3.sweep' })
   // Storage cleanup: finished sessions and abandoned uploads, stalled runs, the weekly run.
   // Last, and on its own: a failure here shouldn't rerun the rest.
   await cleanupTick(ports).catch((err) => console.error('[cleanup] tick failed:', err))

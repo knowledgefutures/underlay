@@ -188,6 +188,7 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       return (await primaryOf(collectionId)).layout
     },
     v3: new PrefixedStore(platform.bucket, platform.v3Prefix ?? 'v3'),
+    v3BucketKey: (key) => `${platform.v3Prefix ?? 'v3'}/${key}`,
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,
     canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),

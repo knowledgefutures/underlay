@@ -33,7 +33,7 @@ import {
   RepoSource,
   setRecordTotals,
 } from '@underlay/protocol'
-import { and, asc, eq, gt, gte, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
 
 import { fenceHolds, fenceMoved, writeFence } from '../cleanup/fence.js'
 import { chunks } from '../db/chunks.js'
@@ -435,6 +435,8 @@ export async function reconcileDue(ports: Ports): Promise<number> {
     .from(schema.collections)
     .where(
       and(
+        // v2's counters, rebuilt from its trees; a v3 row's come from its commit (v3/catalog.ts).
+        ne(schema.collections.recordLayout, 'v3'),
         or(
           isNull(schema.collections.reconciledAt),
           lt(schema.collections.reconciledAt, new Date(now - reconcileConfig.everyMs)),

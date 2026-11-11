@@ -96,6 +96,8 @@ registerJob('collection.info.org', async (job, ports) => {
 
 registerJob('collection.info', async (job, ports) => {
   const collectionId = String(job.collectionId)
+  // v2's collection.json; a v3 collection keeps its description in its own log.
+  if ((await ports.stores.layoutOf(collectionId)) === 'v3') return
   const repo = await ports.stores.forCollection(collectionId)
   const out = await publishCollectionInfo(ports, repo, collectionId)
   if (out?.changed) await mirrorCollectionInfo(ports, collectionId, out.info)

@@ -28,6 +28,7 @@ import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { PRIVATE_RECORD_ERROR } from '../v3/rules.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../versions/commit.js'
 import { deltaChanges, isPrivateSchema, stageOutOfLine } from './changes.js'
 import type { SessionCommitResult } from './outcome.js'
@@ -212,16 +213,19 @@ export async function ingestRecords(
   input: string | AsyncIterable<string>,
 ): Promise<IngestResult> {
   const inputs = await loadInputs(ports, session.id)
+  // v3: records stay whole in the run (the commit builds files from them), and none
+  // may be marked private in a public collection (decision 1).
+  const onV3 = (await ports.stores.layoutOf(session.collectionId)) === 'v3'
   // Layout F: the records go straight into the collection's packs; a key-ordered
   // session's as they arrive.
-  const records = (await ports.stores.forCollection(session.collectionId)).records
+  const records = onV3 ? null : (await ports.stores.forCollection(session.collectionId)).records
   const placer = records && session.inKeyOrder ? keyOrderPlacer(ports, session.id, records) : null
   const limits = batchLimits(session)
   let prepared
   try {
     prepared = await prepareRecords(ports, session.id, inputs, input, {
       stripUnknownFields: session.stripUnknownFields,
-      packed: records !== null,
+      packed: onV3 || records !== null,
       maxLines: limits.lines,
       ...(placer ? { place: placer.place } : {}),
     })
@@ -245,12 +249,23 @@ export async function ingestRecords(
     }
   }
   if (prepared.entries.length === 0) return { ok: false, status: 400, error: 'Empty batch' }
+  if (onV3 && prepared.entries.some((e) => e.p) && (await collectionIsPublic(ports, session))) {
+    return { ok: false, status: 422, error: PRIVATE_RECORD_ERROR }
+  }
   const seq = await nextRunSeq(ports, session.id)
   if (seq === null) return { ok: false, status: 409, error: 'Session is not open' }
   if (records && !placer) await packEntries(ports, session.id, records, prepared.entries)
   const index = await writeRun(ports.stores.internal, session.id, seq, prepared.entries)
   await recordRun(ports, session.id, 'records', index, { records: prepared.entries.length })
   return { ok: true, received: prepared.entries.length }
+}
+
+async function collectionIsPublic(ports: Ports, session: SessionRow): Promise<boolean> {
+  const [c] = await ports.db
+    .select({ public: schema.collections.public })
+    .from(schema.collections)
+    .where(eq(schema.collections.id, session.collectionId))
+  return c?.public ?? true
 }
 
 /** One delete line, `{"type", "id"}`, under the input rules. Throws InputRuleError. */

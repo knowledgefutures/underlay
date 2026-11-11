@@ -54,6 +54,8 @@ export interface Stores {
    * assets, and each v3 collection's commits and layouts. Shared by every v3 collection.
    */
   v3: Store
+  /** A key in the v3 area as a key of the bucket, for `fileBytes` (a server-side copy in). */
+  v3BucketKey(key: string): string
   /** The record layout a new collection gets (a fork takes its parent's). */
   newCollections: CollectionLayout
   /** The repository at a storage location. */
