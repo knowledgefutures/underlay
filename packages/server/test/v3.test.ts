@@ -4,7 +4,12 @@
  * dropped, a schema tightened, assets, the rebuild and sweep jobs, and D1 catching up
  * with the log. Runs on the v3 project only; the rest of the suite runs on every layout.
  */
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
 import { hashRecord, memoryStore, v3 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
@@ -298,10 +303,20 @@ describe.skipIf(!onV3)('v3 collections', () => {
       removed: [{ id: 'b0', type: 'Book' }],
     })
 
-    // What v3 does not serve yet says so.
-    res = await h.request(`${base}/versions/latest/records.ndjson.gz`)
-    expect(res.status).toBe(501)
-    expect(await json(res)).toMatchObject({ code: 'not_on_v3' })
+    // records.ndjson.gz: the same lines, without their hashes.
+    res = await h.request(`${base}/versions/latest/records.ndjson.gz?type=Book`)
+    expect(res.headers.get('content-type')).toBe('application/gzip')
+    const gz = gunzipSync(new Uint8Array(await res.arrayBuffer())).toString('utf8')
+    const plain = await (await h.request(`${base}/versions/latest/records.ndjson?type=Book`)).text()
+    expect(gz.trim().split('\n')).toEqual(
+      plain
+        .trim()
+        .split('\n')
+        .map((l) => l.replace(/,"hash":"[0-9a-f]{64}"}$/, '}')),
+    )
+    expect((await h.request(`${base}/versions/latest/records.ndjson.gz?type=Nope`)).status).toBe(
+      404,
+    )
   })
 
   it('keeps no private records or types in a public collection, and takes them in a private one', async () => {
@@ -807,6 +822,49 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(ids(diff.added)).toEqual(['c'])
     const manifest = await json(await h.request(`${base}/versions/latest/manifest?since=v1.0.0`))
     expect(ids(manifest.delta.added)).toEqual(['c'])
+  })
+
+  it('exports a tar of the records, readme, and files, the same bytes every time', async () => {
+    const { h, user, base } = await setup()
+    const file = 'file bytes'
+    const fileHash = createHash('sha256').update(file).digest('hex')
+    await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+    const LONG = 'T'.repeat(120)
+    const Doc = { type: 'object' }
+    const res = await push(
+      h,
+      user,
+      base,
+      { schemas: { Doc, [LONG]: Doc }, metadata: { readme: '# Lib\n' } },
+      [
+        { id: 'd1', type: 'Doc', data: { title: 'Ünïcode ✓', f: { $file: `sha256:${fileHash}` } } },
+        { id: 'd2', type: 'Doc', data: { title: 'two' } },
+        { id: 'l1', type: LONG, data: { x: 1 } },
+      ],
+    )
+    expect(res.status).toBe(201)
+    const exported = await h.request(`${base}/export`)
+    expect(exported.headers.get('content-disposition')).toContain('org-lib-v1.0.0.tar.gz')
+    const bytes = new Uint8Array(await exported.arrayBuffer())
+    const dir = await mkdtemp(join(tmpdir(), 'ul-v3-export-'))
+    await writeFile(join(dir, 'a.tar.gz'), bytes)
+    execFileSync('tar', ['-xzf', 'a.tar.gz'], { cwd: dir })
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))
+    expect(manifest.version).toMatchObject({ semver: 'v1.0.0', recordCount: 3, fileCount: 1 })
+    expect(manifest.schemas).toEqual({ Doc, [LONG]: Doc })
+    expect(manifest).toMatchObject({ files_missing: [], files_withheld: [] })
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Lib\n')
+    // records/<Type>.ndjson is records.ndjson's lines for the type.
+    const ndjson = await (await h.request(`${base}/versions/latest/records.ndjson?type=Doc`)).text()
+    expect(await readFile(join(dir, 'records/Doc.ndjson'), 'utf8')).toBe(ndjson)
+    expect(
+      (await readFile(join(dir, `records/${LONG}.ndjson`), 'utf8')).trim().split('\n'),
+    ).toHaveLength(1)
+    expect(await readFile(join(dir, `files/${fileHash}`), 'utf8')).toBe(file)
+    // The same bytes again; plain tar works too.
+    expect(new Uint8Array(await (await h.request(`${base}/export`)).arrayBuffer())).toEqual(bytes)
+    const tar = await h.request(`${base}/export?format=tar&version=v1.0.0`)
+    expect(tar.headers.get('content-type')).toBe('application/x-tar')
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {

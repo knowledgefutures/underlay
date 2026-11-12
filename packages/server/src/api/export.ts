@@ -23,6 +23,7 @@ import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
+import { v3Export } from '../v3/export.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 
@@ -39,6 +40,11 @@ export function exportRoutes() {
     const format = c.req.query('format') ?? 'tar.gz'
     if (format !== 'tar' && format !== 'tar.gz')
       return jsonError(c, 400, `Unknown format "${format.slice(0, 40)}": use tar or tar.gz`)
+    if (access.collection.recordLayout === 'v3')
+      return v3Export(c, access, {
+        version: c.req.query('version') ?? 'latest',
+        gzip: format === 'tar.gz',
+      })
     const ports = c.var.ports
     const v = await findVersion(
       ports.db,

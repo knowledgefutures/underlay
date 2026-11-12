@@ -80,11 +80,11 @@ function recordJson(line: Uint8Array, hash: string) {
 }
 
 /** A record line with its hash added, as records.ndjson has it. */
-const withHash = (line: Uint8Array, hash: string) =>
+export const withHash = (line: Uint8Array, hash: string) =>
   `${dec.decode(line).slice(0, -1)},"hash":"${hash}"}`
 
 /** The live publisher records of a version from a key on, with what reads their lines. */
-async function* liveRecords(
+export async function* liveRecords(
   c: Context<AppEnv>,
   view: v3.View,
   range: v3.KeyRange,
