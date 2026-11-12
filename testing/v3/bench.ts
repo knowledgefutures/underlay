@@ -22,6 +22,7 @@ import { getHeapStatistics } from 'node:v8'
 
 import { v3 } from '../../packages/protocol/src/index.js'
 import { benchDir } from '../src/dirs.js'
+import * as API from './api.js'
 import { log, parseArgs } from './lib.js'
 import { readResults, writeReport } from './report.js'
 import * as S from './scenarios.js'
@@ -252,6 +253,35 @@ async function suite(name: string): Promise<void> {
       await step(w, 'schema', '', () => S.crossrefSchema(w, str('schema-type', 'dataset')))
       await step(w, 'forks', '', () => S.crossrefForks(w, o, num('fork-days', 10)))
       await step(w, 'storage', '', () => S.storageSplit(w))
+      break
+    }
+    case 'api-crossref': {
+      // The Crossref sample through a deployed server's API (v3-deploy-plan.md, Phase 2's exit):
+      // built here as the crossref suite builds it, sent as a client sends it. The key is UL_KEY.
+      const w = world(folder, { ...base, records: num('records', 179_518_552) })
+      const o = {
+        dataDir: str('data', '/data/crossref-sort/sorted'),
+        plan: str('plan', '/data/crossref-sort/plan.json'),
+        files: num('files', 2000),
+      }
+      const t = {
+        base: str('to', ''),
+        collection: str('collection', ''),
+        key: process.env.UL_KEY ?? '',
+        parallel: num('parallel', 8),
+      }
+      if (!t.base || !t.collection || !t.key)
+        throw new Error('api-crossref needs --to, --collection, and UL_KEY')
+      let keys: [string, string][] = []
+      await step(w, 'api-load', '', async () => {
+        const r = await API.apiCrossrefLoad(w, o, t)
+        keys = r.keys as [string, string][]
+        return r
+      })
+      await step(w, 'api-reads', 'after-load', () => API.apiReads(t, keys, 'after-load'))
+      const days = num('days', 6)
+      await step(w, 'api-daily', `${days}`, () => API.apiCrossrefDays(w, o, t, days))
+      await step(w, 'api-reads', 'after-days', () => API.apiReads(t, keys, 'after-days'))
       break
     }
     case 'fork-edit': {

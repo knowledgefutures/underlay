@@ -1177,7 +1177,7 @@ export interface CrossrefOptions {
  * lists the source dump's files, which are fewer (35,908 against 36,626): round 4's load took
  * its list from there and so left out the last 718.
  */
-function dumpFiles(o: CrossrefOptions): { all: string[]; files: string[] } {
+export function dumpFiles(o: CrossrefOptions): { all: string[]; files: string[] } {
   const all = readdirSync(o.dataDir)
     .filter((f) => /^\d+\.jsonl\.gz$/.test(f))
     .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
@@ -1302,7 +1302,7 @@ export async function crossrefLoad(
  * update changes; a few removed; a few new ones beside them. `share` is the
  * part of the collection a day changes.
  */
-async function* crossrefDayRows(
+export async function* crossrefDayRows(
   o: CrossrefOptions,
   files: string[],
   day: number,
