@@ -36,6 +36,9 @@ const enc = new TextEncoder()
 /** The first key after every reserved type: publisher types never begin with `$`. */
 const PAST_RESERVED: v3.Key = { type: '$\u{10FFFF}', id: '' }
 
+/** Bytes of key blocks each file reads at a time while skipping to an offset. */
+const SKIP_READ_AHEAD = 2 * 1024 * 1024
+
 /** A page's records stop at this many bytes of lines as well as at its count. */
 export const v3ReadLimits = { pageBytes: 4 * 1024 * 1024 }
 
@@ -106,14 +109,23 @@ async function recordPage(
     ...(opts.after ? { after: opts.after } : {}),
   }
   const out: { line: Uint8Array; hash: string; type: string; id: string }[] = []
-  let skip = opts.offset
+  // An offset is found by walking key entries (no lines), reading key blocks in large
+  // windows: page 20,000 of a 1M-record type is then about a dozen reads, not a thousand.
+  // The page itself is read from the key before it, with no read-ahead.
+  if (opts.offset > 0) {
+    let skip = opts.offset
+    let before: v3.Key | null = null
+    for await (const w of liveRecords(c, view, range, SKIP_READ_AHEAD)) {
+      before = { type: w.entry.type, id: w.entry.id }
+      if (--skip === 0) break
+    }
+    if (skip > 0 || !before) return { records: out, hasMore: false }
+    range.after = before
+    delete range.from
+  }
   let bytes = 0
   let hasMore = false
   for await (const w of liveRecords(c, view, range)) {
-    if (skip > 0) {
-      skip--
-      continue
-    }
     if (
       out.length === opts.limit ||
       (out.length > 0 && bytes + w.entry.size > v3ReadLimits.pageBytes)
