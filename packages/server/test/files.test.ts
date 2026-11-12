@@ -106,6 +106,40 @@ describe('files', () => {
     ).toBe('verified')
     expect(h.bucket.objects.has(`repo/files/${sha(good)}`)).toBe(true)
     expect(h.bucket.objects.has(`internal/uploads/${ticket.id}`)).toBe(false)
+    expect(h.bucket.objects.has(`internal/uploads/${ticket.id}.checked`)).toBe(false)
+
+    // The presigned URL still works while the job verifies: other bytes sent to it after
+    // the upload is read are not what is stored under the hash.
+    const honest = new TextEncoder().encode('y'.repeat(50_000))
+    const swap = await json(
+      await h.request(`${base}/files/uploads`, {
+        method: 'POST',
+        user,
+        json: { hash: sha(honest), size: honest.length },
+      }),
+    )
+    const staging = `internal/uploads/${swap.id}`
+    await h.bucket.put(staging, honest)
+    await h.request(`${base}/files/uploads/${swap.id}/complete`, { method: 'POST', user, json: {} })
+    const get = h.bucket.get.bind(h.bucket)
+    let swapped = false
+    h.bucket.get = async (key, range) => {
+      const obj = await get(key, range)
+      // As the job reads what it hashes (the upload, or its own copy of it).
+      if (key.startsWith(staging) && !swapped) {
+        swapped = true
+        await h.bucket.put(staging, 'z'.repeat(50_000))
+      }
+      return obj
+    }
+    try {
+      await h.drain()
+    } finally {
+      h.bucket.get = get
+    }
+    expect(swapped).toBe(true)
+    const stored = await (await h.bucket.get(`repo/files/${sha(honest)}`))!.bytes()
+    expect(sha(new Uint8Array(stored))).toBe(sha(honest))
 
     // Bytes that don't match the declared hash are refused and removed.
     const bad = await json(
