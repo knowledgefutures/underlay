@@ -112,9 +112,17 @@ export const FINDINGS = {
       todo: 'Queue commits to a collection in the server, and land them in turn.',
     },
   },
-  cut: `<p>After the measurements above, uploads and rebuilds were changed to cut files by key toward 32 MB stored (128 MiB of lines), with a cap of four times that. The same rows then give the same files however an upload is split, and a later takedown, correction, or folded-back edit rewrites about 32 MB where it rewrote about 200 MB. Rounds 5 and 6 measured what that costs (box, commits <code>b6e561d</code> and <code>8733959</code>). Everything above this section is on the earlier cut.</p>
+  cut: `<p>After the measurements above, uploads and rebuilds were changed to cut files by key toward 32 MB stored (128 MiB of lines), with a cap of four times that. Everything above this section is on the earlier cut. The cut does nothing for ordinary later versions, which add small files beside the load on either cut. What it is for is work that has to go back and rewrite stored files, and round 7 measured that directly: the same Crossref sample loaded both ways with the same eight daily commits (box, commit <code>526264f</code>).</p>
 <div class="scroll"><table>
-<thead><tr><th></th><th>Cut by size (before)</th><th>Cut by key, 32 MB</th></tr></thead>
+<thead><tr><th>What the cut buys</th><th>Cut by size (60 files, 232 MB each)</th><th>Cut by key (445 files, 31 MB each)</th><th></th></tr></thead>
+<tbody>
+<tr><td>Taking one record down</td><td>1 file rewritten, 260 MB, 55 s</td><td>1 file rewritten, 61 MB, 12 s</td><td><b>4.3×</b> less written</td></tr>
+<tr><td>Merging eight days back into the load, keeping untouched files</td><td>12 of 68 files kept; 11.3 GB written; 33 min</td><td>351 of 458 files kept; 4.4 GB written; 16 min</td><td><b>2.6×</b> less written</td></tr>
+<tr><td>The same rows built in one part and in ten</td><td>2 of 25 files the same</td><td>25 of 25 the same</td><td></td></tr>
+</tbody></table></div>
+<p class="note">A takedown rewrites only the file that holds the record, on either cut; until <code>526264f</code> it rewrote every file of the load. The file hit is larger than average, since a larger file is likelier to hold any given record. Rounds 5 and 6 measured what the cut costs (commits <code>b6e561d</code> and <code>8733959</code>):</p>
+<div class="scroll"><table>
+<thead><tr><th>What the cut costs</th><th>Cut by size (before)</th><th>Cut by key, 32 MB</th></tr></thead>
 <tbody>
 <tr><td><b>Crossref sample, 7.2M records, the cut at its true size</b></td><td></td><td></td></tr>
 <tr><td>Files in the first load</td><td>60, about 215 MB each</td><td>445, about 29 MB each</td></tr>
