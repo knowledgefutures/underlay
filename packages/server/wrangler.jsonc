@@ -60,6 +60,9 @@
       "vars": {
         "APP_URL": "https://staging.underlay.org",
         "DEPLOYMENT": "staging",
+        // New collections are v3 (v3-deploy-plan.md, Phase 4). Production keeps the default,
+        // `today`, until Phase 5 step 3.
+        "NEW_COLLECTION_LAYOUT": "v3",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-staging",
         // staging replaces dev.underlay.org: dev's data, and staging KF Auth (kf-console),
