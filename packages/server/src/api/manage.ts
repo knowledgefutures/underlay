@@ -23,7 +23,7 @@ import { headView, metadataOf } from '../v3/catalog.js'
 import { commitV3Metadata } from '../v3/commit.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
-import { capRole, jsonError, keyCannotManage, requireCollection } from './access.js'
+import { capRole, jsonError, keyCannotManage, reachesOrg, requireCollection } from './access.js'
 import { ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
@@ -40,7 +40,8 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
     .limit(1)
   if (!org) return { org: null, role: null }
   if (!p || p.collectionIds || p.scope === 'read') return { org, role: null }
-  if (p.orgId) return { org, role: p.orgId === org.id ? capRole(p, 'owner') : null }
+  if (!reachesOrg(p, org.id)) return { org, role: null }
+  if (p.orgId) return { org, role: capRole(p, 'owner') }
   const [m] = await c.var.ports.db
     .select({ role: schema.member.role })
     .from(schema.member)

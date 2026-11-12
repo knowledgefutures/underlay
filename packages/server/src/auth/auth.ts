@@ -273,7 +273,7 @@ async function verifyKey(auth: Auth, ports: Ports, key: string): Promise<Princip
   }
   const perms = jsonColumn<Record<string, string[]>>(k.permissions)?.collections ?? []
   const scope = perms.includes('admin') ? 'admin' : perms.includes('write') ? 'write' : 'read'
-  const metadata = jsonColumn<{ collectionIds?: string[] }>(k.metadata)
+  const metadata = jsonColumn<{ collectionIds?: string[]; organizationId?: unknown }>(k.metadata)
   const [org] = await ports.db
     .select({ id: schema.organization.id })
     .from(schema.organization)
@@ -284,6 +284,11 @@ async function verifyKey(auth: Auth, ports: Ports, key: string): Promise<Princip
     scope,
     collectionIds: metadata?.collectionIds?.length ? metadata.collectionIds : null,
     ...(org ? { orgId: org.id } : {}),
+    // A person's key made for one organization. Its creator wrote the id, so it can only
+    // narrow the key: what the key may do there is still its holder's membership.
+    ...(!org && typeof metadata?.organizationId === 'string' && metadata.organizationId
+      ? { onlyOrgId: metadata.organizationId }
+      : {}),
   }
 }
 

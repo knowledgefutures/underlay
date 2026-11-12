@@ -20,6 +20,12 @@ export interface Principal {
   collectionIds: string[] | null
   /** Set for an API key owned by an organization: it acts as a member of that org only. */
   orgId?: string
+  /**
+   * Set for a person's API key made for one organization (on that org's keys page): it
+   * acts as its holder, with their role, in that org and nowhere else. A key made in the
+   * holder's own settings has none, and reaches every organization they belong to.
+   */
+  onlyOrgId?: string
   /** The signed-in session's id (scope 'session' only). */
   sessionId?: string
 }
@@ -48,6 +54,14 @@ export function keyCannotManage(c: Context<AppEnv>): Response | null {
     ? jsonError(c, 403, 'This key cannot manage collections')
     : null
 }
+
+/**
+ * Whether a key reaches an organization at all. A key limited to one (an org-owned key's
+ * org, or the org a person's key was made for) reaches no other; a session, or a key with
+ * no such limit, reaches any. What the caller may do there is still their membership's.
+ */
+export const reachesOrg = (p: Principal, orgId: string) =>
+  (p.orgId ?? p.onlyOrgId ?? orgId) === orgId
 
 export interface CollectionAccess {
   collection: typeof schema.collections.$inferSelect
@@ -100,7 +114,8 @@ export async function collectionAccess(
   let role: string | null = null
   if (principal) {
     const keyCovers =
-      principal.collectionIds === null || principal.collectionIds.includes(row.collection.id)
+      (principal.collectionIds === null || principal.collectionIds.includes(row.collection.id)) &&
+      reachesOrg(principal, row.owner.id)
     if (keyCovers && principal.orgId) {
       isMember = principal.orgId === row.owner.id
       // An org-owned key acts with the org's authority, as far as its scope goes.

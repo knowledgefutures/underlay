@@ -37,7 +37,7 @@ import { jsonError } from './access.js'
 /** The signed-in person (session or unscoped key), as v1's requireAuth + requireUnscopedKey. */
 function person(c: Context<AppEnv>, write: boolean): string | null {
   const p = c.var.principal
-  if (!p || p.collectionIds || p.orgId) return null
+  if (!p || p.collectionIds || p.orgId || p.onlyOrgId) return null
   if (write && p.scope === 'read') return null
   return p.userId
 }

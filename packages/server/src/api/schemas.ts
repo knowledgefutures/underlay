@@ -34,7 +34,8 @@ function callerOrgs(c: Context<AppEnv>): SQL | null {
   const p = c.var.principal
   if (!p || p.collectionIds) return null
   if (p.orgId) return sql`(${p.orgId})`
-  return sql`(SELECT ${schema.member.organizationId} FROM ${schema.member} WHERE ${schema.member.userId} = ${p.userId})`
+  const only = p.onlyOrgId ? sql` AND ${schema.member.organizationId} = ${p.onlyOrgId}` : sql``
+  return sql`(SELECT ${schema.member.organizationId} FROM ${schema.member} WHERE ${schema.member.userId} = ${p.userId}${only})`
 }
 
 /** A SQL condition: this schema hash is visible to the caller. */

@@ -29,13 +29,15 @@ import { capRole, jsonError } from './access.js'
 
 /**
  * The calling user, for account routes: a session or an unscoped personal key
- * (write routes refuse read keys). Collection-scoped and org-owned keys are
- * not a user, as in v1's requireUnscopedKey.
+ * (write routes refuse read keys). Collection-scoped and org-owned keys, and a
+ * person's key made for one organization, are not a user, as in v1's
+ * requireUnscopedKey.
  */
 export function requireUser(c: Context<AppEnv>, write: boolean): string | Response {
   const p = c.var.principal
   if (!p) return jsonError(c, 401, 'Authentication required')
-  if (p.collectionIds || p.orgId) return jsonError(c, 403, 'This key cannot manage accounts')
+  if (p.collectionIds || p.orgId || p.onlyOrgId)
+    return jsonError(c, 403, 'This key cannot manage accounts')
   if (write && p.scope === 'read') return jsonError(c, 403, 'Read-only key')
   return p.userId
 }

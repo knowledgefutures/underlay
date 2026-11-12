@@ -22,7 +22,7 @@ import { deniedHashes, isDenied } from '../lib/limits.js'
 import { eventsFor, type Presence, presenceOf } from '../refs/log.js'
 import { fileSizes } from '../versions/file-refs.js'
 import { getRecord, loadView } from '../versions/view.js'
-import { jsonError } from './access.js'
+import { jsonError, reachesOrg } from './access.js'
 
 /** Hashes one batch request may ask for: each costs a few queries, and D1 allows 1,000. */
 export const MAX_BATCH_HASHES = 100
@@ -46,7 +46,8 @@ async function memberOrgs(c: Context<AppEnv>): Promise<Set<string>> {
     .select({ id: schema.member.organizationId })
     .from(schema.member)
     .where(eq(schema.member.userId, p.userId))
-  return new Set(rows.map((r) => r.id))
+  // A key made for one organization sees as a member there only.
+  return new Set(rows.map((r) => r.id).filter((id) => reachesOrg(p, id)))
 }
 
 /**

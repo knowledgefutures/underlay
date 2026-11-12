@@ -18,23 +18,22 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 import { metadataOf, viewOf } from '../v3/catalog.js'
-import { jsonError, requireCollection } from './access.js'
+import { jsonError, type Principal, reachesOrg, requireCollection } from './access.js'
 import { collectionArk } from './ark.js'
 
 type VersionRow = typeof schema.versions.$inferSelect
 
-/** Org ids the principal belongs to (empty for anonymous or collection-scoped keys). */
-async function memberOrgIds(
-  db: Db,
-  userId: string | undefined,
-  scoped: boolean,
-): Promise<string[]> {
-  if (!userId || scoped) return []
+/**
+ * Org ids the principal acts as a member of: empty for anonymous or collection-scoped
+ * keys, and only its organization for a key made for one.
+ */
+async function memberOrgIds(db: Db, p: Principal | null): Promise<string[]> {
+  if (!p || p.collectionIds) return []
   const rows = await db
     .select({ id: schema.member.organizationId })
     .from(schema.member)
-    .where(eq(schema.member.userId, userId))
-  return rows.map((r) => r.id)
+    .where(eq(schema.member.userId, p.userId))
+  return rows.map((r) => r.id).filter((id) => reachesOrg(p, id))
 }
 
 /** A version as a caller sees it in lists and the collection detail. */
@@ -140,13 +139,18 @@ export function collectionRoutes() {
     const scoped = !!p?.collectionIds
     if (mine && (!p || scoped))
       return jsonError(c, 401, 'Unauthorized — mine=true requires a session')
-    const orgIds = await memberOrgIds(db, p?.userId, scoped)
+    const orgIds = await memberOrgIds(db, p)
 
     // A subquery, not the list: D1 binds at most 100 parameters per statement.
     const myOrgs = db
       .select({ id: schema.member.organizationId })
       .from(schema.member)
-      .where(eq(schema.member.userId, p?.userId ?? ''))
+      .where(
+        and(
+          eq(schema.member.userId, p?.userId ?? ''),
+          p?.onlyOrgId ? eq(schema.member.organizationId, p.onlyOrgId) : undefined,
+        ),
+      )
     const visible = mine
       ? inArray(schema.collections.organizationId, myOrgs)
       : eq(schema.collections.public, true)
@@ -336,7 +340,7 @@ export function collectionRoutes() {
       .where(eq(schema.organization.slug, c.req.param('owner')))
       .limit(1)
     if (!org) return c.json([])
-    const orgIds = await memberOrgIds(db, p?.userId, !!p?.collectionIds)
+    const orgIds = await memberOrgIds(db, p)
     const member = orgIds.includes(org.id)
     const rows = await db
       .select({

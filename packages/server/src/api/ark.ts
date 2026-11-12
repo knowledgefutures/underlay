@@ -34,10 +34,11 @@ import { recordAt, schemaAt } from '../v3/catalog.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
 import {
   capRole,
-  type CollectionAccess,
   collectionAccess,
+  type CollectionAccess,
   jsonError,
   type Principal,
+  reachesOrg,
 } from './access.js'
 
 // --- Shoulders and collection ARKs (also for wiring ARK fields into other routes) ---
@@ -568,8 +569,8 @@ export function arkRoutes() {
     const p = c.var.principal
     if (!p) return jsonError(c, 401, 'Authentication required')
     let role: string | null = null
-    if (!p.collectionIds && p.scope !== 'read') {
-      if (p.orgId) role = p.orgId === org.id ? 'owner' : null
+    if (!p.collectionIds && p.scope !== 'read' && reachesOrg(p, org.id)) {
+      if (p.orgId) role = 'owner'
       else {
         const [m] = await db
           .select({ role: schema.member.role })

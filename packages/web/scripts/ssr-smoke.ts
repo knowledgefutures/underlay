@@ -313,6 +313,21 @@ try {
     { path: '/settings', status: 302, location: '/login' },
     { path: '/settings/sessions', status: 200, has: ['Active sessions'], user: 'u1' },
     { path: '/org/settings', status: 200, has: ['Settings — org', 'Smoke Org'], user: 'u1' },
+    // A key made on an organization's page is for that organization; one made in the
+    // account's settings is for all of the person's organizations.
+    {
+      path: '/org/settings/keys',
+      status: 200,
+      has: ['All collections in Smoke Org', 'works only in this organization'],
+      lacks: ['in every organization'],
+      user: 'u1',
+    },
+    {
+      path: '/settings/keys',
+      status: 200,
+      has: ['All collections, in all your organizations'],
+      user: 'u1',
+    },
     { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
     { path: '/new-org', status: 200, user: 'u1' },
     { path: '/invitations/accept?invitation=x', status: 200, has: ['Organization Invitation'] },
