@@ -13,6 +13,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { QueueJobs, runJob } from '../src/jobs.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
+import { dropDeletedV3 } from '../src/v3/fork.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
 import { durableQueue, serially } from '../src/v3/queue.js'
@@ -698,6 +699,84 @@ describe.skipIf(!onV3)('v3 collections', () => {
       result: { semver: 'v1.0.0' },
     })
     expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(1)
+  })
+
+  it('forks with the history and shared files, and drops a deleted collection after its grace', async () => {
+    const { h, user, c, base } = await setup()
+    expect(
+      (
+        await push(h, user, base, { schemas: { Author }, metadata: { title: 'L' } }, [
+          author('a', 'A'),
+        ])
+      ).status,
+    ).toBe(201)
+    expect((await push(h, user, base, { base: 'v1.0.0' }, [author('b', 'B')])).status).toBe(201)
+    await h.ports.db.insert(schema.user).values({ id: 'u2', name: 'u2', email: 'u2@example.org' })
+    await h.ports.db.insert(schema.organization).values({ id: 'org2', name: 'Two', slug: 'two' })
+    await h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org2', userId: 'u2', role: 'owner' })
+    const putsBefore = h.bucket.puts
+    let res = await h.request(`${base}/fork`, {
+      method: 'POST',
+      user: 'u2',
+      json: { targetOrg: 'two' },
+    })
+    expect(res.status).toBe(201)
+    const fork = await json(res)
+    expect(fork).toMatchObject({
+      owner: 'two',
+      slug: 'lib',
+      forkedFrom: { version: 'v1.1.0' },
+      version: { semver: 'v1.1.0', recordCount: 2 },
+    })
+    // The description, two commits, the hint: no sorted-record-file is copied.
+    expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(5)
+    const fb = '/api/collections/two/lib'
+    const versions = await json(await h.request(`${fb}/versions`, { user: 'u2' }))
+    expect(versions.map((v: { semver: string }) => v.semver)).toEqual(['v1.1.0', 'v1.0.0'])
+    const [parentHead] = await h.ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.collectionId, c.id))
+      .orderBy(schema.versions.seq)
+    expect(
+      (
+        await h.ports.db
+          .select()
+          .from(schema.forks)
+          .where(eq(schema.forks.childCollectionId, fork.id))
+      )[0],
+    ).toMatchObject({ parentCollectionId: c.id, parentSeq: 2 })
+    expect((await json(await h.request(`${fb}/versions/v1.0.0`, { user: 'u2' }))).hash).toBe(
+      parentHead!.hash,
+    )
+    expect(
+      (await json(await h.request(`${fb}/versions/latest/records/Author/a`, { user: 'u2' }))).data,
+    ).toEqual({ name: 'A' })
+    // The fork goes on by itself.
+    res = await push(h, 'u2', fb, { base: 'v1.1.0' }, [author('c', 'C')])
+    expect(await json(res)).toMatchObject({ semver: 'v1.2.0', recordCount: 3 })
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(2)
+
+    // Delete the parent: its own objects go once the tombstone's grace is over, and the
+    // sweep keeps the files the fork still lists.
+    expect((await h.request(base, { method: 'DELETE', user })).status).toBe(200)
+    expect(await dropDeletedV3(h.ports)).toBe(0)
+    expect(await v3.readDescription(h.ports.stores.v3, c.id)).not.toBe(null)
+    await h.ports.db
+      .update(schema.collectionTombstones)
+      .set({ deletedAt: new Date(0) })
+      .where(eq(schema.collectionTombstones.collectionId, c.id))
+    expect(await dropDeletedV3(h.ports)).toBe(1)
+    expect(await dropDeletedV3(h.ports)).toBe(0)
+    expect(await v3.readDescription(h.ports.stores.v3, c.id)).toBe(null)
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(0)
+    for (let i = 0; i < 3; i++) await v3.sweep(h.ports.stores.v3, { graceMs: 0, trashMs: 0 })
+    const all = await json(
+      await h.request(`${fb}/versions/latest/records?type=Author`, { user: 'u2' }),
+    )
+    expect(all.records.map((r: { id: string }) => r.id)).toEqual(['a', 'b', 'c'])
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {

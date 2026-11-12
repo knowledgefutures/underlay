@@ -16,7 +16,7 @@ async function json(res: Response) {
 }
 
 describe('collection management', () => {
-  itNotOnV3('not on v3 yet: forks and deletion (Phase 3)')(
+  itNotOnV3('private records or types: a v3 collection is private or public as a whole')(
     'creates, updates, edits metadata, forks, transfers and deletes',
     async () => {
       const h = await harness()

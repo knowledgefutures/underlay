@@ -20,6 +20,7 @@ import { createObject, v3 } from '@underlay/protocol'
 import { registerJob } from '../jobs.js'
 import type { Ports, Store } from '../ports.js'
 import { fanOut } from './fanout.js'
+import { dropDeletedV3 } from './fork.js'
 
 export const v3JobConfig = {
   /** Size tiers a factor of this apart (decision 5 is open: 10 now, maybe 4 past a size). */
@@ -55,6 +56,8 @@ registerJob('v3.finishRebuild', async (job, ports) => {
 
 registerJob('v3.sweep', async (_job, ports) => {
   const store = ports.stores.v3
+  // Deleted collections' own objects first, so this pass already frees their files.
+  const dropped = await dropDeletedV3(ports)
   const result = await v3.sweep(store, {
     graceMs: v3JobConfig.graceMs,
     trashMs: v3JobConfig.trashMs,
@@ -63,7 +66,7 @@ registerJob('v3.sweep', async (_job, ports) => {
     (await clearStale(store, 'uploads/', v3JobConfig.staleMs)) +
     (await clearStale(store, 'tmp/', v3JobConfig.staleMs))
   console.log(
-    `[v3.sweep] pass ${result.pass}: ${result.collections} collections; records trashed ${result.records.trashed}, purged ${result.records.purged}; assets trashed ${result.assets.trashed}, purged ${result.assets.purged}; ${cleared} stale upload objects cleared`,
+    `[v3.sweep] pass ${result.pass}: ${result.collections} collections (${dropped} deleted ones dropped); records trashed ${result.records.trashed}, purged ${result.records.purged}; assets trashed ${result.assets.trashed}, purged ${result.assets.purged}; ${cleared} stale upload objects cleared`,
   )
   const missing = [...result.records.missing, ...result.assets.missing]
   if (missing.length > 0)

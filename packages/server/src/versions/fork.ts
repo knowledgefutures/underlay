@@ -15,6 +15,7 @@ import { and, eq } from 'drizzle-orm'
 import { FenceError, fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { CollectionLayout, Ports } from '../ports.js'
+import { forkV3 } from '../v3/fork.js'
 import { appendVersionLog } from './commit.js'
 import { publishVersion, type SchemaUsageChange } from './publish.js'
 
@@ -85,6 +86,21 @@ export async function forkCollection(
     .limit(1)
   if (primary?.locationId !== schema.PLATFORM_LOCATION_ID)
     throw new Error('Forks across storage locations are not supported yet')
+  if (source.collection.recordLayout === 'v3') {
+    // v3 (v3/fork.ts): the fork keeps the parent's history; a v3 collection has no
+    // private records, so there is no set to leave out.
+    const collection = await createCollectionRows(ports, {
+      ...target,
+      recordLayout: 'v3',
+    })
+    const version = await forkV3(ports, source.collection, source.version, collection)
+    await ports.jobs.enqueue({ type: 'version.published', versionId: version.id, bump: 'major' })
+    const [row] = await ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, collection.id))
+    return { collection: row!, version }
+  }
   const repo = await ports.stores.forCollection(source.collection.id)
   const root = await repo.root(source.version.hash)
   const priv = includePrivate && root.private ? await repo.privateSet(root.private) : null
