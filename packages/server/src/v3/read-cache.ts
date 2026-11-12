@@ -80,13 +80,15 @@ export class ReadCachedStore implements Store {
     if (!FILE.test(key) || !range || range.length === undefined) return this.inner.get(key, range)
     const at = `@${range.offset}:${range.length}`
     const known = etags.get(key)
+    // The isolate keeps its own copy and hands out copies: a reader may detach or consume
+    // the bytes it is given (inflating them), and the next request would get them empty.
     if (known) {
       const ck = `v3b/${key}#${known}${at}`
       const hot = blocks.get(ck)
-      if (hot) return asObject(hot, known)
+      if (hot) return asObject(hot.slice(), known)
       const warm = await this.cache.get(ck, { maxBytes: MAX_CACHED_BYTES }).catch(() => null)
       if (warm) {
-        blocks.set(ck, warm)
+        blocks.set(ck, warm.slice())
         return asObject(warm, known)
       }
     }
@@ -96,9 +98,9 @@ export class ReadCachedStore implements Store {
     if (!obj.etag || obj.size > MAX_CACHED_BYTES) return obj
     const bytes = await obj.bytes()
     const ck = `v3b/${key}#${obj.etag}${at}`
-    blocks.set(ck, bytes)
+    blocks.set(ck, bytes.slice())
     // A failed cache write costs a later read, never this one.
-    await this.cache.put(ck, bytes).catch(() => {})
+    await this.cache.put(ck, bytes.slice()).catch(() => {})
     return asObject(bytes, obj.etag)
   }
 

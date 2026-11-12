@@ -75,3 +75,18 @@ describe('what the v3 read cache keeps', () => {
     expect(reads).toEqual([])
   })
 })
+
+describe('bytes the v3 read cache hands out', () => {
+  it("are the caller's own: detaching them leaves the cache whole", async () => {
+    const { store } = countingStore()
+    const cached = new ReadCachedStore(store, new MemoryCache())
+    await store.put(key, 'a block of bytes, then more')
+    await cached.tail(key, 4)
+    const detach = (b: Uint8Array) => structuredClone(b.buffer, { transfer: [b.buffer] })
+    for (let i = 0; i < 3; i++) {
+      const b = await (await cached.get(key, { offset: 0, length: 7 }))!.bytes()
+      expect(new TextDecoder().decode(b)).toBe('a block')
+      detach(b)
+    }
+  })
+})
