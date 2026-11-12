@@ -81,12 +81,12 @@ export interface Placed {
 /**
  * Builds a file's content from its entries in order: assigns each line its block
  * and offset by the cut rule, shares a line between entries that the format says
- * share one, and seals key blocks. It never sees a line's bytes, so a rebuild can
+ * share one, and closes key blocks. It never sees a line's bytes, so a rebuild can
  * learn a file's id from key entries alone, before copying any record.
  */
 export class ContentBuilder {
   readonly #keyBlocks: FileContent['keyBlocks'] = []
-  #sealed: Uint8Array[] = []
+  #closed: Uint8Array[] = []
   #text: string[] = []
   #blockFirst: KeyPair | null = null
   #block = 0
@@ -161,28 +161,28 @@ export class ContentBuilder {
     this.#text.push(entryText(e))
     this.entries++
     this.#prev = e
-    if (this.#text.length === KEY_BLOCK_ENTRIES) this.#seal()
+    if (this.#text.length === KEY_BLOCK_ENTRIES) this.#closeKeyBlock()
     return placed
   }
 
-  #seal(): void {
+  #closeKeyBlock(): void {
     const bytes = utf8(this.#text.join('\n') + '\n')
     const [type, id] = this.#blockFirst!
     this.#keyBlocks.push([type, id, sha256Hex(bytes), this.#text.length])
-    this.#sealed.push(bytes)
+    this.#closed.push(bytes)
     this.#text = []
   }
 
-  /** Key blocks sealed since the last call, uncompressed, in order. */
+  /** Key blocks closed since the last call, uncompressed, in order. */
   takeKeyBlocks(): Uint8Array[] {
-    const out = this.#sealed
-    this.#sealed = []
+    const out = this.#closed
+    this.#closed = []
     return out
   }
 
-  /** Seal the last key block and give the content. `takeKeyBlocks` then has the rest. */
+  /** Close the last key block and give the content. `takeKeyBlocks` then has the rest. */
   finish(): FileContent {
-    if (this.#text.length > 0) this.#seal()
+    if (this.#text.length > 0) this.#closeKeyBlock()
     const prev = this.#prev
     return {
       underlay: 3,
@@ -251,7 +251,7 @@ export function trailerBytes(footerLength: number): Uint8Array {
  * Writes one sorted-record-file from rows in key order. Record blocks go to the
  * sink as they fill; key blocks are held compressed (about 50 bytes an entry)
  * and follow at the end with the footer and trailer. The file id is known only
- * when `finish` returns, so the sink writes somewhere it can be named afterwards.
+ * when `finish` returns, so the sink writes somewhere it can be named afterward.
  */
 export class SortedFileWriter {
   readonly #content: ContentBuilder

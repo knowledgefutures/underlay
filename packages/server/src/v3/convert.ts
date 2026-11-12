@@ -24,6 +24,7 @@ import {
   compareUtf8,
   fileTree,
   hashSchema,
+  InputRuleError,
   iterate,
   jcs,
   MissingRecordError,
@@ -513,7 +514,7 @@ export async function convertStep(ports: Ports, collectionId: string): Promise<v
     const permanent =
       err instanceof ConvertError ||
       err instanceof MissingRecordError ||
-      (err as Error).name === 'InputRuleError'
+      err instanceof InputRuleError
     if (!permanent) throw err
     console.error(`[v3.convert] ${collectionId} stopped:`, (err as Error).message)
     await setConversion(ports, collectionId, { status: 'failed', error: (err as Error).message })

@@ -38,8 +38,6 @@ export function compareKeys(aType: string, aId: string, bType: string, bId: stri
 }
 export const compareKey = (a: Key, b: Key) => compareKeys(a.type, a.id, b.type, b.id)
 
-export const recordLine = recordCanonical
-
 export function removalLine(id: string, type: string): string {
   return '{"id":' + JSON.stringify(id) + ',"removed":true,"type":' + JSON.stringify(type) + '}'
 }

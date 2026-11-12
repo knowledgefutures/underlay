@@ -176,7 +176,7 @@ async function buildGenerated(
       ),
     ),
   )
-  // What two neighbours left between them: after one's last cut key, through the other's first.
+  // What two neighbors left between them: after one's last cut key, through the other's first.
   const seams = await Promise.all(
     built.slice(0, -1).map((b, p) =>
       worker(

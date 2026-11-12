@@ -68,8 +68,8 @@ describe('schemas', () => {
       ).toBe(201)
       const byLabel = await json(await h.request('/api/schemas?label=pers'))
       expect(byLabel.map((s: any) => s.labels)).toEqual([['person']])
-      const labelled = await json(await h.request(`${base}/schemas`))
-      expect(labelled.schemas[0].schema['x-underlay-labels']).toEqual(['person'])
+      const labeled = await json(await h.request(`${base}/schemas`))
+      expect(labeled.schemas[0].schema['x-underlay-labels']).toEqual(['person'])
       expect((await json(await h.request('/api/schemas?q=Auth'))).length).toBe(1)
     },
   )

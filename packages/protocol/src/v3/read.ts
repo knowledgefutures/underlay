@@ -127,7 +127,7 @@ export interface ReadOptions {
   verify?: boolean
   /**
    * Readers for point lookups to share, by file id. A reader keeps the last key block and
-   * record block it fetched, so one job's lookups of neighbouring keys (a collection's
+   * record block it fetched, so one job's lookups of neighboring keys (a collection's
    * schemas) fetch them once. For lookups made one after another, not at once.
    */
   readers?: Map<string, FileReader>

@@ -1,5 +1,6 @@
 /**
- * v3's background work (v3-deploy-plan.md, Phase 1), on the bulk queue:
+ * v3's background work (v3-deploy-plan.md, Phase 1), on the bulk queue (`v3.mergeUnit` on
+ * the v3 queue and its pool):
  *
  *   v3.rebuild         after each commit: plan a round of the rebuild policy (Section 9).
  *                      A small round merges here and creates its layout; a large one is

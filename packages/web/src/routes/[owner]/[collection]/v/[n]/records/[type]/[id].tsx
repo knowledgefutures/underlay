@@ -51,8 +51,8 @@ export default function RecordPage() {
             at {record.semver}
           </p>
           <h1 className="font-mono text-lg font-semibold break-all">{record.id}</h1>
-          {/* No link to where else the record appears until the reference index covers
-              v3 collections (v3-deploy-plan.md, decision 6). */}
+          {/* No link to where else the record appears, on any layout, until the reference
+              index covers v3 collections (v3-deploy-plan.md, decision 6). */}
           <p className="text-ink-muted mt-1 font-mono text-xs break-all">{record.hash}</p>
         </div>
 

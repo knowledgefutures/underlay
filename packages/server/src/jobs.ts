@@ -53,7 +53,8 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'cleanup.internal',
   'cleanup.mark',
   'cleanup.sweep',
-  // v3: the rebuild policy after a commit, and the sweep on the cron (v3/jobs.ts).
+  // v3: the rebuild policy after a commit, the sweep on the cron (v3/jobs.ts), and a
+  // version's conversion from v2 (v3/convert.ts).
   'v3.rebuild',
   'v3.mergeUnit',
   'v3.finishRebuild',

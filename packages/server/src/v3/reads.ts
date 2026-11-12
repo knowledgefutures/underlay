@@ -28,7 +28,7 @@ import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import { findVersion, type VersionRow } from '../versions/view.js'
-import { assetsOf, dataOf, metadataOf, schemasOf, viewOf } from './catalog.js'
+import { assetsOf, metadataOf, schemasOf, viewOf } from './catalog.js'
 
 const dec = new TextDecoder()
 const enc = new TextEncoder()
@@ -135,7 +135,6 @@ async function recordPage(
     }
     if (skip > 0 || !before) return { records: out, hasMore: false }
     range.after = before
-    delete range.from
   }
   let bytes = 0
   let hasMore = false
@@ -520,8 +519,6 @@ export const notOnV3 = (c: Context<AppEnv>, what: string) =>
     },
     501,
   )
-
-export { dataOf }
 
 /**
  * The manifest (protocol-v2 Section 11.3.6): a version's record ids and hashes, from key

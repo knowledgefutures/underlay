@@ -155,7 +155,7 @@ describe('commits', () => {
     await v3.verifyLog(store, 'c')
   })
 
-  it('ignores a failed hint write, and recognises its own commit after an unclear create', async () => {
+  it('ignores a failed hint write, and recognizes its own commit after an unclear create', async () => {
     const inner = memoryStore()
     let failHint = true
     let lie = false

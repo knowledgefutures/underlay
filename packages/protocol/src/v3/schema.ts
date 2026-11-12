@@ -422,7 +422,13 @@ export interface UploadOptions extends CheckOptions, CommitOptions {
  * have changed.
  *
  * (`createCommit` is the step beneath this, for the server's own use: a fork's
- * copy, or files the server itself has just verified.)
+ * copy, or files the server itself has just verified. The reference server
+ * commits that way: it checks an upload across several jobs, from a copy of the
+ * session the uploader cannot write.)
+ *
+ * The session must not be writable by anyone else while this runs: the files are
+ * checked where they lie and then installed from there, so bytes that changed in
+ * between would be installed unchecked.
  */
 export async function commitUpload(
   store: Store,

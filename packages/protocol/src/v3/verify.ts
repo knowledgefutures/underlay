@@ -1,4 +1,3 @@
-import { parseRecordLine } from '../input-rules.js'
 /**
  * Checking a sorted-record-file against docs/protocol-v3.md Section 3.7.
  *
@@ -8,6 +7,7 @@ import { parseRecordLine } from '../input-rules.js'
  * and adds the totals up against the footer. Memory per range: one key block,
  * one record block, and the reader's windows.
  */
+import { parseRecordLine } from '../input-rules.js'
 import { jcs } from '../jcs.js'
 import type { Store } from '../repo/types.js'
 import { sha256Hex } from '../sha256.js'

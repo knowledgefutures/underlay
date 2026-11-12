@@ -24,7 +24,7 @@ export const scanConfig = {
   unitRecords: 250_000,
 }
 
-/** A type whose records the change keeps must be checked against: its new schema, or null. */
+/** A type the change tightens, and what the records it keeps must satisfy: the new schema, or null (none may remain). */
 export interface Tightened {
   type: string
   schema: unknown | null

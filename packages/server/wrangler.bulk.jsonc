@@ -1,7 +1,7 @@
 // The bulk job Worker: the same code as wrangler.jsonc's Worker, deployed as a
 // second Worker that consumes only the bulk queue (jobs.ts BULK_JOBS: commits,
-// compactions, indexing, mirrors, cleanup) and the compaction queue (jobs.ts
-// COMPACT_JOBS). It serves no routes.
+// compactions, indexing, mirrors, cleanup), the compaction queue (jobs.ts
+// COMPACT_JOBS), and the v3 queue (jobs.ts V3_POOLED_JOBS). It serves no routes.
 //
 // Why a second Worker: Workers memory is 128 MB per isolate, and an isolate
 // runs several invocations at once. Bulk jobs are sized to share an isolate
@@ -19,7 +19,7 @@
 // the same values as the main Worker's:
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, SIGNING_KEY, LOCATION_KEY
 //
-// Queues are made by hand before a deploy names them; the compaction queues:
+// Queues are made by hand before a deploy names them; the compaction and v3 queues:
 //   wrangler queues create underlay-staging-compact
 //   wrangler queues create underlay-prod-compact
 //   wrangler queues create underlay-staging-v3

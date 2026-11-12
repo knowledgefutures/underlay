@@ -7,7 +7,7 @@
  *
  *   mergeFiles   the merge itself: labels, shared lines, thinning, takedown
  *   rebuild      plan, merge, and create the next layout
- *   planTiered   the starting policy: merge neighbouring groups of files by size tier
+ *   planTiered   the starting policy: merge neighboring groups of files by size tier
  *   recreate     write a commit's original files again from rebuilt ones
  *
  * A merged file's id comes from its key entries alone, so the merge reads key
@@ -439,7 +439,7 @@ export const tierOf = (bytes: number, ratio: number, baseBytes: number): number 
 
 /**
  * The starting policy. Groups are in commit order. For each size tier, lowest
- * first: where `ratio` or more neighbouring groups are each at or below the tier,
+ * first: where `ratio` or more neighboring groups are each at or below the tier,
  * merge them, the newest such group first. A group is left alone unless
  * together they are at least twice the largest of them, so one large group is not
  * rewritten again and again to take in small ones (they merge with each other
@@ -447,7 +447,7 @@ export const tierOf = (bytes: number, ratio: number, baseBytes: number): number 
  *
  * Uploads of one size merge in tens, then tens of tens: each byte is rewritten
  * about once a tier. Uploads of uneven size still merge, since a smaller group
- * counts toward its larger neighbours' tier. Merged groups stay in commit order,
+ * counts toward its larger neighbors' tier. Merged groups stay in commit order,
  * so a file's commit range still says which versions it can matter to.
  */
 export function planTiered(groups: FileGroup[], opts: TierOptions = {}): FileGroup[] | null {
@@ -561,11 +561,6 @@ const overlaps = (a: LayoutFile, b: LayoutFile): boolean =>
   compareKeys(a.first[0], a.first[1], b.last[0], b.last[1]) <= 0 &&
   compareKeys(b.first[0], b.first[1], a.last[0], a.last[1]) <= 0
 
-/**
- * One round of rebuilding: plan, merge, and create the next layout. Commits
- * that land meanwhile are untouched; they come after the new layout's
- * `through`. Call again until `layout` comes back null to let merges cascade.
- */
 /** One merge of a rebuild: the groups it takes, and how it treats removals. */
 export interface PlannedMerge {
   /** Its input files, the picked groups' files together. */
@@ -695,6 +690,11 @@ export async function finishRebuild(
   return { layout, won: await createLayout(store, layout) }
 }
 
+/**
+ * One round of rebuilding: plan, merge, and create the next layout. Commits
+ * that land meanwhile are untouched; they come after the new layout's
+ * `through`. Call again until `layout` comes back null to let merges cascade.
+ */
 export async function rebuild(
   store: Store,
   collection: string,

@@ -32,6 +32,9 @@ export function newCollectionsFrom(value: string | undefined): {
   throw new Error(`NEW_COLLECTION_LAYOUT must be today, f, or v3, not ${JSON.stringify(value)}`)
 }
 
+/** Key prefix of the v3 area in the platform bucket: every v3 collection's objects. */
+const V3_PREFIX = 'v3'
+
 /** A v2 code path asked for a v3 collection's repository: it has none. */
 export class V3CollectionError extends Error {
   constructor(readonly collectionId: string) {
@@ -53,8 +56,6 @@ export interface PlatformStorage {
   repoPrefix: string
   /** Key prefix for platform-internal objects. */
   internalPrefix: string
-  /** Key prefix for the v3 area (default `v3`): every v3 collection's objects. */
-  v3Prefix?: string
   /** The isolate's memory cache for repository objects (default 32 MB; the bulk Worker's is smaller). */
   memoryBytes?: number
   /**
@@ -192,8 +193,8 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
       // Always from D1: callers choose v2's or v3's path by it, and a conversion flips it.
       return (await primaryOf(collectionId, true)).layout
     },
-    v3: new PrefixedStore(bucketWithS3(platform.bucket, files), platform.v3Prefix ?? 'v3'),
-    v3BucketKey: (key) => `${platform.v3Prefix ?? 'v3'}/${key}`,
+    v3: new PrefixedStore(bucketWithS3(platform.bucket, files), V3_PREFIX),
+    v3BucketKey: (key) => `${V3_PREFIX}/${key}`,
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,
     canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),

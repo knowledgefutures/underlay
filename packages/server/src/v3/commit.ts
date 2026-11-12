@@ -38,6 +38,7 @@ import {
   type AssetData,
   assetsOf,
   type CommitStats,
+  emptyCommitStats,
   headView,
   lastRow,
   metadataOf,
@@ -78,13 +79,7 @@ async function settled(
   landed: Landed,
   written: string[],
 ): Promise<SessionCommitResult> {
-  if (landed.status === 'invalid') {
-    return {
-      status: 'invalid',
-      errors: landed.problems.map((p) => ({ recordId: '', type: '', errors: [p] })),
-      total: landed.problems.length,
-    }
-  }
+  if (landed.status === 'invalid') return invalid(landed.problems)
   if (landed.status === 'base_moved') {
     await syncCatalog(ports, collectionId)
     return { status: 'base_moved', current: (await headBase(ports, collectionId))?.semver ?? null }
@@ -275,14 +270,6 @@ scanFinished.push = async (ports, state, problems) => {
   await settleSession(ports, sessionId, outcome)
   await ports.stores.internal.delete(landingKey(sessionId))
 }
-
-const emptyCommitStats = (): CommitStats => ({
-  typeDelta: {},
-  recordBytesDelta: 0,
-  assetsDelta: 0,
-  assetBytesDelta: 0,
-  changes: { added: 0, removed: 0, updated: 0 },
-})
 
 const compare = (a: string, b: string) => v3.compareKeys(a, '', b, '')
 const enc = new TextEncoder()

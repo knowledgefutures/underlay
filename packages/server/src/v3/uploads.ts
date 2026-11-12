@@ -42,7 +42,14 @@ import { and, count, eq, inArray, sql } from 'drizzle-orm'
 import * as schema from '../db/schema.js'
 import { registerJob, runJob } from '../jobs.js'
 import type { JobMessage, Ports } from '../ports.js'
-import { type CommitStats, headView, schemasOf, syncCatalog, viewOf } from './catalog.js'
+import {
+  type CommitStats,
+  emptyCommitStats,
+  headView,
+  schemasOf,
+  syncCatalog,
+  viewOf,
+} from './catalog.js'
 import { copyAssetFromUpload } from './commit.js'
 import { fanOut } from './fanout.js'
 import { commitsOf } from './queue.js'
@@ -288,9 +295,9 @@ const UPLOAD_JOBS: ReadonlySet<string> = new Set([
 export function inlineUpload(ports: Ports): { ports: Ports; drain(): Promise<void> } {
   const pending: JobMessage[] = []
   // No pool: the upload's own jobs run here, one after another.
-  const { pool: _pool, ...rest } = ports
+  const { pool: _pool, ...withoutPool } = ports
   const inline: Ports = {
-    ...rest,
+    ...withoutPool,
     jobs: {
       async enqueue(job, opts) {
         if (UPLOAD_JOBS.has(job.type) && !opts?.delaySeconds) pending.push(job)
@@ -410,7 +417,7 @@ export async function requestCommit(
   const ok = await setUpload(ports, upload.id, 'open', {
     status: 'verifying',
     files,
-    change: change as never,
+    change,
     verified: 0,
     attempts: 0,
     error: null,
@@ -486,7 +493,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   if (!upload || upload.status !== 'verifying') return
   const store = ports.stores.v3
   const cid = upload.collectionId
-  const files = (upload.files ?? []) as v3.FileRef[]
+  const files = upload.files ?? []
   // Every named file came with this upload, and is checked from the server's own copy.
   const stage = await stageFiles(ports, upload.id, files)
   if ('absent' in stage) {
@@ -691,7 +698,7 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   const store = ports.stores.v3
   const internal = ports.stores.internal
   const fileId = String(job.fileId)
-  const f = ((upload.files ?? []) as v3.FileRef[]).find((x) => x.id === fileId)
+  const f = (upload.files ?? []).find((x) => x.id === fileId)
   if (!f) return
   const marker = markerKey(upload.id, upload.expectHead, fileId)
   // Verified already against this head (a job delivered twice, or queued again): count it.
@@ -790,13 +797,7 @@ async function fileStats(
   view: v3.View | null,
 ): Promise<CommitStats> {
   const store = ports.stores.v3
-  const s: CommitStats = {
-    typeDelta: {},
-    recordBytesDelta: 0,
-    assetsDelta: 0,
-    assetBytesDelta: 0,
-    changes: { added: 0, removed: 0, updated: 0 },
-  }
+  const s = emptyCommitStats()
   const file = await v3.SortedFile.open(store, v3.uploadKey(session, fileId), { id: fileId })
   const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
   const cursor = new v3.EntryCursor(reader, 1)
@@ -869,7 +870,7 @@ async function countVerified(ports: Ports, upload: UploadRow) {
 async function maybeLand(ports: Ports, id: string) {
   const u = await getUpload(ports, id)
   if (!u || u.status !== 'verifying') return
-  if (u.verified < ((u.files ?? []) as unknown[]).length || !u.scanDone) return
+  if (u.verified < (u.files ?? []).length || !u.scanDone) return
   if (await setUpload(ports, id, 'verifying', { status: 'landing' }))
     await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: id })
 }
@@ -905,14 +906,8 @@ async function landUpload(ports: Ports, uploadId: string) {
   if (!(await setUpload(ports, upload.id, 'landing', { status: 'committing' }))) return
   const t0 = Date.now()
   const internal = ports.stores.internal
-  const files = (upload.files ?? []) as v3.FileRef[]
-  const stats: CommitStats = {
-    typeDelta: {},
-    recordBytesDelta: 0,
-    assetsDelta: 0,
-    assetBytesDelta: 0,
-    changes: { added: 0, removed: 0, updated: 0 },
-  }
+  const files = upload.files ?? []
+  const stats = emptyCommitStats()
   const markers = await v3.inParallel(
     files.map((f) => async () => {
       const obj = await internal.get(markerKey(upload.id, upload.expectHead, f.id))
@@ -940,7 +935,7 @@ async function landUpload(ports: Ports, uploadId: string) {
   }
   const cid = upload.collectionId
   const change =
-    (upload.change as v3.Change | null) ??
+    upload.change ??
     (await v3.makeChange(cid, { files, base: upload.base, message: upload.message }))
   const obj = await internal.get(preparedKey(upload.id, upload.expectHead))
   if (!obj) {

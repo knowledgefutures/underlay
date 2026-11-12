@@ -34,7 +34,7 @@ export interface BuildGenSpec {
   /**
    * `part`: the rows from `lo` up to, not including, `hi`, moved in to end on cut keys: after
    * the part's first cut key (unless it is the first part) through its last (unless it is the
-   * last). `seam`: the rows two neighbouring parts left between them, after `lo` through `hi`.
+   * last). `seam`: the rows two neighboring parts left between them, after `lo` through `hi`.
    * Built that way the files are the ones a single pass over all the rows would write.
    */
   mode: 'part' | 'seam'
@@ -53,7 +53,7 @@ export interface BuildGenReport {
   files: v3.FileRef[]
   lineBytes: number
   storedBytes: number
-  /** The part's first and last cut keys: where its neighbours' seams end and begin. */
+  /** The part's first and last cut keys: where its neighbors' seams end and begin. */
   firstCut: KeyPair | null
   lastCut: KeyPair | null
 }
@@ -186,7 +186,7 @@ async function buildDump(): Promise<void> {
   /** The dump file the row in hand came from: at `end` or after, it is past this part's own. */
   let at = s.start
   async function* dump(): AsyncGenerator<v3.LineRow> {
-    // The dump holds a few keys twice, in neighbouring lines or files: the first is kept.
+    // The dump holds a few keys twice, in neighboring lines or files: the first is kept.
     let last: v3.LineRow | null = null
     if (s.start > 0) {
       for await (const line of gzLines(join(s.dataDir, s.files[s.start - 1]!)))

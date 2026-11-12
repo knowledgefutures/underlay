@@ -16,7 +16,7 @@ export const onV3 = testLayout === 'v3'
 
 /**
  * Why v3 skips a test: no private records or types (decision 1), v2's own objects, not
- * yet built for v3 (and which phase or decision it waits on), or a behaviour v3 changes.
+ * yet built for v3 (and which phase or decision it waits on), or a behavior v3 changes.
  */
 export type NotOnV3 =
   | 'private records or types: a v3 collection is private or public as a whole'

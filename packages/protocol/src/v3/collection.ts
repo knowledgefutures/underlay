@@ -215,7 +215,7 @@ export async function collectionStats(store: Store, id: string): Promise<Collect
   }
 }
 
-/** The assets a version lists: each `$asset` record's hash, with its size if the record gives one. */
+/** The assets a version lists: each `$asset` record's asset hash, with the record's own hash. */
 export async function* listedAssets(
   store: Store,
   collection: string,

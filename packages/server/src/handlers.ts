@@ -136,15 +136,16 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   await ports.jobs.enqueueBatch(
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
-  // v3: one pass of the deletion sweep over the v3 area, and stale uploads cleared. A
-  // failure here is logged and never stops the v2 housekeeping below.
-  try {
-    await expireUploads(ports)
-    await recoverUploads(ports)
-    await queueConversions(ports)
-    await ports.jobs.enqueue({ type: 'v3.sweep' })
-  } catch (err) {
-    console.error('[v3] cron steps failed:', err)
+  // v3: stale uploads expired and stalled ones taken up, conversions queued, and one pass of
+  // the deletion sweep over the v3 area. A failure in one is logged, and stops neither the
+  // others nor the v2 housekeeping below.
+  for (const [what, step] of [
+    ['expire uploads', () => expireUploads(ports)],
+    ['recover uploads', () => recoverUploads(ports)],
+    ['queue conversions', () => queueConversions(ports)],
+    ['queue the sweep', () => ports.jobs.enqueue({ type: 'v3.sweep' })],
+  ] as const) {
+    await step().catch((err) => console.error(`[v3] cron: ${what} failed:`, err))
   }
   // Storage cleanup: finished sessions and abandoned uploads, stalled runs, the weekly run.
   // Last, and on its own: a failure here shouldn't rerun the rest.

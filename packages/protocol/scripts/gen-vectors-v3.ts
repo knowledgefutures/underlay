@@ -1,6 +1,7 @@
 /**
  * Writes test/vectors/v3-files.json: rows, and the file id and footer content
- * they must produce (docs/protocol-v3.md, Section 3). A second implementation
+ * they must produce (docs/protocol-v3.md, Section 3); and v3-commits.json: commits
+ * with their bytes, version ids, and signatures (Section 4). A second implementation
  * checks itself against these. Run with `pnpm --filter @underlay/protocol vectors:v3`
  * only when the format changes, and say so in the commit.
  */

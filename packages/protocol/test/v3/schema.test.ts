@@ -284,7 +284,7 @@ describe('checking files', () => {
     ).rejects.toThrow(/did not come with this upload/)
 
     // Sending the same bytes again is fine: the upload is checked, the stored file is left
-    // as it is, and the session's copy is gone afterwards.
+    // as it is, and the session's copy is gone afterward.
     const before = (await (await store.get(v3.recordKey(stored.id)))!.bytes()).slice()
     const again = await staged(
       store,

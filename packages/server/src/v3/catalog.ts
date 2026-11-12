@@ -8,7 +8,7 @@
  *
  * Counts on a row come from the row before it plus what the commit changed (`CommitStats`),
  * so recording a commit costs what the commit wrote, not what the collection holds. Only
- * a row with no row before it is counted from the files (`fullStats`).
+ * a row `syncCatalog` writes for a commit D1 lacks is counted from the files (`fullStats`).
  */
 import { hashSchema, parseSemver, parseStrict, v3 } from '@underlay/protocol'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
@@ -119,6 +119,14 @@ export interface CommitStats {
   assetBytesDelta: number
   changes: { added: number; removed: number; updated: number }
 }
+
+export const emptyCommitStats = (): CommitStats => ({
+  typeDelta: {},
+  recordBytesDelta: 0,
+  assetsDelta: 0,
+  assetBytesDelta: 0,
+  changes: { added: 0, removed: 0, updated: 0 },
+})
 
 export const emptyStats = (): VersionStats => ({
   typeCounts: {},

@@ -11,6 +11,7 @@
  * read-modify-write is written as a batch whose conditions are in SQL (see
  * publishVersion in ../versions/publish.ts).
  */
+import type { v3 } from '@underlay/protocol'
 import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
@@ -598,11 +599,6 @@ export const abuseReports = sqliteTable(
 
 export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'expired'
 
-/**
- * A push in progress. Session inputs whose size the user controls (schemas,
- * metadata, the declared file list) are in the blob store under sessions/<id>/;
- * runs of uploaded manifest entries and records are sessions/<id>/runs/….
- */
 /** One v2 version converted to a v3 commit (v3/convert.ts). */
 export interface ConvertedVersion {
   seq: number
@@ -689,12 +685,12 @@ export const v3Uploads = sqliteTable(
     base: text('base'),
     appId: text('app_id'),
     /** At commit: the files the change names, and the change itself if the client signed it. */
-    files: json<unknown[]>('files'),
-    change: json<Record<string, unknown>>('change'),
+    files: json<v3.FileRef[]>('files'),
+    change: json<v3.Change>('change'),
     /** The head the files were verified against, and the schemas in force for them. */
     expectHead: text('expect_head'),
     schemas: json<Record<string, unknown>>('schemas'),
-    /** Files verified so far (a job each), and the land attempts. */
+    /** Files verified so far (a job each). */
     verified: integer('verified').notNull().default(0),
     /**
      * A schema scan of the head in units (v3/scans.ts): how many, and whether it passed.
@@ -702,6 +698,7 @@ export const v3Uploads = sqliteTable(
      */
     scanUnits: integer('scan_units').notNull().default(0),
     scanDone: bool('scan_done').notNull().default(false),
+    /** Times its land found another commit had landed first, and it was prepared again. */
     attempts: integer('attempts').notNull().default(0),
     error: json<{ statusCode: number; error: string; problems?: string[] }>('error'),
     result: json<Record<string, unknown>>('result'),
@@ -717,6 +714,11 @@ export const v3Uploads = sqliteTable(
   ],
 )
 
+/**
+ * A push in progress. Session inputs whose size the user controls (schemas,
+ * metadata, the declared file list) are in the blob store under sessions/<id>/;
+ * runs of uploaded manifest entries and records are sessions/<id>/runs/….
+ */
 export const pushSessions = sqliteTable(
   'push_sessions',
   {

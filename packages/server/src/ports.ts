@@ -35,13 +35,13 @@ export interface Jobs {
   enqueueBatch(jobs: JobMessage[]): Promise<void>
 }
 
+/** A collection's record layout: one of v2's two (`today`, `f`), or `v3`. */
+export type CollectionLayout = LayoutName | 'v3'
+
 /**
  * Where repositories live. A collection's objects are read and written through
  * the repository of its primary placement; mirrors are written by sync jobs.
  */
-/** A collection's record layout: one of v2's two (`today`, `f`), or `v3`. */
-export type CollectionLayout = LayoutName | 'v3'
-
 export interface Stores {
   /**
    * The repository of a collection's primary placement, in the collection's record layout.

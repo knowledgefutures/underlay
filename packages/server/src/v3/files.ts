@@ -71,7 +71,7 @@ export async function v3PresignDownloads(
       await ports.stores.fileBytes.presigner.presignGet(ports.stores.v3BucketKey(assetKey(hash)), {
         expiresIn,
         disposition: `attachment; filename="${hash}"`,
-        ...(data?.mediaType ? { contentType: data.mediaType } : {}),
+        ...(data.mediaType ? { contentType: data.mediaType } : {}),
       }),
     )
   }

@@ -54,7 +54,7 @@ describe('rebuilding against the model', () => {
             ? v3.planAll
             : roll < 0.7
               ? (groups: v3.FileGroup[]) => {
-                  // Some neighbouring groups, anywhere in the log.
+                  // Some neighboring groups, anywhere in the log.
                   const from = Math.floor(rand() * groups.length)
                   const to = from + 1 + Math.floor(rand() * (groups.length - from))
                   return [groups.slice(from, to)]
@@ -227,7 +227,7 @@ describe('the tiered policy', () => {
   })
   const MB = 1024 * 1024
 
-  it('merges ten neighbouring groups of one tier, the newest ten first', () => {
+  it('merges ten neighboring groups of one tier, the newest ten first', () => {
     const nine = Array.from({ length: 9 }, (_, i) => g(i + 1, 5 * MB))
     expect(v3.planTiered(nine)).toBe(null)
     const ten = [...nine, g(10, 6 * MB)]
@@ -247,7 +247,7 @@ describe('the tiered policy', () => {
     expect(v3.planTiered(broken, { ratio: 4 })!.map((r) => r.commits[0])).toEqual([7, 8, 9, 10])
   })
 
-  it('merges neighbours of uneven size, and does not rewrite a large group to take in small ones', () => {
+  it('merges neighbors of uneven size, and does not rewrite a large group to take in small ones', () => {
     // Sizes that fall either side of a tier's edge: no ten are of one tier, but ten are at or below one.
     const uneven = Array.from({ length: 10 }, (_, i) => g(i + 1, (i % 2 ? 5 : 20) * MB))
     expect(v3.planTiered(uneven)!.length).toBe(10)

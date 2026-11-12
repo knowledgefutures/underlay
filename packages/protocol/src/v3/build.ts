@@ -1,16 +1,16 @@
-import { chunkLines, gunzipStream } from '../repo/gzip.js'
 /**
  * Building an upload: lines in, sorted-record-files out.
  *
  *   parseUpload    NDJSON bytes to rows, under the input rules
  *   sortRows       an external sort with bounded memory: sorted chunks spilled to
  *                  scratch, then merged. A key given twice keeps its last line.
- *   buildFiles     rows in key order to one or more files, cut by size
+ *   buildFiles     rows in key order to one or more files, cut by key (`keyCut`)
  *
  * Input that is already in key order skips `sortRows`; `buildFiles` refuses rows
  * out of order. Scratch and the files' target are both a `Store`, so the same
  * code builds on disk, in a bucket, or in memory.
  */
+import { chunkLines, gunzipStream } from '../repo/gzip.js'
 import { MIN_PART_BYTES, putFromParts, readParts, type Store } from '../repo/types.js'
 import { utf8ByteLength } from '../utf8.js'
 import { MAX_FILE_ENTRIES } from './constants.js'
@@ -190,7 +190,7 @@ export async function* sortRows(
       const out = sorted()
       chunks.push(await put(spillParts(out.map((r) => r.line))))
     }
-    // Merge down until one pass can take what is left. Groups are of neighbours, so order holds.
+    // Merge down until one pass can take what is left. Groups are of neighbors, so order holds.
     while (chunks.length > fanIn) {
       const next: string[] = []
       for (let i = 0; i < chunks.length; i += fanIn) {

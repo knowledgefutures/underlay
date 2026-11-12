@@ -509,7 +509,7 @@ export async function findVersion(
     const c = await readCommit(store, collection, n)
     if (!c) return null
     if (c.id === id) return n
-    // Each commit names the one before it, so the walk needs only every other read.
+    // Each commit names the one before it, so a match is found one read early.
     if (c.commit.previous === id) return n - 1
   }
   return null

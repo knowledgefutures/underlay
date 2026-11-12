@@ -1,7 +1,8 @@
 /**
- * underlay: the command line for Underlay v2. A local repository in .underlay/
+ * underlay: the command line for Underlay. For v2, a local repository in .underlay/
  * (local.ts), versions built by the protocol's commit engine, and tree sync with
- * a registry.
+ * a registry. For v3, `upload`: files built here and sent to a v3 collection, with
+ * no local repository.
  */
 import { Command } from 'commander'
 
@@ -148,7 +149,7 @@ program
   .requiredOption('--to <url>', 'registry URL, e.g. https://www.underlay.org')
   .requiredOption('-c, --collection <owner/slug>', 'the v3 collection')
   .option('-t, --token <token>', 'API key (default: UL_KEY)')
-  .option('-m, --message <message>', 'the commit message')
+  .option('-m, --message <message>', 'the commit message (given when the upload is opened)')
   .option('--sorted', 'the rows are in key order already')
   .option('--upload <id>', 'take an interrupted upload up again')
   .option('--dir <dir>', 'where the files are built', '.underlay-upload')

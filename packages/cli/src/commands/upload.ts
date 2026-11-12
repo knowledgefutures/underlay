@@ -8,8 +8,10 @@
  * rows always give the same files. Each file goes to the bucket by presigned URL; the
  * commit names them and the server verifies and lands it.
  *
- * An interrupted upload is taken up again with `--upload <id>`: files already in the
- * bucket are not sent twice, and the folder's files are reused if the rows are the same.
+ * An interrupted upload is taken up again with `--upload <id>`: the files are built again
+ * from the rows (the same rows give the same files), and those already in the bucket are
+ * not sent twice. The message is given when the upload is opened, so `-m` has no effect
+ * with `--upload`.
  */
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
