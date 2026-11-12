@@ -10,6 +10,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { runJob } from '../src/jobs.js'
+import { pruneLayouts, v3JobConfig } from '../src/v3/jobs.js'
 import { recoverUploads, uploadLimits } from '../src/v3/uploads.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
@@ -265,6 +266,91 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     await runJob({ type: 'v3.sweep' }, h.ports)
     expect(await ledgers()).toBe(1)
     expect(await h.ports.stores.internal.head('v3-sweep/running')).toBe(null)
+  })
+
+  /** Twelve small commits, a layout after each, so old layout files are pruned. */
+  async function twelveCommits(h: Harness, user: string, base: string) {
+    let semver: string | null = null
+    for (let i = 0; i < 12; i++) {
+      const opened = await h.request(`${base}/push`, {
+        method: 'POST',
+        user,
+        json: semver ? { base: semver } : { schemas: { Author } },
+      })
+      const sid = (await json(opened)).session_id as string
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [{ id: `a${i}`, type: 'Author', data: { name: `A${i}` } }],
+      })
+      const res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+      expect(res.status).toBe(201)
+      semver = (await json(res)).semver
+      await h.drain()
+    }
+  }
+
+  it('finds the newest layout once old ones are pruned, with the hint lost or stale', async () => {
+    const { h, user, c, base } = await setup()
+    const saved = { ...v3JobConfig }
+    Object.assign(v3JobConfig, { adoptAfter: 1 })
+    try {
+      await twelveCommits(h, user, base)
+      const store = h.ports.stores.v3
+      const newest = (await v3.findLayout(store, c.id))!.number
+      expect(newest).toBeGreaterThan(v3JobConfig.keepLayouts)
+      expect(await v3.readLayout(store, c.id, 1)).toBe(null)
+      // The hint's write is allowed to fail: lost, a reader probing from 1 finds no layout.
+      // Pruning puts it back before it deletes anything more.
+      await store.delete(v3.layoutHintKey(c.id))
+      await pruneLayouts(store, c.id, v3JobConfig.keepLayouts)
+      expect(await v3.readLayoutHint(store, c.id)).toBe(newest)
+      expect((await v3.openView(store, c.id)).layout).toBe(newest)
+      // A hint that names a layout since deleted: the layouts are listed.
+      await v3.writeLayoutHint(store, c.id, 1)
+      expect((await v3.openView(store, c.id)).layout).toBe(newest)
+      expect((await v3.findLayout(store, c.id))!.number).toBe(newest)
+    } finally {
+      Object.assign(v3JobConfig, saved)
+    }
+  })
+
+  it("passes fsck once a rebuild has replaced commits' files and the sweep has removed them", async () => {
+    const { h, user, c, base } = await setup()
+    await twelveCommits(h, user, base)
+    const store = h.ports.stores.v3
+    const { files } = await v3.currentFiles(store, c.id)
+    const listed = new Set(files.map((f) => v3.recordKey(f.id)))
+    const { keys } = await store.list('records/')
+    const swept = keys.filter((k) => !listed.has(k))
+    expect(swept.length).toBeGreaterThan(0)
+    for (const k of swept) await store.delete(k)
+    await runJob({ type: 'repo.fsck', collectionId: c.id, fileBytes: true }, h.ports)
+    await h.drain()
+    const report = JSON.parse(
+      await (await h.ports.stores.internal.get(`fsck/${c.id}.json`))!.text(),
+    )
+    expect(report).toMatchObject({ ok: true, errors: [], versions: 12 })
+    // A file the layout lists that is gone is still named.
+    await store.delete(v3.recordKey(files[0]!.id))
+    await runJob({ type: 'repo.fsck', collectionId: c.id }, h.ports)
+    await h.drain()
+    const after = JSON.parse(await (await h.ports.stores.internal.get(`fsck/${c.id}.json`))!.text())
+    expect(after.ok).toBe(false)
+    expect(JSON.stringify(after.errors)).toMatch(/is not stored/)
+  })
+
+  it('refuses a type name v3 keys cannot hold, when the push opens', async () => {
+    const { h, user, base } = await setup()
+    for (const type of ['#early', '__proto__']) {
+      const res = await h.request(`${base}/push`, {
+        method: 'POST',
+        user,
+        body: `{"schemas":{${JSON.stringify(type)}:${JSON.stringify(Author)}}}`,
+        headers: { 'content-type': 'application/json' },
+      })
+      expect(res.status).toBe(422)
+    }
   })
 
   it('names a download after a type whose name a header cannot hold', async () => {

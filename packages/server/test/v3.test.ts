@@ -1075,7 +1075,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       store,
       c.id,
       {
-        change: { collection: c.id, files, base: prev.id, message: null, keyId: null, sig: null },
+        change: await v3.makeChange(c.id, { files, base: prev.id }),
       },
       { session },
     )

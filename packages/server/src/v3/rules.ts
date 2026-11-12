@@ -7,7 +7,24 @@
  * published; in a private collection every record is already private, and the mark is
  * accepted and changes nothing.
  */
+import { v3 } from '@underlay/protocol'
+
 import { isPrivateSchema } from '../push/changes.js'
+
+/**
+ * The refusal for a session whose schemas v3 cannot take, or null: a type name v3's keys
+ * refuse (docs/protocol-v3.md, Section 2), or a type marked private in a public collection.
+ */
+export function v3SchemaError(
+  collectionPublic: boolean,
+  schemas: Record<string, Record<string, unknown>> | null | undefined,
+): string | null {
+  for (const type of Object.keys(schemas ?? {})) {
+    const error = v3.checkKey(v3.SCHEMA_TYPE, type)
+    if (error) return `Type ${JSON.stringify(type)}: ${error}`
+  }
+  return privateMarkError(collectionPublic, schemas)
+}
 
 /** The refusal for a session whose schemas mark a type private, or null. */
 export function privateMarkError(

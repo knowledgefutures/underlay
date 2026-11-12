@@ -39,7 +39,7 @@ import {
   type SessionRow,
   transition,
 } from '../push/session.js'
-import { privateMarkError } from '../v3/rules.js'
+import { v3SchemaError } from '../v3/rules.js'
 import { v3BaseInputs, v3NeededFiles, v3Revalidates } from '../v3/session.js'
 import { collectionFileSizes } from '../versions/file-refs.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
@@ -341,7 +341,7 @@ export function pushRoutes() {
     const schemaErr =
       schemaSetError(schemas) ??
       (access.collection.recordLayout === 'v3'
-        ? privateMarkError(access.collection.public, schemas as SessionInputs['schemas'])
+        ? v3SchemaError(access.collection.public, schemas as SessionInputs['schemas'])
         : null)
     if (schemaErr) return jsonError(c, 422, schemaErr)
     const patch = body.metadata_patch

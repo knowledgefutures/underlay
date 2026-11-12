@@ -245,20 +245,32 @@ export async function finishRound(ports: Ports, collectionId: string, planId: st
 /**
  * Delete all but the newest `keep` layout files of a collection. Each layout is complete
  * and only the newest is read (Section 5); the sweep lists files by the newest only.
+ *
+ * With the low numbers gone a reader cannot find a layout by probing up from 1: it needs
+ * the hint. So nothing is deleted until the hint names the newest layout (a hint's write
+ * is allowed to fail when the layout is made): a reader then always starts from a layout
+ * that exists, or reads the hint again and does.
  */
 export async function pruneLayouts(store: Store, collectionId: string, keep: number) {
-  const newest = (await v3.findLayout(store, collectionId))?.number ?? 0
+  // By listing, not from the hint: the hint is what may be missing.
   const prefix = `${v3.collectionPrefix(collectionId)}layouts/`
-  const old: string[] = []
+  const numbered: [key: string, n: number][] = []
   let cursor: string | undefined
   do {
     const page = await store.list(prefix, cursor)
     for (const key of page.keys) {
       const n = Number(key.slice(prefix.length).replace(/\.json$/, ''))
-      if (Number.isInteger(n) && n <= newest - keep) old.push(key)
+      if (Number.isInteger(n)) numbered.push([key, n])
     }
     cursor = page.cursor
   } while (cursor)
+  const newest = Math.max(0, ...numbered.map(([, n]) => n))
+  const old = numbered.filter(([, n]) => n <= newest - keep).map(([key]) => key)
+  if (newest === 0) return 0
+  if ((await v3.readLayoutHint(store, collectionId)) !== newest) {
+    await v3.writeLayoutHint(store, collectionId, newest)
+    if ((await v3.readLayoutHint(store, collectionId)) !== newest) return 0
+  }
   await v3.inParallel(
     old.map((k) => () => store.delete(k)),
     8,

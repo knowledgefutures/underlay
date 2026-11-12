@@ -541,12 +541,12 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   }
   for (const [type, body] of reserved.schemas) {
     if (body === null) {
-      delete schemas[type]
+      if (Object.hasOwn(schemas, type)) delete schemas[type]
       continue
     }
-    const err = checkSchemaFull(type, body)
+    const err = v3.checkKey(v3.SCHEMA_TYPE, type) ?? checkSchemaFull(type, body)
     if (err) problems.push(err)
-    schemas[type] = body
+    else schemas[type] = body
   }
   const priv = privateMarkError(
     collection.public,
@@ -715,7 +715,7 @@ registerJob('v3.uploadVerify', async (job, ports) => {
       if (shape) problems.push(`$asset ${id}: ${shape}`)
       return
     }
-    const s = schemas[type]
+    const s = Object.hasOwn(schemas, type) ? schemas[type] : undefined
     if (!s) {
       problems.push(`Type "${type}" has records but no schema`)
       return

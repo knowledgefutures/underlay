@@ -4,7 +4,8 @@
  *
  * The first step checks the log (`verifyLog`: numbers without gaps, each commit naming the
  * one before, semvers that follow, the server's signature, the collection ids its lineage
- * allows, and each named file's footer against the commit), D1's versions against the
+ * allows, and, for the commits after the newest layout, each named file's footer against
+ * the commit), that each file the newest layout lists is stored, D1's versions against the
  * commits, and that each asset the head lists is stored at its size. With `fileBytes`, the
  * steps after it read every sorted-record-file the collection lists in full (`verifyFile`),
  * a few a step. An asset's bytes are not hashed: they were checked against their name when
@@ -67,16 +68,31 @@ export async function v3FsckStep(
     const description = await v3.readDescription(store, collectionId)
     if (!description && head > 0) problem(`${collectionId} has no description`)
     const own = (await ports.signer()).publicKey
+    // The files of commits a layout covers are replaced by the layout's, and swept: a
+    // commit's files are checked only after the newest layout, and the layout's are below.
+    const layout = await v3.findLayout(store, collectionId)
     try {
-      const head = await v3.verifyLog(store, collectionId, {
+      const last = await v3.verifyLog(store, collectionId, {
         ...(description?.lineage ? { lineage: description.lineage } : {}),
         files: true,
+        filesFrom: (layout?.through ?? 0) + 1,
         serverKeys: [own],
       })
-      report.versions = head?.commit.number ?? 0
+      report.versions = last?.commit.number ?? 0
     } catch (err) {
       problem((err as Error).message)
     }
+
+    // Every file the newest layout lists, stored.
+    await checking('The layout', async () => {
+      const listed = layout?.files ?? []
+      const found = await v3.inParallel(
+        listed.map((f) => () => store.head(v3.recordKey(f.id))),
+        16,
+      )
+      for (const [i, f] of listed.entries())
+        if (!found[i]) problem(`File ${f.id} of layout ${layout!.number} is not stored`)
+    })
 
     // D1's catalog against the log: a row a commit, with the commit's id.
     await checking('The catalog', async () => {

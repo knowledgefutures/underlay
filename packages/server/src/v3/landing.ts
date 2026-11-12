@@ -16,7 +16,9 @@
  * in-process queue (Node, tests).
  */
 import { v3 } from '@underlay/protocol'
+import { and, eq } from 'drizzle-orm'
 
+import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import {
   applyStats,
@@ -78,12 +80,27 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
       problems: absent.slice(0, 20).map((id) => `File ${id} is not stored`),
     }
   }
+  // Where the change's base is in the log, from D1: the library looks back only so far for a
+  // base it is given no number for, and a commit is never refused for an old base.
+  const [base] =
+    l.change.base === null
+      ? []
+      : await ports.db
+          .select({ seq: schema.versions.seq })
+          .from(schema.versions)
+          .where(
+            and(
+              eq(schema.versions.collectionId, l.collectionId),
+              eq(schema.versions.hash, l.change.base),
+            ),
+          )
+  const baseNumber = base?.seq ?? head?.commit.number
   let stored: v3.StoredCommit
   try {
     stored = await v3.createCommit(
       store,
       l.collectionId,
-      { change: l.change, bump: l.bump, ...(head ? { baseNumber: head.commit.number } : {}) },
+      { change: l.change, bump: l.bump, ...(baseNumber ? { baseNumber } : {}) },
       { signer: await ports.signer(), attempts: 1 },
     )
   } catch (err) {

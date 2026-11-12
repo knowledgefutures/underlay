@@ -47,7 +47,7 @@ import {
 } from './catalog.js'
 import { type Landed, type Landing } from './landing.js'
 import { commitsOf } from './queue.js'
-import { assetKey, privateMarkError } from './rules.js'
+import { assetKey, v3SchemaError } from './rules.js'
 import {
   scanConfig,
   scanFinished,
@@ -116,7 +116,7 @@ async function prepareSession(
   if (!collection) return { status: 'schema_refused', error: 'Collection not found' }
   const inputs = await loadInputs(ports, session.id)
   const schemaErr =
-    schemaSetError(inputs.schemas) ?? privateMarkError(collection.public, inputs.schemas)
+    schemaSetError(inputs.schemas) ?? v3SchemaError(collection.public, inputs.schemas)
   if (schemaErr) return { status: 'schema_refused', error: schemaErr }
 
   await ensureCollection(store, cid)
