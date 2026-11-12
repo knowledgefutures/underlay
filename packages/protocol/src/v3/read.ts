@@ -601,7 +601,7 @@ export async function* changes(
   store: Store,
   view: View,
   since: number,
-  range: KeyRange & { before?: boolean } = {},
+  range: KeyRange & { before?: boolean; batch?: number } = {},
   opts: ScanOptions = {},
 ): AsyncGenerator<ChangeRow> {
   if (since > view.version) throw new VersionError('`since` is after the version read')
@@ -619,28 +619,36 @@ export async function* changes(
   ): Promise<KeyState | null> => {
     let best: (Entry & { commit: number }) | undefined
     for (const f of group) if (f.entry.commit <= since) best = f.entry
-    for (const file of older) {
-      if (!covers(file, type, id)) continue
-      // Files are newest first: nothing in this one can beat a newer row already found.
-      if (best && best.commit > file.commits[1]) continue
-      const f = await open(store, file.id, opts)
-      const entries = await lookupEntries(f, type, id, (i) => {
-        const k = `${file.id}/${i}`
-        let p = blocks.get(k)
-        if (!p) blocks.set(k, (p = f.reader(readerOpts).keyBlock(i)))
-        return p
-      })
-      for (const e of entries) {
-        const commit = file.labeled ? e.commit! : file.commits[0]
-        if (commit <= since && (!best || commit > best.commit)) best = { ...e, commit }
-      }
+    // Every older file that could hold the key, looked in at once: one at a time costs a
+    // round trip each, and a key added since is in none of them, so it is looked for in all.
+    // (A file older than a row already found cannot beat it.)
+    const files = older.filter(
+      (file) => covers(file, type, id) && !(best && best.commit > file.commits[1]),
+    )
+    const found = await Promise.all(
+      files.map(async (file) => {
+        const f = await open(store, file.id, opts)
+        const entries = await lookupEntries(f, type, id, (i) => {
+          const k = `${file.id}/${i}`
+          let p = blocks.get(k)
+          if (!p) blocks.set(k, (p = f.reader(readerOpts).keyBlock(i)))
+          return p
+        })
+        return entries.map((e) => ({ ...e, commit: file.labeled ? e.commit! : file.commits[0] }))
+      }),
+    )
+    for (const e of found.flat()) {
+      if (e.commit <= since && (!best || e.commit > best.commit)) best = e
     }
     return best && best.kind !== 'x'
       ? { hash: best.hash!, commit: best.commit, withheld: best.kind === 'w' }
       : null
   }
-  /** Changed keys are looked up in the older files a batch at a time, several at once. */
-  const BATCH = 64
+  /**
+   * Changed keys are looked up in the older files a batch at a time, several at once. A
+   * caller reading a page of changes passes its page size, so the page is one batch.
+   */
+  const BATCH = range.batch ?? 64
   let batch: { row: ChangeRow; group: Found[] }[] = []
   const flush = async function* (): AsyncGenerator<ChangeRow> {
     const befores = await inParallel(

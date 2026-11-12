@@ -385,7 +385,11 @@ export async function v3Diff(
   const updated: string[] = []
   const removed: { id: string; type: string }[] = []
   let next: string | null = null
-  const range = after ? { after, before: true } : { from: PAST_RESERVED, before: true }
+  const range = {
+    ...(after ? { after } : { from: PAST_RESERVED }),
+    before: true,
+    batch: q.limit + 1,
+  }
   // The page's changes first (and whether there are more), then their lines, 16 at a
   // time: each is in a different record block, so one at a time costs a round trip each.
   const rows: v3.ChangeRow[] = []
@@ -513,7 +517,11 @@ export async function v3Manifest(
     const delta = { added: [] as object[], updated: [] as object[], removed: [] as object[] }
     let n = 0
     let last: { type: string; id: string } | null = null
-    const range = after ? { after, before: true } : { from: PAST_RESERVED, before: true }
+    const range = {
+      ...(after ? { after } : { from: PAST_RESERVED }),
+      before: true,
+      batch: q.limit + 1,
+    }
     for await (const ch of v3.changes(store, v.view, from.seq, range, cached)) {
       if (ch.type.startsWith('$')) continue
       if (n === q.limit) {
