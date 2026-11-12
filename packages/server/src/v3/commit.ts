@@ -201,10 +201,18 @@ async function prepareSession(
     base: base?.hash ?? null,
     message: session.message,
   })
+  // The server built these files itself from rows it checked: install them now, so the
+  // landing only commits.
+  await v3.inParallel(
+    files.map((f) => () => v3.installUpload(store, session.id, f.id)),
+    16,
+  )
+  const records = stats.changes.added + stats.changes.removed + stats.changes.updated
   const landing: Landing = {
     collectionId: cid,
     session: session.id,
     change,
+    bump: schemaChanges.size > 0 ? 'major' : records > 0 ? 'minor' : 'patch',
     expectHead,
     stats,
     schemaChanges: [...schemaChanges],
@@ -236,22 +244,7 @@ async function prepareSession(
       return { status: 'parallel' }
     }
   }
-  return {
-    written: files.map((f) => f.id),
-    landing: {
-      collectionId: cid,
-      session: session.id,
-      change,
-      expectHead,
-      stats,
-      schemaChanges: [...schemaChanges],
-      metadata,
-      pushedBy: session.userId,
-      appId: session.appId,
-      actorId: session.actorId,
-      pushSessionId: session.id,
-    },
-  }
+  return { written: files.map((f) => f.id), landing }
 }
 
 const invalid = (problems: string[]): SessionCommitResult => ({
@@ -527,9 +520,11 @@ export async function commitV3Metadata(
         : v3.rowFromRecord(v3.META_ID, v3.META_TYPE, metadata)
     const session = v3.newSession()
     const files = await v3.buildFiles([row], v3.uploadTarget(store, session))
+    await v3.installUpload(store, session, files[0]!.id)
     const landed = await commitsOf(ports).land(ports, {
       collectionId,
       session,
+      bump: 'patch',
       change: await v3.makeChange(collectionId, {
         files: files.map(refOf),
         base: head?.id ?? null,

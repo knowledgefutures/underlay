@@ -75,6 +75,16 @@ const HEX64 = /^[0-9a-f]{64}$/
 export type UploadRow = typeof schema.v3Uploads.$inferSelect
 
 export const uploadObjectKey = (upload: string, fileId: string) => v3.uploadKey(upload, fileId)
+/** What prepare found that landing needs, against one head. */
+interface Prepared {
+  schemaChanges: [string, string | null][]
+  metadata: Record<string, unknown> | null
+  bump: 'major' | 'minor' | 'patch'
+}
+/** Beside the markers, not among them: `countVerified` counts what is under the head's folder. */
+const preparedKey = (upload: string, head: string | null) =>
+  `v3-uploads/${upload}/prepared-${head ?? 'none'}.json`
+
 /** A verified file's counts against one head: written once, by the job that verified it. */
 const markerKey = (upload: string, head: string | null, fileId: string) =>
   `v3-uploads/${upload}/${head ?? 'none'}/${fileId}.json`
@@ -351,7 +361,8 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   const head = await v3.findHead(store, cid)
   const view = head ? await headView(store, cid) : null
   // The schemas in force: the head's, with the upload's `$schema` rows over them.
-  const schemas: Record<string, unknown> = await schemasOf(store, view)
+  const headSchemas: Record<string, unknown> = await schemasOf(store, view)
+  const schemas: Record<string, unknown> = { ...headSchemas }
   const problems: string[] = []
   for await (const { entry, line } of typeEntries(ports, upload.id, files, v3.SCHEMA_TYPE)) {
     if (entry.kind === 'x') {
@@ -420,6 +431,30 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
       })
     }
   }
+  // What landing needs and prepare knows: which schemas change, the metadata, the bump.
+  const schemaChanges: [string, string | null][] = []
+  for (const [t, body] of Object.entries(schemas)) {
+    const h = hashSchema(body)
+    if (!headSchemas[t] || hashSchema(headSchemas[t]) !== h) schemaChanges.push([t, h])
+  }
+  for (const t of Object.keys(headSchemas)) if (!(t in schemas)) schemaChanges.push([t, null])
+  let metadata: Record<string, unknown> | null = null
+  for await (const { entry, line } of typeEntries(ports, upload.id, files, v3.META_TYPE)) {
+    if (entry.kind === 'r') metadata = dataOf(await line()) as Record<string, unknown>
+  }
+  // A file holds publisher rows exactly when its first or last key's type is not reserved.
+  const ordinary = files.some(
+    (f) => (f.first && !f.first[0].startsWith('$')) || (f.last && !f.last[0].startsWith('$')),
+  )
+  const prepared: Prepared = {
+    schemaChanges,
+    metadata,
+    bump: schemaChanges.length > 0 ? 'major' : ordinary ? 'minor' : 'patch',
+  }
+  await ports.stores.internal.put(
+    preparedKey(upload.id, head?.id ?? null),
+    JSON.stringify(prepared),
+  )
   await setUpload(ports, upload.id, 'verifying', {
     schemas,
     expectHead: head?.id ?? null,
@@ -675,26 +710,19 @@ registerJob('v3.uploadLand', async (job, ports) => {
   const change =
     (upload.change as v3.Change | null) ??
     (await v3.makeChange(cid, { files, base: upload.base, message: upload.message }))
-  // Which types' schemas the upload sets, for schema_usage: the head's against the upload's.
-  const store = ports.stores.v3
-  const headSchemas = upload.expectHead
-    ? await schemasOf(store, await headViewAt(ports, cid, upload.expectHead))
-    : {}
-  const now = (upload.schemas ?? {}) as Record<string, unknown>
-  const schemaChanges: [string, string | null][] = []
-  for (const [t, body] of Object.entries(now)) {
-    const h = hashSchema(body)
-    if (!headSchemas[t] || hashSchema(headSchemas[t]) !== h) schemaChanges.push([t, h])
+  const obj = await internal.get(preparedKey(upload.id, upload.expectHead))
+  if (!obj) {
+    await fail(ports, upload.id, {
+      statusCode: 500,
+      error: 'The prepared commit is gone; commit again',
+    })
+    return
   }
-  for (const t of Object.keys(headSchemas)) if (!(t in now)) schemaChanges.push([t, null])
-  const metaRow = typeEntries(ports, upload.id, files, v3.META_TYPE)
-  let metadata: Record<string, unknown> | null = null
-  for await (const { entry, line } of metaRow) {
-    if (entry.kind === 'r') metadata = dataOf(await line()) as Record<string, unknown>
-  }
+  const { schemaChanges, metadata, bump } = JSON.parse(await obj.text()) as Prepared
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,
     session: upload.id,
+    bump,
     change,
     expectHead: upload.expectHead,
     stats,

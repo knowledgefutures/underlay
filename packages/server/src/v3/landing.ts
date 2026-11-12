@@ -6,8 +6,10 @@
  *
  *   1. brings D1 up to the log (`syncCatalog`), and checks the head is still the one the
  *      change was prepared against; if not, the caller prepares again;
- *   2. checks and creates the commit (`commitUpload`, with no retries: a lost number means
- *      another commit landed, so the counts made against the old head no longer hold);
+ *   2. creates the commit (`createCommit`, with no retries: a lost number means another
+ *      commit landed, so the counts made against the old head no longer hold). The change's
+ *      files were checked and installed among the stored files by whoever prepared it; landing
+ *      only makes sure they are there;
  *   3. records it in D1 and queues what follows a commit.
  *
  * A `Landing` is plain JSON, so a Durable Object can take it (Phase 2) as well as the
@@ -28,8 +30,10 @@ import {
 
 export interface Landing {
   collectionId: string
-  /** The upload session the change's files are in. */
+  /** The upload session the change's files came in (installed already; cleared after). */
   session: string
+  /** The kind of change, for the semver (protocol-v3 4.4), as its preparer found it. */
+  bump: 'major' | 'minor' | 'patch'
   change: v3.Change
   /** The version id of the head the change was prepared against (null: no commits yet). */
   expectHead: string | null
@@ -60,26 +64,30 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const head = await v3.findHead(store, l.collectionId)
   mark()
   if ((head?.id ?? null) !== l.expectHead) return { status: 'base_moved', head: head?.id ?? null }
-  let stored: v3.StoredCommit & { check: v3.UploadCheck }
+  // Every file the change names is stored (its preparer installed it once checked).
+  const files = l.change.files
+  const absent = (
+    await v3.inParallel(
+      files.map((f) => async () => ((await store.head(v3.recordKey(f.id))) ? null : f.id)),
+      16,
+    )
+  ).filter((x): x is string => x !== null)
+  if (absent.length > 0) {
+    return {
+      status: 'invalid',
+      problems: absent.slice(0, 20).map((id) => `File ${id} is not stored`),
+    }
+  }
+  let stored: v3.StoredCommit
   try {
-    stored = await v3.commitUpload(
+    stored = await v3.createCommit(
       store,
       l.collectionId,
-      { change: l.change, ...(head ? { baseNumber: head.commit.number } : {}) },
-      {
-        session: l.session,
-        signer: await ports.signer(),
-        // The server built and checked these files itself, row by row, as they arrived.
-        verify: false,
-        validateRows: false,
-        // Records carried over under a tightened schema were scanned before landing
-        // (scans.ts), against this same head.
-        scan: false,
-        attempts: 1,
-      },
+      { change: l.change, bump: l.bump, ...(head ? { baseNumber: head.commit.number } : {}) },
+      { signer: await ports.signer(), attempts: 1 },
     )
   } catch (err) {
-    if (err instanceof v3.UploadError) return { status: 'invalid', problems: err.problems }
+    if (err instanceof v3.BaseError) return { status: 'invalid', problems: [err.message] }
     if (err instanceof v3.CommitRaceError) {
       const now = await v3.findHead(store, l.collectionId)
       return { status: 'base_moved', head: now?.id ?? null }
@@ -104,10 +112,15 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   await ports.jobs.enqueue({
     type: 'version.published',
     versionId: version.id,
-    bump: stored.check.bump,
+    bump: l.bump,
   })
   mark()
   const step = (i: number) => at[i + 1]! - at[i]!
+  // The upload's own copies, now stored under their ids: cleared (the sweep would, a day on).
+  await v3.inParallel(
+    files.map((f) => () => store.delete(v3.uploadKey(l.session, f.id))),
+    16,
+  )
   console.log(
     `[v3.land] ${l.collectionId} #${stored.commit.number}: sync ${step(0)}ms, head ${step(1)}ms, commit ${step(2)}ms, record ${step(3)}ms, queue ${step(4)}ms`,
   )
@@ -115,6 +128,6 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
     status: 'committed',
     versionId: version.id,
     number: stored.commit.number,
-    bump: stored.check.bump,
+    bump: l.bump,
   }
 }
