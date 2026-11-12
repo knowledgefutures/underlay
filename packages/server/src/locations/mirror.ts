@@ -429,6 +429,9 @@ export async function laggingPlacements(ports: Ports): Promise<string[]> {
         eq(schema.placements.role, 'mirror'),
         ne(schema.placements.state, 'paused'),
         lt(schema.placements.syncedSeq, schema.versions.seq),
+        // No mirrors of v3 collections yet (v3-deploy-plan.md, decision 8): an org's
+        // default mirror waits for them.
+        ne(schema.collections.recordLayout, 'v3'),
       ),
     )
   return rows.map((r) => r.id)

@@ -33,6 +33,7 @@ import {
   type LocationRow,
 } from '../locations/locations.js'
 import { collectionMirrors, queueMirrors } from '../locations/mirror.js'
+import { notOnV3 } from '../v3/reads.js'
 import { jsonError, requireCollection } from './access.js'
 import { isAdmin, membership } from './manage.js'
 
@@ -306,6 +307,7 @@ export function locationRoutes() {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Only org owners and admins manage mirrors')
+    if (access.collection.recordLayout === 'v3') return notOnV3(c, 'mirrors')
     const body = (await c.req.json().catch(() => ({}))) as { locationId?: unknown; sets?: unknown }
     const loc = await orgLocation(c, access.owner.id, String(body.locationId ?? ''))
     if (!loc) return jsonError(c, 404, 'Location not found')

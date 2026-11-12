@@ -18,6 +18,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { QueueJobs, runJob } from '../src/jobs.js'
 import { forgetDenylist } from '../src/lib/limits.js'
+import { laggingPlacements } from '../src/locations/mirror.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
 import { dropDeletedV3 } from '../src/v3/fork.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
@@ -906,6 +907,33 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(broken.ok).toBe(false)
     expect(broken.errors.join('\n')).toMatch(/Version 1 is ulv3:[0-9a-f]+ in the log/)
     expect(broken.errors.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('mirrors no v3 collection yet: refused, and an inherited mirror waits', async () => {
+    const { h, user, c, base } = await setup()
+    await push(h, user, base, { schemas: { Author } }, [author('a', 'A')])
+    const res = await h.request(`${base}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: 'anywhere' },
+    })
+    expect(res.status).toBe(501)
+    expect(await json(res)).toMatchObject({ code: 'not_on_v3' })
+    await h.ports.db.insert(schema.storageLocations).values({
+      id: 'loc1',
+      kind: 'platform',
+      name: 'Mirror',
+      prefix: 'mirror',
+      status: 'active',
+    })
+    await h.ports.db.insert(schema.placements).values({
+      collectionId: c.id,
+      locationId: 'loc1',
+      role: 'mirror',
+      sets: 'public',
+      state: 'backfilling',
+    })
+    expect(await laggingPlacements(h.ports)).toEqual([])
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {
