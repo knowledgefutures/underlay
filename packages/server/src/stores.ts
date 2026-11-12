@@ -186,13 +186,38 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     async layoutOf(collectionId: string): Promise<CollectionLayout> {
       return (await primaryOf(collectionId)).layout
     },
-    v3: new PrefixedStore(platform.bucket, platform.v3Prefix ?? 'v3'),
+    v3: new PrefixedStore(bucketWithS3(platform.bucket, files), platform.v3Prefix ?? 'v3'),
     v3BucketKey: (key) => `${platform.v3Prefix ?? 'v3'}/${key}`,
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,
     canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),
     stagingKey: (id) => [platform.internalPrefix, 'uploads', id].filter(Boolean).join('/'),
   }
+}
+
+/**
+ * The bucket as the v3 area uses it: reads and writes through `bucket` (on Workers the
+ * R2 binding), and what the binding cannot do through the S3 API over the same bucket:
+ * presigned URLs (client uploads) and server-side copies (installing a checked upload,
+ * an asset), so no file's bytes pass through a Worker to be copied.
+ */
+export function bucketWithS3(bucket: Store, s3: PresigningStore): Store {
+  if (bucket === s3) return bucket
+  const out: Store = {
+    get: (k, r) => bucket.get(k, r),
+    head: (k) => bucket.head(k),
+    put: (k, b, o) => bucket.put(k, b, o),
+    list: (p, c) => bucket.list(p, c),
+    delete: (k) => bucket.delete(k),
+    presigner: s3.presigner,
+  }
+  if (bucket.create) out.create = bucket.create.bind(bucket)
+  if (bucket.tail) out.tail = bucket.tail.bind(bucket)
+  if (bucket.putParts) out.putParts = bucket.putParts.bind(bucket)
+  if (bucket.putPieces) out.putPieces = bucket.putPieces.bind(bucket)
+  const copy = bucket.copy ?? s3.copy
+  if (copy) out.copy = copy.bind(bucket.copy ? bucket : s3)
+  return out
 }
 
 function presigning(store: Store): PresigningStore {

@@ -12,7 +12,8 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
-import { commitQueue } from '../src/v3/queue.js'
+import { landCommit, type Landing } from '../src/v3/landing.js'
+import { durableQueue, serially } from '../src/v3/queue.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
 
@@ -437,15 +438,13 @@ describe.skipIf(!onV3)('v3 collections', () => {
       v3.uploadTarget(store, session),
     )
     const prev = (await v3.findHead(store, c.id))!
-    await commitQueue.run(c.id, () =>
-      v3.commitUpload(
-        store,
-        c.id,
-        {
-          change: { collection: c.id, files, base: prev.id, message: null, keyId: null, sig: null },
-        },
-        { session },
-      ),
+    await v3.commitUpload(
+      store,
+      c.id,
+      {
+        change: { collection: c.id, files, base: prev.id, message: null, keyId: null, sig: null },
+      },
+      { session },
     )
     expect((await lastRow(h.ports, c.id))!.seq).toBe(1)
     expect(await syncCatalog(h.ports, c.id)).toBe(1)
@@ -458,5 +457,47 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const res = await push(h, user, base, { base: 'v1.1.0' }, [author('c', 'C')])
     expect(res.status).toBe(201)
     expect(await json(res)).toMatchObject({ semver: 'v1.2.0', recordCount: 3 })
+  })
+  it('lands commits one at a time through a Durable Object, the second on a moved head', async () => {
+    const { h, user, c, base } = await setup()
+    expect((await push(h, user, base, { schemas: { Author } }, [author('a', 'A')])).status).toBe(
+      201,
+    )
+    // A stand-in for the namespace: JSON both ways, one landing at a time, as the class does.
+    const run = serially()
+    let calls = 0
+    h.ports.commits = durableQueue({
+      idFromName: (name) => name,
+      get: () => ({
+        fetch: async (req) => {
+          calls++
+          const l = JSON.parse(await req.text()) as Landing
+          return Response.json(await run(l.collectionId, () => landCommit(h.ports, l)))
+        },
+      }),
+    })
+    // Two pushes opened on the same head, committed at once: one lands, one is told the base moved.
+    const open = async (id: string) => {
+      const sid = (
+        await json(
+          await h.request(`${base}/push`, { method: 'POST', user, json: { base: 'v1.0.0' } }),
+        )
+      ).session_id
+      await h.request(`${base}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [author(id, id)],
+      })
+      return sid as string
+    }
+    const [s1, s2] = [await open('b'), await open('c')]
+    const results = await Promise.all(
+      [s1, s2].map((sid) => h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })),
+    )
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409])
+    expect(calls).toBeGreaterThanOrEqual(1)
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(2)
+    expect((await lastRow(h.ports, c.id))!.recordCount).toBe(2)
+    delete h.ports.commits
   })
 })

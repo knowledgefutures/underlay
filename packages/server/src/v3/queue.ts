@@ -1,34 +1,67 @@
 /**
- * The one way a commit to a v3 collection is made: "do this for collection X, one at a
- * time" (v3-deploy-plan.md, decision 4). Every v3 commit goes through `commitQueue`.
+ * The one way a commit to a v3 collection lands: "do this for collection X, one at a
+ * time" (v3-deploy-plan.md, decision 4). Every v3 commit goes through `Ports.commits`.
  *
- * Phase 1: an in-process lock. On Node (dev, tests) that orders every commit to a
- * collection. On Workers it orders those within one isolate, and the library's own rule
- * covers the rest: a commit number is created only if absent, and a loser tries again at
- * the next number. That is correct whatever happens; the queue only saves the retries.
- * Phase 2 puts a Durable Object for each collection behind the same interface.
+ * What goes through it is a `Landing` (landing.ts): plain JSON, so it can cross into a
+ * Durable Object. Two implementations:
+ *
+ *   localQueue    an in-process lock (Node, tests). On a Worker without the Durable
+ *                 Object it orders the commits of one isolate, and the library's rule
+ *                 covers the rest: a lost number comes back as `base_moved`.
+ *   durableQueue  a Durable Object for each collection (worker.ts, `CollectionCommits`),
+ *                 which runs the landings it is sent one after another.
  */
+import type { Ports } from '../ports.js'
+import { type Landed, landCommit, type Landing } from './landing.js'
+
 export interface CommitQueue {
-  run<T>(collectionId: string, work: () => Promise<T>): Promise<T>
+  land(ports: Ports, landing: Landing): Promise<Landed>
+}
+
+/** Run work for a key one at a time, in this process. */
+export function serially() {
+  const tails = new Map<string, Promise<unknown>>()
+  return async function run<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const before = tails.get(key) ?? Promise.resolve()
+    const mine = before.catch(() => {}).then(work)
+    const tail = mine.catch(() => {})
+    tails.set(key, tail)
+    try {
+      return await mine
+    } finally {
+      if (tails.get(key) === tail) tails.delete(key)
+    }
+  }
 }
 
 /** One at a time per collection, in this process. */
 export function localQueue(): CommitQueue {
-  const tails = new Map<string, Promise<unknown>>()
+  const run = serially()
+  return { land: (ports, l) => run(l.collectionId, () => landCommit(ports, l)) }
+}
+
+/** A Durable Object namespace, as far as the queue uses it. */
+export interface CommitsNamespace {
+  idFromName(name: string): unknown
+  get(id: unknown): { fetch(req: Request): Promise<Response> }
+}
+
+/** One Durable Object per collection: it lands what it is sent, one at a time. */
+export function durableQueue(ns: CommitsNamespace): CommitQueue {
   return {
-    async run<T>(collectionId: string, work: () => Promise<T>): Promise<T> {
-      const before = tails.get(collectionId) ?? Promise.resolve()
-      const mine = before.catch(() => {}).then(work)
-      const tail = mine.catch(() => {})
-      tails.set(collectionId, tail)
-      try {
-        return await mine
-      } finally {
-        if (tails.get(collectionId) === tail) tails.delete(collectionId)
-      }
+    async land(_ports, l) {
+      const stub = ns.get(ns.idFromName(l.collectionId))
+      const res = await stub.fetch(
+        new Request('https://commits/land', { method: 'POST', body: JSON.stringify(l) }),
+      )
+      if (!res.ok)
+        throw new Error(`Commit queue for ${l.collectionId}: ${res.status} ${await res.text()}`)
+      return (await res.json()) as Landed
     },
   }
 }
 
-/** The process's queue, until Phase 2 gives Workers another. */
-export const commitQueue: CommitQueue = localQueue()
+/** The process's in-process queue, for ports that name none. */
+export const defaultQueue: CommitQueue = localQueue()
+
+export const commitsOf = (ports: Ports): CommitQueue => ports.commits ?? defaultQueue

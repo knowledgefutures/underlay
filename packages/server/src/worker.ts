@@ -26,6 +26,8 @@ import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports, PublicAssets } from './ports.js'
 import { createStores, newCollectionsFrom } from './stores.js'
+import { landCommit, type Landing } from './v3/landing.js'
+import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
 
 export interface Env {
   /** 'bulk' in the bulk job Worker (wrangler.bulk.jsonc). */
@@ -67,6 +69,11 @@ export interface Env {
   REPO_PREFIX?: string
   /** The record layout new collections get: today (default), f, or v3. */
   NEW_COLLECTION_LAYOUT?: string
+  /**
+   * v3 commits, a Durable Object for each collection (`CollectionCommits` below). Without
+   * it, commits land through the isolate's own queue (v3/queue.ts).
+   */
+  COMMITS?: CommitsNamespace
   INTERNAL_PREFIX?: string
   /**
    * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
@@ -133,6 +140,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
   })
   return {
     db,
+    ...(env.COMMITS ? { commits: durableQueue(env.COMMITS) } : {}),
     stores: createStores(db, cache, {
       bucket: env.BUCKET ? r2Store(env.BUCKET) : s3,
       files: s3,
@@ -284,4 +292,30 @@ export default {
     const ports = makePorts(env, ctx)
     await ports.jobs.enqueue({ type: 'maintenance.sweep' })
   },
+}
+
+/**
+ * One for each v3 collection (by name: its id): lands the commits it is sent, one at a
+ * time (v3-deploy-plan.md, decision 4). Only the short last step runs here (landing.ts):
+ * check the head, create the commit, record it in D1. The job that prepared the change
+ * built and checked its files first.
+ */
+export class CollectionCommits {
+  readonly #run = serially()
+  constructor(
+    readonly state: { waitUntil(p: Promise<unknown>): void },
+    readonly env: Env,
+  ) {}
+
+  async fetch(req: Request): Promise<Response> {
+    const landing = (await req.json()) as Landing
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => this.state.waitUntil(p),
+      passThroughOnException() {},
+    } as unknown as ExecutionContext
+    // Landing never goes back through the queue, so these ports' own `commits` is unused.
+    const ports = makePorts(this.env, ctx)
+    const landed = await this.#run(landing.collectionId, () => landCommit(ports, landing))
+    return Response.json(landed)
+  }
 }

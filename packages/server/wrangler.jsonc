@@ -45,6 +45,10 @@
   // served before the Worker runs; everything else reaches the Worker.
   "assets": { "directory": "../web/dist/client" },
   "observability": { "enabled": true },
+  // v3 commits land one at a time per collection, in a Durable Object for each
+  // (src/v3/queue.ts, `CollectionCommits` in worker.ts; v3-deploy-plan.md, decision 4).
+  // The class lives in this Worker; the bulk Worker binds it by script_name.
+  "migrations": [{ "tag": "v3-commits", "new_sqlite_classes": ["CollectionCommits"] }],
   "env": {
     "staging": {
       "name": "underlay-staging",
@@ -69,6 +73,9 @@
         { "binding": "BUCKET", "bucket_name": "underlay-staging" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
       ],
+      "durable_objects": {
+        "bindings": [{ "name": "COMMITS", "class_name": "CollectionCommits" }],
+      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -135,6 +142,9 @@
         { "binding": "BUCKET", "bucket_name": "underlay-prod" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
       ],
+      "durable_objects": {
+        "bindings": [{ "name": "COMMITS", "class_name": "CollectionCommits" }],
+      },
       "d1_databases": [
         {
           "binding": "DB",

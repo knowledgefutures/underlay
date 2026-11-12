@@ -36,31 +36,62 @@ import { mergeRuns, type RunEntry } from '../push/runs.js'
 import { loadInputs, schemaSetError, sessionRuns, type SessionRow } from '../push/session.js'
 import {
   type AssetData,
-  applyStats,
   assetsOf,
   type CommitStats,
-  emptyStats,
   headView,
   metadataOf,
-  recordCommit,
   rowsOfType,
   schemasOf,
-  statsOfRow,
   syncCatalog,
-  lastRow,
 } from './catalog.js'
-import { commitQueue } from './queue.js'
+import { type Landed, type Landing } from './landing.js'
+import { commitsOf } from './queue.js'
 import { assetKey, privateMarkError } from './rules.js'
 
-/** Commit a session to its v3 collection. Only an open session's base is accepted. */
+/**
+ * Commit a session to its v3 collection: prepare the change here (the heavy part), then
+ * land it through the collection's commit queue (the short part, one at a time).
+ */
 export async function commitV3Session(
   ports: Ports,
   session: SessionRow,
 ): Promise<SessionCommitResult> {
-  return commitQueue.run(session.collectionId, () => commitInTurn(ports, session))
+  const prepared = await prepareSession(ports, session)
+  if ('status' in prepared) return prepared
+  const landed = await commitsOf(ports).land(ports, prepared.landing)
+  return settled(ports, session.collectionId, landed, prepared.written)
 }
 
-async function commitInTurn(ports: Ports, session: SessionRow): Promise<SessionCommitResult> {
+/** What a landing means for the push that prepared it. */
+async function settled(
+  ports: Ports,
+  collectionId: string,
+  landed: Landed,
+  written: string[],
+): Promise<SessionCommitResult> {
+  if (landed.status === 'invalid') {
+    return {
+      status: 'invalid',
+      errors: landed.problems.map((p) => ({ recordId: '', type: '', errors: [p] })),
+      total: landed.problems.length,
+    }
+  }
+  if (landed.status === 'base_moved') {
+    await syncCatalog(ports, collectionId)
+    return { status: 'base_moved', current: (await headBase(ports, collectionId))?.semver ?? null }
+  }
+  const [version] = await ports.db
+    .select()
+    .from(schema.versions)
+    .where(eq(schema.versions.id, landed.versionId))
+  return { status: 'committed', version: version!, written }
+}
+
+/** Build a session's change against the head: its files, its counts, and what it sets. */
+async function prepareSession(
+  ports: Ports,
+  session: SessionRow,
+): Promise<SessionCommitResult | { landing: Landing; written: string[] }> {
   const store = ports.stores.v3
   const cid = session.collectionId
   // D1 catches up with the bucket first, so the base check below sees every commit.
@@ -81,6 +112,11 @@ async function commitInTurn(ports: Ports, session: SessionRow): Promise<SessionC
 
   await ensureCollection(store, cid)
   const view = await headView(store, cid)
+  // The head the change is built against: the log's, which must be the D1 row's.
+  const expectHead = view ? (await v3.findHead(store, cid))!.id : null
+  if (expectHead !== (base?.hash ?? null)) {
+    return { status: 'base_moved', current: base?.semver ?? null }
+  }
   const cache = new v3.FileCache(16 * 1024 * 1024)
   const read: v3.ReadOptions = { cache, readers: new Map() }
   const baseSchemas = await schemasOf(store, view, read)
@@ -117,13 +153,7 @@ async function commitInTurn(ports: Ports, session: SessionRow): Promise<SessionC
   reserved.sort(v3.compareKey)
 
   // --- Every row, in key order, with no-ops left out and the counts kept ---
-  const stats: CommitStats = {
-    typeDelta: {},
-    recordBytesDelta: 0,
-    assetsDelta: 0,
-    assetBytesDelta: 0,
-    changes: { added: 0, removed: 0, updated: 0 },
-  }
+  const stats = emptyCommitStats()
   const assetSizes = assetRows.sizes
   let rows = 0
   const judged = async function* (): AsyncGenerator<v3.LineRow> {
@@ -143,48 +173,31 @@ async function commitInTurn(ports: Ports, session: SessionRow): Promise<SessionC
     base: base?.hash ?? null,
     message: session.message,
   })
-  let stored: v3.StoredCommit & { check: v3.UploadCheck }
-  try {
-    stored = await v3.commitUpload(
-      store,
-      cid,
-      { change },
-      {
-        session: session.id,
-        signer: await ports.signer(),
-        cache,
-        verify: false,
-        validateRows: false,
-      },
-    )
-  } catch (err) {
-    if (!(err instanceof v3.UploadError)) throw err
-    return {
-      status: 'invalid',
-      errors: err.problems.map((p) => ({ recordId: '', type: '', errors: [p] })),
-      total: err.problems.length,
-    }
+  return {
+    written: files.map((f) => f.id),
+    landing: {
+      collectionId: cid,
+      session: session.id,
+      change,
+      expectHead,
+      stats,
+      schemaChanges: [...schemaChanges],
+      metadata,
+      pushedBy: session.userId,
+      appId: session.appId,
+      actorId: session.actorId,
+      pushSessionId: session.id,
+    },
   }
-  const before = await lastRow(ports, cid)
-  const version = await recordCommit(ports, {
-    collectionId: cid,
-    stored,
-    stats: applyStats(before ? statsOfRow(before) : emptyStats(), stats),
-    changes: stats.changes,
-    schemaChanges,
-    metadata,
-    pushedBy: session.userId,
-    appId: session.appId,
-    actorId: session.actorId,
-    pushSessionId: session.id,
-  })
-  await ports.jobs.enqueue({
-    type: 'version.published',
-    versionId: version.id,
-    bump: stored.check.bump,
-  })
-  return { status: 'committed', version, written: files.map((f) => f.id) }
 }
+
+const emptyCommitStats = (): CommitStats => ({
+  typeDelta: {},
+  recordBytesDelta: 0,
+  assetsDelta: 0,
+  assetBytesDelta: 0,
+  changes: { added: 0, removed: 0, updated: 0 },
+})
 
 const compare = (a: string, b: string) => v3.compareKeys(a, '', b, '')
 const enc = new TextEncoder()
@@ -395,10 +408,11 @@ export async function commitV3Metadata(
   metadata: Record<string, unknown> | null,
   pushedBy: string | null,
 ): Promise<{ status: 'committed'; version: typeof schema.versions.$inferSelect } | null> {
-  return commitQueue.run(collectionId, async () => {
-    const store = ports.stores.v3
+  const store = ports.stores.v3
+  for (let attempt = 0; attempt < 5; attempt++) {
     await syncCatalog(ports, collectionId)
-    const view = await headView(store, collectionId)
+    const head = await v3.findHead(store, collectionId)
+    const view = head ? await headView(store, collectionId) : null
     if (canonical(metadata) === canonical(await metadataOf(store, view))) return null
     const row =
       metadata === null
@@ -406,32 +420,30 @@ export async function commitV3Metadata(
         : v3.rowFromRecord(v3.META_ID, v3.META_TYPE, metadata)
     const session = v3.newSession()
     const files = await v3.buildFiles([row], v3.uploadTarget(store, session))
-    const base = await headBase(ports, collectionId)
-    const change = await v3.makeChange(collectionId, {
-      files: files.map(refOf),
-      base: base?.hash ?? null,
-      message: 'Metadata update',
-    })
-    const stored = await v3.commitUpload(
-      store,
+    const landed = await commitsOf(ports).land(ports, {
       collectionId,
-      { change },
-      { session, signer: await ports.signer(), verify: false, validateRows: false },
-    )
-    const before = await lastRow(ports, collectionId)
-    const version = await recordCommit(ports, {
-      collectionId,
-      stored,
-      stats: before ? statsOfRow(before) : emptyStats(),
-      changes: { added: 0, removed: 0, updated: 0 },
-      schemaChanges: new Map(),
+      session,
+      change: await v3.makeChange(collectionId, {
+        files: files.map(refOf),
+        base: head?.id ?? null,
+        message: 'Metadata update',
+      }),
+      expectHead: head?.id ?? null,
+      stats: emptyCommitStats(),
+      schemaChanges: [],
       metadata,
       pushedBy,
       appId: null,
       actorId: null,
       pushSessionId: null,
     })
-    await ports.jobs.enqueue({ type: 'version.published', versionId: version.id, bump: 'patch' })
-    return { status: 'committed' as const, version }
-  })
+    if (landed.status === 'base_moved') continue
+    if (landed.status === 'invalid') throw new Error(landed.problems.join('; '))
+    const [version] = await ports.db
+      .select()
+      .from(schema.versions)
+      .where(eq(schema.versions.id, landed.versionId))
+    return { status: 'committed', version: version! }
+  }
+  throw new Error(`Metadata of ${collectionId}: other commits kept landing first`)
 }

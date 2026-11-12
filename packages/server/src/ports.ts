@@ -13,6 +13,7 @@ import type { LibSQLDatabase } from 'drizzle-orm/libsql'
  */
 import type { UsageSink } from './billing/usage.js'
 import type * as schema from './db/schema.js'
+import type { CommitQueue } from './v3/queue.js'
 
 export type { Cache, PresigningStore, Store } from '@underlay/protocol'
 
@@ -85,6 +86,11 @@ export interface PublicAssets {
 
 export interface Ports {
   stores: Stores
+  /**
+   * Where v3 commits land, one at a time per collection (v3/queue.ts): a Durable Object
+   * for each collection on Workers, an in-process queue when absent.
+   */
+  commits?: CommitQueue
   db: Db
   jobs: Jobs
   cache: Cache

@@ -51,6 +51,16 @@
         { "binding": "BUCKET", "bucket_name": "underlay-staging" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
       ],
+      // The main Worker's class: v3 commits land there, one at a time per collection.
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "COMMITS",
+            "class_name": "CollectionCommits",
+            "script_name": "underlay-staging",
+          },
+        ],
+      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -103,6 +113,16 @@
         { "binding": "BUCKET", "bucket_name": "underlay-prod" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
       ],
+      // The main Worker's class: v3 commits land there, one at a time per collection.
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "COMMITS",
+            "class_name": "CollectionCommits",
+            "script_name": "underlay-prod",
+          },
+        ],
+      },
       "d1_databases": [
         {
           "binding": "DB",
