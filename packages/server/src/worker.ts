@@ -151,6 +151,9 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
   return {
     db,
     ...(env.COMMITS ? { commits: durableQueue(env.COMMITS) } : {}),
+    ...(env.POOL && Number(env.V3_POOL_SIZE ?? 0) > 0
+      ? { pool: (job: JobMessage) => pooled(env.POOL!, Number(env.V3_POOL_SIZE), job) }
+      : {}),
     stores: createStores(db, cache, {
       bucket: env.BUCKET ? r2Store(env.BUCKET) : s3,
       files: s3,

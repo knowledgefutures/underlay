@@ -15,6 +15,7 @@ import { createObject, hashSchema, schemaRelaxes, v3 } from '@underlay/protocol'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 import { schemasOf } from './catalog.js'
+import { fanOut } from './fanout.js'
 
 export const scanConfig = {
   /** Records a preparing job scans itself; above this, the scan is cut into units. */
@@ -163,7 +164,8 @@ export async function readScan(ports: Ports, id: string): Promise<ScanState | nu
 /** Start a scan in units: its state, then a job for each unit. */
 export async function startScan(ports: Ports, state: ScanState): Promise<void> {
   await ports.stores.internal.put(stateKey(state.id), JSON.stringify(state))
-  await ports.jobs.enqueueBatch(
+  await fanOut(
+    ports,
     state.units.map((_, unit) => ({ type: 'v3.scanUnit', scanId: state.id, unit })),
   )
 }

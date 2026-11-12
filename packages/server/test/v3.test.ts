@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
-import { QueueJobs } from '../src/jobs.js'
+import { QueueJobs, runJob } from '../src/jobs.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
@@ -602,6 +602,58 @@ describe.skipIf(!onV3)('v3 collections', () => {
       expect(keys).toEqual([])
     } finally {
       Object.assign(scanConfig, saved)
+    }
+  })
+
+  it('fans an upload out to the pool, and queues what fails there', async () => {
+    const { h, user, base } = await setup()
+    const ran: string[] = []
+    let failOnce = true
+    h.ports.pool = async (job) => {
+      ran.push(job.type)
+      // One job fails in the pool: it goes to the queue and runs from there.
+      if (failOnce) {
+        failOnce = false
+        throw new Error('the pool is busy')
+      }
+      await runJob(job, h.ports)
+    }
+    try {
+      const local = memoryStore()
+      const session = v3.newSession()
+      const rows = [
+        v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+        ...Array.from({ length: 300 }, (_, i) =>
+          v3.rowFromRecord(`a${String(i).padStart(3, '0')}`, 'Author', { name: `A${i}` }),
+        ),
+      ].sort(v3.compareKey)
+      const built = await v3.buildFiles(rows, v3.uploadTarget(local, session), { cutBytes: 2000 })
+      const id = (
+        await json(await h.request(`${base}/uploads`, { method: 'POST', user, json: {} }))
+      ).upload_id as string
+      for (const f of built) {
+        const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
+        const t = await json(
+          await h.request(`${base}/uploads/${id}/files`, {
+            method: 'POST',
+            user,
+            json: { id: f.id, size: bytes.byteLength },
+          }),
+        )
+        await h.bucket.put(String(t.url).replace('memory://put/', ''), bytes)
+      }
+      const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
+      expect(files.length).toBeGreaterThan(uploadLimits.inlineFiles)
+      expect(
+        (await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } }))
+          .status,
+      ).toBe(202)
+      await h.drain()
+      const up = await json(await h.request(`${base}/uploads/${id}`, { user }))
+      expect(up).toMatchObject({ status: 'committed', files_verified: files.length })
+      expect(ran.filter((t) => t === 'v3.uploadVerify')).toHaveLength(files.length)
+    } finally {
+      delete h.ports.pool
     }
   })
 

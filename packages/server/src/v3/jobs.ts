@@ -19,6 +19,7 @@ import { createObject, v3 } from '@underlay/protocol'
 
 import { registerJob } from '../jobs.js'
 import type { Ports, Store } from '../ports.js'
+import { fanOut } from './fanout.js'
 
 export const v3JobConfig = {
   /** Size tiers a factor of this apart (decision 5 is open: 10 now, maybe 4 past a size). */
@@ -130,7 +131,8 @@ export async function rebuildCollection(ports: Ports, collectionId: string, roun
   console.log(
     `[v3.rebuild] ${collectionId}: layout ${plan.number}, ${plan.merges.length} merges, ${units.length} units, ${bytes} bytes of lines`,
   )
-  await ports.jobs.enqueueBatch(
+  await fanOut(
+    ports,
     units.map((_, unit) => ({ type: 'v3.mergeUnit', collectionId, planId: r.id, unit })),
   )
 }

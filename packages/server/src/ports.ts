@@ -91,6 +91,11 @@ export interface Ports {
    * for each collection on Workers, an in-process queue when absent.
    */
   commits?: CommitQueue
+  /**
+   * Run one v3 job in the pool of Durable Objects (worker.ts `V3Pool`) and wait for it, for
+   * work fanned out many at a time (v3/fanout.ts). Absent: such jobs go to the queue.
+   */
+  pool?: (job: JobMessage) => Promise<void>
   db: Db
   jobs: Jobs
   cache: Cache

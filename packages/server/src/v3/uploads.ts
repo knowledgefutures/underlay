@@ -36,6 +36,7 @@ import { registerJob, runJob } from '../jobs.js'
 import type { JobMessage, Ports } from '../ports.js'
 import { type CommitStats, headView, schemasOf, syncCatalog, viewOf } from './catalog.js'
 import { copyAssetFromUpload } from './commit.js'
+import { fanOut } from './fanout.js'
 import { commitsOf } from './queue.js'
 import { assetKey, privateMarkError } from './rules.js'
 import {
@@ -211,8 +212,10 @@ const UPLOAD_JOBS: ReadonlySet<string> = new Set([
  */
 export function inlineUpload(ports: Ports): { ports: Ports; drain(): Promise<void> } {
   const pending: JobMessage[] = []
+  // No pool: the upload's own jobs run here, one after another.
+  const { pool: _pool, ...rest } = ports
   const inline: Ports = {
-    ...ports,
+    ...rest,
     jobs: {
       async enqueue(job, opts) {
         if (UPLOAD_JOBS.has(job.type) && !opts?.delaySeconds) pending.push(job)
@@ -462,7 +465,8 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     scanUnits: scanUnitCount,
     scanDone: scanUnitCount === 0,
   })
-  await ports.jobs.enqueueBatch(
+  await fanOut(
+    ports,
     files.map((f) => ({
       type: 'v3.uploadVerify',
       uploadId: upload.id,
