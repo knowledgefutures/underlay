@@ -40,7 +40,7 @@ import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
-import { expireUploads } from './v3/uploads.js'
+import { expireUploads, recoverUploads } from './v3/uploads.js'
 import './v3/jobs.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
@@ -138,6 +138,7 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   // failure here is logged and never stops the v2 housekeeping below.
   try {
     await expireUploads(ports)
+    await recoverUploads(ports)
     await ports.jobs.enqueue({ type: 'v3.sweep' })
   } catch (err) {
     console.error('[v3] cron steps failed:', err)

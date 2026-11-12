@@ -139,7 +139,7 @@ export class QueueJobs implements Jobs {
   }
   async enqueueBatch(jobs: JobMessage[]) {
     // Each queue once: an unbound one is the same object as the queue it falls back to.
-    for (const q of new Set([this.queue, this.bulk, this.compact])) {
+    for (const q of new Set([this.queue, this.bulk, this.compact, this.v3])) {
       const mine = jobs.filter((j) => this.#for(j.type) === q)
       // sendBatch takes at most 100 messages.
       for (let i = 0; i < mine.length; i += 100) {

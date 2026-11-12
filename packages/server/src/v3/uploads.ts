@@ -393,8 +393,8 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   const f = ((upload.files ?? []) as v3.FileRef[]).find((x) => x.id === fileId)
   if (!f) return
   const marker = markerKey(upload.id, upload.expectHead, fileId)
-  // Verified already against this head (a job delivered twice): counted then.
-  if (await internal.head(marker)) return
+  // Verified already against this head (a job delivered twice, or queued again): count it.
+  if (await internal.head(marker)) return countVerified(ports, upload)
   // Structure, canonical lines, and each record against the schemas in force.
   const schemas = (upload.schemas ?? {}) as Record<string, unknown>
   const validators = new Map<string, SchemaValidator>()
@@ -453,13 +453,12 @@ registerJob('v3.uploadVerify', async (job, ports) => {
     ? await headViewAt(ports, upload.collectionId, upload.expectHead)
     : null
   const stats = await fileStats(ports, upload.id, fileId, view)
-  // Only the job that writes the marker counts the file.
-  const fresh = await createObject(
+  await createObject(
     internal,
     marker,
     JSON.stringify({ head: upload.expectHead, stats } satisfies FileStats),
   )
-  if (fresh) await countVerified(ports, upload)
+  await countVerified(ports, upload)
 })
 
 /** The view of the version with this id (a head the upload was prepared against). */
@@ -526,9 +525,21 @@ async function fileStats(
 
 /** Count a verified file, then land if that was the last thing waited on. */
 async function countVerified(ports: Ports, upload: UploadRow) {
+  // The files verified are the markers written for this head: counted, not incremented, so
+  // a job delivered twice, or a prepare queued again, never counts a file twice or loses one.
+  let n = 0
+  let cursor: string | undefined
+  do {
+    const page = await ports.stores.internal.list(
+      `v3-uploads/${upload.id}/${upload.expectHead ?? 'none'}/`,
+      cursor,
+    )
+    n += page.keys.length
+    cursor = page.cursor
+  } while (cursor)
   await ports.db
     .update(schema.v3Uploads)
-    .set({ verified: sql`${schema.v3Uploads.verified} + 1`, updatedAt: new Date() })
+    .set({ verified: sql`max(${schema.v3Uploads.verified}, ${n})`, updatedAt: new Date() })
     .where(and(eq(schema.v3Uploads.id, upload.id), eq(schema.v3Uploads.status, 'verifying')))
   await maybeLand(ports, upload.id)
 }
@@ -685,6 +696,35 @@ async function clearMarkers(ports: Ports, upload: string) {
 }
 
 /** Uploads past their idle time are expired; the sweep clears their objects. */
+/** A commit whose chain has gone quiet this long is queued again from where it stands. */
+export const UPLOAD_STALL_MS = 15 * 60 * 1000
+
+/**
+ * Uploads stuck verifying or landing (a job lost, or never sent): queued again. Every step
+ * is safe to run twice: prepare recounts the files already verified for the head, a verify
+ * finds its marker, and a land that finds the head moved prepares again.
+ */
+export async function recoverUploads(ports: Ports) {
+  const stuck = await ports.db
+    .select({ id: schema.v3Uploads.id, status: schema.v3Uploads.status })
+    .from(schema.v3Uploads)
+    .where(
+      and(
+        sql`${schema.v3Uploads.status} IN ('verifying', 'landing')`,
+        sql`${schema.v3Uploads.updatedAt} < ${Date.now() - UPLOAD_STALL_MS}`,
+      ),
+    )
+    .limit(50)
+  for (const u of stuck) {
+    await setUpload(ports, u.id, u.status, {})
+    await ports.jobs.enqueue({
+      type: u.status === 'landing' ? 'v3.uploadLand' : 'v3.uploadPrepare',
+      uploadId: u.id,
+    })
+  }
+  return stuck.length
+}
+
 export async function expireUploads(ports: Ports) {
   await ports.db
     .update(schema.v3Uploads)

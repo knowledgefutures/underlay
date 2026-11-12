@@ -11,11 +11,13 @@ import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
+import { QueueJobs } from '../src/jobs.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
 import { durableQueue, serially } from '../src/v3/queue.js'
 import { scanConfig } from '../src/v3/scans.js'
+import { recoverUploads } from '../src/v3/uploads.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
 
@@ -594,6 +596,79 @@ describe.skipIf(!onV3)('v3 collections', () => {
     } finally {
       Object.assign(scanConfig, saved)
     }
+  })
+
+  it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {
+    const sent: Record<string, string[]> = {}
+    const q = (name: string) => ({
+      send: async (b: { type: string }) => void (sent[name] ??= []).push(b.type),
+      sendBatch: async (ms: { body: { type: string } }[]) =>
+        void (sent[name] ??= []).push(...ms.map((m) => m.body.type)),
+    })
+    const jobs = new QueueJobs(q('jobs'), q('bulk'), q('compact'), q('v3'))
+    await jobs.enqueue({ type: 'v3.uploadVerify' })
+    await jobs.enqueueBatch([
+      { type: 'v3.uploadVerify' },
+      { type: 'v3.mergeUnit' },
+      { type: 'v3.uploadPrepare' },
+      { type: 'push.compact' },
+      { type: 'webhook.deliver' },
+    ])
+    expect(sent).toEqual({
+      v3: ['v3.uploadVerify', 'v3.uploadVerify', 'v3.mergeUnit'],
+      bulk: ['v3.uploadPrepare'],
+      compact: ['push.compact'],
+      jobs: ['webhook.deliver'],
+    })
+  })
+
+  it('finishes an upload whose jobs were lost, from the cron, counting each file once', async () => {
+    const { h, user, base } = await setup()
+    const local = memoryStore()
+    const session = v3.newSession()
+    const rows = [
+      v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+      ...Array.from({ length: 300 }, (_, i) =>
+        v3.rowFromRecord(`a${String(i).padStart(3, '0')}`, 'Author', { name: `A${i}` }),
+      ),
+    ].sort(v3.compareKey)
+    const built = await v3.buildFiles(rows, v3.uploadTarget(local, session), { cutBytes: 2000 })
+    const id = (await json(await h.request(`${base}/uploads`, { method: 'POST', user, json: {} })))
+      .upload_id as string
+    for (const f of built) {
+      const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
+      const t = await json(
+        await h.request(`${base}/uploads/${id}/files`, {
+          method: 'POST',
+          user,
+          json: { id: f.id, size: bytes.byteLength },
+        }),
+      )
+      await h.bucket.put(String(t.url).replace('memory://put/', ''), bytes)
+    }
+    const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
+    expect(files.length).toBeGreaterThan(2)
+    await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } })
+    // Prepare runs and a verify or two, then every other queued job is lost.
+    await h.ports.db.delete(schema.jobs)
+    const stalled = async () => {
+      await h.ports.db
+        .update(schema.v3Uploads)
+        .set({ updatedAt: new Date(Date.now() - 60 * 60 * 1000) })
+        .where(eq(schema.v3Uploads.id, id))
+    }
+    await stalled()
+    expect(await recoverUploads(h.ports)).toBe(1)
+    // Recovered twice over (a second cron before the first finishes): still each file once.
+    await stalled()
+    expect(await recoverUploads(h.ports)).toBe(1)
+    await h.drain()
+    const up = await json(await h.request(`${base}/uploads/${id}`, { user }))
+    expect(up).toMatchObject({
+      status: 'committed',
+      files_verified: files.length,
+      result: { recordCount: 300 },
+    })
   })
 
   it('waits for both its files and its scan before an upload lands', async () => {
