@@ -33,10 +33,20 @@ export function gzipMember(bytes: Uint8Array, level?: number): Promise<Uint8Arra
   )
 }
 
+/** Room above a member's stated length: a runtime grows its output a chunk at a time. */
+const INFLATE_STEP = 65_536
+
 /**
  * Inflate one block, refusing one that inflates past `maxBytes`: a block's stored length
  * says nothing of what it holds, and a few hundred KB of zeros inflate to hundreds of MB.
- * Native zlib stops at the limit; where a runtime does not, the result is still refused.
+ *
+ * The limit given to zlib is sized from the member's own trailer, which states its
+ * inflated length (ISIZE, RFC 1952), not from `maxBytes`: on Cloudflare Workers a call
+ * costs time in proportion to the limit it is given, and a reader makes one for every
+ * block. A member that states more than `maxBytes` is refused unread. One that inflates
+ * past what it states stops at that limit; it is then tried once more at `maxBytes` (a
+ * runtime may also need more room than the stated length), and refused if it passes that.
+ * Where a runtime does not stop at the limit, the result is still refused.
  */
 export async function gunzipMember(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
   const tooLong = () => new FormatError(`A block inflates past ${maxBytes} bytes`)
@@ -48,13 +58,33 @@ export async function gunzipMember(bytes: Uint8Array, maxBytes: number): Promise
     if (out.byteLength > maxBytes) throw tooLong()
     return out
   }
-  return new Promise((resolve, reject) =>
-    zlib.gunzip(bytes, { maxOutputLength: maxBytes }, (err, out) => {
-      if (err) return reject(err.code === 'ERR_BUFFER_TOO_LARGE' ? tooLong() : notGzip(err))
-      if (out.byteLength > maxBytes) return reject(tooLong())
-      resolve(new Uint8Array(out.buffer, out.byteOffset, out.byteLength))
-    }),
-  )
+  const stated =
+    bytes.byteLength >= 4
+      ? new DataView(bytes.buffer, bytes.byteOffset + bytes.byteLength - 4, 4).getUint32(0, true)
+      : 0
+  if (stated > maxBytes) throw tooLong()
+  const room = Math.min(maxBytes, (Math.ceil(stated / INFLATE_STEP) + 1) * INFLATE_STEP)
+  const inflate = (limit: number) =>
+    new Promise<Uint8Array>((resolve, reject) =>
+      zlib.gunzip(bytes, { maxOutputLength: limit }, (err, out) =>
+        err ? reject(err) : resolve(new Uint8Array(out.buffer, out.byteOffset, out.byteLength)),
+      ),
+    )
+  // Node says ERR_BUFFER_TOO_LARGE; workerd, a RangeError "Memory limit exceeded".
+  const pastLimit = (err: Error & { code?: string }) =>
+    err.code === 'ERR_BUFFER_TOO_LARGE' || /memory limit|too large/i.test(err.message)
+  let out: Uint8Array
+  try {
+    out = await inflate(room)
+  } catch (first) {
+    if (!pastLimit(first as Error)) throw notGzip(first as Error)
+    if (room === maxBytes) throw tooLong()
+    out = await inflate(maxBytes).catch((err: Error) => {
+      throw pastLimit(err) ? tooLong() : notGzip(err)
+    })
+  }
+  if (out.byteLength > maxBytes) throw tooLong()
+  return out
 }
 
 export function concatBytes(parts: readonly Uint8Array[], total?: number): Uint8Array {

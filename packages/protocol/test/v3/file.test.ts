@@ -459,6 +459,15 @@ describe('verifying', () => {
       /inflates past 1024 bytes/,
     )
     await expect(v3.gunzipMember(new Uint8Array(64), 1024)).rejects.toThrow(/does not inflate/)
+    // A member whose trailer understates its length stops at the limit all the same; an
+    // honest one of any size within the limit inflates whole.
+    const lying = (await gzip(new Uint8Array(4 * 1024 * 1024))).slice()
+    new DataView(lying.buffer).setUint32(lying.byteLength - 4, 10, true)
+    await expect(v3.gunzipMember(lying, 1024 * 1024)).rejects.toThrow(v3.FormatError)
+    for (const size of [0, 1, 65_535, 65_536, 65_537, 111_338, 300_000]) {
+      const raw = new Uint8Array(size).map((_, i) => (i * 31 + (i >> 3)) & 0xff)
+      expect(await v3.gunzipMember(await gzip(raw), 1024 * 1024)).toEqual(raw)
+    }
     // A trailer that claims a footer of 2^60 bytes: refused before anything more is read.
     const store = memoryStore()
     const f = await putFile(store, manyRows(10))
