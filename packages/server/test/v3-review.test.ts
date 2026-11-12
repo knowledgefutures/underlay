@@ -160,6 +160,33 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     expect(JSON.stringify(up.error)).toMatch(/\$meta data must be an object/)
   })
 
+  it('serves an asset whose type a browser would render as bytes, as v2 does', async () => {
+    const { h, user, base } = await setup()
+    const bytes = '<script>alert(1)</script>'
+    const hash = sha(bytes)
+    await h.request(`${base}/files/${hash}`, { method: 'PUT', user, body: bytes })
+    const rows = [
+      v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+      v3.rowFromRecord(hash, v3.ASSET_TYPE, { size: bytes.length, mediaType: 'text/html' }),
+    ]
+    expect(await upload(h, user, base, await build(rows))).toMatchObject({ status: 'committed' })
+    const headRes = await h.request(`${base}/files/${hash}`, { method: 'HEAD', user })
+    expect(headRes.headers.get('content-type')).toBe('application/octet-stream')
+    const presigner = h.ports.stores.fileBytes.presigner
+    const presignGet = presigner.presignGet
+    const asked: (string | undefined)[] = []
+    presigner.presignGet = async (key, opts) => {
+      asked.push(opts?.contentType)
+      return presignGet(key, opts)
+    }
+    try {
+      expect((await h.request(`${base}/files/${hash}`, { user })).status).toBe(302)
+    } finally {
+      presigner.presignGet = presignGet
+    }
+    expect(asked).toEqual(['application/octet-stream'])
+  })
+
   it('bounds what an upload may ask for', async () => {
     const { h, user, c, base } = await setup()
     const files = await firstLoad()

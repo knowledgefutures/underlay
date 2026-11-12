@@ -56,7 +56,7 @@ export function fileRoutes() {
       if (head)
         return c.body(null, 200, {
           'content-length': String(size),
-          'content-type': data?.mediaType ?? 'application/octet-stream',
+          'content-type': safeMimeType(data?.mediaType ?? undefined),
         })
       meter(c.var.meter, 'file_downloads', 1)
       meter(c.var.meter, 'file_bytes', size)

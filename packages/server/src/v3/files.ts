@@ -10,7 +10,7 @@
  */
 import { v3 } from '@underlay/protocol'
 
-import { presignDownloads, uploadedFiles } from '../files/files.js'
+import { presignDownloads, safeMimeType, uploadedFiles } from '../files/files.js'
 import { deniedHashes } from '../lib/limits.js'
 import type { Ports } from '../ports.js'
 import { type AssetData, dataOf, headView } from './catalog.js'
@@ -71,7 +71,8 @@ export async function v3PresignDownloads(
       await ports.stores.fileBytes.presigner.presignGet(ports.stores.v3BucketKey(assetKey(hash)), {
         expiresIn,
         disposition: `attachment; filename="${hash}"`,
-        ...(data.mediaType ? { contentType: data.mediaType } : {}),
+        // As v2 does: a type a browser would render or run is served as bytes.
+        ...(data.mediaType ? { contentType: safeMimeType(data.mediaType) } : {}),
       }),
     )
   }
