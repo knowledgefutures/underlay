@@ -338,12 +338,18 @@ export interface BuildOptions extends WriterOptions {
 }
 
 /**
- * The reference client's target for an upload's files: 128 MiB of lines, which
- * stores as about 32 MB (records store at a fifth to a quarter of their lines).
+ * The reference client's target for an upload's files: 512 MiB of lines, which
+ * stores as about 128 MB (records store at a fifth to a quarter of their lines).
  * It is counted in lines so that the cut depends on the rows alone, never on how
  * they compress. A server accepts any cut; this is only what this client does.
+ *
+ * Why this size (measured 2026-11-12, see the bench report): what smaller files
+ * buy is less rewritten by a takedown or a merge that keeps untouched files,
+ * which are uncommon, and what they cost is a longer file list in every large
+ * commit and layout. Cutting by key at all is what makes the same rows give the
+ * same files, and that holds at any target.
  */
-export const CUT_BYTES = 128 * 1024 * 1024
+export const CUT_BYTES = 512 * 1024 * 1024
 /** A file's cap, for a stretch of keys the hash happens not to cut. */
 export const DEFAULT_FILE_BYTES = 4 * CUT_BYTES
 export const DEFAULT_FILE_ENTRIES = 524_288

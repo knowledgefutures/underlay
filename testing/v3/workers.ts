@@ -133,8 +133,13 @@ export interface BuildDumpSpec {
   first: boolean
   /** Add the schema rows (the first part only). */
   schemaTypes: string[] | null
-  /** Cut files by key toward this many bytes of lines a file; the cap is four times it. */
-  cutBytes: number
+  /**
+   * Cut files by key toward this many bytes of lines a file; the cap is four times it.
+   * Null (how JSON carries "no cut by key"): files end at `maxBytes` alone, and parts are not
+   * moved to cut keys, as before the key cut.
+   */
+  cutBytes: number | null
+  maxBytes?: number
   level?: number
 }
 
@@ -176,6 +181,8 @@ async function buildDump(): Promise<void> {
   const store = new BenchStore(s.storeDir, s.latency)
   let records = 0
   let duplicates = 0
+  const byKey = s.cutBytes !== null && Number.isFinite(s.cutBytes)
+  const cutBytes = byKey ? s.cutBytes! : Infinity
   /** The dump file the row in hand came from: at `end` or after, it is past this part's own. */
   let at = s.start
   async function* dump(): AsyncGenerator<v3.LineRow> {
@@ -206,18 +213,23 @@ async function buildDump(): Promise<void> {
         yield v3.rowFromRecord(type, v3.SCHEMA_TYPE, crossrefSchema)
       }
     }
-    for await (const row of v3.partOnCuts(dump(), {
-      first: s.first,
-      past: () => at >= s.end,
-      cutBytes: s.cutBytes,
-    })) {
+    // Cut by size alone (as before the key cut): the part is its own files and nothing more.
+    const part = byKey
+      ? v3.partOnCuts(dump(), { first: s.first, past: () => at >= s.end, cutBytes })
+      : (async function* () {
+          for await (const row of dump()) {
+            if (at >= s.end) return
+            yield row
+          }
+        })()
+    for await (const row of part) {
       records++
       yield row
     }
   }
   const files = await v3.buildFiles(rows(), clientTarget(store, s.session), {
-    cutBytes: s.cutBytes,
-    maxBytes: 4 * s.cutBytes,
+    cutBytes,
+    maxBytes: s.maxBytes ?? 4 * cutBytes,
     ...(s.level === undefined ? {} : { level: s.level }),
   })
   report(store, {
@@ -468,6 +480,10 @@ export async function runJob(job: string): Promise<void> {
   const fn = JOBS[job]
   if (!fn) throw new Error(`Unknown worker job "${job}"`)
   await fn()
+  // The report is the last thing written, and the process exits next. A write to a pipe that
+  // is longer than the pipe holds finishes later, and an exit cuts it off (at 146,166 bytes
+  // on the box: a part of 12M names enough files to pass that). Wait for it to be flushed.
+  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()))
 }
 
 export { schemas }

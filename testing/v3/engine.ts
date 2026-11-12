@@ -87,6 +87,8 @@ export interface V3Options {
   level?: number
   /** Cut files by key toward this many bytes of lines (uploads and rebuilds). Default: the library's. */
   cutBytes?: number
+  /** The cap on a file's lines, if not four times the cut. */
+  maxBytes?: number
 }
 
 export class V3Engine implements Engine {
@@ -105,7 +107,7 @@ export class V3Engine implements Engine {
   /** Where files end: by key toward the target, with the cap at four times it. */
   #cut(): { cutBytes?: number; maxBytes?: number } {
     const c = this.opts.cutBytes
-    return c === undefined ? {} : { cutBytes: c, maxBytes: 4 * c }
+    return c === undefined ? {} : { cutBytes: c, maxBytes: this.opts.maxBytes ?? 4 * c }
   }
 
   /** The version each collection was last seen at: the base of the next change to it. */

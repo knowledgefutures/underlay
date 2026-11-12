@@ -311,7 +311,7 @@ are. A rebuild MUST preserve every retained version: each reads the same before 
   older entry for that key.
 - **Takedown.** A rebuild MAY replace a record entry by a `"w"` entry with the same hash, size,
   and commit, and leave out its line. Every file holding the row has to be rebuilt for the
-  bytes to be gone.
+  bytes to be gone; a file that does not hold it can stay listed as it is.
 
 Because of 3.6, the files a commit named can be recreated from rebuilt files that still hold
 all of the commit's rows: take the entries labeled with its number, in key order, drop the
@@ -372,7 +372,7 @@ sweep/                            the sweep's own state
   upload's are (below). Replaced rows stay in the same file as the rows that replaced them.
 - **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by
   one rule. A file ends after a key picked by a hash of the key against its row's size in
-  bytes of lines, toward 128 MiB of lines a file (about 32 MB stored); at a cap of four times
+  bytes of lines, toward 512 MiB of lines a file (about 128 MB stored); at a cap of four times
   that, or 524,288 entries (262,144 in a rebuild); and where the type changes once the file
   holds 16 MiB. The rule looks only at the rows, never at how they compress or how the work
   was split: a client that builds an upload in parts ends each part on a key the hash picks.

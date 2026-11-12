@@ -112,6 +112,42 @@ export const FINDINGS = {
       todo: 'Queue commits to a collection in the server, and land them in turn.',
     },
   },
+  cut: `<p>After the measurements above, uploads and rebuilds were changed to cut files by key, with a cap of four times the target. Everything above this section is on the earlier cut by size. Cutting by key does nothing for ordinary later versions, which add small files beside the load on any cut. It makes the same rows give the same files however an upload is split, at any target. And the smaller the target, the less is rewritten by work that goes back into stored files (a takedown; a merge that keeps untouched files), which is uncommon work. The target was first 32 MB stored; on 2026-11-12 Travis set it to <b>128 MB</b>, about the size files were before. Rounds 7 and 8 measured all three on the same Crossref sample (7.2M records, 13 GB, eight daily commits; box, commits <code>526264f</code> and <code>dd9130b</code>).</p>
+<div class="scroll"><table>
+<thead><tr><th></th><th>Cut by size (60 files, 232 MB each)</th><th>By key, 128 MB target (110 files, 126 MB each)</th><th>By key, 32 MB target (445 files, 31 MB each)</th></tr></thead>
+<tbody>
+<tr><td><b>What a smaller target buys</b></td><td></td><td></td><td></td></tr>
+<tr><td>Taking one record down</td><td>260 MB rewritten, 55 s</td><td>141 MB rewritten, 30 s</td><td>61 MB rewritten, 12 s</td></tr>
+<tr><td>Merging eight days back into the load, keeping untouched files</td><td>12 of 68 files kept; 11.3 GB written; 33 min</td><td>55 of 121 kept; 10.1 GB written; 29 min</td><td>351 of 458 kept; 4.4 GB written; 16 min</td></tr>
+<tr><td><b>What it costs</b></td><td></td><td></td><td></td></tr>
+<tr><td>Building and verifying the load</td><td>508 s and 393 s</td><td>594 s and 426 s</td><td>550 s and 411 s</td></tr>
+<tr><td>The first commit</td><td>3 s, 251 requests</td><td>5 s, 451 requests</td><td>18 s, 1,791 requests</td></tr>
+<tr><td>A day’s commit</td><td>29 to 34 requests, 2.2 s</td><td>33 to 41 requests, 2.3 s</td><td>33 to 41 requests, 2.2 to 2.5 s</td></tr>
+<tr><td><b>At any target</b></td><td></td><td></td><td></td></tr>
+<tr><td>The same rows built in one part and in ten</td><td>2 of 25 files the same</td><td colspan="2">25 of 25 the same</td></tr>
+<tr><td>A fork still shared after 30 days of changes to both (tier rule, 12M)</td><td></td><td colspan="2">97.5% at 8, 32, and 128 MB alike</td></tr>
+</tbody></table></div>
+<p class="note">A takedown rewrites only the file that holds the record; until <code>526264f</code> it rewrote every file of the load. The file hit is larger than average, since a larger file is likelier to hold any given record. Building in ten parts reads a little past each part’s end to finish on a cut key, which is why the 128 MB build is the slowest on this small sample; on all of Crossref the same overrun is under 1%. The wider measurements below were made at the 32 MB target (rounds 5 and 6, commits <code>b6e561d</code> and <code>8733959</code>), against the earlier rounds:</p>
+<div class="scroll"><table>
+<thead><tr><th>At the 32 MB target</th><th>Cut by size (before)</th><th>Cut by key, 32 MB</th></tr></thead>
+<tbody>
+<tr><td><b>Crossref sample, 7.2M records, the cut at its true size</b></td><td></td><td></td></tr>
+<tr><td>Files in the first load</td><td>60, about 215 MB each</td><td>445, about 29 MB each</td></tr>
+<tr><td>Building and verifying</td><td>468 s and 394 s</td><td>548 s and 411 s</td></tr>
+<tr><td>The first commit</td><td>15 KB</td><td>109 KB; 18 s and 1,791 requests to install the files</td></tr>
+<tr><td>One record, once rebuilt</td><td>7 requests warm, 20 cold</td><td>6 warm, 20 cold</td></tr>
+<tr><td><b>12M records, the cut scaled down to 2 MB files (Crossref’s file count on a fifteenth of the data)</b></td><td></td><td></td></tr>
+<tr><td>Files in the first load</td><td>297</td><td>9,444</td></tr>
+<tr><td>First load, upload to readable</td><td>30.6 min</td><td>40.6 min, 6 of them installing files at the commit</td></tr>
+<tr><td>A day’s commit</td><td>35 requests, 3.1 s</td><td>71 requests, 3.8 s</td></tr>
+<tr><td>The same 1,000-change upload</td><td>19 requests, 1.1 s</td><td>23 requests, 1.4 s</td></tr>
+<tr><td>One record, policy on</td><td>6 requests warm, 16 cold</td><td>3 warm, 14 cold</td></tr>
+<tr><td>Merging 30 days</td><td>80 s</td><td>275 s</td></tr>
+<tr><td>Recreating 61 commits’ files</td><td>3.6 min, all to their ids</td><td>14.3 min, all to their ids</td></tr>
+<tr><td>A fork writes</td><td>0.2 MB</td><td>4.8 MB (the file lists)</td></tr>
+<tr><td>Layout files kept (not pruned yet)</td><td>7.9 MB</td><td>253 MB</td></tr>
+</tbody></table></div>
+<p class="note">The costs are those of a longer file list: a bigger first commit and layout file, more requests to install a first load, and more per-file work in merges. Reads are the same or cheaper. The 12M rows overstate it for a collection that size, which at the true cut would have about 600 files, and are closer to what Crossref’s 6,500 would see. They follow the number of files, so at the 128 MB target they should be about a quarter of what is shown (the first commit above is). For the server: install a first load’s files with two requests each and more of them at once, and prune old layout files.</p>`,
   next: `<ol>
 <li><b>Queue commits to a collection</b> in the server, where today they race.</li>
 <li><b>Decide the rebuild ratio.</b> 10 keeps one record at about 10 requests at Crossref’s size; 4 makes it about 7 for a fifth more rewriting.</li>

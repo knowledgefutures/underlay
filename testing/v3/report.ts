@@ -1554,6 +1554,7 @@ details.more > * + * { margin-top: 10px; }
   ${more('The fork test, every target size', '8, 32, and 128 MB files', `<div class="charts">${forkChart(r)}</div>${forkEdit(r)}`)}
   ${more('Many collections', 'loading, a burst, and the sweep', `<div class="charts">${manyChart(r)}</div>${manyDetail(r)}`)}
   ${more('Beside layout F, every row', '5M, 12M, and 20,000 collections', `${besideF(r)}<p class="note">${FINDINGS.besideF}</p>`)}
+  ${more('Cutting uploads by key', 'added after these measurements: the target is 128 MB, and what each size buys and costs', FINDINGS.cut)}
   ${more('Against R2’s documented limits', 'and what R2 does not spell out', FINDINGS.r2)}
   ${more('Not built, and what to change first', '', FINDINGS.open)}
   ${more('Each size in detail', 'loads, daily commits, reads, exports', details)}

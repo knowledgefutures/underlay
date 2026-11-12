@@ -222,6 +222,8 @@ async function suite(name: string): Promise<void> {
       const w = world(folder, {
         ...base,
         records: num('records', 179_518_552),
+        // `--by-size`: files as they were before the key cut (1 GiB of lines, no cut by key).
+        ...(args['by-size'] ? { cutBytes: Infinity, maxBytes: 1024 ** 3 } : {}),
       })
       const o = {
         dataDir: str('data', '/data/crossref-sort/sorted'),
@@ -314,11 +316,19 @@ async function suite(name: string): Promise<void> {
       const w = world(str('label', 'crossref'), {
         ...base,
         records: num('records', 179_518_552),
+        // `--by-size`: files as they were before the key cut (1 GiB of lines, no cut by key).
+        ...(args['by-size'] ? { cutBytes: Infinity, maxBytes: 1024 ** 3 } : {}),
       })
       const o = {
         dataDir: str('data', '/data/crossref-sort/sorted'),
         plan: str('plan', '/data/crossref-sort/plan.json'),
         ...(args.files ? { files: num('files', 0) } : {}),
+      }
+      if (args.benefit) {
+        // What the key cut is for: one record taken down, and everything merged back keeping
+        // untouched files, on forks of the collection as it stands.
+        await step(w, 'cut-benefit', '', () => S.cutBenefit(w))
+        break
       }
       if (args.rest) {
         // The dump's files from `--rest` on, as one upload onto the collection: what a load
