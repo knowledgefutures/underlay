@@ -2,6 +2,17 @@ import { type BlobObject, memoryStore, type Store } from '@underlay/protocol'
 import { describe, expect, it } from 'vitest'
 
 import { MemoryCache } from '../src/cache.js'
+
+/** A cache keyed as the Cache API keys: by URL, so a fragment is dropped. */
+class UrlCache extends MemoryCache {
+  #url = (key: string) => new URL(`https://cache.underlay.internal/t/${key}`).href.split('#')[0]!
+  override get(key: string, opts?: { maxBytes?: number }) {
+    return super.get(this.#url(key), opts)
+  }
+  override put(key: string, value: Uint8Array) {
+    return super.put(this.#url(key), value)
+  }
+}
 import { ReadCachedStore } from '../src/v3/read-cache.js'
 
 /** A store whose etag changes on every write, counting the reads that reach it. */
@@ -73,6 +84,32 @@ describe('what the v3 read cache keeps', () => {
     reads.length = 0
     await cached.get(key, { offset: 0, length: 4096 })
     expect(reads).toEqual([])
+  })
+})
+
+describe('the v3 read cache in the colo', () => {
+  it('keeps each block of a file apart, as a URL-keyed cache sees them', async () => {
+    const { store } = countingStore()
+    const colo = new UrlCache()
+    await store.put(key, 'first second third')
+    for (const [offset, length, want] of [
+      [0, 5, 'first'],
+      [6, 6, 'second'],
+      [13, 5, 'third'],
+    ] as const) {
+      const cached = new ReadCachedStore(store, colo)
+      await cached.tail(key, 4)
+      expect(await text(await cached.get(key, { offset, length }))).toBe(want)
+    }
+    // Each from the colo cache alone, in a store whose own memory never saw them.
+    for (const [offset, length, want] of [
+      [6, 6, 'second'],
+      [0, 5, 'first'],
+    ] as const) {
+      const fresh = new ReadCachedStore(store, colo)
+      await fresh.tail(key, 4)
+      expect(await text(await fresh.get(key, { offset, length }))).toBe(want)
+    }
   })
 })
 

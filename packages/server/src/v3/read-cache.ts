@@ -60,6 +60,14 @@ const etags = new Map<string, string>()
 const asObject = (bytes: Uint8Array, etag: string): BlobObject =>
   blobObject(bytes, { etag, contentType: null })
 
+/**
+ * A block's cache key. The colo cache keys by URL, so nothing here may be read as URL
+ * syntax: a `#` would start a fragment, which is dropped, and every block of a file would
+ * share one entry. An etag is quoted hex; only its letters and digits are kept.
+ */
+const blockKey = (key: string, etag: string, at: string) =>
+  `v3b/${key}/${etag.replace(/[^0-9A-Za-z]/g, '')}/${at}`
+
 function learn(key: string, etag: string) {
   if (!etag) return
   if (etags.size > 100_000) etags.clear()
@@ -78,12 +86,12 @@ export class ReadCachedStore implements Store {
 
   async get(key: string, range?: { offset: number; length?: number }) {
     if (!FILE.test(key) || !range || range.length === undefined) return this.inner.get(key, range)
-    const at = `@${range.offset}:${range.length}`
+    const at = `${range.offset}-${range.length}`
     const known = etags.get(key)
     // The isolate keeps its own copy and hands out copies: a reader may detach or consume
     // the bytes it is given (inflating them), and the next request would get them empty.
     if (known) {
-      const ck = `v3b/${key}#${known}${at}`
+      const ck = blockKey(key, known, at)
       const hot = blocks.get(ck)
       if (hot) return asObject(hot.slice(), known)
       const warm = await this.cache.get(ck, { maxBytes: MAX_CACHED_BYTES }).catch(() => null)
@@ -97,7 +105,7 @@ export class ReadCachedStore implements Store {
     learn(key, obj.etag)
     if (!obj.etag || obj.size > MAX_CACHED_BYTES) return obj
     const bytes = await obj.bytes()
-    const ck = `v3b/${key}#${obj.etag}${at}`
+    const ck = blockKey(key, obj.etag, at)
     blocks.set(ck, bytes.slice())
     // A failed cache write costs a later read, never this one.
     await this.cache.put(ck, bytes.slice()).catch(() => {})
