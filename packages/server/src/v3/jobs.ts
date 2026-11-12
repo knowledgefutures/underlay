@@ -22,7 +22,7 @@ import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports, Store } from '../ports.js'
 import { fanOut } from './fanout.js'
-import { dropDeletedV3 } from './fork.js'
+import { dropDeletedV3, dropOrphans } from './fork.js'
 
 export const v3JobConfig = {
   /** Size tiers a factor of this apart (decision 5 is open: 10 now, maybe 4 past a size). */
@@ -64,11 +64,13 @@ registerJob('v3.sweep', async (_job, ports) => {
     graceMs: v3JobConfig.graceMs,
     trashMs: v3JobConfig.trashMs,
   })
+  // Collections left in the v3 area with no row: dropped now, their files on later passes.
+  const orphans = await dropOrphans(ports, [...result.logical.keys()])
   const cleared =
     (await clearStale(store, 'uploads/', v3JobConfig.staleMs)) +
     (await clearStale(store, 'tmp/', v3JobConfig.staleMs))
   console.log(
-    `[v3.sweep] pass ${result.pass}: ${result.collections} collections (${dropped} deleted ones dropped); records trashed ${result.records.trashed}, purged ${result.records.purged}; assets trashed ${result.assets.trashed}, purged ${result.assets.purged}; ${cleared} stale upload objects cleared`,
+    `[v3.sweep] pass ${result.pass}: ${result.collections} collections (${dropped} deleted and ${orphans} orphaned ones dropped); records trashed ${result.records.trashed}, purged ${result.records.purged}; assets trashed ${result.assets.trashed}, purged ${result.assets.purged}; ${cleared} stale upload objects cleared`,
   )
   await recordStoredBytes(ports, result.logical)
   const missing = [...result.records.missing, ...result.assets.missing]

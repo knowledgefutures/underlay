@@ -10,9 +10,10 @@
  * tombstone's grace is over; the sweep then frees the files nothing else lists.
  */
 import { v3 } from '@underlay/protocol'
-import { and, asc, eq, getTableColumns, isNull, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, getTableColumns, gt, inArray, isNull, lte, sql } from 'drizzle-orm'
 
 import { graceCutoff } from '../cleanup/mark.js'
+import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { syncCatalog } from './catalog.js'
@@ -117,4 +118,40 @@ export async function dropDeletedV3(ports: Ports): Promise<number> {
     await ports.db.update(T).set({ recordsDroppedAt: new Date() }).where(eq(T.collectionId, id))
   }
   return due.length
+}
+
+/**
+ * Drop v3 collections whose D1 row is gone and whose tombstone, if any, is past its grace:
+ * a collection converted but deleted before it was flipped (its tombstone names its v2
+ * layout), or anything else left behind. The sweep walks every v3 collection, so it passes
+ * their ids here. Returns how many it dropped.
+ */
+export async function dropOrphans(ports: Ports, collectionIds: string[]): Promise<number> {
+  const db = ports.db
+  const T = schema.collectionTombstones
+  let dropped = 0
+  for (const part of chunks(collectionIds, 90)) {
+    const live = new Set(
+      (
+        await db
+          .select({ id: schema.collections.id })
+          .from(schema.collections)
+          .where(inArray(schema.collections.id, part))
+      ).map((r) => r.id),
+    )
+    const grace = new Set(
+      (
+        await db
+          .select({ id: T.collectionId })
+          .from(T)
+          .where(and(inArray(T.collectionId, part), gt(T.deletedAt, graceCutoff())))
+      ).map((r) => r.id),
+    )
+    for (const id of part) {
+      if (live.has(id) || grace.has(id)) continue
+      await v3.deleteCollection(ports.stores.v3, id)
+      dropped++
+    }
+  }
+  return dropped
 }

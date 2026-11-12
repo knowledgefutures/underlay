@@ -290,6 +290,24 @@ describe('converting a v2 collection to v3', () => {
     expect(await snapshot(h, base, user)).toEqual(before)
   })
 
+  it('drops a converted collection deleted before it was flipped, after the grace', async () => {
+    const { h, user, c, base } = await v2Collection()
+    await requestConversion(h.ports, c.id, { flip: false, allowPrivate: false })
+    await h.drain()
+    expect(await v3.readDescription(h.ports.stores.v3, c.id)).not.toBe(null)
+    expect((await h.request(base, { method: 'DELETE', user })).status).toBe(200)
+    await runJob({ type: 'v3.sweep' }, h.ports)
+    // In its grace: kept.
+    expect(await v3.readDescription(h.ports.stores.v3, c.id)).not.toBe(null)
+    await h.ports.db
+      .update(schema.collectionTombstones)
+      .set({ deletedAt: new Date(0) })
+      .where(eq(schema.collectionTombstones.collectionId, c.id))
+    await runJob({ type: 'v3.sweep' }, h.ports)
+    expect(await v3.readDescription(h.ports.stores.v3, c.id)).toBe(null)
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(0)
+  })
+
   it('stops with the reason when a version does not match', async () => {
     const { h, c } = await v2Collection()
     // A v2 version whose semver v3 cannot derive: the bump from v1.1.0 can't give v1.3.0.
