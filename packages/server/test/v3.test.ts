@@ -15,6 +15,7 @@ import { lastRow, syncCatalog } from '../src/v3/catalog.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
 import { durableQueue, serially } from '../src/v3/queue.js'
+import { scanConfig } from '../src/v3/scans.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
 
@@ -554,6 +555,94 @@ describe.skipIf(!onV3)('v3 collections', () => {
       (await h.request('/api/collections/org/old/uploads', { method: 'POST', user, json: {} }))
         .status,
     ).toBe(409)
+  })
+
+  it('scans records under a tightened schema in key-range units, before landing', async () => {
+    const { h, user, c, base } = await setup()
+    const saved = { ...scanConfig }
+    Object.assign(scanConfig, { inlineRecords: 0, unitRecords: 40 })
+    try {
+      const Num = { type: 'object', properties: { n: { type: 'integer' } } }
+      const rows = Array.from({ length: 200 }, (_, i) => ({
+        id: `r${String(i).padStart(3, '0')}`,
+        type: 'Num',
+        data: { n: i },
+      }))
+      expect((await push(h, user, base, { schemas: { Num } }, rows)).status).toBe(201)
+      // Tightened so that 50 of the records left fail: the push waits on the scan's units, then fails.
+      const strict = { type: 'object', properties: { n: { type: 'integer', maximum: 149 } } }
+      let res = await push(h, user, base, { base: 'v1.0.0', schemas: { Num: strict } })
+      expect(res.status).toBe(202)
+      const sid = (await json(res)).session_id
+      let s = await json(await h.request(`${base}/push/${sid}`, { user }))
+      expect(s.status).toBe('failed')
+      expect(JSON.stringify(s.error)).toMatch(/does not satisfy the new schema/)
+      expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(1)
+      // The same, with the failing records replaced in the push: it scans in units and lands.
+      res = await push(
+        h,
+        user,
+        base,
+        { base: 'v1.0.0', schemas: { Num: strict } },
+        rows.slice(150).map((r) => ({ ...r, data: { n: 1 } })),
+      )
+      expect(res.status).toBe(202)
+      s = await json(await h.request(`${base}/push/${(await json(res)).session_id}`, { user }))
+      expect(s).toMatchObject({ status: 'committed', result: { semver: 'v2.0.0' } })
+      const { keys } = await h.ports.stores.internal.list('v3-scans/')
+      expect(keys).toEqual([])
+    } finally {
+      Object.assign(scanConfig, saved)
+    }
+  })
+
+  it('waits for both its files and its scan before an upload lands', async () => {
+    const { h, user, base } = await setup()
+    const send = async (rows: v3.LineRow[]) => {
+      const local = memoryStore()
+      const session = v3.newSession()
+      const built = await v3.buildFiles(rows.sort(v3.compareKey), v3.uploadTarget(local, session))
+      const id = (
+        await json(await h.request(`${base}/uploads`, { method: 'POST', user, json: {} }))
+      ).upload_id as string
+      for (const f of built) {
+        const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
+        const t = await json(
+          await h.request(`${base}/uploads/${id}/files`, {
+            method: 'POST',
+            user,
+            json: { id: f.id, size: bytes.byteLength },
+          }),
+        )
+        await h.bucket.put(String(t.url).replace('memory://put/', ''), bytes)
+      }
+      const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
+      await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } })
+      await h.drain()
+      return json(await h.request(`${base}/uploads/${id}`, { user }))
+    }
+    const Num = { type: 'object', properties: { n: { type: 'integer' } } }
+    const strict = { type: 'object', properties: { n: { type: 'integer', maximum: 149 } } }
+    const nums = Array.from({ length: 200 }, (_, i) =>
+      v3.rowFromRecord(`r${String(i).padStart(3, '0')}`, 'Num', { n: i }),
+    )
+    expect((await send([v3.rowFromRecord('Num', v3.SCHEMA_TYPE, Num), ...nums])).status).toBe(
+      'committed',
+    )
+    const saved = { ...scanConfig }
+    Object.assign(scanConfig, { inlineRecords: 0, unitRecords: 40 })
+    try {
+      let up = await send([v3.rowFromRecord('Num', v3.SCHEMA_TYPE, strict)])
+      expect(up.status).toBe('failed')
+      expect(JSON.stringify(up.error)).toMatch(/does not satisfy the new schema/)
+      up = await send([
+        v3.rowFromRecord('Num', v3.SCHEMA_TYPE, strict),
+        ...nums.slice(150).map((r) => v3.rowFromRecord(r.id, 'Num', { n: 0 })),
+      ])
+      expect(up).toMatchObject({ status: 'committed', result: { semver: 'v2.0.0' } })
+    } finally {
+      Object.assign(scanConfig, saved)
+    }
   })
 
   it('writes the D1 rows of a commit the bucket has and D1 lacks', async () => {

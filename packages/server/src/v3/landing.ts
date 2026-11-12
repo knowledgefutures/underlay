@@ -67,6 +67,9 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
         // The server built and checked these files itself, row by row, as they arrived.
         verify: false,
         validateRows: false,
+        // Records carried over under a tightened schema were scanned before landing
+        // (scans.ts), against this same head.
+        scan: false,
         attempts: 1,
       },
     )

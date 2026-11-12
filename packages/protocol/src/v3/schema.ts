@@ -56,6 +56,12 @@ export interface CheckOptions {
   /** Problems to collect before giving up. */
   maxProblems?: number
   /**
+   * With `validate`, whether to scan the records already there when a schema changes in a
+   * way that could reject one (default true). False when the caller has scanned them
+   * itself, in parts (`scanUnderSchema`), against the same head.
+   */
+  scan?: boolean
+  /**
    * Where the upload's files are: by default among the stored files; for an
    * upload being checked, its session (`uploads/<session>/<id>`).
    */
@@ -99,6 +105,7 @@ async function* uploadEntries(
   open: OpenUploaded,
   files: FileRef[],
   type: string,
+  from = '',
 ): AsyncGenerator<{ entry: Entry; line: () => Promise<Uint8Array> }> {
   const holding = files
     .filter(
@@ -113,7 +120,7 @@ async function* uploadEntries(
     const file = await open(f.id)
     const reader = file.reader({ readAhead: 1024 * 1024 })
     const cursor = new EntryCursor(reader, 1)
-    await cursor.seek({ type, id: '' })
+    await cursor.seek({ type, id: from })
     while (cursor.current && cursor.current.type === type) {
       const entry = cursor.current
       yield { entry, line: () => reader.line(entry) }
@@ -274,38 +281,13 @@ export async function checkUpload(
 
   // A schema change that could reject records already there: scan the ones the upload leaves.
   let scanned = 0
-  for (const type of validate ? changed : []) {
+  for (const type of validate && (opts.scan ?? true) ? changed : []) {
     const before = await currentSchema(type)
     const after = set.get(type)
     if (!before) continue
     if (after !== null && after !== undefined && schemaRelaxes(before.body, after)) continue
-    const v = after === null || after === undefined ? null : compileSchema(after)
-    const replaced = uploadEntries(open, files, type)
-    let next = await replaced.next()
-    for await (const group of mergeGroups(store, view, { type }, { ...read, readAhead: 1 << 20 })) {
-      const winner = group[group.length - 1]!
-      const e = winner.entry
-      if (e.kind === 'x') continue
-      while (
-        !next.done &&
-        compareKeys(next.value.entry.type, next.value.entry.id, e.type, e.id) < 0
-      ) {
-        next = await replaced.next()
-      }
-      // The upload replaces or removes this record: it was checked above, or is gone.
-      if (!next.done && next.value.entry.id === e.id) continue
-      scanned++
-      if (v === null) {
-        fail(`Type "${type}" still has records but its schema is removed`)
-        break
-      }
-      if (e.kind === 'w') continue
-      const errors = v(dataOf(await winner.reader.line(e)))
-      if (errors.length > 0) {
-        fail(`${type} ${JSON.stringify(e.id)} does not satisfy the new schema: ${errors[0]}`)
-      }
-    }
-    await replaced.return(undefined)
+    const r = await scanWith(store, view, open, files, type, after ?? null, {}, read, fail)
+    scanned += r
   }
 
   if (opts.checkAssets ?? true) {
@@ -325,6 +307,81 @@ export async function checkUpload(
     validated,
     scanned,
   }
+}
+
+/**
+ * Check the records of one type that a version carries over into an upload against the
+ * type's new schema (null: the upload removes the schema, so none may remain). Records the
+ * upload replaces or removes are skipped: they were checked as the upload's own. With
+ * `range`, only that stretch of the type's keys: one unit of a scan split across
+ * processes. Returns the records scanned and the problems found, at most `maxProblems`.
+ */
+export async function scanUnderSchema(
+  store: Store,
+  view: View,
+  upload: { files: FileRef[]; locate: (id: string) => string },
+  type: string,
+  schema: unknown | null,
+  range: { from?: string; to?: string } = {},
+  opts: { cache?: FileCache; maxProblems?: number } = {},
+): Promise<{ scanned: number; problems: string[] }> {
+  const problems: string[] = []
+  const max = opts.maxProblems ?? 20
+  const open = opener(store, { locate: upload.locate })
+  const fail = (what: string) => {
+    if (problems.length < max) problems.push(what)
+  }
+  const read = opts.cache ? { cache: opts.cache } : {}
+  const scanned = await scanWith(store, view, open, upload.files, type, schema, range, read, fail)
+  return { scanned, problems }
+}
+
+async function scanWith(
+  store: Store,
+  view: View,
+  open: OpenUploaded,
+  files: FileRef[],
+  type: string,
+  after: unknown | null,
+  range: { from?: string; to?: string },
+  read: { cache?: FileCache },
+  fail: (what: string) => void,
+): Promise<number> {
+  let scanned = 0
+  const v = after === null ? null : compileSchema(after)
+  const replaced = uploadEntries(open, files, type, range.from ?? '')
+  let next = await replaced.next()
+  const keys = {
+    type,
+    ...(range.from !== undefined ? { from: { type, id: range.from } } : {}),
+    ...(range.to !== undefined ? { to: { type, id: range.to } } : {}),
+  }
+  for await (const group of mergeGroups(store, view, keys, { ...read, readAhead: 1 << 20 })) {
+    const winner = group[group.length - 1]!
+    const e = winner.entry
+    if (e.type !== type) break
+    if (e.kind === 'x') continue
+    while (
+      !next.done &&
+      compareKeys(next.value.entry.type, next.value.entry.id, e.type, e.id) < 0
+    ) {
+      next = await replaced.next()
+    }
+    // The upload replaces or removes this record: it was checked as the upload's own, or is gone.
+    if (!next.done && next.value.entry.id === e.id) continue
+    scanned++
+    if (v === null) {
+      fail(`Type "${type}" still has records but its schema is removed`)
+      break
+    }
+    if (e.kind === 'w') continue
+    const errors = v(dataOf(await winner.reader.line(e)))
+    if (errors.length > 0) {
+      fail(`${type} ${JSON.stringify(e.id)} does not satisfy the new schema: ${errors[0]}`)
+    }
+  }
+  await replaced.return(undefined)
+  return scanned
 }
 
 /** The types that have rows in an upload, from its key entries: a seek for each type. */

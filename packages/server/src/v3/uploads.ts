@@ -38,6 +38,14 @@ import { type CommitStats, headView, schemasOf, syncCatalog, viewOf } from './ca
 import { copyAssetFromUpload } from './commit.js'
 import { commitsOf } from './queue.js'
 import { assetKey, privateMarkError } from './rules.js'
+import {
+  scanConfig,
+  scanFinished,
+  scanInline,
+  scanUnits,
+  startScan,
+  tightenedTypes,
+} from './scans.js'
 
 export const uploadLimits = {
   /** An upload idle longer than this expires; its objects are cleared by the sweep. */
@@ -317,10 +325,46 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     })
     return
   }
+  // Records the head carries over under a tightened schema: scanned here, or in units
+  // alongside the files' verification.
+  let scanUnitCount = 0
+  const tight = await tightenedTypes(ports, view, schemas)
+  if (view && tight.length > 0) {
+    const scanUpload = { files, session: upload.id }
+    const units = await scanUnits(ports, view, tight)
+    const [row] = await ports.db
+      .select({ typeCounts: schema.versions.typeCounts })
+      .from(schema.versions)
+      .where(and(eq(schema.versions.collectionId, cid), eq(schema.versions.hash, head!.id)))
+    const records = tight.reduce((n, t) => n + (row?.typeCounts[t.type] ?? 0), 0)
+    if (records <= scanConfig.inlineRecords) {
+      const found = await scanInline(ports, view, scanUpload, units)
+      if (found.length > 0) {
+        await fail(ports, upload.id, {
+          statusCode: 422,
+          error: 'Records refused by the new schema',
+          problems: found,
+        })
+        return
+      }
+    } else {
+      scanUnitCount = units.length
+      await startScan(ports, {
+        id: `upload-${upload.id}-${upload.attempts}`,
+        collectionId: cid,
+        version: view.version,
+        upload: scanUpload,
+        units,
+        then: { kind: 'upload', uploadId: upload.id, head: head?.id ?? null },
+      })
+    }
+  }
   await setUpload(ports, upload.id, 'verifying', {
     schemas,
     expectHead: head?.id ?? null,
     verified: 0,
+    scanUnits: scanUnitCount,
+    scanDone: scanUnitCount === 0,
   })
   await ports.jobs.enqueueBatch(
     files.map((f) => ({
@@ -476,17 +520,40 @@ async function fileStats(
   return s
 }
 
-/** Count a verified file; the last one queues the land. */
+/** Count a verified file, then land if that was the last thing waited on. */
 async function countVerified(ports: Ports, upload: UploadRow) {
-  const [row] = await ports.db
+  await ports.db
     .update(schema.v3Uploads)
     .set({ verified: sql`${schema.v3Uploads.verified} + 1`, updatedAt: new Date() })
     .where(and(eq(schema.v3Uploads.id, upload.id), eq(schema.v3Uploads.status, 'verifying')))
-    .returning({ verified: schema.v3Uploads.verified })
-  if (row && row.verified === ((upload.files ?? []) as unknown[]).length) {
-    if (await setUpload(ports, upload.id, 'verifying', { status: 'landing' }))
-      await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: upload.id })
+  await maybeLand(ports, upload.id)
+}
+
+/** Every file verified and the scan, if any, passed: move to landing (once) and queue it. */
+async function maybeLand(ports: Ports, id: string) {
+  const u = await getUpload(ports, id)
+  if (!u || u.status !== 'verifying') return
+  if (u.verified < ((u.files ?? []) as unknown[]).length || !u.scanDone) return
+  if (await setUpload(ports, id, 'verifying', { status: 'landing' }))
+    await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: id })
+}
+
+/** An upload's scan in units finished: failed with what it found, or on toward landing. */
+scanFinished.upload = async (ports, state, problems) => {
+  if (state.then.kind !== 'upload') return
+  const u = await getUpload(ports, state.then.uploadId)
+  // A scan for an older head (a land that lost and was prepared again) is not this one's.
+  if (!u || u.status !== 'verifying' || u.expectHead !== state.then.head) return
+  if (problems.length > 0) {
+    await fail(ports, u.id, {
+      statusCode: 422,
+      error: 'Records refused by the new schema',
+      problems,
+    })
+    return
   }
+  await setUpload(ports, u.id, 'verifying', { scanDone: true })
+  await maybeLand(ports, u.id)
 }
 
 registerJob('v3.uploadLand', async (job, ports) => {

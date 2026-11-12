@@ -11,6 +11,8 @@ CREATE TABLE `v3_uploads` (
 	`expect_head` text,
 	`schemas` text,
 	`verified` integer DEFAULT 0 NOT NULL,
+	`scan_units` integer DEFAULT 0 NOT NULL,
+	`scan_done` integer DEFAULT false NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`error` text,
 	`result` text,

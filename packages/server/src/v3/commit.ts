@@ -31,7 +31,7 @@ import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { headBase } from '../push/delta.js'
-import type { SessionCommitResult } from '../push/outcome.js'
+import { commitOutcome, type SessionCommitResult, settleSession } from '../push/outcome.js'
 import { mergeRuns, type RunEntry } from '../push/runs.js'
 import { loadInputs, schemaSetError, sessionRuns, type SessionRow } from '../push/session.js'
 import {
@@ -39,6 +39,7 @@ import {
   assetsOf,
   type CommitStats,
   headView,
+  lastRow,
   metadataOf,
   rowsOfType,
   schemasOf,
@@ -47,6 +48,14 @@ import {
 import { type Landed, type Landing } from './landing.js'
 import { commitsOf } from './queue.js'
 import { assetKey, privateMarkError } from './rules.js'
+import {
+  scanConfig,
+  scanFinished,
+  scanInline,
+  scanUnits,
+  startScan,
+  tightenedTypes,
+} from './scans.js'
 
 /**
  * Commit a session to its v3 collection: prepare the change here (the heavy part), then
@@ -112,6 +121,7 @@ async function prepareSession(
 
   await ensureCollection(store, cid)
   const view = await headView(store, cid)
+  const headCounts = (await lastRow(ports, cid))?.typeCounts ?? {}
   // The head the change is built against: the log's, which must be the D1 row's.
   const expectHead = view ? (await v3.findHead(store, cid))!.id : null
   if (expectHead !== (base?.hash ?? null)) {
@@ -173,6 +183,41 @@ async function prepareSession(
     base: base?.hash ?? null,
     message: session.message,
   })
+  const landing: Landing = {
+    collectionId: cid,
+    session: session.id,
+    change,
+    expectHead,
+    stats,
+    schemaChanges: [...schemaChanges],
+    metadata,
+    pushedBy: session.userId,
+    appId: session.appId,
+    actorId: session.actorId,
+    pushSessionId: session.id,
+  }
+  // Records the head carries over under a tightened schema: scanned here, or in units.
+  const tight = await tightenedTypes(ports, view, inputs.schemas)
+  if (view && tight.length > 0) {
+    const upload = { files: files.map(refOf), session: session.id }
+    const units = await scanUnits(ports, view, tight)
+    const records = tight.reduce((n, t) => n + (headCounts[t.type] ?? 0), 0)
+    if (records <= scanConfig.inlineRecords) {
+      const problems = await scanInline(ports, view, upload, units)
+      if (problems.length > 0) return invalid(problems)
+    } else {
+      await ports.stores.internal.put(landingKey(session.id), JSON.stringify(landing))
+      await startScan(ports, {
+        id: `push-${session.id}`,
+        collectionId: cid,
+        version: view.version,
+        upload,
+        units,
+        then: { kind: 'push', sessionId: session.id },
+      })
+      return { status: 'parallel' }
+    }
+  }
   return {
     written: files.map((f) => f.id),
     landing: {
@@ -189,6 +234,35 @@ async function prepareSession(
       pushSessionId: session.id,
     },
   }
+}
+
+const invalid = (problems: string[]): SessionCommitResult => ({
+  status: 'invalid',
+  errors: problems.map((p) => ({ recordId: '', type: '', errors: [p] })),
+  total: problems.length,
+})
+
+const landingKey = (sessionId: string) => `v3-scans/push-${sessionId}-landing.json`
+
+/** A push session's scan in units passed (or not): land its change, and settle the session. */
+scanFinished.push = async (ports, state, problems) => {
+  if (state.then.kind !== 'push') return
+  const sessionId = state.then.sessionId
+  const obj = await ports.stores.internal.get(landingKey(sessionId))
+  const outcome = await commitOutcome(ports, sessionId, async () => {
+    if (problems.length > 0) return invalid(problems)
+    if (!obj) return invalid(['The prepared change is gone; push again'])
+    const landing = JSON.parse(await obj.text()) as Landing
+    const landed = await commitsOf(ports).land(ports, landing)
+    return settled(
+      ports,
+      state.collectionId,
+      landed,
+      landing.change.files.map((f) => f.id),
+    )
+  })
+  await settleSession(ports, sessionId, outcome)
+  await ports.stores.internal.delete(landingKey(sessionId))
 }
 
 const emptyCommitStats = (): CommitStats => ({

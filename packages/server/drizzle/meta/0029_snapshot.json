@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7d0edcf5-df12-4688-8512-296d738a2cb4",
+  "id": "968aa340-7c6f-40d3-a425-71b9d0f720e4",
   "prevId": "da046055-1aee-4f12-910a-a397cc1cc54d",
   "tables": {
     "abuse_reports": {
@@ -3268,6 +3268,22 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "scan_units": {
+          "name": "scan_units",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "scan_done": {
+          "name": "scan_done",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "attempts": {
           "name": "attempts",

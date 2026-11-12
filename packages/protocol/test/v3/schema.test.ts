@@ -364,3 +364,60 @@ describe('checking files', () => {
     expect(jcs((await v3.readCommit(store, 'c', 2))!.commit.semver)).toBe('"v2.0.0"')
   })
 })
+
+describe('a schema scan in key-range units', () => {
+  it('finds what the whole scan finds, unit by unit, skipping what the upload replaces', async () => {
+    const store = memoryStore()
+    await v3.createCollection(store, 's')
+    const Work = { type: 'object', properties: { n: { type: 'integer' } } }
+    const rows = [
+      v3.rowFromRecord('Work', v3.SCHEMA_TYPE, Work),
+      ...Array.from({ length: 50 }, (_, i) =>
+        v3.rowFromRecord(`w${String(i).padStart(3, '0')}`, 'Work', { n: i }),
+      ),
+    ].sort(v3.compareKey)
+    const files = await v3.buildFiles(rows, v3.storeTarget(store), { cutBytes: 600 })
+    await v3.createCommit(store, 's', {
+      files: files.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref),
+      bump: 'minor',
+    })
+    const view = await v3.openView(store, 's')
+    // An upload that replaces w045 (it now fits), against a schema that refuses n > 30.
+    const strict = { type: 'object', properties: { n: { type: 'integer', maximum: 30 } } }
+    const session = v3.newSession()
+    const up = await v3.buildFiles(
+      [v3.rowFromRecord('w045', 'Work', { n: 1 })],
+      v3.uploadTarget(store, session),
+    )
+    const upload = { files: up, locate: (id: string) => v3.uploadKey(session, id) }
+    const whole = await v3.scanUnderSchema(
+      store,
+      view,
+      upload,
+      'Work',
+      strict,
+      {},
+      {
+        maxProblems: 100,
+      },
+    )
+    expect(whole.scanned).toBe(49)
+    expect(whole.problems).toHaveLength(18)
+    let scanned = 0
+    let problems = 0
+    const cuts = ['w010', 'w025', 'w045', 'w046']
+    for (let i = 0; i <= cuts.length; i++) {
+      const range = {
+        ...(i > 0 ? { from: cuts[i - 1]! } : {}),
+        ...(i < cuts.length ? { to: cuts[i]! } : {}),
+      }
+      const r = await v3.scanUnderSchema(store, view, upload, 'Work', strict, range, {
+        maxProblems: 100,
+      })
+      scanned += r.scanned
+      problems += r.problems.length
+    }
+    expect(scanned).toBe(49)
+    expect(problems).toBe(18)
+  })
+})

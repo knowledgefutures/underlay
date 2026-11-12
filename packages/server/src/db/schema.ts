@@ -626,6 +626,12 @@ export const v3Uploads = sqliteTable(
     schemas: json<Record<string, unknown>>('schemas'),
     /** Files verified so far (a job each), and the land attempts. */
     verified: integer('verified').notNull().default(0),
+    /**
+     * A schema scan of the head in units (v3/scans.ts): how many, and whether it passed.
+     * The upload lands once its files are verified and its scan, if any, has passed.
+     */
+    scanUnits: integer('scan_units').notNull().default(0),
+    scanDone: bool('scan_done').notNull().default(false),
     attempts: integer('attempts').notNull().default(0),
     error: json<{ statusCode: number; error: string; problems?: string[] }>('error'),
     result: json<Record<string, unknown>>('result'),
