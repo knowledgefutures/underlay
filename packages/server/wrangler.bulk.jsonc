@@ -59,6 +59,7 @@
             "class_name": "CollectionCommits",
             "script_name": "underlay-staging",
           },
+          { "name": "POOL", "class_name": "V3Pool", "script_name": "underlay-staging" },
         ],
       },
       "d1_databases": [
@@ -121,6 +122,7 @@
             "class_name": "CollectionCommits",
             "script_name": "underlay-prod",
           },
+          { "name": "POOL", "class_name": "V3Pool", "script_name": "underlay-prod" },
         ],
       },
       "d1_databases": [

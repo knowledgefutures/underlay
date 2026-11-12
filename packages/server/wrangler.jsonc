@@ -48,7 +48,11 @@
   // v3 commits land one at a time per collection, in a Durable Object for each
   // (src/v3/queue.ts, `CollectionCommits` in worker.ts; v3-deploy-plan.md, decision 4).
   // The class lives in this Worker; the bulk Worker binds it by script_name.
-  "migrations": [{ "tag": "v3-commits", "new_sqlite_classes": ["CollectionCommits"] }],
+  // V3Pool: CPU-heavy v3 jobs the bulk Worker hands off (worker.ts, V3_POOL_SIZE).
+  "migrations": [
+    { "tag": "v3-commits", "new_sqlite_classes": ["CollectionCommits"] },
+    { "tag": "v3-pool", "new_sqlite_classes": ["V3Pool"] },
+  ],
   "env": {
     "staging": {
       "name": "underlay-staging",
@@ -74,7 +78,10 @@
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
       ],
       "durable_objects": {
-        "bindings": [{ "name": "COMMITS", "class_name": "CollectionCommits" }],
+        "bindings": [
+          { "name": "COMMITS", "class_name": "CollectionCommits" },
+          { "name": "POOL", "class_name": "V3Pool" },
+        ],
       },
       "d1_databases": [
         {
@@ -143,7 +150,10 @@
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
       ],
       "durable_objects": {
-        "bindings": [{ "name": "COMMITS", "class_name": "CollectionCommits" }],
+        "bindings": [
+          { "name": "COMMITS", "class_name": "CollectionCommits" },
+          { "name": "POOL", "class_name": "V3Pool" },
+        ],
       },
       "d1_databases": [
         {

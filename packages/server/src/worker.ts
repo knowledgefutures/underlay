@@ -74,6 +74,14 @@ export interface Env {
    * it, commits land through the isolate's own queue (v3/queue.ts).
    */
   COMMITS?: CommitsNamespace
+  /**
+   * A pool of Durable Objects that run the CPU-heavy v3 jobs (`POOLED_JOBS`) the bulk queue
+   * hands them, `V3_POOL_SIZE` of them (unset or 0: no pool, the jobs run in the consumer).
+   * Queue invocations at once share an isolate's one thread and 128 MB; objects in the pool
+   * are spread across isolates.
+   */
+  POOL?: CommitsNamespace
+  V3_POOL_SIZE?: string
   INTERNAL_PREFIX?: string
   /**
    * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
@@ -261,9 +269,12 @@ export default {
       }
       return
     }
+    const pool = Number(env.V3_POOL_SIZE ?? 0)
     const run = async (msg: (typeof batch.messages)[number]) => {
       try {
-        await runJob(msg.body, ports)
+        if (env.POOL && pool > 0 && POOLED_JOBS.has(msg.body.type))
+          await pooled(env.POOL, pool, msg.body)
+        else await runJob(msg.body, ports)
         msg.ack()
       } catch (err) {
         console.error(
@@ -292,6 +303,41 @@ export default {
     const ports = makePorts(env, ctx)
     await ports.jobs.enqueue({ type: 'maintenance.sweep' })
   },
+}
+
+/** v3 jobs that are mostly CPU (hashing, parsing, validating, merging): run in the pool when there is one. */
+const POOLED_JOBS: ReadonlySet<string> = new Set(['v3.uploadVerify', 'v3.scanUnit', 'v3.mergeUnit'])
+
+/** Run a job in one of the pool's objects, picked at random. */
+async function pooled(ns: CommitsNamespace, size: number, job: JobMessage): Promise<void> {
+  const stub = ns.get(ns.idFromName(`pool-${Math.floor(Math.random() * size)}`))
+  const res = await stub.fetch(
+    new Request('https://pool/run', { method: 'POST', body: JSON.stringify(job) }),
+  )
+  if (!res.ok) throw new Error(`pool: ${job.type} ${res.status} ${await res.text()}`)
+}
+
+/** One of the pool: runs the jobs it is sent, one at a time. */
+export class V3Pool {
+  readonly #run = serially()
+  constructor(
+    readonly state: { waitUntil(p: Promise<unknown>): void },
+    readonly env: Env,
+  ) {}
+
+  async fetch(req: Request): Promise<Response> {
+    const job = (await req.json()) as JobMessage
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => this.state.waitUntil(p),
+      passThroughOnException() {},
+    } as unknown as ExecutionContext
+    try {
+      await this.#run('job', () => runJob(job, makePorts(this.env, ctx)))
+      return new Response('ok')
+    } catch (err) {
+      return new Response(String((err as Error)?.stack ?? err), { status: 500 })
+    }
+  }
 }
 
 /**
