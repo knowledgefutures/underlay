@@ -260,11 +260,13 @@ try {
       has: ['Versions — org/authors', 'v1.0.0', 'First load of authors', 'ulv2:'],
     },
     { path: '/org/authors/v/1.0.0/records', status: 200, has: ['Ada Lovelace'] },
-    // A record's page: its data and history; rows link to it.
+    // A record's page: its data and history; rows link to it. It no longer links to where
+    // else the record appears (the reference index does not cover v3 collections yet).
     {
       path: '/org/authors/v/1.0.0/records/Author/ada',
       status: 200,
-      has: ['Ada Lovelace', 'History in this collection', 'added', 'where else it appears'],
+      has: ['Ada Lovelace', 'History in this collection', 'added'],
+      lacks: ['where else it appears'],
     },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 404 },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 200, has: ['Kurt'], user: 'u1' },
