@@ -44,6 +44,13 @@ export interface CheckOptions {
   verify?: boolean
   /** Validate records against their schemas. Default true. */
   validate?: boolean
+  /**
+   * With `validate`, whether to check the upload's own rows too (default true). False
+   * for a builder that already checked each row against the schemas the upload sets,
+   * such as a server building a push it validated as it arrived: the records already in
+   * the collection are still scanned when a schema changes.
+   */
+  validateRows?: boolean
   /** Require every `$asset` row's asset to be stored. Default true. */
   checkAssets?: boolean
   /** Problems to collect before giving up. */
@@ -147,6 +154,7 @@ export async function checkUpload(
   // The schemas sit next to each other, so their lookups share readers and fetch a block once.
   const schemaRead = { ...read, readers: new Map<string, FileReader>() }
   const validate = opts.validate ?? true
+  const validateRows = validate && (opts.validateRows ?? true)
   const open = opener(store, opts)
 
   // The schemas the upload sets, and the ones in force before it.
@@ -230,7 +238,7 @@ export async function checkUpload(
         id: f.id,
         labeled: false,
         canonical: true,
-        ...(validate ? { onRecord } : {}),
+        ...(validateRows ? { onRecord } : {}),
       })
       const c = v.content
       if (
@@ -250,7 +258,7 @@ export async function checkUpload(
       const file = await open(f.id)
       if (file.content.labeled) {
         fail(`File ${f.id} is labeled: a commit names only files with no commit numbers in them`)
-      } else if (validate && f.first) {
+      } else if (validateRows && f.first) {
         // The records are still validated.
         const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
         const cursor = new EntryCursor(reader, 1)

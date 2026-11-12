@@ -149,7 +149,13 @@ async function commitInTurn(ports: Ports, session: SessionRow): Promise<SessionC
       store,
       cid,
       { change },
-      { session: session.id, signer: await ports.signer(), cache, verify: false },
+      {
+        session: session.id,
+        signer: await ports.signer(),
+        cache,
+        verify: false,
+        validateRows: false,
+      },
     )
   } catch (err) {
     if (!(err instanceof v3.UploadError)) throw err
@@ -410,7 +416,7 @@ export async function commitV3Metadata(
       store,
       collectionId,
       { change },
-      { session, signer: await ports.signer(), verify: false },
+      { session, signer: await ports.signer(), verify: false, validateRows: false },
     )
     const before = await lastRow(ports, collectionId)
     const version = await recordCommit(ports, {
