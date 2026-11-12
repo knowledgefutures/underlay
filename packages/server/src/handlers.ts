@@ -40,6 +40,7 @@ import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
+import { v3FsckStep, type V3FsckCursor } from './v3/fsck.js'
 import { expireUploads, recoverUploads } from './v3/uploads.js'
 import './v3/jobs.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
@@ -169,7 +170,7 @@ export const fsckConfig = { changesPerJob: 1_000_000 }
 interface FsckState extends FsckReport {
   running: boolean
   step: number
-  cursor: FsckCursor | null
+  cursor: FsckCursor | V3FsckCursor | null
   fileBytes: boolean
   startedAt: string
   checkedAt: string | null
@@ -211,16 +212,7 @@ registerJob('repo.fsckStep', async (job, ports) => {
   const obj = await ports.stores.internal.get(fsckKey(collectionId))
   const state = obj ? (JSON.parse(await obj.text()) as FsckState) : null
   if (!state?.running || state.step !== Number(job.step)) return // finished, or a duplicate
-  const repo = await ports.stores.forCollection(collectionId)
-  const own = (await ports.signer()).publicKey
-  const info = await readCollectionInfo(repo, collectionId)
-  const { report, cursor } = await fsckStep(repo, {
-    collectionId,
-    trustedKeys: [own, ...(info?.keys ?? []).filter((k) => k.id !== own.id)],
-    fileBytes: state.fileBytes,
-    cursor: state.cursor,
-    changeBudget: fsckConfig.changesPerJob,
-  })
+  const { report, cursor } = await fsckOne(ports, collectionId, state)
   const room = Math.max(0, 100 - state.errors.length)
   const next: FsckState = {
     ...state,
@@ -242,6 +234,30 @@ registerJob('repo.fsckStep', async (job, ports) => {
   if (cursor) await ports.jobs.enqueue({ type: 'repo.fsckStep', collectionId, step: next.step })
   else if (!next.ok) console.error(`[fsck] ${collectionId}:`, next.errors.slice(0, 10))
 })
+
+/** One step of fsck, for the collection's layout. */
+async function fsckOne(
+  ports: Ports,
+  collectionId: string,
+  state: FsckState,
+): Promise<{ report: FsckReport; cursor: FsckCursor | V3FsckCursor | null }> {
+  if ((await ports.stores.layoutOf(collectionId)) === 'v3') {
+    return v3FsckStep(ports, collectionId, {
+      fileBytes: state.fileBytes,
+      cursor: state.cursor as V3FsckCursor | null,
+    })
+  }
+  const repo = await ports.stores.forCollection(collectionId)
+  const own = (await ports.signer()).publicKey
+  const info = await readCollectionInfo(repo, collectionId)
+  return fsckStep(repo, {
+    collectionId,
+    trustedKeys: [own, ...(info?.keys ?? []).filter((k) => k.id !== own.id)],
+    fileBytes: state.fileBytes,
+    cursor: state.cursor as FsckCursor | null,
+    changeBudget: fsckConfig.changesPerJob,
+  })
+}
 
 registerJob('repo.repairLog', async (job, ports) => {
   const collectionId = String(job.collectionId)

@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 
 import { hashRecord, memoryStore, v3 } from '@underlay/protocol'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
@@ -865,6 +865,47 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(new Uint8Array(await (await h.request(`${base}/export`)).arrayBuffer())).toEqual(bytes)
     const tar = await h.request(`${base}/export?format=tar&version=v1.0.0`)
     expect(tar.headers.get('content-type')).toBe('application/x-tar')
+  })
+
+  it('checks a collection with fsck and names what is wrong', async () => {
+    const { h, user, c, base } = await setup()
+    const file = 'file bytes'
+    const fileHash = createHash('sha256').update(file).digest('hex')
+    await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+    const Doc = { type: 'object' }
+    let res = await push(h, user, base, { schemas: { Doc } }, [
+      { id: 'a', type: 'Doc', data: { f: { $file: `sha256:${fileHash}` } } },
+    ])
+    expect(res.status).toBe(201)
+    res = await push(h, user, base, { base: 'v1.0.0' }, [{ id: 'b', type: 'Doc', data: {} }])
+    expect(res.status).toBe(201)
+    const check = async (fileBytes: boolean) => {
+      await runJob({ type: 'repo.fsck', collectionId: c.id, fileBytes }, h.ports)
+      await h.drain()
+      const obj = await h.ports.stores.internal.get(`fsck/${c.id}.json`)
+      return JSON.parse(await obj!.text())
+    }
+    expect(await check(true)).toMatchObject({
+      ok: true,
+      running: false,
+      versions: 2,
+      files: 1,
+      leaves: 2,
+      log: 'trusted keys',
+    })
+    // A D1 row that names another commit, and a file cut short.
+    await h.ports.db
+      .update(schema.versions)
+      .set({ hash: 'ulv3:' + '0'.repeat(64) })
+      .where(and(eq(schema.versions.collectionId, c.id), eq(schema.versions.seq, 1)))
+    const [f] = (await v3.currentFiles(h.ports.stores.v3, c.id)).files
+    const key = v3.recordKey(f!.id)
+    const bytes = await (await h.ports.stores.v3.get(key))!.bytes()
+    await h.ports.stores.v3.put(key, bytes.subarray(0, bytes.byteLength - 10))
+    const broken = await check(true)
+    expect(broken.ok).toBe(false)
+    expect(broken.errors.join('\n')).toMatch(/Version 1 is ulv3:[0-9a-f]+ in the log/)
+    expect(broken.errors.length).toBeGreaterThanOrEqual(2)
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {
