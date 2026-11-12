@@ -301,7 +301,7 @@ const refOf = (f: v3.FileRef): v3.FileRef => ({
 })
 
 /** Write the collection's description at its first commit (its D1 row came first). */
-async function ensureCollection(store: Ports['stores']['v3'], id: string) {
+export async function ensureCollection(store: Ports['stores']['v3'], id: string) {
   if (await v3.readDescription(store, id)) return
   try {
     await v3.createCollection(store, id)
@@ -484,7 +484,7 @@ export async function copyAssetFromUpload(
 }
 
 /** Copy an uploaded file's bytes to `assets/<sha256>` in the v3 area, unless already there. */
-async function copyAsset(ports: Ports, storageKey: string, hash: string, size: number) {
+export async function copyAsset(ports: Ports, storageKey: string, hash: string, size: number) {
   const store = ports.stores.v3
   if (await store.head(assetKey(hash))) return
   const files = ports.stores.fileBytes

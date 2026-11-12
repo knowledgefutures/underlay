@@ -58,6 +58,7 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'v3.mergeUnit',
   'v3.finishRebuild',
   'v3.sweep',
+  'v3.convert',
   // A key range of a schema scan (v3/scans.ts).
   'v3.scanUnit',
   // v3 client-built uploads (v3/uploads.ts): a verify hashes a whole file.

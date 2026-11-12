@@ -816,7 +816,7 @@ async function fileCounts(a: VersionView | null, b: VersionView) {
   return { added, removed }
 }
 
-type TypedDiff = {
+export type TypedDiff = {
   type: string
   key: string
   before: RecordEntry | null
@@ -832,7 +832,7 @@ type TypedDiff = {
  * sees both, unless `moves` asks for those; to a public reader it appears or
  * disappears.
  */
-async function* diffAll(
+export async function* diffAll(
   from: VersionView | null,
   to: VersionView,
   cursor: { t: string; k: string } | null,

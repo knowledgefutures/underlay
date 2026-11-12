@@ -152,10 +152,13 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     return layout === 'f' ? forCollectionRuns(locationId, collectionId) : forLocation(locationId)
   }
 
-  /** A collection's primary location and layout, from D1 or the isolate's cache. */
-  const primaryOf = async (collectionId: string) => {
+  /**
+   * A collection's primary location and layout, from D1 or the isolate's cache. `fresh`
+   * reads D1: a collection's layout changes when it is converted to v3 (or back).
+   */
+  const primaryOf = async (collectionId: string, fresh = false) => {
     const hit = primaryCache.get(collectionId)
-    if (hit && Date.now() - hit.at < PRIMARY_TTL_MS) return hit
+    if (!fresh && hit && Date.now() - hit.at < PRIMARY_TTL_MS) return hit
     const [row] = await db
       .select({
         locationId: schema.placements.locationId,
@@ -180,11 +183,14 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     forLocation,
     newCollections: platform.newCollections ?? 'today',
     async forCollection(collectionId: string): Promise<Repo> {
-      const p = await primaryOf(collectionId)
+      let p = await primaryOf(collectionId)
+      // Cached as v3 but asked for on v2's path: it may have been put back on v2.
+      if (p.layout === 'v3') p = await primaryOf(collectionId, true)
       return located(p.locationId, collectionId, p.layout)
     },
     async layoutOf(collectionId: string): Promise<CollectionLayout> {
-      return (await primaryOf(collectionId)).layout
+      // Always from D1: callers choose v2's or v3's path by it, and a conversion flips it.
+      return (await primaryOf(collectionId, true)).layout
     },
     v3: new PrefixedStore(bucketWithS3(platform.bucket, files), platform.v3Prefix ?? 'v3'),
     v3BucketKey: (key) => `${platform.v3Prefix ?? 'v3'}/${key}`,

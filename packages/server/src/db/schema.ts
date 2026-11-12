@@ -603,6 +603,68 @@ export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'ex
  * metadata, the declared file list) are in the blob store under sessions/<id>/;
  * runs of uploaded manifest entries and records are sessions/<id>/runs/….
  */
+/** One v2 version converted to a v3 commit (v3/convert.ts). */
+export interface ConvertedVersion {
+  seq: number
+  semver: string
+  /** The v2 version id; the alias once flipped (decision 2). */
+  v2Hash: string
+  /** The v3 commit id. */
+  id: string
+  signature: string | null
+  typeCounts: Record<string, number>
+  recordBytes: number
+  assets: number
+  assetBytes: number
+  /** The row's v2 counts, put back if the collection goes back to v2. */
+  v2: {
+    recordCount: number
+    publicRecordCount: number
+    fileCount: number
+    totalBytes: number
+    publicFileCount: number
+    publicTotalBytes: number
+    typeCounts: Record<string, number>
+    publicTypeCounts: Record<string, number>
+    hasPrivate: boolean
+    signature: string | null
+    assetBytes: number | null
+  }
+}
+
+/**
+ * The conversion of a v2 collection to v3 (v3-deploy-plan.md, Phase 4). queued → converting
+ * (a job a version, each checked against v2) → converted → flipped (one conditional D1
+ * batch, with `flip`); reverted by a steward while no v3 commit follows; failed with a
+ * reason. A row can be added with `wrangler d1 execute` as well as by the admin route.
+ */
+export const v3Conversions = sqliteTable('v3_conversions', {
+  collectionId: text('collection_id')
+    .primaryKey()
+    .references(() => collections.id, { onDelete: 'cascade' }),
+  status: text('status', {
+    enum: ['queued', 'converting', 'converted', 'flipped', 'reverted', 'failed'],
+  })
+    .notNull()
+    .default('queued'),
+  /** Flip the collection to v3 once every version is converted and checked. */
+  flip: bool('flip').notNull().default(false),
+  /** Flip even though the collection has private records or types (decision 1). */
+  allowPrivate: bool('allow_private').notNull().default(false),
+  /** What it was, for the way back. */
+  fromLayout: text('from_layout', { enum: ['today', 'f'] }),
+  fromPublic: bool('from_public'),
+  fromHistoryBytes: integer('from_history_bytes'),
+  /** Some version has a private record or type: it converts as a private collection. */
+  private: bool('private').notNull().default(false),
+  versions: json<ConvertedVersion[]>('versions')
+    .notNull()
+    .default(sql`'[]'`),
+  error: text('error'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at'),
+})
+
 /**
  * A v3 upload built by the client (v3-deploy-plan.md, Phase 2): its sorted-record-files go
  * straight to the bucket by presigned URL, under `v3/uploads/<id>/`, and its commit names

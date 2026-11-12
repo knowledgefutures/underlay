@@ -40,9 +40,10 @@ import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
+import { queueConversions } from './v3/convert.js'
 import { v3FsckStep, type V3FsckCursor } from './v3/fsck.js'
-import { expireUploads, recoverUploads } from './v3/uploads.js'
 import './v3/jobs.js'
+import { expireUploads, recoverUploads } from './v3/uploads.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
@@ -140,6 +141,7 @@ registerJob('maintenance.sweep', async (_job, ports) => {
   try {
     await expireUploads(ports)
     await recoverUploads(ports)
+    await queueConversions(ports)
     await ports.jobs.enqueue({ type: 'v3.sweep' })
   } catch (err) {
     console.error('[v3] cron steps failed:', err)
