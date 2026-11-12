@@ -26,6 +26,7 @@ import {
   hashSchema,
   iterate,
   jcs,
+  MissingRecordError,
   parseSemver,
   RepoSource,
   sha256Hex,
@@ -409,7 +410,13 @@ export async function convertStep(ports: Ports, collectionId: string): Promise<v
       return
     }
   } catch (err) {
-    if (!(err instanceof ConvertError) && (err as Error).name !== 'InputRuleError') throw err
+    // What will not change on a retry stops the conversion: a mismatch, a record v3 refuses,
+    // a record v2 itself has lost. Anything else is retried.
+    const permanent =
+      err instanceof ConvertError ||
+      err instanceof MissingRecordError ||
+      (err as Error).name === 'InputRuleError'
+    if (!permanent) throw err
     console.error(`[v3.convert] ${collectionId} stopped:`, (err as Error).message)
     await setConversion(ports, collectionId, { status: 'failed', error: (err as Error).message })
     return
