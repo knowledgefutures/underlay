@@ -112,6 +112,27 @@ export const FINDINGS = {
       todo: 'Queue commits to a collection in the server, and land them in turn.',
     },
   },
+  cut: `<p>After the measurements above, uploads and rebuilds were changed to cut files by key toward 32 MB stored (128 MiB of lines), with a cap of four times that. The same rows then give the same files however an upload is split, and a later takedown, correction, or folded-back edit rewrites about 32 MB where it rewrote about 200 MB. Rounds 5 and 6 measured what that costs (box, commits <code>b6e561d</code> and <code>8733959</code>). Everything above this section is on the earlier cut.</p>
+<div class="scroll"><table>
+<thead><tr><th></th><th>Cut by size (before)</th><th>Cut by key, 32 MB</th></tr></thead>
+<tbody>
+<tr><td><b>Crossref sample, 7.2M records, the cut at its true size</b></td><td></td><td></td></tr>
+<tr><td>Files in the first load</td><td>60, about 215 MB each</td><td>445, about 29 MB each</td></tr>
+<tr><td>Building and verifying</td><td>468 s and 394 s</td><td>548 s and 411 s</td></tr>
+<tr><td>The first commit</td><td>15 KB</td><td>109 KB; 18 s and 1,791 requests to install the files</td></tr>
+<tr><td>One record, once rebuilt</td><td>7 requests warm, 20 cold</td><td>6 warm, 20 cold</td></tr>
+<tr><td><b>12M records, the cut scaled down to 2 MB files (Crossref’s file count on a fifteenth of the data)</b></td><td></td><td></td></tr>
+<tr><td>Files in the first load</td><td>297</td><td>9,444</td></tr>
+<tr><td>First load, upload to readable</td><td>30.6 min</td><td>40.6 min, 6 of them installing files at the commit</td></tr>
+<tr><td>A day’s commit</td><td>35 requests, 3.1 s</td><td>71 requests, 3.8 s</td></tr>
+<tr><td>The same 1,000-change upload</td><td>19 requests, 1.1 s</td><td>23 requests, 1.4 s</td></tr>
+<tr><td>One record, policy on</td><td>6 requests warm, 16 cold</td><td>3 warm, 14 cold</td></tr>
+<tr><td>Merging 30 days</td><td>80 s</td><td>275 s</td></tr>
+<tr><td>Recreating 61 commits’ files</td><td>3.6 min, all to their ids</td><td>14.3 min, all to their ids</td></tr>
+<tr><td>A fork writes</td><td>0.2 MB</td><td>4.8 MB (the file lists)</td></tr>
+<tr><td>Layout files kept (not pruned yet)</td><td>7.9 MB</td><td>253 MB</td></tr>
+</tbody></table></div>
+<p class="note">The costs are those of a longer file list: a bigger first commit and layout file, more requests to install a first load, and more per-file work in merges. Reads are the same or cheaper. The 12M rows overstate it for a collection that size, which at the true cut would have about 600 files, and are closer to what Crossref’s 6,500 would see. For the server: install a first load’s files with two requests each and more of them at once, and prune old layout files.</p>`,
   next: `<ol>
 <li><b>Queue commits to a collection</b> in the server, where today they race.</li>
 <li><b>Decide the rebuild ratio.</b> 10 keeps one record at about 10 requests at Crossref’s size; 4 makes it about 7 for a fifth more rewriting.</li>
