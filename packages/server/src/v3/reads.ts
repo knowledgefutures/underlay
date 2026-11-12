@@ -395,8 +395,11 @@ export async function v3Diff(
   const rows: v3.ChangeRow[] = []
   let more = false
   const t0 = Date.now()
+  // A change to a blocked record (the denylist) isn't served, as in v2.
+  const denied = await deniedHashes(c.var.ports.db)
   for await (const ch of v3.changes(store, v.view, since, range, cached)) {
     if (ch.type.startsWith('$')) continue
+    if (ch.after && denied.has(ch.after.hash)) continue
     if (rows.length === q.limit) {
       more = true
       break
@@ -522,8 +525,10 @@ export async function v3Manifest(
       before: true,
       batch: q.limit + 1,
     }
+    const denied = await deniedHashes(c.var.ports.db)
     for await (const ch of v3.changes(store, v.view, from.seq, range, cached)) {
       if (ch.type.startsWith('$')) continue
+      if (ch.after && denied.has(ch.after.hash)) continue
       if (n === q.limit) {
         next = encodeCursor(last!.type, last!.id)
         break

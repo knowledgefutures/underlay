@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { QueueJobs, runJob } from '../src/jobs.js'
+import { forgetDenylist } from '../src/lib/limits.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
 import { dropDeletedV3 } from '../src/v3/fork.js'
 import { v3JobConfig } from '../src/v3/jobs.js'
@@ -785,6 +786,27 @@ describe.skipIf(!onV3)('v3 collections', () => {
       .where(eq(schema.collections.id, fork.id))
     expect(row!.storedBytes).toBeGreaterThan(0)
     expect(row!.storedAt).not.toBe(null)
+  })
+
+  it('serves no blocked record: not in a page, the record, the diff, or the manifest delta', async () => {
+    const { h, user, base } = await setup()
+    await push(h, user, base, { schemas: { Author } }, [author('a', 'A')])
+    await push(h, user, base, { base: 'v1.0.0' }, [author('b', 'Spam'), author('c', 'C')])
+    const page = await json(await h.request(`${base}/versions/latest/records?type=Author`))
+    const spam = page.records.find((r: { id: string }) => r.id === 'b')
+    await h.ports.db
+      .insert(schema.denylist)
+      .values({ hash: spam.hash, kind: 'record', reason: 'spam' })
+    forgetDenylist(h.ports.db)
+    const ids = (rs: { id: string }[]) => rs.map((r) => r.id)
+    expect(
+      ids((await json(await h.request(`${base}/versions/latest/records?type=Author`))).records),
+    ).toEqual(['a', 'c'])
+    expect((await h.request(`${base}/versions/latest/records/Author/b`)).status).toBe(404)
+    const diff = await json(await h.request(`${base}/versions/latest/diff`))
+    expect(ids(diff.added)).toEqual(['c'])
+    const manifest = await json(await h.request(`${base}/versions/latest/manifest?since=v1.0.0`))
+    expect(ids(manifest.delta.added)).toEqual(['c'])
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {
