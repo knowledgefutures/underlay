@@ -31,8 +31,13 @@ step() {
     exit 1
   fi
 }
-step load-by-size suite crossref --label crossref-by-size --files "$files" --days 6 --by-size --only load,daily
+# A third argument `key-only` leaves out the by-size half (it does not change with the target).
+if [ "$3" != key-only ]; then
+  step load-by-size suite crossref --label crossref-by-size --files "$files" --days 6 --by-size --only load,daily
+fi
 step load-by-key suite crossref --label crossref-by-key --files "$files" --days 6 --only load,daily
-step benefit-by-size suite crossref-extra --label crossref-by-size --files "$files" --by-size --benefit
+if [ "$3" != key-only ]; then
+  step benefit-by-size suite crossref-extra --label crossref-by-size --files "$files" --by-size --benefit
+fi
 step benefit-by-key suite crossref-extra --label crossref-by-key --files "$files" --benefit
 echo "=== all done $(date)" >> "$L"

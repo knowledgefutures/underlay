@@ -372,7 +372,7 @@ sweep/                            the sweep's own state
   upload's are (below). Replaced rows stay in the same file as the rows that replaced them.
 - **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by
   one rule. A file ends after a key picked by a hash of the key against its row's size in
-  bytes of lines, toward 128 MiB of lines a file (about 32 MB stored); at a cap of four times
+  bytes of lines, toward 512 MiB of lines a file (about 128 MB stored); at a cap of four times
   that, or 524,288 entries (262,144 in a rebuild); and where the type changes once the file
   holds 16 MiB. The rule looks only at the rows, never at how they compress or how the work
   was split: a client that builds an upload in parts ends each part on a key the hash picks.
