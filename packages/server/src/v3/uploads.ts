@@ -324,6 +324,7 @@ async function* typeEntries(ports: Ports, upload: string, files: v3.FileRef[], t
 }
 
 registerJob('v3.uploadPrepare', async (job, ports) => {
+  const t0 = Date.now()
   const upload = await getUpload(ports, String(job.uploadId))
   if (!upload || upload.status !== 'verifying') return
   const store = ports.stores.v3
@@ -465,6 +466,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     scanUnits: scanUnitCount,
     scanDone: scanUnitCount === 0,
   })
+  const t1 = Date.now()
   await fanOut(
     ports,
     files.map((f) => ({
@@ -474,9 +476,14 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
       head: head?.id ?? null,
     })),
   )
+  const t2 = Date.now()
   // With a pool the files are verified by now: land here, not a queue hop later. (The land
   // job queued when the last file was counted finds it claimed and stops.)
   if (ports.pool) await landUpload(ports, upload.id)
+  console.log(
+    `[v3.upload] ${upload.id}: ${files.length} files, prepare ${t1 - t0}ms, verify ${t2 - t1}ms` +
+      (ports.pool ? `, land ${Date.now() - t2}ms` : ''),
+  )
 })
 
 /** What one verified file changes in the head it was checked against. */
@@ -693,6 +700,7 @@ async function landUpload(ports: Ports, uploadId: string) {
   const upload = await getUpload(ports, uploadId)
   if (!upload || upload.status !== 'landing') return
   if (!(await setUpload(ports, upload.id, 'landing', { status: 'committing' }))) return
+  const t0 = Date.now()
   const internal = ports.stores.internal
   const files = (upload.files ?? []) as v3.FileRef[]
   const stats: CommitStats = {
@@ -740,6 +748,7 @@ async function landUpload(ports: Ports, uploadId: string) {
     return
   }
   const { schemaChanges, metadata, bump } = JSON.parse(await obj.text()) as Prepared
+  const t1 = Date.now()
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,
     session: upload.id,
@@ -755,8 +764,12 @@ async function landUpload(ports: Ports, uploadId: string) {
     // The version row names the upload: recovery finds a commit a land job made and lost.
     pushSessionId: upload.id,
   })
+  const t2 = Date.now()
   if (landed.status === 'committed') {
     await settleCommitted(ports, upload.id, landed.versionId)
+    console.log(
+      `[v3.upload] ${upload.id} landed: markers ${t1 - t0}ms, commit ${t2 - t1}ms, settle ${Date.now() - t2}ms`,
+    )
     return
   }
   if (landed.status === 'invalid') {
