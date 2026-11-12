@@ -563,3 +563,44 @@ describe('cutting by key and keeping untouched files', () => {
     expect(f).toBeGreaterThan(p * 0.95)
   })
 })
+
+describe('a merge split into key-range units', () => {
+  it('reads every version as the model says, whatever the units', async () => {
+    for (let seed = 1; seed <= 8; seed++) {
+      const rand = rng(seed * 13)
+      const store = memoryStore()
+      const model = new Model()
+      for (let round = 0; round < 3; round++) {
+        const n = 2 + Math.floor(rand() * 4)
+        for (let c = 0; c < n; c++) {
+          const rows = randomUpload(rand)
+          model.add(rows)
+          await commitRows(store, 'c', rows, rand() < 0.3 ? { maxBytes: 300 } : {})
+        }
+        const plan = await v3.planRebuild(store, 'c', { plan: v3.planAll, adoptAfter: 1 })
+        expect(plan).not.toBeNull()
+        const outputs: { files: v3.LayoutFile[]; kept: string[] }[] = []
+        let units = 0
+        for (const m of plan!.merges) {
+          // Small units: several ranges, each merged on its own, as separate jobs would.
+          const ranges = await v3.splitMerge(store, m.inputs, 50 + Math.floor(rand() * 400))
+          units += ranges.length
+          const files: v3.LayoutFile[] = []
+          for (const range of ranges) {
+            const r = await v3.mergeFiles(store, m.inputs, v3.mergeOptions(plan!, m, { range }))
+            expect(r.kept).toEqual([])
+            files.push(...r.files)
+          }
+          outputs.push({ files, kept: [] })
+        }
+        expect(units).toBeGreaterThan(1)
+        const { layout, won } = await v3.finishRebuild(store, plan!, outputs)
+        expect(won).toBe(true)
+        expect(layout.through).toBe(model.head)
+        await dropUnlisted(store, 'c')
+        await verifyListed(store, 'c')
+        await checkReads(store, 'c', model, rand)
+      }
+    }
+  })
+})

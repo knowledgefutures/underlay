@@ -37,7 +37,7 @@ import {
   trailerBytes,
 } from './file.js'
 import { concatBytes, gzipMember } from './gz.js'
-import { compareKeys, type Kind } from './lines.js'
+import { compareKeys, type Key, type Kind } from './lines.js'
 import {
   type Commit,
   commitFiles,
@@ -51,8 +51,10 @@ import {
 } from './log.js'
 import {
   type Found,
+  type KeyRange,
   type MergeHooks,
   mergeGroups,
+  openFile,
   type ReadOptions,
   type View,
   type ViewFile,
@@ -93,6 +95,12 @@ export interface MergeOptions extends ReadOptions {
    */
   keepUntouched?: boolean
   level?: number
+  /**
+   * Merge only the inputs' rows in this key range: one unit of a merge split across
+   * processes (`splitMerge`). The units' outputs together are the whole merge's.
+   * Untouched files are not kept within a range, since one may reach past it.
+   */
+  range?: KeyRange
 }
 
 export interface MergeResult {
@@ -292,7 +300,7 @@ export async function mergeFiles(
   /** The key before the one in hand, with the size of its newest row: what decides a cut. */
   let lastKey: { type: string; id: string; size: number } | null = null
   const hooks: MergeHooks =
-    opts.keepUntouched && !opts.retained && !opts.takedown
+    opts.keepUntouched && !opts.retained && !opts.takedown && !opts.range
       ? {
           // A file with its key range to itself: the output so far ends before it, and it stays.
           skipFile: async (file) => {
@@ -306,7 +314,7 @@ export async function mergeFiles(
   for await (const group of mergeGroups(
     store,
     all,
-    {},
+    opts.range ?? {},
     { ...read, readAhead: 1024 * 1024 },
     inputs,
     hooks,
@@ -538,24 +546,38 @@ const overlaps = (a: LayoutFile, b: LayoutFile): boolean =>
  * that land meanwhile are untouched; they come after the new layout's
  * `through`. Call again until `layout` comes back null to let merges cascade.
  */
-export async function rebuild(
+/** One merge of a rebuild: the groups it takes, and how it treats removals. */
+export interface PlannedMerge {
+  /** Its input files, the picked groups' files together. */
+  inputs: LayoutFile[]
+  /** The group number its outputs get. */
+  group: number
+  /** Drop a removal with nothing older behind it (no file left out can hold an older row). */
+  dropLeadingRemovals: boolean
+}
+
+/** What a rebuild will do, decided before any file is read: `planRebuild`. */
+export interface RebuildPlan {
+  collection: string
+  /** The layout it will create, and the commits it covers. */
+  number: number
+  through: number
+  retained?: [number, number][]
+  merges: PlannedMerge[]
+  /** Every file the layout will list that no merge takes. */
+  untouched: LayoutFile[]
+}
+
+/**
+ * Decide a rebuild: which groups to merge, under which layout number. Null when there is
+ * nothing to do. Reads the layout and the commits after it, no files.
+ */
+export async function planRebuild(
   store: Store,
   collection: string,
   opts: RebuildOptions = {},
-): Promise<RebuildResult> {
+): Promise<RebuildPlan | null> {
   const { layout: old, head, files } = await currentFiles(store, collection)
-  const result: RebuildResult = {
-    layout: null,
-    lost: false,
-    merges: 0,
-    filesIn: 0,
-    filesOut: 0,
-    kept: 0,
-    written: 0,
-    skipped: 0,
-    bytesIn: 0,
-    dropped: 0,
-  }
   const groups = groupsOf(files)
   const plan =
     opts.plan?.(groups) ??
@@ -565,7 +587,7 @@ export async function rebuild(
     })()
   const adopt = head - (old?.through ?? 0) >= (opts.adoptAfter ?? 8)
   // A change of what is retained, or a takedown, is only real once a layout states it.
-  if (plan.length === 0 && !adopt && !opts.retained) return result
+  if (plan.length === 0 && !adopt && !opts.retained) return null
 
   const number = (old?.number ?? 0) + 1
   const through = head
@@ -579,9 +601,8 @@ export async function rebuild(
       retained = undefined
     }
   }
-
   const merged = new Set<string>()
-  const outputs: LayoutFile[] = []
+  const merges: PlannedMerge[] = []
   // A group number is only a name for the files one merge wrote: unique within the layout.
   let nextGroup = 1 + files.reduce((n, f) => Math.max(n, f.group ?? 0), 0)
   for (const picked of plan) {
@@ -595,42 +616,138 @@ export async function rebuild(
     const older = files.some(
       (f) => !inputs.includes(f) && f.commits[0] < newest && inputs.some((i) => overlaps(f, i)),
     )
-    const m = await mergeFiles(store, inputs, {
-      ...opts,
-      through,
-      dropLeadingRemovals: !older,
-      ...(retained ? { retained } : {}),
-    })
     // A merge of one group keeps its number, so a takedown does not regroup the layout.
     const group = picked.length === 1 ? picked[0]!.group : nextGroup++
-    for (const f of m.files) outputs.push({ ...f, group })
-    // Files the merge left as they are stay listed, now as part of the merged group.
-    for (const k of m.kept) outputs.push({ ...inputs.find((i) => i.id === k.id)!, group })
-    result.kept += m.kept.length
-    result.merges++
-    result.filesIn += inputs.length
-    result.filesOut += m.files.length
-    result.written += m.written
-    result.skipped += m.skipped
-    const keptIds = new Set(m.kept.map((k) => k.id))
-    result.bytesIn += inputs.reduce((n, f) => n + (keptIds.has(f.id) ? 0 : f.bytes), 0)
-    result.dropped += m.dropped
+    merges.push({ inputs, group, dropLeadingRemovals: !older })
   }
-
-  const layout: Layout = {
-    underlay: 3,
+  return {
     collection,
     number,
     through,
-    createdAt: (opts.now?.() ?? new Date()).toISOString(),
-    files: [...files.filter((f) => !merged.has(f.id)), ...outputs].sort(
-      (a, b) => a.commits[0] - b.commits[0] || cmpFirst(a, b),
-    ),
     ...(retained ? { retained } : {}),
+    merges,
+    untouched: files.filter((f) => !merged.has(f.id)),
   }
-  const won = await createLayout(store, layout)
+}
+
+/** The options one merge of a plan runs with (whole, or one key range of it). */
+export function mergeOptions(
+  plan: RebuildPlan,
+  m: PlannedMerge,
+  opts: Omit<MergeOptions, 'through' | 'dropLeadingRemovals'> = {},
+): MergeOptions {
+  return {
+    ...opts,
+    through: plan.through,
+    dropLeadingRemovals: m.dropLeadingRemovals,
+    ...(plan.retained ? { retained: plan.retained } : {}),
+  }
+}
+
+/**
+ * Create a plan's layout from what its merges wrote: for each merge (in plan order), the
+ * files it wrote and the inputs it kept as they were. False if another rebuild took the
+ * layout number first (this one's files are then unlisted, for the sweep).
+ */
+export async function finishRebuild(
+  store: Store,
+  plan: RebuildPlan,
+  outputs: { files: LayoutFile[]; kept: string[] }[],
+  now: () => Date = () => new Date(),
+): Promise<{ layout: Layout; won: boolean }> {
+  const listed: LayoutFile[] = [...plan.untouched]
+  plan.merges.forEach((m, i) => {
+    const out = outputs[i] ?? { files: [], kept: [] }
+    for (const f of out.files) listed.push({ ...f, group: m.group })
+    // Files a merge left as they are stay listed, now as part of the merged group.
+    for (const id of out.kept)
+      listed.push({ ...m.inputs.find((f) => f.id === id)!, group: m.group })
+  })
+  const layout: Layout = {
+    underlay: 3,
+    collection: plan.collection,
+    number: plan.number,
+    through: plan.through,
+    createdAt: now().toISOString(),
+    files: listed.sort((a, b) => a.commits[0] - b.commits[0] || cmpFirst(a, b)),
+    ...(plan.retained ? { retained: plan.retained } : {}),
+  }
+  return { layout, won: await createLayout(store, layout) }
+}
+
+export async function rebuild(
+  store: Store,
+  collection: string,
+  opts: RebuildOptions = {},
+): Promise<RebuildResult> {
+  const result: RebuildResult = {
+    layout: null,
+    lost: false,
+    merges: 0,
+    filesIn: 0,
+    filesOut: 0,
+    kept: 0,
+    written: 0,
+    skipped: 0,
+    bytesIn: 0,
+    dropped: 0,
+  }
+  const plan = await planRebuild(store, collection, opts)
+  if (!plan) return result
+  const outputs: { files: LayoutFile[]; kept: string[] }[] = []
+  for (const m of plan.merges) {
+    const r = await mergeFiles(store, m.inputs, mergeOptions(plan, m, opts))
+    outputs.push({ files: r.files, kept: r.kept.map((k) => k.id) })
+    result.kept += r.kept.length
+    result.merges++
+    result.filesIn += m.inputs.length
+    result.filesOut += r.files.length
+    result.written += r.written
+    result.skipped += r.skipped
+    const keptIds = new Set(r.kept.map((k) => k.id))
+    result.bytesIn += m.inputs.reduce((n, f) => n + (keptIds.has(f.id) ? 0 : f.bytes), 0)
+    result.dropped += r.dropped
+  }
+  const { layout, won } = await finishRebuild(store, plan, outputs, opts.now)
   if (!won) return { ...result, lost: true }
   return { ...result, layout }
+}
+
+/**
+ * Cut one merge into key ranges of about `targetBytes` of input lines each, by the first
+ * keys of the inputs' key blocks (from their footers). Each range is a unit a separate
+ * process can merge (`MergeOptions.range`); in order, they cover every key.
+ */
+export async function splitMerge(
+  store: Store,
+  inputs: LayoutFile[],
+  targetBytes: number,
+  opts: ReadOptions = {},
+): Promise<KeyRange[]> {
+  const total = inputs.reduce((n, f) => n + f.bytes, 0)
+  if (total <= targetBytes) return [{}]
+  // Each key block's first key, weighted by its share of its file's bytes.
+  const marks: { type: string; id: string; bytes: number }[] = []
+  for (const f of inputs) {
+    const file = opts.cache ? await opts.cache.open(store, f.id) : await openFile(store, f.id)
+    const blocks = file.content.keyBlocks
+    const entries = blocks.reduce((n, b) => n + b[3], 0) || 1
+    for (const b of blocks) marks.push({ type: b[0], id: b[1], bytes: (f.bytes * b[3]) / entries })
+  }
+  marks.sort((a, b) => compareKeys(a.type, a.id, b.type, b.id))
+  const ranges: KeyRange[] = []
+  let from: Key | undefined
+  let acc = 0
+  for (const m of marks) {
+    if (acc >= targetBytes && (!from || compareKeys(from.type, from.id, m.type, m.id) < 0)) {
+      ranges.push({ ...(from ? { from } : {}), to: { type: m.type, id: m.id } })
+      from = { type: m.type, id: m.id }
+      acc = 0
+    }
+    acc += m.bytes
+  }
+  ranges.push(from ? { from } : {})
+  return ranges
 }
 
 const cmpFirst = (a: LayoutFile, b: LayoutFile): number =>
