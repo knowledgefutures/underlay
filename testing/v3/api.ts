@@ -114,13 +114,13 @@ async function sendUpload(
     }),
   )
   const sent = performance.now()
-  await call('POST', `/uploads/${id}/commit`, { files })
-  let s: Record<string, any> = {}
+  // A small commit is answered with its result; a large one is polled, soon at first.
+  let s: Record<string, any> = await call('POST', `/uploads/${id}/commit`, { files })
   let lastLog = 0
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 5000))
-    s = await call('GET', `/uploads/${id}`)
+  for (let wait = 1000; ; wait = Math.min(5000, wait * 2)) {
     if (s.status === 'committed' || s.status === 'failed' || s.status === 'open') break
+    await new Promise((r) => setTimeout(r, wait))
+    s = await call('GET', `/uploads/${id}`)
     if (performance.now() - lastLog > 60_000) {
       lastLog = performance.now()
       log(`upload ${id}: ${s.status}, ${s.files_verified} of ${s.files_named} verified`)

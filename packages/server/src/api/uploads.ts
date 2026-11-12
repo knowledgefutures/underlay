@@ -25,7 +25,9 @@ import {
   openUpload,
   presentFiles,
   presignFile,
+  inlineUpload,
   requestCommit,
+  smallCommit,
   uploadLimits,
   type UploadRow,
 } from '../v3/uploads.js'
@@ -145,9 +147,20 @@ export function uploadRoutes() {
       )
         return jsonError(c, 400, '"change" must be for this collection and name the same files')
     }
-    if (!(await requestCommit(c.var.ports, u, checked.files, change))) {
+    // A small commit is verified and landed here, and answered with its result.
+    const inline = (await smallCommit(c.var.ports, u.id, checked.files))
+      ? inlineUpload(c.var.ports)
+      : null
+    if (!(await requestCommit(inline?.ports ?? c.var.ports, u, checked.files, change))) {
       const now = await getUpload(c.var.ports, u.id)
       return jsonError(c, 409, `Upload is ${now?.status ?? 'gone'}`)
+    }
+    if (inline) {
+      await inline.drain()
+      const now = (await getUpload(c.var.ports, u.id))!
+      if (now.status === 'committed') return c.json(statusBody(now), 201)
+      if (now.status === 'failed' || now.status === 'open')
+        return c.json(statusBody(now), (now.error?.statusCode ?? 422) as 422)
     }
     return c.json(
       {

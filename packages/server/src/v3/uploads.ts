@@ -32,8 +32,8 @@ import {
 import { and, count, eq, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
-import { registerJob } from '../jobs.js'
-import type { Ports } from '../ports.js'
+import { registerJob, runJob } from '../jobs.js'
+import type { JobMessage, Ports } from '../ports.js'
 import { type CommitStats, headView, schemasOf, syncCatalog, viewOf } from './catalog.js'
 import { copyAssetFromUpload } from './commit.js'
 import { commitsOf } from './queue.js'
@@ -48,6 +48,13 @@ import {
 } from './scans.js'
 
 export const uploadLimits = {
+  /**
+   * A commit naming at most this many files and bytes is verified and landed in the request
+   * that asks for it (`inlineUpload`), not by queued jobs: for a small upload the queue
+   * hops are most of the time.
+   */
+  inlineFiles: 8,
+  inlineBytes: 32 * 1024 * 1024,
   /** An upload idle longer than this expires; its objects are cleared by the sweep. */
   idleMs: 24 * 60 * 60 * 1000,
   /** Open uploads a user may hold. */
@@ -178,6 +185,54 @@ export async function presentFiles(ports: Ports, uploadId: string): Promise<stri
     cursor = page.cursor
   } while (cursor)
   return out
+}
+
+/** The jobs of an upload's commit, which `inlineUpload` runs in the request. */
+const UPLOAD_JOBS: ReadonlySet<string> = new Set([
+  'v3.uploadPrepare',
+  'v3.uploadVerify',
+  'v3.uploadLand',
+])
+
+/**
+ * Ports that run an upload's own jobs here, one after another, when `drain` is called, and
+ * send every other job (what follows a commit, a scan in units) to the real queues. The
+ * same handlers, in the same order the queues would run them.
+ */
+export function inlineUpload(ports: Ports): { ports: Ports; drain(): Promise<void> } {
+  const pending: JobMessage[] = []
+  const inline: Ports = {
+    ...ports,
+    jobs: {
+      async enqueue(job, opts) {
+        if (UPLOAD_JOBS.has(job.type) && !opts?.delaySeconds) pending.push(job)
+        else await ports.jobs.enqueue(job, opts)
+      },
+      async enqueueBatch(jobs) {
+        pending.push(...jobs.filter((j) => UPLOAD_JOBS.has(j.type)))
+        const rest = jobs.filter((j) => !UPLOAD_JOBS.has(j.type))
+        if (rest.length > 0) await ports.jobs.enqueueBatch(rest)
+      },
+    },
+  }
+  return {
+    ports: inline,
+    async drain() {
+      for (let job = pending.shift(); job; job = pending.shift()) await runJob(job, inline)
+    },
+  }
+}
+
+/** Whether a commit is small enough to verify and land in its request. */
+export async function smallCommit(ports: Ports, uploadId: string, files: v3.FileRef[]) {
+  if (files.length > uploadLimits.inlineFiles) return false
+  let bytes = 0
+  for (const f of files) {
+    const h = await ports.stores.v3.head(uploadObjectKey(uploadId, f.id))
+    if (!h) return false
+    bytes += h.size
+  }
+  return bytes <= uploadLimits.inlineBytes
 }
 
 /** A commit's request, checked; null and the problem when it cannot be taken. */

@@ -17,7 +17,7 @@ import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
 import { durableQueue, serially } from '../src/v3/queue.js'
 import { scanConfig } from '../src/v3/scans.js'
-import { recoverUploads } from '../src/v3/uploads.js'
+import { recoverUploads, uploadLimits } from '../src/v3/uploads.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
 
@@ -513,9 +513,11 @@ describe.skipIf(!onV3)('v3 collections', () => {
         user,
         json: { files: files.map((f) => f.ref) },
       })
-      expect(res.status).toBe(202)
       await h.drain()
-      return json(await h.request(`${base}/uploads/${id}`, { user }))
+      const after: Record<string, any> = await json(
+        await h.request(`${base}/uploads/${id}`, { user }),
+      )
+      return { ...after, commitStatus: res.status } as Record<string, any>
     }
     const authors = Array.from({ length: 300 }, (_, i) =>
       v3.rowFromRecord(`a${String(i).padStart(3, '0')}`, 'Author', { name: `Author ${i}` }),
@@ -530,7 +532,9 @@ describe.skipIf(!onV3)('v3 collections', () => {
       status: 'committed',
       result: { semver: 'v1.0.0', recordCount: 300 },
     })
-    expect(up.files_named).toBeGreaterThan(1)
+    expect(up.files_named).toBeGreaterThan(uploadLimits.inlineFiles)
+    // More files than a request lands itself: queued, then verified a job a file.
+    expect(up.commitStatus).toBe(202)
     // A second upload: an update, a removal, a new record; counted against the head.
     up = await send(
       await build([
@@ -543,12 +547,15 @@ describe.skipIf(!onV3)('v3 collections', () => {
       status: 'committed',
       result: { semver: 'v1.1.0', recordCount: 300, changes: { added: 1, removed: 1, updated: 1 } },
     })
+    // A small one is verified and landed in the request that commits it.
+    expect(up.commitStatus).toBe(201)
     expect(
       (await json(await h.request(`${base}/versions/latest/records/Author/a000`))).data,
     ).toEqual({ name: 'Ada' })
     // A record its schema refuses fails the upload, with the reason.
     up = await send(await build([v3.rowFromRecord('bad', 'Author', { born: 3 })]))
     expect(up.status).toBe('failed')
+    expect(up.commitStatus).toBe(422)
     expect(JSON.stringify(up.error)).toMatch(/bad/)
     expect((await lastRow(h.ports, c.id))!.seq).toBe(2)
     // Not for a v2 collection.

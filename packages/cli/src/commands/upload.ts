@@ -128,18 +128,17 @@ export async function upload(path: string, o: UploadOptions, say: Say): Promise<
   )
 
   // 4. Commit, and wait for the server to verify and land it.
-  await call('POST', `/uploads/${id}/commit`, { files })
+  // A small commit is answered with its result; a large one is verified by jobs: poll it,
+  // soon at first, then every 5 seconds.
   say('Committing…')
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 3000))
-    const s = await call('GET', `/uploads/${id}`)
-    if (s.status === 'committed') {
-      say(`Committed ${s.result.semver} (${s.result.hash}): ${s.result.recordCount} records`)
-      return
-    }
+  let s = await call('POST', `/uploads/${id}/commit`, { files })
+  for (let wait = 1000; s.status !== 'committed'; wait = Math.min(5000, wait * 2)) {
     if (s.status === 'failed' || s.status === 'open') {
       throw new CliError(`Upload ${id} ${s.status}: ${JSON.stringify(s.error)}`)
     }
-    say(`  ${s.status}: ${s.files_verified} of ${s.files_named} files verified`)
+    if (s.files_named) say(`  ${s.status}: ${s.files_verified} of ${s.files_named} files verified`)
+    await new Promise((r) => setTimeout(r, wait))
+    s = await call('GET', `/uploads/${id}`)
   }
+  say(`Committed ${s.result.semver} (${s.result.hash}): ${s.result.recordCount} records`)
 }
