@@ -396,7 +396,15 @@ async function convertVersion(
       cid,
       {
         change,
-        bump: bumpBetween(prevRow?.semver ?? null, v.semver),
+        // Only as the commit after the one before it: a job that ran twice (a retry beside
+        // the first) must not append the same version again as the next number.
+        bump: (at) => {
+          if ((at?.commit.number ?? 0) !== v.seq - 1)
+            throw new Error(
+              `The v3 log moved to ${at?.commit.number} while ${v.semver} was converted`,
+            )
+          return bumpBetween(prevRow?.semver ?? null, v.semver)
+        },
         ...(base ? { baseNumber: base.seq } : {}),
       },
       { signer: await ports.signer(), now: () => v.createdAt, attempts: 1 },
@@ -509,6 +517,19 @@ export async function convertStep(ports: Ports, collectionId: string): Promise<v
     if (!permanent) throw err
     console.error(`[v3.convert] ${collectionId} stopped:`, (err as Error).message)
     await setConversion(ports, collectionId, { status: 'failed', error: (err as Error).message })
+    return
+  }
+  // The v3 log must end at the last version converted: anything after it was not converted.
+  const head = await v3.headNumber(ports.stores.v3, collectionId)
+  const last = done.at(-1)
+  if (
+    head !== (last?.seq ?? 0) ||
+    (last && (await v3.readCommit(ports.stores.v3, collectionId, head))?.id !== last.id)
+  ) {
+    await setConversion(ports, collectionId, {
+      status: 'failed',
+      error: `The v3 log ends at commit ${head}, not at the last version converted (${last?.seq ?? 0}): convert it afresh`,
+    })
     return
   }
   if (!conv.flip) {
@@ -668,8 +689,24 @@ export async function revertToV2(ports: Ports, collectionId: string): Promise<st
 export async function requestConversion(
   ports: Ports,
   collectionId: string,
-  opts: { flip: boolean; allowPrivate: boolean },
+  opts: { flip: boolean; allowPrivate: boolean; fresh?: boolean },
 ): Promise<void> {
+  if (opts.fresh) {
+    // Afresh: what an earlier conversion wrote to the v3 area goes, while v2 still serves it.
+    const [col] = await ports.db
+      .select({ layout: schema.collections.recordLayout })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, collectionId))
+    if (!col || col.layout === 'v3')
+      throw new ConvertError('Only a collection still on v2 converts afresh')
+    await v3.deleteCollection(ports.stores.v3, collectionId)
+    const parts = await ports.stores.internal.list(`v3-convert/${collectionId}/`)
+    await Promise.all(parts.keys.map((k) => ports.stores.internal.delete(k)))
+    await ports.db
+      .update(schema.v3Conversions)
+      .set({ versions: [], private: false, status: 'queued', error: null, updatedAt: new Date() })
+      .where(eq(schema.v3Conversions.collectionId, collectionId))
+  }
   await ports.db
     .insert(schema.v3Conversions)
     .values({ collectionId, flip: opts.flip, allowPrivate: opts.allowPrivate })

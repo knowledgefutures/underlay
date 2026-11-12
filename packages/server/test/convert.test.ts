@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { runJob } from '../src/jobs.js'
-import { convertConfig, requestConversion, revertToV2 } from '../src/v3/convert.js'
+import { convertConfig, convertStep, requestConversion, revertToV2 } from '../src/v3/convert.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { testLayout } from './layouts.js'
 
@@ -251,6 +251,43 @@ describe('converting a v2 collection to v3', () => {
     // The first version's records went into files built by several jobs.
     const first = await v3.readCommit(h.ports.stores.v3, c.id, 1)
     expect(v3.commitFiles(first!.commit).length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('never appends a version twice when two jobs convert it at once', async () => {
+    const { h, c } = await v2Collection()
+    await h.drain()
+    await h.ports.db.insert(schema.v3Conversions).values({ collectionId: c.id, flip: false })
+    // Two jobs for the same step, as a retry beside the first would be.
+    const both = await Promise.allSettled([convertStep(h.ports, c.id), convertStep(h.ports, c.id)])
+    expect(both.some((r) => r.status === 'fulfilled')).toBe(true)
+    for (let i = 0; i < 10 && (await conversion(h, c.id)).status === 'converting'; i++)
+      await convertStep(h.ports, c.id).catch(() => {})
+    expect((await conversion(h, c.id)).status).toBe('converted')
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(4)
+  })
+
+  it('refuses a v3 log with a commit the conversion did not make, until converted afresh', async () => {
+    const { h, user, c, base } = await v2Collection()
+    await h.drain()
+    const before = await snapshot(h, base, user)
+    await requestConversion(h.ports, c.id, { flip: false, allowPrivate: false })
+    await h.drain()
+    // A stray commit after the last version converted.
+    await v3.createCommit(h.ports.stores.v3, c.id, { files: [], bump: 'patch', message: 'stray' })
+    await h.ports.db
+      .update(schema.v3Conversions)
+      .set({ status: 'converting' })
+      .where(eq(schema.v3Conversions.collectionId, c.id))
+    await convertStep(h.ports, c.id)
+    let conv = await conversion(h, c.id)
+    expect(conv.status).toBe('failed')
+    expect(conv.error).toMatch(/ends at commit 5, not at the last version converted \(4\)/)
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false, fresh: true })
+    await h.drain()
+    conv = await conversion(h, c.id)
+    expect(conv.status).toBe('flipped')
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(4)
+    expect(await snapshot(h, base, user)).toEqual(before)
   })
 
   it('stops with the reason when a version does not match', async () => {

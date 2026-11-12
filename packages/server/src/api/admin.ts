@@ -17,7 +17,7 @@
  *   POST    /api/admin/fsck                      stewards: {collection, fileBytes?} checks its repository
  *   GET     /api/admin/fsck?collection=          stewards: the last check's report
  *   GET     /api/admin/v3/conversions            stewards: conversions to v3 and where each stands
- *   POST    /api/admin/v3/conversions            stewards: {collection, flip?, allowPrivate?} converts it
+ *   POST    /api/admin/v3/conversions            stewards: {collection, flip?, allowPrivate?, fresh?} converts it
  *   POST    /api/admin/v3/conversions/revert     stewards: {collection} puts a flipped one back on v2
  *   POST    /api/admin/usage/rebuild             stewards: {day} recomputes them from the usage log
  *
@@ -278,6 +278,7 @@ export function adminRoutes() {
       collection?: unknown
       flip?: unknown
       allowPrivate?: unknown
+      fresh?: unknown
     } | null
     const col = await collectionBySlugs(c, b?.collection)
     if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
@@ -285,6 +286,7 @@ export function adminRoutes() {
     await requestConversion(c.var.ports, col.id, {
       flip: b?.flip === true,
       allowPrivate: b?.allowPrivate === true,
+      fresh: b?.fresh === true,
     })
     return c.json({ ok: true, queued: true }, 202)
   })
