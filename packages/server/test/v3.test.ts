@@ -657,6 +657,49 @@ describe.skipIf(!onV3)('v3 collections', () => {
     }
   })
 
+  it('settles an upload whose land job stopped after committing, and never lands it twice', async () => {
+    const { h, user, c, base } = await setup()
+    const local = memoryStore()
+    const session = v3.newSession()
+    const [f] = await v3.buildFiles(
+      [
+        v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+        v3.rowFromRecord('a', 'Author', { name: 'A' }),
+      ].sort(v3.compareKey),
+      v3.uploadTarget(local, session),
+    )
+    const id = (await json(await h.request(`${base}/uploads`, { method: 'POST', user, json: {} })))
+      .upload_id as string
+    const bytes = local.objects.get(v3.uploadKey(session, f!.id))!.bytes
+    const t = await json(
+      await h.request(`${base}/uploads/${id}/files`, {
+        method: 'POST',
+        user,
+        json: { id: f!.id, size: bytes.byteLength },
+      }),
+    )
+    await h.bucket.put(String(t.url).replace('memory://put/', ''), bytes)
+    const { size: _s, labeled: _l, commits: _c, ...ref } = f!
+    const res = await h.request(`${base}/uploads/${id}/commit`, {
+      method: 'POST',
+      user,
+      json: { files: [ref] },
+    })
+    expect(res.status).toBe(201)
+    // As if the land job had stopped between committing and recording it on the upload.
+    await h.ports.db
+      .update(schema.v3Uploads)
+      .set({ status: 'committing', updatedAt: new Date(Date.now() - 60 * 60 * 1000) })
+      .where(eq(schema.v3Uploads.id, id))
+    expect(await recoverUploads(h.ports)).toBe(1)
+    await h.drain()
+    expect(await json(await h.request(`${base}/uploads/${id}`, { user }))).toMatchObject({
+      status: 'committed',
+      result: { semver: 'v1.0.0' },
+    })
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(1)
+  })
+
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {
     const sent: Record<string, string[]> = {}
     const q = (name: string) => ({

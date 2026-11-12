@@ -599,7 +599,8 @@ export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'ex
 /**
  * A v3 upload built by the client (v3-deploy-plan.md, Phase 2): its sorted-record-files go
  * straight to the bucket by presigned URL, under `v3/uploads/<id>/`, and its commit names
- * them. open → verifying (a job a file) → landing → committed | failed; expired when idle.
+ * them. open → verifying (a job a file) → landing → committing (claimed by the one job that
+ * lands it) → committed | failed; expired when idle.
  */
 export const v3Uploads = sqliteTable(
   'v3_uploads',
@@ -610,7 +611,7 @@ export const v3Uploads = sqliteTable(
       .references(() => collections.id, { onDelete: 'cascade' }),
     userId: text('user_id').notNull(),
     status: text('status', {
-      enum: ['open', 'verifying', 'landing', 'committed', 'failed', 'expired'],
+      enum: ['open', 'verifying', 'landing', 'committing', 'committed', 'failed', 'expired'],
     })
       .notNull()
       .default('open'),

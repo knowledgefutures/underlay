@@ -474,6 +474,9 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
       head: head?.id ?? null,
     })),
   )
+  // With a pool the files are verified by now: land here, not a queue hop later. (The land
+  // job queued when the last file was counted finds it claimed and stops.)
+  if (ports.pool) await landUpload(ports, upload.id)
 })
 
 /** What one verified file changes in the head it was checked against. */
@@ -679,9 +682,17 @@ scanFinished.upload = async (ports, state, problems) => {
   await maybeLand(ports, u.id)
 }
 
-registerJob('v3.uploadLand', async (job, ports) => {
-  const upload = await getUpload(ports, String(job.uploadId))
+registerJob('v3.uploadLand', async (job, ports) => landUpload(ports, String(job.uploadId)))
+
+/**
+ * Land an upload whose files are all verified. The landing is claimed first (landing →
+ * committing), so of two land jobs for one upload (the queue's, and prepare's own once its
+ * fan-out is done) exactly one lands it.
+ */
+async function landUpload(ports: Ports, uploadId: string) {
+  const upload = await getUpload(ports, uploadId)
   if (!upload || upload.status !== 'landing') return
+  if (!(await setUpload(ports, upload.id, 'landing', { status: 'committing' }))) return
   const internal = ports.stores.internal
   const files = (upload.files ?? []) as v3.FileRef[]
   const stats: CommitStats = {
@@ -691,9 +702,15 @@ registerJob('v3.uploadLand', async (job, ports) => {
     assetBytesDelta: 0,
     changes: { added: 0, removed: 0, updated: 0 },
   }
-  for (const f of files) {
-    const obj = await internal.get(markerKey(upload.id, upload.expectHead, f.id))
-    const m = obj ? (JSON.parse(await obj.text()) as FileStats) : null
+  const markers = await v3.inParallel(
+    files.map((f) => async () => {
+      const obj = await internal.get(markerKey(upload.id, upload.expectHead, f.id))
+      return obj ? (JSON.parse(await obj.text()) as FileStats) : null
+    }),
+    16,
+  )
+  for (const [i, f] of files.entries()) {
+    const m = markers[i]
     if (!m || m.head !== upload.expectHead) {
       await fail(ports, upload.id, {
         statusCode: 500,
@@ -735,24 +752,11 @@ registerJob('v3.uploadLand', async (job, ports) => {
     pushedBy: upload.userId,
     appId: upload.appId,
     actorId: null,
-    pushSessionId: null,
+    // The version row names the upload: recovery finds a commit a land job made and lost.
+    pushSessionId: upload.id,
   })
   if (landed.status === 'committed') {
-    const [v] = await ports.db
-      .select()
-      .from(schema.versions)
-      .where(eq(schema.versions.id, landed.versionId))
-    await setUpload(ports, upload.id, 'landing', {
-      status: 'committed',
-      result: {
-        semver: v?.semver,
-        hash: v?.hash,
-        recordCount: v?.recordCount,
-        fileCount: v?.fileCount,
-        changes: v?.changes,
-      },
-    })
-    await clearMarkers(ports, upload.id)
+    await settleCommitted(ports, upload.id, landed.versionId)
     return
   }
   if (landed.status === 'invalid') {
@@ -772,13 +776,29 @@ registerJob('v3.uploadLand', async (job, ports) => {
     return
   }
   if (
-    await setUpload(ports, upload.id, 'landing', {
+    await setUpload(ports, upload.id, 'committing', {
       status: 'verifying',
       attempts: upload.attempts + 1,
     })
   )
     await ports.jobs.enqueue({ type: 'v3.uploadPrepare', uploadId: upload.id })
-})
+}
+
+/** The upload landed as this version: record it as committed, and clear its markers. */
+async function settleCommitted(ports: Ports, uploadId: string, versionId: string) {
+  const [v] = await ports.db.select().from(schema.versions).where(eq(schema.versions.id, versionId))
+  await setUpload(ports, uploadId, null, {
+    status: 'committed',
+    result: {
+      semver: v?.semver,
+      hash: v?.hash,
+      recordCount: v?.recordCount,
+      fileCount: v?.fileCount,
+      changes: v?.changes,
+    },
+  })
+  await clearMarkers(ports, uploadId)
+}
 
 /** Delete an upload's verification markers (every head's). */
 async function clearMarkers(ports: Ports, upload: string) {
@@ -811,12 +831,24 @@ export async function recoverUploads(ports: Ports) {
     .from(schema.v3Uploads)
     .where(
       and(
-        sql`${schema.v3Uploads.status} IN ('verifying', 'landing')`,
+        sql`${schema.v3Uploads.status} IN ('verifying', 'landing', 'committing')`,
         sql`${schema.v3Uploads.updatedAt} < ${Date.now() - UPLOAD_STALL_MS}`,
       ),
     )
     .limit(50)
   for (const u of stuck) {
+    // A land that stopped after committing: its version names the upload.
+    if (u.status === 'committing') {
+      const [v] = await ports.db
+        .select({ id: schema.versions.id })
+        .from(schema.versions)
+        .where(eq(schema.versions.pushSessionId, u.id))
+        .limit(1)
+      if (v) await settleCommitted(ports, u.id, v.id)
+      else await setUpload(ports, u.id, 'committing', { status: 'landing' })
+      if (!v) await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: u.id })
+      continue
+    }
     await setUpload(ports, u.id, u.status, {})
     await ports.jobs.enqueue({
       type: u.status === 'landing' ? 'v3.uploadLand' : 'v3.uploadPrepare',
