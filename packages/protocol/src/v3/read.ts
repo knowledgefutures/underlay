@@ -291,6 +291,68 @@ export interface HistoryRow {
   size: number
 }
 
+/** A key's row in a version, as `statesAt` finds it: present, with its hash and line size. */
+export interface KeyRow {
+  hash: string
+  size: number
+  commit: number
+  withheld: boolean
+}
+
+/**
+ * What many keys are in a version, at once: for each key, its row (or null if the version
+ * has no record with that key). Keys are looked up a batch at a time, `concurrency` at
+ * once, and within a batch each key block of each file is fetched once, so keys near each
+ * other cost one fetch. For counting what a change does to a version, which a key at a
+ * time would do in one round trip each.
+ */
+export async function statesAt(
+  store: Store,
+  view: View,
+  keys: Key[],
+  opts: ReadOptions & { concurrency?: number; batch?: number } = {},
+): Promise<(KeyRow | null)[]> {
+  const out: (KeyRow | null)[] = new Array(keys.length).fill(null)
+  const batch = opts.batch ?? 512
+  const readerOpts = opts.verify === undefined ? {} : { verify: opts.verify }
+  for (let start = 0; start < keys.length; start += batch) {
+    // Key blocks fetched for this batch, each once; dropped after it, to bound memory.
+    const blocks = new Map<string, Promise<Entry[]>>()
+    const end = Math.min(keys.length, start + batch)
+    await inParallel(
+      Array.from({ length: end - start }, (_, j) => async () => {
+        const { type, id } = keys[start + j]!
+        let best: (Entry & { commit: number }) | undefined
+        for (const vf of view.files) {
+          if (!covers(vf, type, id)) continue
+          const f = await open(store, vf.id, opts)
+          const entries = await lookupEntries(f, type, id, (i) => {
+            const k = `${vf.id}/${i}`
+            let p = blocks.get(k)
+            if (!p) blocks.set(k, (p = f.reader(readerOpts).keyBlock(i)))
+            return p
+          })
+          for (const e of entries) {
+            const commit = vf.labeled ? e.commit! : vf.commits[0]
+            if (commit <= view.version && (!best || commit > best.commit)) best = { ...e, commit }
+          }
+        }
+        out[start + j] =
+          best && best.kind !== 'x'
+            ? {
+                hash: best.hash!,
+                size: best.size,
+                commit: best.commit,
+                withheld: best.kind === 'w',
+              }
+            : null
+      }),
+      opts.concurrency ?? 16,
+    )
+  }
+  return out
+}
+
 /** One key's rows up to the view's version, newest first. */
 export async function history(
   store: Store,

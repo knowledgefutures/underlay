@@ -542,12 +542,22 @@ async function fileStats(
   const file = await v3.SortedFile.open(store, uploadObjectKey(upload, fileId), { id: fileId })
   const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
   const cursor = new v3.EntryCursor(reader, 1)
-  const read: v3.ReadOptions = { cache: new v3.FileCache(16 * 1024 * 1024), readers: new Map() }
+  const read: v3.ReadOptions = { cache: new v3.FileCache(16 * 1024 * 1024) }
   await cursor.seek()
-  while (cursor.current) {
-    const e = cursor.current
-    const [newest] = view ? await v3.history(store, view, e.type, e.id, read) : []
-    const before = !newest || newest.kind === 'x' ? null : { hash: newest.hash!, size: newest.size }
+  // The file's entries a chunk at a time, each chunk's keys looked up in the head at once.
+  for (;;) {
+    const chunk: v3.Entry[] = []
+    while (cursor.current && chunk.length < 1024) {
+      chunk.push(cursor.current)
+      await cursor.next()
+    }
+    if (chunk.length === 0) break
+    const befores = view ? await v3.statesAt(store, view, chunk, read) : []
+    for (const [i, e] of chunk.entries()) await count(e, befores[i] ?? null)
+  }
+  return s
+
+  async function count(e: v3.Entry, before: { hash: string; size: number } | null) {
     if (e.type === v3.ASSET_TYPE) {
       if (e.kind === 'r' && !before) {
         s.assetsDelta++
@@ -573,9 +583,7 @@ async function fileStats(
         s.changes.updated++
       }
     }
-    await cursor.next()
   }
-  return s
 }
 
 /** Count a verified file, then land if that was the last thing waited on. */

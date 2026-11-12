@@ -130,7 +130,8 @@ export async function upload(path: string, o: UploadOptions, say: Say): Promise<
   // 4. Commit, and wait for the server to verify and land it.
   // A small commit is answered with its result; a large one is verified by jobs: poll it,
   // soon at first, then every 5 seconds.
-  say('Committing…')
+  const sentAt = Date.now()
+  say(`Sent in ${((sentAt - t0) / 1000).toFixed(1)}s from the start; committing…`)
   let s = await call('POST', `/uploads/${id}/commit`, { files })
   for (let wait = 1000; s.status !== 'committed'; wait = Math.min(5000, wait * 2)) {
     if (s.status === 'failed' || s.status === 'open') {
@@ -140,5 +141,7 @@ export async function upload(path: string, o: UploadOptions, say: Say): Promise<
     await new Promise((r) => setTimeout(r, wait))
     s = await call('GET', `/uploads/${id}`)
   }
-  say(`Committed ${s.result.semver} (${s.result.hash}): ${s.result.recordCount} records`)
+  say(
+    `Committed ${s.result.semver} (${s.result.hash}): ${s.result.recordCount} records, ${((Date.now() - sentAt) / 1000).toFixed(1)}s after sending`,
+  )
 }

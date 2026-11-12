@@ -166,14 +166,32 @@ async function prepareSession(
   const stats = emptyCommitStats()
   const assetSizes = assetRows.sizes
   let rows = 0
-  const judged = async function* (): AsyncGenerator<v3.LineRow> {
-    for await (const row of allRows(ports, session, runs, reserved, dropped, view, read)) {
-      const before = view ? await stateOf(store, view, row, read) : null
+  // A chunk of rows at a time, each chunk's keys looked up in the head at once.
+  const judge = function* (
+    chunk: v3.LineRow[],
+    befores: ({ hash: string; size: number } | null)[],
+  ) {
+    for (const [i, row] of chunk.entries()) {
+      const before = befores[i] ?? null
       if (row.kind === 'x' ? before === null : before?.hash === lineHash(row)) continue
       count(stats, row, before, assetSizes)
       rows++
       yield row
     }
+  }
+  const judged = async function* (): AsyncGenerator<v3.LineRow> {
+    let chunk: v3.LineRow[] = []
+    const flush = async () => {
+      const befores = view ? await v3.statesAt(store, view, chunk, read) : []
+      const out = [...judge(chunk, befores)]
+      chunk = []
+      return out
+    }
+    for await (const row of allRows(ports, session, runs, reserved, dropped, view, read)) {
+      chunk.push(row)
+      if (chunk.length >= 1024) yield* await flush()
+    }
+    if (chunk.length > 0) yield* await flush()
   }
   const files = await v3.buildFiles(judged(), v3.uploadTarget(store, session.id))
   if (rows === 0) return { status: 'no_changes', versionHash: base?.hash ?? '' }
@@ -298,17 +316,6 @@ async function ensureCollection(store: Ports['stores']['v3'], id: string) {
     // Another commit wrote it first.
     if (!(err instanceof v3.CollectionError)) throw err
   }
-}
-
-/** A key's state in the head: the hash and line size of its record, or null if absent. */
-async function stateOf(
-  store: Ports['stores']['v3'],
-  view: v3.View,
-  row: { type: string; id: string },
-  read: v3.ReadOptions,
-): Promise<{ hash: string; size: number } | null> {
-  const [newest] = await v3.history(store, view, row.type, row.id, read)
-  return !newest || newest.kind === 'x' ? null : { hash: newest.hash!, size: newest.size }
 }
 
 /** Add one row's effect to the commit's counts. */

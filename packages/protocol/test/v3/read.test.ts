@@ -109,3 +109,31 @@ describe('views', () => {
     expect(store.gets).toBeLessThanOrEqual(6)
   })
 })
+
+describe('many keys at once', () => {
+  it('finds each key as the model has it, at every version, rebuilt or not', async () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      const rand = rng(seed * 31)
+      const store = memoryStore()
+      const model = new Model()
+      for (let c = 0; c < 6; c++) {
+        const rows = randomUpload(rand)
+        model.add(rows)
+        await commitRows(store, 'c', rows, rand() < 0.3 ? { maxBytes: 300 } : {})
+        if (c === 3) await v3.rebuild(store, 'c', { plan: v3.planAll, adoptAfter: 1 })
+      }
+      const keys = [...model.allKeys(), { type: 'Nope', id: 'none' }]
+      const head = await v3.openView(store, 'c')
+      for (let version = 1; version <= model.head; version++) {
+        const view = v3.viewAt(head, version)!
+        const rows = model.rowsAt(version)
+        const got = await v3.statesAt(store, view, keys, { batch: 7, concurrency: 3 })
+        keys.forEach((k, i) => {
+          const want = [...rows.values()].find((r) => r.type === k.type && r.id === k.id)
+          expect(got[i]?.hash ?? null).toBe(want?.kind === 'r' ? want.hash : null)
+          if (got[i]) expect(got[i]!.size).toBe(new TextEncoder().encode(want!.line).byteLength)
+        })
+      }
+    }
+  })
+})
