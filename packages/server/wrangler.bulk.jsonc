@@ -22,6 +22,8 @@
 // Queues are made by hand before a deploy names them; the compaction queues:
 //   wrangler queues create underlay-staging-compact
 //   wrangler queues create underlay-prod-compact
+//   wrangler queues create underlay-staging-v3
+//   wrangler queues create underlay-prod-v3
 //
 // Keep bindings and vars in step with wrangler.jsonc.
 {
@@ -38,6 +40,8 @@
       "name": "underlay-staging-bulk",
       "vars": {
         "ROLE": "bulk",
+        // The pool of Durable Objects the v3 queue's jobs run in (worker.ts V3Pool).
+        "V3_POOL_SIZE": "32",
         "APP_URL": "https://staging.underlay.org",
         "DEPLOYMENT": "staging",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
@@ -75,6 +79,7 @@
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-staging-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-staging-v3" },
           { "binding": "USAGE", "queue": "underlay-staging-usage" },
         ],
         "consumers": [
@@ -94,6 +99,15 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
+          // v3's CPU-heavy jobs: each invocation hands its job to the pool and waits, so it
+          // holds almost nothing itself (worker.ts V3Pool, V3_POOL_SIZE).
+          {
+            "queue": "underlay-staging-v3",
+            "max_batch_size": 1,
+            "max_concurrency": 32,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-staging-dead",
+          },
         ],
       },
     },
@@ -101,6 +115,8 @@
       "name": "underlay-prod-bulk",
       "vars": {
         "ROLE": "bulk",
+        // The pool of Durable Objects the v3 queue's jobs run in (worker.ts V3Pool).
+        "V3_POOL_SIZE": "32",
         "APP_URL": "https://www.underlay.org",
         "DEPLOYMENT": "prod",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
@@ -138,6 +154,7 @@
           { "binding": "JOBS", "queue": "underlay-prod-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-prod-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-prod-v3" },
           { "binding": "USAGE", "queue": "underlay-prod-usage" },
         ],
         "consumers": [
@@ -150,6 +167,15 @@
           },
           {
             "queue": "underlay-prod-compact",
+            "max_batch_size": 1,
+            "max_concurrency": 32,
+            "max_retries": 10,
+            "dead_letter_queue": "underlay-prod-dead",
+          },
+          // v3's CPU-heavy jobs: each invocation hands its job to the pool and waits, so it
+          // holds almost nothing itself (worker.ts V3Pool, V3_POOL_SIZE).
+          {
+            "queue": "underlay-prod-v3",
             "max_batch_size": 1,
             "max_concurrency": 32,
             "max_retries": 10,

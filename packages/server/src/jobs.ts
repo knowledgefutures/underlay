@@ -83,6 +83,18 @@ export const isBulk = (type: string) => BULK_JOBS.has(type)
  */
 export const COMPACT_JOBS: ReadonlySet<string> = new Set(['push.compact', 'push.compactPiece'])
 
+/**
+ * v3 jobs that are mostly CPU (hashing, parsing, validating, merging). On Workers they go
+ * to a queue of their own (JOBS_V3), whose consumer hands each to a pool of Durable
+ * Objects (worker.ts, `V3Pool`): queue invocations at once share an isolate's one thread
+ * and 128 MB, and objects in the pool are spread across isolates.
+ */
+export const V3_POOLED_JOBS: ReadonlySet<string> = new Set([
+  'v3.uploadVerify',
+  'v3.scanUnit',
+  'v3.mergeUnit',
+])
+
 const handlers = new Map<string, JobHandler>()
 
 export function registerJob(type: string, handler: JobHandler): void {
@@ -112,9 +124,11 @@ export class QueueJobs implements Jobs {
     readonly queue: CfQueue,
     readonly bulk: CfQueue = queue,
     readonly compact: CfQueue = bulk,
+    readonly v3: CfQueue = bulk,
   ) {}
   #for(type: string) {
     if (COMPACT_JOBS.has(type)) return this.compact
+    if (V3_POOLED_JOBS.has(type)) return this.v3
     return isBulk(type) ? this.bulk : this.queue
   }
   async enqueue(job: JobMessage, opts?: { delaySeconds?: number }) {

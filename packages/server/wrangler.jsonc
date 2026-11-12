@@ -103,6 +103,7 @@
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-staging-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-staging-v3" },
           { "binding": "USAGE", "queue": "underlay-staging-usage" },
         ],
         "consumers": [
@@ -175,6 +176,7 @@
           { "binding": "JOBS", "queue": "underlay-prod-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-prod-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-prod-v3" },
           { "binding": "USAGE", "queue": "underlay-prod-usage" },
         ],
         "consumers": [

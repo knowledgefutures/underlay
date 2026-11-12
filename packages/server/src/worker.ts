@@ -21,7 +21,7 @@ import { isolateUsageSink, newUsageBuffer, type UsageEvent, writeUsage } from '.
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
-import { isBulk, QueueJobs, runJob } from './jobs.js'
+import { isBulk, QueueJobs, runJob, V3_POOLED_JOBS } from './jobs.js'
 import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports, PublicAssets } from './ports.js'
@@ -38,6 +38,8 @@ export interface Env {
   JOBS_BULK?: Queue
   /** Run compactions (jobs.ts COMPACT_JOBS); without it, they go with the other bulk jobs. */
   JOBS_COMPACT?: Queue
+  /** v3's CPU-heavy jobs (jobs.ts V3_POOLED_JOBS), run in the pool; without it, with the bulk jobs. */
+  JOBS_V3?: Queue
   /** Usage events (billing/usage.ts), a request's to a message; without it, nothing is metered. */
   USAGE?: Queue
   APP_URL: string
@@ -75,7 +77,7 @@ export interface Env {
    */
   COMMITS?: CommitsNamespace
   /**
-   * A pool of Durable Objects that run the CPU-heavy v3 jobs (`POOLED_JOBS`) the bulk queue
+   * A pool of Durable Objects that run the CPU-heavy v3 jobs (jobs.ts `V3_POOLED_JOBS`) the v3 queue
    * hands them, `V3_POOL_SIZE` of them (unset or 0: no pool, the jobs run in the consumer).
    * Queue invocations at once share an isolate's one thread and 128 MB; objects in the pool
    * are spread across isolates.
@@ -164,6 +166,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
       env.JOBS as never,
       (env.JOBS_BULK ?? env.JOBS) as never,
       (env.JOBS_COMPACT ?? env.JOBS_BULK ?? env.JOBS) as never,
+      (env.JOBS_V3 ?? env.JOBS_BULK ?? env.JOBS) as never,
     ),
     waitUntil: (p) => ctx.waitUntil(p),
     outboundFetch: (url, init) => fetch(url, init),
@@ -272,7 +275,7 @@ export default {
     const pool = Number(env.V3_POOL_SIZE ?? 0)
     const run = async (msg: (typeof batch.messages)[number]) => {
       try {
-        if (env.POOL && pool > 0 && POOLED_JOBS.has(msg.body.type))
+        if (env.POOL && pool > 0 && V3_POOLED_JOBS.has(msg.body.type))
           await pooled(env.POOL, pool, msg.body)
         else await runJob(msg.body, ports)
         msg.ack()
@@ -304,9 +307,6 @@ export default {
     await ports.jobs.enqueue({ type: 'maintenance.sweep' })
   },
 }
-
-/** v3 jobs that are mostly CPU (hashing, parsing, validating, merging): run in the pool when there is one. */
-const POOLED_JOBS: ReadonlySet<string> = new Set(['v3.uploadVerify', 'v3.scanUnit', 'v3.mergeUnit'])
 
 /** Run a job in one of the pool's objects, picked at random. */
 async function pooled(ns: CommitsNamespace, size: number, job: JobMessage): Promise<void> {
