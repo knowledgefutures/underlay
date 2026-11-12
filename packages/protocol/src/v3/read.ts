@@ -32,6 +32,7 @@ import {
   readCommit,
   readLatest,
   readLayout,
+  readLayoutAtHint,
   readLog,
 } from './log.js'
 import {
@@ -161,8 +162,7 @@ export async function openView(
   opts: { version?: number } = {},
 ): Promise<View> {
   const latest = await readLatest(store, collection)
-  let layout: Layout | null = null
-  if (latest && latest.layout > 0) layout = await readLayout(store, collection, latest.layout)
+  let layout = await readLayoutAtHint(store, collection, latest?.layout)
   const layoutExists = async (n: number) => (await store.head(layoutKey(collection, n))) !== null
   const newest = await probeUp(layoutExists, layout?.number ?? 0)
   if (newest !== (layout?.number ?? 0)) layout = await readLayout(store, collection, newest)

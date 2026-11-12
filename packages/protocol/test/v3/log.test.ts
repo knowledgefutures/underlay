@@ -262,8 +262,33 @@ describe('checking the log', () => {
     const a = await putFile(store, [rec('t', 'a', 1), rec('t', 'm', 1)])
     const b = await putFile(store, [rec('t', 'k', 1), rec('t', 'z', 1)])
     const files = [v3.fileRef(a.id, a.content), v3.fileRef(b.id, b.content)]
-    await v3.createCommit(store, 'c', { files, bump: 'minor' })
-    await expect(v3.readCommit(store, 'c', 1)).rejects.toThrow(/overlap/)
+    // Refused before it is written: a commit no reader takes would end the log.
+    await expect(v3.createCommit(store, 'c', { files, bump: 'minor' })).rejects.toThrow(/overlap/)
+    expect(await v3.headNumber(store, 'c')).toBe(0)
+    // And one written anyway is refused by every read.
+    const good = await v3.createCommit(store, 'd', { files: [files[0]!], bump: 'minor' })
+    const bad = { ...good.commit, changes: [{ ...good.commit.changes[0]!, files }] }
+    await store.put(v3.commitKey('d', 1), v3.commitBytes(bad))
+    await expect(v3.readCommit(store, 'd', 1)).rejects.toThrow(/overlap/)
+  })
+
+  it('writes no commit a reader would refuse: a bad change, or a file entry with more members', async () => {
+    const store = memoryStore()
+    const a = await putFile(store, [rec('t', 'a', 1)])
+    const ref = v3.fileRef(a.id, a.content)
+    const change = await v3.makeChange('c', { files: [ref] })
+    for (const bad of [
+      { ...change, message: 5 },
+      { ...change, extra: true },
+      { ...change, keyId: 'k' },
+      { ...change, files: [{ ...ref, size: 1 }] },
+    ]) {
+      await expect(
+        v3.createCommit(store, 'c', { change: bad as unknown as v3.Change, bump: 'minor' }),
+      ).rejects.toThrow(v3.BaseError)
+    }
+    expect(await v3.headNumber(store, 'c')).toBe(0)
+    expect((await v3.createCommit(store, 'c', { change, bump: 'minor' })).commit.number).toBe(1)
   })
 
   it("accepts a fork's earlier commits under its lineage", async () => {

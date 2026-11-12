@@ -1,3 +1,4 @@
+import { MAX_RECORD_BYTES } from '../constants.js'
 /**
  * Reading a sorted-record-file from a store with range reads: the footer from
  * the file's tail, then only the key blocks and record blocks a read needs.
@@ -12,7 +13,13 @@
 import { jcs } from '../jcs.js'
 import { readTail, type Store } from '../repo/types.js'
 import { sha256Hex } from '../sha256.js'
-import { RECORD_BLOCK_BYTES, TRAILER_BYTES, TRAILER_MAGIC } from './constants.js'
+import {
+  KEY_BLOCK_ENTRIES,
+  MAX_FILE_ENTRIES,
+  RECORD_BLOCK_BYTES,
+  TRAILER_BYTES,
+  TRAILER_MAGIC,
+} from './constants.js'
 import type { FileContent, FileLocator } from './file.js'
 import { gunzipMember } from './gz.js'
 import { compareKeys, type Entry, FormatError, type Key, parseEntry } from './lines.js'
@@ -27,7 +34,32 @@ export class MissingFileError extends Error {
   }
 }
 
-const dec = new TextDecoder()
+/**
+ * What a reader takes from a file before it has checked anything else: a file is someone
+ * else's bytes until it is verified, and its lengths are claims. Nothing a writer under the
+ * input rules produces comes near these.
+ */
+export const readLimits = {
+  /** The footer as stored, and inflated. */
+  footerStored: 16 * 1024 * 1024,
+  footer: 64 * 1024 * 1024,
+  /** A record block: the lines that fill it, and one more of the largest record. */
+  recordBlock: RECORD_BLOCK_BYTES + MAX_RECORD_BYTES + 1,
+  /** A key block: `KEY_BLOCK_ENTRIES` entries with the longest keys, escaped. */
+  keyBlock: 8 * 1024 * 1024,
+  /** A block as stored, past what it inflates to (gzip adds little to what it cannot shrink). */
+  storedSlack: 1024 * 1024,
+}
+
+/** Strict UTF-8, with no byte-order mark dropped: what is hashed is exactly what is parsed. */
+const strict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+function decode(bytes: Uint8Array, what: string): string {
+  try {
+    return strict.decode(bytes)
+  } catch {
+    throw new FormatError(`${what} is not UTF-8`)
+  }
+}
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -89,6 +121,7 @@ export class SortedFile {
       if (t[i] !== TRAILER_MAGIC[i]) throw new FormatError(`${key}: bad trailer`)
     }
     const footerLength = Number(new DataView(t.buffer, t.byteOffset + 8, 8).getBigUint64(0, false))
+    if (footerLength > readLimits.footerStored) throw new FormatError(`${key}: footer too long`)
     const need = footerLength + TRAILER_BYTES
     if (need > tail.byteLength) {
       if (tail.byteLength < want) throw new FormatError(`${key}: footer longer than the file`)
@@ -99,30 +132,39 @@ export class SortedFile {
     }
     const footer = await gunzipMember(
       tail.subarray(tail.byteLength - need, tail.byteLength - TRAILER_BYTES),
+      readLimits.footer,
     )
     let parsed: unknown
     try {
-      parsed = JSON.parse(dec.decode(footer))
-    } catch {
-      throw new FormatError(`${key}: footer is not JSON`)
+      parsed = JSON.parse(decode(footer, `${key}: footer`))
+    } catch (err) {
+      throw err instanceof FormatError ? err : new FormatError(`${key}: footer is not JSON`)
     }
     if (!isObject(parsed) || !isObject(parsed.content) || !isObject(parsed.locator)) {
       throw new FormatError(`${key}: bad footer`)
     }
     const content = parsed.content as unknown as FileContent
     const locator = parsed.locator as unknown as FileLocator
-    const lengths = (v: unknown) =>
-      Array.isArray(v) && v.every((n) => Number.isSafeInteger(n) && n > 0)
+    const lengths = (v: unknown, most: number, longest: number) =>
+      Array.isArray(v) &&
+      v.length <= most &&
+      v.every((n) => Number.isSafeInteger(n) && n > 0 && n <= longest + readLimits.storedSlack)
     if (
-      !lengths(locator.recordBlocks) ||
-      !lengths(locator.keyBlocks) ||
+      !lengths(locator.recordBlocks, MAX_FILE_ENTRIES, readLimits.recordBlock) ||
+      !lengths(locator.keyBlocks, MAX_FILE_ENTRIES / KEY_BLOCK_ENTRIES, readLimits.keyBlock) ||
       !Array.isArray(content.keyBlocks) ||
       content.keyBlocks.length !== locator.keyBlocks.length ||
       typeof content.labeled !== 'boolean'
     ) {
       throw new FormatError(`${key}: bad footer`)
     }
-    const id = sha256Hex(jcs(content))
+    let id: string
+    try {
+      id = sha256Hex(jcs(content))
+    } catch {
+      // Nested past what canonicalizing it can walk.
+      throw new FormatError(`${key}: bad footer`)
+    }
     if (opts.id !== undefined && id !== opts.id) {
       throw new FormatError(`${key}: footer does not match file id ${opts.id}`)
     }
@@ -263,11 +305,11 @@ export class FileReader {
     if (!listed) throw new FormatError(`${f.key}: no key block ${i}`)
     const r = await this.#range(this.#keyWin, f.keyOffsets, i)
     this.#keyWin = r.win
-    const raw = await gunzipMember(r.bytes)
+    const raw = await gunzipMember(r.bytes, readLimits.keyBlock)
     if (this.verify && sha256Hex(raw) !== listed[2]) {
       throw new FormatError(`${f.key}: key block ${i} does not match the footer`)
     }
-    const text = dec.decode(raw)
+    const text = decode(raw, `${f.key}: key block ${i}`)
     const lines = text.split('\n')
     if (lines.pop() !== '') throw new FormatError(`${f.key}: key block ${i} has no final newline`)
     if (lines.length !== listed[3]) throw new FormatError(`${f.key}: key block ${i} entry count`)
@@ -283,7 +325,8 @@ export class FileReader {
     const f = this.file
     const r = await this.#range(this.#keyWin, f.keyOffsets, i)
     this.#keyWin = r.win
-    const lines = dec.decode(await gunzipMember(r.bytes)).split('\n')
+    const raw = await gunzipMember(r.bytes, readLimits.keyBlock)
+    const lines = decode(raw, `${f.key}: key block ${i}`).split('\n')
     lines.pop()
     return lines
   }
@@ -301,7 +344,7 @@ export class FileReader {
     }
     const r = await this.#range(this.#recWin, f.recordOffsets, i)
     this.#recWin = r.win
-    const raw = await gunzipMember(r.bytes)
+    const raw = await gunzipMember(r.bytes, readLimits.recordBlock)
     this.#recAt = i
     this.#recBytes = raw
     return raw

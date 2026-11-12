@@ -162,7 +162,8 @@ export async function verifyRange(
     commits: null,
     end: at,
   }
-  const enc = new TextDecoder('utf-8', { fatal: true })
+  // Strict, and with no byte-order mark dropped: the text parsed is the bytes hashed.
+  const strict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
   for (let b = from; b < to; b++) {
     const listed = f.content.keyBlocks[b]!
     const entries = await reader.keyBlock(b)
@@ -205,7 +206,7 @@ export async function verifyRange(
             if (opts.canonical) {
               let lineText: string
               try {
-                lineText = enc.decode(line)
+                lineText = strict.decode(line)
               } catch {
                 throw bad('line is not UTF-8')
               }
@@ -294,9 +295,20 @@ export async function verifyFile(
     throw bad(opts.labeled ? 'file is not labeled' : 'file is labeled')
   }
   const n = c.keyBlocks.length
+  // Every byte of the object is one the footer accounts for.
+  const stored = await store.head(key)
+  if (stored && stored.size !== f.size) throw bad('length does not match its footer')
   if (n === 0) {
-    if (f.locator.recordBlocks.length !== 0 || c.lines !== 0 || c.bytes !== 0) {
-      throw bad('an empty file has no blocks')
+    if (
+      f.locator.recordBlocks.length !== 0 ||
+      c.lines !== 0 ||
+      c.bytes !== 0 ||
+      c.entries !== 0 ||
+      c.records !== 0 ||
+      c.removals !== 0 ||
+      c.withheld !== 0
+    ) {
+      throw bad('an empty file has no blocks and counts nothing')
     }
     return { id: f.id, content: c, size: f.size }
   }

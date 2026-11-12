@@ -119,6 +119,9 @@ const VERSION_ID = /^ulv3:[0-9a-f]{64}$/
 /** Whether a string has the shape of a version id. */
 export const isVersionId = (v: unknown): v is string => typeof v === 'string' && VERSION_ID.test(v)
 
+/** The members of a file entry as a commit is written with (Section 4). */
+const FILE_REF_MEMBERS = 'bytes,entries,first,id,last,records,removals'
+
 function checkFileRef(f: unknown, what: string): asserts f is FileRef {
   if (
     !isObject(f) ||
@@ -306,8 +309,10 @@ export async function writeLatest(store: Store, collection: string, latest: Late
 
 /**
  * The highest number that exists, given that `from` does (0 if none is known
- * to): gallop upward, then bisect. Numbers have no gaps. A fresh hint costs one
- * probe; a stale or missing one, a few more.
+ * to): gallop upward, then bisect. Numbers have no gaps from `from` up: commits
+ * are never deleted, and a server that deletes old layout files keeps the layout
+ * hint on one that exists (`readLayoutAtHint`). A fresh hint costs one probe; a
+ * stale or missing one, a few more.
  */
 export async function probeUp(
   exists: (n: number) => Promise<boolean>,
@@ -355,6 +360,37 @@ export async function findHead(
   return head
 }
 
+/**
+ * The layout a hint names. A server may delete old layout files once the hint names a
+ * newer one, so a hinted layout that is gone means the hint is stale: it is read again,
+ * and if it still names none, the layouts are listed (probing up from 1 would find the
+ * low numbers gone and take the collection to have no layout).
+ */
+export async function readLayoutAtHint(
+  store: Store,
+  collection: string,
+  hinted: number | null | undefined,
+): Promise<Layout | null> {
+  if (!hinted || hinted < 1) return null
+  const layout = await readLayout(store, collection, hinted)
+  if (layout) return layout
+  const again = await readLayoutHint(store, collection)
+  const named = again && again !== hinted ? await readLayout(store, collection, again) : null
+  if (named) return named
+  const prefix = `${collectionPrefix(collection)}layouts/`
+  let newest = 0
+  let cursor: string | undefined
+  do {
+    const page = await store.list(prefix, cursor)
+    for (const key of page.keys) {
+      const n = Number.parseInt(key.slice(prefix.length), 10)
+      if (n > newest) newest = n
+    }
+    cursor = page.cursor
+  } while (cursor !== undefined)
+  return newest > 0 ? readLayout(store, collection, newest) : null
+}
+
 /** The newest layout, or null. */
 export async function findLayout(
   store: Store,
@@ -363,10 +399,10 @@ export async function findLayout(
 ): Promise<Layout | null> {
   const hinted = latest === undefined ? await readLayoutHint(store, collection) : latest?.layout
   const exists = async (n: number) => (await store.head(layoutKey(collection, n))) !== null
-  let from = hinted ?? 0
-  if (from > 0 && !(await exists(from))) from = 0
-  const n = await probeUp(exists, from)
+  const from = await readLayoutAtHint(store, collection, hinted)
+  const n = await probeUp(exists, from?.number ?? 0)
   if (n === 0) return null
+  if (n === from?.number) return from
   const layout = await readLayout(store, collection, n)
   if (!layout) throw new Error(`Layout ${n} of ${collection} vanished`)
   return layout
@@ -423,7 +459,16 @@ export async function makeChange(
 ): Promise<Change> {
   const change: Change = {
     collection,
-    files: parts.files,
+    // As a commit names a file: what a builder adds (its stored size, say) is left out.
+    files: parts.files.map((f) => ({
+      id: f.id,
+      first: f.first,
+      last: f.last,
+      entries: f.entries,
+      records: f.records,
+      removals: f.removals,
+      bytes: f.bytes,
+    })),
     base: parts.base ?? null,
     message: parts.message ?? null,
     keyId: null,
@@ -561,6 +606,19 @@ export async function createCommit(
     }
     const commit = opts.signer ? await signObject(unsigned, opts.signer) : unsigned
     const bytes = commitBytes(commit)
+    // Written only if it can be read back: a commit no reader takes would end the log, since
+    // nothing can be committed after one that cannot be read.
+    try {
+      parseCommit(bytes)
+      for (const f of change.files) {
+        if (Object.keys(f).sort().join() !== FILE_REF_MEMBERS)
+          throw new FormatError(`File entry ${f.id} has members a commit does not name`)
+      }
+    } catch (err) {
+      if (err instanceof FormatError)
+        throw new BaseError(`The change cannot be committed: ${err.message}`)
+      throw err
+    }
     const key = commitKey(collection, commit.number)
     const won = await createObject(store, key, bytes, { contentType: 'application/json' })
     const mine = { commit, id: versionId(bytes), bytes }
@@ -621,6 +679,12 @@ export interface VerifyLogOptions {
   lineage?: [collection: string, through: number][]
   /** Also open each file a commit names and check its footer against the commit. */
   files?: boolean
+  /**
+   * With `files`: only for commits from this number on. A rebuild's layout replaces the
+   * files of the commits it covers, and the sweep then removes them, so a server checks the
+   * files of the commits after its newest layout and the layout's own files apart.
+   */
+  filesFrom?: number
   from?: number
   /** The version id `from`'s `previous` must be, when `from` is above 1. */
   previous?: string
@@ -654,7 +718,8 @@ export async function verifyLog(
     if (wantPrev !== undefined && c.commit.previous !== wantPrev)
       throw bad('previous does not match')
     for (const ch of c.commit.changes) {
-      // A base is a version of this log before the commit: recorded as given, never enforced.
+      // A base is a version of this log before the commit. What it names is recorded as
+      // given: nothing requires it to be the commit before.
       if (ch.base !== null && from === 1 && !seen.has(ch.base)) {
         throw bad(`base ${ch.base} is not an earlier version of this collection`)
       }
@@ -672,7 +737,7 @@ export async function verifyLog(
       )
       if (!ok) throw bad(`semver ${c.commit.semver} does not follow ${prev.commit.semver}`)
     } else if (n === 1 && c.commit.semver !== 'v1.0.0') throw bad('the first commit is v1.0.0')
-    if (opts.files) {
+    if (opts.files && n >= (opts.filesFrom ?? 1)) {
       for (const f of commitFiles(c.commit)) {
         const file = await SortedFile.open(store, recordKey(f.id), { id: f.id })
         const fc = file.content

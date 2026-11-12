@@ -242,7 +242,7 @@ describe('determinism', () => {
       [file.keyOffsets, locator.keyBlocks],
     ] as const) {
       for (let i = 0; i < offsets.length - 1; i++) {
-        const raw = await v3.gunzipMember(all.subarray(offsets[i]!, offsets[i + 1]!))
+        const raw = await v3.gunzipMember(all.subarray(offsets[i]!, offsets[i + 1]!), 1 << 30)
         const gz = await gzip(raw)
         parts.push(gz)
         into.push(gz.byteLength)
@@ -319,7 +319,9 @@ describe('verifying', () => {
     const read = async (offsets: number[]) => {
       const out: Uint8Array[] = []
       for (let i = 0; i < offsets.length - 1; i++) {
-        out.push((await v3.gunzipMember(all.subarray(offsets[i]!, offsets[i + 1]!))).slice())
+        out.push(
+          (await v3.gunzipMember(all.subarray(offsets[i]!, offsets[i + 1]!), 1 << 30)).slice(),
+        )
       }
       return out
     }
@@ -443,6 +445,89 @@ describe('verifying', () => {
     const store = memoryStore()
     const f = await putFile(store, [rec('$other', 'a', 1)])
     await expect(v3.verifyFile(store, f.key)).rejects.toThrow(/reserved/)
+  })
+
+  it('rejects a block that inflates past its limit, and a footer too long to read', async () => {
+    // A few hundred KB of zeros that inflate to 64 MiB, as a record block.
+    const bomb = await tampered(manyRows(10), (p) => {
+      p.records[0] = new Uint8Array(64 * 1024 * 1024)
+    })
+    const r = (await v3.SortedFile.open(bomb.store, bomb.key)).reader()
+    await expect(r.recordBlock(0)).rejects.toThrow(/inflates past/)
+    await expect(v3.verifyFile(bomb.store, bomb.key)).rejects.toThrow(v3.FormatError)
+    await expect(v3.gunzipMember(await gzip(new Uint8Array(4096)), 1024)).rejects.toThrow(
+      /inflates past 1024 bytes/,
+    )
+    await expect(v3.gunzipMember(new Uint8Array(64), 1024)).rejects.toThrow(/does not inflate/)
+    // A trailer that claims a footer of 2^60 bytes: refused before anything more is read.
+    const store = memoryStore()
+    const f = await putFile(store, manyRows(10))
+    const all = ((await (await store.get(f.key))!.bytes()) as Uint8Array).slice()
+    new DataView(all.buffer).setBigUint64(all.byteLength - 8, 1n << 60n, false)
+    await store.put('long', all)
+    await expect(v3.SortedFile.open(store, 'long')).rejects.toThrow(/footer too long/)
+  })
+
+  it('rejects a byte-order mark, in a line or a key block, and text that is not UTF-8', async () => {
+    const BOM = [0xef, 0xbb, 0xbf]
+    // The line is the canonical record after a BOM: a lenient decoder would drop it and
+    // find the record canonical, while its hash and size are over other bytes.
+    const line = await tampered([rec('t', 'a', { n: 1 })], (p) => {
+      const text = '{"id":"a","type":"t","data":{"n":1}}'
+      const bytes = new Uint8Array([...BOM, ...enc.encode(text)])
+      p.records[0] = new Uint8Array([...bytes, 0x0a])
+      const e: v3.Entry = {
+        kind: 'r',
+        type: 't',
+        id: 'a',
+        hash: sha256Hex(bytes),
+        size: bytes.byteLength,
+        block: 0,
+        offset: 0,
+      }
+      p.keys[0] = enc.encode(v3.entryText(e) + '\n')
+      p.content.bytes = bytes.byteLength + 1
+      rehash(p)
+    })
+    await expect(v3.verifyFile(line.store, line.key, { canonical: true })).rejects.toThrow(
+      InputRuleError,
+    )
+    const keys = await tampered(manyRows(10), (p) => {
+      p.keys[0] = new Uint8Array([...BOM, ...p.keys[0]!])
+      rehash(p)
+    })
+    await expect(v3.verifyFile(keys.store, keys.key)).rejects.toThrow(v3.FormatError)
+    const raw = await tampered(manyRows(10), (p) => {
+      const at = p.keys[0]!.indexOf(0x30)
+      p.keys[0]![at] = 0xff
+      rehash(p)
+    })
+    await expect(v3.verifyFile(raw.store, raw.key)).rejects.toThrow(/not UTF-8/)
+  })
+
+  it('rejects an empty file that counts rows, and bytes its footer does not cover', async () => {
+    const counts = await tampered([], (p) => {
+      p.content.records = 1_000_000
+      p.content.removals = 77
+    })
+    await expect(v3.verifyFile(counts.store, counts.key)).rejects.toThrow(/counts nothing/)
+    // Junk before a file that the tail read never reaches.
+    const store = memoryStore()
+    const f = await putFile(store, manyRows(2000))
+    const all = (await (await store.get(f.key))!.bytes()) as Uint8Array
+    await store.put('padded', v3.concatBytes([new Uint8Array(1 << 20), all]))
+    await expect(v3.verifyFile(store, 'padded')).rejects.toThrow(/length does not match/)
+  })
+
+  it('refuses a key with a lone surrogate, a type before the reserved ones, and __proto__', () => {
+    expect(v3.checkKey('t', 'a\ud800')).toMatch(/lone surrogate/)
+    expect(() => v3.removalRow('a\ud800', 't')).toThrow(InputRuleError)
+    for (const type of [' a', '!a', '"a', '#a'])
+      expect(v3.checkKey(type, 'a')).toMatch(/before "\$"/)
+    expect(v3.checkKey('%a', 'a')).toBe(null)
+    expect(v3.checkKey('__proto__', 'a')).toMatch(/reserved/)
+    expect(v3.checkKey(v3.SCHEMA_TYPE, '__proto__')).toMatch(/type name/)
+    expect(v3.checkKey(v3.SCHEMA_TYPE, '#a')).toMatch(/type name/)
   })
 
   it('rejects a truncated file and a bad trailer', async () => {

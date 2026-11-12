@@ -228,6 +228,17 @@ describe('the sweep', () => {
     expect(s.records).toMatchObject({ listed: 2, condemned: 0 })
   })
 
+  it('stops, condemning nothing, when a commit is there and cannot be read', async () => {
+    const store = memoryStore()
+    await seeded(store, 'c', 8, 3)
+    await seeded(store, 'd', 9, 2)
+    // Damaged, not gone: taken as listing nothing, its files would be on their way out.
+    await store.put(v3.commitKey('c', 2), '{"not":"a commit"}')
+    await expect(v3.sweep(store, { now: () => 0 })).rejects.toThrow(v3.FormatError)
+    expect(await collect(listAll(store, 'sweep/'))).toEqual([])
+    expect(await collect(listAll(store, 'trash/'))).toEqual([])
+  })
+
   it('keeps assets that a listed file names and reclaims the rest', async () => {
     const store = memoryStore()
     const put = async (text: string) => {

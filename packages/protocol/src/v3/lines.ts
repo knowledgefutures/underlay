@@ -5,11 +5,10 @@
  * hashes are v2's) and removal lines. Each line has an entry in the file's key
  * blocks: its kind, key, hash, size, and where it sits.
  */
-import { MAX_RECORD_BYTES } from '../constants.js'
-import { MAX_JSON_DEPTH } from '../constants.js'
+import { MAX_JSON_DEPTH, MAX_RECORD_BYTES } from '../constants.js'
 import { recordCanonical } from '../hash.js'
 import { checkRecordId, checkTypeSlug, InputRuleError, parseStrict } from '../input-rules.js'
-import { compareUtf8, utf8ByteLength } from '../utf8.js'
+import { compareUtf8, isWellFormed, utf8ByteLength } from '../utf8.js'
 import { ASSET_TYPE, META_ID, META_TYPE, RESERVED_TYPES, SCHEMA_TYPE } from './constants.js'
 
 /** `r`: a record line. `x`: a removal line. `w`: a record whose line is withheld. */
@@ -111,6 +110,18 @@ export function parseEntry(text: string, labeled: boolean): Entry {
   return e
 }
 
+/**
+ * What is wrong with a publisher's type beyond v2's limits, or null. It sorts after every
+ * reserved type (those begin with `$`), so a file's reserved rows come first and a reader
+ * finds the records from the first key past them; and it is not `__proto__`, which a JSON
+ * object keyed by type cannot hold.
+ */
+function publisherTypeError(type: string): string | null {
+  if (type.charCodeAt(0) < 0x24) return 'Type must not begin with a character before "$"'
+  if (type === '__proto__') return 'Type "__proto__" is reserved'
+  return null
+}
+
 /** Whether a type and id may be a key: v2's limits, and only the three reserved `$` types. */
 export function checkKey(type: unknown, id: unknown): string | null {
   const typeError = checkTypeSlug(type)
@@ -119,10 +130,13 @@ export function checkKey(type: unknown, id: unknown): string | null {
   if (idError) return idError
   const t = type as string
   const i = id as string
-  if (!t.startsWith('$')) return null
+  if (!isWellFormed(t) || !isWellFormed(i)) return 'A key must not hold a lone surrogate'
+  if (!t.startsWith('$')) return publisherTypeError(t)
   if (!RESERVED_TYPES.includes(t)) return `Type "${t}" is reserved`
   if (t === SCHEMA_TYPE) {
-    return i.startsWith('$') || checkTypeSlug(i) ? '$schema id must be a type name' : null
+    return i.startsWith('$') || checkTypeSlug(i) || publisherTypeError(i)
+      ? '$schema id must be a type name'
+      : null
   }
   if (t === ASSET_TYPE) return HEX64.test(i) ? null : '$asset id must be a SHA-256 in hex'
   if (t === META_TYPE) return i === META_ID ? null : `$meta id must be "${META_ID}"`

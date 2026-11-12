@@ -273,8 +273,10 @@ export async function sweep(store: Store, opts: SweepOptions = {}): Promise<Swee
     result.collections++
     result.logical.set(c.id, { files: 0, bytes: 0 })
     const lines: string[] = []
-    // A collection being deleted may lose objects under us; what is gone lists nothing.
-    const layout = c.layout > 0 ? await readLayout(store, c.id, c.layout).catch(() => null) : null
+    // A collection being deleted may lose objects under us; what is gone lists nothing (a
+    // read of a missing object gives null). A layout or commit that is there and cannot be
+    // read stops the pass: taken as listing nothing, its files would be on their way out.
+    const layout = c.layout > 0 ? await readLayout(store, c.id, c.layout) : null
     for (const f of layout?.files ?? []) {
       lines.push(`${f.id}\t${c.id}\t${coversType(f.first, f.last, ASSET_TYPE) ? 1 : 0}`)
     }
@@ -282,7 +284,7 @@ export async function sweep(store: Store, opts: SweepOptions = {}): Promise<Swee
     const commits = await inParallel(
       Array.from(
         { length: Math.max(0, c.commit - from + 1) },
-        (_, i) => () => readCommit(store, c.id, from + i).catch(() => null),
+        (_, i) => () => readCommit(store, c.id, from + i),
       ),
       8,
     )
