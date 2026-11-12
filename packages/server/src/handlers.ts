@@ -43,6 +43,7 @@ import { recoverCommits } from './push/recover.js'
 import { queueConversions } from './v3/convert.js'
 import { v3FsckStep, type V3FsckCursor } from './v3/fsck.js'
 import './v3/jobs.js'
+import './v3/offsets.js'
 import { expireUploads, recoverUploads } from './v3/uploads.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
@@ -51,13 +52,18 @@ import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 registerJob('version.published', async (job, ports) => {
   await enqueueDeliveries(ports, String(job.versionId), job.bump as BumpType)
   const [v] = await ports.db
-    .select({ collectionId: schema.versions.collectionId, hash: schema.versions.hash })
+    .select({
+      collectionId: schema.versions.collectionId,
+      hash: schema.versions.hash,
+      seq: schema.versions.seq,
+    })
     .from(schema.versions)
     .where(eq(schema.versions.id, String(job.versionId)))
-  // v3: the rebuild policy, then nothing else yet. No reference index (decision 6) and no
-  // mirrors (decision 8) for v3 collections.
+  // v3: the rebuild policy and the record pages' offset index. No reference index
+  // (decision 6) and no mirrors (decision 8) for v3 collections.
   if (v && (await ports.stores.layoutOf(v.collectionId)) === 'v3') {
     await ports.jobs.enqueue({ type: 'v3.rebuild', collectionId: v.collectionId })
+    await ports.jobs.enqueue({ type: 'v3.offsets', collectionId: v.collectionId, seq: v.seq })
     return
   }
   await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })

@@ -29,6 +29,7 @@ import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import { findVersion, type VersionRow } from '../versions/view.js'
 import { assetsOf, metadataOf, schemasOf } from './catalog.js'
+import { offsetConfig, offsetStart } from './offsets.js'
 import { readStore, readView } from './read-cache.js'
 
 const dec = new TextDecoder()
@@ -116,26 +117,38 @@ export async function* liveRecords(
 /** A page of records: after a cursor or an offset, at most `limit` and `pageBytes`. */
 async function recordPage(
   c: Context<AppEnv>,
-  view: v3.View,
+  v: V3Version,
   opts: { type?: string; after?: v3.Key; offset: number; limit: number },
 ) {
+  const view = v.view
   const range: v3.KeyRange = {
     ...(opts.type !== undefined ? { type: opts.type } : {}),
     ...(opts.after ? { after: opts.after } : {}),
   }
   const out: { line: Uint8Array; hash: string; type: string; id: string }[] = []
-  // An offset is found by walking key entries (no lines), reading key blocks in large
-  // windows: page 20,000 of a 1M-record type is then about a dozen reads, not a thousand.
-  // The page itself is read from the key before it, with no read-ahead.
+  // An offset starts from the version's offset index (offsets.ts) when it has one: the
+  // nearest indexed record at or before it, and fewer than `offsetConfig.step` more walked.
+  // Without one it is found by walking key entries (no lines) from the start, reading
+  // key blocks in large windows. The page itself is read with no read-ahead.
   if (opts.offset > 0) {
     let skip = opts.offset
-    let before: v3.Key | null = null
-    for await (const w of liveRecords(c, view, range, SKIP_READ_AHEAD)) {
-      before = { type: w.entry.type, id: w.entry.id }
-      if (--skip === 0) break
+    if (opts.type !== undefined && opts.offset >= offsetConfig.step) {
+      const start = await offsetStart(c.var.ports, view.collection, v.row, opts.type, opts.offset)
+      if (start) {
+        range.from = start.from
+        skip = start.skip
+      }
     }
-    if (skip > 0 || !before) return { records: out, hasMore: false }
-    range.after = before
+    if (skip > 0) {
+      let before: v3.Key | null = null
+      for await (const w of liveRecords(c, view, range, SKIP_READ_AHEAD)) {
+        before = { type: w.entry.type, id: w.entry.id }
+        if (--skip === 0) break
+      }
+      if (skip > 0 || !before) return { records: out, hasMore: false }
+      delete range.from
+      range.after = before
+    }
   }
   let bytes = 0
   let hasMore = false
@@ -183,7 +196,7 @@ export async function v3Detail(
   if (pageType !== undefined) {
     const t = shown[0] ?? null
     const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
-    const page = t ? await recordPage(c, v.view, { type: t.slug, offset, limit: limitOf() }) : null
+    const page = t ? await recordPage(c, v, { type: t.slug, offset, limit: limitOf() }) : null
     recordsPage = {
       type: t?.slug ?? null,
       records: (page?.records ?? []).map((r) => recordJson(r.line, r.hash)),
@@ -218,7 +231,7 @@ export async function v3Records(
   const total = q.type
     ? (v.row.typeCounts[q.type] ?? 0)
     : Object.values(v.row.typeCounts).reduce((a, b) => a + b, 0)
-  const page = await recordPage(c, v.view, {
+  const page = await recordPage(c, v, {
     ...(q.type ? { type: q.type } : {}),
     ...(q.cursor ? { after: { type: q.cursor.t, id: q.cursor.k } } : {}),
     offset: q.cursor ? 0 : q.offset,

@@ -60,6 +60,8 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'v3.finishRebuild',
   'v3.sweep',
   'v3.convert',
+  // A version's offset index for record pages (v3/offsets.ts): may walk a whole type.
+  'v3.offsets',
   // A key range of a schema scan (v3/scans.ts).
   'v3.scanUnit',
   // v3 client-built uploads (v3/uploads.ts): a verify hashes a whole file.
