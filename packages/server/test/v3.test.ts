@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import { hashRecord, v3 } from '@underlay/protocol'
+import { hashRecord, memoryStore, v3 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -463,6 +463,97 @@ describe.skipIf(!onV3)('v3 collections', () => {
     } finally {
       Object.assign(v3JobConfig, saved)
     }
+  })
+
+  it('takes an upload the client built: files by presigned URL, verified a job each, then landed', async () => {
+    const { h, user, c, base } = await setup()
+    const build = async (rows: v3.LineRow[]) => {
+      const local = memoryStore()
+      const session = v3.newSession()
+      const files = await v3.buildFiles(rows.sort(v3.compareKey), v3.uploadTarget(local, session), {
+        cutBytes: 2000,
+      })
+      return files.map((f) => ({
+        ref: {
+          id: f.id,
+          first: f.first,
+          last: f.last,
+          entries: f.entries,
+          records: f.records,
+          removals: f.removals,
+          bytes: f.bytes,
+        },
+        bytes: local.objects.get(v3.uploadKey(session, f.id))!.bytes,
+      }))
+    }
+    const send = async (files: Awaited<ReturnType<typeof build>>, body: object = {}) => {
+      const opened = await json(
+        await h.request(`${base}/uploads`, { method: 'POST', user, json: body }),
+      )
+      const id = opened.upload_id as string
+      for (const f of files) {
+        const res = await json(
+          await h.request(`${base}/uploads/${id}/files`, {
+            method: 'POST',
+            user,
+            json: { id: f.ref.id, size: f.bytes.byteLength },
+          }),
+        )
+        expect(res.method).toBe('PUT')
+        // The client's PUT to the presigned URL.
+        await h.bucket.put(String(res.url).replace('memory://put/', ''), f.bytes)
+      }
+      const status = await json(await h.request(`${base}/uploads/${id}`, { user }))
+      expect(status.present.sort()).toEqual(files.map((f) => f.ref.id).sort())
+      const res = await h.request(`${base}/uploads/${id}/commit`, {
+        method: 'POST',
+        user,
+        json: { files: files.map((f) => f.ref) },
+      })
+      expect(res.status).toBe(202)
+      await h.drain()
+      return json(await h.request(`${base}/uploads/${id}`, { user }))
+    }
+    const authors = Array.from({ length: 300 }, (_, i) =>
+      v3.rowFromRecord(`a${String(i).padStart(3, '0')}`, 'Author', { name: `Author ${i}` }),
+    )
+    let up = await send(
+      await build([v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author), ...authors]),
+      {
+        message: 'first load',
+      },
+    )
+    expect(up).toMatchObject({
+      status: 'committed',
+      result: { semver: 'v1.0.0', recordCount: 300 },
+    })
+    expect(up.files_named).toBeGreaterThan(1)
+    // A second upload: an update, a removal, a new record; counted against the head.
+    up = await send(
+      await build([
+        v3.rowFromRecord('a000', 'Author', { name: 'Ada' }),
+        v3.removalRow('a001', 'Author'),
+        v3.rowFromRecord('z999', 'Author', { name: 'Zed' }),
+      ]),
+    )
+    expect(up).toMatchObject({
+      status: 'committed',
+      result: { semver: 'v1.1.0', recordCount: 300, changes: { added: 1, removed: 1, updated: 1 } },
+    })
+    expect(
+      (await json(await h.request(`${base}/versions/latest/records/Author/a000`))).data,
+    ).toEqual({ name: 'Ada' })
+    // A record its schema refuses fails the upload, with the reason.
+    up = await send(await build([v3.rowFromRecord('bad', 'Author', { born: 3 })]))
+    expect(up.status).toBe('failed')
+    expect(JSON.stringify(up.error)).toMatch(/bad/)
+    expect((await lastRow(h.ports, c.id))!.seq).toBe(2)
+    // Not for a v2 collection.
+    await h.collection('old', { recordLayout: 'today' })
+    expect(
+      (await h.request('/api/collections/org/old/uploads', { method: 'POST', user, json: {} }))
+        .status,
+    ).toBe(409)
   })
 
   it('writes the D1 rows of a commit the bucket has and D1 lacks', async () => {

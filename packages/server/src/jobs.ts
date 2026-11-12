@@ -55,7 +55,13 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'cleanup.sweep',
   // v3: the rebuild policy after a commit, and the sweep on the cron (v3/jobs.ts).
   'v3.rebuild',
+  'v3.mergeUnit',
+  'v3.finishRebuild',
   'v3.sweep',
+  // v3 client-built uploads (v3/uploads.ts): a verify hashes a whole file.
+  'v3.uploadPrepare',
+  'v3.uploadVerify',
+  'v3.uploadLand',
   // Layout F's merges after a commit.
   'layout.maintain',
   // Its reclaim, a key range a job (cleanup/layout-reclaim.ts), and merges too large for one job.

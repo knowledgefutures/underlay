@@ -40,8 +40,9 @@ import { laggingPlacements, queueMirrors } from './locations/mirror.js'
 import type { JobMessage, Ports } from './ports.js'
 import { expireSessions } from './push/finalize.js'
 import { recoverCommits } from './push/recover.js'
-import { queueInfoBackfill } from './versions/collection-info.js'
+import { expireUploads } from './v3/uploads.js'
 import './v3/jobs.js'
+import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
 
@@ -134,6 +135,7 @@ registerJob('maintenance.sweep', async (_job, ports) => {
     lagging.map((placementId) => ({ type: 'mirror.version', placementId })),
   )
   // v3: one pass of the deletion sweep over the v3 area, and stale uploads cleared.
+  await expireUploads(ports)
   await ports.jobs.enqueue({ type: 'v3.sweep' })
   // Storage cleanup: finished sessions and abandoned uploads, stalled runs, the weekly run.
   // Last, and on its own: a failure here shouldn't rerun the rest.

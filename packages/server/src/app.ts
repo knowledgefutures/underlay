@@ -22,6 +22,7 @@ import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
 import { statsRoutes } from './api/stats.js'
 import { syncRoutes } from './api/sync.js'
+import { uploadRoutes } from './api/uploads.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Kf } from './auth/kf.js'
@@ -298,6 +299,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', fileRoutes())
   app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())
+  app.route('/api/collections', uploadRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', syncRoutes())
   app.route('/api/collections', webhookRoutes())

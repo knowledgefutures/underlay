@@ -9,6 +9,7 @@ import { commit } from './commands/commit.js'
 import { diff, fsck, log, remoteAdd, remoteList, remoteRemove, status } from './commands/info.js'
 import { add, fileAdd, metaSet, rm, schemaSet } from './commands/stage.js'
 import { clone, pull, push } from './commands/sync.js'
+import { upload } from './commands/upload.js'
 import { CliError, Local } from './local.js'
 
 const say = (line: string) => console.log(line)
@@ -137,6 +138,22 @@ program
   .description('Publish the head to a remote')
   .argument('[remote]', 'remote name', 'origin')
   .action((name: string) => run(push(here(), name, {}, say)))
+
+program
+  .command('upload')
+  .description(
+    'Build a v3 upload from NDJSON rows here and send it to a v3 collection (no local repository)',
+  )
+  .argument('<file>', 'NDJSON rows, or - for stdin')
+  .requiredOption('--to <url>', 'registry URL, e.g. https://www.underlay.org')
+  .requiredOption('-c, --collection <owner/slug>', 'the v3 collection')
+  .option('-t, --token <token>', 'API key (default: UL_KEY)')
+  .option('-m, --message <message>', 'the commit message')
+  .option('--sorted', 'the rows are in key order already')
+  .option('--upload <id>', 'take an interrupted upload up again')
+  .option('--dir <dir>', 'where the files are built', '.underlay-upload')
+  .option('--parallel <n>', 'files sent at once', (v) => Number(v), 4)
+  .action((file: string, o: Parameters<typeof upload>[1]) => run(upload(file, o, say)))
 
 program.parseAsync().catch((err: unknown) => {
   if (err instanceof CliError) {

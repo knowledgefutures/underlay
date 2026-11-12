@@ -596,6 +596,51 @@ export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'ex
  * metadata, the declared file list) are in the blob store under sessions/<id>/;
  * runs of uploaded manifest entries and records are sessions/<id>/runs/….
  */
+/**
+ * A v3 upload built by the client (v3-deploy-plan.md, Phase 2): its sorted-record-files go
+ * straight to the bucket by presigned URL, under `v3/uploads/<id>/`, and its commit names
+ * them. open → verifying (a job a file) → landing → committed | failed; expired when idle.
+ */
+export const v3Uploads = sqliteTable(
+  'v3_uploads',
+  {
+    id: id(),
+    collectionId: text('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    status: text('status', {
+      enum: ['open', 'verifying', 'landing', 'committed', 'failed', 'expired'],
+    })
+      .notNull()
+      .default('open'),
+    message: text('message'),
+    /** The version id the client built from, recorded as the change's base. */
+    base: text('base'),
+    appId: text('app_id'),
+    /** At commit: the files the change names, and the change itself if the client signed it. */
+    files: json<unknown[]>('files'),
+    change: json<Record<string, unknown>>('change'),
+    /** The head the files were verified against, and the schemas in force for them. */
+    expectHead: text('expect_head'),
+    schemas: json<Record<string, unknown>>('schemas'),
+    /** Files verified so far (a job each), and the land attempts. */
+    verified: integer('verified').notNull().default(0),
+    attempts: integer('attempts').notNull().default(0),
+    error: json<{ statusCode: number; error: string; problems?: string[] }>('error'),
+    result: json<Record<string, unknown>>('result'),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+    expiresAt: ts('expires_at').notNull(),
+  },
+  (t) => [
+    index('v3_uploads_collection_idx').on(t.collectionId),
+    index('v3_uploads_user_status_idx').on(t.userId, t.status),
+  ],
+)
+
 export const pushSessions = sqliteTable(
   'push_sessions',
   {

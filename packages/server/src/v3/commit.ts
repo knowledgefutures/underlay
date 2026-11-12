@@ -383,6 +383,32 @@ async function assetChanges(
   return { rows, sizes }
 }
 
+/**
+ * An asset a client-built upload names, copied into the v3 area from bytes uploaded to this
+ * collection through the file routes. False if none were (the upload must send them first).
+ */
+export async function copyAssetFromUpload(
+  ports: Ports,
+  collectionId: string,
+  hash: string,
+): Promise<boolean> {
+  const [u] = await ports.db
+    .select({ size: schema.files.size, storageKey: schema.files.storageKey })
+    .from(schema.files)
+    .innerJoin(schema.fileUploads, eq(schema.fileUploads.hash, schema.files.hash))
+    .where(
+      and(
+        eq(schema.files.hash, hash),
+        eq(schema.fileUploads.collectionId, collectionId),
+        eq(schema.fileUploads.status, 'verified'),
+      ),
+    )
+    .limit(1)
+  if (!u) return false
+  await copyAsset(ports, u.storageKey, hash, u.size)
+  return true
+}
+
 /** Copy an uploaded file's bytes to `assets/<sha256>` in the v3 area, unless already there. */
 async function copyAsset(ports: Ports, storageKey: string, hash: string, size: number) {
   const store = ports.stores.v3
