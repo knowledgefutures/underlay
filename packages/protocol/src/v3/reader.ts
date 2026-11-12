@@ -40,9 +40,19 @@ export class MissingFileError extends Error {
  * input rules produces comes near these.
  */
 export const readLimits = {
-  /** The footer as stored, and inflated. */
+  /**
+   * The footer as stored, and inflated. A footer at the most a file can hold is about
+   * 15 MiB: 8 MiB of record-block lengths (1,048,576 of them), and 7 MiB of key-block
+   * keys (1,024, each type and id at its longest, escaped).
+   */
   footerStored: 16 * 1024 * 1024,
-  footer: 64 * 1024 * 1024,
+  footer: 16 * 1024 * 1024,
+  /**
+   * Commas and brackets outside strings in a footer, before it is parsed: each array
+   * element or member past the first follows a comma, so this bounds what `JSON.parse`
+   * builds. A footer at the most a file can hold has about 1,053,000.
+   */
+  footerTokens: MAX_FILE_ENTRIES + 8 * (MAX_FILE_ENTRIES / KEY_BLOCK_ENTRIES) + 1024,
   /** A record block: the lines that fill it, and one more of the largest record. */
   recordBlock: RECORD_BLOCK_BYTES + MAX_RECORD_BYTES + 1,
   /** A key block: `KEY_BLOCK_ENTRIES` entries with the longest keys, escaped. */
@@ -58,6 +68,33 @@ function decode(bytes: Uint8Array, what: string): string {
     return strict.decode(bytes)
   } catch {
     throw new FormatError(`${what} is not UTF-8`)
+  }
+}
+
+/**
+ * Commas and opening brackets outside strings, stopping once past `most`. The bytes are
+ * UTF-8, whose multi-byte sequences never hold an ASCII byte, so a byte scan is exact.
+ */
+function structuralTokens(bytes: Uint8Array, most: number): number {
+  let n = 0
+  let inString = false
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]!
+    if (inString) {
+      if (b === 0x5c)
+        i++ // a backslash: skip what it escapes
+      else if (b === 0x22) inString = false
+    } else if (b === 0x22) inString = true
+    else if ((b === 0x2c || b === 0x5b || b === 0x7b) && ++n > most) return n
+  }
+  return n
+}
+
+/** Lines in a block, refused before splitting once past `most` (each ends in `\n`). */
+function countLines(bytes: Uint8Array, most: number, what: string): void {
+  let n = 0
+  for (let i = bytes.indexOf(0x0a); i !== -1; i = bytes.indexOf(0x0a, i + 1)) {
+    if (++n > most) throw new FormatError(`${what} has more than ${most} entries`)
   }
 }
 
@@ -134,6 +171,9 @@ export class SortedFile {
       tail.subarray(tail.byteLength - need, tail.byteLength - TRAILER_BYTES),
       readLimits.footer,
     )
+    if (structuralTokens(footer, readLimits.footerTokens) > readLimits.footerTokens) {
+      throw new FormatError(`${key}: footer has more elements than a file can`)
+    }
     let parsed: unknown
     try {
       parsed = JSON.parse(decode(footer, `${key}: footer`))
@@ -306,6 +346,7 @@ export class FileReader {
     const r = await this.#range(this.#keyWin, f.keyOffsets, i)
     this.#keyWin = r.win
     const raw = await gunzipMember(r.bytes, readLimits.keyBlock)
+    countLines(raw, KEY_BLOCK_ENTRIES, `${f.key}: key block ${i}`)
     if (this.verify && sha256Hex(raw) !== listed[2]) {
       throw new FormatError(`${f.key}: key block ${i} does not match the footer`)
     }
@@ -326,6 +367,7 @@ export class FileReader {
     const r = await this.#range(this.#keyWin, f.keyOffsets, i)
     this.#keyWin = r.win
     const raw = await gunzipMember(r.bytes, readLimits.keyBlock)
+    countLines(raw, KEY_BLOCK_ENTRIES, `${f.key}: key block ${i}`)
     const lines = decode(raw, `${f.key}: key block ${i}`).split('\n')
     lines.pop()
     return lines

@@ -477,6 +477,36 @@ describe('verifying', () => {
     await expect(v3.SortedFile.open(store, 'long')).rejects.toThrow(/footer too long/)
   })
 
+  it('bounds what a footer parses into, and a key block its lines, before either is read', async () => {
+    const store = memoryStore()
+    const f = await putFile(store, manyRows(10))
+    const all = (await (await store.get(f.key))!.bytes()) as Uint8Array
+    const file = await v3.SortedFile.open(store, f.key)
+    const body = all.subarray(0, file.keyOffsets[file.keyOffsets.length - 1]!)
+    const withFooter = async (name: string, json: string) => {
+      const footer = await v3.gzipMember(new TextEncoder().encode(json))
+      await store.put(name, v3.concatBytes([body, footer, v3.trailerBytes(footer.byteLength)]))
+      return v3.SortedFile.open(store, name)
+    }
+    // 4M array elements in 8 MiB of JSON: refused by counting, never handed to JSON.parse.
+    const many = `{"content":{},"locator":{"recordBlocks":[${'1,'.repeat(4 * 1024 * 1024)}1],"keyBlocks":[]}}`
+    await expect(withFooter('many', many)).rejects.toThrow(/more elements than a file can/)
+    // Commas inside strings are not elements: a footer whose only long member is a string of
+    // them gets as far as its shape.
+    const commas = `{"content":{"x":"${','.repeat(2 * 1024 * 1024)}"},"locator":{}}`
+    await expect(withFooter('commas', commas)).rejects.toThrow(/bad footer/)
+    // A footer that inflates past 16 MiB: refused while inflating.
+    const big = `{"content":{"x":"${'a'.repeat(17 * 1024 * 1024)}"},"locator":{}}`
+    await expect(withFooter('big', big)).rejects.toThrow(/inflates past/)
+    // A key block of 4,096 lines, its hash put in the footer as a forger would.
+    const lines = await tampered(manyRows(10), (p) => {
+      p.keys[0] = new Uint8Array(4096).fill(0x0a)
+    })
+    const r = (await v3.SortedFile.open(lines.store, lines.key)).reader()
+    await expect(r.keyBlock(0)).rejects.toThrow(/more than 1024 entries/)
+    await expect(r.keyBlockText(0)).rejects.toThrow(/more than 1024 entries/)
+  })
+
   it('rejects a byte-order mark, in a line or a key block, and text that is not UTF-8', async () => {
     const BOM = [0xef, 0xbb, 0xbf]
     // The line is the canonical record after a BOM: a lenient decoder would drop it and

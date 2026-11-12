@@ -171,9 +171,11 @@ A file is valid if and only if:
 A reader that does not trust where a file came from MUST check what it reads: the footer
 against the file id, a key block against the footer, a line against its entry. It SHOULD also
 bound what it reads before it has checked it, since a stored length says nothing of what a
-block inflates to. The reference reader refuses a footer over 16 MiB stored or 64 MiB
-inflated, a record block that inflates past `RECORD_BLOCK_BYTES` plus the largest record, a
-key block past 8 MiB, and more blocks than a file can have entries.
+block inflates to, nor what a footer parses into. The reference reader refuses a footer over
+16 MiB stored or inflated, or with more commas and brackets outside its strings than a file
+at 1,048,576 entries could have, before parsing it; a record block that inflates past
+`RECORD_BLOCK_BYTES` plus the largest record; a key block past 8 MiB or with more than
+1,024 lines, before splitting it; and more blocks than a file can have entries.
 
 ## 4. Commit
 
