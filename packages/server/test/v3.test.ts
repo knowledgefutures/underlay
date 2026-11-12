@@ -12,6 +12,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { lastRow, syncCatalog } from '../src/v3/catalog.js'
+import { v3JobConfig } from '../src/v3/jobs.js'
 import { landCommit, type Landing } from '../src/v3/landing.js'
 import { durableQueue, serially } from '../src/v3/queue.js'
 import { cleanup, type Harness, harness } from './harness.js'
@@ -423,6 +424,45 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(
       (await json(await h.request(`${base}/versions/latest/records?limit=100`))).records,
     ).toHaveLength(12)
+  })
+
+  it('merges a large round in key-range units, one job each, and lays them out', async () => {
+    const { h, user, c, base } = await setup()
+    const saved = { ...v3JobConfig }
+    // Units of a few hundred bytes of lines: every round of merging is cut into several.
+    Object.assign(v3JobConfig, { unitBytes: 400, adoptAfter: 4, ratio: 2 })
+    try {
+      let semver: string | null = null
+      const all = new Map<string, string>()
+      for (let i = 0; i < 10; i++) {
+        const rows = Array.from({ length: 6 }, (_, j) =>
+          author(`a${(i * 7 + j * 3) % 25}`, `n${i}-${j}`),
+        )
+        for (const r of rows) all.set(r.id, r.data.name)
+        const res = await push(
+          h,
+          user,
+          base,
+          semver ? { base: semver } : { schemas: { Author } },
+          rows,
+        )
+        expect(res.status).toBe(201)
+        semver = (await json(res)).semver
+      }
+      const store = h.ports.stores.v3
+      const layout = await v3.findLayout(store, c.id)
+      expect(layout).not.toBeNull()
+      // Merged groups: labeled files, from more than one unit.
+      expect(layout!.files.some((f) => f.labeled)).toBe(true)
+      const { keys } = await h.ports.stores.internal.list('v3-rebuilds/')
+      expect(keys).toEqual([])
+      const page = await json(await h.request(`${base}/versions/latest/records?limit=100`))
+      expect(Object.fromEntries(page.records.map((r: any) => [r.id, r.data.name]))).toEqual(
+        Object.fromEntries(all),
+      )
+    } finally {
+      Object.assign(v3JobConfig, saved)
+    }
   })
 
   it('writes the D1 rows of a commit the bucket has and D1 lacks', async () => {
