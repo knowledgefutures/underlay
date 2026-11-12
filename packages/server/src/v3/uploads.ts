@@ -444,6 +444,10 @@ registerJob('v3.uploadVerify', async (job, ports) => {
     await fail(ports, upload.id, { statusCode: 422, error: 'Records refused', problems })
     return
   }
+  // Checked: install it among the stored files now (a server-side copy), so landing finds
+  // it there and does not copy hundreds of files inside the collection's queue. If the
+  // upload never lands, nothing lists it and the sweep clears it after its grace period.
+  await v3.installUpload(store, upload.id, fileId)
   // What the file's rows change in the head: one lookup a row, in key order.
   const view = upload.expectHead
     ? await headViewAt(ports, upload.collectionId, upload.expectHead)

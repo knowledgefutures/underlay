@@ -370,25 +370,39 @@ export async function v3Diff(
   const added: string[] = []
   const updated: string[] = []
   const removed: { id: string; type: string }[] = []
-  let n = 0
-  let bytes = 0
   let next: string | null = null
-  let last: { type: string; id: string } | null = null
   const range = after ? { after, before: true } : { from: PAST_RESERVED, before: true }
+  // The page's changes first (and whether there are more), then their lines, 16 at a
+  // time: each is in a different record block, so one at a time costs a round trip each.
+  const rows: v3.ChangeRow[] = []
+  let more = false
   for await (const ch of v3.changes(store, v.view, since, range)) {
     if (ch.type.startsWith('$')) continue
-    const line = ch.after ? await ch.line() : null
-    const size = line?.byteLength ?? 0
-    if (n === q.limit || (n > 0 && bytes + size > v3ReadLimits.pageBytes)) {
-      next = encodeCursor(last!.type, last!.id)
+    if (rows.length === q.limit) {
+      more = true
       break
     }
-    n++
+    rows.push(ch)
+  }
+  const lines = await v3.inParallel(
+    rows.map((ch) => () => (ch.after ? ch.line() : Promise.resolve(null))),
+    16,
+  )
+  // The byte cap: the page ends before the row that would pass it (never before the first).
+  let bytes = 0
+  let n = 0
+  for (; n < rows.length; n++) {
+    const size = lines[n]?.byteLength ?? 0
+    if (n > 0 && bytes + size > v3ReadLimits.pageBytes) break
     bytes += size
-    last = { type: ch.type, id: ch.id }
+    const ch = rows[n]!
     if (!ch.after) removed.push({ id: ch.id, type: ch.type })
-    else if (!ch.before) added.push(dec.decode(line!))
-    else updated.push(dec.decode(line!))
+    else if (!ch.before) added.push(dec.decode(lines[n]!))
+    else updated.push(dec.decode(lines[n]!))
+  }
+  if (n < rows.length || more) {
+    const last = rows[n - 1]!
+    next = encodeCursor(last.type, last.id)
   }
   const rest = JSON.stringify({
     removed,
