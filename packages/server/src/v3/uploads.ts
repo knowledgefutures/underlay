@@ -218,7 +218,13 @@ export function inlineUpload(ports: Ports): { ports: Ports; drain(): Promise<voi
   return {
     ports: inline,
     async drain() {
-      for (let job = pending.shift(); job; job = pending.shift()) await runJob(job, inline)
+      const took: string[] = []
+      for (let job = pending.shift(); job; job = pending.shift()) {
+        const t0 = Date.now()
+        await runJob(job, inline)
+        took.push(`${job.type.replace('v3.upload', '')} ${Date.now() - t0}ms`)
+      }
+      console.log(`[v3.upload] inline: ${took.join(', ')}`)
     },
   }
 }

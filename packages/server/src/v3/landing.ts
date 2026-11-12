@@ -52,8 +52,13 @@ export type Landed =
 
 export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const store = ports.stores.v3
+  // Where landing's time goes, logged once it lands (timers advance across I/O).
+  const at = [Date.now()]
+  const mark = () => at.push(Date.now())
   await syncCatalog(ports, l.collectionId)
+  mark()
   const head = await v3.findHead(store, l.collectionId)
+  mark()
   if ((head?.id ?? null) !== l.expectHead) return { status: 'base_moved', head: head?.id ?? null }
   let stored: v3.StoredCommit & { check: v3.UploadCheck }
   try {
@@ -81,6 +86,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
     }
     throw err
   }
+  mark()
   const before = await lastRow(ports, l.collectionId)
   const version = await recordCommit(ports, {
     collectionId: l.collectionId,
@@ -94,11 +100,17 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
     actorId: l.actorId,
     pushSessionId: l.pushSessionId,
   })
+  mark()
   await ports.jobs.enqueue({
     type: 'version.published',
     versionId: version.id,
     bump: stored.check.bump,
   })
+  mark()
+  const step = (i: number) => at[i + 1]! - at[i]!
+  console.log(
+    `[v3.land] ${l.collectionId} #${stored.commit.number}: sync ${step(0)}ms, head ${step(1)}ms, commit ${step(2)}ms, record ${step(3)}ms, queue ${step(4)}ms`,
+  )
   return {
     status: 'committed',
     versionId: version.id,
