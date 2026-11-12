@@ -50,7 +50,7 @@ type Converted = schema.ConvertedVersion
 
 export const convertConfig = {
   /** Records whose bodies are read at once. */
-  bodyBatch: 512,
+  bodyBatch: 128,
   /** A conversion not moved for this long is queued again by the cron. */
   staleMs: 15 * 60 * 1000,
   /** Conversions the cron queues at once. */
@@ -149,9 +149,12 @@ async function* versionRows(
   // Records, by v2's diff over both sets: a record that only moved between sets is no change.
   let batch: TypedDiff[] = []
   const flush = async function* (): AsyncGenerator<v3.LineRow> {
+    // One leaf at a time: a v2 leaf of Crossref records is 20 to 90 MB, and the isolate's
+    // 128 MB is shared with other jobs.
     const bodies = await recordBodies(
       now,
       batch.filter((d) => d.after).map((d) => ({ type: d.type, key: d.key, set: d.afterSet })),
+      1,
     )
     for (const d of batch) {
       if (!d.after) {
