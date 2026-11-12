@@ -49,8 +49,8 @@ type ConversionRow = typeof schema.v3Conversions.$inferSelect
 type Converted = schema.ConvertedVersion
 
 export const convertConfig = {
-  /** Records whose bodies are read at once. */
-  bodyBatch: 128,
+  /** Changed records whose bodies are read at once (a later version's; a first is streamed). */
+  bodyBatch: 512,
   /** Bytes of lines one job builds; a larger version is converted in parts. */
   partBytes: 256 * 1024 * 1024,
   /** A conversion not moved for this long is queued again by the cron. */
@@ -172,6 +172,33 @@ async function* recordRows(
   part: { budget: number; stoppedAt: Cursor | null },
 ): AsyncGenerator<v3.LineRow> {
   let bytes = 0
+  /** The row for a record, checked against v2's hash. */
+  const rowOf = (type: string, id: string, body: string, hash: string) => {
+    const row = v3.rowFromRecord(id, type, (JSON.parse(body) as { data: unknown }).data)
+    if (sha256Hex(row.line) !== hash)
+      throw new ConvertError(`${type}/${id}: the v3 line does not hash to v2's record hash`)
+    return row
+  }
+  if (!prev) {
+    // A first version is every record: each type's leaves streamed once, bodies and all.
+    for (const t of now.types) {
+      if (from && compareUtf8(t.slug, from.t) < 0) continue
+      const after = from && t.slug === from.t ? from.k : undefined
+      for await (const e of typeRecords(now, t, {
+        bodies: true,
+        ...(after !== undefined ? { after } : {}),
+      })) {
+        const row = rowOf(t.slug, e.key, e.body!, e.hash)
+        yield row
+        bytes += row.line.length
+        if (bytes >= part.budget) {
+          part.stoppedAt = { t: t.slug, k: e.key }
+          return
+        }
+      }
+    }
+    return
+  }
   let batch: TypedDiff[] = []
   const flush = async function* (): AsyncGenerator<v3.LineRow> {
     // One leaf at a time: a v2 leaf of Crossref records is 20 to 90 MB, and the isolate's
@@ -188,9 +215,7 @@ async function* recordRows(
       }
       const body = bodies.get(`${d.type}\u0000${d.key}`)
       if (body === undefined) throw new ConvertError(`${d.type}/${d.key} has no body in v2`)
-      const row = v3.rowFromRecord(d.key, d.type, (JSON.parse(body) as { data: unknown }).data)
-      if (sha256Hex(row.line) !== d.after.hash)
-        throw new ConvertError(`${d.type}/${d.key}: the v3 line does not hash to v2's record hash`)
+      const row = rowOf(d.type, d.key, body, d.after.hash)
       yield row
       bytes += row.line.length
       if (bytes >= part.budget) {
