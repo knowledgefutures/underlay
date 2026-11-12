@@ -147,7 +147,7 @@ export const FINDINGS = {
 <tr><td>A fork writes</td><td>0.2 MB</td><td>4.8 MB (the file lists)</td></tr>
 <tr><td>Layout files kept (not pruned yet)</td><td>7.9 MB</td><td>253 MB</td></tr>
 </tbody></table></div>
-<p class="note">The costs are those of a longer file list: a bigger first commit and layout file, more requests to install a first load, and more per-file work in merges. Reads are the same or cheaper. The 12M rows overstate it for a collection that size, which at the true cut would have about 600 files, and are closer to what Crossref’s 6,500 would see. At the 128 MB target these costs are about a quarter of what is shown. For the server: install a first load’s files with two requests each and more of them at once, and prune old layout files.</p>`,
+<p class="note">The costs are those of a longer file list: a bigger first commit and layout file, more requests to install a first load, and more per-file work in merges. Reads are the same or cheaper. The 12M rows overstate it for a collection that size, which at the true cut would have about 600 files, and are closer to what Crossref’s 6,500 would see. They follow the number of files, so at the 128 MB target they should be about a quarter of what is shown (the first commit above is). For the server: install a first load’s files with two requests each and more of them at once, and prune old layout files.</p>`,
   next: `<ol>
 <li><b>Queue commits to a collection</b> in the server, where today they race.</li>
 <li><b>Decide the rebuild ratio.</b> 10 keeps one record at about 10 requests at Crossref’s size; 4 makes it about 7 for a fifth more rewriting.</li>
