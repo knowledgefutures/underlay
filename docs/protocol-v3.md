@@ -1,8 +1,9 @@
 # Underlay protocol, version 3 (draft)
 
-**Status:** Draft, 2026-11-10. Not stable. Implemented in `packages/protocol/src/v3/`. Where this
+**Status:** Draft, 2026-11-12. Not stable. Implemented in `packages/protocol/src/v3/`. Where this
 document and the code disagree while both are drafts, fix whichever is wrong and say so in the
-commit.
+commit. Test vectors for files and commits are in `packages/protocol/test/vectors/`
+(`v3-files.json`, `v3-commits.json`), written by `packages/protocol/scripts/gen-vectors-v3.ts`.
 
 Version 3 defines four things: the **sorted-record-file**, the **commit**, the **layout file**,
 and the **collection** that holds them. It does not define how a server keeps those objects,
@@ -45,7 +46,14 @@ Reserved types begin with `$`:
 | `$asset`  | an asset's SHA-256, hex | `{"size": n, "mediaType": string or null}` |
 | `$meta`   | `collection`            | the collection's metadata object           |
 
-A publisher's own types MUST NOT begin with `$`, and no other `$` type is valid.
+A publisher's own types MUST NOT begin with `$`, and no other `$` type is valid. A publisher's
+type also MUST NOT begin with a character that sorts before `$` (U+0020 to U+0023), so that
+every reserved row sorts before every record, and MUST NOT be `__proto__`. A type or an id
+with a lone surrogate is not valid.
+
+An upload's input lines are a record, `{"id", "type", "data"}`, or a removal,
+`{"id", "type", "removed": true}`, with exactly those members. Unlike v2, a line with any other
+member is refused: there is no `private`.
 
 ## 3. Sorted-record-file
 
@@ -145,6 +153,10 @@ A file is valid if and only if:
 
 - the trailer and footer parse, and the footer is the JCS of an object with exactly these
   members; it has at most 1,048,576 entries;
+- the footer, each key block, and each record line is UTF-8, with no byte-order mark;
+- the object's length is what its footer accounts for: the blocks' stored lengths, the footer,
+  and the trailer;
+- a file with no entries has no blocks, and every count in its footer is zero;
 - each key block's uncompressed bytes hash to the listed hash, hold the listed number of
   entries, and its first entry has the listed key; every key block but the last has 1,024
   entries;
@@ -157,7 +169,11 @@ A file is valid if and only if:
 - the counts, `bytes`, `first`, `last`, `commits`, and `labeled` match the entries.
 
 A reader that does not trust where a file came from MUST check what it reads: the footer
-against the file id, a key block against the footer, a line against its entry.
+against the file id, a key block against the footer, a line against its entry. It SHOULD also
+bound what it reads before it has checked it, since a stored length says nothing of what a
+block inflates to. The reference reader refuses a footer over 16 MiB stored or 64 MiB
+inflated, a record block that inflates past `RECORD_BLOCK_BYTES` plus the largest record, a
+key block past 8 MiB, and more blocks than a file can have entries.
 
 ## 4. Commit
 
@@ -194,6 +210,9 @@ lands: its number, the commit before it, the semver, and the time.
   and only if commit `n − 1` exists and has version id `previous`.
 - `first` and `last` are each file's first and last keys, and `bytes` its footer's `bytes`.
   With them the commit's rows can be cut into the same files again (Section 7).
+- A commit, each change, and each file entry has exactly the members shown. A writer MUST NOT
+  write a commit a reader would refuse: nothing can be committed after a commit that cannot be
+  read, so one would end the log.
 - A change's `collection` is the commit's.
 - `changes` is a list so that one commit can later carry several authors' uploads. A writer
   today makes one change per commit.
@@ -235,6 +254,11 @@ never enough: otherwise knowing an id would be a way to test whether a file exis
 read it through a collection of one's own. The one exception is the server's own copy of
 commits from a collection the caller may read, which is how a fork begins (Section 8).
 
+The same holds for an asset. A `$asset` row that adds an asset to a collection is accepted only
+if the asset's bytes were sent to that collection, or one of its versions already names it.
+The bytes a server checks MUST be the bytes it installs: an uploader who can still write where
+its upload was sent must not be able to change a file between the check and the install.
+
 ### 4.4 Semver
 
 As v2 Section 10.1, from what the commit changes relative to the version before it:
@@ -256,7 +280,8 @@ A record of a publisher's type `T` in a version MUST satisfy the `$schema` row f
 version. A type with records MUST have a `$schema` row. When a commit changes a schema, every
 record of that type the version carries over MUST satisfy the new schema, and the commit MUST
 be refused if any does not. A change that only relaxes the schema (every document valid before
-is valid after) needs no check of the records carried over.
+is valid after) needs no check of the records carried over. A record whose line a server
+withholds is not checked.
 
 ## 5. Layout file
 
@@ -356,20 +381,44 @@ sweep/                            the sweep's own state
 - Commits and layouts are created with a put that fails if the key exists. Nothing else decides
   a race. A store that limits how often one key is written (R2: once a second, then a 429) may
   answer a losing create with that refusal instead; if the key is there, the create lost.
+- **Landing.** This server lands a collection's commits one at a time, each against the head it
+  was prepared for, since its counts and its schema checks were made against that head. A
+  change whose head has moved is not committed at the next free number, as 4.2 allows: a
+  client-built upload is prepared again, a few times at most, and a push session is refused
+  and pushes again.
+- **Changes are unsigned.** The server keeps no authors' keys: it records who pushed in its
+  catalog and signs the commit. It refuses a change sent with a `keyId` and `sig`, since it
+  could not check them and its own signature would then cover a key id nobody verified.
 - `latest.json` is `{"commit": n}`, overwritten after each commit; `latest-layout.json` is
   `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
   key is written twice when a layout follows a commit. A reader starts from them and probes
   upward; without them, a reader probes from 1. A failed write of either is ignored.
-- A file or asset is stored once. An upload always sends its bytes, into its own session; the
-  commit checks them there (4.3) and installs them among the stored files. A file already
-  stored under that id is left as it is, and the uploader is not told.
-- **Rebuild policy.** Each layout file carries `group`, a number shared by the files one merge
-  wrote (0 for a commit's own files, which are a group by their commit). A group's files have
+- **Old layout files are deleted.** The server keeps the two newest, and deletes the rest only
+  once the layout hint names the newest. With the low numbers gone, probing from 1 finds no
+  layout, so from then on the hint is what a reader starts from: one whose hinted layout is
+  gone reads the hint again and, if that names none either, lists the layouts.
+- A file is stored once. An upload always sends its files' bytes, into its own session. The
+  commit copies them into a session the uploader cannot write, checks them there (4.3), and
+  installs them from there among the stored files. A file already stored under that id is
+  left as it is, and the uploader is not told.
+- An asset is stored once too. Its bytes are sent to a collection through the server's file
+  routes, apart from the upload, and copied in when a commit first names it. A `$asset` row
+  for an asset the collection neither names already nor was sent is refused, whoever else
+  stores it, and the row's `size` must be the bytes' length.
+- **Limits.** A commit names at most 10,000 files, each at most 4 GiB. A user holds at most 20
+  uploads that are open or being committed. An upload's objects are cleared a day after each
+  was written, and a commit not finished a day after it was asked for fails.
+- **Rebuild policy.** Each layout file carries `size`, the file's stored bytes, and `group`, a
+  number shared by the files one merge wrote (0 for a commit's own files, which are a group
+  by their commit). A group's files have
   key ranges that don't overlap, so a read checks one file for each group. Groups are kept in
   commit order, and cover commit ranges that don't overlap. Size tiers are a factor of 10
-  apart. For each tier, lowest first: where 10 or more neighbouring groups are each at or below
-  it, and together are at least twice the largest of them, they are merged into files cut as an
-  upload's are (below). Replaced rows stay in the same file as the rows that replaced them.
+  apart, the lowest up to 8 MiB of lines. For each tier, lowest first: where 10 or more
+  neighboring groups are each at or below it, and together are at least twice the largest of
+  them, they are merged into files cut as an upload's are (below). Replaced rows stay in the
+  same file as the rows that replaced them. With nothing to merge, a layout is still written
+  once 8 commits have landed since the last. A merge can make another due, so up to 4 rounds
+  follow one another.
 - **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by
   one rule. A file ends after a key picked by a hash of the key against its row's size in
   bytes of lines, toward 512 MiB of lines a file (about 128 MB stored); at a cap of four times
@@ -382,17 +431,24 @@ sweep/                            the sweep's own state
   after it stays small beside it, so the upload's cut is how most of a collection lies.
   The target, the hash, and the caps are this client's and this server's choice. The protocol
   says nothing about how large a sorted-record-file is or where it is cut, and a server
-  accepts any cut.
+  accepts any cut. Two things on this server end a file elsewhere. A merge, or a conversion
+  from v2, too large for one job is split by key range, 256 MiB of lines a part, and each
+  part's last file ends where the part does, so such files come out at about half the target.
+  And where records average under about 1 KiB (2 KiB in a rebuild), the entry cap ends a file
+  before the hash does; there a row added can move the boundaries after it.
 - **Keeping what did not change** (built, not the default). A merge can leave as it is any
   file whose key range no other file has an entry in: nothing changed there. Measured, it
-  pays for a narrow edit (one record, or a stretch of neighbouring keys, on a fork) and not
+  pays for a narrow edit (one record, or a stretch of neighboring keys, on a fork) and not
   for daily changes spread over the keys, which fall in every file.
 - **Sweep.** A file is listed if a collection's current layout, or a commit after that
   layout's `through`, names it. An asset is listed if a `$asset` entry in a listed file names
-  it. One sweeper works in passes. A pass condemns what nothing lists; moves to `trash/` what is
-  still unlisted and has been condemned longer than a grace period; moves back anything in
-  `trash/` that is listed again; and deletes from `trash/` what has been there longer than a
-  second period. An object's age alone is never the test, since a fork can copy a layout just
+  it (a removal names none). One sweeper works in passes: the server holds a lock for a pass.
+  A pass condemns what nothing lists; moves to `trash/` what is still unlisted and has been
+  condemned longer than a grace period (a day); moves back anything in `trash/` that is listed
+  again; and deletes from `trash/` what has been there longer than a second period (seven
+  days). A reader that does not find a file looks in `trash/`. A layout or commit that is
+  there and cannot be read stops the pass: taken as listing nothing, its files would be on
+  their way out. An object's age alone is never the test, since a fork can copy a layout just
   before its parent's next layout drops a file. The sweep's only state is a ledger of what it
   has condemned and trashed, written whole by each pass under the pass's number, so nothing is
   overwritten.

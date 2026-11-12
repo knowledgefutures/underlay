@@ -22,7 +22,13 @@ underlay fsck [--files]           verify the local repository
 underlay remote add <name> <url> -c <owner/slug> [-t <token>] | remove | list
 underlay pull [remote] [--force]  remote defaults to origin
 underlay push [remote]
+underlay upload <rows.ndjson> --to <url> -c <owner/slug> [-m <message>] [--sorted] [--upload <id>]
 ```
+
+- **upload** is for a v3 collection and uses no local repository: it sorts the rows, builds
+  sorted-record-files in `.underlay-upload/`, sends each by presigned URL, and commits them;
+  the server verifies the files and lands the commit. `--upload <id>` takes an interrupted
+  upload up again without sending the files already there.
 
 - **pull** verifies the registry's signed log after what was last seen, then receives the newest
   version as a pack against the last synced one; every tree is re-derived before it's accepted.
