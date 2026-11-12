@@ -18,7 +18,8 @@ import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
-import { metadataOf, viewOf } from '../v3/catalog.js'
+import { metadataOf } from '../v3/catalog.js'
+import { readStore, readView } from '../v3/read-cache.js'
 import { jsonError, type Principal, reachesOrg, requireCollection } from './access.js'
 import { collectionArk } from './ark.js'
 import { membership } from './manage.js'
@@ -294,10 +295,7 @@ export function collectionRoutes() {
         head = { semver: v.semver, hash: v.hash }
         const metadata =
           col.recordLayout === 'v3'
-            ? await metadataOf(
-                c.var.ports.stores.v3,
-                await viewOf(c.var.ports.stores.v3, col.id, v.seq),
-              )
+            ? await metadataOf(readStore(c.var.ports), await readView(c.var.ports, col.id, v))
             : (await (await c.var.ports.stores.forCollection(col.id)).root(v.hash)).metadata
         const s = (await withPusherNames(db, [versionSummary(v, access.isMember, ark)]))[0]!
         latestVersion = {

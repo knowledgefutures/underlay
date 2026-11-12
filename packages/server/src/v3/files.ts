@@ -14,6 +14,7 @@ import { presignDownloads, safeMimeType, uploadedFiles } from '../files/files.js
 import { deniedHashes } from '../lib/limits.js'
 import type { Ports } from '../ports.js'
 import { type AssetData, dataOf, headView } from './catalog.js'
+import { readStore } from './read-cache.js'
 import { assetKey } from './rules.js'
 
 /** An asset's data from the newest version that named it, or null if none ever did. */
@@ -23,7 +24,7 @@ export async function assetData(
   hash: string,
   view?: v3.View | null,
 ): Promise<AssetData | null> {
-  const store = ports.stores.v3
+  const store = readStore(ports)
   const head = view === undefined ? await headView(store, collectionId) : view
   if (!head) return null
   const rows = await v3.history(store, head, v3.ASSET_TYPE, hash)
@@ -41,7 +42,7 @@ export async function v3ReadableFiles(
   member: boolean,
   hashes: string[],
 ): Promise<Map<string, AssetData | null>> {
-  const view = await headView(ports.stores.v3, collectionId)
+  const view = await headView(readStore(ports), collectionId)
   const out = new Map<string, AssetData | null>()
   const rest: string[] = []
   for (const h of hashes) {

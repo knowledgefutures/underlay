@@ -31,6 +31,7 @@ import {
 import { deniedHashes } from '../lib/limits.js'
 import type { Db, Ports } from '../ports.js'
 import { recordAt, schemaAt } from '../v3/catalog.js'
+import { readStore } from '../v3/read-cache.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
 import {
   capRole,
@@ -229,10 +230,10 @@ export async function resolveArk(
     let typeSchema: Record<string, unknown> | null
     if (collection.recordLayout === 'v3') {
       // A v3 collection has no private records: who may read it was decided above.
-      const rec = await recordAt(ports.stores.v3, collection.id, v.seq, recordType, recordId)
+      const rec = await recordAt(readStore(ports), collection.id, v.seq, recordType, recordId)
       if (!rec || (await deniedHashes(db)).has(rec.hash)) return notFound
       data = rec.data as Record<string, unknown>
-      typeSchema = await schemaAt(ports.stores.v3, collection.id, v.seq, recordType)
+      typeSchema = await schemaAt(readStore(ports), collection.id, v.seq, recordType)
     } else {
       // Non-members get the public set only: a private-set record is not found.
       const repo = await ports.stores.forCollection(collection.id)

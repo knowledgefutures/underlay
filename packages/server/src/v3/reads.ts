@@ -28,7 +28,8 @@ import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import { findVersion, type VersionRow } from '../versions/view.js'
-import { assetsOf, metadataOf, schemasOf, viewOf } from './catalog.js'
+import { assetsOf, metadataOf, schemasOf } from './catalog.js'
+import { readStore, readView } from './read-cache.js'
 
 const dec = new TextDecoder()
 const enc = new TextEncoder()
@@ -68,7 +69,7 @@ export async function v3VersionFor(
     access.collection.headVersionId,
   )
   if (!row) return jsonError(c, 404, n === 'latest' ? 'No versions' : 'Version not found')
-  const view = await viewOf(c.var.ports.stores.v3, access.collection.id, row.seq)
+  const view = await readView(c.var.ports, access.collection.id, row)
   if (!view) return jsonError(c, 404, 'Version not found')
   return { row, view }
 }
@@ -96,7 +97,7 @@ export async function* liveRecords(
   range: v3.KeyRange,
   readAhead = 0,
 ): AsyncGenerator<v3.Found> {
-  const store = c.var.ports.stores.v3
+  const store = readStore(c.var.ports)
   const denied = await deniedHashes(c.var.ports.db)
   const from = range.type === undefined && !range.after && !range.from ? PAST_RESERVED : range.from
   for await (const group of v3.mergeGroups(
@@ -171,7 +172,7 @@ export async function v3Detail(
 ) {
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
-  const store = c.var.ports.stores.v3
+  const store = readStore(c.var.ports)
   const all = await schemasOf(store, v.view, cached)
   const types = typesOf(v.row, all)
   const pageType = c.req.query('records')
@@ -242,7 +243,7 @@ export async function v3Record(c: Context<AppEnv>, access: CollectionAccess) {
   const id = c.req.param('id')!
   const rec = type.startsWith('$')
     ? null
-    : await v3.getRecord(c.var.ports.stores.v3, v.view, type, id, cached)
+    : await v3.getRecord(readStore(c.var.ports), v.view, type, id, cached)
   const denied = await deniedHashes(c.var.ports.db)
   if (!rec?.line || denied.has(rec.hash)) return jsonError(c, 404, 'Record not found')
   return c.json({ ...recordJson(rec.line, rec.hash), semver: v.row.semver })
@@ -256,7 +257,7 @@ export async function v3History(c: Context<AppEnv>, access: CollectionAccess) {
   const id = c.req.param('id')!
   const rows = type.startsWith('$')
     ? []
-    : (await v3.history(c.var.ports.stores.v3, v.view, type, id, cached)).reverse()
+    : (await v3.history(readStore(c.var.ports), v.view, type, id, cached)).reverse()
   const seqs = [...new Set(rows.map((r) => r.commit))]
   const byseq = new Map<number, VersionRow>()
   for (const part of chunks(seqs, 90)) {
@@ -380,7 +381,7 @@ export async function v3Diff(
 ) {
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
-  const store = c.var.ports.stores.v3
+  const store = readStore(c.var.ports)
   let since = v.row.seq - 1
   let fromSemver: string | null = null
   if (q.fromParam) {
@@ -487,7 +488,7 @@ export async function v3Diff(
 export async function v3Files(c: Context<AppEnv>, access: CollectionAccess) {
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
-  const assets = await assetsOf(c.var.ports.stores.v3, v.view, cached)
+  const assets = await assetsOf(readStore(c.var.ports), v.view, cached)
   const hashes = [...assets.keys()].sort(compareUtf8).slice(0, 10_000)
   const created = new Map<string, Date>()
   for (const part of chunks(hashes, JSON_CHUNK)) {
@@ -533,7 +534,7 @@ export async function v3Manifest(
 ) {
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
-  const store = c.var.ports.stores.v3
+  const store = readStore(c.var.ports)
   const all = await schemasOf(store, v.view, cached)
   const schemas = Object.fromEntries(
     Object.keys(all)

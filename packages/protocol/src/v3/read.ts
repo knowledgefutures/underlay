@@ -25,6 +25,7 @@ import {
   commitFiles,
   commitKey,
   findVersion,
+  type Latest,
   type Layout,
   layoutKey,
   type LayoutFile,
@@ -33,6 +34,7 @@ import {
   readLatest,
   readLayout,
   readLayoutAtHint,
+  readLayoutHint,
   readLog,
 } from './log.js'
 import {
@@ -155,20 +157,27 @@ function retains(layout: Layout, version: number): boolean {
  * Resolve a version (the newest by default) to its files. Requests for the
  * newest: the hint, the layout, a probe past each of the newest layout and
  * commit, and one read for each commit after the layout.
+ *
+ * `head`: the newest commit, when the caller knows it (a server that records each commit
+ * it lands). The commit hint and the probe past it are then skipped; the layout is still
+ * found as above, since a rebuild may have written one since.
  */
 export async function openView(
   store: Store,
   collection: string,
-  opts: { version?: number } = {},
+  opts: { version?: number; head?: number } = {},
 ): Promise<View> {
-  const latest = await readLatest(store, collection)
+  const known = opts.head !== undefined && Number.isSafeInteger(opts.head) && opts.head >= 0
+  const latest: Latest | null = known
+    ? { commit: opts.head!, layout: (await readLayoutHint(store, collection)) ?? 0 }
+    : await readLatest(store, collection)
   let layout = await readLayoutAtHint(store, collection, latest?.layout)
   const layoutExists = async (n: number) => (await store.head(layoutKey(collection, n))) !== null
   const newest = await probeUp(layoutExists, layout?.number ?? 0)
   if (newest !== (layout?.number ?? 0)) layout = await readLayout(store, collection, newest)
   // The hint is trusted to exist (it is written after its commit); the probe finds anything newer.
   const commitExists = async (n: number) => (await store.head(commitKey(collection, n))) !== null
-  const head = await probeUp(commitExists, latest?.commit ?? 0)
+  const head = known ? opts.head! : await probeUp(commitExists, latest?.commit ?? 0)
   const version = opts.version ?? head
   if (!Number.isSafeInteger(version) || version < 0 || version > head) {
     throw new VersionError(`${collection} has no version ${version} (the newest is ${head})`)

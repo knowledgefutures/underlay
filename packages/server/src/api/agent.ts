@@ -19,7 +19,8 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
-import { rowsOfType, schemasOf, viewOf } from '../v3/catalog.js'
+import { rowsOfType, schemasOf } from '../v3/catalog.js'
+import { readStore, readView } from '../v3/read-cache.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { collectionAccess, type Principal } from './access.js'
 
@@ -162,8 +163,8 @@ export function agentRoutes() {
     const schemas: { slug: string; schema: unknown }[] = []
     const examples: { id: string; type: string; data: unknown; private?: true }[] = []
     if (onV3 && head) {
-      const store = c.var.ports.stores.v3
-      const v3View = await viewOf(store, coll.id, head.seq)
+      const store = readStore(c.var.ports)
+      const v3View = await readView(c.var.ports, coll.id, head)
       const all = await schemasOf(store, v3View)
       for (const slug of Object.keys(all).sort()) schemas.push({ slug, schema: all[slug] })
       if (v3View && schemas[0]) {

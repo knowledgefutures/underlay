@@ -19,7 +19,8 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
-import { schemaAt, schemasOf, viewOf } from '../v3/catalog.js'
+import { schemaAt, schemasOf } from '../v3/catalog.js'
+import { readStore, readView } from '../v3/read-cache.js'
 import { findVersion, loadView } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 import { stewardOnly } from './admin.js'
@@ -85,7 +86,7 @@ async function schemaBody(
   if (!u) return null
   // A v3 collection keeps a schema as its type's `$schema` row, in force from `fromSeq`.
   if ((await c.var.ports.stores.layoutOf(u.collectionId)) === 'v3')
-    return schemaAt(c.var.ports.stores.v3, u.collectionId, u.fromSeq, u.typeSlug)
+    return schemaAt(readStore(c.var.ports), u.collectionId, u.fromSeq, u.typeSlug)
   const repo = await c.var.ports.stores.forCollection(u.collectionId)
   return repo.schema(hash)
 }
@@ -105,8 +106,8 @@ export function schemaRoutes() {
     if (!v) return jsonError(c, 404, 'No versions found')
     const raw = c.req.query('raw') === 'true'
     if (access.collection.recordLayout === 'v3') {
-      const store = c.var.ports.stores.v3
-      const all = await schemasOf(store, await viewOf(store, access.collection.id, v.seq))
+      const store = readStore(c.var.ports)
+      const all = await schemasOf(store, await readView(c.var.ports, access.collection.id, v))
       const types = Object.keys(all)
         .sort()
         .map((slug) => ({ slug, body: all[slug]!, hash: hashSchema(all[slug]) }))
