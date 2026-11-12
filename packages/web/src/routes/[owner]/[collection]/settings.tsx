@@ -453,38 +453,45 @@ export default function CollectionSettingsPage() {
             </Link>
           </p>
         )}
-        <form onSubmit={handleUpdateArk} className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="arkEnabled"
-              checked={arkEnabled}
-              onChange={(e) => setArkEnabled(e.target.checked)}
-            />
-            <label htmlFor="arkEnabled" className="text-sm">
-              Enable ARK identifier
-            </label>
-          </div>
-          <div>
-            <label htmlFor="arkCustomUrl" className="mb-1 block text-sm font-medium">
-              Custom redirect URL{' '}
-              <span className="text-ink-muted font-normal">
-                (optional — leave blank to redirect to collection page)
-              </span>
-            </label>
-            <Input
-              type="url"
-              id="arkCustomUrl"
-              value={arkCustomUrl}
-              onChange={(e) => setArkCustomUrl(e.target.value)}
-              placeholder="https://example.org/my-collection"
-            />
-          </div>
-          <div className="pt-2">
-            <Button type="submit" disabled={submitting === 'ark'}>
-              {submitting === 'ark' ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </form>
+        {!isOrgAdmin && (
+          <p className="text-ink-muted text-sm">
+            Only the organization's owners and admins can change ARK settings.
+          </p>
+        )}
+        {isOrgAdmin && (
+          <form onSubmit={handleUpdateArk} className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="arkEnabled"
+                checked={arkEnabled}
+                onChange={(e) => setArkEnabled(e.target.checked)}
+              />
+              <label htmlFor="arkEnabled" className="text-sm">
+                Enable ARK identifier
+              </label>
+            </div>
+            <div>
+              <label htmlFor="arkCustomUrl" className="mb-1 block text-sm font-medium">
+                Custom redirect URL{' '}
+                <span className="text-ink-muted font-normal">
+                  (optional — leave blank to redirect to collection page)
+                </span>
+              </label>
+              <Input
+                type="url"
+                id="arkCustomUrl"
+                value={arkCustomUrl}
+                onChange={(e) => setArkCustomUrl(e.target.value)}
+                placeholder="https://example.org/my-collection"
+              />
+            </div>
+            <div className="pt-2">
+              <Button type="submit" disabled={submitting === 'ark'}>
+                {submitting === 'ark' ? 'Saving…' : 'Save changes'}
+              </Button>
+            </div>
+          </form>
+        )}
       </section>
 
       {/* Webhooks */}

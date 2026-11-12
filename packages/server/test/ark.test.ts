@@ -160,6 +160,50 @@ describe('collection ARK settings', () => {
     expect((await t.req(`/api/collections/org/nope/ark`, { user: t.user })).status).toBe(404)
   })
 
+  it('is changed by org owners and admins only, not members or member-level keys', async () => {
+    await t.h.ports.db
+      .insert(schema.user)
+      .values({ id: 'plain', name: 'plain', email: 'plain@example.org' })
+      .onConflictDoNothing()
+    await t.h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org1', userId: 'plain', role: 'member' })
+    const redirect = { enabled: true, customUrl: 'https://example.com/elsewhere' }
+    const types = { recordType: 'Link', redirectUrlField: 'url' }
+    try {
+      // A member reads the settings, and changes nothing: not the redirect, not record types.
+      expect((await t.req(`${base}/ark`, { user: 'plain' })).status).toBe(200)
+      for (const [method, path, json] of [
+        ['PATCH', `${base}/ark`, redirect],
+        ['PATCH', `${base}/ark/record-types`, types],
+        ['PUT', `${base}/ark/record-types`, types],
+        ['DELETE', `${base}/ark/record-types/Link`, undefined],
+      ] as const) {
+        expect((await t.req(path, { method, user: 'plain', json })).status).toBe(403)
+        // An owner's write key acts as a member (capRole).
+        expect((await t.req(path, { method, user: t.user, scope: 'write', json })).status).toBe(403)
+      }
+      // The owner, signed in or with an admin key, may.
+      expect(
+        (
+          await t.req(`${base}/ark`, {
+            method: 'PATCH',
+            user: t.user,
+            scope: 'admin',
+            json: redirect,
+          })
+        ).status,
+      ).toBe(200)
+    } finally {
+      await t.req(`${base}/ark`, {
+        method: 'PATCH',
+        user: t.user,
+        json: { enabled: true, customUrl: null },
+      })
+      await t.h.ports.db.delete(schema.member).where(eq(schema.member.userId, 'plain'))
+    }
+  })
+
   it('reports no ARK for a collection that has none', async () => {
     await t.h.collection('bare')
     const res = await t.req(`/api/collections/org/bare/ark`, { user: t.user })

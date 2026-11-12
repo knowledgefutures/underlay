@@ -13,11 +13,14 @@ export default function SchemaList({
   collection,
   schemasData,
   isOwner,
+  canEditArk = false,
 }: {
   owner: string
   collection: string
   schemasData: any
   isOwner: boolean
+  /** The org's owners and admins change ARK settings (at the latest version only). */
+  canEditArk?: boolean
 }) {
   const schemas: any[] = schemasData?.schemas ?? []
 
@@ -222,8 +225,8 @@ export default function SchemaList({
                   </tbody>
                 </table>
 
-                {/* ARK section for this type (owner only) */}
-                {isOwner && urlFields.length > 0 && (
+                {/* ARK section for this type (org owners and admins) */}
+                {canEditArk && urlFields.length > 0 && (
                   <div className="border-rule bg-parchment-dark/30 border-t px-4 py-3">
                     <p className="text-ink-muted mb-2 text-xs font-medium tracking-wide uppercase">
                       ARK identifiers for this type

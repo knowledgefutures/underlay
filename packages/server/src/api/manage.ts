@@ -23,7 +23,14 @@ import { headView, metadataOf } from '../v3/catalog.js'
 import { commitV3Metadata } from '../v3/commit.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
-import { capRole, jsonError, keyCannotManage, reachesOrg, requireCollection } from './access.js'
+import {
+  capRole,
+  isAdmin,
+  jsonError,
+  keyCannotManage,
+  reachesOrg,
+  requireCollection,
+} from './access.js'
 import { ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
@@ -50,7 +57,7 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
   return { org, role: capRole(p, m?.role ?? null) }
 }
 
-export const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'
+export { isAdmin }
 
 export function manageRoutes() {
   const app = new Hono<AppEnv>()

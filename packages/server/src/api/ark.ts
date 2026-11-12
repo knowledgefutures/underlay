@@ -36,7 +36,9 @@ import {
   capRole,
   collectionAccess,
   type CollectionAccess,
+  isAdmin,
   jsonError,
+  keyCannotManage,
   type Principal,
   reachesOrg,
 } from './access.js'
@@ -376,8 +378,10 @@ async function arkPage(c: Context<AppEnv>): Promise<Response> {
 // --- Settings access ---
 
 /**
- * ARK settings are for members of the owning org (v1: any role). A private
- * collection stays a 404 to everyone else; a public one is 401/403.
+ * ARK settings are read by members of the owning org and changed by its owners and admins,
+ * as visibility is: an ARK is a persistent identifier, and where it redirects is the
+ * org's to decide (v1 let any member). A key confined to some collections never changes
+ * them. A private collection stays a 404 to everyone else; a public one is 401/403.
  */
 async function requireArkMember(
   c: Context<AppEnv>,
@@ -394,6 +398,12 @@ async function requireArkMember(
     return c.var.principal
       ? jsonError(c, 403, 'Forbidden')
       : jsonError(c, 401, 'Authentication required')
+  }
+  if (write) {
+    const refused = keyCannotManage(c)
+    if (refused) return refused
+    if (!isAdmin(access.role))
+      return jsonError(c, 403, 'Only org owners and admins can change ARK settings')
   }
   return access
 }

@@ -43,10 +43,13 @@ export function capRole(p: Principal, role: string | null): string | null {
   return p.scope === 'session' || p.scope === 'admin' ? role : 'member'
 }
 
+/** An org role that manages its collections: visibility, ARKs, webhooks, transfer. */
+export const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'
+
 /**
  * 403 for a key confined to some collections, on a route that manages a
- * collection (visibility, deletion, transfer, webhooks, placements); null for
- * anyone else. capRole already keeps such a key from an admin's role; this
+ * collection (visibility, deletion, transfer, webhooks, placements, ARKs); null
+ * for anyone else. capRole already keeps such a key from an admin's role; this
  * says why.
  */
 export function keyCannotManage(c: Context<AppEnv>): Response | null {
