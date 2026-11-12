@@ -11,6 +11,10 @@
  * and `sets=all` needs the private sets. The base must be a version of the same
  * collection, so what a pack leaves out says nothing about anything the caller
  * couldn't read anyway.
+ *
+ * A pack carries record bodies as stored, so it cannot leave out a record the platform
+ * withholds (the denylist): a version that reaches one is refused with 451, and its
+ * records are read through the routes that filter them.
  */
 import {
   type LogEntry,
@@ -23,7 +27,8 @@ import {
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
-import { findVersion } from '../versions/view.js'
+import { deniedHashes } from '../lib/limits.js'
+import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
 
 const MAX_LOG_ENTRIES = 1000
@@ -49,6 +54,22 @@ export function syncRoutes() {
     if (baseParam && !base) return jsonError(c, 404, `Base version ${baseParam} not found`)
 
     const repo = await c.var.ports.stores.forCollection(id)
+    const denied = await deniedHashes(db)
+    if (denied.size > 0) {
+      // Every record the pack's sets reach, without bodies: the trees name each hash.
+      const view = await loadView(repo, version, sets === 'all')
+      for (const t of view.types) {
+        for await (const r of typeRecords(view, t)) {
+          if (denied.has(r.hash)) {
+            return jsonError(
+              c,
+              451,
+              'This version holds records that are withheld; read it through the records routes',
+            )
+          }
+        }
+      }
+    }
     const objects = packVersion(repo, version.hash, { base: base?.hash ?? null, sets })
     const entries = (async function* () {
       for await (const o of objects) {

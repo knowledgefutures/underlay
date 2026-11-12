@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
+import { forgetDenylist } from '../src/lib/limits.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { describeNotOnV3 } from './layouts.js'
 
@@ -123,6 +124,27 @@ describeNotOnV3('not on v3 yet: the CLI sync routes (decision 7)')('sync endpoin
     expect((await h.request(`${path}/versions/${v1.semver}/pack`)).status).toBe(404)
     expect((await h.request(`${path}/log`)).status).toBe(404)
     expect((await h.request(`${path}/versions/${v1.semver}/pack`, { user })).status).toBe(200)
+  })
+
+  it('refuses a pack of a version that reaches a withheld record', async () => {
+    const { h, c, path, v1, v2 } = await setup()
+    const repo = await h.ports.stores.forCollection(c.id)
+    const root = await repo.root(v1.hash)
+    let hash = ''
+    for await (const e of iterate(
+      new RepoSource(recordTree, repo, { type: 'Author' }),
+      root.public.types.Author!.root,
+    )) {
+      if (e.key === 'a7') hash = e.hash
+    }
+    expect(hash).not.toBe('')
+    await h.ports.db.insert(schema.denylist).values({ hash, kind: 'record', reason: 'test' })
+    forgetDenylist(h.ports.db)
+    // v1 holds a7 as it was; v2 changed it, so v2 no longer reaches the blocked record.
+    expect((await h.request(`${path}/versions/${v1.semver}/pack`)).status).toBe(451)
+    expect((await h.request(`${path}/versions/${v2.semver}/pack`)).status).toBe(200)
+    await h.ports.db.delete(schema.denylist)
+    forgetDenylist(h.ports.db)
   })
 
   it('serves the signed log with the keys that verify it', async () => {
