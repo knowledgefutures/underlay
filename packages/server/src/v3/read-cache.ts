@@ -40,11 +40,15 @@ import type { Ports } from '../ports.js'
 /** A stored sorted-record-file. */
 const FILE = /(^|\/)records\/[0-9a-f]{64}$/
 
-/** What one cached read may hold: blocks and footers, never a whole large file. */
-const MAX_CACHED_BYTES = 4 * 1024 * 1024
+/**
+ * What one cached read may hold: a block as a page reads it (a record block inflates to
+ * about 256 KiB, a key block to less). A scan's read-ahead windows (2 MiB and up) go
+ * straight through: caching them filled the isolate during a deep walk.
+ */
+const MAX_CACHED_BYTES = 512 * 1024
 
-/** This isolate's share, across requests: a few thousand blocks. */
-const ISOLATE_BYTES = 48 * 1024 * 1024
+/** This isolate's share, across requests: a few hundred blocks, well inside 128 MB. */
+const ISOLATE_BYTES = 24 * 1024 * 1024
 
 /** How long a resolved view is kept. */
 export const VIEW_TTL_MS = 5 * 60 * 1000

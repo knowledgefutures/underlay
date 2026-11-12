@@ -58,3 +58,20 @@ describe('the v3 read cache', () => {
     expect(reads).toHaveLength(2)
   })
 })
+
+describe('what the v3 read cache keeps', () => {
+  it('leaves a read past a block, such as a scan window, uncached', async () => {
+    const { store, reads } = countingStore()
+    const cached = new ReadCachedStore(store, new MemoryCache())
+    await store.put(key, new Uint8Array(1024 * 1024).fill(7))
+    await cached.tail(key, 16)
+    await cached.get(key, { offset: 0, length: 1024 * 1024 })
+    reads.length = 0
+    await cached.get(key, { offset: 0, length: 1024 * 1024 })
+    expect(reads).toHaveLength(1)
+    await cached.get(key, { offset: 0, length: 4096 })
+    reads.length = 0
+    await cached.get(key, { offset: 0, length: 4096 })
+    expect(reads).toEqual([])
+  })
+})
