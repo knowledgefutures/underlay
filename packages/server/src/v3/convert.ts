@@ -51,6 +51,8 @@ type Converted = schema.ConvertedVersion
 export const convertConfig = {
   /** Records whose bodies are read at once. */
   bodyBatch: 128,
+  /** Bytes of lines one job builds; a larger version is converted in parts. */
+  partBytes: 256 * 1024 * 1024,
   /** A conversion not moved for this long is queued again by the cron. */
   staleMs: 15 * 60 * 1000,
   /** Conversions the cron queues at once. */
@@ -92,8 +94,8 @@ async function filesOf(view: VersionView): Promise<Map<string, number>> {
 const hasPrivate = (view: VersionView) =>
   view.types.some((t) => t.privateType || (t.private?.count ?? 0) > 0)
 
-/** The rows a version adds to the one before it, in key order. */
-async function* versionRows(
+/** The reserved rows a version adds to the one before it, in key order. */
+async function* reservedRows(
   ports: Ports,
   prev: VersionView | null,
   now: VersionView,
@@ -115,13 +117,21 @@ async function* versionRows(
       .where(inJson(schema.files.hash, part))
     for (const r of rows) stored.set(r.hash, r)
   }
-  const assets: v3.LineRow[] = []
-  for (const h of added) {
-    const f = stored.get(h)
-    if (!f) throw new ConvertError(`File ${h} of ${now.version.semver} has no row in files`)
-    await copyAsset(ports, f.storageKey, h, f.size)
-    assets.push(v3.rowFromRecord(h, v3.ASSET_TYPE, { size: f.size, mediaType: f.mimeType }))
-  }
+  const missing = added.find((h) => !stored.has(h))
+  if (missing)
+    throw new ConvertError(`File ${missing} of ${now.version.semver} has no row in files`)
+  // Copied 16 at once: a collection can name thousands of files.
+  await v3.inParallel(
+    added.map((h) => () => {
+      const f = stored.get(h)!
+      return copyAsset(ports, f.storageKey, h, f.size)
+    }),
+    16,
+  )
+  const assets: v3.LineRow[] = added.map((h) => {
+    const f = stored.get(h)!
+    return v3.rowFromRecord(h, v3.ASSET_TYPE, { size: f.size, mediaType: f.mimeType })
+  })
   for (const h of prevFiles.keys())
     if (!nowFiles.has(h)) assets.push(v3.removalRow(h, v3.ASSET_TYPE))
   yield* assets.sort((a, b) => compareUtf8(a.id, b.id))
@@ -145,8 +155,23 @@ async function* versionRows(
       schemaRows.push(v3.removalRow(t.slug, v3.SCHEMA_TYPE))
   }
   yield* schemaRows.sort((a, b) => compareUtf8(a.id, b.id))
+}
 
-  // Records, by v2's diff over both sets: a record that only moved between sets is no change.
+/** Where a part of a version's records stopped: the last key it wrote. */
+type Cursor = { t: string; k: string }
+
+/**
+ * The record rows a version adds, by v2's diff over both sets (a record that only moved
+ * between sets is no change), from after `from`. Stops once `part.budget` bytes of lines
+ * are written, and says where in `part.stoppedAt`.
+ */
+async function* recordRows(
+  prev: VersionView | null,
+  now: VersionView,
+  from: Cursor | null,
+  part: { budget: number; stoppedAt: Cursor | null },
+): AsyncGenerator<v3.LineRow> {
+  let bytes = 0
   let batch: TypedDiff[] = []
   const flush = async function* (): AsyncGenerator<v3.LineRow> {
     // One leaf at a time: a v2 leaf of Crossref records is 20 to 90 MB, and the isolate's
@@ -167,15 +192,32 @@ async function* versionRows(
       if (sha256Hex(row.line) !== d.after.hash)
         throw new ConvertError(`${d.type}/${d.key}: the v3 line does not hash to v2's record hash`)
       yield row
+      bytes += row.line.length
+      if (bytes >= part.budget) {
+        part.stoppedAt = { t: d.type, k: d.key }
+        return
+      }
     }
     batch = []
   }
-  for await (const d of diffAll(prev, now, null)) {
+  for await (const d of diffAll(prev, now, from)) {
     batch.push(d)
-    if (batch.length >= convertConfig.bodyBatch) yield* flush()
+    if (batch.length >= convertConfig.bodyBatch) {
+      yield* flush()
+      if (part.stoppedAt) return
+    }
   }
   if (batch.length > 0) yield* flush()
 }
+
+/** A version converted in parts: the files built so far, and where the next part starts. */
+interface Part {
+  session: string
+  reserved: boolean
+  cursor: Cursor | null
+  files: v3.FileRef[]
+}
+const partKey = (collectionId: string, seq: number) => `v3-convert/${collectionId}/${seq}.json`
 
 /** Rows as given, refused if any is not after the one before (files need key order). */
 async function* inKeyOrder(rows: AsyncIterable<v3.LineRow>): AsyncGenerator<v3.LineRow> {
@@ -277,7 +319,7 @@ async function convertVersion(
   v: VersionRow,
   prevRow: VersionRow | null,
   done: Converted[],
-): Promise<{ converted: Converted; private: boolean }> {
+): Promise<{ converted: Converted; private: boolean } | { more: true }> {
   const store = ports.stores.v3
   const cid = collection.id
   const repo = await ports.stores.forCollection(cid)
@@ -294,17 +336,31 @@ async function convertVersion(
         `The v3 log is at commit ${head}, not ${v.seq - 1}, before ${v.semver}`,
       )
     await ensureCollection(store, cid)
-    const session = v3.newSession()
-    const built = await v3.buildFiles(
-      inKeyOrder(versionRows(ports, prev, now)),
-      v3.uploadTarget(store, session),
-    )
+    const internal = ports.stores.internal
+    const saved = await internal.get(partKey(cid, v.seq))
+    const part: Part = saved
+      ? (JSON.parse(await saved.text()) as Part)
+      : { session: v3.newSession(), reserved: false, cursor: null, files: [] }
+    const stop = { budget: convertConfig.partBytes, stoppedAt: null as Cursor | null }
+    const rows = async function* () {
+      if (!part.reserved) yield* reservedRows(ports, prev, now)
+      yield* recordRows(prev, now, part.cursor, stop)
+    }
+    const built = await v3.buildFiles(inKeyOrder(rows()), v3.uploadTarget(store, part.session))
     await v3.inParallel(
-      built.map((f) => () => v3.installUpload(store, session, f.id)),
+      built.map((f) => () => v3.installUpload(store, part.session, f.id)),
       16,
     )
+    part.files.push(...built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref))
+    part.reserved = true
+    if (stop.stoppedAt) {
+      // The rest in the next job, from the key this one stopped at.
+      part.cursor = stop.stoppedAt
+      await internal.put(partKey(cid, v.seq), JSON.stringify(part))
+      return { more: true }
+    }
     const base = v.baseSemver ? done.find((d) => d.semver === v.baseSemver) : undefined
-    const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
+    const files = part.files
     const change = await v3.makeChange(cid, {
       files,
       base: base?.id ?? null,
@@ -320,6 +376,7 @@ async function convertVersion(
       },
       { signer: await ports.signer(), now: () => v.createdAt, attempts: 1 },
     )
+    await internal.delete(partKey(cid, v.seq))
   }
   if (!stored) throw new ConvertError(`The v3 log has no commit ${v.seq}`)
   if (stored.commit.semver !== v.semver)
@@ -398,6 +455,11 @@ export async function convertStep(ports: Ports, collectionId: string): Promise<v
     if (next) {
       const prevRow = rows.find((r) => r.seq === next.seq - 1) ?? null
       const r = await convertVersion(ports, collection, next, prevRow, done)
+      if ('more' in r) {
+        await setConversion(ports, collectionId, { status: 'converting' })
+        await ports.jobs.enqueue({ type: 'v3.convert', collectionId })
+        return
+      }
       // Written only if no other job recorded a version meanwhile.
       await setConversion(
         ports,

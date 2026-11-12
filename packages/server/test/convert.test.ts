@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { runJob } from '../src/jobs.js'
-import { requestConversion, revertToV2 } from '../src/v3/convert.js'
+import { convertConfig, requestConversion, revertToV2 } from '../src/v3/convert.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { testLayout } from './layouts.js'
 
@@ -232,6 +232,25 @@ describe('converting a v2 collection to v3', () => {
       200,
     )
     expect((await h.request(`${base}/versions/latest/records/Author/a2`)).status).toBe(404)
+  })
+
+  it('converts a version in parts when it is large', async () => {
+    const { h, user, c, base } = await v2Collection()
+    await h.drain()
+    const before = await snapshot(h, base, user)
+    const was = convertConfig.partBytes
+    convertConfig.partBytes = 60 // a record or two a part
+    try {
+      await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })
+      await h.drain()
+    } finally {
+      convertConfig.partBytes = was
+    }
+    expect((await conversion(h, c.id)).status).toBe('flipped')
+    expect(await snapshot(h, base, user)).toEqual(before)
+    // The first version's records went into files built by several jobs.
+    const first = await v3.readCommit(h.ports.stores.v3, c.id, 1)
+    expect(v3.commitFiles(first!.commit).length).toBeGreaterThanOrEqual(2)
   })
 
   it('stops with the reason when a version does not match', async () => {
