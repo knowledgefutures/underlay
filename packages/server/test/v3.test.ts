@@ -777,6 +777,14 @@ describe.skipIf(!onV3)('v3 collections', () => {
       await h.request(`${fb}/versions/latest/records?type=Author`, { user: 'u2' }),
     )
     expect(all.records.map((r: { id: string }) => r.id)).toEqual(['a', 'b', 'c'])
+    // The sweep job records what the fork lists, its parent's files included.
+    await runJob({ type: 'v3.sweep' }, h.ports)
+    const [row] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, fork.id))
+    expect(row!.storedBytes).toBeGreaterThan(0)
+    expect(row!.storedAt).not.toBe(null)
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {

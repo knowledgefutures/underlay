@@ -16,7 +16,9 @@
  * the v3 area (`Stores.v3`) and that internal prefix, never on v2's objects.
  */
 import { createObject, v3 } from '@underlay/protocol'
+import { and, eq } from 'drizzle-orm'
 
+import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports, Store } from '../ports.js'
 import { fanOut } from './fanout.js'
@@ -68,10 +70,27 @@ registerJob('v3.sweep', async (_job, ports) => {
   console.log(
     `[v3.sweep] pass ${result.pass}: ${result.collections} collections (${dropped} deleted ones dropped); records trashed ${result.records.trashed}, purged ${result.records.purged}; assets trashed ${result.assets.trashed}, purged ${result.assets.purged}; ${cleared} stale upload objects cleared`,
   )
+  await recordStoredBytes(ports, result.logical)
   const missing = [...result.records.missing, ...result.assets.missing]
   if (missing.length > 0)
     console.error(`[v3.sweep] listed but missing: ${missing.slice(0, 20).join(', ')}`)
 })
+
+/** Each collection's stored bytes from a sweep pass, onto its row (billing on logical size). */
+async function recordStoredBytes(ports: Ports, logical: Map<string, { bytes: number }>) {
+  const at = new Date()
+  const all = [...logical]
+  for (let i = 0; i < all.length; i += 50) {
+    await ports.db.batch(
+      all.slice(i, i + 50).map(([id, l]) =>
+        ports.db
+          .update(schema.collections)
+          .set({ storedBytes: l.bytes, storedAt: at })
+          .where(and(eq(schema.collections.id, id), eq(schema.collections.recordLayout, 'v3'))),
+      ) as never,
+    )
+  }
+}
 
 /** A round of rebuilding in progress: its plan, and the key-range units of each merge. */
 interface Round {

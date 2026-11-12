@@ -211,6 +211,13 @@
       "when": 1794445056254,
       "tag": "0029_v3_uploads",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1794456182816,
+      "tag": "0030_v3_stored_bytes",
+      "breakpoints": true
     }
   ]
 }

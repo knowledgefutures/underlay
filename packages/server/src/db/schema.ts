@@ -258,6 +258,13 @@ export const collections = sqliteTable(
      */
     versionCount: integer('version_count').notNull().default(0),
     historyBytes: integer('history_bytes').notNull().default(0),
+    /**
+     * v3: stored bytes of the sorted-record-files the collection lists, shared or not, as of
+     * the sweep's last pass (`storedAt`). With its head's asset bytes, what it is billed for.
+     * Null on v2.
+     */
+    storedBytes: integer('stored_bytes'),
+    storedAt: ts('stored_at'),
     lastPushAt: ts('last_push_at'),
     /** Reconcile (billing/reconcile.ts): started, finished, and what it corrected. */
     reconcileStartedAt: ts('reconcile_started_at'),

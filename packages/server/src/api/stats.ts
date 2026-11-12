@@ -88,6 +88,8 @@ interface CollectionFigures {
   latestBytes: number
   versions: number
   historyBytes: number
+  /** v3: what it lists, shared or not (its files at the sweep's last pass, and its assets). */
+  storedBytes: number
   refEvents: number
   refBytes: number
   lastPushAt: number | null
@@ -105,6 +107,7 @@ async function collectionFigures(c: Context<AppEnv>, orgId?: string) {
           coalesce(v.total_bytes, 0) AS latestBytes,
           c.version_count AS versions,
           c.history_bytes AS historyBytes,
+          coalesce(c.stored_bytes + coalesce(v.asset_bytes, 0), 0) AS storedBytes,
           c.ref_events AS refEvents, c.ref_bytes AS refBytes,
           c.last_push_at AS lastPushAt, c.reconciled_at AS reconciledAt,
           coalesce(json_array_length(c.reconcile_report), 0) AS corrections
@@ -124,6 +127,7 @@ async function collectionFigures(c: Context<AppEnv>, orgId?: string) {
     latestBytes: n(r.latestBytes),
     versions: n(r.versions),
     historyBytes: n(r.historyBytes),
+    storedBytes: n(r.storedBytes),
     refEvents: n(r.refEvents),
     refBytes: n(r.refBytes),
     lastPushAt: r.lastPushAt == null ? null : n(r.lastPushAt),
@@ -139,6 +143,7 @@ const SUMMED = [
   'latestBytes',
   'versions',
   'historyBytes',
+  'storedBytes',
   'refEvents',
   'refBytes',
 ] as const
@@ -396,6 +401,7 @@ export function statsRoutes() {
           collections: o.collections,
           latestBytes: o.latestBytes,
           historyBytes: o.historyBytes,
+          storedBytes: o.storedBytes,
           refEvents: o.refEvents,
           refBytes: o.refBytes,
           usage: usage.get(o.id) ?? emptyUsage(),
