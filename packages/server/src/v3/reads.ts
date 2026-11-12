@@ -36,6 +36,14 @@ const enc = new TextEncoder()
 /** The first key after every reserved type: publisher types never begin with `$`. */
 const PAST_RESERVED: v3.Key = { type: '$\u{10FFFF}', id: '' }
 
+/**
+ * Open sorted-record-files, kept for the isolate's later reads: a file never changes once
+ * written, so its footer and key blocks are good for any collection that names it. Without
+ * it, a diff's before-states opened an older file again for every changed key.
+ */
+const files = new v3.FileCache(16 * 1024 * 1024)
+const cached: v3.ReadOptions = { cache: files }
+
 /** Bytes of key blocks each file reads at a time while skipping to an offset. */
 const SKIP_READ_AHEAD = 2 * 1024 * 1024
 
@@ -89,7 +97,7 @@ async function* liveRecords(
     store,
     view,
     { ...range, ...(from ? { from } : {}) },
-    { readAhead },
+    { ...cached, readAhead },
   )) {
     const w = group[group.length - 1]!
     if (w.entry.kind !== 'r' || w.entry.type.startsWith('$')) continue
@@ -159,7 +167,7 @@ export async function v3Detail(
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
   const store = c.var.ports.stores.v3
-  const all = await schemasOf(store, v.view)
+  const all = await schemasOf(store, v.view, cached)
   const types = typesOf(v.row, all)
   const pageType = c.req.query('records')
   const shown =
@@ -186,7 +194,7 @@ export async function v3Detail(
         ),
       ])
     )[0],
-    metadata: await metadataOf(store, v.view),
+    metadata: await metadataOf(store, v.view, cached),
     typeCounts: Object.fromEntries(types.map((t) => [t.slug, t.count])),
     schemas,
     ...(recordsPage ? { recordsPage } : {}),
@@ -229,7 +237,7 @@ export async function v3Record(c: Context<AppEnv>, access: CollectionAccess) {
   const id = c.req.param('id')!
   const rec = type.startsWith('$')
     ? null
-    : await v3.getRecord(c.var.ports.stores.v3, v.view, type, id)
+    : await v3.getRecord(c.var.ports.stores.v3, v.view, type, id, cached)
   const denied = await deniedHashes(c.var.ports.db)
   if (!rec?.line || denied.has(rec.hash)) return jsonError(c, 404, 'Record not found')
   return c.json({ ...recordJson(rec.line, rec.hash), semver: v.row.semver })
@@ -243,7 +251,7 @@ export async function v3History(c: Context<AppEnv>, access: CollectionAccess) {
   const id = c.req.param('id')!
   const rows = type.startsWith('$')
     ? []
-    : (await v3.history(c.var.ports.stores.v3, v.view, type, id)).reverse()
+    : (await v3.history(c.var.ports.stores.v3, v.view, type, id, cached)).reverse()
   const seqs = [...new Set(rows.map((r) => r.commit))]
   const byseq = new Map<number, VersionRow>()
   for (const part of chunks(seqs, 90)) {
@@ -358,7 +366,13 @@ export async function v3Diff(
     filesAdded: 0,
     filesRemoved: 0,
   }
-  for await (const ch of v3.changes(store, v.view, since, { to: PAST_RESERVED, before: true })) {
+  for await (const ch of v3.changes(
+    store,
+    v.view,
+    since,
+    { to: PAST_RESERVED, before: true },
+    cached,
+  )) {
     if (ch.type === v3.SCHEMA_TYPE) meta.schemaChanged = true
     else if (ch.type === v3.META_TYPE) meta.metadataChanged = true
     else if (ch.type === v3.ASSET_TYPE) {
@@ -376,7 +390,7 @@ export async function v3Diff(
   // time: each is in a different record block, so one at a time costs a round trip each.
   const rows: v3.ChangeRow[] = []
   let more = false
-  for await (const ch of v3.changes(store, v.view, since, range)) {
+  for await (const ch of v3.changes(store, v.view, since, range, cached)) {
     if (ch.type.startsWith('$')) continue
     if (rows.length === q.limit) {
       more = true
@@ -421,7 +435,7 @@ export async function v3Diff(
 export async function v3Files(c: Context<AppEnv>, access: CollectionAccess) {
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
-  const assets = await assetsOf(c.var.ports.stores.v3, v.view)
+  const assets = await assetsOf(c.var.ports.stores.v3, v.view, cached)
   const hashes = [...assets.keys()].sort(compareUtf8).slice(0, 10_000)
   const created = new Map<string, Date>()
   for (const part of chunks(hashes, JSON_CHUNK)) {
@@ -470,7 +484,7 @@ export async function v3Manifest(
   const v = await v3VersionFor(c, access)
   if (v instanceof Response) return v
   const store = c.var.ports.stores.v3
-  const all = await schemasOf(store, v.view)
+  const all = await schemasOf(store, v.view, cached)
   const schemas = Object.fromEntries(
     Object.keys(all)
       .sort(compareUtf8)
@@ -478,10 +492,10 @@ export async function v3Manifest(
   )
   const fileList = async () => {
     if (q.cursor) return {}
-    const files = [...(await assetsOf(store, v.view)).keys()].sort(compareUtf8)
-    return files.length > q.maxFiles
-      ? { files: files.slice(0, q.maxFiles), filesTruncated: true }
-      : { files }
+    const listed = [...(await assetsOf(store, v.view, cached)).keys()].sort(compareUtf8)
+    return listed.length > q.maxFiles
+      ? { files: listed.slice(0, q.maxFiles), filesTruncated: true }
+      : { files: listed }
   }
   const after = q.cursor ? { type: q.cursor.t, id: q.cursor.k } : null
   let next: string | null = null
@@ -495,7 +509,7 @@ export async function v3Manifest(
     let n = 0
     let last: { type: string; id: string } | null = null
     const range = after ? { after, before: true } : { from: PAST_RESERVED, before: true }
-    for await (const ch of v3.changes(store, v.view, from.seq, range)) {
+    for await (const ch of v3.changes(store, v.view, from.seq, range, cached)) {
       if (ch.type.startsWith('$')) continue
       if (n === q.limit) {
         next = encodeCursor(last!.type, last!.id)
