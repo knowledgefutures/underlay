@@ -416,6 +416,60 @@ describe('takedown', () => {
   })
 })
 
+describe('takedown of one record in a load of many files', () => {
+  it('rewrites only the file that holds it, and keeps the rest as they are', async () => {
+    const store = memoryStore()
+    const model = new Model()
+    const pad = (i: number) => String(i).padStart(4, '0')
+    const rows = Array.from({ length: 900 }, (_, i) =>
+      line(rec('t', pad(i), i === 417 ? 'TOP-SECRET-LINE' : 'r'.repeat(100))),
+    )
+    model.add(rows)
+    const first = await commitRows(store, 'c', rows, { cutBytes: 8000, maxBytes: 32_000 })
+    const named = v3.commitFiles(first.commit)
+    expect(named.length).toBeGreaterThan(8)
+    const key = { type: 't', id: pad(417) }
+    const secretHash = model.commits[0]!.get(JSON.stringify(['t', pad(417)]))!.hash!
+    const { files } = await v3.currentFiles(store, 'c')
+    const plan = await v3.planGroupsHolding(store, v3.groupsOf(files), [key])
+    expect(plan.length).toBe(1)
+    const r = await v3.rebuild(store, 'c', {
+      plan: () => plan,
+      takedown: (type, id, hash) => type === 't' && id === key.id && hash === secretHash,
+      takedownKeys: [key],
+      cutBytes: 8000,
+      maxBytes: 32_000,
+    })
+    // One file of the load rewritten, the others listed as they were.
+    expect(r.kept).toBe(named.length - 1)
+    const after = r.layout!.files
+    const still = after.filter((f) => named.some((n) => n.id === f.id))
+    expect(still.length).toBe(named.length - 1)
+    expect(still.every((f) => !f.labeled)).toBe(true)
+    const holder = named.find(
+      (n) =>
+        v3.compareKeys(n.first![0], n.first![1], key.type, key.id) <= 0 &&
+        v3.compareKeys(key.type, key.id, n.last![0], n.last![1]) <= 0,
+    )!
+    expect(after.some((f) => f.id === holder.id)).toBe(false)
+    // What was written is about that one file, not the load.
+    expect(r.written).toBeLessThan(
+      first.commit.changes[0]!.files.reduce((n, f) => n + f.bytes, 0) / 4,
+    )
+    await dropUnlisted(store, 'c')
+    await checkReads(store, 'c', model, rng(3), { withheld: (row) => row.hash === secretHash })
+    for await (const k of listAll(store, 'records/')) {
+      const file = await v3.SortedFile.open(store, k)
+      const reader = file.reader()
+      for (let i = 0; i < file.locator.recordBlocks.length; i++) {
+        expect(dec.decode(await reader.recordBlock(i))).not.toContain('TOP-SECRET-LINE')
+      }
+    }
+    await verifyListed(store, 'c')
+    await v3.verifyLog(store, 'c')
+  })
+})
+
 describe('recreating originals', () => {
   it("writes a commit's files again, byte for byte the same rows, with the same ids", async () => {
     const store = memoryStore()

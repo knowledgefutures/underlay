@@ -40,6 +40,8 @@ export interface World {
    * load still has files by the thousand, as Crossref's has.
    */
   cutBytes: number
+  /** The cap on a file's lines, if not four times the cut (to build as before the key cut). */
+  maxBytes?: number
   /** Gzip level for built files. */
   level?: number
 }
@@ -84,6 +86,7 @@ export function engineOf(w: World, latency = w.latency, opts: { verify?: boolean
   return new V3Engine(storeOf(w, latency), {
     tiers: w.tiers,
     cutBytes: w.cutBytes,
+    ...(w.maxBytes === undefined ? {} : { maxBytes: w.maxBytes }),
     scratch: fileStore(join(w.dir, 'scratch')),
     ...(w.level === undefined ? {} : { level: w.level }),
     ...opts,

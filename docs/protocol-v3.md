@@ -311,7 +311,7 @@ are. A rebuild MUST preserve every retained version: each reads the same before 
   older entry for that key.
 - **Takedown.** A rebuild MAY replace a record entry by a `"w"` entry with the same hash, size,
   and commit, and leave out its line. Every file holding the row has to be rebuilt for the
-  bytes to be gone.
+  bytes to be gone; a file that does not hold it can stay listed as it is.
 
 Because of 3.6, the files a commit named can be recreated from rebuilt files that still hold
 all of the commit's rows: take the entries labeled with its number, in key order, drop the

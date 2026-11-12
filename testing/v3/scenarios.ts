@@ -1222,6 +1222,7 @@ export async function crossrefLoad(
           first: p === 0,
           schemaTypes: p === 0 && !opts.append ? plan.types : null,
           cutBytes: w.cutBytes,
+          ...(w.maxBytes === undefined ? {} : { maxBytes: w.maxBytes }),
           ...(w.level === undefined ? {} : { level: w.level }),
         } satisfies BuildDumpSpec),
       ),
@@ -1576,6 +1577,84 @@ export async function storageSplit(w: World): Promise<Result> {
     storedOverLines: round(out.bytes / Math.max(1, out.lines), 4),
     stored: disk,
   }
+}
+
+/**
+ * What the key cut is for, measured on a collection that is already loaded (on forks of it,
+ * so it is not changed): how much is rewritten to take one record down, and to merge
+ * everything back together keeping the files no change fell in.
+ */
+export async function cutBenefit(w: World): Promise<Result> {
+  const store = storeOf(w)
+  const engine = engineOf(w)
+  const cut = { cutBytes: w.cutBytes, maxBytes: w.maxBytes ?? 4 * w.cutBytes }
+  const sizeOf = async (f: v3.LayoutFile) =>
+    f.size ?? (await store.inner.head(v3.recordKey(f.id)))?.size ?? 0
+  const before = (await v3.currentFiles(store.inner, w.collection)).files
+  const load = before.filter((f) => !f.labeled && f.commits[0] === 1)
+  const loadBytes = (await Promise.all(load.map(sizeOf))).reduce((n, b) => n + b, 0)
+  const stamp = Date.now().toString(36)
+
+  // 1. Take down one record of the first load: the first key of the load's middle file.
+  const victim = load[Math.floor(load.length / 2)]!
+  const key = { type: victim.first![0], id: victim.first![1] }
+  const t = `${w.collection}-takedown-${stamp}`
+  await engine.fork(w.collection, t)
+  const groups = v3.groupsOf((await v3.currentFiles(store.inner, t)).files)
+  const plan = await v3.planGroupsHolding(store.inner, groups, [key])
+  const takedown = await measure(store, () =>
+    v3.rebuild(store, t, {
+      plan: () => plan,
+      takedown: (type, id) => type === key.type && id === key.id,
+      takedownKeys: [key],
+      ...cut,
+    }),
+  )
+  const gone = await v3.getRecord(store, await v3.openView(store, t), key.type, key.id)
+  if (!gone || gone.line !== null) throw new Error('cut benefit: the record was not withheld')
+
+  // 2. Merge everything back together, keeping the files no change fell in.
+  const m = `${w.collection}-merged-${stamp}`
+  await engine.fork(w.collection, m)
+  const merge = await measure(store, () =>
+    v3.rebuild(store, m, { plan: v3.planAll, keepUntouched: true, ...cut }),
+  )
+  const after = (await v3.currentFiles(store.inner, m)).files
+  const result = {
+    cutBytes: Number.isFinite(w.cutBytes) ? w.cutBytes : null,
+    load: {
+      files: load.length,
+      storedBytes: loadBytes,
+      meanFileBytes: Math.round(loadBytes / load.length),
+    },
+    groupsBefore: groups.length,
+    takedown: {
+      ...brief(takedown.m),
+      groupsHolding: plan.length,
+      filesRewritten: takedown.value.filesIn - takedown.value.kept,
+      kept: takedown.value.kept,
+      written: takedown.value.written,
+    },
+    merge: {
+      ...brief(merge.m),
+      filesIn: merge.value.filesIn,
+      kept: merge.value.kept,
+      filesRewritten: merge.value.filesIn - merge.value.kept,
+      filesOut: merge.value.filesOut,
+      written: merge.value.written,
+      groupsAfter: v3.groupsOf(after).length,
+    },
+  }
+  log('cut benefit', {
+    files: result.load.files,
+    meanFileMb: round(result.load.meanFileBytes / MB),
+    takedownWrittenMb: round(result.takedown.written / MB),
+    takedownSeconds: takedown.m.seconds,
+    mergeWrittenMb: round(result.merge.written / MB),
+    mergeKept: result.merge.kept,
+    mergeSeconds: merge.m.seconds,
+  })
+  return result
 }
 
 /**

@@ -78,6 +78,12 @@ export interface MergeOptions extends ReadOptions {
   dropLeadingRemovals?: boolean
   /** Records to withhold: their lines are left out and their entries kept, marked. */
   takedown?: (type: string, id: string, hash: string) => boolean
+  /**
+   * With a takedown: the keys it is for. A file none of them falls in cannot hold a row to
+   * withhold, so it is kept as it is, and only the files that hold one are rewritten.
+   * Without this a takedown rewrites every file it is given.
+   */
+  takedownKeys?: { type: string; id: string }[]
   /** The cap: close an output file once its lines reach this many bytes. Default four times `CUT_BYTES`. */
   maxBytes?: number
   /** Close an output file once it has this many entries. Default 262,144. */
@@ -89,7 +95,8 @@ export interface MergeOptions extends ReadOptions {
   /**
    * Keep, as it is, any input file whose key range no other input has an entry
    * in: it has no changes, so there is nothing to merge into it. Not with
-   * thinning or a takedown, which may have to rewrite any file.
+   * thinning, which may have to rewrite any file, nor with a takedown unless
+   * `takedownKeys` says which keys it is for.
    */
   keepUntouched?: boolean
   level?: number
@@ -291,11 +298,23 @@ export async function mergeFiles(
   let lastType: string | null = null
   /** The key before the one in hand, with the size of its newest row: what decides a cut. */
   let lastKey: { type: string; id: string; size: number } | null = null
+  const keys = opts.takedownKeys
+  const holdsKey = (file: ViewFile): boolean =>
+    !!keys &&
+    !!file.first &&
+    !!file.last &&
+    keys.some(
+      (k) =>
+        compareKeys(file.first![0], file.first![1], k.type, k.id) <= 0 &&
+        compareKeys(k.type, k.id, file.last![0], file.last![1]) <= 0,
+    )
   const hooks: MergeHooks =
-    opts.keepUntouched && !opts.retained && !opts.takedown
+    !opts.retained && (opts.takedown ? !!keys : opts.keepUntouched)
       ? {
           // A file with its key range to itself: the output so far ends before it, and it stays.
+          // In a takedown, not if one of the keys falls in it: that file is rewritten.
           skipFile: async (file) => {
+            if (holdsKey(file)) return false
             if (draft) await close(draft)
             draft = null
             result.kept.push(file)
