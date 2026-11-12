@@ -83,6 +83,26 @@ describe('writing and reading', () => {
     expect(store.gets).toBe(3)
   })
 
+  it('fetches a block once for lines read from it at the same time', async () => {
+    const store = memoryStore()
+    const rows = manyRows(20_000, 2000)
+    const big = await putFile(store, rows)
+    const bf = await v3.SortedFile.open(store, big.key, { id: big.id })
+    const r = bf.reader()
+    const entries = await Promise.all(
+      Array.from({ length: 300 }, (_, i) => r.lookup('work', pad(7000 + i)).then(([e]) => e!)),
+    )
+    const blocks = new Set(entries.map((e) => e.block))
+    expect(blocks.size).toBeGreaterThan(1)
+    store.gets = 0
+    const lines = await Promise.all(entries.map((e) => r.line(e)))
+    expect(store.gets).toBe(blocks.size)
+    for (const [i, line] of lines.entries()) {
+      const row = rows.find((x) => x.id === pad(7000 + i)) as { line: string }
+      expect(dec.decode(line)).toBe(row.line)
+    }
+  })
+
   it('cuts record blocks after the first line at or past 262,144 bytes', async () => {
     const store = memoryStore()
     const f = await putFile(store, manyRows(3000, 1000))

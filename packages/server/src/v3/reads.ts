@@ -390,6 +390,7 @@ export async function v3Diff(
   // time: each is in a different record block, so one at a time costs a round trip each.
   const rows: v3.ChangeRow[] = []
   let more = false
+  const t0 = Date.now()
   for await (const ch of v3.changes(store, v.view, since, range, cached)) {
     if (ch.type.startsWith('$')) continue
     if (rows.length === q.limit) {
@@ -398,9 +399,13 @@ export async function v3Diff(
     }
     rows.push(ch)
   }
+  const t1 = Date.now()
   const lines = await v3.inParallel(
     rows.map((ch) => () => (ch.after ? ch.line() : Promise.resolve(null))),
     16,
+  )
+  console.log(
+    `[v3.diff] ${access.collection.id} #${v.row.seq} since #${since}: ${rows.length} changes ${t1 - t0}ms, lines ${Date.now() - t1}ms`,
   )
   // The byte cap: the page ends before the row that would pass it (never before the first).
   let bytes = 0

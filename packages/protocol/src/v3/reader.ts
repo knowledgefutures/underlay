@@ -199,7 +199,9 @@ interface Window {
  * One consumer's view of a file. It keeps one window of compressed bytes for
  * key blocks and one for record blocks, and the last block decoded of each, so
  * a scan costs a request per window and a point read a request per block.
- * Memory: two windows and two decoded blocks.
+ * Calls made at once for the same block share one fetch: a caller reading many
+ * lines in parallel (a diff page) asks for each block many times over.
+ * Memory: two windows and two decoded blocks, and the blocks in flight.
  */
 export class FileReader {
   readonly #readAhead: number
@@ -210,6 +212,8 @@ export class FileReader {
   #keyEntries: Entry[] = []
   #recAt = -1
   #recBytes: Uint8Array = new Uint8Array(0)
+  readonly #keyPending = new Map<number, Promise<Entry[]>>()
+  readonly #recPending = new Map<number, Promise<Uint8Array>>()
 
   constructor(
     readonly file: SortedFile,
@@ -250,6 +254,10 @@ export class FileReader {
   /** A key block's entries, checked against the footer. */
   async keyBlock(i: number): Promise<Entry[]> {
     if (i === this.#keyAt) return this.#keyEntries
+    return shared(this.#keyPending, i, () => this.#loadKeyBlock(i))
+  }
+
+  async #loadKeyBlock(i: number): Promise<Entry[]> {
     const f = this.file
     const listed = f.content.keyBlocks[i]
     if (!listed) throw new FormatError(`${f.key}: no key block ${i}`)
@@ -283,6 +291,10 @@ export class FileReader {
   /** A record block's uncompressed bytes. */
   async recordBlock(i: number): Promise<Uint8Array> {
     if (i === this.#recAt) return this.#recBytes
+    return shared(this.#recPending, i, () => this.#loadRecordBlock(i))
+  }
+
+  async #loadRecordBlock(i: number): Promise<Uint8Array> {
     const f = this.file
     if (i < 0 || i >= f.locator.recordBlocks.length) {
       throw new FormatError(`${f.key}: no record block ${i}`)
@@ -314,6 +326,20 @@ export class FileReader {
   lookup(type: string, id: string): Promise<Entry[]> {
     return lookupEntries(this.file, type, id, (i) => this.keyBlock(i))
   }
+}
+
+/** One fetch per key at a time: callers asking while it is in flight wait for the same one. */
+function shared<T>(
+  pending: Map<number, Promise<T>>,
+  i: number,
+  load: () => Promise<T>,
+): Promise<T> {
+  let p = pending.get(i)
+  if (!p) {
+    p = load().finally(() => pending.delete(i))
+    pending.set(i, p)
+  }
+  return p
 }
 
 /**
