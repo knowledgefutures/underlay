@@ -99,9 +99,10 @@ describe('D1 limits', () => {
           Array.from({ length: 25 }, (_, j) => ({ id: `o${i + j}`, name: 'O', slug: `o${i + j}` })),
         )
     }
-    for (let i = 0; i < 120; i += 25) {
+    // Ten at a time: a member row binds five values, and D1 allows 100 a statement.
+    for (let i = 0; i < 120; i += 10) {
       await h.ports.db.insert(schema.member).values(
-        Array.from({ length: 25 }, (_, j) => ({
+        Array.from({ length: 10 }, (_, j) => ({
           organizationId: `o${i + j}`,
           userId: user,
           role: 'member' as const,

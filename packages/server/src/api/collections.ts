@@ -6,6 +6,7 @@
  *   GET /api/collections/:owner/:slug          detail (spec 11.3.3, plus v1's members)
  *   GET /api/accounts/:owner/collections
  *   GET /api/accounts/:slug, /api/accounts/:slug/members
+ *   PUT /api/accounts/:slug/members/me      show or hide one's own membership
  *
  * Everything here is SQLite rows: no repository reads. Lists show what a
  * caller may see: public counts to non-members, full counts to members.
@@ -20,6 +21,7 @@ import type { Db } from '../ports.js'
 import { metadataOf, viewOf } from '../v3/catalog.js'
 import { jsonError, type Principal, reachesOrg, requireCollection } from './access.js'
 import { collectionArk } from './ark.js'
+import { membership } from './manage.js'
 
 type VersionRow = typeof schema.versions.$inferSelect
 
@@ -392,6 +394,9 @@ export function collectionRoutes() {
     })
   })
 
+  // Members: the org's own members see everyone and their roles; anyone else sees only
+  // those who chose to be listed, by name (GitHub's rule). A key limited to another org,
+  // or confined to some collections, reads as an outsider.
   app.get('/api/accounts/:slug/members', async (c) => {
     const { db } = c.var.ports
     const [org] = await db
@@ -401,11 +406,50 @@ export function collectionRoutes() {
       .limit(1)
     if (!org) return jsonError(c, 404, 'Not found')
     const members = await db
-      .select({ role: schema.member.role, name: schema.user.name })
+      .select({
+        userId: schema.member.userId,
+        role: schema.member.role,
+        name: schema.user.name,
+        publicMembership: schema.member.publicMembership,
+      })
       .from(schema.member)
       .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
       .where(eq(schema.member.organizationId, org.id))
-    return c.json(members.map((m) => ({ role: m.role, displayName: m.name })))
+    const p = c.var.principal
+    const inside =
+      !!p &&
+      !p.collectionIds &&
+      reachesOrg(p, org.id) &&
+      (p.orgId === org.id || members.some((m) => m.userId === p.userId))
+    if (!inside) {
+      return c.json(members.filter((m) => m.publicMembership).map((m) => ({ displayName: m.name })))
+    }
+    return c.json(
+      members.map((m) => ({
+        role: m.role,
+        displayName: m.name,
+        public: m.publicMembership,
+        you: m.userId === p.userId,
+      })),
+    )
+  })
+
+  // A member shows or hides their own membership on the org's public page.
+  app.put('/api/accounts/:slug/members/me', async (c) => {
+    const p = c.var.principal
+    if (!p) return jsonError(c, 401, 'Authentication required')
+    if (p.orgId) return jsonError(c, 403, "An organization's key is not a member")
+    const { org, role } = await membership(c, c.req.param('slug'))
+    if (!org) return jsonError(c, 404, 'Not found')
+    if (!role) return jsonError(c, 403, 'Forbidden')
+    const body = (await c.req.json().catch(() => null)) as { public?: unknown } | null
+    if (typeof body?.public !== 'boolean')
+      return jsonError(c, 400, '"public" must be true or false')
+    await c.var.ports.db
+      .update(schema.member)
+      .set({ publicMembership: body.public })
+      .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, p.userId)))
+    return c.json({ public: body.public })
   })
 
   return app

@@ -1,0 +1,1 @@
+ALTER TABLE `member` ADD `public_membership` integer DEFAULT false NOT NULL;

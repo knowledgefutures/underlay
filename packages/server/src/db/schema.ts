@@ -166,6 +166,11 @@ export const member = sqliteTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     role: text('role').notNull().default('member'),
     createdAt: createdAt(),
+    /**
+     * Whether the org's public page lists this person (by name, not role). Each member
+     * chooses for themselves; hidden until they do.
+     */
+    publicMembership: bool('public_membership').notNull().default(false),
   },
   (t) => [
     index('member_organization_id_idx').on(t.organizationId),

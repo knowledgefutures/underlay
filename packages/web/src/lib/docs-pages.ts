@@ -98,6 +98,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
           'GET /api/accounts/me',
           'GET /api/accounts/:slug',
           'GET /api/accounts/:slug/members',
+          'PUT /api/accounts/:slug/members/me',
           'PATCH /api/accounts/:slug',
           'DELETE /api/accounts/:slug',
           'POST /api/auth/organization/create',

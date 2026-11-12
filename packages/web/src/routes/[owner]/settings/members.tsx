@@ -23,6 +23,9 @@ export default function OwnerSettingsMembers() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  /** Whether the org's public page lists the signed-in member; null until loaded. */
+  const [listed, setListed] = useState<boolean | null>(null)
+
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
   const [copied, setCopied] = useState('')
@@ -41,11 +44,18 @@ export default function OwnerSettingsMembers() {
     if (data) setInvitations(Array.isArray(data) ? data : [])
   }
 
+  async function loadListed(slug: string) {
+    const res = await fetch(`/api/accounts/${slug}/members`, { credentials: 'include' })
+    const rows = res.ok ? ((await res.json()) as { you?: boolean; public?: boolean }[]) : []
+    setListed(rows.find((r) => r.you)?.public ?? false)
+  }
+
   useEffect(() => {
     if (!orgId) return
     loadMembers(orgId)
     loadInvitations(orgId)
-  }, [orgId])
+    if (owner) loadListed(owner)
+  }, [orgId, owner])
 
   if (currentUser && !org) {
     window.location.href = `/${owner}`
@@ -86,6 +96,26 @@ export default function OwnerSettingsMembers() {
       setSuccess('Member removed.')
       await loadMembers(orgId)
     }
+  }
+
+  async function handleSetListed(value: boolean) {
+    clearMessages()
+    const res = await fetch(`/api/accounts/${owner}/members/me`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ public: value }),
+    })
+    if (!res.ok) {
+      setError('Failed to change how your membership is shown.')
+      return
+    }
+    setListed(value)
+    setSuccess(
+      value
+        ? 'Your name is now listed on the organization page.'
+        : 'Your membership is now hidden.',
+    )
   }
 
   async function handleLeaveOrg() {
@@ -212,6 +242,22 @@ export default function OwnerSettingsMembers() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="border-rule mb-6 border-t pt-6">
+        <h3 className="text-ink-muted mb-2 text-xs font-semibold">Your membership</h3>
+        <p className="text-ink-muted mb-3 text-sm">
+          Members are hidden from people outside the organization unless they choose to be listed. A
+          listed member's name appears on the organization page; roles are never shown there.
+        </p>
+        {listed !== null && (
+          <div className="flex items-center gap-3">
+            <span className="text-sm">{listed ? 'Listed publicly' : 'Hidden'}</span>
+            <Button variant="link" size="sm" onClick={() => handleSetListed(!listed)}>
+              {listed ? 'Hide my membership' : 'List my name publicly'}
+            </Button>
+          </div>
+        )}
       </div>
 
       {isAdmin && (
