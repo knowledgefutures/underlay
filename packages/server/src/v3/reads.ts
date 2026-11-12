@@ -14,7 +14,7 @@
  * access decides which (api/access.ts). Records on the deny list are left out, as in v2.
  * Reserved types (`$schema`, `$asset`, `$meta`) are never listed as records.
  */
-import { compareUtf8, hashSchema, v3 } from '@underlay/protocol'
+import { compareUtf8, gzip, hashSchema, v3 } from '@underlay/protocol'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { Context } from 'hono'
 
@@ -329,6 +329,41 @@ export async function v3Ndjson(
   }
   return new Response(pullStream(lines()), {
     headers: { 'content-type': 'application/x-ndjson', 'x-underlay-record-count': String(count) },
+  })
+}
+
+/**
+ * A version's records as one gzip file of canonical lines (no `hash`), a member about every
+ * MB, as v2's records.ndjson.gz. A v3 collection is wholly public or private, so this is
+ * every record the caller may read, not a public set.
+ */
+export async function v3NdjsonGz(c: Context<AppEnv>, access: CollectionAccess, type?: string) {
+  const v = await v3VersionFor(c, access)
+  if (v instanceof Response) return v
+  if (type !== undefined && !(v.row.typeCounts[type] ?? 0))
+    return jsonError(c, 404, `No records of type ${type}`)
+  const members = async function* () {
+    let lines: string[] = []
+    let bytes = 0
+    const range: v3.KeyRange = type === undefined ? {} : { type }
+    for await (const w of liveRecords(c, v.view, range, 4 * 1024 * 1024)) {
+      lines.push(dec.decode(await w.reader.line(w.entry)))
+      bytes += w.entry.size
+      // Billed as the NDJSON it decompresses to: a line and a newline per record.
+      c.var.meter.logicalBytes = (c.var.meter.logicalBytes ?? 0) + w.entry.size + 1
+      if (bytes >= 1 << 20) {
+        yield await gzip(lines.join('\n') + '\n')
+        lines = []
+        bytes = 0
+      }
+    }
+    if (lines.length) yield await gzip(lines.join('\n') + '\n')
+  }
+  return new Response(pullStream(members()), {
+    headers: {
+      'content-type': 'application/gzip',
+      'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${v.row.semver}${type ? `-${type}` : ''}.ndjson.gz"`,
+    },
   })
 }
 

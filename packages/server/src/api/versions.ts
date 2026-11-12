@@ -37,13 +37,13 @@ import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import type { Db } from '../ports.js'
 import {
-  notOnV3,
   v3Detail,
   v3Diff,
   v3Files,
   v3History,
   v3Manifest,
   v3Ndjson,
+  v3NdjsonGz,
   v3Record,
   v3Records,
 } from '../v3/reads.js'
@@ -388,7 +388,7 @@ export function versionRoutes() {
   app.get('/:owner/:slug/versions/:n/records.ndjson.gz', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
-    if (access.collection.recordLayout === 'v3') return notOnV3(c, 'records.ndjson.gz')
+    if (access.collection.recordLayout === 'v3') return v3NdjsonGz(c, access, c.req.query('type'))
     const view = await viewFor(c, access)
     if (view instanceof Response) return view
     const want = c.req.query('type')
