@@ -127,6 +127,9 @@ async function bodyAt(
   item: { p: Presence; c: typeof schema.collections.$inferSelect; member: boolean },
   hash: string,
 ) {
+  // A collection converted to v3 keeps the events v2 wrote, but its records are not read
+  // through the index yet: the body comes from another collection, or the hash is not found.
+  if (item.c.recordLayout === 'v3') return null
   const seq = item.p.to === null ? null : item.p.to - 1
   const [v] =
     seq === null

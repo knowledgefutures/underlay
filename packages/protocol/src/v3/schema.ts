@@ -129,7 +129,8 @@ async function* uploadEntries(
   }
 }
 
-function checkAssetData(data: unknown): string | null {
+/** What is wrong with a `$asset` row's data, or null: `{"size": n, "mediaType": string or null}`. */
+export function checkAssetData(data: unknown): string | null {
   if (
     !isObject(data) ||
     !Number.isSafeInteger(data.size) ||

@@ -573,8 +573,15 @@ async function flipToV3(
   const V = schema.versions
   const U = schema.schemaUsage
   const P = schema.pushSessions
+  const T = schema.v3Conversions
   const flipped = sql`EXISTS (SELECT 1 FROM ${C} WHERE ${C.id} = ${cid} AND ${C.recordLayout} = 'v3')`
   const statements = [
+    // Whether it is public as it flips, for the way back (its owner may have changed that
+    // since the conversion began).
+    db
+      .update(T)
+      .set({ fromPublic: sql`(SELECT ${C.public} FROM ${C} WHERE ${C.id} = ${cid})` })
+      .where(eq(T.collectionId, cid)),
     db
       .update(C)
       .set({
@@ -588,6 +595,8 @@ async function flipToV3(
           eq(C.recordLayout, conv.fromLayout),
           eq(C.headVersionId, head.id),
           sql`NOT EXISTS (SELECT 1 FROM ${P} WHERE ${P.collectionId} = ${cid} AND ${P.status} IN ('open', 'committing'))`,
+          // The conversion is still the one this job read: not begun afresh meanwhile.
+          sql`EXISTS (SELECT 1 FROM ${T} WHERE ${T.collectionId} = ${cid} AND ${T.status} IN ('converting', 'converted') AND json_array_length(${T.versions}) = ${conv.versions.length})`,
         ),
       ),
     ...conv.versions.map((c) => {
@@ -640,9 +649,10 @@ async function flipToV3(
 }
 
 /**
- * Put a flipped collection back on v2: its layout, visibility, and every version row as
- * they were. Only while no v3 commit follows the conversion (one would be lost). The v3
- * objects stay; converting again reuses them.
+ * Put a flipped collection back on v2: its layout and every version row as they were. Only
+ * while no v3 commit follows the conversion (one would be lost). It is made public again only
+ * if the flip is what made it private (decision 1): otherwise its visibility is its owner's
+ * choice, and stays. The v3 objects stay; converting again reuses them.
  */
 export async function revertToV2(ports: Ports, collectionId: string): Promise<string | null> {
   const [conv] = await ports.db
@@ -661,7 +671,7 @@ export async function revertToV2(ports: Ports, collectionId: string): Promise<st
       .update(C)
       .set({
         recordLayout: conv.fromLayout,
-        public: conv.fromPublic ?? false,
+        ...(conv.private && conv.fromPublic ? { public: true } : {}),
         historyBytes: conv.fromHistoryBytes ?? 0,
         updatedAt: new Date(),
       })
@@ -693,19 +703,32 @@ export async function requestConversion(
 ): Promise<void> {
   if (opts.fresh) {
     // Afresh: what an earlier conversion wrote to the v3 area goes, while v2 still serves it.
-    const [col] = await ports.db
-      .select({ layout: schema.collections.recordLayout })
-      .from(schema.collections)
-      .where(eq(schema.collections.id, collectionId))
-    if (!col || col.layout === 'v3')
-      throw new ConvertError('Only a collection still on v2 converts afresh')
-    await v3.deleteCollection(ports.stores.v3, collectionId)
-    const parts = await ports.stores.internal.list(`v3-convert/${collectionId}/`)
-    await Promise.all(parts.keys.map((k) => ports.stores.internal.delete(k)))
+    // The conversion's row is emptied first (never a flipped one's: it holds the way back),
+    // so a job about to flip on the earlier one's versions no longer can: the flip holds
+    // only while the row is as that job read it. Then, if the collection is still on v2,
+    // nothing can put it on these objects.
+    const onV2 = async () => {
+      const [col] = await ports.db
+        .select({ layout: schema.collections.recordLayout })
+        .from(schema.collections)
+        .where(eq(schema.collections.id, collectionId))
+      if (!col || col.layout === 'v3')
+        throw new ConvertError('Only a collection still on v2 converts afresh')
+    }
+    await onV2()
     await ports.db
       .update(schema.v3Conversions)
       .set({ versions: [], private: false, status: 'queued', error: null, updatedAt: new Date() })
-      .where(eq(schema.v3Conversions.collectionId, collectionId))
+      .where(
+        and(
+          eq(schema.v3Conversions.collectionId, collectionId),
+          sql`${schema.v3Conversions.status} <> 'flipped'`,
+        ),
+      )
+    await onV2()
+    await v3.deleteCollection(ports.stores.v3, collectionId)
+    const parts = await ports.stores.internal.list(`v3-convert/${collectionId}/`)
+    await Promise.all(parts.keys.map((k) => ports.stores.internal.delete(k)))
   }
   await ports.db
     .insert(schema.v3Conversions)

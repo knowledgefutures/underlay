@@ -211,6 +211,70 @@ describe('converting a v2 collection to v3', () => {
     expect((await conversion(h, c.id)).status).toBe('reverted')
   })
 
+  it('goes back without making public what its owner made private', async () => {
+    const { h, c } = await v2Collection()
+    await requestConversion(h.ports, c.id, { flip: false, allowPrivate: false })
+    await h.drain()
+    // Its owner makes it private while it converts; it has no private record or type.
+    await h.ports.db
+      .update(schema.collections)
+      .set({ public: false })
+      .where(eq(schema.collections.id, c.id))
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })
+    await h.drain()
+    expect(await conversion(h, c.id)).toMatchObject({ status: 'flipped', fromPublic: false })
+    expect(await revertToV2(h.ports, c.id)).toBe(null)
+    const [col] = await h.ports.db
+      .select()
+      .from(schema.collections)
+      .where(eq(schema.collections.id, c.id))
+    expect(col).toMatchObject({ recordLayout: v2Layout, public: false })
+  })
+
+  it('makes public again, going back, a collection the flip made private', async () => {
+    const { h, c } = await v2Collection({ private: true })
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: true })
+    await h.drain()
+    const col = async () =>
+      (await h.ports.db.select().from(schema.collections).where(eq(schema.collections.id, c.id)))[0]
+    expect(await col()).toMatchObject({ recordLayout: 'v3', public: false })
+    expect(await revertToV2(h.ports, c.id)).toBe(null)
+    expect(await col()).toMatchObject({ recordLayout: v2Layout, public: true })
+  })
+
+  it('answers for a record by its hash once its collection is on v3: not found, not an error', async () => {
+    const { h, user, c, base } = await v2Collection()
+    await h.drain()
+    const page = await json(
+      await h.request(`${base}/versions/latest/records?type=Author&limit=1`, { user }),
+    )
+    const hash = page.records[0].hash as string
+    expect((await h.request(`/api/records/${hash}/provenance`, { user })).status).toBe(200)
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })
+    await h.drain()
+    expect((await conversion(h, c.id)).status).toBe('flipped')
+    expect((await h.request(`/api/records/${hash}/provenance`, { user })).status).toBe(404)
+    const batch = await h.request('/api/records/batch', {
+      method: 'POST',
+      user,
+      json: { hashes: [hash] },
+    })
+    expect(batch.status).toBe(200)
+    expect(await batch.text()).toBe('')
+  })
+
+  it('leaves a flipped collection as it is when asked to convert it afresh', async () => {
+    const { h, c } = await v2Collection()
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })
+    await h.drain()
+    await expect(
+      requestConversion(h.ports, c.id, { flip: true, allowPrivate: false, fresh: true }),
+    ).rejects.toThrow(/still on v2/)
+    expect(await conversion(h, c.id)).toMatchObject({ status: 'flipped' })
+    expect((await conversion(h, c.id)).versions).toHaveLength(4)
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(4)
+  })
+
   it('makes a collection with a private record private, only once allowed', async () => {
     const { h, user, c, base } = await v2Collection({ private: true })
     await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })

@@ -5,21 +5,22 @@
  *   POST   /:owner/:slug/uploads                          open one {message?, base?, app_id?}
  *   POST   /:owner/:slug/uploads/:id/files                {id, size} → a presigned PUT, or parts
  *   POST   /:owner/:slug/uploads/:id/files/:fid/complete  {upload_id, parts: [{n, etag}]}
- *   POST   /:owner/:slug/uploads/:id/commit               {files: [FileRef…], change?}
+ *   POST   /:owner/:slug/uploads/:id/commit               {files: [FileRef…], change?} (a change unsigned)
  *   GET    /:owner/:slug/uploads/:id                      status, files present, result
- *   DELETE /:owner/:slug/uploads/:id                      abandon
+ *   DELETE /:owner/:slug/uploads/:id                      abandon (while it is open)
  *
  * A file's id is its content's (docs/protocol-v3.md, 3.4); the client builds it with the
  * library. The commit is verified and landed by jobs: poll the status until `committed`.
  */
-import { v3 } from '@underlay/protocol'
-import { and, eq } from 'drizzle-orm'
+import type { v3 } from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
-import * as schema from '../db/schema.js'
 import {
+  abandonUpload,
+  checkChange,
   checkCommitBody,
+  checkParts,
   completeFile,
   getUpload,
   openUpload,
@@ -121,9 +122,10 @@ export function uploadRoutes() {
     const body = await readJson(c, 1024 * 1024)
     if (body instanceof Response) return body
     const fid = c.req.param('fid')
-    const parts = body.parts as { n: number; etag: string }[] | undefined
-    if (!HEX64.test(fid) || typeof body.upload_id !== 'string' || !Array.isArray(parts))
+    if (!HEX64.test(fid) || typeof body.upload_id !== 'string' || body.upload_id.length > 1024)
       return jsonError(c, 400, 'Needs {upload_id, parts: [{n, etag}]}')
+    const parts = checkParts(body.parts)
+    if (typeof parts === 'string') return jsonError(c, 400, parts)
     await completeFile(c.var.ports, u, fid, body.upload_id, parts)
     return c.json({ ok: true })
   })
@@ -137,15 +139,12 @@ export function uploadRoutes() {
     if (body instanceof Response) return body
     const checked = checkCommitBody(body)
     if (typeof checked === 'string') return jsonError(c, 400, checked)
-    // A change the client signed names the same files, for this collection.
+    // A change the client prepared names the same files, for this collection.
     let change: v3.Change | null = null
     if (body.change !== undefined) {
-      change = body.change as v3.Change
-      if (
-        change?.collection !== access.collection.id ||
-        JSON.stringify(change.files) !== JSON.stringify(checked.files)
-      )
-        return jsonError(c, 400, '"change" must be for this collection and name the same files')
+      const given = checkChange(body.change, access.collection.id, checked.files)
+      if (typeof given === 'string') return jsonError(c, 400, given)
+      change = given
     }
     // A small commit is verified and landed here, and answered with its result.
     const inline = (await smallCommit(c.var.ports, u.id, checked.files))
@@ -186,10 +185,8 @@ export function uploadRoutes() {
     if (access instanceof Response) return access
     const u = await ownUpload(c, access)
     if (u instanceof Response) return u
-    await c.var.ports.db
-      .update(schema.v3Uploads)
-      .set({ status: 'expired', updatedAt: new Date() })
-      .where(and(eq(schema.v3Uploads.id, u.id), eq(schema.v3Uploads.status, 'open')))
+    // Only an open upload can be abandoned: one being committed runs to its end.
+    if (!(await abandonUpload(c.var.ports, u.id))) return jsonError(c, 409, `Upload is ${u.status}`)
     return c.json({ ok: true })
   })
 

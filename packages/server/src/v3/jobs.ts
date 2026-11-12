@@ -39,6 +39,8 @@ export const v3JobConfig = {
   keepLayouts: 2,
   /** Upload sessions and temporary files older than this are cleared. */
   staleMs: 24 * 60 * 60 * 1000,
+  /** A sweep pass's lock older than this was left by a pass that died. */
+  sweepStaleMs: 60 * 60 * 1000,
   /** Deletion sweep periods (the library's defaults). */
   graceMs: 24 * 60 * 60 * 1000,
   trashMs: 7 * 24 * 60 * 60 * 1000,
@@ -56,7 +58,26 @@ registerJob('v3.finishRebuild', async (job, ports) => {
   await finishRound(ports, String(job.collectionId), String(job.planId))
 })
 
+const SWEEP_LOCK = 'v3-sweep/running'
+
 registerJob('v3.sweep', async (_job, ports) => {
+  // One sweeper at a time (Section 9): the cron queues a pass every tick, and a long pass
+  // must not have a second beside it. A lock left by a pass that died is cleared once stale.
+  const internal = ports.stores.internal
+  if (!(await createObject(internal, SWEEP_LOCK, String(Date.now())))) {
+    const held = await internal.get(SWEEP_LOCK)
+    const since = held ? Number(await held.text()) : 0
+    if (held && Date.now() - since >= v3JobConfig.sweepStaleMs) await internal.delete(SWEEP_LOCK)
+    return
+  }
+  try {
+    await sweepPass(ports)
+  } finally {
+    await internal.delete(SWEEP_LOCK)
+  }
+})
+
+async function sweepPass(ports: Ports) {
   const store = ports.stores.v3
   // Deleted collections' own objects first, so this pass already frees their files.
   const dropped = await dropDeletedV3(ports)
@@ -76,7 +97,7 @@ registerJob('v3.sweep', async (_job, ports) => {
   const missing = [...result.records.missing, ...result.assets.missing]
   if (missing.length > 0)
     console.error(`[v3.sweep] listed but missing: ${missing.slice(0, 20).join(', ')}`)
-})
+}
 
 /** Each collection's stored bytes from a sweep pass, onto its row (billing on logical size). */
 async function recordStoredBytes(ports: Ports, logical: Map<string, { bytes: number }>) {

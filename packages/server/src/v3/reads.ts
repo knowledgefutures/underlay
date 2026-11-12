@@ -79,6 +79,12 @@ function recordJson(line: Uint8Array, hash: string) {
   return { id: r.id, type: r.type, data: r.data, hash }
 }
 
+/**
+ * A type name as part of a download's file name: a type may hold a quote or any other
+ * character, and a header value may not.
+ */
+export const fileNamePart = (type: string) => type.replace(/[^A-Za-z0-9._-]/g, '_')
+
 /** A record line with its hash added, as records.ndjson has it. */
 export const withHash = (line: Uint8Array, hash: string) =>
   `${dec.decode(line).slice(0, -1)},"hash":"${hash}"}`
@@ -362,7 +368,7 @@ export async function v3NdjsonGz(c: Context<AppEnv>, access: CollectionAccess, t
   return new Response(pullStream(members()), {
     headers: {
       'content-type': 'application/gzip',
-      'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${v.row.semver}${type ? `-${type}` : ''}.ndjson.gz"`,
+      'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${v.row.semver}${type ? `-${fileNamePart(type)}` : ''}.ndjson.gz"`,
     },
   })
 }

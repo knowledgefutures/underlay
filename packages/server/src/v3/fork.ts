@@ -10,7 +10,7 @@
  * tombstone's grace is over; the sweep then frees the files nothing else lists.
  */
 import { v3 } from '@underlay/protocol'
-import { and, asc, eq, getTableColumns, gt, inArray, isNull, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, getTableColumns, inArray, isNull, lte, sql } from 'drizzle-orm'
 
 import { graceCutoff } from '../cleanup/mark.js'
 import { chunks } from '../db/chunks.js'
@@ -121,14 +121,19 @@ export async function dropDeletedV3(ports: Ports): Promise<number> {
 }
 
 /**
- * Drop v3 collections whose D1 row is gone and whose tombstone, if any, is past its grace:
- * a collection converted but deleted before it was flipped (its tombstone names its v2
- * layout), or anything else left behind. The sweep walks every v3 collection, so it passes
- * their ids here. Returns how many it dropped.
+ * Drop v3 collections whose D1 row is gone: a collection converted but deleted before it was
+ * flipped (its tombstone names its v2 layout), or anything else left behind. The sweep walks
+ * every v3 collection, so it passes their ids here. Returns how many it dropped.
+ *
+ * A missing row alone is not a deletion: it is also what a database restored to an earlier
+ * time, or a Worker bound to the wrong database, looks like. So one with a tombstone goes
+ * when the tombstone's grace is over, as a deleted collection does; one with no tombstone
+ * goes only when nothing of it has been written within that grace, and is logged.
  */
 export async function dropOrphans(ports: Ports, collectionIds: string[]): Promise<number> {
   const db = ports.db
   const T = schema.collectionTombstones
+  const cutoff = graceCutoff()
   let dropped = 0
   for (const part of chunks(collectionIds, 90)) {
     const live = new Set(
@@ -139,19 +144,36 @@ export async function dropOrphans(ports: Ports, collectionIds: string[]): Promis
           .where(inArray(schema.collections.id, part))
       ).map((r) => r.id),
     )
-    const grace = new Set(
+    const deletedAt = new Map(
       (
         await db
-          .select({ id: T.collectionId })
+          .select({ id: T.collectionId, at: T.deletedAt })
           .from(T)
-          .where(and(inArray(T.collectionId, part), gt(T.deletedAt, graceCutoff())))
-      ).map((r) => r.id),
+          .where(inArray(T.collectionId, part))
+      ).map((r) => [r.id, r.at]),
     )
     for (const id of part) {
-      if (live.has(id) || grace.has(id)) continue
+      if (live.has(id)) continue
+      const at = deletedAt.get(id)
+      if (at ? at > cutoff : !(await quietSince(ports, id, cutoff.getTime()))) continue
+      if (!at) console.error(`[v3.sweep] ${id} has no row and no tombstone: dropped`)
       await v3.deleteCollection(ports.stores.v3, id)
       dropped++
     }
   }
   return dropped
+}
+
+/** Whether every object of a collection was last written before `cutoff` (false if the store cannot say). */
+async function quietSince(ports: Ports, collectionId: string, cutoff: number): Promise<boolean> {
+  let cursor: string | undefined
+  do {
+    const page = await ports.stores.v3.list(v3.collectionPrefix(collectionId), cursor)
+    for (const [i] of page.keys.entries()) {
+      const modified = page.info?.[i]?.modified
+      if (!modified || modified >= cutoff) return false
+    }
+    cursor = page.cursor
+  } while (cursor)
+  return true
 }

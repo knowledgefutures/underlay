@@ -18,6 +18,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { deniedHashes } from '../lib/limits.js'
 import { rowsOfType, schemasOf, viewOf } from '../v3/catalog.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { collectionAccess, type Principal } from './access.js'
@@ -155,7 +156,9 @@ export function agentRoutes() {
     const head = await findVersion(db, coll.id, 'latest', coll.headVersionId)
     const onV3 = coll.recordLayout === 'v3'
     const repo = onV3 ? null : await c.var.ports.stores.forCollection(coll.id)
-    const view = head && repo ? await loadView(repo, head, true) : null
+    // Blocked records are shown to no one, a collection's writers included.
+    const denied = await deniedHashes(db)
+    const view = head && repo ? await loadView(repo, head, true, denied) : null
     const schemas: { slug: string; schema: unknown }[] = []
     const examples: { id: string; type: string; data: unknown; private?: true }[] = []
     if (onV3 && head) {
@@ -165,7 +168,7 @@ export function agentRoutes() {
       for (const slug of Object.keys(all).sort()) schemas.push({ slug, schema: all[slug] })
       if (v3View && schemas[0]) {
         for await (const r of rowsOfType(store, v3View, schemas[0].slug)) {
-          if (!r.line || r.line.byteLength > MAX_EXAMPLE_BYTES) continue
+          if (!r.line || r.line.byteLength > MAX_EXAMPLE_BYTES || denied.has(r.hash)) continue
           const rec = JSON.parse(new TextDecoder().decode(r.line)) as {
             id: string
             type: string

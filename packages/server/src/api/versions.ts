@@ -37,6 +37,7 @@ import { deniedHashes } from '../lib/limits.js'
 import { pullStream } from '../lib/streams.js'
 import type { Db } from '../ports.js'
 import {
+  fileNamePart,
   v3Detail,
   v3Diff,
   v3Files,
@@ -432,7 +433,7 @@ export function versionRoutes() {
     return new Response(pullStream(members()), {
       headers: {
         'content-type': 'application/gzip',
-        'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${view.version.semver}${want ? `-${want}` : ''}.ndjson.gz"`,
+        'content-disposition': `attachment; filename="${access.owner.slug}-${access.collection.slug}-${view.version.semver}${want ? `-${fileNamePart(want)}` : ''}.ndjson.gz"`,
       },
     })
   })

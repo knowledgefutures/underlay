@@ -18,18 +18,26 @@
  *
  * Section 4.3: a file is named only if its bytes came with this upload (they are under its
  * prefix), and they are checked against its id here. A file already stored is not enough.
+ *
+ * The client can write `uploads/<upload>/<file id>` for as long as its presigned URLs last,
+ * so a commit first copies each named file into a session of the server's own (`stage`),
+ * which no presigned URL names, and everything after reads that copy: the bytes checked are
+ * the bytes installed, whatever the client sends meanwhile.
  */
 import {
   checkSchemaFull,
   compileSchema,
+  copyObject,
   createObject,
   hashSchema,
+  InputRuleError,
+  jcs,
   MAX_JSON_DEPTH,
   parseStrict,
   type SchemaValidator,
   v3,
 } from '@underlay/protocol'
-import { and, count, eq, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, sql } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import { registerJob, runJob } from '../jobs.js'
@@ -56,17 +64,26 @@ export const uploadLimits = {
    */
   inlineFiles: 8,
   inlineBytes: 32 * 1024 * 1024,
-  /** An upload idle longer than this expires; its objects are cleared by the sweep. */
+  /**
+   * An upload open this long without a commit expires, and a commit not finished this long
+   * after it was asked for fails. The sweep clears an upload's objects a day after each was
+   * written, so a file sent more than a day before its commit must be sent again.
+   */
   idleMs: 24 * 60 * 60 * 1000,
-  /** Open uploads a user may hold. */
+  /** Uploads a user may hold that are open or being committed. */
   open: 20,
   /** Files one commit may name. */
   files: 10_000,
   /** A file up to this size goes up in one presigned PUT; larger, in equal parts. */
   singlePutBytes: 64 * 1024 * 1024,
   partBytes: v3.PART_BYTES,
-  /** S3's limit for one object. */
-  maxFileBytes: 5 * 1024 ** 4,
+  /**
+   * The largest file taken: 512 parts. A sorted-record-file is cut toward 128 MB stored, and
+   * one far past this could not be verified within a job's CPU limit.
+   */
+  maxFileBytes: 4 * 1024 ** 3,
+  /** A commit's message and base, in characters. */
+  messageChars: 64 * 1024,
   presignSeconds: 3600,
   /** Times a land is tried again after other commits landed first. */
   landAttempts: 5,
@@ -76,6 +93,44 @@ const HEX64 = /^[0-9a-f]{64}$/
 export type UploadRow = typeof schema.v3Uploads.$inferSelect
 
 export const uploadObjectKey = (upload: string, fileId: string) => v3.uploadKey(upload, fileId)
+
+/** Which session of the server's own a commit's files were copied into, to be checked there. */
+const stageKey = (upload: string) => `v3-uploads/${upload}/stage.json`
+
+/** The session an upload's files are checked and installed from, or null before they are taken. */
+async function stageOf(ports: Ports, upload: string): Promise<string | null> {
+  const obj = await ports.stores.internal.get(stageKey(upload))
+  return obj ? (JSON.parse(await obj.text()) as { session: string }).session : null
+}
+
+/**
+ * Take a commit's files out of the client's reach: copy each from where the client sent it
+ * into a new session only this job writes, then name that session for the upload, created
+ * only if absent. Of two jobs preparing one upload at once, both use the session of the one
+ * that named its first, so a file there is written once and never changes. Returns the
+ * session, or the files the client has not sent.
+ */
+async function stageFiles(
+  ports: Ports,
+  upload: string,
+  files: v3.FileRef[],
+): Promise<{ session: string } | { absent: string[] }> {
+  const store = ports.stores.v3
+  const staged = await stageOf(ports, upload)
+  if (staged) return { session: staged }
+  const present = new Set(await presentFiles(ports, upload))
+  const absent = files.filter((f) => !present.has(f.id)).map((f) => f.id)
+  if (absent.length > 0) return { absent }
+  const session = v3.newSession()
+  await v3.inParallel(
+    files.map(
+      (f) => () => copyObject(store, uploadObjectKey(upload, f.id), v3.uploadKey(session, f.id)),
+    ),
+    16,
+  )
+  await createObject(ports.stores.internal, stageKey(upload), JSON.stringify({ session }))
+  return { session: (await stageOf(ports, upload)) ?? session }
+}
 /** What prepare found that landing needs, against one head. */
 interface Prepared {
   schemaChanges: [string, string | null][]
@@ -113,6 +168,9 @@ async function setUpload(
   return rows.length > 0
 }
 
+/** An upload not yet settled: open, or somewhere in its commit. */
+const IN_FLIGHT: UploadRow['status'][] = ['open', 'verifying', 'landing', 'committing']
+
 /** Open an upload for a user on a v3 collection; null when the user holds too many. */
 export async function openUpload(
   ports: Ports,
@@ -123,9 +181,9 @@ export async function openUpload(
   const [{ n }] = (await ports.db
     .select({ n: count() })
     .from(schema.v3Uploads)
-    .where(and(eq(schema.v3Uploads.userId, userId), eq(schema.v3Uploads.status, 'open')))) as [
-    { n: number },
-  ]
+    .where(
+      and(eq(schema.v3Uploads.userId, userId), inArray(schema.v3Uploads.status, IN_FLIGHT)),
+    )) as [{ n: number }]
   if (n >= uploadLimits.open) return null
   const [row] = await ports.db
     .insert(schema.v3Uploads)
@@ -170,6 +228,22 @@ export async function presignFile(ports: Ports, upload: UploadRow, fileId: strin
   }
 }
 
+/** A multipart completion's parts, checked: numbered 1 up, an ETag each; or what is wrong. */
+export function checkParts(parts: unknown): { n: number; etag: string }[] | string {
+  const most = Math.ceil(uploadLimits.maxFileBytes / uploadLimits.partBytes)
+  if (!Array.isArray(parts) || parts.length === 0 || parts.length > most)
+    return `"parts" must list 1 to ${most} parts`
+  const out: { n: number; etag: string }[] = []
+  for (const p of parts as { n?: unknown; etag?: unknown }[]) {
+    if (!p || !Number.isInteger(p.n) || (p.n as number) < 1 || (p.n as number) > most)
+      return 'Each part needs its number "n"'
+    if (typeof p.etag !== 'string' || p.etag.length === 0 || p.etag.length > 256)
+      return `Part ${p.n} needs its "etag"`
+    out.push({ n: p.n as number, etag: p.etag })
+  }
+  return out
+}
+
 export async function completeFile(
   ports: Ports,
   upload: UploadRow,
@@ -177,7 +251,8 @@ export async function completeFile(
   multipartId: string,
   parts: { n: number; etag: string }[],
 ) {
-  const presigner = ports.stores.v3.presigner!
+  const presigner = ports.stores.v3.presigner
+  if (!presigner) throw new Error('The v3 area cannot presign')
   await presigner.completeMultipart(
     uploadObjectKey(upload.id, fileId),
     multipartId,
@@ -254,17 +329,75 @@ export async function smallCommit(ports: Ports, uploadId: string, files: v3.File
   return bytes <= uploadLimits.inlineBytes
 }
 
-/** A commit's request, checked; null and the problem when it cannot be taken. */
+const isKeyPair = (k: unknown): k is v3.KeyPair =>
+  Array.isArray(k) && k.length === 2 && typeof k[0] === 'string' && typeof k[1] === 'string'
+
+/**
+ * A commit's request, checked: its files as a commit names them (nothing else a client
+ * sent with them is kept), each named once; or the problem when it cannot be taken.
+ */
 export function checkCommitBody(body: Record<string, unknown>): { files: v3.FileRef[] } | string {
   const files = body.files
   if (!Array.isArray(files) || files.length === 0) return '"files" must be a non-empty list'
   if (files.length > uploadLimits.files) return `At most ${uploadLimits.files} files a commit`
+  const out: v3.FileRef[] = []
+  const seen = new Set<string>()
   for (const f of files as v3.FileRef[]) {
     if (!f || typeof f !== 'object' || !HEX64.test(String(f.id))) return 'Each file needs its id'
+    if (seen.has(f.id)) return `File ${f.id} is named twice`
+    seen.add(f.id)
     for (const k of ['entries', 'records', 'removals', 'bytes'] as const)
       if (!Number.isSafeInteger(f[k]) || f[k] < 0) return `File ${f.id}: "${k}" must be a count`
+    // A file with rows has its first and last keys; an empty one has neither.
+    if (
+      f.entries === 0
+        ? f.first != null || f.last != null
+        : !isKeyPair(f.first) || !isKeyPair(f.last)
+    )
+      return `File ${f.id}: "first" and "last" must be its first and last keys`
+    out.push({
+      id: f.id,
+      first: f.first ?? null,
+      last: f.last ?? null,
+      entries: f.entries,
+      records: f.records,
+      removals: f.removals,
+      bytes: f.bytes,
+    })
   }
-  return { files: files as v3.FileRef[] }
+  return { files: out }
+}
+
+/**
+ * A change the client sent with its commit, checked: for this collection, naming the same
+ * files, and unsigned. The server keeps no authors' keys (the pusher is recorded in D1), so
+ * it has nothing to check a signature against, and a commit must not carry a key id nobody
+ * verified. Gives the change as it will be committed, or the problem.
+ */
+export function checkChange(
+  change: unknown,
+  collectionId: string,
+  files: v3.FileRef[],
+): v3.Change | string {
+  const c = change as Partial<v3.Change> | null
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return '"change" must be an object'
+  if (c.collection !== collectionId || !Array.isArray(c.files) || jcs(c.files) !== jcs(files))
+    return '"change" must be for this collection and name the same files'
+  for (const k of ['base', 'message'] as const) {
+    const v = c[k] ?? null
+    if (v !== null && (typeof v !== 'string' || v.length > uploadLimits.messageChars))
+      return `"change.${k}" must be a string or null`
+  }
+  if ((c.keyId ?? null) !== null || (c.sig ?? null) !== null)
+    return 'A signed change is not accepted yet: send it unsigned ("keyId" and "sig" null)'
+  return {
+    collection: collectionId,
+    files,
+    base: c.base ?? null,
+    message: c.message ?? null,
+    keyId: null,
+    sig: null,
+  }
 }
 
 /** Start verifying a commit's files. The upload must be open. */
@@ -289,6 +422,8 @@ export async function requestCommit(
 
 /** A failure the client can fix in the same upload (missing files): it goes back to open. */
 async function reopen(ports: Ports, id: string, error: NonNullable<UploadRow['error']>) {
+  // The next commit may name other files: it takes its own copies.
+  await ports.stores.internal.delete(stageKey(id))
   await setUpload(ports, id, null, {
     status: 'open',
     error,
@@ -298,20 +433,21 @@ async function reopen(ports: Ports, id: string, error: NonNullable<UploadRow['er
 
 async function fail(ports: Ports, id: string, error: NonNullable<UploadRow['error']>) {
   await setUpload(ports, id, null, { status: 'failed', error })
+  await clearMarkers(ports, id)
 }
 
 const dec = new TextDecoder()
 const dataOf = (line: Uint8Array) =>
   (parseStrict(dec.decode(line), MAX_JSON_DEPTH + 1) as { data: unknown }).data
 
-/** Every entry of one type in a set of the upload's files, with what reads its line. */
-async function* typeEntries(ports: Ports, upload: string, files: v3.FileRef[], type: string) {
+/** Every entry of one type in a set of the upload's files (in `session`), with what reads its line. */
+async function* typeEntries(ports: Ports, session: string, files: v3.FileRef[], type: string) {
   const store = ports.stores.v3
   for (const f of files) {
     if (!f.first || !f.last) continue
     if (v3.compareKeys(f.first[0], '', type, '') > 0 || v3.compareKeys(type, '', f.last[0], '') > 0)
       continue
-    const file = await v3.SortedFile.open(store, uploadObjectKey(upload, f.id), { id: f.id })
+    const file = await v3.SortedFile.open(store, v3.uploadKey(session, f.id), { id: f.id })
     const reader = file.reader({ readAhead: 1024 * 1024 })
     const cursor = new v3.EntryCursor(reader, 1)
     await cursor.seek({ type, id: '' })
@@ -323,6 +459,27 @@ async function* typeEntries(ports: Ports, upload: string, files: v3.FileRef[], t
   }
 }
 
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+
+/**
+ * The reserved rows of an upload's files: each `$schema` row (null for a removal), each
+ * `$asset` row it adds, and its `$meta` row's data. Found by the key ranges the commit gives
+ * for its files, which each file's verification holds it to.
+ */
+async function reservedRows(ports: Ports, session: string, files: v3.FileRef[]) {
+  const schemas: [string, unknown | null][] = []
+  for await (const { entry, line } of typeEntries(ports, session, files, v3.SCHEMA_TYPE))
+    schemas.push([entry.id, entry.kind === 'x' ? null : dataOf(await line())])
+  const assets: [string, unknown][] = []
+  for await (const { entry, line } of typeEntries(ports, session, files, v3.ASSET_TYPE))
+    if (entry.kind === 'r') assets.push([entry.id, dataOf(await line())])
+  let metadata: unknown = null
+  for await (const { entry, line } of typeEntries(ports, session, files, v3.META_TYPE))
+    if (entry.kind === 'r') metadata = dataOf(await line())
+  return { schemas, assets, metadata }
+}
+
 registerJob('v3.uploadPrepare', async (job, ports) => {
   const t0 = Date.now()
   const upload = await getUpload(ports, String(job.uploadId))
@@ -330,17 +487,17 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   const store = ports.stores.v3
   const cid = upload.collectionId
   const files = (upload.files ?? []) as v3.FileRef[]
-  // Every named file came with this upload.
-  const present = new Set(await presentFiles(ports, upload.id))
-  const absent = files.filter((f) => !present.has(f.id)).map((f) => f.id)
-  if (absent.length > 0) {
+  // Every named file came with this upload, and is checked from the server's own copy.
+  const stage = await stageFiles(ports, upload.id, files)
+  if ('absent' in stage) {
     await reopen(ports, upload.id, {
       statusCode: 422,
       error: 'Files not uploaded',
-      problems: absent.slice(0, 100),
+      problems: stage.absent.slice(0, 100),
     })
     return
   }
+  const session = stage.session
   // Key ranges apart, as a commit requires.
   const sorted = files
     .filter((f) => f.first)
@@ -368,30 +525,67 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   const headSchemas: Record<string, unknown> = await schemasOf(store, view)
   const schemas: Record<string, unknown> = { ...headSchemas }
   const problems: string[] = []
-  for await (const { entry, line } of typeEntries(ports, upload.id, files, v3.SCHEMA_TYPE)) {
-    if (entry.kind === 'x') {
-      delete schemas[entry.id]
+  // The upload's reserved rows are read before its files are verified (the verify jobs need
+  // the schemas): a file too broken to read them from fails the upload here.
+  let reserved: Awaited<ReturnType<typeof reservedRows>>
+  try {
+    reserved = await reservedRows(ports, session, files)
+  } catch (err) {
+    if (!(err instanceof v3.FormatError || err instanceof InputRuleError)) throw err
+    await fail(ports, upload.id, {
+      statusCode: 422,
+      error: 'A file is not valid',
+      problems: [err.message],
+    })
+    return
+  }
+  for (const [type, body] of reserved.schemas) {
+    if (body === null) {
+      delete schemas[type]
       continue
     }
-    const body = dataOf(await line())
-    const err = checkSchemaFull(entry.id, body)
+    const err = checkSchemaFull(type, body)
     if (err) problems.push(err)
-    schemas[entry.id] = body
+    schemas[type] = body
   }
   const priv = privateMarkError(
     collection.public,
     schemas as Record<string, Record<string, unknown>>,
   )
   if (priv) problems.push(priv)
+  if (reserved.metadata !== null && !isObject(reserved.metadata))
+    problems.push('$meta data must be an object')
   if (problems.length > 0) {
     await fail(ports, upload.id, { statusCode: 422, error: 'Schemas refused', problems })
     return
   }
-  // Assets the upload names: in the v3 area, or uploaded to this collection and copied in.
+  // Assets the upload names. A new one must have been uploaded to this collection through
+  // the file routes (the push's test, and v2's): knowing a hash is not holding its bytes, and
+  // another collection's asset must not become readable here by being named. Its bytes are
+  // copied into the v3 area, and the row must give their size.
   const missing: string[] = []
-  for await (const { entry } of typeEntries(ports, upload.id, files, v3.ASSET_TYPE)) {
-    if (entry.kind !== 'r' || (await store.head(assetKey(entry.id)))) continue
-    if (!(await copyAssetFromUpload(ports, cid, entry.id))) missing.push(entry.id)
+  const read: v3.ReadOptions = { cache: new v3.FileCache(16 * 1024 * 1024) }
+  for (const [hash, data] of reserved.assets) {
+    const shape = v3.checkAssetData(data)
+    if (shape) {
+      problems.push(`$asset ${hash}: ${shape}`)
+      continue
+    }
+    const named = view && (await v3.getRecord(store, view, v3.ASSET_TYPE, hash, read))?.line
+    if (!named && !(await copyAssetFromUpload(ports, cid, hash))) {
+      missing.push(hash)
+      continue
+    }
+    const stored = await store.head(assetKey(hash))
+    if (!stored) missing.push(hash)
+    else if (stored.size !== (data as { size: number }).size)
+      problems.push(
+        `$asset ${hash}: it is ${stored.size} bytes, not ${(data as { size: number }).size}`,
+      )
+  }
+  if (problems.length > 0) {
+    await fail(ports, upload.id, { statusCode: 422, error: 'Assets refused', problems })
+    return
   }
   if (missing.length > 0) {
     await reopen(ports, upload.id, {
@@ -406,7 +600,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   let scanUnitCount = 0
   const tight = await tightenedTypes(ports, view, schemas)
   if (view && tight.length > 0) {
-    const scanUpload = { files, session: upload.id }
+    const scanUpload = { files, session }
     const units = await scanUnits(ports, view, tight)
     const [row] = await ports.db
       .select({ typeCounts: schema.versions.typeCounts })
@@ -442,10 +636,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     if (!headSchemas[t] || hashSchema(headSchemas[t]) !== h) schemaChanges.push([t, h])
   }
   for (const t of Object.keys(headSchemas)) if (!(t in schemas)) schemaChanges.push([t, null])
-  let metadata: Record<string, unknown> | null = null
-  for await (const { entry, line } of typeEntries(ports, upload.id, files, v3.META_TYPE)) {
-    if (entry.kind === 'r') metadata = dataOf(await line()) as Record<string, unknown>
-  }
+  const metadata = reserved.metadata as Record<string, unknown> | null
   // A file holds publisher rows exactly when its first or last key's type is not reserved.
   const ordinary = files.some(
     (f) => (f.first && !f.first[0].startsWith('$')) || (f.last && !f.last[0].startsWith('$')),
@@ -505,13 +696,25 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   const marker = markerKey(upload.id, upload.expectHead, fileId)
   // Verified already against this head (a job delivered twice, or queued again): count it.
   if (await internal.head(marker)) return countVerified(ports, upload)
+  // The copy prepare took, which the client cannot write.
+  const session = await stageOf(ports, upload.id)
+  if (!session) return
   // Structure, canonical lines, and each record against the schemas in force.
   const schemas = (upload.schemas ?? {}) as Record<string, unknown>
   const validators = new Map<string, SchemaValidator>()
   const problems: string[] = []
   const onRecord = (type: string, id: string, data: unknown) => {
     if (problems.length >= 20) return
-    if (type === v3.SCHEMA_TYPE || type === v3.META_TYPE || type === v3.ASSET_TYPE) return
+    if (type === v3.SCHEMA_TYPE) return
+    if (type === v3.META_TYPE) {
+      if (!isObject(data)) problems.push('$meta data must be an object')
+      return
+    }
+    if (type === v3.ASSET_TYPE) {
+      const shape = v3.checkAssetData(data)
+      if (shape) problems.push(`$asset ${id}: ${shape}`)
+      return
+    }
     const s = schemas[type]
     if (!s) {
       problems.push(`Type "${type}" has records but no schema`)
@@ -525,7 +728,7 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   let content: v3.FileContent
   try {
     content = (
-      await v3.verifyFile(store, uploadObjectKey(upload.id, fileId), {
+      await v3.verifyFile(store, v3.uploadKey(session, fileId), {
         id: fileId,
         labeled: false,
         canonical: true,
@@ -557,12 +760,12 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   // Checked: install it among the stored files now (a server-side copy), so landing finds
   // it there and does not copy hundreds of files inside the collection's queue. If the
   // upload never lands, nothing lists it and the sweep clears it after its grace period.
-  await v3.installUpload(store, upload.id, fileId)
+  await v3.installUpload(store, session, fileId)
   // What the file's rows change in the head: one lookup a row, in key order.
   const view = upload.expectHead
     ? await headViewAt(ports, upload.collectionId, upload.expectHead)
     : null
-  const stats = await fileStats(ports, upload.id, fileId, view)
+  const stats = await fileStats(ports, session, fileId, view)
   await createObject(
     internal,
     marker,
@@ -582,7 +785,7 @@ async function headViewAt(ports: Ports, collectionId: string, id: string) {
 
 async function fileStats(
   ports: Ports,
-  upload: string,
+  session: string,
   fileId: string,
   view: v3.View | null,
 ): Promise<CommitStats> {
@@ -594,7 +797,7 @@ async function fileStats(
     assetBytesDelta: 0,
     changes: { added: 0, removed: 0, updated: 0 },
   }
-  const file = await v3.SortedFile.open(store, uploadObjectKey(upload, fileId), { id: fileId })
+  const file = await v3.SortedFile.open(store, v3.uploadKey(session, fileId), { id: fileId })
   const reader = file.reader({ readAhead: 4 * 1024 * 1024 })
   const cursor = new v3.EntryCursor(reader, 1)
   const read: v3.ReadOptions = { cache: new v3.FileCache(16 * 1024 * 1024) }
@@ -748,10 +951,18 @@ async function landUpload(ports: Ports, uploadId: string) {
     return
   }
   const { schemaChanges, metadata, bump } = JSON.parse(await obj.text()) as Prepared
+  const session = await stageOf(ports, upload.id)
+  if (!session) {
+    await fail(ports, upload.id, {
+      statusCode: 500,
+      error: 'The checked files are gone; commit again',
+    })
+    return
+  }
   const t1 = Date.now()
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,
-    session: upload.id,
+    session,
     bump,
     change,
     expectHead: upload.expectHead,
@@ -811,9 +1022,17 @@ async function settleCommitted(ports: Ports, uploadId: string, versionId: string
     },
   })
   await clearMarkers(ports, uploadId)
+  // What the client sent, now stored under its ids: cleared (the sweep would, a day on).
+  const store = ports.stores.v3
+  await v3.inParallel(
+    (await presentFiles(ports, uploadId)).map(
+      (id) => () => store.delete(uploadObjectKey(uploadId, id)),
+    ),
+    16,
+  )
 }
 
-/** Delete an upload's verification markers (every head's). */
+/** Delete what the internal area holds for an upload: its markers (every head's), and where its files were taken. */
 async function clearMarkers(ports: Ports, upload: string) {
   const internal = ports.stores.internal
   const keys: string[] = []
@@ -829,7 +1048,6 @@ async function clearMarkers(ports: Ports, upload: string) {
   )
 }
 
-/** Uploads past their idle time are expired; the sweep clears their objects. */
 /** A commit whose chain has gone quiet this long is queued again from where it stands. */
 export const UPLOAD_STALL_MS = 15 * 60 * 1000
 
@@ -840,7 +1058,11 @@ export const UPLOAD_STALL_MS = 15 * 60 * 1000
  */
 export async function recoverUploads(ports: Ports) {
   const stuck = await ports.db
-    .select({ id: schema.v3Uploads.id, status: schema.v3Uploads.status })
+    .select({
+      id: schema.v3Uploads.id,
+      status: schema.v3Uploads.status,
+      expiresAt: schema.v3Uploads.expiresAt,
+    })
     .from(schema.v3Uploads)
     .where(
       and(
@@ -851,15 +1073,30 @@ export async function recoverUploads(ports: Ports) {
     .limit(50)
   for (const u of stuck) {
     // A land that stopped after committing: its version names the upload.
+    const [v] =
+      u.status === 'committing'
+        ? await ports.db
+            .select({ id: schema.versions.id })
+            .from(schema.versions)
+            .where(eq(schema.versions.pushSessionId, u.id))
+            .limit(1)
+        : []
+    if (v) {
+      await settleCommitted(ports, u.id, v.id)
+      continue
+    }
+    // A commit that has not finished a day after it was asked for never will (a file no job
+    // can get through): it fails, and stops being queued again.
+    if (u.expiresAt.getTime() < Date.now()) {
+      await fail(ports, u.id, {
+        statusCode: 500,
+        error: 'The commit did not finish in time; open a new upload',
+      })
+      continue
+    }
     if (u.status === 'committing') {
-      const [v] = await ports.db
-        .select({ id: schema.versions.id })
-        .from(schema.versions)
-        .where(eq(schema.versions.pushSessionId, u.id))
-        .limit(1)
-      if (v) await settleCommitted(ports, u.id, v.id)
-      else await setUpload(ports, u.id, 'committing', { status: 'landing' })
-      if (!v) await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: u.id })
+      await setUpload(ports, u.id, 'committing', { status: 'landing' })
+      await ports.jobs.enqueue({ type: 'v3.uploadLand', uploadId: u.id })
       continue
     }
     await setUpload(ports, u.id, u.status, {})
@@ -871,6 +1108,14 @@ export async function recoverUploads(ports: Ports) {
   return stuck.length
 }
 
+/** Abandon an open upload; false if it is not open. The sweep clears its objects. */
+export const abandonUpload = (ports: Ports, id: string) =>
+  setUpload(ports, id, 'open', { status: 'expired' })
+
+/**
+ * Open uploads not committed a day after they were opened (or last reopened) are expired.
+ * The sweep clears an upload's objects a day after each was written, whatever its state.
+ */
 export async function expireUploads(ports: Ports) {
   await ports.db
     .update(schema.v3Uploads)
