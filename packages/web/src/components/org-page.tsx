@@ -458,7 +458,7 @@ function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
           ))}
         </div>
       </div>
-      <div className="flex min-w-0 flex-[1_1_11rem] flex-col gap-0.5 text-sm sm:text-right">
+      <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-0.5 text-sm sm:text-right">
         {c.recordCount !== null ? (
           <>
             <div className="font-medium tabular-nums">
