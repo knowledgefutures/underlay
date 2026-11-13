@@ -34,6 +34,7 @@ import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
+import { previewRecord } from '../lib/preview.js'
 import { pullStream } from '../lib/streams.js'
 import type { Db } from '../ports.js'
 import {
@@ -227,9 +228,10 @@ export function versionRoutes() {
           if (records.length === limit) break
         }
       }
+      const preview = c.req.query('preview') === '1'
       recordsPage = {
         type: t?.slug ?? null,
-        records: records.map(recordJson),
+        records: records.map((r) => (preview ? previewRecord(recordJson(r)) : recordJson(r))),
         total: t?.count ?? 0,
       }
     }

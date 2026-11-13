@@ -148,7 +148,9 @@ export function RecordsView({
     }
   }
 
-  const pastEnd = !!currentType && records.length === 0 && totalRecords > 0 && !recordsLoading
+  const preparing = !!loaded?.preparing
+  const pastEnd =
+    !!currentType && records.length === 0 && totalRecords > 0 && !recordsLoading && !preparing
   const pageHref = (p: number) => `${basePath}?type=${currentType}&page=${p}`
   const step = 'border-rule hover:bg-parchment-dark rounded-control border px-2 py-1'
   const pager = totalPages > 1 && (
@@ -328,7 +330,9 @@ export function RecordsView({
                           val === null || val === undefined || val === ''
                             ? ''
                             : typeof val === 'object'
-                              ? JSON.stringify(val)
+                              ? '$preview' in val
+                                ? String((val as { $preview: unknown }).$preview)
+                                : JSON.stringify(val)
                               : String(val)
                         return (
                           <td
@@ -402,7 +406,9 @@ export function RecordsView({
                 ? 'Select a type to view records.'
                 : recordsLoading
                   ? 'Loading records…'
-                  : 'No records of this type in this version.'}
+                  : preparing
+                    ? 'Pages this far into this type are still being indexed, which takes a few minutes after a large version lands. Try again shortly.'
+                    : 'No records of this type in this version.'}
           </p>
         )}
       </div>
