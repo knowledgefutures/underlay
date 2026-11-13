@@ -11,6 +11,7 @@
  * read-modify-write is written as a batch whose conditions are in SQL (see
  * publishVersion in ../versions/publish.ts).
  */
+import type { v3 } from '@underlay/protocol'
 import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
@@ -165,6 +166,11 @@ export const member = sqliteTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     role: text('role').notNull().default('member'),
     createdAt: createdAt(),
+    /**
+     * Whether the org's public page lists this person (by name, not role). Each member
+     * chooses for themselves; hidden until they do.
+     */
+    publicMembership: bool('public_membership').notNull().default(false),
   },
   (t) => [
     index('member_organization_id_idx').on(t.organizationId),
@@ -258,6 +264,13 @@ export const collections = sqliteTable(
      */
     versionCount: integer('version_count').notNull().default(0),
     historyBytes: integer('history_bytes').notNull().default(0),
+    /**
+     * v3: stored bytes of the sorted-record-files the collection lists, shared or not, as of
+     * the sweep's last pass (`storedAt`). With its head's asset bytes, what it is billed for.
+     * Null on v2.
+     */
+    storedBytes: integer('stored_bytes'),
+    storedAt: ts('stored_at'),
     lastPushAt: ts('last_push_at'),
     /** Reconcile (billing/reconcile.ts): started, finished, and what it corrected. */
     reconcileStartedAt: ts('reconcile_started_at'),
@@ -274,10 +287,11 @@ export const collections = sqliteTable(
     /**
      * Where its record bytes live (record-storage-layout.md): `today`, inside leaf
      * bodies, or `f`, in packs found through the collection's own index under
-     * `runs/<collection>/`. Set at creation (forks take their parent's); existing
-     * collections are `today` until converted.
+     * `runs/<collection>/`, or `v3`, a log of commits naming sorted-record-files in
+     * the bucket's v3 area (docs/protocol-v3.md; v3/ here). Set at creation (forks
+     * take their parent's); existing collections are `today` until converted.
      */
-    recordLayout: text('record_layout', { enum: ['today', 'f'] })
+    recordLayout: text('record_layout', { enum: ['today', 'f', 'v3'] })
       .notNull()
       .default('today'),
     deletedAt: ts('deleted_at'),
@@ -353,9 +367,17 @@ export const versions = sqliteTable(
      * that runs twice finds its own version by this (push/outcome.ts).
      */
     pushSessionId: text('push_session_id'),
+    /** v3: bytes of the version's assets (`total_bytes` less its records' line bytes). */
+    assetBytes: integer('asset_bytes'),
+    /**
+     * A version converted from v2: its old `ulv2:` id, which the read API still
+     * resolves (v3-deploy-plan.md, decision 2). Null otherwise.
+     */
+    v2Hash: text('v2_hash'),
   },
   (t) => [
     uniqueIndex('versions_collection_seq_uq').on(t.collectionId, t.seq),
+    index('versions_v2_hash_idx').on(t.v2Hash),
     uniqueIndex('versions_collection_semver_uq').on(t.collectionId, t.semver),
     index('versions_hash_idx').on(t.hash),
     index('versions_published_idx').on(t.publishedAt),
@@ -582,6 +604,121 @@ export const abuseReports = sqliteTable(
 
 export type SessionStatus = 'open' | 'committing' | 'committed' | 'failed' | 'expired'
 
+/** One v2 version converted to a v3 commit (v3/convert.ts). */
+export interface ConvertedVersion {
+  seq: number
+  semver: string
+  /** The v2 version id; the alias once flipped (decision 2). */
+  v2Hash: string
+  /** The v3 commit id. */
+  id: string
+  signature: string | null
+  typeCounts: Record<string, number>
+  recordBytes: number
+  assets: number
+  assetBytes: number
+  /** The row's v2 counts, put back if the collection goes back to v2. */
+  v2: {
+    recordCount: number
+    publicRecordCount: number
+    fileCount: number
+    totalBytes: number
+    publicFileCount: number
+    publicTotalBytes: number
+    typeCounts: Record<string, number>
+    publicTypeCounts: Record<string, number>
+    hasPrivate: boolean
+    signature: string | null
+    assetBytes: number | null
+  }
+}
+
+/**
+ * The conversion of a v2 collection to v3 (v3-deploy-plan.md, Phase 4). queued → converting
+ * (a job a version, each checked against v2) → converted → flipped (one conditional D1
+ * batch, with `flip`); reverted by a steward while no v3 commit follows; failed with a
+ * reason. A row can be added with `wrangler d1 execute` as well as by the admin route.
+ */
+export const v3Conversions = sqliteTable('v3_conversions', {
+  collectionId: text('collection_id')
+    .primaryKey()
+    .references(() => collections.id, { onDelete: 'cascade' }),
+  status: text('status', {
+    enum: ['queued', 'converting', 'converted', 'flipped', 'reverted', 'failed'],
+  })
+    .notNull()
+    .default('queued'),
+  /** Flip the collection to v3 once every version is converted and checked. */
+  flip: bool('flip').notNull().default(false),
+  /** Flip even though the collection has private records or types (decision 1). */
+  allowPrivate: bool('allow_private').notNull().default(false),
+  /** What it was, for the way back. */
+  fromLayout: text('from_layout', { enum: ['today', 'f'] }),
+  fromPublic: bool('from_public'),
+  fromHistoryBytes: integer('from_history_bytes'),
+  /** Some version has a private record or type: it converts as a private collection. */
+  private: bool('private').notNull().default(false),
+  versions: json<ConvertedVersion[]>('versions')
+    .notNull()
+    .default(sql`'[]'`),
+  error: text('error'),
+  createdAt: createdAt(),
+  updatedAt: ts('updated_at'),
+})
+
+/**
+ * A v3 upload built by the client (v3-deploy-plan.md, Phase 2): its sorted-record-files go
+ * straight to the bucket by presigned URL, under `v3/uploads/<id>/`, and its commit names
+ * them. open → verifying (a job a file) → landing → committing (claimed by the one job that
+ * lands it) → committed | failed; expired when idle.
+ */
+export const v3Uploads = sqliteTable(
+  'v3_uploads',
+  {
+    id: id(),
+    collectionId: text('collection_id')
+      .notNull()
+      .references(() => collections.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    status: text('status', {
+      enum: ['open', 'verifying', 'landing', 'committing', 'committed', 'failed', 'expired'],
+    })
+      .notNull()
+      .default('open'),
+    message: text('message'),
+    /** The version id the client built from, recorded as the change's base. */
+    base: text('base'),
+    appId: text('app_id'),
+    /** At commit: the files the change names, and the change itself if the client signed it. */
+    files: json<v3.FileRef[]>('files'),
+    change: json<v3.Change>('change'),
+    /** The head the files were verified against, and the schemas in force for them. */
+    expectHead: text('expect_head'),
+    schemas: json<Record<string, unknown>>('schemas'),
+    /** Files verified so far (a job each). */
+    verified: integer('verified').notNull().default(0),
+    /**
+     * A schema scan of the head in units (v3/scans.ts): how many, and whether it passed.
+     * The upload lands once its files are verified and its scan, if any, has passed.
+     */
+    scanUnits: integer('scan_units').notNull().default(0),
+    scanDone: bool('scan_done').notNull().default(false),
+    /** Times its land found another commit had landed first, and it was prepared again. */
+    attempts: integer('attempts').notNull().default(0),
+    error: json<{ statusCode: number; error: string; problems?: string[] }>('error'),
+    result: json<Record<string, unknown>>('result'),
+    createdAt: createdAt(),
+    updatedAt: ts('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date()),
+    expiresAt: ts('expires_at').notNull(),
+  },
+  (t) => [
+    index('v3_uploads_collection_idx').on(t.collectionId),
+    index('v3_uploads_user_status_idx').on(t.userId, t.status),
+  ],
+)
+
 /**
  * A push in progress. Session inputs whose size the user controls (schemas,
  * metadata, the declared file list) are in the blob store under sessions/<id>/;
@@ -787,7 +924,7 @@ export const collectionTombstones = sqliteTable('collection_tombstones', {
     .notNull()
     .$defaultFn(() => new Date()),
   /** The collection's record layout: layout F's files (`runs/<id>/`) go once its grace is over. */
-  recordLayout: text('record_layout', { enum: ['today', 'f'] })
+  recordLayout: text('record_layout', { enum: ['today', 'f', 'v3'] })
     .notNull()
     .default('today'),
   /** When cleanup dropped its layout F files (null: not yet, or none). */

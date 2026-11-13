@@ -368,7 +368,7 @@ export async function completeUpload(
 }
 
 /**
- * Verify a staged upload: stream it, hash it, and on a match make it a file.
+ * Verify a staged upload: stream a copy of it, hash it, and on a match make it a file.
  * One job hashes at roughly 1 GB/s of CPU; files past what fits in one job's
  * CPU budget need a resumable SHA-256 (edge-redesign.md, Files).
  */
@@ -380,14 +380,22 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
     .limit(1)
   if (!u || u.status !== 'verifying') return
   const blobs = ports.stores.fileBytes
+  // The client can still write the staging key (its presigned URL lasts an hour), so the
+  // bytes are hashed from a copy it cannot write, and the file is made from that copy:
+  // what is hashed is what is stored under the hash, whatever the client sends meanwhile.
+  const checked = `${u.storageKey}.checked`
   const fail = async (error: string) => {
     await ports.db
       .update(schema.fileUploads)
       .set({ status: 'failed', error })
       .where(eq(schema.fileUploads.id, uploadId))
     await blobs.delete(u.storageKey)
+    await blobs.delete(checked)
   }
-  const obj = await blobs.get(u.storageKey)
+  const staged = await blobs.head(u.storageKey)
+  if (!staged) return fail('Nothing was uploaded')
+  await copyObject(blobs, u.storageKey, checked, staged.size)
+  const obj = await blobs.get(checked)
   if (!obj) return fail('Nothing was uploaded')
   const h = createHash('sha256')
   let size = 0
@@ -413,7 +421,7 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
     if (!existing) {
       const storageKey = ports.stores.canonicalFileKey(u.hash)
       // With the size, a store copies past CopyObject's 5 GiB in parts (UploadPartCopy).
-      await copyObject(blobs, u.storageKey, storageKey, size)
+      await copyObject(blobs, checked, storageKey, size)
       await recordFile(ports.db, { hash: u.hash, size, mimeType: u.mimeType, storageKey }, fence)
     }
     const done = await ports.db
@@ -430,7 +438,10 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
     if (done.length === 0 && (await fenceMoved(ports.db, fence))) throw new FenceError()
     return done.length === 1
   })
-  if (verified) await blobs.delete(u.storageKey)
+  if (verified) {
+    await blobs.delete(u.storageKey)
+    await blobs.delete(checked)
+  }
 }
 
 registerJob('files.verify', async (job, ports) => verifyUpload(ports, String(job.uploadId)))

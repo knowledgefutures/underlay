@@ -1,0 +1,260 @@
+{
+  "underlay": 3,
+  "cases": [
+    {
+      "name": "empty",
+      "labeled": false,
+      "rows": [],
+      "id": "6fb4b3adef0ec8dcfc7a1cb53f9abd4784d48f7ae4a7c6532f56962872129533",
+      "content": {
+        "underlay": 3,
+        "labeled": false,
+        "entries": 0,
+        "lines": 0,
+        "records": 0,
+        "removals": 0,
+        "withheld": 0,
+        "bytes": 0,
+        "first": null,
+        "last": null,
+        "commits": null,
+        "keyBlocks": []
+      }
+    },
+    {
+      "name": "one record",
+      "labeled": false,
+      "rows": [
+        {
+          "kind": "r",
+          "type": "work",
+          "id": "10.1000/abc",
+          "line": "{\"id\":\"10.1000/abc\",\"type\":\"work\",\"data\":{\"title\":\"On Sorting\",\"year\":2024}}"
+        }
+      ],
+      "id": "6cc5b320f29d7e3115142802792ad4dd7235d9ef5b9c2f26355dc0a02c2dcec8",
+      "content": {
+        "underlay": 3,
+        "labeled": false,
+        "entries": 1,
+        "lines": 1,
+        "records": 1,
+        "removals": 0,
+        "withheld": 0,
+        "bytes": 77,
+        "first": ["work", "10.1000/abc"],
+        "last": ["work", "10.1000/abc"],
+        "commits": null,
+        "keyBlocks": [
+          [
+            "work",
+            "10.1000/abc",
+            "a6210c1b3dcb993166ac9e088e74be43ea50246eb77fda176f5ef2d67d0e001a",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "name": "records, a removal, reserved types, and non-ASCII keys",
+      "labeled": false,
+      "rows": [
+        {
+          "kind": "r",
+          "type": "$meta",
+          "id": "collection",
+          "line": "{\"id\":\"collection\",\"type\":\"$meta\",\"data\":{\"name\":\"Vectors\"}}"
+        },
+        {
+          "kind": "r",
+          "type": "$schema",
+          "id": "work",
+          "line": "{\"id\":\"work\",\"type\":\"$schema\",\"data\":{\"type\":\"object\"}}"
+        },
+        {
+          "kind": "r",
+          "type": "author",
+          "id": "é",
+          "line": "{\"id\":\"é\",\"type\":\"author\",\"data\":{\"name\":\"É\"}}"
+        },
+        {
+          "kind": "r",
+          "type": "author",
+          "id": "￿",
+          "line": "{\"id\":\"￿\",\"type\":\"author\",\"data\":1}"
+        },
+        {
+          "kind": "r",
+          "type": "author",
+          "id": "𐀀",
+          "line": "{\"id\":\"𐀀\",\"type\":\"author\",\"data\":2}"
+        },
+        {
+          "kind": "x",
+          "type": "work",
+          "id": "10.1000/gone",
+          "line": "{\"id\":\"10.1000/gone\",\"removed\":true,\"type\":\"work\"}"
+        },
+        {
+          "kind": "r",
+          "type": "work",
+          "id": "10.1000/kept",
+          "line": "{\"id\":\"10.1000/kept\",\"type\":\"work\",\"data\":{\"10\":1,\"9\":2,\"a\":[null,true,1.5,\"x\"]}}"
+        }
+      ],
+      "id": "b1a194f88c41aede71c3148c835e7af05657be4054ecc267aee6463a04bd34c4",
+      "content": {
+        "underlay": 3,
+        "labeled": false,
+        "entries": 7,
+        "lines": 7,
+        "records": 6,
+        "removals": 1,
+        "withheld": 0,
+        "bytes": 376,
+        "first": ["$meta", "collection"],
+        "last": ["work", "10.1000/kept"],
+        "commits": null,
+        "keyBlocks": [
+          [
+            "$meta",
+            "collection",
+            "b6c141d7546b5a45ed1ca35f7c55aeb1055b46b75c5a5d4fd21f9b7f5a0cf179",
+            7
+          ]
+        ]
+      }
+    },
+    {
+      "name": "two record blocks",
+      "labeled": false,
+      "generated": {
+        "count": 300,
+        "repeat": 100
+      },
+      "id": "415e14c9845e66effbef9836b0a189568de86049a46200f9d3180e8527b68216",
+      "content": {
+        "underlay": 3,
+        "labeled": false,
+        "entries": 300,
+        "lines": 300,
+        "records": 300,
+        "removals": 0,
+        "withheld": 0,
+        "bytes": 315490,
+        "first": ["t", "0000"],
+        "last": ["t", "0299"],
+        "commits": null,
+        "keyBlocks": [
+          ["t", "0000", "00bba2729d44c5c97c421bb703afea0363412bd6c8895fba4f10c3bd2ceb5df5", 300]
+        ]
+      }
+    },
+    {
+      "name": "two key blocks",
+      "labeled": false,
+      "generated": {
+        "count": 1030,
+        "repeat": 0
+      },
+      "id": "64f6fcbed1d35fc8030155a9b5a875d745425bff0db85f2c036a37e267769489",
+      "content": {
+        "underlay": 3,
+        "labeled": false,
+        "entries": 1030,
+        "lines": 1030,
+        "records": 1030,
+        "removals": 0,
+        "withheld": 0,
+        "bytes": 37000,
+        "first": ["t", "0000"],
+        "last": ["t", "1029"],
+        "commits": null,
+        "keyBlocks": [
+          ["t", "0000", "c7c68c83c267119f0b15b525b52eb3e08e0dfab13f9e85a92c4731186bb39ee3", 1024],
+          ["t", "1024", "b109639038bd5dd3d20338cbe5e7894fce55905c823a94929b14e1d509ce3d61", 6]
+        ]
+      }
+    },
+    {
+      "name": "labeled, with a shared line, removals, and a withheld row",
+      "labeled": true,
+      "rows": [
+        {
+          "kind": "r",
+          "type": "t",
+          "id": "a",
+          "line": "{\"id\":\"a\",\"type\":\"t\",\"data\":{\"v\":1}}",
+          "commit": 1
+        },
+        {
+          "kind": "r",
+          "type": "t",
+          "id": "a",
+          "line": "{\"id\":\"a\",\"type\":\"t\",\"data\":{\"v\":1}}",
+          "commit": 4
+        },
+        {
+          "kind": "r",
+          "type": "t",
+          "id": "a",
+          "line": "{\"id\":\"a\",\"type\":\"t\",\"data\":{\"v\":2}}",
+          "commit": 6
+        },
+        {
+          "kind": "r",
+          "type": "t",
+          "id": "b",
+          "line": "{\"id\":\"b\",\"type\":\"t\",\"data\":{\"v\":1}}",
+          "commit": 2
+        },
+        {
+          "kind": "x",
+          "type": "t",
+          "id": "b",
+          "line": "{\"id\":\"b\",\"removed\":true,\"type\":\"t\"}",
+          "commit": 3
+        },
+        {
+          "kind": "x",
+          "type": "t",
+          "id": "b",
+          "line": "{\"id\":\"b\",\"removed\":true,\"type\":\"t\"}",
+          "commit": 5
+        },
+        {
+          "kind": "w",
+          "type": "t",
+          "id": "c",
+          "hash": "6c1c3a6cec2d36f38ab868ca4021788d2eb6c5884b3b5861d79d34a3e0ffaada",
+          "size": 30,
+          "commit": 2
+        },
+        {
+          "kind": "r",
+          "type": "t",
+          "id": "c",
+          "line": "{\"id\":\"c\",\"type\":\"t\",\"data\":{\"v\":3}}",
+          "commit": 8
+        }
+      ],
+      "id": "c4bee20b289c36e6bd5ed3b741b072e4ac58d9866203182abd921508046c1b1a",
+      "content": {
+        "underlay": 3,
+        "labeled": true,
+        "entries": 8,
+        "lines": 5,
+        "records": 5,
+        "removals": 2,
+        "withheld": 1,
+        "bytes": 185,
+        "first": ["t", "a"],
+        "last": ["t", "c"],
+        "commits": [1, 8],
+        "keyBlocks": [
+          ["t", "a", "b77c120e9def20f3a70cda67346ac1490872c671a766ee6ec9f185fc786e48af", 8]
+        ]
+      }
+    }
+  ]
+}

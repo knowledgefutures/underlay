@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { MAX_BATCH_HASHES } from '../src/api/records.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -98,9 +99,10 @@ describe('D1 limits', () => {
           Array.from({ length: 25 }, (_, j) => ({ id: `o${i + j}`, name: 'O', slug: `o${i + j}` })),
         )
     }
-    for (let i = 0; i < 120; i += 25) {
+    // Ten at a time: a member row binds five values, and D1 allows 100 a statement.
+    for (let i = 0; i < 120; i += 10) {
       await h.ports.db.insert(schema.member).values(
-        Array.from({ length: 25 }, (_, j) => ({
+        Array.from({ length: 10 }, (_, j) => ({
           organizationId: `o${i + j}`,
           userId: user,
           role: 'member' as const,
@@ -147,34 +149,37 @@ describe('D1 limits', () => {
     expect(res.status).toBe(204)
   })
 
-  it('answers provenance across many forks in a bounded number of queries', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('lib')
-    await h.ports.db.update(schema.collections).set({ public: true })
-    await push(h, user, '/api/collections/org/lib', { schemas: { Author } }, [
-      { id: 'a', type: 'Author', data: { name: 'A' } },
-    ])
-    for (let i = 0; i < 30; i++) {
-      const res = await h.request('/api/collections/org/lib/fork', {
-        method: 'POST',
-        user,
-        json: { targetOrg: 'org', slug: `fork-${i}` },
-      })
-      expect(res.status).toBe(201)
-    }
-    await h.drain()
-    const hash = hashRecord('a', 'Author', { name: 'A' }).hash
-    const before = h.statements()
-    const res = await h.request(`/api/records/${hash}/provenance`, { user })
-    expect(res.status).toBe(200)
-    expect((await json(res)).references.length).toBe(31)
-    expect(h.statements() - before).toBeLessThan(20)
+  itNotOnV3('not on v3 yet: the reference index (decision 6)')(
+    'answers provenance across many forks in a bounded number of queries',
+    async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('lib')
+      await h.ports.db.update(schema.collections).set({ public: true })
+      await push(h, user, '/api/collections/org/lib', { schemas: { Author } }, [
+        { id: 'a', type: 'Author', data: { name: 'A' } },
+      ])
+      for (let i = 0; i < 30; i++) {
+        const res = await h.request('/api/collections/org/lib/fork', {
+          method: 'POST',
+          user,
+          json: { targetOrg: 'org', slug: `fork-${i}` },
+        })
+        expect(res.status).toBe(201)
+      }
+      await h.drain()
+      const hash = hashRecord('a', 'Author', { name: 'A' }).hash
+      const before = h.statements()
+      const res = await h.request(`/api/records/${hash}/provenance`, { user })
+      expect(res.status).toBe(200)
+      expect((await json(res)).references.length).toBe(31)
+      expect(h.statements() - before).toBeLessThan(20)
 
-    const batch = await h.request('/api/records/batch', {
-      method: 'POST',
-      json: { hashes: Array.from({ length: MAX_BATCH_HASHES + 1 }, () => hash) },
-    })
-    expect(batch.status).toBe(400)
-  })
+      const batch = await h.request('/api/records/batch', {
+        method: 'POST',
+        json: { hashes: Array.from({ length: MAX_BATCH_HASHES + 1 }, () => hash) },
+      })
+      expect(batch.status).toBe(400)
+    },
+  )
 })

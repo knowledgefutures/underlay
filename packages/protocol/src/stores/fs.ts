@@ -202,6 +202,31 @@ export class FileStore implements Store {
     if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
   }
 
+  /** Written to a temporary file, then hard-linked to the key: the link fails if the key exists. */
+  async create(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<boolean> {
+    const { fsp, path: P, p: path } = await this.#at(key)
+    await fsp.mkdir(P.dirname(path), { recursive: true })
+    const tmp = `${path}.${crypto.randomUUID()}.tmp`
+    await fsp.writeFile(tmp, body)
+    try {
+      await fsp.link(tmp, path)
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'EEXIST') throw err
+      return false
+    } finally {
+      await fsp.rm(tmp, { force: true })
+    }
+    if (opts.contentType) await fsp.writeFile(path + '.__type', opts.contentType)
+    return true
+  }
+
+  async tail(key: string, length: number): Promise<BlobObject | null> {
+    const { fsp, p } = await this.#at(key)
+    const st = await fsp.stat(p).catch(() => null)
+    if (!st?.isFile()) return null
+    return this.get(key, { offset: Math.max(0, st.size - length) })
+  }
+
   async putParts(
     key: string,
     parts: AsyncIterable<Uint8Array>,

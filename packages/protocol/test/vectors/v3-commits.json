@@ -1,0 +1,74 @@
+{
+  "underlay": 3,
+  "note": "A commit is the JCS of `commit`; its version id is ulv3: and the SHA-256 of those bytes. Signatures are Ed25519 over the JCS of the signed object without `sig`; the private keys are 32 bytes of 0x01 (author) and 0x02 (server).",
+  "keys": {
+    "author": {
+      "id": "34750f98bd59fcfc",
+      "alg": "Ed25519",
+      "publicKey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+    },
+    "server": {
+      "id": "6a3803d5f059902a",
+      "alg": "Ed25519",
+      "publicKey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q"
+    }
+  },
+  "commits": [
+    {
+      "commit": {
+        "underlay": 3,
+        "collection": "vectors",
+        "number": 1,
+        "previous": null,
+        "semver": "v1.0.0",
+        "createdAt": "2026-11-10T00:00:00.000Z",
+        "changes": [
+          {
+            "collection": "vectors",
+            "files": [
+              {
+                "id": "6cc5b320f29d7e3115142802792ad4dd7235d9ef5b9c2f26355dc0a02c2dcec8",
+                "first": ["work", "10.1000/abc"],
+                "last": ["work", "10.1000/abc"],
+                "entries": 1,
+                "records": 1,
+                "removals": 0,
+                "bytes": 77
+              }
+            ],
+            "base": null,
+            "message": "first",
+            "keyId": null,
+            "sig": null
+          }
+        ],
+        "keyId": null,
+        "sig": null
+      },
+      "id": "ulv3:a143dcc42898ae56fcdaf96e7162199fa80659577c8e3b1ce51e3a7465f0b4a3"
+    },
+    {
+      "commit": {
+        "underlay": 3,
+        "collection": "vectors",
+        "number": 2,
+        "previous": "ulv3:a143dcc42898ae56fcdaf96e7162199fa80659577c8e3b1ce51e3a7465f0b4a3",
+        "semver": "v1.0.1",
+        "createdAt": "2026-11-10T00:00:01.000Z",
+        "changes": [
+          {
+            "collection": "vectors",
+            "files": [],
+            "base": "ulv3:a143dcc42898ae56fcdaf96e7162199fa80659577c8e3b1ce51e3a7465f0b4a3",
+            "message": null,
+            "keyId": "34750f98bd59fcfc",
+            "sig": "cS2MVo4GCJTkSM0_azTPFZkgQkSzNeg2N2HFA4LRPDLkLB8SmiJBdwhno0XjbHCKewsgVl0cw8SBr4PLWQLACQ"
+          }
+        ],
+        "keyId": "6a3803d5f059902a",
+        "sig": "XYErGrJ5fGY8QmDV8EkePPlRJpsm4bNA6VLaSbU7OYwUDyYunntL3t5SINQzhe_HwlDe3Frwp2UU-oGqO8DUDA"
+      },
+      "id": "ulv3:710951fd676c7824c02de0b7044f47151c9802d0c18a5c4d9864aa72d6e6e678"
+    }
+  ]
+}

@@ -10,7 +10,6 @@ import {
   memoryStore,
   newSalt,
   type Signer,
-  type LayoutName,
 } from '@underlay/protocol'
 
 import '../src/handlers.js'
@@ -19,13 +18,13 @@ import { MemoryCache } from '../src/cache.js'
 import { D1_MAX_BOUND_PARAMS, openNodeDb } from '../src/db/node.js'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs, SqliteJobs } from '../src/jobs.js'
-import type { Ports } from '../src/ports.js'
+import type { CollectionLayout, Ports } from '../src/ports.js'
 import { createStores } from '../src/stores.js'
 
 const dirs: string[] = []
 
 /** The layout this test project runs collections on (vitest.config.ts). */
-const testLayout = (process.env.UNDERLAY_TEST_LAYOUT ?? 'today') as LayoutName
+const testLayout = (process.env.UNDERLAY_TEST_LAYOUT ?? 'today') as CollectionLayout
 
 /** Outbound requests made by the app (webhooks), and the responder tests set. */
 export const outboundCalls: { url: string; init: RequestInit }[] = []
@@ -63,7 +62,7 @@ export interface Harness {
   /** A collection in the org, in the project's layout unless `recordLayout` says. */
   collection(
     slug?: string,
-    opts?: { recordLayout?: LayoutName },
+    opts?: { recordLayout?: CollectionLayout },
   ): Promise<typeof schema.collections.$inferSelect>
 }
 
@@ -71,7 +70,7 @@ export interface Harness {
  * The record layout new collections get: the test project's (vitest.config.ts runs
  * the suite once a layout), unless a test needs one.
  */
-export async function harness(opts: { newCollections?: LayoutName } = {}): Promise<Harness> {
+export async function harness(opts: { newCollections?: CollectionLayout } = {}): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'ul-it-'))
   dirs.push(dir)
   let statements = 0
@@ -149,7 +148,7 @@ export async function harness(opts: { newCollections?: LayoutName } = {}): Promi
         }),
       )
     },
-    async collection(slug = 'c', opts: { recordLayout?: LayoutName } = {}) {
+    async collection(slug = 'c', opts: { recordLayout?: CollectionLayout } = {}) {
       await ensureOrg()
       const [c] = await db
         .insert(schema.collections)

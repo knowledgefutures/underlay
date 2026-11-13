@@ -22,11 +22,13 @@ import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
 import { statsRoutes } from './api/stats.js'
 import { syncRoutes } from './api/sync.js'
+import { uploadRoutes } from './api/uploads.js'
 import { versionRoutes } from './api/versions.js'
 import { webhookRoutes } from './api/webhooks.js'
 import type { Kf } from './auth/kf.js'
 import { type Meter, meter, newMeter } from './billing/usage.js'
 import { clientIp, requestCost } from './lib/limits.js'
+import { cachedPage } from './page-cache.js'
 import type { Ports } from './ports.js'
 
 export interface AppConfig {
@@ -89,10 +91,13 @@ export type Setup = (c: Context<AppEnv>) => {
   renderPage?: RenderPage
 }
 
-export type RenderPage = (
+export type RenderPage = ((
   req: Request,
   api: (req: Request) => Promise<Response>,
-) => Promise<Response>
+) => Promise<Response>) & {
+  /** Which build renders pages (the web app's hashed assets): part of a cached page's key. */
+  buildId?: string
+}
 
 export function createApp(setup: Setup) {
   const app = new Hono<AppEnv>()
@@ -208,6 +213,18 @@ export function createApp(setup: Setup) {
     }
   })
 
+  app.use('*', async (c, next) => {
+    await next()
+    if (c.var.config?.deployment !== 'staging') return
+    try {
+      c.res.headers.set('x-robots-tag', 'noindex, nofollow')
+    } catch {
+      // A response with immutable headers (one fetched from elsewhere): copy it.
+      c.res = new Response(c.res.body, c.res)
+      c.res.headers.set('x-robots-tag', 'noindex, nofollow')
+    }
+  })
+
   // Usage (billing/usage.ts): a collection API call and its response bytes, billed
   // to the collection's owner, plus whatever the route metered. A page's own
   // in-process API calls are part of the page view, which isn't metered.
@@ -281,6 +298,26 @@ export function createApp(setup: Setup) {
     return c.json({ error: 'Rate limit exceeded', statusCode: 429 }, 429)
   })
 
+  // Crawlers. Staging is kept out of search entirely: every path disallowed, and every
+  // response says noindex, so a link to it found elsewhere is not listed either.
+  // Elsewhere, pages are open and the API, accounts, and admin are not.
+  app.get('/robots.txt', (c) => {
+    const body =
+      c.var.config.deployment === 'staging'
+        ? 'User-agent: *\nDisallow: /\n'
+        : [
+            'User-agent: *',
+            'Disallow: /api/',
+            'Disallow: /admin',
+            'Disallow: /dashboard',
+            'Disallow: /settings',
+            'Disallow: /login',
+            'Disallow: /signup',
+            '',
+          ].join('\n')
+    return c.text(body, 200, { 'cache-control': 'public, max-age=3600' })
+  })
+
   app.get('/api/health', (c) =>
     c.json({
       ok: true,
@@ -298,6 +335,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', fileRoutes())
   app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())
+  app.route('/api/collections', uploadRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', syncRoutes())
   app.route('/api/collections', webhookRoutes())
@@ -325,10 +363,13 @@ export function createApp(setup: Setup) {
       ctx = undefined
     }
     const page: PageContext = { principal: c.var.principal, access: new Map() }
-    return renderPage(c.req.raw, async (req) => {
-      inProcess.set(req, page)
-      return app.fetch(req, c.env, ctx)
-    })
+    // An anonymous visitor's page may come from, and go to, the colo's cache (page-cache.ts).
+    return cachedPage(c, renderPage.buildId, () =>
+      renderPage(c.req.raw, async (req) => {
+        inProcess.set(req, page)
+        return app.fetch(req, c.env, ctx)
+      }),
+    )
   })
 
   app.notFound((c) => c.json({ error: 'Not found', statusCode: 404 }, 404))
@@ -337,6 +378,14 @@ export function createApp(setup: Setup) {
     if (err.name === 'SessionCapError') {
       c.header('Retry-After', '60')
       return c.json({ error: err.message, statusCode: 429 }, 429)
+    }
+    // A route or job built on v2's repository reached a v3 collection: not ported yet
+    // (v3-deploy-plan.md, Phase 3), so say so rather than fail.
+    if (err.name === 'V3CollectionError') {
+      return c.json(
+        { error: 'Not available for v3 collections yet', code: 'not_on_v3', statusCode: 501 },
+        501,
+      )
     }
     // Storage cleanup held a write past its patience (cleanup/fence.ts): brief.
     if (err.name === 'StorageBusyError' || err.name === 'FenceError') {

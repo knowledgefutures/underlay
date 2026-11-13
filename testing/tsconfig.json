@@ -1,0 +1,8 @@
+{
+  "extends": "../packages/protocol/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["../packages/protocol/node_modules/@types"]
+  },
+  "include": ["v3", "src"],
+  "exclude": []
+}

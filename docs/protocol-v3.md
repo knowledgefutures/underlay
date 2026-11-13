@@ -1,0 +1,469 @@
+# Underlay protocol, version 3 (draft)
+
+**Status:** Draft, 2026-11-12. Not stable. Implemented in `packages/protocol/src/v3/`. Where this
+document and the code disagree while both are drafts, fix whichever is wrong and say so in the
+commit. Test vectors for files and commits are in `packages/protocol/test/vectors/`
+(`v3-files.json`, `v3-commits.json`), written by `packages/protocol/scripts/gen-vectors-v3.ts`.
+
+Version 3 defines four things: the **sorted-record-file**, the **commit**, the **layout file**,
+and the **collection** that holds them. It does not define how a server keeps those objects,
+when it rebuilds, whether it stores identical files once, who may read, or how it bills. Those
+are choices of each server (Section 9 gives the reference server's).
+
+Records, canonical JSON, input rules, key order, and schemas are those of version 2
+(`docs/protocol-v2.md` Sections 2 to 5 and 7) unless changed here.
+
+## 1. Terms
+
+- **Record:** an id, a type, and data. Its **key** is (type, id).
+- **Key order:** by type, then by id, each compared as UTF-8 bytes (v2 Section 7).
+- **Sorted-record-file:** an immutable file of record lines in key order with a table of
+  contents, named by its **file id**.
+- **Commit:** a numbered object naming the sorted-record-files one upload added.
+- **Version:** the commits of a collection up to and including one commit.
+- **Rebuild:** writing new sorted-record-files that hold the rows of older ones.
+- **Layout file:** a numbered object, written by a rebuild, listing the sorted-record-files that
+  hold everything through a commit.
+- **Asset:** a byte string named by its SHA-256.
+
+## 2. Lines
+
+A sorted-record-file holds two kinds of line. Each is UTF-8 and ends with `\n`.
+
+- **Record line:** the canonical form of a record (v2 Section 4):
+  `{"id":` JCS(id) `,"type":` JCS(type) `,"data":` JCS(data) `}`.
+- **Removal line:** `{"id":` JCS(id) `,"removed":true,"type":` JCS(type) `}`. It says the record
+  with that key is removed.
+
+The **size** of a line is its length in bytes without the `\n`. The **hash** of a record line is
+the SHA-256 of those bytes, in lowercase hex (v2's record hash). A removal line has no hash.
+
+Reserved types begin with `$`:
+
+| Type      | Id                      | Data                                       |
+| --------- | ----------------------- | ------------------------------------------ |
+| `$schema` | a type name             | that type's JSON Schema (v2 Section 5)     |
+| `$asset`  | an asset's SHA-256, hex | `{"size": n, "mediaType": string or null}` |
+| `$meta`   | `collection`            | the collection's metadata object           |
+
+A publisher's own types MUST NOT begin with `$`, and no other `$` type is valid. A publisher's
+type also MUST NOT begin with a character that sorts before `$` (U+0020 to U+0023), so that
+every reserved row sorts before every record, and MUST NOT be `__proto__`. A type or an id
+with a lone surrogate is not valid.
+
+An upload's input lines are a record, `{"id", "type", "data"}`, or a removal,
+`{"id", "type", "removed": true}`, with exactly those members. Unlike v2, a line with any other
+member is refused: there is no `private`.
+
+## 3. Sorted-record-file
+
+```
+[record block]… [key block]… [footer] [trailer]
+```
+
+Every block and the footer is one gzip member (RFC 1952). A reader MUST accept any valid gzip
+member. Nothing that is hashed depends on compressed bytes.
+
+### 3.1 Record blocks
+
+The file's lines, in order, cut into blocks. A block closes after the first line that brings its
+uncompressed size (lines and their `\n`) to 262,144 bytes or more. The last block closes at the
+last line. A file with no lines has no record blocks.
+
+### 3.2 Entries
+
+Each line has one or more **entries**. An entry is a JSON array:
+
+```
+[kind, type, id, hash, size, block, offset]            in a file from an upload
+[kind, type, id, hash, size, block, offset, commit]    in a rebuilt file
+```
+
+- `kind` is `"r"` for a record line, `"x"` for a removal line, and `"w"` for a record whose
+  line is withheld (a takedown, Section 7).
+- `hash` is the line's hash, or `null` for a removal.
+- `size` is the line's size.
+- `block` is the number of the record block holding the line, from 0. `offset` is the byte
+  offset of the line within that block's uncompressed bytes. Both are `null` for `"w"`, which
+  has no line in the file.
+- `commit` is the number of the commit that wrote the row.
+
+A file is **labeled** if its entries carry `commit`, and **unlabeled** otherwise. All entries of
+a file are one or the other. `"w"` entries appear only in labeled files.
+
+Order of entries: by key; in a labeled file, entries with the same key are in ascending `commit`
+order, and no two have the same `commit`. In an unlabeled file keys are unique.
+
+Lines are in the order of their first entry. In a labeled file, consecutive entries with the
+same key, the same `kind`, and the same `hash` (a row rewritten unchanged) share one line: they
+have the same `block`, `offset`, and `size`. No other entries share a line. Sharing is a rule,
+not a choice, so that the entries alone decide the lines.
+
+A file holds at most 1,048,576 entries.
+
+### 3.3 Key blocks
+
+The entries, in order, cut into blocks of 1,024 entries; the last block holds the rest. A key
+block's uncompressed bytes are its entries, each as JCS followed by `\n`.
+
+### 3.4 Footer
+
+The footer's uncompressed bytes are the JCS of:
+
+```
+{"content": {
+   "underlay": 3,
+   "labeled": boolean,
+   "entries": n, "lines": n, "records": n, "removals": n, "withheld": n,
+   "bytes": total uncompressed size of the record blocks,
+   "first": [type, id] | null, "last": [type, id] | null,
+   "commits": [lowest, highest] | null,
+   "keyBlocks": [[type, id, hash, entries], …]
+ },
+ "locator": {
+   "recordBlocks": [compressed length, …],
+   "keyBlocks": [compressed length, …]
+ }}
+```
+
+- `keyBlocks` lists, for each key block, the key of its first entry, the SHA-256 of its
+  uncompressed bytes, and its number of entries.
+- `records`, `removals`, and `withheld` count entries of each kind. `lines` counts lines.
+- `first` and `last` are the keys of the first and last entries, `null` in an empty file.
+- `commits` is `null` in an unlabeled file.
+- The locator gives each block's compressed length in file order. Record blocks start at byte
+  0; key blocks follow them; the footer follows the key blocks.
+
+**File id** = SHA-256, in lowercase hex, of JCS(`content`).
+
+### 3.5 Trailer
+
+The last 16 bytes of the file: the 8 bytes `55 4C 33 53 52 46 0A 00` (`UL3SRF\n\0`), then the
+footer's compressed length as an unsigned 64-bit big-endian integer.
+
+### 3.6 Determinism
+
+The same lines and entries produce the same `content`, and so the same file id, whatever
+compressor, compression level, or write buffering is used. A writer has no choices that reach
+`content`.
+
+### 3.7 Validity
+
+A file is valid if and only if:
+
+- the trailer and footer parse, and the footer is the JCS of an object with exactly these
+  members; it has at most 1,048,576 entries;
+- the footer, each key block, and each record line is UTF-8, with no byte-order mark;
+- the object's length is what its footer accounts for: the blocks' stored lengths, the footer,
+  and the trailer;
+- a file with no entries has no blocks, and every count in its footer is zero;
+- each key block's uncompressed bytes hash to the listed hash, hold the listed number of
+  entries, and its first entry has the listed key; every key block but the last has 1,024
+  entries;
+- entries are in order (3.2), each is canonical JSON, with valid type and id (v2 Section 3);
+- each entry's line, read at (`block`, `offset`, `size`), is followed by `\n`; for `"r"` it
+  hashes to `hash` and is the canonical form of a record with the entry's id and type; for `"x"`
+  it is exactly the removal line for the entry's key; a `"w"` entry has no line;
+- lines fill each record block exactly, in entry order, shared as 3.2 says, and blocks are cut
+  by 3.1;
+- the counts, `bytes`, `first`, `last`, `commits`, and `labeled` match the entries.
+
+A reader that does not trust where a file came from MUST check what it reads: the footer
+against the file id, a key block against the footer, a line against its entry. It SHOULD also
+bound what it reads before it has checked it, since a stored length says nothing of what a
+block inflates to, nor what a footer parses into. The reference reader refuses a footer over
+16 MiB stored or inflated, or with more commas and brackets outside its strings than a file
+at 1,048,576 entries could have, before parsing it; a record block that inflates past
+`RECORD_BLOCK_BYTES` plus the largest record; a key block past 8 MiB or with more than
+1,024 lines, before splitting it; and more blocks than a file can have entries.
+
+## 4. Commit
+
+A commit is the JCS of:
+
+```
+{"underlay": 3,
+ "collection": collection id,
+ "number": n,                       1 for the first commit
+ "previous": version id | null,     of commit n − 1
+ "semver": "v1.0.0",
+ "createdAt": ISO 8601 UTC,
+ "changes": [{"collection": collection id,
+              "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
+              "base": version id | null,
+              "message": string | null,
+              "keyId": string | null, "sig": string | null}, …],
+ "keyId": string | null, "sig": string | null}
+```
+
+A commit has two parts. A **change** is what an author sent: the files of one upload, the
+version they were working from, and a message. The rest is what the server adds when the change
+lands: its number, the commit before it, the semver, and the time.
+
+- **Version id** = `ulv3:` + SHA-256 hex of the commit's bytes.
+- The files a commit names MUST be unlabeled: files as their author built them, with no commit
+  numbers inside. A server MUST refuse a change that names a labeled file. Within one commit
+  their key ranges MUST NOT overlap. Every row in them counts as written by this commit.
+- Version ids and signatures rest on commits, and through them on the unlabeled files commits
+  name, and on nothing else. None rests on a labeled file or a layout file, so how those are
+  written can change at the cost of a rebuild. A change to a line, an unlabeled file, or a
+  commit means a second format beside the first.
+- A commit with number `n` exists only once. A writer creates it only if no commit `n` exists,
+  and only if commit `n − 1` exists and has version id `previous`.
+- `first` and `last` are each file's first and last keys, and `bytes` its footer's `bytes`.
+  With them the commit's rows can be cut into the same files again (Section 7).
+- A commit, each change, and each file entry has exactly the members shown. A writer MUST NOT
+  write a commit a reader would refuse: nothing can be committed after a commit that cannot be
+  read, so one would end the log.
+- A change's `collection` is the commit's.
+- `changes` is a list so that one commit can later carry several authors' uploads. A writer
+  today makes one change per commit.
+
+### 4.1 Base
+
+`base` is the version id the author was working from when they prepared the upload, or `null`.
+The author sets it; the server sets `previous`. The two are equal unless another commit landed
+in between.
+
+- The server records `base` as given. It MUST refuse a base that is not the version id of an
+  earlier commit in this collection's log (which, for a fork, includes the commits of the
+  collections it was forked from).
+- Nothing else depends on it. A commit is never refused because of its base, and reading is
+  unchanged: the newest entry wins (Section 6).
+- What it gives: for any commit, the keys it wrote that other commits changed after its base
+  and up to its `previous` can be listed from key entries alone. Those are the changes the
+  author had not seen.
+
+### 4.2 Signatures
+
+Both signatures are Ed25519 over the JCS of the signed object without its `sig` member, base64url
+without padding, as v2 Section 11.1. `keyId` is the first 16 hex characters of the SHA-256 of
+the raw public key. `keyId` and `sig` are both `null`, or neither is.
+
+- **The author signs the change:** its `collection`, `files`, `base`, `message`, and `keyId`.
+  The signature does not cover the commit's `number` or `previous`.
+- **The server signs the commit:** every member but its own `sig`, the changes and their
+  signatures included.
+- A change that loses the race for a number is committed at the next free number with the
+  author's signature unchanged. Only the server's part is made again.
+- Which keys a reader trusts, for either signature, is not part of this protocol.
+
+### 4.3 Naming a file
+
+A server MUST NOT accept a change that names a file unless the file's bytes came with that
+upload and check out against the file id (3.7). That a file with the id is already stored is
+never enough: otherwise knowing an id would be a way to test whether a file exists, and then to
+read it through a collection of one's own. The one exception is the server's own copy of
+commits from a collection the caller may read, which is how a fork begins (Section 8).
+
+The same holds for an asset. A `$asset` row that adds an asset to a collection is accepted only
+if the asset's bytes were sent to that collection, or one of its versions already names it.
+The bytes a server checks MUST be the bytes it installs: an uploader who can still write where
+its upload was sent must not be able to change a file between the check and the install.
+
+### 4.4 Semver
+
+As v2 Section 10.1, from what the commit changes relative to the version before it:
+
+1. The first commit is `v1.0.0`.
+2. If it adds, removes, or changes a `$schema` row: major.
+3. Otherwise, if it adds, removes, or changes a row of any non-reserved type: minor.
+4. Otherwise: patch.
+
+A `$schema` row equal to the row it would replace (same key, same hash; or a removal of an
+absent key) is not a change, so a committer always compares schema rows with the version
+before. For other rows a committer MAY make the same comparison, and otherwise counts every row
+as a change. The comparison costs a lookup per row, and nothing else about a commit reads the
+collection. A commit that changes nothing SHOULD NOT be made.
+
+### 4.5 Schemas
+
+A record of a publisher's type `T` in a version MUST satisfy the `$schema` row for `T` in that
+version. A type with records MUST have a `$schema` row. When a commit changes a schema, every
+record of that type the version carries over MUST satisfy the new schema, and the commit MUST
+be refused if any does not. A change that only relaxes the schema (every document valid before
+is valid after) needs no check of the records carried over. A record whose line a server
+withholds is not checked.
+
+## 5. Layout file
+
+The JCS of:
+
+```
+{"underlay": 3, "collection": collection id, "number": n, "through": commit number,
+ "createdAt": ISO 8601 UTC,
+ "files": [{"id", "labeled", "first", "last", "commits": [lowest, highest],
+            "entries", "records", "removals", "bytes"}, …]}
+```
+
+- The files together hold every row written by commits 1 to `through` that some retained
+  version can see. Which versions are retained is the server's choice. A layout that no longer
+  holds every version states which it holds in `retained`: a list of `[lowest, highest]` ranges
+  of commit numbers, in order. Without it every version is retained.
+- A labeled file's `commits` is its footer's. An unlabeled file in a layout has `commits`
+  `[c, c]`: all its rows count as written by `c`.
+- A layout MAY carry other members for the server's own use, on itself or on a file. A reader
+  ignores those it does not know, so such a member never changes what a version reads as. A
+  reader MUST refuse a layout whose `underlay` number it does not know; a member that changes
+  how the listed files are read comes with a new number.
+- A layout with number `n` exists only once, and is created only if absent. The layout with the
+  highest number is current. Each layout is complete; earlier ones are not needed.
+
+## 6. Reading a version
+
+To read version `v` of a collection:
+
+1. Let `L` be the current layout, or none. The files are `L`'s files plus the files named by
+   commits `L.through + 1` to `v` (all commits 1 to `v` if there is no layout).
+2. For a key, among the entries of those files whose commit is at most `v`, the entry with the
+   highest commit wins. If it is a removal, or there is none, the version has no record with
+   that key. If it is withheld, the version has a record with that key and hash whose line the
+   server no longer holds. Otherwise the record is the entry's line.
+
+If `v` is at or below `L.through` and `L` does not retain it, the read fails.
+
+The changes between versions `a` and `b` (`a` < `b`) are the keys with an entry whose commit is
+above `a` and at most `b`. A file whose `commits` range lies outside that is not read.
+
+## 7. Rebuild
+
+A rebuild takes files the current layout or later commits name, and writes labeled files that
+hold their rows, then creates the next layout. A layout MAY also list a commit's files as they
+are. A rebuild MUST preserve every retained version: each reads the same before and after.
+
+- **Thinning.** An entry with commit `c` is seen by versions `c` up to, but not including, the
+  commit of the next entry for its key. A rebuild MAY drop an entry that no retained version
+  sees. It MAY drop a removal that would then be the oldest entry for its key only if the
+  removal's commit is before the oldest retained version, and no file it leaves out can hold an
+  older entry for that key.
+- **Takedown.** A rebuild MAY replace a record entry by a `"w"` entry with the same hash, size,
+  and commit, and leave out its line. Every file holding the row has to be rebuilt for the
+  bytes to be gone; a file that does not hold it can stay listed as it is.
+
+Because of 3.6, the files a commit named can be recreated from rebuilt files that still hold
+all of the commit's rows: take the entries labeled with its number, in key order, drop the
+labels, cut them at the `first` keys the commit recorded, and write each part by Section 3. The
+results have the ids the commit recorded. A commit with a row that was thinned or withheld
+cannot be recreated in full.
+
+## 8. Collection
+
+A collection is:
+
+- a description: a JSON object with at least `id`; for a fork, where it was forked from
+  (`forkedFrom`: collection id, commit number, version id) and its `lineage`: the collections
+  whose ids its earlier commits carry, oldest first, each with the last commit number that
+  carries it;
+- its commits, numbered from 1 with no gaps;
+- its layouts;
+- the sorted-record-files and assets those name.
+
+A collection names files and assets by id only. It never refers to another collection's
+commits or layouts. A fork begins as a copy of another collection's commits up to the fork
+point, and of its current layout; those commits carry the ids of the collections they were
+made in and are valid under `lineage`. The fork point is at or after the copied layout's
+`through`, since labeled files may hold rows of every commit up to it.
+
+## 9. The reference server's storage (informative)
+
+```
+uploads/<session>/<file id>       an upload's files, until its commit checks and installs them
+records/<file id>                 sorted-record-files, shared by every collection naming them
+assets/<sha256>                   assets, shared the same way
+collections/<id>/collection.json
+collections/<id>/commits/<number, 16 digits>.json
+collections/<id>/layouts/<number, 16 digits>.json
+collections/<id>/latest.json          a hint to the newest commit, may be stale
+collections/<id>/latest-layout.json   a hint to the newest layout, may be stale
+tmp/                              files being written, before their id is known
+trash/records/, trash/assets/     objects the sweep removed, kept for a while
+sweep/                            the sweep's own state
+```
+
+- Commits and layouts are created with a put that fails if the key exists. Nothing else decides
+  a race. A store that limits how often one key is written (R2: once a second, then a 429) may
+  answer a losing create with that refusal instead; if the key is there, the create lost.
+- **Landing.** This server lands a collection's commits one at a time, each against the head it
+  was prepared for, since its counts and its schema checks were made against that head. A
+  change whose head has moved is not committed at the next free number, as 4.2 allows: a
+  client-built upload is prepared again, a few times at most, and a push session is refused
+  and pushes again.
+- **Changes are unsigned.** The server keeps no authors' keys: it records who pushed in its
+  catalog and signs the commit. It refuses a change sent with a `keyId` and `sig`, since it
+  could not check them and its own signature would then cover a key id nobody verified.
+- `latest.json` is `{"commit": n}`, overwritten after each commit; `latest-layout.json` is
+  `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
+  key is written twice when a layout follows a commit. A reader starts from them and probes
+  upward; without them, a reader probes from 1. A failed write of either is ignored.
+- **Old layout files are deleted.** The server keeps the two newest, and deletes the rest only
+  once the layout hint names the newest. With the low numbers gone, probing from 1 finds no
+  layout, so from then on the hint is what a reader starts from: one whose hinted layout is
+  gone reads the hint again and, if that names none either, lists the layouts.
+- A file is stored once. An upload always sends its files' bytes, into its own session. The
+  commit copies them into a session the uploader cannot write, checks them there (4.3), and
+  installs them from there among the stored files. A file already stored under that id is
+  left as it is, and the uploader is not told.
+- An asset is stored once too. Its bytes are sent to a collection through the server's file
+  routes, apart from the upload, and copied in when a commit first names it. A `$asset` row
+  for an asset the collection neither names already nor was sent is refused, whoever else
+  stores it, and the row's `size` must be the bytes' length.
+- **Limits.** A commit names at most 10,000 files, each at most 4 GiB. A user holds at most 20
+  uploads that are open or being committed. An upload's objects are cleared a day after each
+  was written, and a commit not finished a day after it was asked for fails.
+- **Rebuild policy.** Each layout file carries `size`, the file's stored bytes, and `group`, a
+  number shared by the files one merge wrote (0 for a commit's own files, which are a group
+  by their commit). A group's files have
+  key ranges that don't overlap, so a read checks one file for each group. Groups are kept in
+  commit order, and cover commit ranges that don't overlap. Size tiers are a factor of 10
+  apart, the lowest up to 8 MiB of lines. For each tier, lowest first: where 10 or more
+  neighboring groups are each at or below it, and together are at least twice the largest of
+  them, they are merged into files cut as an upload's are (below). Replaced rows stay in the
+  same file as the rows that replaced them. With nothing to merge, a layout is still written
+  once 8 commits have landed since the last. A merge can make another due, so up to 4 rounds
+  follow one another.
+- **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by
+  one rule. A file ends after a key picked by a hash of the key against its row's size in
+  bytes of lines, toward 512 MiB of lines a file (about 128 MB stored); at a cap of four times
+  that, or 524,288 entries (262,144 in a rebuild); and where the type changes once the file
+  holds 16 MiB. The rule looks only at the rows, never at how they compress or how the work
+  was split: a client that builds an upload in parts ends each part on a key the hash picks.
+  So the same rows give the same files, with the same ids, on any machine; a row added
+  changes the file it falls in and no other; and an upload that was interrupted can be taken
+  up again. A first load is not rewritten by the policy above for as long as what arrives
+  after it stays small beside it, so the upload's cut is how most of a collection lies.
+  The target, the hash, and the caps are this client's and this server's choice. The protocol
+  says nothing about how large a sorted-record-file is or where it is cut, and a server
+  accepts any cut. Two things on this server end a file elsewhere. A merge, or a conversion
+  from v2, too large for one job is split by key range, 256 MiB of lines a part, and each
+  part's last file ends where the part does, so such files come out at about half the target.
+  And where records average under about 1 KiB (2 KiB in a rebuild), the entry cap ends a file
+  before the hash does; there a row added can move the boundaries after it.
+- **Keeping what did not change** (built, not the default). A merge can leave as it is any
+  file whose key range no other file has an entry in: nothing changed there. Measured, it
+  pays for a narrow edit (one record, or a stretch of neighboring keys, on a fork) and not
+  for daily changes spread over the keys, which fall in every file.
+- **Sweep.** A file is listed if a collection's current layout, or a commit after that
+  layout's `through`, names it. An asset is listed if a `$asset` entry in a listed file names
+  it (a removal names none). One sweeper works in passes: the server holds a lock for a pass.
+  A pass condemns what nothing lists; moves to `trash/` what is still unlisted and has been
+  condemned longer than a grace period (a day); moves back anything in `trash/` that is listed
+  again; and deletes from `trash/` what has been there longer than a second period (seven
+  days). A reader that does not find a file looks in `trash/`. A layout or commit that is
+  there and cannot be read stops the pass: taken as listing nothing, its files would be on
+  their way out. An object's age alone is never the test, since a fork can copy a layout just
+  before its parent's next layout drops a file. The sweep's only state is a ledger of what it
+  has condemned and trashed, written whole by each pass under the pass's number, so nothing is
+  overwritten.
+
+## 10. Constants
+
+| Name                 | Value             |
+| -------------------- | ----------------- |
+| `RECORD_BLOCK_BYTES` | 262,144           |
+| `KEY_BLOCK_ENTRIES`  | 1,024             |
+| `MAX_FILE_ENTRIES`   | 1,048,576         |
+| Trailer magic        | `UL3SRF\n\0`      |
+| Version id prefix    | `ulv3:`           |
+| Number width in keys | 16 decimal digits |
+
+Limits on ids, types, record size, depth, and schemas are v2's (Section 12).

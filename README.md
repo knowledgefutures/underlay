@@ -24,7 +24,9 @@ for development and tests, on Node (SQLite, S3 or the filesystem). It is a pnpm 
 | `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                    |
 
 `docs/protocol-v2.md` is the specification of Underlay protocol v2, with test vectors in
-`packages/protocol/test/vectors/`. `docs/v1-read-api.md` is the inventory of v1's read API that
+`packages/protocol/test/vectors/`. `docs/protocol-v3.md` is the draft of protocol v3 (a log of
+commits naming sorted-record-files), implemented in `packages/protocol/src/v3/`; the server
+keeps each collection on v2 or v3 (`collections.record_layout`). `docs/v1-read-api.md` is the inventory of v1's read API that
 v2 was built against, and what v2 changes.
 
 ## Development

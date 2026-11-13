@@ -20,7 +20,7 @@ import {
   type TreeSummary,
   type VersionRoot,
 } from '@underlay/protocol'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
@@ -39,6 +39,12 @@ export async function findVersion(
     if (!headVersionId) return null
     where = eq(schema.versions.id, headVersionId)
   } else if (n.startsWith('ulv2:')) {
+    // A converted version keeps its old id as an alias (v3-deploy-plan.md, decision 2).
+    where = and(
+      eq(schema.versions.collectionId, collectionId),
+      or(eq(schema.versions.hash, n), eq(schema.versions.v2Hash, n)),
+    )
+  } else if (n.startsWith('ulv3:')) {
     where = and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.hash, n))
   } else {
     where = and(

@@ -16,6 +16,9 @@
  *   GET     /api/admin/usage?day=&account=       stewards: a day's usage rollups
  *   POST    /api/admin/fsck                      stewards: {collection, fileBytes?} checks its repository
  *   GET     /api/admin/fsck?collection=          stewards: the last check's report
+ *   GET     /api/admin/v3/conversions            stewards: conversions to v3 and where each stands
+ *   POST    /api/admin/v3/conversions            stewards: {collection, flip?, allowPrivate?, fresh?} converts it
+ *   POST    /api/admin/v3/conversions/revert     stewards: {collection} puts a flipped one back on v2
  *   POST    /api/admin/usage/rebuild             stewards: {day} recomputes them from the usage log
  *
  * A steward is a KF Auth user whose role is 'admin', read fresh on each check.
@@ -28,12 +31,13 @@ import { usageFor } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { forgetDenylist } from '../lib/limits.js'
+import { requestConversion, revertToV2 } from '../v3/convert.js'
 import { jsonError } from './access.js'
 
 /** The signed-in person (session or unscoped key), as v1's requireAuth + requireUnscopedKey. */
 function person(c: Context<AppEnv>, write: boolean): string | null {
   const p = c.var.principal
-  if (!p || p.collectionIds || p.orgId) return null
+  if (!p || p.collectionIds || p.orgId || p.onlyOrgId) return null
   if (write && p.scope === 'read') return null
   return p.userId
 }
@@ -236,6 +240,66 @@ export function adminRoutes() {
         !(col.reconciledAt && col.reconciledAt >= col.reconcileStartedAt),
       report: col.reconcileReport ?? [],
     })
+  })
+
+  // v3 conversion (v3-deploy-plan.md, Phase 4): ask for one, see them, and go back.
+  app.get('/api/admin/v3/conversions', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const rows = await c.var.ports.db
+      .select({
+        conversion: schema.v3Conversions,
+        slug: schema.collections.slug,
+        owner: schema.organization.slug,
+        layout: schema.collections.recordLayout,
+      })
+      .from(schema.v3Conversions)
+      .innerJoin(schema.collections, eq(schema.collections.id, schema.v3Conversions.collectionId))
+      .innerJoin(schema.organization, eq(schema.organization.id, schema.collections.organizationId))
+    return c.json({
+      conversions: rows.map((r) => ({
+        collection: `${r.owner}/${r.slug}`,
+        layout: r.layout,
+        status: r.conversion.status,
+        flip: r.conversion.flip,
+        allowPrivate: r.conversion.allowPrivate,
+        private: r.conversion.private,
+        versions: r.conversion.versions.map((v) => ({ semver: v.semver, id: v.id, v2: v.v2Hash })),
+        error: r.conversion.error,
+        updatedAt: r.conversion.updatedAt,
+      })),
+    })
+  })
+
+  app.post('/api/admin/v3/conversions', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as {
+      collection?: unknown
+      flip?: unknown
+      allowPrivate?: unknown
+      fresh?: unknown
+    } | null
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    if (col.recordLayout === 'v3') return jsonError(c, 409, 'The collection is on v3 already')
+    await requestConversion(c.var.ports, col.id, {
+      flip: b?.flip === true,
+      allowPrivate: b?.allowPrivate === true,
+      fresh: b?.fresh === true,
+    })
+    return c.json({ ok: true, queued: true }, 202)
+  })
+
+  app.post('/api/admin/v3/conversions/revert', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as { collection?: unknown } | null
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    const refused = await revertToV2(c.var.ports, col.id)
+    if (refused) return jsonError(c, 409, refused)
+    return c.json({ ok: true })
   })
 
   app.post('/api/admin/fsck', async (c) => {

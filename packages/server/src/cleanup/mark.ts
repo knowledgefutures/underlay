@@ -147,14 +147,19 @@ export async function markStep(
 
   while (s.phase === 'collections' && !spent()) {
     const rows = await db
-      .select({ id: schema.collections.id, publicFilesRoot: schema.collections.publicFilesRoot })
+      .select({
+        id: schema.collections.id,
+        publicFilesRoot: schema.collections.publicFilesRoot,
+        recordLayout: schema.collections.recordLayout,
+      })
       .from(schema.collections)
       .where(s.after ? gt(schema.collections.id, s.after) : undefined)
       .orderBy(asc(schema.collections.id))
       .limit(50)
     if (rows.length === 0) Object.assign(s, { phase: 'tombstones', after: null, current: null })
     for (const c of rows) {
-      if (await onPlatform(ports, c.id)) {
+      // A v3 collection holds nothing under v2's prefix: its objects are the v3 sweep's.
+      if (c.recordLayout !== 'v3' && (await onPlatform(ports, c.id))) {
         const from = s.current?.id === c.id ? s.current.seq : 0
         const r = await markCollection(ports, marker, c, from, (seq) => {
           s.current = { id: c.id, seq }

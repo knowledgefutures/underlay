@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { getEntry, hashRecord, recordTree, RepoSource } from '@underlay/protocol'
+import { hashRecord } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -9,6 +9,7 @@ import * as schema from '../src/db/schema.js'
 import { finalizeSession } from '../src/push/finalize.js'
 import { limits } from '../src/push/session.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { metadataAt, recordHashAt } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -84,15 +85,10 @@ describe('delta push', () => {
     const res = await send(chunked(body, 3))
     expect(await res.json()).toEqual({ received: 3 })
     await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
-    const repo = await h.ports.stores.forCollection(c.id)
     const v = await head(h, c.id)
-    const root = await repo.root(v!.hash)
-    const got = await getEntry(
-      new RepoSource(recordTree, repo),
-      root.public.types.Author!.root,
-      'b',
+    expect(await recordHashAt(h.ports, c.id, v!.hash, 'Author', 'b')).toBe(
+      hashOf('b', { name: '日本語' }),
     )
-    expect(got?.hash).toBe(hashOf('b', { name: '日本語' }))
 
     // Past the cap, with no content-length to refuse it early: 413 mid-stream.
     const open2 = await h.request(`${base}/push`, { method: 'POST', user, json: {} })
@@ -237,16 +233,11 @@ describe('delta push', () => {
       publicRecordCount: 2,
       hasPrivate: false,
     })
-    const repo = await h.ports.stores.forCollection(c.id)
-    const root = await repo.root(v2!.hash)
     // Metadata was kept from the base.
-    expect(root.metadata).toEqual({ title: 'Authors' })
-    const kurt = await getEntry(
-      new RepoSource(recordTree, repo),
-      root.public.types.Author!.root,
-      'kurt',
+    expect(await metadataAt(h.ports, c.id, v2!.hash)).toEqual({ title: 'Authors' })
+    expect(await recordHashAt(h.ports, c.id, v2!.hash, 'Author', 'kurt')).toBe(
+      hashOf('kurt', { name: 'Kurt' }),
     )
-    expect(kurt?.hash).toBe(hashOf('kurt', { name: 'Kurt' }))
   })
 
   it('compacts runs during upload, later uploads still winning', async () => {
@@ -280,12 +271,11 @@ describe('delta push', () => {
     // The last write to each id wins: a delete for i % 7 === 3, else the record.
     const last = new Map<string, number>()
     for (let i = 0; i < 40; i++) last.set(`a${i % 10}`, i)
-    const repo = await h.ports.stores.forCollection(c.id)
-    const root = await repo.root((await head(h, c.id))!.hash)
-    const source = new RepoSource(recordTree, repo)
+    const v = (await head(h, c.id))!
     for (const [id, i] of last) {
-      const e = await getEntry(source, root.public.types.Author!.root, id)
-      expect(e?.hash ?? null).toBe(i % 7 === 3 ? null : hashOf(id, { name: `n${i}` }))
+      expect(await recordHashAt(h.ports, c.id, v.hash, 'Author', id)).toBe(
+        i % 7 === 3 ? null : hashOf(id, { name: `n${i}` }),
+      )
     }
   })
 

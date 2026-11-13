@@ -9,6 +9,8 @@ export interface RecordsPage {
   page: number
   records: any[]
   total: number
+  /** The page is too far into its type to walk, and its index is still being made. */
+  preparing?: boolean
 }
 
 /**
@@ -28,9 +30,20 @@ export async function loadVersionRecords(
     records: params.get('type') ?? '',
     limit: String(RECORDS_PAGE_SIZE),
     offset: String((page - 1) * RECORDS_PAGE_SIZE),
+    // Each value cut to what a cell shows (server lib/preview.ts): a record's page has it whole.
+    preview: '1',
   })
   const version = await api.json<any>(`${prefix}/versions/${n}?${q}`, null)
   if (!version) return null
   const r = version.recordsPage ?? { type: null, records: [], total: 0 }
-  return { version, records: { type: r.type, page, records: r.records, total: r.total } }
+  return {
+    version,
+    records: {
+      type: r.type,
+      page,
+      records: r.records,
+      total: r.total,
+      ...(r.preparing ? { preparing: true } : {}),
+    },
+  }
 }

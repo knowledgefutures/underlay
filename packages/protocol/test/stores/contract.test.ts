@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
   copyObject,
+  createObject,
   fileStore,
   listAll,
   memoryStore,
@@ -20,6 +21,7 @@ import {
   putFromParts,
   type R2BucketLike,
   readParts,
+  readTail,
   r2Store,
   s3CopyLimits,
   s3Store,
@@ -135,6 +137,39 @@ for (const [name, make] of makers) {
       expect(seen).toEqual(seen.map(() => won))
     })
 
+    it('creates only if absent, and exactly one of 50 racing creates wins', async () => {
+      expect(await createObject(store, 'create/a', 'first')).toBe(true)
+      expect(await createObject(store, 'create/a', 'second')).toBe(false)
+      expect(await (await store.get('create/a'))!.text()).toBe('first')
+      const wins = await Promise.all(
+        Array.from({ length: 50 }, (_, i) => createObject(store, 'create/race', `w${i}`)),
+      )
+      const winners = wins.flatMap((won, i) => (won ? [i] : []))
+      expect(winners.length).toBe(1)
+      expect(await (await store.get('create/race'))!.text()).toBe(`w${winners[0]}`)
+    })
+
+    it('reads the tail of an object in one call', async () => {
+      await store.put('tail/obj', 'hello world')
+      expect(await (await readTail(store, 'tail/obj', 5))!.text()).toBe('world')
+      const all = await readTail(store, 'tail/obj', 100)
+      expect(all!.size).toBe(11)
+      expect(await all!.text()).toBe('hello world')
+      await store.put('tail/empty', '')
+      expect((await (await readTail(store, 'tail/empty', 16))!.bytes()).length).toBe(0)
+      expect(await readTail(store, 'tail/absent', 5)).toBe(null)
+      // The fallback (head, then a ranged get) for a store without `tail`.
+      const plain: Store = {
+        get: (k, r) => store.get(k, r),
+        head: (k) => store.head(k),
+        put: (k, b, o) => store.put(k, b, o),
+        list: (p, c) => store.list(p, c),
+        delete: (k) => store.delete(k),
+      }
+      expect(await (await readTail(plain, 'tail/obj', 5))!.text()).toBe('world')
+      expect(await (await readTail(plain, 'tail/obj', 100))!.text()).toBe('hello world')
+    })
+
     it('streams bodies', async () => {
       await store.put('stream', enc.encode('x'.repeat(100_000)))
       const obj = await store.get('stream')
@@ -235,6 +270,28 @@ describe('capabilities', () => {
     expect(s3.copy).toBeDefined()
     expect(fileStore('x').presigner).toBeUndefined()
     expect(new PrefixedStore(s3, 'p').presigner).toBeDefined()
+  })
+})
+
+describe('s3 create under a rate limit', () => {
+  it('reads a 429 for a key that is there as a lost create, and for one that is not as an error', async () => {
+    const fake: FakeS3 = await startFakeS3()
+    cleanups.push(() => fake.close())
+    const store = s3Store({
+      endpoint: fake.url,
+      bucket: 'test',
+      accessKeyId: 'k',
+      secretAccessKey: 's',
+    })
+    expect(await createObject(store, 'c/1', 'first')).toBe(true)
+    // R2 refuses a second write of a key within a second with 429, not 412.
+    fake.limits.busy = 'existing'
+    expect(await createObject(store, 'c/1', 'second')).toBe(false)
+    expect(await (await store.get('c/1'))!.text()).toBe('first')
+    expect(await createObject(store, 'c/2', 'new')).toBe(true)
+    fake.limits.busy = 'all'
+    await expect(createObject(store, 'c/3', 'x')).rejects.toThrow(/429/)
+    expect(await store.get('c/3')).toBeNull()
   })
 })
 

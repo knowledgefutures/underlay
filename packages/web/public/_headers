@@ -2,3 +2,8 @@
 # explicit charset, or browsers read UTF-8 as Windows-1252 (an arrow shows as â†’).
 /*.txt
   Content-Type: text/plain; charset=utf-8
+
+# Built JS and CSS: their names carry a hash of their contents, so a browser may keep
+# them for good and never ask again.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

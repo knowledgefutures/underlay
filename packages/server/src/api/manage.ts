@@ -19,9 +19,18 @@ import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
+import { headView, metadataOf } from '../v3/catalog.js'
+import { commitV3Metadata } from '../v3/commit.js'
 import { commitVersion } from '../versions/commit.js'
 import { createCollectionRows, forkCollection } from '../versions/fork.js'
-import { capRole, jsonError, keyCannotManage, requireCollection } from './access.js'
+import {
+  capRole,
+  isAdmin,
+  jsonError,
+  keyCannotManage,
+  reachesOrg,
+  requireCollection,
+} from './access.js'
 import { ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
@@ -38,7 +47,8 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
     .limit(1)
   if (!org) return { org: null, role: null }
   if (!p || p.collectionIds || p.scope === 'read') return { org, role: null }
-  if (p.orgId) return { org, role: p.orgId === org.id ? capRole(p, 'owner') : null }
+  if (!reachesOrg(p, org.id)) return { org, role: null }
+  if (p.orgId) return { org, role: capRole(p, 'owner') }
   const [m] = await c.var.ports.db
     .select({ role: schema.member.role })
     .from(schema.member)
@@ -47,7 +57,7 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
   return { org, role: capRole(p, m?.role ?? null) }
 }
 
-export const isAdmin = (role: string | null) => role === 'owner' || role === 'admin'
+export { isAdmin }
 
 export function manageRoutes() {
   const app = new Hono<AppEnv>()
@@ -278,6 +288,20 @@ export function manageRoutes() {
     const ports = c.var.ports
     const base = await headBase(ports, access.collection.id)
     if (!base) return jsonError(c, 422, 'No versions exist yet')
+    if (access.collection.recordLayout === 'v3') {
+      const store = ports.stores.v3
+      const current = await metadataOf(store, await headView(store, access.collection.id))
+      const merged: Record<string, unknown> = { ...(current ?? {}), ...patch }
+      for (const [k, v] of Object.entries(merged)) if (v === null) delete merged[k]
+      const r = await commitV3Metadata(
+        ports,
+        access.collection.id,
+        Object.keys(merged).length ? merged : null,
+        c.var.principal?.userId ?? null,
+      )
+      if (!r) return c.json({ semver: base.semver, unchanged: true })
+      return c.json({ semver: r.version.semver, hash: r.version.hash, status: 'completed' }, 201)
+    }
     const repo = await ports.stores.forCollection(access.collection.id)
     const root = await repo.root(base.hash)
     const priv = root.private ? await repo.privateSet(root.private) : null

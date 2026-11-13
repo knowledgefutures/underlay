@@ -197,6 +197,41 @@
       "when": 1792605564163,
       "tag": "0027_push_pack_types",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1794436478132,
+      "tag": "0028_v3_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1794445056254,
+      "tag": "0029_v3_uploads",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1794456182816,
+      "tag": "0030_v3_stored_bytes",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1794492730162,
+      "tag": "0031_v3_conversions",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1794522513170,
+      "tag": "0032_member_public",
+      "breakpoints": true
     }
   ]
 }

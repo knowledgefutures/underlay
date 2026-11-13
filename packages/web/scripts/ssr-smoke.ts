@@ -260,11 +260,13 @@ try {
       has: ['Versions — org/authors', 'v1.0.0', 'First load of authors', 'ulv2:'],
     },
     { path: '/org/authors/v/1.0.0/records', status: 200, has: ['Ada Lovelace'] },
-    // A record's page: its data and history; rows link to it.
+    // A record's page: its data and history; rows link to it. It no longer links to where
+    // else the record appears (the reference index does not cover v3 collections yet).
     {
       path: '/org/authors/v/1.0.0/records/Author/ada',
       status: 200,
-      has: ['Ada Lovelace', 'History in this collection', 'added', 'where else it appears'],
+      has: ['Ada Lovelace', 'History in this collection', 'added'],
+      lacks: ['where else it appears'],
     },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 404 },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 200, has: ['Kurt'], user: 'u1' },
@@ -311,6 +313,21 @@ try {
     { path: '/settings', status: 302, location: '/login' },
     { path: '/settings/sessions', status: 200, has: ['Active sessions'], user: 'u1' },
     { path: '/org/settings', status: 200, has: ['Settings — org', 'Smoke Org'], user: 'u1' },
+    // A key made on an organization's page is for that organization; one made in the
+    // account's settings is for all of the person's organizations.
+    {
+      path: '/org/settings/keys',
+      status: 200,
+      has: ['All collections in Smoke Org', 'works only in this organization'],
+      lacks: ['in every organization'],
+      user: 'u1',
+    },
+    {
+      path: '/settings/keys',
+      status: 200,
+      has: ['All collections, in all your organizations'],
+      user: 'u1',
+    },
     { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
     { path: '/new-org', status: 200, user: 'u1' },
     { path: '/invitations/accept?invitation=x', status: 200, has: ['Organization Invitation'] },

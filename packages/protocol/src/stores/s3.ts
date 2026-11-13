@@ -164,6 +164,10 @@ export class S3Store implements Store {
       return null
     }
     if (!res.ok) return this.#fail(res, `GET ${key}`)
+    return this.#object(res)
+  }
+
+  #object(res: Response): BlobObject {
     const head = this.#head(res)
     let used = false
     const take = () => {
@@ -205,6 +209,49 @@ export class S3Store implements Store {
     }
     if (!res.ok) return this.#fail(res, `PUT ${key}`)
     await res.body?.cancel()
+  }
+
+  /** A PUT with `If-None-Match: *`: a 412 means the key existed, a loss. */
+  async create(key: string, body: Uint8Array | string, opts: PutOptions = {}): Promise<boolean> {
+    const headers: Record<string, string> = { 'if-none-match': '*' }
+    if (opts.contentType) headers['content-type'] = opts.contentType
+    if (opts.cacheControl) headers['cache-control'] = opts.cacheControl
+    const res = await this.#fetch(this.#url(key), {
+      method: 'PUT',
+      headers,
+      body: body as BodyInit,
+    })
+    if (res.status === 412) {
+      await res.body?.cancel()
+      return false
+    }
+    // R2 answers 429 to a second write of a key within a second, so a create that loses a
+    // close race may get that in place of 412. The key is there then, and the create lost.
+    // If it is not there, this is some other limit, and an error.
+    if (res.status === 429 && (await this.head(key)) !== null) {
+      await res.body?.cancel()
+      return false
+    }
+    if (!res.ok) return this.#fail(res, `PUT ${key}`)
+    await res.body?.cancel()
+    return true
+  }
+
+  /** A suffix range (`bytes=-n`). An empty object answers 416, read as empty. */
+  async tail(key: string, length: number): Promise<BlobObject | null> {
+    const res = await this.#fetch(this.#url(key), {
+      headers: { range: `bytes=-${length}` },
+    })
+    if (res.status === 404) {
+      await res.body?.cancel()
+      return null
+    }
+    if (res.status === 416) {
+      await res.body?.cancel()
+      return this.get(key)
+    }
+    if (!res.ok) return this.#fail(res, `GET ${key}`)
+    return this.#object(res)
   }
 
   async delete(key: string): Promise<void> {

@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 
 import { eq } from 'drizzle-orm'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, expect, it } from 'vitest'
 
 import { reconcileConfig, reconcileDue } from '../src/billing/reconcile.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 const perSweep = reconcileConfig.perSweep
@@ -34,7 +35,7 @@ async function reconcile(h: Harness, collectionId: string, full = false) {
   return c!
 }
 
-describe('reconcile', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('reconcile', () => {
   it('finds nothing to correct after normal commits, and corrects what was broken', async () => {
     const h = await harness()
     const user = await h.member()

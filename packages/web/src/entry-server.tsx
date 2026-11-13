@@ -26,7 +26,10 @@ import { escapeHtml } from '~/lib/markdown'
 import template from '../index.html?raw'
 
 /** Structurally the same as RenderPage in @underlay/server's app.ts. */
-export type RenderPage = (req: Request, api: ApiFn) => Promise<Response>
+export type RenderPage = ((req: Request, api: ApiFn) => Promise<Response>) & {
+  /** Which build rendered a page: its hashed asset names, hashed. A cached page names it. */
+  buildId?: string
+}
 
 // Each render's in-process API, found by loaders through apiFetch. Concurrent
 // renders on one isolate or process each see their own.
@@ -178,4 +181,14 @@ async function renderContext(context: StaticHandlerContext): Promise<Response> {
   })
 }
 
-export const renderPage: RenderPage = (req, api) => apiStore.run(api, () => render(req))
+/** FNV-1a, hex: enough to tell one build's asset names from another's. */
+function fnv(text: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+  return (h >>> 0).toString(16)
+}
+
+export const renderPage: RenderPage = Object.assign(
+  (req: Request, api: ApiFn) => apiStore.run(api, () => render(req)),
+  { buildId: fnv(assetTags.head + assetTags.body) },
+)

@@ -13,6 +13,7 @@ import type { LibSQLDatabase } from 'drizzle-orm/libsql'
  */
 import type { UsageSink } from './billing/usage.js'
 import type * as schema from './db/schema.js'
+import type { CommitQueue } from './v3/queue.js'
 
 export type { Cache, PresigningStore, Store } from '@underlay/protocol'
 
@@ -34,15 +35,30 @@ export interface Jobs {
   enqueueBatch(jobs: JobMessage[]): Promise<void>
 }
 
+/** A collection's record layout: one of v2's two (`today`, `f`), or `v3`. */
+export type CollectionLayout = LayoutName | 'v3'
+
 /**
  * Where repositories live. A collection's objects are read and written through
  * the repository of its primary placement; mirrors are written by sync jobs.
  */
 export interface Stores {
-  /** The repository of a collection's primary placement, in the collection's record layout. */
+  /**
+   * The repository of a collection's primary placement, in the collection's record layout.
+   * v2 only: a v3 collection throws `V3CollectionError` (read it through `v3`).
+   */
   forCollection(collectionId: string): Promise<Repo>
+  /** A collection's record layout (cached briefly per isolate, as the primary is). */
+  layoutOf(collectionId: string): Promise<CollectionLayout>
+  /**
+   * The v3 area of the platform bucket (docs/protocol-v3.md, Section 9): sorted-record-files,
+   * assets, and each v3 collection's commits and layouts. Shared by every v3 collection.
+   */
+  v3: Store
+  /** A key in the v3 area as a key of the bucket, for `fileBytes` (a server-side copy in). */
+  v3BucketKey(key: string): string
   /** The record layout a new collection gets (a fork takes its parent's). */
-  newCollections: LayoutName
+  newCollections: CollectionLayout
   /** The repository at a storage location. */
   forLocation(locationId: string): Promise<Repo>
   /**
@@ -70,6 +86,16 @@ export interface PublicAssets {
 
 export interface Ports {
   stores: Stores
+  /**
+   * Where v3 commits land, one at a time per collection (v3/queue.ts): a Durable Object
+   * for each collection on Workers, an in-process queue when absent.
+   */
+  commits?: CommitQueue
+  /**
+   * Run one v3 job in the pool of Durable Objects (worker.ts `V3Pool`) and wait for it, for
+   * work fanned out many at a time (v3/fanout.ts). Absent: such jobs go to the queue.
+   */
+  pool?: (job: JobMessage) => Promise<void>
   db: Db
   jobs: Jobs
   cache: Cache

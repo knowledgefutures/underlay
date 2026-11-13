@@ -87,6 +87,19 @@ export interface Store {
    * put. Given the size, a store may copy a large object in parts (S3: over 5 GiB).
    */
   copy?(from: string, to: string, size?: number): Promise<void>
+  /**
+   * Write an object only if its key is absent, and say who won: true if this call
+   * created the key, false if it already existed (the body is then not written).
+   * Atomic: of any number of concurrent creates on one key, exactly one is true.
+   * Protocol v3's commits and layouts are decided by it. `createObject` throws
+   * for a store without it.
+   */
+  create?(key: string, body: Uint8Array | string, opts?: PutOptions): Promise<boolean>
+  /**
+   * The last `length` bytes of an object (all of it if it is shorter), in one
+   * request; null if absent. `readTail` falls back to head and a ranged get.
+   */
+  tail?(key: string, length: number): Promise<BlobObject | null>
   /** Presigned URLs and multipart uploads, where the store can hand out URLs. */
   readonly presigner?: Presigner
 }
@@ -123,6 +136,29 @@ export async function putJoined(
     off += p.byteLength
   }
   return store.put(key, bytes, opts)
+}
+
+/** Create an object only if absent; true if this call created it. The store must have `create`. */
+export function createObject(
+  store: Store,
+  key: string,
+  body: Uint8Array | string,
+  opts?: PutOptions,
+): Promise<boolean> {
+  if (!store.create) throw new Error('This store cannot create-if-absent')
+  return store.create(key, body, opts)
+}
+
+/** The last `length` bytes of an object (all of it if shorter); null if absent. */
+export async function readTail(
+  store: Store,
+  key: string,
+  length: number,
+): Promise<BlobObject | null> {
+  if (store.tail) return store.tail(key, length)
+  const head = await store.head(key)
+  if (!head) return null
+  return store.get(key, { offset: Math.max(0, head.size - length) })
 }
 
 /** Copy an object within a store: natively when it can, else by reading and writing it. */
@@ -290,6 +326,8 @@ export class PrefixedStore implements Store {
     pieces: readonly Uint8Array[],
     opts?: PutOptions,
   ) => Promise<void>
+  readonly create?: (key: string, body: Uint8Array | string, opts?: PutOptions) => Promise<boolean>
+  readonly tail?: (key: string, length: number) => Promise<BlobObject | null>
   constructor(
     readonly inner: Store,
     prefix: string,
@@ -319,6 +357,14 @@ export class PrefixedStore implements Store {
     if (inner.putPieces) {
       const putPieces = inner.putPieces.bind(inner)
       this.putPieces = (key, pieces, opts) => putPieces(k(key), pieces, opts)
+    }
+    if (inner.create) {
+      const create = inner.create.bind(inner)
+      this.create = (key, body, opts) => create(k(key), body, opts)
+    }
+    if (inner.tail) {
+      const tail = inner.tail.bind(inner)
+      this.tail = (key, length) => tail(k(key), length)
     }
   }
   #k = (key: string) => this.#p + key

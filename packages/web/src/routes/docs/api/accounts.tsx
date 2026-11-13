@@ -33,9 +33,15 @@ const accountRes = `{
 }`
 
 const membersRes = `[
-  { "role": "owner", "displayName": "Jane Doe" },
-  { "role": "member", "displayName": "Alex Smith" }
+  { "role": "owner", "displayName": "Jane Doe", "public": true, "you": true },
+  { "role": "member", "displayName": "Alex Smith", "public": false, "you": false }
 ]`
+
+const membersPublicRes = `[
+  { "displayName": "Jane Doe" }
+]`
+
+const membersMeReq = `{ "public": true }`
 
 const updateOrgReq = `{
   "displayName": "Knowledge Futures",
@@ -178,14 +184,37 @@ export default function DocsApiAccounts() {
         <h2 id="get-api-accounts-slug-members">GET /api/accounts/:slug/members</h2>
         <p className="scope">No auth required</p>
         <p>
-          List an account&rsquo;s members and their roles (<code>owner</code>, <code>admin</code> or{' '}
-          <code>member</code>), by name. An unknown slug returns <code>404</code>.
+          List an account&rsquo;s members. The organization&rsquo;s own members see everyone, with
+          their roles (<code>owner</code>, <code>admin</code> or <code>member</code>), whether each
+          is listed publicly, and which is the caller. Anyone else sees only the members who chose
+          to be listed, by name, without roles. An unknown slug returns <code>404</code>.
         </p>
         <h3>
-          Response <span className="text-ink-muted font-normal">200</span>
+          Response to a member <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{membersRes}</code>
+        </pre>
+        <h3>
+          Response to anyone else <span className="text-ink-muted font-normal">200</span>
+        </h3>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{membersPublicRes}</code>
+        </pre>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
+        <h2 id="put-api-accounts-slug-members-me">PUT /api/accounts/:slug/members/me</h2>
+        <p className="scope">Auth: a member, by session or a write or admin key</p>
+        <p>
+          Show or hide your own membership on the organization&rsquo;s public page. Members are
+          hidden until they choose to be listed.
+        </p>
+        <h3>Request</h3>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{membersMeReq}</code>
         </pre>
       </div>
 

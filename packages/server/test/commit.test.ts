@@ -24,6 +24,7 @@ import * as schema from '../src/db/schema.js'
 import { type BaseVersion, commitVersion, type TypeInput } from '../src/versions/commit.js'
 import { publishVersion } from '../src/versions/publish.js'
 import { cleanup, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -71,7 +72,7 @@ async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
 
 const FILE = 'f'.repeat(64)
 
-describe('commitVersion', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion', () => {
   it('commits, publishes by CAS, and writes the signed log', async () => {
     const h = await harness()
     const c = await h.collection()

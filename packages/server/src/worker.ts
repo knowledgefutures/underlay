@@ -21,11 +21,13 @@ import { isolateUsageSink, newUsageBuffer, type UsageEvent, writeUsage } from '.
 import { CfCache } from './cache.js'
 import { openD1 } from './db/d1.js'
 import { readsAnyReplica } from './db/replicas.js'
-import { isBulk, QueueJobs, runJob } from './jobs.js'
+import { isBulk, QueueJobs, runJob, V3_POOLED_JOBS } from './jobs.js'
 import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
 import type { JobMessage, Ports, PublicAssets } from './ports.js'
-import { createStores } from './stores.js'
+import { createStores, newCollectionsFrom } from './stores.js'
+import { landCommit, type Landing } from './v3/landing.js'
+import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
 
 export interface Env {
   /** 'bulk' in the bulk job Worker (wrangler.bulk.jsonc). */
@@ -36,6 +38,8 @@ export interface Env {
   JOBS_BULK?: Queue
   /** Run compactions (jobs.ts COMPACT_JOBS); without it, they go with the other bulk jobs. */
   JOBS_COMPACT?: Queue
+  /** v3's CPU-heavy jobs (jobs.ts V3_POOLED_JOBS), run in the pool; without it, with the bulk jobs. */
+  JOBS_V3?: Queue
   /** Usage events (billing/usage.ts), a request's to a message; without it, nothing is metered. */
   USAGE?: Queue
   APP_URL: string
@@ -65,6 +69,21 @@ export interface Env {
   /** Anonymous pages, ARK and the auth routes (lib/limits.ts). */
   RL_PAGE?: RateLimitBinding
   REPO_PREFIX?: string
+  /** The record layout new collections get: today (default), f, or v3. */
+  NEW_COLLECTION_LAYOUT?: string
+  /**
+   * v3 commits, a Durable Object for each collection (`CollectionCommits` below). Without
+   * it, commits land through the isolate's own queue (v3/queue.ts).
+   */
+  COMMITS?: CommitsNamespace
+  /**
+   * A pool of Durable Objects that run the CPU-heavy v3 jobs (jobs.ts `V3_POOLED_JOBS`) the v3 queue
+   * hands them, `V3_POOL_SIZE` of them (unset or 0: no pool, the jobs run in the consumer).
+   * Queue invocations at once share an isolate's one thread and 128 MB; objects in the pool
+   * are spread across isolates.
+   */
+  POOL?: CommitsNamespace
+  V3_POOL_SIZE?: string
   INTERNAL_PREFIX?: string
   /**
    * Public assets (org logos): a world-readable bucket served at ASSETS_BASE_URL.
@@ -131,11 +150,16 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
   })
   return {
     db,
+    ...(env.COMMITS ? { commits: durableQueue(env.COMMITS) } : {}),
+    ...(env.POOL && Number(env.V3_POOL_SIZE ?? 0) > 0
+      ? { pool: (job: JobMessage) => pooled(env.POOL!, Number(env.V3_POOL_SIZE), job) }
+      : {}),
     stores: createStores(db, cache, {
       bucket: env.BUCKET ? r2Store(env.BUCKET) : s3,
       files: s3,
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
+      ...newCollectionsFrom(env.NEW_COLLECTION_LAYOUT),
       // The bulk Worker's isolates run jobs, whose reads rarely repeat.
       ...(env.ROLE === 'bulk' ? { memoryBytes: 8 * 1024 * 1024 } : {}),
     }),
@@ -145,6 +169,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
       env.JOBS as never,
       (env.JOBS_BULK ?? env.JOBS) as never,
       (env.JOBS_COMPACT ?? env.JOBS_BULK ?? env.JOBS) as never,
+      (env.JOBS_V3 ?? env.JOBS_BULK ?? env.JOBS) as never,
     ),
     waitUntil: (p) => ctx.waitUntil(p),
     outboundFetch: (url, init) => fetch(url, init),
@@ -250,9 +275,12 @@ export default {
       }
       return
     }
+    const pool = Number(env.V3_POOL_SIZE ?? 0)
     const run = async (msg: (typeof batch.messages)[number]) => {
       try {
-        await runJob(msg.body, ports)
+        if (env.POOL && pool > 0 && V3_POOLED_JOBS.has(msg.body.type))
+          await pooled(env.POOL, pool, msg.body)
+        else await runJob(msg.body, ports)
         msg.ack()
       } catch (err) {
         console.error(
@@ -281,4 +309,62 @@ export default {
     const ports = makePorts(env, ctx)
     await ports.jobs.enqueue({ type: 'maintenance.sweep' })
   },
+}
+
+/** Run a job in one of the pool's objects, picked at random. */
+async function pooled(ns: CommitsNamespace, size: number, job: JobMessage): Promise<void> {
+  const stub = ns.get(ns.idFromName(`pool-${Math.floor(Math.random() * size)}`))
+  const res = await stub.fetch(
+    new Request('https://pool/run', { method: 'POST', body: JSON.stringify(job) }),
+  )
+  if (!res.ok) throw new Error(`pool: ${job.type} ${res.status} ${await res.text()}`)
+}
+
+/** One of the pool: runs the jobs it is sent, one at a time. */
+export class V3Pool {
+  readonly #run = serially()
+  constructor(
+    readonly state: { waitUntil(p: Promise<unknown>): void },
+    readonly env: Env,
+  ) {}
+
+  async fetch(req: Request): Promise<Response> {
+    const job = (await req.json()) as JobMessage
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => this.state.waitUntil(p),
+      passThroughOnException() {},
+    } as unknown as ExecutionContext
+    try {
+      await this.#run('job', () => runJob(job, makePorts(this.env, ctx)))
+      return new Response('ok')
+    } catch (err) {
+      return new Response(String((err as Error)?.stack ?? err), { status: 500 })
+    }
+  }
+}
+
+/**
+ * One for each v3 collection (by name: its id): lands the commits it is sent, one at a
+ * time (v3-deploy-plan.md, decision 4). Only the short last step runs here (landing.ts):
+ * check the head, create the commit, record it in D1. The job that prepared the change
+ * built and checked its files first.
+ */
+export class CollectionCommits {
+  readonly #run = serially()
+  constructor(
+    readonly state: { waitUntil(p: Promise<unknown>): void },
+    readonly env: Env,
+  ) {}
+
+  async fetch(req: Request): Promise<Response> {
+    const landing = (await req.json()) as Landing
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => this.state.waitUntil(p),
+      passThroughOnException() {},
+    } as unknown as ExecutionContext
+    // Landing never goes back through the queue, so these ports' own `commits` is unused.
+    const ports = makePorts(this.env, ctx)
+    const landed = await this.#run(landing.collectionId, () => landCommit(ports, landing))
+    return Response.json(landed)
+  }
 }

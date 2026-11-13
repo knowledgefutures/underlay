@@ -96,6 +96,13 @@ export default function DocsApi() {
         or deleting an organization, setting its NAAN, and deleting your account.
       </p>
       <p>
+        A key made in your account settings works in every organization you belong to. A key made on
+        an organization&rsquo;s settings page works only in that organization (its{' '}
+        <code>metadata.organizationId</code>): there it acts as you, with your role, and everywhere
+        else it is treated as anonymous. Like a key scoped to collections, it is rejected with{' '}
+        <code>403</code> on account endpoints.
+      </p>
+      <p>
         A key scoped to specific collections (this is how share and agent links work) is confined to
         them: it is rejected with <code>403</code> on account and organization endpoints, cannot
         enumerate other collections, and is treated as anonymous outside its scope. Within its

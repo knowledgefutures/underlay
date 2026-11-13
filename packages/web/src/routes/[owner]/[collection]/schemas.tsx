@@ -3,12 +3,18 @@ import { useLoaderData, useParams } from 'react-router'
 import BaseLayout from '~/components/BaseLayout'
 import { CollectionNav } from '~/components/collection-nav'
 import SchemaList from '~/components/SchemaList'
+import { useAppContext } from '~/lib/app-context'
 import { useIsOwner } from '~/lib/use-is-owner'
 
 export default function CollectionSchemasPage() {
   const { owner, collection } = useParams()
   const { data, schemas: schemasData } = useLoaderData() as { data: any; schemas: any }
   const isOwner = useIsOwner(owner)
+  const { currentUser } = useAppContext()
+  const canEditArk = !!currentUser?.orgs?.some(
+    (o: { slug: string; role: string }) =>
+      o.slug === owner && (o.role === 'owner' || o.role === 'admin'),
+  )
 
   return (
     <BaseLayout>
@@ -27,6 +33,7 @@ export default function CollectionSchemasPage() {
           collection={collection!}
           schemasData={schemasData}
           isOwner={!!isOwner}
+          canEditArk={canEditArk}
         />
       </div>
     </BaseLayout>

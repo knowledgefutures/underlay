@@ -12,6 +12,7 @@ import { and, eq, lt } from 'drizzle-orm'
 import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { commitV3Session } from '../v3/commit.js'
 import { compactForCommit } from './compact.js'
 import { commitDeltaSession } from './delta.js'
 import {
@@ -40,9 +41,14 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
   // Too many runs for one commit to read: compact them first. The last
   // compaction queues this job again.
   if ((await compactForCommit(ports, session)) === 'waiting') return pendingOutcome(sessionId)
-  // The change streams are rebuilt from the session's runs on each attempt.
+  // The change streams are rebuilt from the session's runs on each attempt. A v3
+  // collection's commit is the library's, through the commit queue (v3/commit.ts); v2's
+  // storage fence does not apply to the v3 area.
+  const onV3 = (await ports.stores.layoutOf(session.collectionId)) === 'v3'
   const outcome = await commitOutcome(ports, sessionId, () =>
-    fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),
+    onV3
+      ? commitV3Session(ports, session)
+      : fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),
   )
   if (await settleSession(ports, sessionId, outcome)) return outcome
   // Another run settled it first: its outcome is the session's.

@@ -21,6 +21,7 @@ import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
 import { mirrorConfig } from '../src/locations/mirror.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 const fakes: FakeS3[] = []
 afterAll(async () => {
@@ -102,7 +103,7 @@ async function addLocation(
 function mirrorRepo(
   f: FakeS3,
   prefix: string,
-  c?: { id: string; recordLayout: 'today' | 'f' },
+  c?: { id: string; recordLayout: 'today' | 'f' | 'v3' },
 ): Repo {
   const store = s3Store({
     endpoint: f.url,
@@ -313,7 +314,7 @@ describe('bucket mirrors of layout F (records in packs of the collection)', () =
   )
 })
 
-describe('bucket mirrors', () => {
+describeNotOnV3('not on v3 yet: mirrors (decision 8)')('bucket mirrors', () => {
   it('adds a location, mirrors the history, and the bucket reads as a repository', async () => {
     const { h, user, c, path, cover, v2 } = await setup()
     const f = await fake()

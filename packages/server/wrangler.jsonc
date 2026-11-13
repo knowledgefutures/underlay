@@ -45,6 +45,14 @@
   // served before the Worker runs; everything else reaches the Worker.
   "assets": { "directory": "../web/dist/client" },
   "observability": { "enabled": true },
+  // v3 commits land one at a time per collection, in a Durable Object for each
+  // (src/v3/queue.ts, `CollectionCommits` in worker.ts; v3-deploy-plan.md, decision 4).
+  // The class lives in this Worker; the bulk Worker binds it by script_name.
+  // V3Pool: CPU-heavy v3 jobs the bulk Worker hands off (worker.ts, V3_POOL_SIZE).
+  "migrations": [
+    { "tag": "v3-commits", "new_sqlite_classes": ["CollectionCommits"] },
+    { "tag": "v3-pool", "new_sqlite_classes": ["V3Pool"] },
+  ],
   "env": {
     "staging": {
       "name": "underlay-staging",
@@ -52,6 +60,9 @@
       "vars": {
         "APP_URL": "https://staging.underlay.org",
         "DEPLOYMENT": "staging",
+        // New collections are v3 (v3-deploy-plan.md, Phase 4). Production keeps the default,
+        // `today`, until Phase 5 step 3.
+        "NEW_COLLECTION_LAYOUT": "v3",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-staging",
         // staging replaces dev.underlay.org: dev's data, and staging KF Auth (kf-console),
@@ -69,6 +80,12 @@
         { "binding": "BUCKET", "bucket_name": "underlay-staging" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
       ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "COMMITS", "class_name": "CollectionCommits" },
+          { "name": "POOL", "class_name": "V3Pool" },
+        ],
+      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -89,6 +106,7 @@
           { "binding": "JOBS", "queue": "underlay-staging-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-staging-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-staging-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-staging-v3" },
           { "binding": "USAGE", "queue": "underlay-staging-usage" },
         ],
         "consumers": [
@@ -99,7 +117,7 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-staging-dead",
           },
-          // The bulk and compaction queues' consumer is the bulk Worker (wrangler.bulk.jsonc).
+          // The bulk, compaction, and v3 queues' consumer is the bulk Worker (wrangler.bulk.jsonc).
           // Usage events (billing/usage.ts): up to 100 requests' events per log object.
           {
             "queue": "underlay-staging-usage",
@@ -135,6 +153,12 @@
         { "binding": "BUCKET", "bucket_name": "underlay-prod" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
       ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "COMMITS", "class_name": "CollectionCommits" },
+          { "name": "POOL", "class_name": "V3Pool" },
+        ],
+      },
       "d1_databases": [
         {
           "binding": "DB",
@@ -155,6 +179,7 @@
           { "binding": "JOBS", "queue": "underlay-prod-jobs" },
           { "binding": "JOBS_BULK", "queue": "underlay-prod-bulk" },
           { "binding": "JOBS_COMPACT", "queue": "underlay-prod-compact" },
+          { "binding": "JOBS_V3", "queue": "underlay-prod-v3" },
           { "binding": "USAGE", "queue": "underlay-prod-usage" },
         ],
         "consumers": [
@@ -165,7 +190,7 @@
             "max_retries": 10,
             "dead_letter_queue": "underlay-prod-dead",
           },
-          // The bulk queue's consumer is the bulk Worker (wrangler.bulk.jsonc).
+          // The bulk, compaction, and v3 queues' consumer is the bulk Worker (wrangler.bulk.jsonc).
           // Usage events (billing/usage.ts): up to 100 requests' events per log object.
           {
             "queue": "underlay-prod-usage",

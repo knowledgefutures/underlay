@@ -7,6 +7,7 @@ import type { AppEnv } from '../src/app.js'
 import * as schema from '../src/db/schema.js'
 import { buildArkUrl, collectionToArkId, computeNcdaCheckChar } from '../src/lib/ark.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -159,6 +160,50 @@ describe('collection ARK settings', () => {
     expect((await t.req(`/api/collections/org/nope/ark`, { user: t.user })).status).toBe(404)
   })
 
+  it('is changed by org owners and admins only, not members or member-level keys', async () => {
+    await t.h.ports.db
+      .insert(schema.user)
+      .values({ id: 'plain', name: 'plain', email: 'plain@example.org' })
+      .onConflictDoNothing()
+    await t.h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org1', userId: 'plain', role: 'member' })
+    const redirect = { enabled: true, customUrl: 'https://example.com/elsewhere' }
+    const types = { recordType: 'Link', redirectUrlField: 'url' }
+    try {
+      // A member reads the settings, and changes nothing: not the redirect, not record types.
+      expect((await t.req(`${base}/ark`, { user: 'plain' })).status).toBe(200)
+      for (const [method, path, json] of [
+        ['PATCH', `${base}/ark`, redirect],
+        ['PATCH', `${base}/ark/record-types`, types],
+        ['PUT', `${base}/ark/record-types`, types],
+        ['DELETE', `${base}/ark/record-types/Link`, undefined],
+      ] as const) {
+        expect((await t.req(path, { method, user: 'plain', json })).status).toBe(403)
+        // An owner's write key acts as a member (capRole).
+        expect((await t.req(path, { method, user: t.user, scope: 'write', json })).status).toBe(403)
+      }
+      // The owner, signed in or with an admin key, may.
+      expect(
+        (
+          await t.req(`${base}/ark`, {
+            method: 'PATCH',
+            user: t.user,
+            scope: 'admin',
+            json: redirect,
+          })
+        ).status,
+      ).toBe(200)
+    } finally {
+      await t.req(`${base}/ark`, {
+        method: 'PATCH',
+        user: t.user,
+        json: { enabled: true, customUrl: null },
+      })
+      await t.h.ports.db.delete(schema.member).where(eq(schema.member.userId, 'plain'))
+    }
+  })
+
   it('reports no ARK for a collection that has none', async () => {
     await t.h.collection('bare')
     const res = await t.req(`/api/collections/org/bare/ark`, { user: t.user })
@@ -279,47 +324,53 @@ describe('resolve', () => {
     expect(res.status).toBe(404)
   })
 
-  it('resolves record ARKs of configured types, by set', async () => {
-    // Not configured yet: no record ARKs for the type.
-    expect((await resolve(`ark:12345/${t.name(undefined, 'Link', 'a')}`)).status).toBe(404)
-    await t.req(`${base}/ark/record-types`, {
-      method: 'PUT',
-      user: t.user,
-      json: { recordType: 'Link', redirectUrlField: 'url' },
-    })
+  itNotOnV3('private records or types: a v3 collection is private or public as a whole')(
+    'resolves record ARKs of configured types, by set',
+    async () => {
+      // Not configured yet: no record ARKs for the type.
+      expect((await resolve(`ark:12345/${t.name(undefined, 'Link', 'a')}`)).status).toBe(404)
+      await t.req(`${base}/ark/record-types`, {
+        method: 'PUT',
+        user: t.user,
+        json: { recordType: 'Link', redirectUrlField: 'url' },
+      })
 
-    const pub = await body(await resolve(`ark:12345/${t.name(undefined, 'Link', 'a')}`))
-    expect(pub).toMatchObject({
-      type: 'redirect',
-      url: 'https://example.org/a',
-      metadata: {
-        type: 'record',
-        what: 'Link a in links',
-        semver: 'v1.0.0',
-        recordType: 'Link',
-        recordId: 'a',
-        schema: Link,
-        data: { title: 'A', url: 'https://example.org/a' },
-      },
-    })
-    // Versioned record ARKs resolve at that version.
-    const at = await body(await resolve(`ark:12345/${t.name('v1.0.0', 'Link', 'a')}`))
-    expect(at.url).toBe('https://example.org/a')
+      const pub = await body(await resolve(`ark:12345/${t.name(undefined, 'Link', 'a')}`))
+      expect(pub).toMatchObject({
+        type: 'redirect',
+        url: 'https://example.org/a',
+        metadata: {
+          type: 'record',
+          what: 'Link a in links',
+          semver: 'v1.0.0',
+          recordType: 'Link',
+          recordId: 'a',
+          schema: Link,
+          data: { title: 'A', url: 'https://example.org/a' },
+        },
+      })
+      // Versioned record ARKs resolve at that version.
+      const at = await body(await resolve(`ark:12345/${t.name('v1.0.0', 'Link', 'a')}`))
+      expect(at.url).toBe('https://example.org/a')
 
-    // A private-set record resolves for members only.
-    const priv = `ark:12345/${t.name(undefined, 'Link', 'b')}`
-    expect(await body(await resolve(priv))).toEqual({ type: 'not_found' })
-    expect(await body(await resolve(priv, 'stranger'))).toEqual({ type: 'not_found' })
-    expect((await body(await resolve(priv, t.user))).url).toBe('https://example.org/b')
+      // A private-set record resolves for members only.
+      const priv = `ark:12345/${t.name(undefined, 'Link', 'b')}`
+      expect(await body(await resolve(priv))).toEqual({ type: 'not_found' })
+      expect(await body(await resolve(priv, 'stranger'))).toEqual({ type: 'not_found' })
+      expect((await body(await resolve(priv, t.user))).url).toBe('https://example.org/b')
 
-    // Missing records, and fields that aren't http(s) URLs, don't redirect.
-    expect((await resolve(`ark:12345/${t.name(undefined, 'Link', 'zzz')}`)).status).toBe(404)
-    for (const id of ['evil', 'none']) {
-      const res = await resolve(`ark:12345/${t.name(undefined, 'Link', id)}`)
-      expect(res.status).toBe(404)
-      expect(await body(res)).toEqual({ type: 'not_found', error: 'No URL found for this record' })
-    }
-  })
+      // Missing records, and fields that aren't http(s) URLs, don't redirect.
+      expect((await resolve(`ark:12345/${t.name(undefined, 'Link', 'zzz')}`)).status).toBe(404)
+      for (const id of ['evil', 'none']) {
+        const res = await resolve(`ark:12345/${t.name(undefined, 'Link', id)}`)
+        expect(res.status).toBe(404)
+        expect(await body(res)).toEqual({
+          type: 'not_found',
+          error: 'No URL found for this record',
+        })
+      }
+    },
+  )
 
   it('hides private collections from non-members', async () => {
     const db = t.h.ports.db
@@ -378,15 +429,18 @@ describe('/ark: URLs', () => {
     expect(v.headers.get('location')).toBe('https://ul.test/org/links/v/1.0.0')
   })
 
-  it('redirects record ARKs to the record URL, by set', async () => {
-    const path = `/ark:12345/${t.name(undefined, 'Link', 'a')}`
-    expect((await t.req(path)).headers.get('location')).toBe('https://example.org/a')
-    const priv = `/ark:12345/${t.name(undefined, 'Link', 'b')}`
-    expect((await t.req(priv)).status).toBe(404)
-    expect((await t.req(priv, { user: t.user })).headers.get('location')).toBe(
-      'https://example.org/b',
-    )
-  })
+  itNotOnV3('private records or types: a v3 collection is private or public as a whole')(
+    'redirects record ARKs to the record URL, by set',
+    async () => {
+      const path = `/ark:12345/${t.name(undefined, 'Link', 'a')}`
+      expect((await t.req(path)).headers.get('location')).toBe('https://example.org/a')
+      const priv = `/ark:12345/${t.name(undefined, 'Link', 'b')}`
+      expect((await t.req(priv)).status).toBe(404)
+      expect((await t.req(priv, { user: t.user })).headers.get('location')).toBe(
+        'https://example.org/b',
+      )
+    },
+  )
 
   it('answers ?info and ?? with an ERC, and ?json with the metadata', async () => {
     for (const q of ['?info', '??']) {

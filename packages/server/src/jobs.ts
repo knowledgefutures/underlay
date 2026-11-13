@@ -53,6 +53,23 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'cleanup.internal',
   'cleanup.mark',
   'cleanup.sweep',
+  // v3: the rebuild policy after a commit, the sweep on the cron (v3/jobs.ts), and a
+  // version's conversion from v2 (v3/convert.ts).
+  'v3.rebuild',
+  'v3.mergeUnit',
+  'v3.finishRebuild',
+  'v3.sweep',
+  'v3.convert',
+  // A version's offset index for record pages (v3/offsets.ts): may walk a whole type.
+  'v3.offsets',
+  // A key range of a schema scan (v3/scans.ts).
+  'v3.scanUnit',
+  // v3 client-built uploads (v3/uploads.ts): a verify hashes a whole file.
+  'v3.uploadPrepare',
+  // A slice of a large upload's files copied out of the client's reach before checking.
+  'v3.uploadStage',
+  'v3.uploadVerify',
+  'v3.uploadLand',
   // Layout F's merges after a commit.
   'layout.maintain',
   // Its reclaim, a key range a job (cleanup/layout-reclaim.ts), and merges too large for one job.
@@ -71,6 +88,20 @@ export const isBulk = (type: string) => BULK_JOBS.has(type)
  * runs the commit, stays on the bulk queue.
  */
 export const COMPACT_JOBS: ReadonlySet<string> = new Set(['push.compact', 'push.compactPiece'])
+
+/**
+ * v3 jobs that are mostly CPU (hashing, parsing, validating, merging). On Workers they go
+ * to a queue of their own (JOBS_V3), whose consumer hands each to a pool of Durable
+ * Objects (worker.ts, `V3Pool`): queue invocations at once share an isolate's one thread
+ * and 128 MB, and objects in the pool are spread across isolates.
+ */
+export const V3_POOLED_JOBS: ReadonlySet<string> = new Set([
+  'v3.uploadVerify',
+  'v3.scanUnit',
+  'v3.mergeUnit',
+  // One key range of a type's offset index (v3/offsets.ts).
+  'v3.offsetsRange',
+])
 
 const handlers = new Map<string, JobHandler>()
 
@@ -101,9 +132,11 @@ export class QueueJobs implements Jobs {
     readonly queue: CfQueue,
     readonly bulk: CfQueue = queue,
     readonly compact: CfQueue = bulk,
+    readonly v3: CfQueue = bulk,
   ) {}
   #for(type: string) {
     if (COMPACT_JOBS.has(type)) return this.compact
+    if (V3_POOLED_JOBS.has(type)) return this.v3
     return isBulk(type) ? this.bulk : this.queue
   }
   async enqueue(job: JobMessage, opts?: { delaySeconds?: number }) {
@@ -114,7 +147,7 @@ export class QueueJobs implements Jobs {
   }
   async enqueueBatch(jobs: JobMessage[]) {
     // Each queue once: an unbound one is the same object as the queue it falls back to.
-    for (const q of new Set([this.queue, this.bulk, this.compact])) {
+    for (const q of new Set([this.queue, this.bulk, this.compact, this.v3])) {
       const mine = jobs.filter((j) => this.#for(j.type) === q)
       // sendBatch takes at most 100 messages.
       for (let i = 0; i < mine.length; i += 100) {

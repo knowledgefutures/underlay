@@ -12,6 +12,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "vectors": "tsx scripts/gen-vectors.ts",
+    "vectors:v3": "tsx scripts/gen-vectors-v3.ts",
     "check-browser": "tsx scripts/browser-bundle.ts"
   },
   "dependencies": {

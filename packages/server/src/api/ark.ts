@@ -30,13 +30,18 @@ import {
 } from '../lib/ark.js'
 import { deniedHashes } from '../lib/limits.js'
 import type { Db, Ports } from '../ports.js'
+import { recordAt, schemaAt } from '../v3/catalog.js'
+import { readStore } from '../v3/read-cache.js'
 import { findVersion, getRecord, loadView, type VersionRow } from '../versions/view.js'
 import {
   capRole,
-  type CollectionAccess,
   collectionAccess,
+  type CollectionAccess,
+  isAdmin,
   jsonError,
+  keyCannotManage,
   type Principal,
+  reachesOrg,
 } from './access.js'
 
 // --- Shoulders and collection ARKs (also for wiring ARK fields into other routes) ---
@@ -221,14 +226,24 @@ export async function resolveArk(
       .limit(1)
     if (!rt || !v) return notFound
 
-    // Non-members get the public set only: a private-set record is not found.
-    const repo = await ports.stores.forCollection(collection.id)
-    const view = await loadView(repo, v, member, await deniedHashes(db))
-    const type = view.types.find((t) => t.slug === recordType)
-    const rec = type ? await getRecord(view, type, recordId) : null
-    if (!type || !rec) return notFound
-    const { data } = JSON.parse(rec.body!) as { data: Record<string, unknown> }
-    const typeSchema = await repo.schema(type.schemaHash)
+    let data: Record<string, unknown>
+    let typeSchema: Record<string, unknown> | null
+    if (collection.recordLayout === 'v3') {
+      // A v3 collection has no private records: who may read it was decided above.
+      const rec = await recordAt(readStore(ports), collection.id, v.seq, recordType, recordId)
+      if (!rec || (await deniedHashes(db)).has(rec.hash)) return notFound
+      data = rec.data as Record<string, unknown>
+      typeSchema = await schemaAt(readStore(ports), collection.id, v.seq, recordType)
+    } else {
+      // Non-members get the public set only: a private-set record is not found.
+      const repo = await ports.stores.forCollection(collection.id)
+      const view = await loadView(repo, v, member, await deniedHashes(db))
+      const type = view.types.find((t) => t.slug === recordType)
+      const rec = type ? await getRecord(view, type, recordId) : null
+      if (!type || !rec) return notFound
+      data = (JSON.parse(rec.body!) as { data: Record<string, unknown> }).data
+      typeSchema = await repo.schema(type.schemaHash)
+    }
 
     // Only http(s) targets: anything else (javascript:, data:) is an open redirect.
     const redirectUrl = data?.[rt.redirectUrlField]
@@ -364,8 +379,10 @@ async function arkPage(c: Context<AppEnv>): Promise<Response> {
 // --- Settings access ---
 
 /**
- * ARK settings are for members of the owning org (v1: any role). A private
- * collection stays a 404 to everyone else; a public one is 401/403.
+ * ARK settings are read by members of the owning org and changed by its owners and admins,
+ * as visibility is: an ARK is a persistent identifier, and where it redirects is the
+ * org's to decide (v1 let any member). A key confined to some collections never changes
+ * them. A private collection stays a 404 to everyone else; a public one is 401/403.
  */
 async function requireArkMember(
   c: Context<AppEnv>,
@@ -382,6 +399,12 @@ async function requireArkMember(
     return c.var.principal
       ? jsonError(c, 403, 'Forbidden')
       : jsonError(c, 401, 'Authentication required')
+  }
+  if (write) {
+    const refused = keyCannotManage(c)
+    if (refused) return refused
+    if (!isAdmin(access.role))
+      return jsonError(c, 403, 'Only org owners and admins can change ARK settings')
   }
   return access
 }
@@ -557,8 +580,8 @@ export function arkRoutes() {
     const p = c.var.principal
     if (!p) return jsonError(c, 401, 'Authentication required')
     let role: string | null = null
-    if (!p.collectionIds && p.scope !== 'read') {
-      if (p.orgId) role = p.orgId === org.id ? 'owner' : null
+    if (!p.collectionIds && p.scope !== 'read' && reachesOrg(p, org.id)) {
+      if (p.orgId) role = 'owner'
       else {
         const [m] = await db
           .select({ role: schema.member.role })

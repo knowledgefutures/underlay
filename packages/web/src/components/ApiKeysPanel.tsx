@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { ApiPlayground } from '~/components/ApiPlayground'
 import { Alert, Badge, Button, Field, Input, SectionHeading, Select } from '~/components/ui'
 import { getScope, isExpired, isExpiringSoon } from '~/lib/api-keys'
+import { useAppContext } from '~/lib/app-context'
 import { authClient } from '~/lib/auth-client'
 import { formatDate } from '~/lib/format'
 
@@ -12,7 +13,7 @@ interface Key {
   name: string
   start?: string
   permissions?: Record<string, string[]>
-  metadata?: { collectionIds?: string[] }
+  metadata?: { collectionIds?: string[]; organizationId?: string }
   createdAt: string
   expiresAt?: string
 }
@@ -31,23 +32,28 @@ const SCOPE_HINTS: Record<string, string> = {
 /**
  * The signed-in user's API keys, a form for a new one (optionally scoped to one
  * of `collections`), and the API playground: the user and org key settings pages.
- * Keys belong to the user. On an org's page (`org`), the list shows the keys
- * scoped to that org's collections, then the user's keys for every collection.
+ * Keys belong to the user. A key made on an org's page (`org`) works only in that
+ * organization; one made in the user's own settings works in every organization
+ * they belong to. On an org's page, the list shows the keys made for it or scoped
+ * to its collections, then the user's keys for all their organizations.
  */
 export default function ApiKeysPanel({
   owner,
   collections,
   canManage = true,
-  org = false,
+  org,
 }: {
   /** The account the playground calls and whose collections a key can be scoped to. */
   owner: string
   collections: Collection[]
   /** Create and revoke (org owners and admins on an org's page). */
   canManage?: boolean
-  /** An org's settings page rather than the user's own. */
-  org?: boolean
+  /** The organization, on its settings page rather than the user's own. */
+  org?: { id: string; name: string }
 }) {
+  const { currentUser } = useAppContext()
+  const orgName = (id: string): string =>
+    currentUser?.orgs?.find((o: any) => o.organizationId === id)?.displayName ?? id.slice(0, 8)
   const [keys, setKeys] = useState<Key[]>([])
   const [error, setError] = useState('')
   const [newKeyResult, setNewKeyResult] = useState<{ key: string; name: string } | null>(null)
@@ -74,10 +80,17 @@ export default function ApiKeysPanel({
     e.preventDefault()
     setError('')
     setNewKeyResult(null)
+    // Never fall back to a key for every organization from an organization's page.
+    if (org && !org.id && !keyCollectionId) {
+      setError('This organization could not be identified. Reload the page and try again.')
+      return
+    }
     setSubmitting(true)
     try {
       const metadata: Record<string, any> = { scope: keyScope }
       if (keyCollectionId) metadata.collectionIds = [keyCollectionId]
+      // Made on an organization's page: for that organization only.
+      else if (org) metadata.organizationId = org.id
       const { data, error: err } = await authClient.apiKey.create({
         name: keyLabel,
         metadata,
@@ -102,8 +115,14 @@ export default function ApiKeysPanel({
   }
 
   const ids = new Set(collections.map((c) => c.id))
-  const orgKeys = keys.filter((k) => k.metadata?.collectionIds?.some((id) => ids.has(id)))
-  const allKeys = keys.filter((k) => !k.metadata?.collectionIds?.length)
+  const orgKeys = keys.filter(
+    (k) =>
+      k.metadata?.collectionIds?.some((id) => ids.has(id)) ||
+      (org && !k.metadata?.collectionIds?.length && k.metadata?.organizationId === org.id),
+  )
+  const allKeys = keys.filter(
+    (k) => !k.metadata?.collectionIds?.length && !k.metadata?.organizationId,
+  )
 
   const keyList = (keys: Key[], empty: string) =>
     keys.length === 0 ? (
@@ -128,12 +147,16 @@ export default function ApiKeysPanel({
               </div>
               <div className="text-ink-muted mt-0.5 flex flex-wrap items-center gap-2 text-xs">
                 <Badge>{getScope(k.permissions)}</Badge>
-                {k.metadata?.collectionIds?.length && (
+                {k.metadata?.collectionIds?.length ? (
                   <Badge>
                     {k.metadata.collectionIds
                       .map((id) => collections.find((c) => c.id === id)?.slug ?? id.slice(0, 8))
                       .join(', ')}
                   </Badge>
+                ) : k.metadata?.organizationId ? (
+                  <Badge>{orgName(k.metadata.organizationId)} only</Badge>
+                ) : (
+                  <Badge>all organizations</Badge>
                 )}
                 <span>Created {formatDate(k.createdAt)}</span>
                 {k.expiresAt && !isExpired(k.expiresAt) && (
@@ -214,14 +237,24 @@ export default function ApiKeysPanel({
                 <option value="admin">admin</option>
               </Select>
             </Field>
-            <Field label="Collection" htmlFor="keyCollection" hint="Optional.">
+            <Field
+              label="Collection"
+              htmlFor="keyCollection"
+              hint={
+                org
+                  ? 'Optional. A key made here works only in this organization.'
+                  : 'Optional. Without one, the key works in every organization you belong to.'
+              }
+            >
               <Select
                 id="keyCollection"
                 value={keyCollectionId}
                 onChange={(e) => setKeyCollectionId(e.target.value)}
               >
                 <option value="">
-                  {org ? 'All collections, in every organization' : 'All collections'}
+                  {org
+                    ? `All collections in ${org.name}`
+                    : 'All collections, in all your organizations'}
                 </option>
                 {collections.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -261,7 +294,7 @@ export default function ApiKeysPanel({
       {org ? (
         <>
           <SectionHeading>Keys for this organization ({orgKeys.length})</SectionHeading>
-          {keyList(orgKeys, "No keys scoped to this organization's collections.")}
+          {keyList(orgKeys, 'No keys for this organization.')}
           <SectionHeading>Your keys for all your organizations ({allKeys.length})</SectionHeading>
           <p className="text-ink-muted mb-3 text-xs">
             These work on every collection you can reach, here and in your other organizations.
@@ -271,7 +304,7 @@ export default function ApiKeysPanel({
             </Link>
             .
           </p>
-          {keyList(allKeys, 'No keys for all collections.')}
+          {keyList(allKeys, 'No keys for all your organizations.')}
         </>
       ) : (
         <>

@@ -18,6 +18,9 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
+import { deniedHashes } from '../lib/limits.js'
+import { rowsOfType, schemasOf } from '../v3/catalog.js'
+import { readStore, readView } from '../v3/read-cache.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { collectionAccess, type Principal } from './access.js'
 
@@ -152,14 +155,35 @@ export function agentRoutes() {
     const coll = access.collection
 
     const head = await findVersion(db, coll.id, 'latest', coll.headVersionId)
-    const repo = await c.var.ports.stores.forCollection(coll.id)
-    const view = head ? await loadView(repo, head, true) : null
-    const schemas: { slug: string; schema: unknown }[] = view
-      ? await Promise.all(
-          view.types.map(async (t) => ({ slug: t.slug, schema: await repo.schema(t.schemaHash) })),
-        )
-      : []
+    const onV3 = coll.recordLayout === 'v3'
+    const repo = onV3 ? null : await c.var.ports.stores.forCollection(coll.id)
+    // Blocked records are shown to no one, a collection's writers included.
+    const denied = await deniedHashes(db)
+    const view = head && repo ? await loadView(repo, head, true, denied) : null
+    const schemas: { slug: string; schema: unknown }[] = []
     const examples: { id: string; type: string; data: unknown; private?: true }[] = []
+    if (onV3 && head) {
+      const store = readStore(c.var.ports)
+      const v3View = await readView(c.var.ports, coll.id, head)
+      const all = await schemasOf(store, v3View)
+      for (const slug of Object.keys(all).sort()) schemas.push({ slug, schema: all[slug] })
+      if (v3View && schemas[0]) {
+        for await (const r of rowsOfType(store, v3View, schemas[0].slug)) {
+          if (!r.line || r.line.byteLength > MAX_EXAMPLE_BYTES || denied.has(r.hash)) continue
+          const rec = JSON.parse(new TextDecoder().decode(r.line)) as {
+            id: string
+            type: string
+            data: unknown
+          }
+          examples.push({ id: rec.id, type: rec.type, data: rec.data })
+          if (examples.length === EXAMPLES) break
+        }
+      }
+    }
+    if (view && repo) {
+      for (const t of view.types)
+        schemas.push({ slug: t.slug, schema: await repo.schema(t.schemaHash) })
+    }
     if (view && view.types[0]) {
       for await (const e of typeRecords(view, view.types[0], { bodies: true })) {
         if (!e.body || e.body.length > MAX_EXAMPLE_BYTES) continue

@@ -169,7 +169,11 @@ export default function OwnerPage() {
                   {members.map((m: any, i: number) => (
                     <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1">
                       <span className="text-sm font-medium">{m.displayName}</span>
-                      <span className="text-ink-muted text-[10px]">{m.role}</span>
+                      {/* Roles, and who is hidden, are shown to the org's own members only. */}
+                      {m.role && <span className="text-ink-muted text-[10px]">{m.role}</span>}
+                      {m.public === false && (
+                        <span className="text-ink-muted text-[10px]">hidden</span>
+                      )}
                     </div>
                   ))}
                 </div>

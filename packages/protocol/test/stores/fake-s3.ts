@@ -15,6 +15,11 @@ export interface FakeS3 {
   requests: { method: string; url: string }[]
   /** The bucket's lifecycle configuration XML (null: none); `'denied'` refuses reading it. */
   lifecycle: { xml: string | null | 'denied' }
+  /**
+   * Answer 429 to puts: `'existing'` to a put of a key that is there (as R2 does to a second
+   * write within a second), `'all'` to every put.
+   */
+  limits: { busy: 'existing' | 'all' | null }
   close(): Promise<void>
 }
 
@@ -28,6 +33,7 @@ export async function startFakeS3(
   const uploads = new Map<string, { key: string; parts: Map<number, Buffer> }>()
   const requests: { method: string; url: string }[] = []
   const lifecycle: FakeS3['lifecycle'] = { xml: null }
+  const limits: FakeS3['limits'] = { busy: null }
 
   const server: Server = createServer(async (req, res) => {
     const chunks: Buffer[] = []
@@ -154,6 +160,10 @@ export async function startFakeS3(
           res.writeHead(200).end('<CopyObjectResult><ETag>"x"</ETag></CopyObjectResult>')
           return
         }
+        if (limits.busy === 'all' || (limits.busy === 'existing' && obj)) {
+          res.writeHead(429).end('<Error><Code>TooManyRequests</Code></Error>')
+          return
+        }
         if (req.headers['if-none-match'] === '*' && obj) {
           res.writeHead(412).end('<Error><Code>PreconditionFailed</Code></Error>')
           return
@@ -174,6 +184,12 @@ export async function startFakeS3(
             .end(req.method === 'GET' ? '<Error><Code>NoSuchKey</Code></Error>' : undefined)
         let bytes = obj.bytes
         let status = 200
+        const suffix = /^bytes=-(\d+)$/.exec(req.headers.range ?? '')
+        if (suffix) {
+          if (bytes.length === 0) return void res.writeHead(416).end()
+          bytes = bytes.subarray(Math.max(0, bytes.length - Number(suffix[1])))
+          status = 206
+        }
         const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '')
         if (range) {
           const start = Number(range[1])
@@ -205,6 +221,7 @@ export async function startFakeS3(
     objects,
     requests,
     lifecycle,
+    limits,
     close: () => new Promise((r) => server.close(() => r())),
   }
 }

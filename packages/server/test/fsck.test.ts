@@ -13,13 +13,14 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: { type: 'object' } } }
 
-describe('fsck', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('fsck', () => {
   it('passes a healthy collection and names what breaks', async () => {
     const h = await harness()
     const user = await h.member()

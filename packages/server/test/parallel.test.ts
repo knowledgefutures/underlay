@@ -10,7 +10,7 @@ import {
   verifyTree,
 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs } from '../src/jobs.js'
@@ -22,6 +22,7 @@ import {
 } from '../src/push/parallel.js'
 import { isMark } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 const defaults = { ...parallelConfig }
@@ -125,7 +126,7 @@ async function trees(h: Harness, collectionId: string) {
   }
 }
 
-describe('parallel commit', () => {
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel commit', () => {
   it('keeps at most a window of units on the queue, and still commits', async () => {
     const h = await harness()
     const user = await h.member()

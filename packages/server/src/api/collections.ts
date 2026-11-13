@@ -6,6 +6,7 @@
  *   GET /api/collections/:owner/:slug          detail (spec 11.3.3, plus v1's members)
  *   GET /api/accounts/:owner/collections
  *   GET /api/accounts/:slug, /api/accounts/:slug/members
+ *   PUT /api/accounts/:slug/members/me      show or hide one's own membership
  *
  * Everything here is SQLite rows: no repository reads. Lists show what a
  * caller may see: public counts to non-members, full counts to members.
@@ -17,23 +18,25 @@ import type { AppEnv } from '../app.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
-import { jsonError, requireCollection } from './access.js'
+import { metadataOf } from '../v3/catalog.js'
+import { readStore, readView } from '../v3/read-cache.js'
+import { jsonError, type Principal, reachesOrg, requireCollection } from './access.js'
 import { collectionArk } from './ark.js'
+import { membership } from './manage.js'
 
 type VersionRow = typeof schema.versions.$inferSelect
 
-/** Org ids the principal belongs to (empty for anonymous or collection-scoped keys). */
-async function memberOrgIds(
-  db: Db,
-  userId: string | undefined,
-  scoped: boolean,
-): Promise<string[]> {
-  if (!userId || scoped) return []
+/**
+ * Org ids the principal acts as a member of: empty for anonymous or collection-scoped
+ * keys, and only its organization for a key made for one.
+ */
+async function memberOrgIds(db: Db, p: Principal | null): Promise<string[]> {
+  if (!p || p.collectionIds) return []
   const rows = await db
     .select({ id: schema.member.organizationId })
     .from(schema.member)
-    .where(eq(schema.member.userId, userId))
-  return rows.map((r) => r.id)
+    .where(eq(schema.member.userId, p.userId))
+  return rows.map((r) => r.id).filter((id) => reachesOrg(p, id))
 }
 
 /** A version as a caller sees it in lists and the collection detail. */
@@ -139,13 +142,18 @@ export function collectionRoutes() {
     const scoped = !!p?.collectionIds
     if (mine && (!p || scoped))
       return jsonError(c, 401, 'Unauthorized — mine=true requires a session')
-    const orgIds = await memberOrgIds(db, p?.userId, scoped)
+    const orgIds = await memberOrgIds(db, p)
 
     // A subquery, not the list: D1 binds at most 100 parameters per statement.
     const myOrgs = db
       .select({ id: schema.member.organizationId })
       .from(schema.member)
-      .where(eq(schema.member.userId, p?.userId ?? ''))
+      .where(
+        and(
+          eq(schema.member.userId, p?.userId ?? ''),
+          p?.onlyOrgId ? eq(schema.member.organizationId, p.onlyOrgId) : undefined,
+        ),
+      )
     const visible = mine
       ? inArray(schema.collections.organizationId, myOrgs)
       : eq(schema.collections.public, true)
@@ -285,12 +293,14 @@ export function collectionRoutes() {
         .limit(1)
       if (v) {
         head = { semver: v.semver, hash: v.hash }
-        const repo = await c.var.ports.stores.forCollection(col.id)
-        const root = await repo.root(v.hash)
+        const metadata =
+          col.recordLayout === 'v3'
+            ? await metadataOf(readStore(c.var.ports), await readView(c.var.ports, col.id, v))
+            : (await (await c.var.ports.stores.forCollection(col.id)).root(v.hash)).metadata
         const s = (await withPusherNames(db, [versionSummary(v, access.isMember, ark)]))[0]!
         latestVersion = {
           ...s,
-          metadata: root.metadata,
+          metadata,
           typeCounts: Object.entries(s.typeCounts).map(([type, n]) => ({ type, count: n })),
         }
       }
@@ -330,7 +340,7 @@ export function collectionRoutes() {
       .where(eq(schema.organization.slug, c.req.param('owner')))
       .limit(1)
     if (!org) return c.json([])
-    const orgIds = await memberOrgIds(db, p?.userId, !!p?.collectionIds)
+    const orgIds = await memberOrgIds(db, p)
     const member = orgIds.includes(org.id)
     const rows = await db
       .select({
@@ -382,6 +392,9 @@ export function collectionRoutes() {
     })
   })
 
+  // Members: the org's own members see everyone and their roles; anyone else sees only
+  // those who chose to be listed, by name (GitHub's rule). A key limited to another org,
+  // or confined to some collections, reads as an outsider.
   app.get('/api/accounts/:slug/members', async (c) => {
     const { db } = c.var.ports
     const [org] = await db
@@ -391,11 +404,50 @@ export function collectionRoutes() {
       .limit(1)
     if (!org) return jsonError(c, 404, 'Not found')
     const members = await db
-      .select({ role: schema.member.role, name: schema.user.name })
+      .select({
+        userId: schema.member.userId,
+        role: schema.member.role,
+        name: schema.user.name,
+        publicMembership: schema.member.publicMembership,
+      })
       .from(schema.member)
       .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
       .where(eq(schema.member.organizationId, org.id))
-    return c.json(members.map((m) => ({ role: m.role, displayName: m.name })))
+    const p = c.var.principal
+    const inside =
+      !!p &&
+      !p.collectionIds &&
+      reachesOrg(p, org.id) &&
+      (p.orgId === org.id || members.some((m) => m.userId === p.userId))
+    if (!inside) {
+      return c.json(members.filter((m) => m.publicMembership).map((m) => ({ displayName: m.name })))
+    }
+    return c.json(
+      members.map((m) => ({
+        role: m.role,
+        displayName: m.name,
+        public: m.publicMembership,
+        you: m.userId === p.userId,
+      })),
+    )
+  })
+
+  // A member shows or hides their own membership on the org's public page.
+  app.put('/api/accounts/:slug/members/me', async (c) => {
+    const p = c.var.principal
+    if (!p) return jsonError(c, 401, 'Authentication required')
+    if (p.orgId) return jsonError(c, 403, "An organization's key is not a member")
+    const { org, role } = await membership(c, c.req.param('slug'))
+    if (!org) return jsonError(c, 404, 'Not found')
+    if (!role) return jsonError(c, 403, 'Forbidden')
+    const body = (await c.req.json().catch(() => null)) as { public?: unknown } | null
+    if (typeof body?.public !== 'boolean')
+      return jsonError(c, 400, '"public" must be true or false')
+    await c.var.ports.db
+      .update(schema.member)
+      .set({ publicMembership: body.public })
+      .where(and(eq(schema.member.organizationId, org.id), eq(schema.member.userId, p.userId)))
+    return c.json({ public: body.public })
   })
 
   return app

@@ -143,6 +143,103 @@ describe('better-auth on SQLite', () => {
     expect(res.status).toBeLessThan(500)
   })
 
+  it('keeps a key made for one organization inside it', async () => {
+    const h = await harness()
+    const user = await h.member('u1')
+    await h.collection('authors')
+    // A second organization the same person belongs to, as its owner, with a collection.
+    await h.ports.db.insert(schema.organization).values({ id: 'org2', name: 'Two', slug: 'two' })
+    await h.ports.db
+      .insert(schema.member)
+      .values({ organizationId: 'org2', userId: user, role: 'owner' })
+    const [books] = await h.ports.db
+      .insert(schema.collections)
+      .values({ organizationId: 'org2', slug: 'books', name: 'books', privateSalt: 'salt' })
+      .returning()
+    await h.ports.db.insert(schema.placements).values({
+      collectionId: books!.id,
+      locationId: schema.PLATFORM_LOCATION_ID,
+      role: 'primary',
+      sets: 'public+private',
+    })
+    const auth = createAuth(
+      h.ports.db,
+      {
+        appUrl: 'http://test',
+        secret: 'test-secret-test-secret-test-secret',
+        oidc: {
+          issuerUrl: 'http://kf',
+          internalUrl: 'http://kf',
+          clientId: 'x',
+          clientSecret: 'y',
+        },
+      },
+      () => {},
+    )
+    const app = createApp(() => ({
+      ports: h.ports,
+      config: { appUrl: 'http://test', deployment: 'test' },
+      authenticate: authenticator(() => auth),
+      authHandler: (req) => auth.handler(req),
+    }))
+    const send = (method: string, path: string, key: string, body?: unknown) =>
+      app.fetch(
+        new Request(`http://test${path}`, {
+          method,
+          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+      )
+    const key = async (metadata: object) =>
+      (await auth.api.createApiKey({ body: { userId: user, metadata } })).key
+    // Made on an organization's keys page: for that organization. Made in the person's
+    // own settings: for every organization they belong to.
+    const forOne = await key({ scope: 'admin', organizationId: 'org1' })
+    const forAll = await key({ scope: 'admin' })
+    const slugs = async (k: string, path: string) =>
+      ((await (await send('GET', path, k)).json()) as { slug: string }[]).map((c) => c.slug)
+
+    // Both collections are private. The limited key is a member in its organization...
+    expect((await send('GET', '/api/collections/org/authors', forOne)).status).toBe(200)
+    expect(
+      (await send('POST', '/api/collections/org/authors/push', forOne, { schemas: { Author } }))
+        .status,
+    ).toBe(200)
+    expect(
+      (await send('PATCH', '/api/collections/org/authors', forOne, { name: 'Authors' })).status,
+    ).toBe(200)
+    expect(await slugs(forOne, '/api/accounts/org/collections')).toEqual(['authors'])
+    // ...and a stranger in the other, where its holder is the owner.
+    expect((await send('GET', '/api/collections/two/books', forOne)).status).toBe(404)
+    expect(
+      (await send('POST', '/api/collections/two/books/push', forOne, { schemas: { Author } }))
+        .status,
+    ).toBe(404)
+    expect(await slugs(forOne, '/api/accounts/two/collections')).toEqual([])
+    expect(
+      (await send('POST', '/api/accounts/two/collections', forOne, { slug: 'more' })).status,
+    ).toBe(403)
+    expect(
+      (await send('POST', '/api/accounts/org/collections', forOne, { slug: 'more' })).status,
+    ).toBe(201)
+    // It is not its holder for account routes, as a collection-scoped key is not.
+    expect((await send('GET', '/api/accounts/me', forOne)).status).toBe(403)
+    // An organization its holder does not belong to: the limit gives nothing.
+    await h.ports.db
+      .insert(schema.organization)
+      .values({ id: 'org3', name: 'Three', slug: 'three' })
+    const elsewhere = await key({ scope: 'admin', organizationId: 'org3' })
+    expect((await send('GET', '/api/collections/org/authors', elsewhere)).status).toBe(404)
+    expect(
+      (await send('POST', '/api/accounts/three/collections', elsewhere, { slug: 'x' })).status,
+    ).toBe(403)
+
+    // A key with no limit reaches both.
+    expect((await send('GET', '/api/collections/org/authors', forAll)).status).toBe(200)
+    expect((await send('GET', '/api/collections/two/books', forAll)).status).toBe(200)
+    expect((await send('GET', '/api/accounts/me', forAll)).status).toBe(200)
+  })
+
   it('gives a new user no organization', async () => {
     const h = await harness()
     const auth = createAuth(

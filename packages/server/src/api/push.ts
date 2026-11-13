@@ -39,6 +39,8 @@ import {
   type SessionRow,
   transition,
 } from '../push/session.js'
+import { v3SchemaError } from '../v3/rules.js'
+import { v3BaseInputs, v3NeededFiles, v3Revalidates } from '../v3/session.js'
 import { collectionFileSizes } from '../versions/file-refs.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
 import { BodyTooLarge, readJson, readLines, readText } from './body.js'
@@ -98,6 +100,8 @@ async function ownSession(
 /** The schemas and metadata of a base version (for sessions that keep them). */
 async function baseInputs(c: Context<AppEnv>, collectionId: string, baseHash: string | null) {
   if (!baseHash) return { schemas: {}, metadata: null }
+  if ((await c.var.ports.stores.layoutOf(collectionId)) === 'v3')
+    return v3BaseInputs(c.var.ports, collectionId)
   const repo = await c.var.ports.stores.forCollection(collectionId)
   const root = await repo.root(baseHash)
   const priv = root.private ? await repo.privateSet(root.private) : null
@@ -207,6 +211,8 @@ function retryable(s: SessionRow): boolean {
  */
 async function revalidates(ports: Ports, session: SessionRow): Promise<number> {
   if (!session.baseVersionId) return 0
+  if ((await ports.stores.layoutOf(session.collectionId)) === 'v3')
+    return v3Revalidates(ports, session)
   const [base] = await ports.db
     .select({ typeCounts: schema.versions.typeCounts })
     .from(schema.versions)
@@ -302,6 +308,8 @@ async function neededFiles(
 ): Promise<string[]> {
   const wanted = [...new Set(files)]
   if (wanted.length === 0) return []
+  if (access.collection.recordLayout === 'v3')
+    return v3NeededFiles(c.var.ports, access.collection.id, wanted)
   const repo = await c.var.ports.stores.forCollection(access.collection.id)
   const held = await collectionFileSizes(c.var.ports.db, repo, access.collection, baseHash, wanted)
   return wanted.filter((h) => !held.has(h))
@@ -330,7 +338,11 @@ export function pushRoutes() {
     // The whole new type set, including schemas kept from the base: a commit
     // refuses any schema that isn't acceptable, so say so now.
     const schemas = body.schemas !== undefined ? body.schemas : base.schemas
-    const schemaErr = schemaSetError(schemas)
+    const schemaErr =
+      schemaSetError(schemas) ??
+      (access.collection.recordLayout === 'v3'
+        ? v3SchemaError(access.collection.public, schemas as SessionInputs['schemas'])
+        : null)
     if (schemaErr) return jsonError(c, 422, schemaErr)
     const patch = body.metadata_patch
     const metadata =

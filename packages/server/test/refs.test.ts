@@ -8,6 +8,7 @@ import * as schema from '../src/db/schema.js'
 import { eventsFor, FAN_IN, indexConfig } from '../src/refs/log.js'
 import { lookupSegment, SegmentWriter } from '../src/refs/segments.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -38,7 +39,7 @@ async function push(
   return json(res)
 }
 
-describe('reference log', () => {
+describeNotOnV3('not on v3 yet: the reference index (decision 6)')('reference log', () => {
   it('answers provenance across versions, sets and forks, filtered by access', async () => {
     const h = await harness()
     const user = await h.member()
@@ -184,7 +185,7 @@ describe('reference log', () => {
   })
 })
 
-describe('deleted collections', () => {
+describeNotOnV3('not on v3 yet: the reference index (decision 6)')('deleted collections', () => {
   it('tombstones a deleted collection, and compaction drops its events', async () => {
     const h = await harness()
     const user = await h.member()
@@ -224,7 +225,7 @@ describe('deleted collections', () => {
   })
 })
 
-describe('forks and access', () => {
+describeNotOnV3('not on v3 yet: the reference index (decision 6)')('forks and access', () => {
   const sha = (b: string) => createHash('sha256').update(b).digest('hex')
   const Doc = { type: 'object', properties: { title: { type: 'string' }, pdf: {} } }
 

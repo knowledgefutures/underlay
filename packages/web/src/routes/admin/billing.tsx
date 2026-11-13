@@ -20,6 +20,8 @@ interface BillingOrg {
   collections: number
   latestBytes: number
   historyBytes: number
+  /** v3 collections: what they list, shared or not, as of the last sweep. */
+  storedBytes: number
   refEvents: number
   refBytes: number
   usage: Usage
@@ -94,6 +96,13 @@ export default function AdminBilling() {
       numeric: true,
       sort: (o) => o.historyBytes,
       render: (o) => formatBytes(o.historyBytes),
+    },
+    {
+      key: 'listed',
+      label: 'Stored, v3 listed',
+      numeric: true,
+      sort: (o) => o.storedBytes,
+      render: (o) => formatBytes(o.storedBytes),
     },
     {
       key: 'refs',
@@ -171,6 +180,7 @@ export default function AdminBilling() {
               <td className="px-2.5 py-1.5 font-medium">Total</td>
               {totalCell(formatBytes(sum((o) => o.latestBytes)))}
               {totalCell(formatBytes(sum((o) => o.historyBytes)))}
+              {totalCell(formatBytes(sum((o) => o.storedBytes)))}
               {totalCell(compact(sum((o) => o.refEvents)))}
               {totalCell(compact(sum((o) => o.usage.api_calls)))}
               {totalCell(formatBytes(sum((o) => o.usage.response_bytes)))}

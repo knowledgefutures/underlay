@@ -25,7 +25,7 @@ export default function SettingsKeys() {
     <SettingsLayout
       crumb={accountCrumb}
       title="API keys"
-      description="Keys for pushing and pulling data with the API or CLI."
+      description="Keys for pushing and pulling data with the API or CLI. A key made here works in every organization you belong to; make one on an organization's settings page to limit it to that organization."
       groups={userSettingsRail}
     >
       <ApiKeysPanel owner={owner} collections={collections} />

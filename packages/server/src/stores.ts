@@ -7,7 +7,6 @@
  * credential encryption lands with bucket mirrors (phase 11).
  */
 import {
-  type LayoutName,
   type Cache,
   PrefixedStore,
   type PresigningStore,
@@ -19,7 +18,30 @@ import { and, eq } from 'drizzle-orm'
 
 import { dbIdentity } from './db/identity.js'
 import * as schema from './db/schema.js'
-import type { Db, Stores } from './ports.js'
+import type { CollectionLayout, Db, Stores } from './ports.js'
+
+/**
+ * The layout new collections get, from NEW_COLLECTION_LAYOUT (`today`, `f`, or `v3`);
+ * unset means the default. Anything else is refused at start, not taken as a default.
+ */
+export function newCollectionsFrom(value: string | undefined): {
+  newCollections?: CollectionLayout
+} {
+  if (value === undefined || value === '') return {}
+  if (value === 'today' || value === 'f' || value === 'v3') return { newCollections: value }
+  throw new Error(`NEW_COLLECTION_LAYOUT must be today, f, or v3, not ${JSON.stringify(value)}`)
+}
+
+/** Key prefix of the v3 area in the platform bucket: every v3 collection's objects. */
+const V3_PREFIX = 'v3'
+
+/** A v2 code path asked for a v3 collection's repository: it has none. */
+export class V3CollectionError extends Error {
+  constructor(readonly collectionId: string) {
+    super(`Collection ${collectionId} is on v3 and has no v2 repository`)
+    this.name = 'V3CollectionError'
+  }
+}
 
 export interface PlatformStorage {
   /** The deployment's own bucket: repositories and internal objects. */
@@ -38,16 +60,16 @@ export interface PlatformStorage {
   memoryBytes?: number
   /**
    * The record layout new collections get (record-storage-layout.md): `today`
-   * (default for now), leaf bodies, or `f`, records in packs per collection. Each collection keeps
-   * the layout it was created with (`collections.record_layout`); forks take their
-   * parent's.
+   * (default for now), leaf bodies, `f`, records in packs per collection, or `v3`.
+   * Each collection keeps the layout it was created with (`collections.record_layout`);
+   * forks take their parent's.
    */
-  newCollections?: LayoutName
+  newCollections?: CollectionLayout
 }
 
 /** Primary placements change rarely, a collection's layout only by a conversion; remember them briefly per isolate. */
 const PRIMARY_TTL_MS = 60_000
-const primaryCache = new Map<string, { locationId: string; layout: LayoutName; at: number }>()
+const primaryCache = new Map<string, { locationId: string; layout: CollectionLayout; at: number }>()
 /** Platform locations' key prefixes, per database and location, for as long. */
 const prefixCache = new WeakMap<object, Map<string, { prefix: string; at: number }>>()
 
@@ -126,43 +148,83 @@ export function createStores(db: Db, cache: Cache, platform: PlatformStorage): S
     if (runRepos.size > collectionRepos.max) runRepos.delete(runRepos.keys().next().value!)
     return repo
   }
-  const located = (locationId: string, collectionId: string, layout: LayoutName) =>
-    layout === 'f' ? forCollectionRuns(locationId, collectionId) : forLocation(locationId)
+  const located = (locationId: string, collectionId: string, layout: CollectionLayout) => {
+    if (layout === 'v3') throw new V3CollectionError(collectionId)
+    return layout === 'f' ? forCollectionRuns(locationId, collectionId) : forLocation(locationId)
+  }
+
+  /**
+   * A collection's primary location and layout, from D1 or the isolate's cache. `fresh`
+   * reads D1: a collection's layout changes when it is converted to v3 (or back).
+   */
+  const primaryOf = async (collectionId: string, fresh = false) => {
+    const hit = primaryCache.get(collectionId)
+    if (!fresh && hit && Date.now() - hit.at < PRIMARY_TTL_MS) return hit
+    const [row] = await db
+      .select({
+        locationId: schema.placements.locationId,
+        layout: schema.collections.recordLayout,
+      })
+      .from(schema.placements)
+      .innerJoin(schema.collections, eq(schema.collections.id, schema.placements.collectionId))
+      .where(
+        and(
+          eq(schema.placements.collectionId, collectionId),
+          eq(schema.placements.role, 'primary'),
+        ),
+      )
+      .limit(1)
+    if (!row) throw new Error(`Collection ${collectionId} has no primary placement`)
+    const entry = { locationId: row.locationId, layout: row.layout, at: Date.now() }
+    primaryCache.set(collectionId, entry)
+    return entry
+  }
 
   return {
     forLocation,
     newCollections: platform.newCollections ?? 'today',
     async forCollection(collectionId: string): Promise<Repo> {
-      const hit = primaryCache.get(collectionId)
-      if (hit && Date.now() - hit.at < PRIMARY_TTL_MS)
-        return located(hit.locationId, collectionId, hit.layout)
-      const [row] = await db
-        .select({
-          locationId: schema.placements.locationId,
-          layout: schema.collections.recordLayout,
-        })
-        .from(schema.placements)
-        .innerJoin(schema.collections, eq(schema.collections.id, schema.placements.collectionId))
-        .where(
-          and(
-            eq(schema.placements.collectionId, collectionId),
-            eq(schema.placements.role, 'primary'),
-          ),
-        )
-        .limit(1)
-      if (!row) throw new Error(`Collection ${collectionId} has no primary placement`)
-      primaryCache.set(collectionId, {
-        locationId: row.locationId,
-        layout: row.layout,
-        at: Date.now(),
-      })
-      return located(row.locationId, collectionId, row.layout)
+      let p = await primaryOf(collectionId)
+      // Cached as v3 but asked for on v2's path: it may have been put back on v2.
+      if (p.layout === 'v3') p = await primaryOf(collectionId, true)
+      return located(p.locationId, collectionId, p.layout)
     },
+    async layoutOf(collectionId: string): Promise<CollectionLayout> {
+      // Always from D1: callers choose v2's or v3's path by it, and a conversion flips it.
+      return (await primaryOf(collectionId, true)).layout
+    },
+    v3: new PrefixedStore(bucketWithS3(platform.bucket, files), V3_PREFIX),
+    v3BucketKey: (key) => `${V3_PREFIX}/${key}`,
     internal: new PrefixedStore(platform.bucket, platform.internalPrefix),
     fileBytes: files,
     canonicalFileKey: (hash) => [platform.repoPrefix, 'files', hash].filter(Boolean).join('/'),
     stagingKey: (id) => [platform.internalPrefix, 'uploads', id].filter(Boolean).join('/'),
   }
+}
+
+/**
+ * The bucket as the v3 area uses it: reads and writes through `bucket` (on Workers the
+ * R2 binding), and what the binding cannot do through the S3 API over the same bucket:
+ * presigned URLs (client uploads) and server-side copies (installing a checked upload,
+ * an asset), so no file's bytes pass through a Worker to be copied.
+ */
+export function bucketWithS3(bucket: Store, s3: PresigningStore): Store {
+  if (bucket === s3) return bucket
+  const out: Store = {
+    get: (k, r) => bucket.get(k, r),
+    head: (k) => bucket.head(k),
+    put: (k, b, o) => bucket.put(k, b, o),
+    list: (p, c) => bucket.list(p, c),
+    delete: (k) => bucket.delete(k),
+    presigner: s3.presigner,
+  }
+  if (bucket.create) out.create = bucket.create.bind(bucket)
+  if (bucket.tail) out.tail = bucket.tail.bind(bucket)
+  if (bucket.putParts) out.putParts = bucket.putParts.bind(bucket)
+  if (bucket.putPieces) out.putPieces = bucket.putPieces.bind(bucket)
+  const copy = bucket.copy ?? s3.copy
+  if (copy) out.copy = copy.bind(bucket.copy ? bucket : s3)
+  return out
 }
 
 function presigning(store: Store): PresigningStore {

@@ -23,6 +23,7 @@ import {
   writeRun,
 } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 const defaults = {
@@ -157,82 +158,90 @@ async function headTree(h: Harness, collectionId: string) {
   return { count: v!.recordCount, root: (await repo.root(v!.hash)).public.types.Author }
 }
 
-describe('one version from many uploads', () => {
-  it('compacts down to the commit’s run limit, in pieces, then commits in planned chunks', async () => {
-    const h = await harness()
-    const user = await h.member()
-    const a = await h.collection('many')
-    const b = await h.collection('one')
-    // 60 uploads, interleaved keys: every upload spans the whole key range.
-    // Ids are split-key candidates (marks) every so often, so units can split.
-    const ids: string[] = []
-    for (let i = 0; ids.length < 2400; i++) {
-      const id = `r${String(i).padStart(7, '0')}`
-      if (isMark(id) || i % 97 === 0) ids.push(id)
-    }
-    const batches = Array.from({ length: 60 }, (_, j) =>
-      Array.from({ length: 40 }, (_, i) => rec(ids[i * 60 + j]!, body(i))),
-    )
-    Object.assign(compactConfig, { commitRuns: 4, pieceBytes: 40_000 })
-    Object.assign(parallelConfig, { aboveBytes: 0, unitBytes: 50_000, baseLevel: 0, chunkUnits: 2 })
-    runConfig.partBytes = 16 * 1024
-    const many = await push(h, user, '/api/collections/org/many', batches)
-    expect(many.status).toMatchObject({ status: 'committed' })
-    // Compaction ran in pieces and left at most four runs for the commit.
-    const runs = await h.ports.db
-      .select()
-      .from(schema.pushRuns)
-      .where(eq(schema.pushRuns.sessionId, many.sid))
-    expect(runs.length).toBeLessThanOrEqual(4)
-    const pieces = await h.ports.stores.internal.list(`sessions/${many.sid}/runs/`)
-    expect(pieces.keys.some((k) => k.includes('/piece-'))).toBe(true)
-    // The plan was written in several chunks.
-    const units = await h.ports.db
-      .select()
-      .from(schema.commitUnits)
-      .where(eq(schema.commitUnits.sessionId, many.sid))
-    expect(units.filter((u) => !u.gap).length).toBeGreaterThan(4)
-
-    // The same records in one upload, committed serially: the same tree.
-    Object.assign(compactConfig, defaults.compact)
-    Object.assign(parallelConfig, { aboveBytes: Infinity })
-    const one = await push(h, user, '/api/collections/org/one', [batches.flat()])
-    expect(one.status).toMatchObject({ status: 'committed' })
-    expect(await headTree(h, a.id)).toEqual(await headTree(h, b.id))
-    expect((await headTree(h, a.id)).count).toBe(2400)
-  }, 60_000)
-
-  it('says where a session is: its runs, then the commit’s phase and units', async () => {
-    const h = await harness()
-    const user = await h.member()
-    await h.collection('st')
-    const path = '/api/collections/org/st'
-    const sid = (
-      await json(
-        await h.request(`${path}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")(
+  'one version from many uploads',
+  () => {
+    it('compacts down to the commit’s run limit, in pieces, then commits in planned chunks', async () => {
+      const h = await harness()
+      const user = await h.member()
+      const a = await h.collection('many')
+      const b = await h.collection('one')
+      // 60 uploads, interleaved keys: every upload spans the whole key range.
+      // Ids are split-key candidates (marks) every so often, so units can split.
+      const ids: string[] = []
+      for (let i = 0; ids.length < 2400; i++) {
+        const id = `r${String(i).padStart(7, '0')}`
+        if (isMark(id) || i % 97 === 0) ids.push(id)
+      }
+      const batches = Array.from({ length: 60 }, (_, j) =>
+        Array.from({ length: 40 }, (_, i) => rec(ids[i * 60 + j]!, body(i))),
       )
-    ).session_id as string
-    for (let j = 0; j < 6; j++)
-      await h.request(`${path}/push/${sid}/records`, {
-        method: 'POST',
-        user,
-        ndjson: Array.from({ length: 10 }, (_, i) => rec(`k${j}-${i}`, body(i))),
+      Object.assign(compactConfig, { commitRuns: 4, pieceBytes: 40_000 })
+      Object.assign(parallelConfig, {
+        aboveBytes: 0,
+        unitBytes: 50_000,
+        baseLevel: 0,
+        chunkUnits: 2,
       })
-    const status = async () => json(await h.request(`${path}/push/${sid}`, { user }))
-    expect((await status()).progress).toMatchObject({ runs: 6, phase: null, units: null })
-    // Runs hold the records, or on layout F their places in the uploads' packs.
-    if (process.env.UNDERLAY_TEST_LAYOUT === 'f')
-      expect((await status()).progress.run_bytes).toBeLessThan(6 * 10 * 512)
-    else expect((await status()).progress.run_bytes).toBeGreaterThan(6 * 10 * 512)
-    Object.assign(compactConfig, { commitRuns: 2 })
-    const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
-    // Too many runs for one commit: it compacts first, and answers 202.
-    expect(res.status).toBe(202)
-    expect((await status()).progress).toMatchObject({ phase: 'compacting' })
-    expect((await status()).progress.runs_compacting).toBeGreaterThan(0)
-    await h.drain()
-    const done = await status()
-    expect(done.status).toBe('committed')
-    expect(done.progress).toBeUndefined()
-  })
-})
+      runConfig.partBytes = 16 * 1024
+      const many = await push(h, user, '/api/collections/org/many', batches)
+      expect(many.status).toMatchObject({ status: 'committed' })
+      // Compaction ran in pieces and left at most four runs for the commit.
+      const runs = await h.ports.db
+        .select()
+        .from(schema.pushRuns)
+        .where(eq(schema.pushRuns.sessionId, many.sid))
+      expect(runs.length).toBeLessThanOrEqual(4)
+      const pieces = await h.ports.stores.internal.list(`sessions/${many.sid}/runs/`)
+      expect(pieces.keys.some((k) => k.includes('/piece-'))).toBe(true)
+      // The plan was written in several chunks.
+      const units = await h.ports.db
+        .select()
+        .from(schema.commitUnits)
+        .where(eq(schema.commitUnits.sessionId, many.sid))
+      expect(units.filter((u) => !u.gap).length).toBeGreaterThan(4)
+
+      // The same records in one upload, committed serially: the same tree.
+      Object.assign(compactConfig, defaults.compact)
+      Object.assign(parallelConfig, { aboveBytes: Infinity })
+      const one = await push(h, user, '/api/collections/org/one', [batches.flat()])
+      expect(one.status).toMatchObject({ status: 'committed' })
+      expect(await headTree(h, a.id)).toEqual(await headTree(h, b.id))
+      expect((await headTree(h, a.id)).count).toBe(2400)
+    }, 60_000)
+
+    it('says where a session is: its runs, then the commit’s phase and units', async () => {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('st')
+      const path = '/api/collections/org/st'
+      const sid = (
+        await json(
+          await h.request(`${path}/push`, { method: 'POST', user, json: { schemas: { Author } } }),
+        )
+      ).session_id as string
+      for (let j = 0; j < 6; j++)
+        await h.request(`${path}/push/${sid}/records`, {
+          method: 'POST',
+          user,
+          ndjson: Array.from({ length: 10 }, (_, i) => rec(`k${j}-${i}`, body(i))),
+        })
+      const status = async () => json(await h.request(`${path}/push/${sid}`, { user }))
+      expect((await status()).progress).toMatchObject({ runs: 6, phase: null, units: null })
+      // Runs hold the records, or on layout F their places in the uploads' packs.
+      if (process.env.UNDERLAY_TEST_LAYOUT === 'f')
+        expect((await status()).progress.run_bytes).toBeLessThan(6 * 10 * 512)
+      else expect((await status()).progress.run_bytes).toBeGreaterThan(6 * 10 * 512)
+      Object.assign(compactConfig, { commitRuns: 2 })
+      const res = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
+      // Too many runs for one commit: it compacts first, and answers 202.
+      expect(res.status).toBe(202)
+      expect((await status()).progress).toMatchObject({ phase: 'compacting' })
+      expect((await status()).progress.runs_compacting).toBeGreaterThan(0)
+      await h.drain()
+      const done = await status()
+      expect(done.status).toBe('committed')
+      expect(done.progress).toBeUndefined()
+    })
+  },
+)

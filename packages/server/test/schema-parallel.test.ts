@@ -8,12 +8,13 @@ import { createHash } from 'node:crypto'
 
 import { iterate, type RecordSet, RepoSource, recordTree } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, expect, it } from 'vitest'
 
 import * as schema from '../src/db/schema.js'
 import { parallelConfig } from '../src/push/parallel.js'
 import { isMark } from '../src/push/runs.js'
 import { cleanup, type Harness, harness } from './harness.js'
+import { describeNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 const defaults = { ...parallelConfig }
@@ -162,183 +163,194 @@ async function pair(name: string, base: { schemas: object; records: object[] }) 
 const baseDocs = () =>
   ids('d', 300).map((id, i) => doc(id, `name ${i}`, i % 50 === 0 ? { pic: 'f1' } : {}))
 
-describe('schema and privacy changes in a parallel commit', () => {
-  it('revalidates a changed schema in jobs, and builds what the serial commit builds', async () => {
-    const { h, user, a, b, paths } = await pair('sch', {
-      schemas: { Doc },
-      records: baseDocs(),
-    })
-    const Doc2 = {
-      ...Doc,
-      properties: { ...Doc.properties, name: { type: 'string', maxLength: 20 } },
-    }
-    const changes = [
-      ...ids('d', 300)
-        .slice(0, 40)
-        .map((id) => doc(id, 'renamed', { pic: 'f2' })),
-      ...ids('e', 30).map((id) => doc(id, 'new')),
-    ]
-    const deletes = ids('d', 300)
-      .slice(200, 205)
-      .map((id) => ({ type: 'Doc', id }))
-    const pa = await push(
-      h,
-      user,
-      paths.a,
-      { schemas: { Doc: Doc2 } },
-      changes,
-      'parallel',
-      deletes,
-    )
-    const pb = await push(h, user, paths.b, { schemas: { Doc: Doc2 } }, changes, 'serial', deletes)
-    expect(pa.status.status).toBe('committed')
-    expect(pb.status.status).toBe('committed')
-    expect(pa.parallel).toBe(true)
-    expect((await planOf(h, pa.sid)).types.Doc!.validate).toBe(true)
-    expect((await planKeys(h, pa.sid)).some((k) => k.includes('/validate/'))).toBe(true)
-    expect(await head(h, a.id)).toEqual(await head(h, b.id))
-  }, 30_000)
-
-  it('fails a commit whose records don’t fit the new schema, as the serial commit does', async () => {
-    const { h, user, paths } = await pair('bad', { schemas: { Doc }, records: baseDocs() })
-    const Doc2 = {
-      ...Doc,
-      properties: { ...Doc.properties, name: { type: 'string', maxLength: 6 } },
-    }
-    const one = [doc('zz', 'ok')]
-    const pa = await push(h, user, paths.a, { schemas: { Doc: Doc2 } }, one, 'parallel')
-    const pb = await push(h, user, paths.b, { schemas: { Doc: Doc2 } }, one, 'serial')
-    for (const p of [pa, pb]) {
-      expect(p.status.status).toBe('failed')
-      expect(p.status.error.error).toBe('Schema validation failed')
-    }
-    expect(pa.status.error.totalErrors).toBe(pb.status.error.totalErrors)
-    expect(pa.status.error.totalErrors).toBeGreaterThan(200)
-    expect(pa.status.error.validationErrors.length).toBe(100)
-  }, 30_000)
-
-  it('skips revalidation for a change that only relaxes the schema', async () => {
-    const { h, user, a, b, paths } = await pair('rel', { schemas: { Doc }, records: baseDocs() })
-    const looser = { ...Doc, required: [], description: 'Docs' }
-    const changes = ids('d', 300)
-      .slice(0, 60)
-      .map((id) => doc(id, 'x'))
-    const pa = await push(h, user, paths.a, { schemas: { Doc: looser } }, changes, 'parallel')
-    const pb = await push(h, user, paths.b, { schemas: { Doc: looser } }, changes, 'serial')
-    expect(pa.status.status).toBe('committed')
-    expect(pa.parallel).toBe(true)
-    expect((await planOf(h, pa.sid)).types.Doc!.validate).toBeUndefined()
-    expect((await planKeys(h, pa.sid)).some((k) => k.includes('/validate'))).toBe(false)
-    expect(pb.status.status).toBe('committed')
-    expect(await head(h, a.id)).toEqual(await head(h, b.id))
-  }, 30_000)
-
-  it('makes a type private by moving its tree, as the serial commit does', async () => {
-    const { h, user, a, b, paths } = await pair('priv', { schemas: { Doc }, records: baseDocs() })
-    const PrivateDoc = { ...Doc, private: true }
-    const changes = ids('d', 300)
-      .slice(100, 160)
-      .map((id) => doc(id, 'moved', { pic: 'f2' }))
-    const pa = await push(h, user, paths.a, { schemas: { Doc: PrivateDoc } }, changes, 'parallel')
-    const pb = await push(h, user, paths.b, { schemas: { Doc: PrivateDoc } }, changes, 'serial')
-    expect(pa.status.status).toBe('committed')
-    // Layout F copies a moved type's records into the other set's packs, in the serial build.
-    if (a.recordLayout === 'today') {
-      expect(pa.parallel).toBe(true)
-      expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPrivate')
-    } else expect(pa.parallel).toBe(false)
-    expect(pb.status.status).toBe('committed')
-    const ha = await head(h, a.id)
-    expect(ha).toEqual(await head(h, b.id))
-    expect(ha.public.types.Doc).toBeUndefined()
-    expect(ha.private?.types.Doc?.count).toBe(300)
-    // Every record of the moved type reads from its new set alone.
-    expect(await readsFrom(h, a.id, 'private', 'Doc', ha.private!.types.Doc!.root)).toBe(300)
-  }, 30_000)
-
-  it('makes a private type public by moving its tree, as the serial commit does', async () => {
-    const PrivateDoc = { ...Doc, private: true }
-    const { h, user, a, b, paths } = await pair('pub', {
-      schemas: { Doc: PrivateDoc },
-      records: baseDocs(),
-    })
-    const changes = ids('e', 40).map((id) => doc(id, 'public', { pic: 'f2' }))
-    const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
-    const pb = await push(h, user, paths.b, { schemas: { Doc } }, changes, 'serial')
-    expect(pa.status.status).toBe('committed')
-    if (a.recordLayout === 'today') {
-      expect(pa.parallel).toBe(true)
-      expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPublic')
-    } else expect(pa.parallel).toBe(false)
-    expect(pb.status.status).toBe('committed')
-    expect(pa.status.result.changes).toEqual(pb.status.result.changes)
-    const ha = await head(h, a.id)
-    expect(await readsFrom(h, a.id, 'public', 'Doc', ha.public.types.Doc!.root)).toBe(
-      ha.public.types.Doc!.count,
-    )
-    expect(ha).toEqual(await head(h, b.id))
-    expect(ha.public.types.Doc?.count).toBe(340)
-  }, 30_000)
-
-  it('keeps a type turning public with private records in the push serial', async () => {
-    const PrivateDoc = { ...Doc, private: true }
-    const { h, user, paths } = await pair('mixed', {
-      schemas: { Doc: PrivateDoc },
-      records: baseDocs().slice(0, 40),
-    })
-    const changes = [doc('k1', 'secret', { private: true }), doc('k2', 'open')]
-    const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
-    expect(pa.status.status).toBe('committed')
-    expect(pa.parallel).toBe(false)
-  })
-
-  it('removes a type, as the serial commit does', async () => {
-    const records = [
-      ...baseDocs(),
-      ...ids('n', 50).map((id) => ({ id, type: 'Note', data: { text: id } })),
-    ]
-    const { h, user, a, b, paths } = await pair('rm', { schemas: { Doc, Note }, records })
-    const changes = ids('d', 300)
-      .slice(0, 30)
-      .map((id) => doc(id, 'kept'))
-    const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
-    const pb = await push(h, user, paths.b, { schemas: { Doc } }, changes, 'serial')
-    expect(pa.status.status).toBe('committed')
-    expect(pa.parallel).toBe(true)
-    expect(pb.status.status).toBe('committed')
-    const ha = await head(h, a.id)
-    expect(ha).toEqual(await head(h, b.id))
-    expect(ha.public.types.Note).toBeUndefined()
-  }, 30_000)
-
-  it('counts revalidation as work: a small push that revalidates a large type goes parallel', async () => {
-    const { h, user, paths } = await pair('small', { schemas: { Doc }, records: baseDocs() })
-    const Doc2 = {
-      ...Doc,
-      properties: { ...Doc.properties, name: { type: 'string', maxLength: 50 } },
-    }
-    // Above the one record's bytes, below the type's.
-    Object.assign(parallelConfig, { aboveBytes: 2000 })
-    const sid = (
-      await json(
-        await h.request(`${paths.a}/push`, {
-          method: 'POST',
-          user,
-          json: { schemas: { Doc: Doc2 } },
-        }),
+describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")(
+  'schema and privacy changes in a parallel commit',
+  () => {
+    it('revalidates a changed schema in jobs, and builds what the serial commit builds', async () => {
+      const { h, user, a, b, paths } = await pair('sch', {
+        schemas: { Doc },
+        records: baseDocs(),
+      })
+      const Doc2 = {
+        ...Doc,
+        properties: { ...Doc.properties, name: { type: 'string', maxLength: 20 } },
+      }
+      const changes = [
+        ...ids('d', 300)
+          .slice(0, 40)
+          .map((id) => doc(id, 'renamed', { pic: 'f2' })),
+        ...ids('e', 30).map((id) => doc(id, 'new')),
+      ]
+      const deletes = ids('d', 300)
+        .slice(200, 205)
+        .map((id) => ({ type: 'Doc', id }))
+      const pa = await push(
+        h,
+        user,
+        paths.a,
+        { schemas: { Doc: Doc2 } },
+        changes,
+        'parallel',
+        deletes,
       )
-    ).session_id as string
-    await h.request(`${paths.a}/push/${sid}/records`, {
-      method: 'POST',
-      user,
-      ndjson: [doc('q', 'q')],
+      const pb = await push(
+        h,
+        user,
+        paths.b,
+        { schemas: { Doc: Doc2 } },
+        changes,
+        'serial',
+        deletes,
+      )
+      expect(pa.status.status).toBe('committed')
+      expect(pb.status.status).toBe('committed')
+      expect(pa.parallel).toBe(true)
+      expect((await planOf(h, pa.sid)).types.Doc!.validate).toBe(true)
+      expect((await planKeys(h, pa.sid)).some((k) => k.includes('/validate/'))).toBe(true)
+      expect(await head(h, a.id)).toEqual(await head(h, b.id))
+    }, 30_000)
+
+    it('fails a commit whose records don’t fit the new schema, as the serial commit does', async () => {
+      const { h, user, paths } = await pair('bad', { schemas: { Doc }, records: baseDocs() })
+      const Doc2 = {
+        ...Doc,
+        properties: { ...Doc.properties, name: { type: 'string', maxLength: 6 } },
+      }
+      const one = [doc('zz', 'ok')]
+      const pa = await push(h, user, paths.a, { schemas: { Doc: Doc2 } }, one, 'parallel')
+      const pb = await push(h, user, paths.b, { schemas: { Doc: Doc2 } }, one, 'serial')
+      for (const p of [pa, pb]) {
+        expect(p.status.status).toBe('failed')
+        expect(p.status.error.error).toBe('Schema validation failed')
+      }
+      expect(pa.status.error.totalErrors).toBe(pb.status.error.totalErrors)
+      expect(pa.status.error.totalErrors).toBeGreaterThan(200)
+      expect(pa.status.error.validationErrors.length).toBe(100)
+    }, 30_000)
+
+    it('skips revalidation for a change that only relaxes the schema', async () => {
+      const { h, user, a, b, paths } = await pair('rel', { schemas: { Doc }, records: baseDocs() })
+      const looser = { ...Doc, required: [], description: 'Docs' }
+      const changes = ids('d', 300)
+        .slice(0, 60)
+        .map((id) => doc(id, 'x'))
+      const pa = await push(h, user, paths.a, { schemas: { Doc: looser } }, changes, 'parallel')
+      const pb = await push(h, user, paths.b, { schemas: { Doc: looser } }, changes, 'serial')
+      expect(pa.status.status).toBe('committed')
+      expect(pa.parallel).toBe(true)
+      expect((await planOf(h, pa.sid)).types.Doc!.validate).toBeUndefined()
+      expect((await planKeys(h, pa.sid)).some((k) => k.includes('/validate'))).toBe(false)
+      expect(pb.status.status).toBe('committed')
+      expect(await head(h, a.id)).toEqual(await head(h, b.id))
+    }, 30_000)
+
+    it('makes a type private by moving its tree, as the serial commit does', async () => {
+      const { h, user, a, b, paths } = await pair('priv', { schemas: { Doc }, records: baseDocs() })
+      const PrivateDoc = { ...Doc, private: true }
+      const changes = ids('d', 300)
+        .slice(100, 160)
+        .map((id) => doc(id, 'moved', { pic: 'f2' }))
+      const pa = await push(h, user, paths.a, { schemas: { Doc: PrivateDoc } }, changes, 'parallel')
+      const pb = await push(h, user, paths.b, { schemas: { Doc: PrivateDoc } }, changes, 'serial')
+      expect(pa.status.status).toBe('committed')
+      // Layout F copies a moved type's records into the other set's packs, in the serial build.
+      if (a.recordLayout === 'today') {
+        expect(pa.parallel).toBe(true)
+        expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPrivate')
+      } else expect(pa.parallel).toBe(false)
+      expect(pb.status.status).toBe('committed')
+      const ha = await head(h, a.id)
+      expect(ha).toEqual(await head(h, b.id))
+      expect(ha.public.types.Doc).toBeUndefined()
+      expect(ha.private?.types.Doc?.count).toBe(300)
+      // Every record of the moved type reads from its new set alone.
+      expect(await readsFrom(h, a.id, 'private', 'Doc', ha.private!.types.Doc!.root)).toBe(300)
+    }, 30_000)
+
+    it('makes a private type public by moving its tree, as the serial commit does', async () => {
+      const PrivateDoc = { ...Doc, private: true }
+      const { h, user, a, b, paths } = await pair('pub', {
+        schemas: { Doc: PrivateDoc },
+        records: baseDocs(),
+      })
+      const changes = ids('e', 40).map((id) => doc(id, 'public', { pic: 'f2' }))
+      const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
+      const pb = await push(h, user, paths.b, { schemas: { Doc } }, changes, 'serial')
+      expect(pa.status.status).toBe('committed')
+      if (a.recordLayout === 'today') {
+        expect(pa.parallel).toBe(true)
+        expect((await planOf(h, pa.sid)).types.Doc!.move).toBe('toPublic')
+      } else expect(pa.parallel).toBe(false)
+      expect(pb.status.status).toBe('committed')
+      expect(pa.status.result.changes).toEqual(pb.status.result.changes)
+      const ha = await head(h, a.id)
+      expect(await readsFrom(h, a.id, 'public', 'Doc', ha.public.types.Doc!.root)).toBe(
+        ha.public.types.Doc!.count,
+      )
+      expect(ha).toEqual(await head(h, b.id))
+      expect(ha.public.types.Doc?.count).toBe(340)
+    }, 30_000)
+
+    it('keeps a type turning public with private records in the push serial', async () => {
+      const PrivateDoc = { ...Doc, private: true }
+      const { h, user, paths } = await pair('mixed', {
+        schemas: { Doc: PrivateDoc },
+        records: baseDocs().slice(0, 40),
+      })
+      const changes = [doc('k1', 'secret', { private: true }), doc('k2', 'open')]
+      const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
+      expect(pa.status.status).toBe('committed')
+      expect(pa.parallel).toBe(false)
     })
-    Object.assign(parallelConfig, { unitBytes: 4000, baseLevel: 0 })
-    const res = await h.request(`${paths.a}/push/${sid}/commit`, { method: 'POST', user })
-    expect(res.status).toBe(202)
-    await h.drain()
-    const status = await json(await h.request(`${paths.a}/push/${sid}`, { user }))
-    expect(status.status).toBe('committed')
-    expect((await planOf(h, sid)).types.Doc!.validate).toBe(true)
-  })
-})
+
+    it('removes a type, as the serial commit does', async () => {
+      const records = [
+        ...baseDocs(),
+        ...ids('n', 50).map((id) => ({ id, type: 'Note', data: { text: id } })),
+      ]
+      const { h, user, a, b, paths } = await pair('rm', { schemas: { Doc, Note }, records })
+      const changes = ids('d', 300)
+        .slice(0, 30)
+        .map((id) => doc(id, 'kept'))
+      const pa = await push(h, user, paths.a, { schemas: { Doc } }, changes, 'parallel')
+      const pb = await push(h, user, paths.b, { schemas: { Doc } }, changes, 'serial')
+      expect(pa.status.status).toBe('committed')
+      expect(pa.parallel).toBe(true)
+      expect(pb.status.status).toBe('committed')
+      const ha = await head(h, a.id)
+      expect(ha).toEqual(await head(h, b.id))
+      expect(ha.public.types.Note).toBeUndefined()
+    }, 30_000)
+
+    it('counts revalidation as work: a small push that revalidates a large type goes parallel', async () => {
+      const { h, user, paths } = await pair('small', { schemas: { Doc }, records: baseDocs() })
+      const Doc2 = {
+        ...Doc,
+        properties: { ...Doc.properties, name: { type: 'string', maxLength: 50 } },
+      }
+      // Above the one record's bytes, below the type's.
+      Object.assign(parallelConfig, { aboveBytes: 2000 })
+      const sid = (
+        await json(
+          await h.request(`${paths.a}/push`, {
+            method: 'POST',
+            user,
+            json: { schemas: { Doc: Doc2 } },
+          }),
+        )
+      ).session_id as string
+      await h.request(`${paths.a}/push/${sid}/records`, {
+        method: 'POST',
+        user,
+        ndjson: [doc('q', 'q')],
+      })
+      Object.assign(parallelConfig, { unitBytes: 4000, baseLevel: 0 })
+      const res = await h.request(`${paths.a}/push/${sid}/commit`, { method: 'POST', user })
+      expect(res.status).toBe(202)
+      await h.drain()
+      const status = await json(await h.request(`${paths.a}/push/${sid}`, { user }))
+      expect(status.status).toBe('committed')
+      expect((await planOf(h, sid)).types.Doc!.validate).toBe(true)
+    })
+  },
+)
