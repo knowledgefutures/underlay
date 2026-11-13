@@ -88,7 +88,7 @@ describe.skipIf(!onV3)('commit tracing (v3)', () => {
     })
     const status = await json(await h.request(`${base}/push/${sid}`, { user }))
     expect(status.status).toBe('committed')
-    expect(status.commit_step).toBe('v3.commit (done)')
+    expect(status.commit_step).toBe('v3.land')
     expect(status.commit_last_error).toBeNull()
 
     const steps = (at: string) => events.filter((e) => e.at === at).map((e) => e.step)
@@ -141,7 +141,7 @@ describe.skipIf(!onV3)('commit tracing (v3)', () => {
     expect(status.commit_last_error).toMatchObject({ step: 'v3.assets' })
   })
 
-  it('a nudge is logged, and starting a step dates progress without clearing nudges', async () => {
+  it('a nudge is logged, and the steps a nudged job passes again do not clear it', async () => {
     const { h, user, base } = await setup()
     const sid = await upload(h, user, base, 200)
     // Committing, with no job queued (as when the job is lost): the sweep nudges it.
@@ -159,10 +159,12 @@ describe.skipIf(!onV3)('commit tracing (v3)', () => {
       expect.objectContaining({ at: 'sweep', action: 'nudge', stalls: 1, session: sid }),
     )
     expect((await sessionRow(h, sid)).stalls).toBe(2)
-    // The nudged job commits: a step that ends clears the count.
+    // The nudged job commits; its steps dated progress as they went.
+    const before = Date.now()
     await commitEvents(() => h.drain().then(() => {}))
     const s = await sessionRow(h, sid)
     expect(s.status).toBe('committed')
-    expect(s.stalls).toBe(0)
+    expect(s.stalls).toBe(2)
+    expect(s.progressAt!.getTime()).toBeGreaterThanOrEqual(before)
   })
 })

@@ -70,6 +70,8 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'v3.uploadStage',
   'v3.uploadVerify',
   'v3.uploadLand',
+  // A key range of a large push session's files, built for its v3 commit (v3/session-build.ts).
+  'v3.sessionPart',
   // Layout F's merges after a commit.
   'layout.maintain',
   // Its reclaim, a key range a job (cleanup/layout-reclaim.ts), and merges too large for one job.
@@ -101,6 +103,8 @@ export const V3_POOLED_JOBS: ReadonlySet<string> = new Set([
   'v3.mergeUnit',
   // One key range of a type's offset index (v3/offsets.ts).
   'v3.offsetsRange',
+  // One key range of a push session's files: merged, checked against the head, written.
+  'v3.sessionPart',
 ])
 
 const handlers = new Map<string, JobHandler>()

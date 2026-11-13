@@ -19,6 +19,7 @@ import { eq } from 'drizzle-orm'
 import * as schema from '../src/db/schema.js'
 import { drainSqliteJobs } from '../src/jobs.js'
 import { traceConfig } from '../src/push/trace.js'
+import { sessionBuildConfig } from '../src/v3/session-build.js'
 import { harness } from '../test/harness.js'
 
 const [file, schemaFile, batchArg] = process.argv.slice(2)
@@ -27,6 +28,8 @@ if (!file || !schemaFile) {
   process.exit(2)
 }
 const batch = Number(batchArg ?? 5000)
+// PART_MB=N: build in parts of about N MB of run lines (v3/session-build.ts).
+if (process.env.PART_MB) sessionBuildConfig.partBytes = Number(process.env.PART_MB) * 1024 * 1024
 const raw = JSON.parse(await readFile(schemaFile, 'utf8'))
 const schemas = raw.schemas ?? raw
 

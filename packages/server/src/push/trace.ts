@@ -1,15 +1,17 @@
 /**
  * Where a commit is, for the logs and for the session's status. A commit job the platform
  * ends (CPU, memory or wall time) runs no handler and logs nothing, so each step says when
- * it starts, and a long step says how far it has got, both on the session (`commit_step`,
- * shown by the status route) and as a log event:
+ * it starts, and a long step says how far it has got, both on the session (`commit_step` and
+ * `commit_step_at`, shown by the status route) and as a log event:
  *
  *   { event: 'push.commit', session, step, at: 'start' | 'progress' | 'end' | 'error', ms, … }
  *
  * A step that throws records its error on the session (`commit_last_error`), kept after the
  * session settles. Starting a step or reporting progress dates `progress_at`, so the sweep
- * leaves a commit that is moving alone; only a step that ends clears the sweep's count of
- * nudges (push/recover.ts), so a job that dies at the same place every time still fails.
+ * leaves a commit that is moving alone. Neither clears the sweep's count of nudges
+ * (push/recover.ts): a nudged job passes its first steps again each time, so a job that
+ * dies at the same place every time must still fail. Only work that stays done clears it
+ * (a compaction, a part of a build).
  */
 import { and, eq } from 'drizzle-orm'
 
@@ -55,16 +57,10 @@ export function commitTrace(ports: Ports, sessionId: string): CommitTrace {
         const ms = Date.now() - started
         logCommit({ session: sessionId, step: name, at: 'end', ms })
         steps.pop()
-        // Back in the step that ran this one, if any: that is where the commit is now.
-        const outer = current()
-        await ports.db
-          .update(s)
-          .set({
-            commitStep: outer ? outer.name : `${name} (done)`,
-            progressAt: new Date(),
-            stalls: 0,
-          })
-          .where(committing)
+        // `commit_step` stays the last step started, or the last progress reported: a commit
+        // waiting on other jobs keeps saying how far they have got ("v3.parts: 3 of 14 parts
+        // built"), not that the job which queued them returned.
+        await ports.db.update(s).set({ progressAt: new Date() }).where(committing)
         return out
       } catch (err) {
         const ms = Date.now() - started

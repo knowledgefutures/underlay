@@ -17,14 +17,7 @@
  * is not there) is left out, and the rest give the counts the `versions` row needs, so
  * recording the commit costs what it changed.
  */
-import {
-  hashSchema,
-  jcs,
-  MissingFilesError,
-  recordCanonical,
-  sha256Hex,
-  v3,
-} from '@underlay/protocol'
+import { hashSchema, jcs, MissingFilesError, v3 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
@@ -32,13 +25,12 @@ import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { headBase } from '../push/delta.js'
 import { commitOutcome, type SessionCommitResult, settleSession } from '../push/outcome.js'
-import { mergeRuns, type RunEntry, runCount } from '../push/runs.js'
+import { mergeRuns, runCount } from '../push/runs.js'
 import { loadInputs, schemaSetError, sessionRuns, type SessionRow } from '../push/session.js'
 import { type CommitTrace, noTrace } from '../push/trace.js'
 import {
   type AssetData,
   assetsOf,
-  type CommitStats,
   emptyCommitStats,
   headView,
   lastRow,
@@ -58,6 +50,17 @@ import {
   startScan,
   tightenedTypes,
 } from './scans.js'
+import {
+  addStats,
+  type BuildProgress,
+  buildChecked,
+  type BuiltFile,
+  buildParts,
+  fmt,
+  partPlan,
+  runRow,
+  setPhase,
+} from './session-build.js'
 
 /**
  * Commit a session to its v3 collection: prepare the change here (the heavy part), then
@@ -155,76 +158,75 @@ async function prepareSession(
         : v3.rowFromRecord(v3.META_ID, v3.META_TYPE, metadata),
     )
   }
-  const assetRows = await trace.step('v3.assets', () =>
-    assetChanges(ports, session, collection.id, view, read, trace),
-  )
-  if ('missing' in assetRows) throw new MissingFilesError(assetRows.missing)
-  reserved.push(...assetRows.rows)
-  reserved.sort(v3.compareKey)
-
   // --- Every row, in key order, with no-ops left out and the counts kept ---
+  // A large session is built in key-range parts (session-build.ts), unless it drops a
+  // type, whose removals come from the head rather than the runs.
+  const plan =
+    dropped.length === 0 ? await partPlan(ports, session, runs, view?.version ?? 0) : null
   const stats = emptyCommitStats()
-  const assetSizes = assetRows.sizes
-  let rows = 0
-  // A chunk of rows at a time, each chunk's keys looked up in the head at once.
-  const judge = function* (
-    chunk: v3.LineRow[],
-    befores: ({ hash: string; size: number } | null)[],
-  ) {
-    for (const [i, row] of chunk.entries()) {
-      const before = befores[i] ?? null
-      if (row.kind === 'x' ? before === null : before?.hash === lineHash(row)) continue
-      count(stats, row, before, assetSizes)
-      rows++
-      yield row
-    }
-  }
-  // How far the pass has got: rows read from the runs, rows kept, and the files it has
-  // finished, in the session's status and the logs every `traceConfig.progressMs`.
-  // (The removals of a dropped type's records are not counted ahead.)
-  const total = reserved.length + runs.reduce((n, r) => n + runCount(r), 0)
-  let read_ = 0
-  let filesDone = 0
-  const report = (force = false) =>
-    trace.progress(
-      `${fmt(read_)} of ${fmt(total)} rows read, ${fmt(rows)} changed, ${filesDone} files`,
-      { rows_read: read_, rows_total: total, rows_changed: rows, files: filesDone },
-      force,
+  let files: BuiltFile[]
+  let rows: number
+  if (plan) {
+    const parts = await trace.step('v3.parts', () =>
+      buildParts(ports, session, plan, (detail, fields) => trace.progress(detail, fields, true)),
     )
-  const judged = async function* (): AsyncGenerator<v3.LineRow> {
-    let chunk: v3.LineRow[] = []
-    const flush = async () => {
-      const befores = view ? await v3.statesAt(store, view, chunk, read) : []
-      const out = [...judge(chunk, befores)]
-      read_ += chunk.length
-      chunk = []
-      await report()
-      return out
+    if (parts === 'waiting') return { status: 'parallel' }
+    await setPhase(ports, session.id, null)
+    const refs = new Set(parts.flatMap((p) => p.refs))
+    const assetRows = await trace.step('v3.assets', () =>
+      assetChanges(ports, session, collection.id, view, read, trace, refs),
+    )
+    if ('missing' in assetRows) throw new MissingFilesError(assetRows.missing)
+    reserved.push(...assetRows.rows)
+    reserved.sort(v3.compareKey)
+    // The reserved rows sort before every publisher type: their files come first.
+    const head = await trace.step('v3.build', () =>
+      buildChecked(ports, session.id, view, read, reserved, stats, assetRows.sizes),
+    )
+    files = [...head.files, ...parts.flatMap((p) => p.files)]
+    rows = head.rows
+    for (const p of parts) {
+      addStats(stats, p.stats)
+      rows += p.rows
     }
-    for await (const row of allRows(ports, session, runs, reserved, dropped, view, read)) {
-      chunk.push(row)
-      if (chunk.length >= 1024) yield* await flush()
-    }
-    if (chunk.length > 0) yield* await flush()
-  }
-  const target = v3.uploadTarget(store, session.id)
-  const counted: v3.FileTarget = {
-    begin: async () => {
-      const draft = await target.begin()
-      return {
-        ...draft,
-        keep: async (id: string) => {
-          await draft.keep(id)
-          filesDone++
+  } else {
+    const assetRows = await trace.step('v3.assets', () =>
+      assetChanges(ports, session, collection.id, view, read, trace),
+    )
+    if ('missing' in assetRows) throw new MissingFilesError(assetRows.missing)
+    reserved.push(...assetRows.rows)
+    reserved.sort(v3.compareKey)
+    // How far the pass has got: rows read from the runs, rows kept, and the files it has
+    // finished, in the session's status and the logs every `traceConfig.progressMs`.
+    // (The removals of a dropped type's records are not counted ahead.)
+    const total = reserved.length + runs.reduce((n, r) => n + runCount(r), 0)
+    const report = (p: BuildProgress, force = false) =>
+      trace.progress(
+        `${fmt(p.read)} of ${fmt(total)} rows read, ${fmt(p.rows)} changed, ${p.files} files`,
+        { rows_read: p.read, rows_total: total, rows_changed: p.rows, files: p.files },
+        force,
+      )
+    let last: BuildProgress = { read: 0, rows: 0, files: 0 }
+    const built = await trace.step('v3.build', async () => {
+      const out = await buildChecked(
+        ports,
+        session.id,
+        view,
+        read,
+        allRows(ports, session, runs, reserved, dropped, view, read),
+        stats,
+        assetRows.sizes,
+        (p) => {
+          last = p
+          return report(p)
         },
-      } as typeof draft
-    },
+      )
+      await report({ ...last, files: out.files.length }, true)
+      return out
+    })
+    files = built.files
+    rows = built.rows
   }
-  const files = await trace.step('v3.build', async () => {
-    const out = await v3.buildFiles(judged(), counted)
-    await report(true)
-    return out
-  })
   if (rows === 0) return { status: 'no_changes', versionHash: base?.hash ?? '' }
 
   const change = await v3.makeChange(cid, {
@@ -310,10 +312,7 @@ scanFinished.push = async (ports, state, problems) => {
 }
 
 const compare = (a: string, b: string) => v3.compareKeys(a, '', b, '')
-const fmt = (n: number) => n.toLocaleString('en-US')
-const enc = new TextEncoder()
 const canonical = (v: unknown) => (v === null || v === undefined ? null : jcs(v))
-const lineHash = (row: v3.LineRow) => sha256Hex(row.line)
 
 /** A commit names files by what a commit needs of them (buildFiles adds more). */
 const refOf = (f: v3.FileRef): v3.FileRef => ({
@@ -334,40 +333,6 @@ export async function ensureCollection(store: Ports['stores']['v3'], id: string)
   } catch (err) {
     // Another commit wrote it first.
     if (!(err instanceof v3.CollectionError)) throw err
-  }
-}
-
-/** Add one row's effect to the commit's counts. */
-function count(
-  s: CommitStats,
-  row: v3.LineRow,
-  before: { hash: string; size: number } | null,
-  assetSizes: Map<string, number>,
-) {
-  if (row.type === v3.ASSET_TYPE) {
-    const size = assetSizes.get(row.id) ?? 0
-    if (row.kind === 'x') {
-      s.assetsDelta--
-      s.assetBytesDelta -= size
-    } else if (!before) {
-      s.assetsDelta++
-      s.assetBytesDelta += size
-    }
-    return
-  }
-  if (row.type.startsWith('$')) return
-  const size = enc.encode(row.line).byteLength
-  if (row.kind === 'x') {
-    s.typeDelta[row.type] = (s.typeDelta[row.type] ?? 0) - 1
-    s.recordBytesDelta -= before!.size
-    s.changes.removed++
-  } else if (before) {
-    s.recordBytesDelta += size - before.size
-    s.changes.updated++
-  } else {
-    s.typeDelta[row.type] = (s.typeDelta[row.type] ?? 0) + 1
-    s.recordBytesDelta += size
-    s.changes.added++
   }
 }
 
@@ -399,12 +364,6 @@ async function* allRows(
   for await (const [row] of v3.mergeSorted([fromRuns, removals], v3.compareKey)) yield row
 }
 
-/** A run entry as a row: a record's canonical line is the v3 record line. */
-function runRow(e: RunEntry): v3.LineRow {
-  if (e.x) return v3.removalRow(e.k, e.t)
-  return { kind: 'r', type: e.t, id: e.k, line: e.b ?? recordCanonical(e.k, e.t, null) }
-}
-
 /**
  * The session's asset changes: a `$asset` row for each file it declares (`files.add`) or
  * its records reference that the head does not name, and a removal for each it removes
@@ -419,12 +378,15 @@ async function assetChanges(
   view: v3.View | null,
   read: v3.ReadOptions,
   trace: CommitTrace = noTrace,
+  /** The files the session's records reference, if known (a build in parts collects them). */
+  refs?: Set<string>,
 ): Promise<{ rows: v3.LineRow[]; sizes: Map<string, number> } | { missing: string[] }> {
   const store = ports.stores.v3
   const inputs = await loadInputs(ports, session.id)
   const wanted = new Set(inputs.files && 'add' in inputs.files ? inputs.files.add : [])
+  for (const h of refs ?? []) wanted.add(h)
   // Files the session's records reference (`r` on each run entry, read at upload).
-  const recordRuns = await sessionRuns(ports, session.id, 'records')
+  const recordRuns = refs ? [] : await sessionRuns(ports, session.id, 'records')
   const total = recordRuns.reduce((n, r) => n + runCount(r), 0)
   let seen = 0
   for (const ix of recordRuns) {

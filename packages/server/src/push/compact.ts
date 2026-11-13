@@ -161,7 +161,9 @@ export async function compactForCommit(
     rows = await runList()
   }
   if (rows.length <= compactConfig.commitRuns) {
-    if (phase !== null) await setPhase(ports, session.id, null)
+    // Only its own phase: a v3 build in parts keeps its (v3/session-build.ts), and with it
+    // the sweep's count of nudges.
+    if (phase === 'compacting') await setPhase(ports, session.id, null)
     return 'ready'
   }
   const inFlight = new Set(rows.filter((r) => r.mergingInto !== null).map((r) => r.mergingInto))
