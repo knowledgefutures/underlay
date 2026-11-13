@@ -277,12 +277,27 @@ export default {
     }
     const pool = Number(env.V3_POOL_SIZE ?? 0)
     const run = async (msg: (typeof batch.messages)[number]) => {
+      // A bulk job logs its start and end: one the platform ends (CPU, memory, wall
+      // time) runs no catch, and shows as a start with no end (push/trace.ts).
+      const started = Date.now()
+      const traced = isBulk(msg.body.type) && !V3_POOLED_JOBS.has(msg.body.type)
+      const tag = {
+        event: 'job',
+        type: msg.body.type,
+        attempt: msg.attempts,
+        isolate: isolateTag(),
+      }
+      const sessionId = (msg.body as { sessionId?: unknown }).sessionId
+      if (traced) console.log({ ...tag, at: 'start', session: sessionId ?? null })
       try {
         if (env.POOL && pool > 0 && V3_POOLED_JOBS.has(msg.body.type))
           await pooled(env.POOL, pool, msg.body)
         else await runJob(msg.body, ports)
+        if (traced) console.log({ ...tag, at: 'end', ms: Date.now() - started })
         msg.ack()
       } catch (err) {
+        if (traced)
+          console.log({ ...tag, at: 'error', ms: Date.now() - started, error: String(err) })
         console.error(
           `[jobs] ${isolateTag()} ${msg.body.type} failed (attempt ${msg.attempts}):`,
           err,

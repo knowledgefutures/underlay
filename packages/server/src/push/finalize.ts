@@ -24,6 +24,7 @@ import {
 } from './outcome.js'
 import { resumeParallel } from './parallel.js'
 import { getSession, type SessionRow } from './session.js'
+import { commitTrace } from './trace.js'
 
 export type { Outcome } from './outcome.js'
 
@@ -33,22 +34,28 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
   // Only a committing session commits: a job delivered again after the session
   // settled, or reopened after "Missing files", reports what's recorded.
   if (session.status !== 'committing') return recorded(session)
+  const trace = commitTrace(ports, sessionId)
   // A parallel commit already planned: make sure its jobs are queued, and wait.
   if (session.commitPlan) {
-    await resumeParallel(ports, session)
+    await trace.step('parallel.resume', () => resumeParallel(ports, session))
     return pendingOutcome(sessionId)
   }
   // Too many runs for one commit to read: compact them first. The last
   // compaction queues this job again.
-  if ((await compactForCommit(ports, session)) === 'waiting') return pendingOutcome(sessionId)
+  const compacted = await trace.step('compact.check', () => compactForCommit(ports, session))
+  if (compacted === 'waiting') return pendingOutcome(sessionId)
   // The change streams are rebuilt from the session's runs on each attempt. A v3
   // collection's commit is the library's, through the commit queue (v3/commit.ts); v2's
   // storage fence does not apply to the v3 area.
   const onV3 = (await ports.stores.layoutOf(session.collectionId)) === 'v3'
   const outcome = await commitOutcome(ports, sessionId, () =>
     onV3
-      ? commitV3Session(ports, session)
-      : fenced<SessionCommitResult>(ports.db, (fence) => commitDeltaSession(ports, session, fence)),
+      ? trace.step('v3.commit', () => commitV3Session(ports, session, trace))
+      : trace.step('v2.commit', () =>
+          fenced<SessionCommitResult>(ports.db, (fence) =>
+            commitDeltaSession(ports, session, fence),
+          ),
+        ),
   )
   if (await settleSession(ports, sessionId, outcome)) return outcome
   // Another run settled it first: its outcome is the session's.

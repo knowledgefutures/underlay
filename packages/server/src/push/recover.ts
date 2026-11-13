@@ -26,6 +26,7 @@ import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { topUpUnits, unitLimits } from './parallel.js'
 import { transition } from './session.js'
+import { logCommit } from './trace.js'
 
 export const recoverConfig = {
   /** A commit step with no progress for this long is stale. */
@@ -46,6 +47,39 @@ async function fail(ports: Ports, sessionId: string, error: string) {
     commitPhase: null,
   })
   console.error(`[push] commit of session ${sessionId} failed: ${error}`)
+}
+
+type StuckSession = typeof schema.pushSessions.$inferSelect
+
+/** What the sweep found of a commit that stopped moving, and what it did about it. */
+function logSweep(session: StuckSession, action: string, extra: Record<string, unknown> = {}) {
+  logCommit({
+    session: session.id,
+    at: 'sweep',
+    action,
+    phase: session.commitPhase,
+    step: session.commitStep,
+    step_started_at: session.commitStepAt?.toISOString() ?? null,
+    progress_at: session.progressAt?.toISOString() ?? null,
+    finalize_started_at: session.finalizeStartedAt?.toISOString() ?? null,
+    stalls: session.stalls,
+    plan: session.commitPlan,
+    last_error: session.commitLastError?.message ?? null,
+    ...extra,
+  })
+}
+
+/** Where a stalled commit last was, for its error: its step, and how long ago it moved. */
+function lastSeen(session: StuckSession): string {
+  const parts: string[] = []
+  if (session.commitStep) parts.push(`last step: ${session.commitStep}`)
+  if (session.progressAt)
+    parts.push(
+      `last progress ${Math.round((Date.now() - session.progressAt.getTime()) / 60_000)} min ago`,
+    )
+  if (session.commitLastError)
+    parts.push(`last error in ${session.commitLastError.step}: ${session.commitLastError.message}`)
+  return parts.length > 0 ? ` (${parts.join('; ')})` : ''
 }
 
 export async function recoverCommits(ports: Ports): Promise<void> {
@@ -87,6 +121,13 @@ export async function recoverCommits(ports: Ports): Promise<void> {
   }
   for (const c of lost) {
     if (moving.has(c.sessionId)) continue
+    console.log({
+      event: 'push.commit',
+      session: c.sessionId,
+      at: 'sweep',
+      action: 'requeue-compaction',
+      seq: c.seq,
+    })
     await db
       .update(runs)
       .set({ claimedAt: new Date() })
@@ -120,6 +161,7 @@ export async function recoverCommits(ports: Ports): Promise<void> {
       )
       if (spent) {
         const range = `(${spent.after ?? 'start'}, ${spent.through ?? 'end'}]`
+        logSweep(session, 'fail-unit', { unit: spent.id, attempts: spent.attempts })
         await fail(
           ports,
           session.id,
@@ -129,6 +171,7 @@ export async function recoverCommits(ports: Ports): Promise<void> {
       }
       // Units still waiting for room in the user's windows: alive, just queued.
       if (pending.some((x) => x.queuedAt === null)) {
+        logSweep(session, 'waiting-window', { pending: pending.length })
         await db.update(s).set({ progressAt: new Date(), stalls: 0 }).where(eq(s.id, session.id))
         await topUpUnits(ports, session.userId)
         continue
@@ -145,13 +188,15 @@ export async function recoverCommits(ports: Ports): Promise<void> {
               : session.commitPlan
                 ? 'committing in parallel'
                 : 'committing'
+      logSweep(session, 'fail')
       await fail(
         ports,
         session.id,
-        `The commit stopped making progress while ${where}. Push again; if it repeats, report this session.`,
+        `The commit stopped making progress while ${where}${lastSeen(session)}. Push again; if it repeats, report this session.`,
       )
       continue
     }
+    logSweep(session, 'nudge')
     await db
       .update(s)
       .set({ progressAt: new Date(), stalls: session.stalls + 1 })

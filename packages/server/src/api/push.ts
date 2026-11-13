@@ -138,6 +138,8 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
   const head = body.rebase === true ? await headBase(ports, session.collectionId) : undefined
   const rebased =
     head === undefined ? {} : { baseVersionId: head?.id ?? null, baseSemver: head?.semver ?? null }
+  // Each commit attempt traces its own steps (push/trace.ts).
+  const freshTrace = { commitStep: null, commitStepAt: null, commitLastError: null }
   const started = retryable(session)
     ? // A commit that failed on the server's side goes again, from the session's
       // uploads (still in storage) and a fresh plan.
@@ -145,6 +147,7 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
         finalizeStartedAt: new Date(),
         commitStarted: true,
         error: null,
+        ...freshTrace,
         commitPlan: null,
         commitPhase: null,
         assemblyLease: null,
@@ -158,6 +161,7 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
         finalizeStartedAt: new Date(),
         commitStarted: true,
         error: null,
+        ...freshTrace,
         ...rebased,
       })
   if (!started) {
@@ -260,6 +264,11 @@ async function statusBody(ports: Ports, s: SessionRow) {
     overlapping_uploads: s.overlappingUploads,
     result: s.result ?? null,
     error: s.error ?? null,
+    // Where the commit last was, and the last error a step threw (push/trace.ts): kept
+    // after the session settles, so a failed or stalled commit says where it stopped.
+    commit_step: s.commitStep,
+    commit_step_started_at: s.commitStepAt,
+    commit_last_error: s.commitLastError ?? null,
   }
   if (s.status !== 'open' && s.status !== 'committing') return body
   const r = schema.pushRuns
@@ -284,8 +293,10 @@ async function statusBody(ports: Ports, s: SessionRow) {
       run_bytes: Number(runs?.bytes ?? 0),
       runs_compacting: compacting?.n ?? 0,
       phase,
+      step: s.commitStep,
       units,
       progress_at: s.progressAt,
+      stalls: s.stalls,
     },
   }
 }

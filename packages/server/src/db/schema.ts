@@ -785,6 +785,15 @@ export const pushSessions = sqliteTable(
     progressAt: ts('progress_at'),
     /** Nudges since the last progress; past a few the commit fails (push/recover.ts). */
     stalls: integer('stalls').notNull().default(0),
+    /**
+     * The commit step last started (push/trace.ts), with how far it had got at its last
+     * report ("v3.prepare: 1,200,000 rows"), and when the step started. A job the
+     * platform ends (CPU, memory, wall time) runs no handler, so this is where it stopped.
+     */
+    commitStep: text('commit_step'),
+    commitStepAt: ts('commit_step_at'),
+    /** The last error a commit step threw, kept after the session settles. */
+    commitLastError: json<{ step: string; message: string; at: string }>('commit_last_error'),
     /** A parallel commit's plan (push/parallel.ts): set once, when its units are queued. */
     commitPlan: text('commit_plan'),
     /** Held by the `commit.assemble` job while it runs (one assembler at a time). */

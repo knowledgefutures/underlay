@@ -32,8 +32,9 @@ import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 import { headBase } from '../push/delta.js'
 import { commitOutcome, type SessionCommitResult, settleSession } from '../push/outcome.js'
-import { mergeRuns, type RunEntry } from '../push/runs.js'
+import { mergeRuns, type RunEntry, runCount } from '../push/runs.js'
 import { loadInputs, schemaSetError, sessionRuns, type SessionRow } from '../push/session.js'
+import { type CommitTrace, noTrace } from '../push/trace.js'
 import {
   type AssetData,
   assetsOf,
@@ -65,10 +66,11 @@ import {
 export async function commitV3Session(
   ports: Ports,
   session: SessionRow,
+  trace: CommitTrace = noTrace,
 ): Promise<SessionCommitResult> {
-  const prepared = await prepareSession(ports, session)
+  const prepared = await prepareSession(ports, session, trace)
   if ('status' in prepared) return prepared
-  const landed = await commitsOf(ports).land(ports, prepared.landing)
+  const landed = await trace.step('v3.land', () => commitsOf(ports).land(ports, prepared.landing))
   return settled(ports, session.collectionId, landed, prepared.written)
 }
 
@@ -95,11 +97,12 @@ async function settled(
 async function prepareSession(
   ports: Ports,
   session: SessionRow,
+  trace: CommitTrace,
 ): Promise<SessionCommitResult | { landing: Landing; written: string[] }> {
   const store = ports.stores.v3
   const cid = session.collectionId
   // D1 catches up with the bucket first, so the base check below sees every commit.
-  await syncCatalog(ports, cid)
+  await trace.step('v3.sync', () => syncCatalog(ports, cid))
   const base = await headBase(ports, cid)
   if ((base?.id ?? null) !== session.baseVersionId) {
     return { status: 'base_moved', current: base?.semver ?? null }
@@ -152,7 +155,9 @@ async function prepareSession(
         : v3.rowFromRecord(v3.META_ID, v3.META_TYPE, metadata),
     )
   }
-  const assetRows = await assetChanges(ports, session, collection.id, view, read)
+  const assetRows = await trace.step('v3.assets', () =>
+    assetChanges(ports, session, collection.id, view, read, trace),
+  )
   if ('missing' in assetRows) throw new MissingFilesError(assetRows.missing)
   reserved.push(...assetRows.rows)
   reserved.sort(v3.compareKey)
@@ -174,12 +179,26 @@ async function prepareSession(
       yield row
     }
   }
+  // How far the pass has got: rows read from the runs, rows kept, and the files it has
+  // finished, in the session's status and the logs every `traceConfig.progressMs`.
+  // (The removals of a dropped type's records are not counted ahead.)
+  const total = reserved.length + runs.reduce((n, r) => n + runCount(r), 0)
+  let read_ = 0
+  let filesDone = 0
+  const report = (force = false) =>
+    trace.progress(
+      `${fmt(read_)} of ${fmt(total)} rows read, ${fmt(rows)} changed, ${filesDone} files`,
+      { rows_read: read_, rows_total: total, rows_changed: rows, files: filesDone },
+      force,
+    )
   const judged = async function* (): AsyncGenerator<v3.LineRow> {
     let chunk: v3.LineRow[] = []
     const flush = async () => {
       const befores = view ? await v3.statesAt(store, view, chunk, read) : []
       const out = [...judge(chunk, befores)]
+      read_ += chunk.length
       chunk = []
+      await report()
       return out
     }
     for await (const row of allRows(ports, session, runs, reserved, dropped, view, read)) {
@@ -188,7 +207,24 @@ async function prepareSession(
     }
     if (chunk.length > 0) yield* await flush()
   }
-  const files = await v3.buildFiles(judged(), v3.uploadTarget(store, session.id))
+  const target = v3.uploadTarget(store, session.id)
+  const counted: v3.FileTarget = {
+    begin: async () => {
+      const draft = await target.begin()
+      return {
+        ...draft,
+        keep: async (id: string) => {
+          await draft.keep(id)
+          filesDone++
+        },
+      } as typeof draft
+    },
+  }
+  const files = await trace.step('v3.build', async () => {
+    const out = await v3.buildFiles(judged(), counted)
+    await report(true)
+    return out
+  })
   if (rows === 0) return { status: 'no_changes', versionHash: base?.hash ?? '' }
 
   const change = await v3.makeChange(cid, {
@@ -198,9 +234,11 @@ async function prepareSession(
   })
   // The server built these files itself from rows it checked: install them now, so the
   // landing only commits.
-  await v3.inParallel(
-    files.map((f) => () => v3.installUpload(store, session.id, f.id)),
-    16,
+  await trace.step('v3.install', () =>
+    v3.inParallel(
+      files.map((f) => () => v3.installUpload(store, session.id, f.id)),
+      16,
+    ),
   )
   const records = stats.changes.added + stats.changes.removed + stats.changes.updated
   const landing: Landing = {
@@ -224,7 +262,7 @@ async function prepareSession(
     const units = await scanUnits(ports, view, tight)
     const records = tight.reduce((n, t) => n + (headCounts[t.type] ?? 0), 0)
     if (records <= scanConfig.inlineRecords) {
-      const problems = await scanInline(ports, view, upload, units)
+      const problems = await trace.step('v3.scan', () => scanInline(ports, view, upload, units))
       if (problems.length > 0) return invalid(problems)
     } else {
       await ports.stores.internal.put(landingKey(session.id), JSON.stringify(landing))
@@ -272,6 +310,7 @@ scanFinished.push = async (ports, state, problems) => {
 }
 
 const compare = (a: string, b: string) => v3.compareKeys(a, '', b, '')
+const fmt = (n: number) => n.toLocaleString('en-US')
 const enc = new TextEncoder()
 const canonical = (v: unknown) => (v === null || v === undefined ? null : jcs(v))
 const lineHash = (row: v3.LineRow) => sha256Hex(row.line)
@@ -379,14 +418,23 @@ async function assetChanges(
   collectionId: string,
   view: v3.View | null,
   read: v3.ReadOptions,
+  trace: CommitTrace = noTrace,
 ): Promise<{ rows: v3.LineRow[]; sizes: Map<string, number> } | { missing: string[] }> {
   const store = ports.stores.v3
   const inputs = await loadInputs(ports, session.id)
   const wanted = new Set(inputs.files && 'add' in inputs.files ? inputs.files.add : [])
   // Files the session's records reference (`r` on each run entry, read at upload).
-  for (const ix of await sessionRuns(ports, session.id, 'records')) {
+  const recordRuns = await sessionRuns(ports, session.id, 'records')
+  const total = recordRuns.reduce((n, r) => n + runCount(r), 0)
+  let seen = 0
+  for (const ix of recordRuns) {
     for await (const e of mergeRuns(ports.stores.internal, session.id, [ix])) {
       for (const h of e.r ?? []) wanted.add(h)
+      if (++seen % 4096 === 0)
+        await trace.progress(`${fmt(seen)} of ${fmt(total)} rows read for files`, {
+          rows_read: seen,
+          rows_total: total,
+        })
     }
   }
   const removed = (inputs.files && 'remove' in inputs.files ? inputs.files.remove : []).filter(
