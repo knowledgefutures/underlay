@@ -103,7 +103,7 @@ export async function scanUnits(
 export async function scanInline(
   ports: Ports,
   view: v3.View,
-  upload: { files: v3.FileRef[]; session: string },
+  upload: { files: v3.FileRef[]; session: string; sessions?: Record<string, string> },
   units: ScanUnit[],
 ): Promise<string[]> {
   const problems: string[] = []
@@ -119,14 +119,17 @@ export async function scanInline(
 async function scanOne(
   ports: Ports,
   view: v3.View,
-  upload: { files: v3.FileRef[]; session: string },
+  upload: { files: v3.FileRef[]; session: string; sessions?: Record<string, string> },
   u: ScanUnit,
   cache: v3.FileCache,
 ): Promise<string[]> {
   const r = await v3.scanUnderSchema(
     ports.stores.v3,
     view,
-    { files: upload.files, locate: (id) => v3.uploadKey(upload.session, id) },
+    {
+      files: upload.files,
+      locate: (id) => v3.uploadKey(upload.sessions?.[id] ?? upload.session, id),
+    },
     u.type,
     u.schema,
     {
@@ -148,7 +151,7 @@ export interface ScanState {
   collectionId: string
   /** The version scanned: the head the change is prepared against. */
   version: number
-  upload: { files: v3.FileRef[]; session: string }
+  upload: { files: v3.FileRef[]; session: string; sessions?: Record<string, string> }
   units: ScanUnit[]
   then: ScanThen
 }

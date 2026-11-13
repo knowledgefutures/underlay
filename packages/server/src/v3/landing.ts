@@ -34,6 +34,8 @@ export interface Landing {
   collectionId: string
   /** The upload session the change's files came in (installed already; cleared after). */
   session: string
+  /** Each file's session, when they came in several (a large client-built upload's copies). */
+  sessions?: Record<string, string>
   /** The kind of change, for the semver (protocol-v3 4.4), as its preparer found it. */
   bump: 'major' | 'minor' | 'patch'
   change: v3.Change
@@ -135,7 +137,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const step = (i: number) => at[i + 1]! - at[i]!
   // The upload's own copies, now stored under their ids: cleared (the sweep would, a day on).
   await v3.inParallel(
-    files.map((f) => () => store.delete(v3.uploadKey(l.session, f.id))),
+    files.map((f) => () => store.delete(v3.uploadKey(l.sessions?.[f.id] ?? l.session, f.id))),
     16,
   )
   console.log(

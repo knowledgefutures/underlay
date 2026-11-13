@@ -66,6 +66,8 @@ export const BULK_JOBS: ReadonlySet<string> = new Set([
   'v3.scanUnit',
   // v3 client-built uploads (v3/uploads.ts): a verify hashes a whole file.
   'v3.uploadPrepare',
+  // A slice of a large upload's files copied out of the client's reach before checking.
+  'v3.uploadStage',
   'v3.uploadVerify',
   'v3.uploadLand',
   // Layout F's merges after a commit.

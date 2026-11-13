@@ -101,43 +101,143 @@ export type UploadRow = typeof schema.v3Uploads.$inferSelect
 
 export const uploadObjectKey = (upload: string, fileId: string) => v3.uploadKey(upload, fileId)
 
-/** Which session of the server's own a commit's files were copied into, to be checked there. */
-const stageKey = (upload: string) => `v3-uploads/${upload}/stage.json`
+/**
+ * Where a commit's files were copied to be checked: the server's own sessions, which no
+ * client is handed a URL under. `files` names, for each file, the session holding its copy
+ * (a large commit is copied by many jobs, each into its own session); without it, every file
+ * is in `session` (as a small commit, and commits staged before, have it).
+ */
+export interface Stage {
+  session: string
+  files?: Record<string, string>
+}
+/** The session holding a file's checked copy. */
+export const stagedIn = (stage: Stage, fileId: string) => stage.files?.[fileId] ?? stage.session
 
-/** The session an upload's files are checked and installed from, or null before they are taken. */
-async function stageOf(ports: Ports, upload: string): Promise<string | null> {
+const stageKey = (upload: string) => `v3-uploads/${upload}/stage.json`
+/** A file's claim: the first job to copy it names its session here; no copy is written twice. */
+const claimKey = (upload: string, fileId: string) => `v3-uploads/${upload}/staged/${fileId}.json`
+/** Created by the one job that finds every file copied, which then queues prepare again. */
+const stagedDoneKey = (upload: string) => `v3-uploads/${upload}/staged.done`
+
+export const stageConfig = {
+  /** Files a large commit's jobs copy each: 2,124 files of ~100 MB are 34 jobs. */
+  slice: 64,
+}
+
+/** Where an upload's files are checked and installed from, or null before they are all copied. */
+async function stageOf(ports: Ports, upload: string): Promise<Stage | null> {
   const obj = await ports.stores.internal.get(stageKey(upload))
-  return obj ? (JSON.parse(await obj.text()) as { session: string }).session : null
+  return obj ? (JSON.parse(await obj.text()) as Stage) : null
+}
+
+/** Each copied file's session, from its claim. */
+async function claimedFiles(ports: Ports, upload: string): Promise<Map<string, string>> {
+  const internal = ports.stores.internal
+  const prefix = `v3-uploads/${upload}/staged/`
+  const keys: string[] = []
+  let cursor: string | undefined
+  do {
+    const page = await internal.list(prefix, cursor)
+    keys.push(...page.keys)
+    cursor = page.cursor ?? undefined
+  } while (cursor)
+  const out = new Map<string, string>()
+  await v3.inParallel(
+    keys.map((k) => async () => {
+      const obj = await internal.get(k)
+      if (!obj) return
+      const id = k.slice(k.lastIndexOf('/') + 1).replace(/\.json$/, '')
+      out.set(id, (JSON.parse(await obj.text()) as { session: string }).session)
+    }),
+    32,
+  )
+  return out
 }
 
 /**
- * Take a commit's files out of the client's reach: copy each from where the client sent it
- * into a new session only this job writes, then name that session for the upload, created
- * only if absent. Of two jobs preparing one upload at once, both use the session of the one
- * that named its first, so a file there is written once and never changes. Returns the
- * session, or the files the client has not sent.
+ * Copy some of an upload's files out of the client's reach, into a new session only this
+ * call writes, and claim each (created only if absent). A file another job claimed first is
+ * skipped; one whose claim this call loses keeps its first copy. So each file is checked and
+ * installed from one copy, written once, which a slow or repeated job cannot change.
+ */
+async function stageSlice(ports: Ports, upload: string, ids: string[]) {
+  const store = ports.stores.v3
+  const internal = ports.stores.internal
+  const session = v3.newSession()
+  await v3.inParallel(
+    ids.map((id) => async () => {
+      if (await internal.head(claimKey(upload, id))) return
+      await copyObject(store, uploadObjectKey(upload, id), v3.uploadKey(session, id))
+      await createObject(internal, claimKey(upload, id), JSON.stringify({ session }))
+    }),
+    16,
+  )
+}
+
+/** Name every file's copy for the upload, created only if absent; the stage in force. */
+async function sealStage(ports: Ports, upload: string, claimed: Map<string, string>) {
+  const files = Object.fromEntries(claimed)
+  const stage: Stage = { session: claimed.values().next().value ?? v3.newSession(), files }
+  await createObject(ports.stores.internal, stageKey(upload), JSON.stringify(stage))
+  return (await stageOf(ports, upload)) ?? stage
+}
+
+/**
+ * Take a commit's files out of the client's reach before anything reads them: the stage
+ * once every file is copied; or, for a commit of more than `stageConfig.slice` files not
+ * copied yet, `staging` (jobs of that many files each are queued, the last to finish queues
+ * prepare again); or the files the client has not sent. One job copying every file of a
+ * large commit took longer than a job may run, and its retries copied them all again.
  */
 async function stageFiles(
   ports: Ports,
   upload: string,
   files: v3.FileRef[],
-): Promise<{ session: string } | { absent: string[] }> {
-  const store = ports.stores.v3
+): Promise<{ stage: Stage } | { absent: string[] } | { staging: number }> {
   const staged = await stageOf(ports, upload)
-  if (staged) return { session: staged }
+  if (staged) return { stage: staged }
   const present = new Set(await presentFiles(ports, upload))
   const absent = files.filter((f) => !present.has(f.id)).map((f) => f.id)
   if (absent.length > 0) return { absent }
-  const session = v3.newSession()
-  await v3.inParallel(
-    files.map(
-      (f) => () => copyObject(store, uploadObjectKey(upload, f.id), v3.uploadKey(session, f.id)),
-    ),
-    16,
-  )
-  await createObject(ports.stores.internal, stageKey(upload), JSON.stringify({ session }))
-  return { session: (await stageOf(ports, upload)) ?? session }
+  let claimed = await claimedFiles(ports, upload)
+  const todo = files.filter((f) => !claimed.has(f.id)).map((f) => f.id)
+  if (todo.length > stageConfig.slice) {
+    const jobs: JobMessage[] = []
+    for (let i = 0; i < todo.length; i += stageConfig.slice)
+      jobs.push({
+        type: 'v3.uploadStage',
+        uploadId: upload,
+        files: todo.slice(i, i + stageConfig.slice).join(','),
+      })
+    await ports.jobs.enqueueBatch(jobs)
+    return { staging: todo.length }
+  }
+  if (todo.length > 0) {
+    await stageSlice(ports, upload, todo)
+    claimed = await claimedFiles(ports, upload)
+  }
+  return { stage: await sealStage(ports, upload, claimed) }
 }
+
+registerJob('v3.uploadStage', async (job, ports) => {
+  const upload = await getUpload(ports, String(job.uploadId))
+  if (!upload || upload.status !== 'verifying' || (await stageOf(ports, upload.id))) return
+  await stageSlice(
+    ports,
+    upload.id,
+    String(job.files ?? '')
+      .split(',')
+      .filter(Boolean),
+  )
+  // Still moving: the stall recovery (recoverUploads) leaves it be.
+  await setUpload(ports, upload.id, 'verifying', {})
+  const claimed = await claimedFiles(ports, upload.id)
+  if (!(upload.files ?? []).every((f) => claimed.has(f.id))) return
+  if (await createObject(ports.stores.internal, stagedDoneKey(upload.id), '1'))
+    await ports.jobs.enqueue({ type: 'v3.uploadPrepare', uploadId: upload.id })
+})
+
 /** What prepare found that landing needs, against one head. */
 interface Prepared {
   schemaChanges: [string, string | null][]
@@ -429,8 +529,20 @@ export async function requestCommit(
 
 /** A failure the client can fix in the same upload (missing files): it goes back to open. */
 async function reopen(ports: Ports, id: string, error: NonNullable<UploadRow['error']>) {
-  // The next commit may name other files: it takes its own copies.
-  await ports.stores.internal.delete(stageKey(id))
+  // The next commit may name other files, or the client may send a file again: it takes its
+  // own copies, claimed afresh.
+  const internal = ports.stores.internal
+  await internal.delete(stageKey(id))
+  await internal.delete(stagedDoneKey(id))
+  let cursor: string | undefined
+  do {
+    const page = await internal.list(`v3-uploads/${id}/staged/`, cursor)
+    await v3.inParallel(
+      page.keys.map((k) => () => internal.delete(k)),
+      32,
+    )
+    cursor = page.cursor ?? undefined
+  } while (cursor)
   await setUpload(ports, id, null, {
     status: 'open',
     error,
@@ -448,13 +560,15 @@ const dataOf = (line: Uint8Array) =>
   (parseStrict(dec.decode(line), MAX_JSON_DEPTH + 1) as { data: unknown }).data
 
 /** Every entry of one type in a set of the upload's files (in `session`), with what reads its line. */
-async function* typeEntries(ports: Ports, session: string, files: v3.FileRef[], type: string) {
+async function* typeEntries(ports: Ports, stage: Stage, files: v3.FileRef[], type: string) {
   const store = ports.stores.v3
   for (const f of files) {
     if (!f.first || !f.last) continue
     if (v3.compareKeys(f.first[0], '', type, '') > 0 || v3.compareKeys(type, '', f.last[0], '') > 0)
       continue
-    const file = await v3.SortedFile.open(store, v3.uploadKey(session, f.id), { id: f.id })
+    const file = await v3.SortedFile.open(store, v3.uploadKey(stagedIn(stage, f.id), f.id), {
+      id: f.id,
+    })
     const reader = file.reader({ readAhead: 1024 * 1024 })
     const cursor = new v3.EntryCursor(reader, 1)
     await cursor.seek({ type, id: '' })
@@ -474,15 +588,15 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  * `$asset` row it adds, and its `$meta` row's data. Found by the key ranges the commit gives
  * for its files, which each file's verification holds it to.
  */
-async function reservedRows(ports: Ports, session: string, files: v3.FileRef[]) {
+async function reservedRows(ports: Ports, stage: Stage, files: v3.FileRef[]) {
   const schemas: [string, unknown | null][] = []
-  for await (const { entry, line } of typeEntries(ports, session, files, v3.SCHEMA_TYPE))
+  for await (const { entry, line } of typeEntries(ports, stage, files, v3.SCHEMA_TYPE))
     schemas.push([entry.id, entry.kind === 'x' ? null : dataOf(await line())])
   const assets: [string, unknown][] = []
-  for await (const { entry, line } of typeEntries(ports, session, files, v3.ASSET_TYPE))
+  for await (const { entry, line } of typeEntries(ports, stage, files, v3.ASSET_TYPE))
     if (entry.kind === 'r') assets.push([entry.id, dataOf(await line())])
   let metadata: unknown = null
-  for await (const { entry, line } of typeEntries(ports, session, files, v3.META_TYPE))
+  for await (const { entry, line } of typeEntries(ports, stage, files, v3.META_TYPE))
     if (entry.kind === 'r') metadata = dataOf(await line())
   return { schemas, assets, metadata }
 }
@@ -496,6 +610,10 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   const files = upload.files ?? []
   // Every named file came with this upload, and is checked from the server's own copy.
   const stage = await stageFiles(ports, upload.id, files)
+  if ('staging' in stage) {
+    console.log(`[v3.upload] ${upload.id}: copying ${stage.staging} files to check, in jobs`)
+    return
+  }
   if ('absent' in stage) {
     await reopen(ports, upload.id, {
       statusCode: 422,
@@ -504,7 +622,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     })
     return
   }
-  const session = stage.session
+  const staged = stage.stage
   // Key ranges apart, as a commit requires.
   const sorted = files
     .filter((f) => f.first)
@@ -536,7 +654,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   // the schemas): a file too broken to read them from fails the upload here.
   let reserved: Awaited<ReturnType<typeof reservedRows>>
   try {
-    reserved = await reservedRows(ports, session, files)
+    reserved = await reservedRows(ports, staged, files)
   } catch (err) {
     if (!(err instanceof v3.FormatError || err instanceof InputRuleError)) throw err
     await fail(ports, upload.id, {
@@ -607,7 +725,11 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   let scanUnitCount = 0
   const tight = await tightenedTypes(ports, view, schemas)
   if (view && tight.length > 0) {
-    const scanUpload = { files, session }
+    const scanUpload = {
+      files,
+      session: staged.session,
+      ...(staged.files ? { sessions: staged.files } : {}),
+    }
     const units = await scanUnits(ports, view, tight)
     const [row] = await ports.db
       .select({ typeCounts: schema.versions.typeCounts })
@@ -704,8 +826,9 @@ registerJob('v3.uploadVerify', async (job, ports) => {
   // Verified already against this head (a job delivered twice, or queued again): count it.
   if (await internal.head(marker)) return countVerified(ports, upload)
   // The copy prepare took, which the client cannot write.
-  const session = await stageOf(ports, upload.id)
-  if (!session) return
+  const stage = await stageOf(ports, upload.id)
+  if (!stage) return
+  const session = stagedIn(stage, fileId)
   // Structure, canonical lines, and each record against the schemas in force.
   const schemas = (upload.schemas ?? {}) as Record<string, unknown>
   const validators = new Map<string, SchemaValidator>()
@@ -946,8 +1069,8 @@ async function landUpload(ports: Ports, uploadId: string) {
     return
   }
   const { schemaChanges, metadata, bump } = JSON.parse(await obj.text()) as Prepared
-  const session = await stageOf(ports, upload.id)
-  if (!session) {
+  const stage = await stageOf(ports, upload.id)
+  if (!stage) {
     await fail(ports, upload.id, {
       statusCode: 500,
       error: 'The checked files are gone; commit again',
@@ -957,7 +1080,8 @@ async function landUpload(ports: Ports, uploadId: string) {
   const t1 = Date.now()
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,
-    session,
+    session: stage.session,
+    ...(stage.files ? { sessions: stage.files } : {}),
     bump,
     change,
     expectHead: upload.expectHead,

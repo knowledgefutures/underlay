@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { runJob } from '../src/jobs.js'
 import { pruneLayouts, v3JobConfig } from '../src/v3/jobs.js'
-import { recoverUploads, uploadLimits } from '../src/v3/uploads.js'
+import { recoverUploads, stageConfig, uploadLimits } from '../src/v3/uploads.js'
 import { cleanup, type Harness, harness } from './harness.js'
 import { onV3 } from './layouts.js'
 
@@ -110,6 +110,53 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     expect((await h.request(`${base}/versions/latest/records/Author/a1`, { user })).status).toBe(
       200,
     )
+  })
+
+  it("copies a large commit's files in jobs, each once, whatever the client sends after", async () => {
+    const { h, user, base } = await setup()
+    const slice = stageConfig.slice
+    const inline = uploadLimits.inlineFiles
+    stageConfig.slice = 2
+    uploadLimits.inlineFiles = 0
+    try {
+      const rows = [
+        v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+        ...Array.from({ length: 300 }, (_, i) =>
+          v3.rowFromRecord(`a${String(i).padStart(4, '0')}`, 'Author', { name: 'x'.repeat(60) }),
+        ),
+      ]
+      const local = memoryStore()
+      const sess = v3.newSession()
+      const built = await v3.buildFiles(rows.sort(v3.compareKey), v3.uploadTarget(local, sess), {
+        cutBytes: 4096,
+      })
+      const files: Built[] = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ({
+        ref,
+        bytes: local.objects.get(v3.uploadKey(sess, ref.id))!.bytes,
+      }))
+      expect(files.length).toBeGreaterThan(4)
+      const id = await sendFiles(h, user, base, files)
+      expect((await commit(h, user, base, id, { files: files.map((f) => f.ref) })).status).toBe(202)
+      // One slice copied and claimed; then the client sends other bytes for that file, and the
+      // slice's job is delivered again: the claimed copy is the one checked and installed.
+      const first = files[1]!
+      await runJob({ type: 'v3.uploadStage', uploadId: id, files: first.ref.id }, h.ports)
+      const [other] = await build([v3.rowFromRecord('Author', v3.SCHEMA_TYPE, { type: 'object' })])
+      await h.bucket.put(`v3/${v3.uploadKey(id, first.ref.id)}`, other!.bytes)
+      await runJob({ type: 'v3.uploadStage', uploadId: id, files: first.ref.id }, h.ports)
+      await h.drain()
+      expect(await json(await h.request(`${base}/uploads/${id}`, { user }))).toMatchObject({
+        status: 'committed',
+      })
+      const stored = await h.bucket.get(`v3/${v3.recordKey(first.ref.id)}`)
+      expect(new Uint8Array(await stored!.bytes())).toEqual(first.bytes)
+      expect(
+        (await h.request(`${base}/versions/latest/records/Author/a0299`, { user })).status,
+      ).toBe(200)
+    } finally {
+      stageConfig.slice = slice
+      uploadLimits.inlineFiles = inline
+    }
   })
 
   it('takes an asset only from bytes uploaded to the collection, at their size', async () => {
