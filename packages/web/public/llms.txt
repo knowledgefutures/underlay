@@ -140,7 +140,7 @@ GET /api/collections                       → public collections
     mine=true (your organizations' collections; session)
     → {collections: [...], facets: {owners, tags}, organizations, featuredTags, featuredCollections}
     organizations: with q, the owners whose name or slug contains it, among those with a
-    collection in the list: [{slug, name, avatarUrl, count}]
+    collection in the list: [{slug, name, avatarUrl, coverColor, count}]
 GET /api/collections/:owner/:slug          → {id, owner: {id, did, handle, name}, slug, name,
     description, visibility: public|private, ark, createdAt, updatedAt, versionCount,
     head: {semver, hash} | null}, plus public, ownerSlug, ownerName and latestVersion (a summary)

@@ -106,25 +106,36 @@ export function initials(name: string): string {
     .join('')
 }
 
+/**
+ * An org's logo, the same tile everywhere it shows: a white rounded square with a thin
+ * rule, holding the uploaded image or, without one, the org's initials in its cover
+ * color. `size` sets the box and the initials' type; the corners scale with it.
+ */
 export function OrgLogo({
   account,
+  size,
   className = '',
 }: {
-  account: Pick<OrgAccount, 'avatarUrl' | 'displayName'>
+  account: Pick<OrgAccount, 'avatarUrl' | 'displayName' | 'slug' | 'coverColor'>
+  size: 'xs' | 'sm' | 'md' | 'lg'
   className?: string
 }) {
+  const box = {
+    xs: 'h-5 w-5 rounded-[4px] text-[8px]',
+    sm: 'h-10 w-10 rounded-[8px] text-xs',
+    md: 'h-16 w-16 rounded-[12px] text-lg',
+    lg: 'h-24 w-24 rounded-[16px] text-2xl sm:h-28 sm:w-28 sm:text-3xl',
+  }[size]
+  const tile = `border-rule shrink-0 overflow-hidden border bg-white ${box} ${className}`
   if (account.avatarUrl)
     return (
-      <img
-        src={account.avatarUrl}
-        alt={account.displayName}
-        className={`bg-parchment object-cover ${className}`}
-      />
+      <img src={account.avatarUrl} alt={account.displayName} className={`${tile} object-cover`} />
     )
   return (
     <div
       aria-hidden="true"
-      className={`bg-ink text-parchment flex items-center justify-center font-bold tracking-wide ${className}`}
+      className={`${tile} flex items-center justify-center font-bold tracking-wide`}
+      style={{ color: coverColorFor(account) }}
     >
       {initials(account.displayName)}
     </div>
@@ -182,33 +193,32 @@ export function OrgHeader({
 }) {
   return (
     <section className="border-rule border-b">
-      <Cover account={account} className="h-24 sm:h-36" />
+      <Cover account={account} className="h-28 sm:h-40" />
       <div className="mx-auto max-w-5xl px-4">
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
-          <OrgLogo
-            account={account}
-            className="border-parchment relative z-10 -mt-12 h-24 w-24 shrink-0 rounded-[14px] border-4 text-2xl sm:-mt-14 sm:h-28 sm:w-28 sm:text-3xl"
-          />
-          <div className="min-w-0 flex-[999_1_18rem] sm:pt-3">
-            <h1 className="text-3xl leading-tight font-bold tracking-tight">
+        {/* The logo straddles the cover's edge; the name sits on the logo's baseline, so the
+            two read as one block, and everything below shares the logo's left edge. */}
+        <div className="-mt-6 flex items-end gap-4 sm:-mt-8 sm:gap-5">
+          <OrgLogo account={account} size="lg" className="ring-parchment relative z-10 ring-4" />
+          <div className="min-w-0 flex-1 pb-1">
+            <h1 className="truncate text-2xl leading-tight font-bold tracking-tight sm:text-3xl">
               {account.displayName}
             </h1>
-            <p className="text-ink-muted font-mono text-sm">@{account.slug}</p>
+            <p className="text-ink-muted font-mono text-sm leading-6">@{account.slug}</p>
           </div>
           {canManage && (
-            <div className="flex flex-auto flex-wrap justify-end gap-2 sm:pt-4">
-              <ButtonLink to={`/${account.slug}/settings`} variant="secondary">
-                Settings
-              </ButtonLink>
-            </div>
+            <ButtonLink to={`/${account.slug}/settings`} variant="secondary" className="mb-2">
+              Settings
+            </ButtonLink>
           )}
         </div>
 
         {account.tagline && (
-          <p className="mt-4 max-w-2xl text-lg leading-snug">{account.tagline}</p>
+          <p className="mt-5 max-w-2xl text-lg leading-snug">{account.tagline}</p>
         )}
 
-        <div className="text-ink-light mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+        <div
+          className={`text-ink-light flex flex-wrap items-center gap-x-5 gap-y-1 text-sm ${account.tagline ? 'mt-2' : 'mt-5'}`}
+        >
           {account.location && (
             <span className="inline-flex items-center gap-1.5">
               <Icon name="pin" />
@@ -241,10 +251,10 @@ export function OrgHeader({
         </div>
 
         {account.provenanceNote && (
-          <p className="text-ink-muted mt-2 text-xs">{account.provenanceNote}</p>
+          <p className="text-ink-muted mt-1.5 text-xs">{account.provenanceNote}</p>
         )}
 
-        <nav aria-label="Organization" className="mt-5 -mb-px flex gap-1 overflow-x-auto">
+        <nav aria-label="Organization" className="-mx-3 mt-6 -mb-px flex gap-1 overflow-x-auto">
           {tabs.map((t) => (
             <Link
               key={t.id}

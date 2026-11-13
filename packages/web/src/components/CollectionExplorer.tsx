@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
+import { OrgLogo } from '~/components/org-page'
 import { formatBytesFixed, formatCount, tagLabel, timeAgo } from '~/lib/format'
 
 interface Collection {
@@ -36,6 +37,7 @@ interface Organization {
   slug: string
   name: string
   avatarUrl: string | null
+  coverColor?: string | null
   count: number
 }
 
@@ -335,17 +337,15 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                   to={`/${o.slug}`}
                   className="border-rule hover:border-ink-muted/50 rounded-surface flex items-center gap-3 border p-3 transition-all hover:shadow-sm"
                 >
-                  {o.avatarUrl ? (
-                    <img
-                      src={o.avatarUrl}
-                      alt=""
-                      className="rounded-control h-9 w-9 shrink-0 object-cover"
-                    />
-                  ) : (
-                    <span className="bg-ink-light text-parchment rounded-control flex h-9 w-9 shrink-0 items-center justify-center text-sm font-semibold">
-                      {(o.name || o.slug).charAt(0).toUpperCase()}
-                    </span>
-                  )}
+                  <OrgLogo
+                    account={{
+                      avatarUrl: o.avatarUrl,
+                      displayName: o.name || o.slug,
+                      slug: o.slug,
+                      coverColor: o.coverColor ?? null,
+                    }}
+                    size="sm"
+                  />
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold">{o.name || o.slug}</span>
                     <span className="text-ink-muted block truncate text-xs">

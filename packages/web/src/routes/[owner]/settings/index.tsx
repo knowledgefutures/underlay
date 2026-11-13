@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
+import { OrgLogo } from '~/components/org-page'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, Input, SectionHeading, Select, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
@@ -208,17 +209,15 @@ export default function OwnerSettings() {
 
       {isOwner && (
         <div className="mb-8 flex items-start gap-4">
-          {avatarUrl ? (
-            <img
-              src={avatarUrl}
-              alt="Organization logo"
-              className="border-rule h-16 w-16 rounded-full border object-cover"
-            />
-          ) : (
-            <div className="bg-parchment-dark border-rule text-ink-muted flex h-16 w-16 items-center justify-center rounded-full border text-lg font-semibold">
-              {initialOrgData.displayName?.charAt(0)?.toUpperCase() ?? '?'}
-            </div>
-          )}
+          <OrgLogo
+            account={{
+              avatarUrl: avatarUrl || null,
+              displayName: initialOrgData.displayName ?? owner!,
+              slug: owner!,
+              coverColor: initialOrgData.coverColor ?? null,
+            }}
+            size="md"
+          />
           <div className="min-w-0">
             <p className="text-sm font-medium">{initialOrgData.displayName}</p>
             <p className="text-ink-muted font-mono text-xs">@{owner}</p>

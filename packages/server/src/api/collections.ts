@@ -239,6 +239,7 @@ export function collectionRoutes() {
             slug: schema.organization.slug,
             name: schema.organization.name,
             avatarUrl: schema.organization.avatarUrl,
+            coverColor: schema.organization.coverColor,
             count: count(),
           })
           .from(schema.collections)

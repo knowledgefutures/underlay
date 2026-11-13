@@ -5,17 +5,26 @@
  */
 import { type FormEvent, useState } from 'react'
 
-import { COVER_COLORS, Cover, coverColorFor, type OrgCollection } from '~/components/org-page'
+import {
+  COVER_COLORS,
+  Cover,
+  coverColorFor,
+  type OrgCollection,
+  OrgLogo,
+} from '~/components/org-page'
 import { Alert, Button, Checkbox, Input, Select } from '~/components/ui'
 
 const MAX_PINNED = 4
 
 export default function OrgPageSettings({
   owner,
+  org,
   initial,
   collections,
 }: {
   owner: string
+  /** The org as its page shows it, for the preview. */
+  org: { displayName: string; avatarUrl: string | null }
   initial: {
     coverColor: string | null
     coverImageUrl: string | null
@@ -142,10 +151,21 @@ export default function OrgPageSettings({
         <p className="text-ink-muted mb-3 text-xs">
           The band across the top of the page, behind the logo.
         </p>
-        <Cover
-          account={{ slug: owner, coverColor, coverImageUrl, coverTint }}
-          className="rounded-surface border-rule h-28 border"
-        />
+        {/* The top of the page as visitors will see it, changing as you edit. */}
+        <div className="border-rule rounded-surface overflow-hidden border">
+          <Cover account={{ slug: owner, coverColor, coverImageUrl, coverTint }} className="h-28" />
+          <div className="-mt-3 flex items-end gap-3 px-4 pb-4">
+            <OrgLogo
+              account={{ ...org, slug: owner, coverColor }}
+              size="md"
+              className="ring-parchment relative z-10 ring-4"
+            />
+            <div className="min-w-0 pb-0.5">
+              <p className="truncate text-lg leading-tight font-bold">{org.displayName}</p>
+              <p className="text-ink-muted font-mono text-xs">@{owner}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <fieldset>

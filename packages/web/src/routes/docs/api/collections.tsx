@@ -164,9 +164,9 @@ export default function DocsApiCollections() {
           across every collection in that set, not just this page and whatever the other filters.
           With <code>q</code>, <code>organizations</code> lists the owners whose name or slug
           contains it, among those with a collection in that set: <code>slug</code>,{' '}
-          <code>name</code>, <code>avatarUrl</code>, and their <code>count</code> of collections.{' '}
-          <code>featuredTags</code> and <code>featuredCollections</code> are the site&rsquo;s picks
-          for the explore page.
+          <code>name</code>, <code>avatarUrl</code>, <code>coverColor</code>, and their{' '}
+          <code>count</code> of collections. <code>featuredTags</code> and{' '}
+          <code>featuredCollections</code> are the site&rsquo;s picks for the explore page.
         </p>
         <h3>Query parameters</h3>
         <table>

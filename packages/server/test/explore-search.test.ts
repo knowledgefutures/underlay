@@ -45,7 +45,7 @@ it('searches collection names, descriptions and owners, and lists matching organ
   const byOwner = await search(h, 'space agency')
   expect(byOwner.collections.map((c: any) => c.slug)).toEqual(['exoplanets'])
   expect(byOwner.organizations).toEqual([
-    { slug: 'nasa', name: 'Space Agency', avatarUrl: null, count: 1 },
+    { slug: 'nasa', name: 'Space Agency', avatarUrl: null, coverColor: null, count: 1 },
   ])
 
   const bySlug = await search(h, 'nasa')

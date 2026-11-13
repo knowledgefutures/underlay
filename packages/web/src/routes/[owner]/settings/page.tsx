@@ -42,6 +42,7 @@ export default function OwnerPageSettings() {
       {isOwner ? (
         <OrgPageSettings
           owner={owner!}
+          org={{ displayName: orgData.displayName ?? owner!, avatarUrl: orgData.avatarUrl ?? null }}
           initial={{
             coverColor: orgData.coverColor ?? null,
             coverImageUrl: orgData.coverImageUrl ?? null,
