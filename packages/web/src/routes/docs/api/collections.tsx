@@ -397,10 +397,10 @@ export default function DocsApiCollections() {
         <p className="scope">No auth required</p>
         <p>
           List an account&rsquo;s collections, most recently updated first, with what each holds at
-          its latest version (null until it has one). Members of the account see all of them, with
-          private records counted; everyone else sees only public ones and public counts.{' '}
-          <code>pinned</code> is a collection&rsquo;s place among those the account pins to its
-          page, or null. An unknown account returns <code>200</code> with an empty list.
+          its latest version (null until it has one). Members of the account see all of them;
+          everyone else sees only public ones. <code>pinned</code> is a collection&rsquo;s place
+          among those the account pins to its page, or null. An unknown account returns{' '}
+          <code>200</code> with an empty list.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>

@@ -232,8 +232,8 @@ export default function DocsApiAccounts() {
         <p>
           Recent versions across an organization&rsquo;s collections, newest first (
           <code>?limit=</code>, default 20, at most 50). Members see their private
-          collections&rsquo; versions too; everyone else sees public ones, with public record
-          counts. An unknown slug returns <code>404</code>.
+          collections&rsquo; versions too; everyone else sees public collections&rsquo; versions
+          only. An unknown slug returns <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
