@@ -9,6 +9,7 @@
  * browser's fetch otherwise. The resolver lives in entry-server so this module
  * (bundled into the client) never imports node:async_hooks.
  */
+import { PREFETCH_HEADER, prefetchGet, takePrefetched } from './prefetch'
 
 export type ApiFn = (req: Request) => Promise<Response>
 
@@ -76,9 +77,17 @@ export function loaderApi(request: Request, { share = false } = {}): LoaderApi {
   const base = fetchBase(request.url)
   const token = share ? new URL(request.url).searchParams.get('token') : null
   const headers = ssrHeaders(request)
+  const prefetching = !import.meta.env.SSR && request.headers.has(PREFETCH_HEADER)
   const get = (path: string) => {
     const url = new URL(path, base)
     if (token) url.searchParams.set('token', token)
+    if (!import.meta.env.SSR) {
+      // On intent (prefetch.ts): a prefetch's response is held for the navigation that
+      // follows, which takes it instead of asking again.
+      if (prefetching) return prefetchGet(url.href, { headers })
+      const held = takePrefetched(url.href)
+      if (held) return held
+    }
     return apiFetch(url, { headers })
   }
   return {

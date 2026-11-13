@@ -2,6 +2,7 @@ import { hydrateRoot } from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router'
 
 import { routes } from '~/App'
+import { listenForIntent } from '~/lib/prefetch'
 import { listenForStaleBuild } from '~/lib/stale-build'
 
 import '~/global.css'
@@ -26,3 +27,4 @@ if (!router.state.initialized) {
 }
 
 hydrateRoot(document.getElementById('root')!, <RouterProvider router={router} />)
+listenForIntent(routes)
