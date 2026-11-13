@@ -14,19 +14,25 @@ async function push(h: Harness, user: string, path: string, open: object, body: 
   const res = await h.request(`${path}/push`, { method: 'POST', user, json: open })
   const sid = ((await res.json()) as { session_id: string }).session_id
   for (const [kind, lines] of Object.entries(body) as [string, unknown[]][]) {
-    if (lines.length)
-      await h.request(`${path}/push/${sid}/${kind}`, { method: 'POST', user, ndjson: lines })
+    if (lines.length) {
+      const res = await h.request(`${path}/push/${sid}/${kind}`, {
+        method: 'POST',
+        user,
+        ndjson: lines,
+      })
+      if (!res.ok) throw new Error(`${kind}: ${res.status} ${await res.text()}`)
+    }
   }
   const commit = await h.request(`${path}/push/${sid}/commit`, { method: 'POST', user })
   expect(commit.status).toBe(201)
 }
 
 describe.skipIf(!onV3)('record pages by offset', () => {
-  it('start from the offset index, built in chunks and moved forward by each commit', async () => {
+  it('start from the offset index, walked in ranges and moved forward by each commit', async () => {
     const step = offsetConfig.step
-    const chunk = offsetConfig.walkChunk
+    const ranges = offsetConfig.rangeRecords
     offsetConfig.step = 100
-    offsetConfig.walkChunk = 700
+    offsetConfig.rangeRecords = 700
     try {
       const h = await harness()
       const user = await h.member()
@@ -53,6 +59,9 @@ describe.skipIf(!onV3)('record pages by offset', () => {
       const index = (seq: number) =>
         h.ports.stores.internal.get(`v3-offsets/${c.id}/${seq}/Author.json`)
       expect(await index(1)).not.toBe(null)
+      // Walked in more than one range: positions restart where a range does.
+      const first = JSON.parse(await (await index(1))!.text()) as { points: [number, string][] }
+      expect(first.points.some(([pos]) => pos % 100 !== 0)).toBe(true)
       for (const o of [0, 99, 100, 101, 1234, 2995, 2999, 3000])
         expect(await page(o)).toEqual(ids.slice(o, o + 5))
 
@@ -89,14 +98,110 @@ describe.skipIf(!onV3)('record pages by offset', () => {
       )
       await h.drain()
       ids = [...ids, id(3001)].sort()
+      const second = JSON.parse(await (await index(2))!.text()) as { points: [number, string][] }
       const third = JSON.parse(await (await index(3))!.text()) as { points: [number, string][] }
-      expect(third.points.some(([pos]) => pos % 100 !== 0)).toBe(true)
+      // The same records indexed, each moved by the one record added before it or not.
+      expect(third.points.map(([, id]) => id)).toEqual(second.points.map(([, id]) => id))
+      third.points.forEach(([pos], i) => expect(pos - second.points[i]![0]).toBeOneOf([0, 1]))
+      expect(third.points.some(([pos], i) => pos !== second.points[i]![0])).toBe(true)
       expect(await index(1)).toBe(null)
       for (const o of [0, 799, 800, 801, 1500, 2997])
         expect(await page(o)).toEqual(ids.slice(o, o + 5))
     } finally {
       offsetConfig.step = step
-      offsetConfig.walkChunk = chunk
+      offsetConfig.rangeRecords = ranges
     }
+  })
+})
+
+describe.skipIf(!onV3)('a page far into a type with no index yet', () => {
+  it('answers that it is being indexed, then pages once it is', async () => {
+    const saved = { ...offsetConfig }
+    offsetConfig.step = 100
+    offsetConfig.walkCap = 500
+    try {
+      const h = await harness()
+      const user = await h.member()
+      await h.collection('far', { recordLayout: 'v3' })
+      const path = '/api/collections/org/far'
+      const ids = Array.from({ length: 2000 }, (_, i) => id(i))
+      await push(
+        h,
+        user,
+        path,
+        { schemas: { Author } },
+        {
+          records: ids.map((x, i) => ({ id: x, type: 'Author', data: { n: i } })),
+        },
+      )
+      // Within the cap a page walks; past it, 503 and a retry, or `preparing` on the web's call.
+      const near = await h.request(
+        `${path}/versions/latest/records?type=Author&limit=5&offset=400`,
+        { user },
+      )
+      expect(near.status).toBe(200)
+      const far = await h.request(
+        `${path}/versions/latest/records?type=Author&limit=5&offset=1500`,
+        { user },
+      )
+      expect(far.status).toBe(503)
+      expect(far.headers.get('retry-after')).toBe('60')
+      const detail = (await (
+        await h.request(`${path}/versions/latest?records=Author&limit=5&offset=1500`, { user })
+      ).json()) as { recordsPage: { preparing?: boolean; records: unknown[] } }
+      expect(detail.recordsPage).toMatchObject({ preparing: true, records: [] })
+      await h.drain()
+      const after = await h.request(
+        `${path}/versions/latest/records?type=Author&limit=5&offset=1500`,
+        { user },
+      )
+      expect(
+        ((await after.json()) as { records: { id: string }[] }).records.map((r) => r.id),
+      ).toEqual(ids.slice(1500, 1505))
+    } finally {
+      Object.assign(offsetConfig, saved)
+    }
+  })
+})
+
+describe('a records page', () => {
+  it('sends each value cut to what a cell shows, and the record whole on its own page', async () => {
+    const h = await harness()
+    const user = await h.member()
+    await h.collection('wide')
+    const path = '/api/collections/org/wide'
+    const Wide = {
+      type: 'object',
+      properties: {
+        t: { type: 'string' },
+        refs: { type: 'array', items: { type: 'object', properties: { n: { type: 'integer' } } } },
+        n: { type: 'integer' },
+      },
+    }
+    const data = {
+      t: 'x'.repeat(5000),
+      refs: Array.from({ length: 300 }, (_, i) => ({ n: i })),
+      n: 7,
+    }
+    await push(
+      h,
+      user,
+      path,
+      { schemas: { Wide } },
+      { records: [{ id: 'w1', type: 'Wide', data }] },
+    )
+    const page = (await (
+      await h.request(`${path}/versions/latest?records=Wide&preview=1`, { user })
+    ).json()) as { recordsPage: { records: { data: any; preview?: boolean }[] } }
+    const r = page.recordsPage.records[0]!
+    expect(r.preview).toBe(true)
+    expect(r.data.t).toHaveLength(201)
+    expect(r.data.t.endsWith('…')).toBe(true)
+    expect(r.data.refs.$preview).toHaveLength(201)
+    expect(r.data.n).toBe(7)
+    const whole = (await (
+      await h.request(`${path}/versions/latest?records=Wide`, { user })
+    ).json()) as { recordsPage: { records: { data: any }[] } }
+    expect(whole.recordsPage.records[0]!.data).toEqual(data)
   })
 })

@@ -12,14 +12,17 @@
  *   offsetStart     where a page at an offset starts, from the index; null without one
  *   v3.offsets      the job: after each commit (the `version.published` job queues it), and
  *                   when a page finds no index. From the previous version's index and the
- *                   commit's changes when they are few; otherwise by walking the type, a
- *                   job for each `offsetConfig.walkChunk` records, resuming from a partial index.
+ *                   commit's changes when they are few; otherwise it cuts each type into key
+ *                   ranges of about `offsetConfig.rangeRecords` (at its files' first keys, or
+ *                   their key blocks') and queues:
+ *   v3.offsetsRange one range walked, in the pool; the last to finish puts the ranges
+ *                   together, each range's positions moved by the counts before it.
  *
  * Positions count live records (`r` entries) without the denylist: a page walks with
  * it, so one blocked record before the point moves a page by one. Only the newest two
  * versions' indexes are kept; an older version's page walks, as before.
  */
-import { type Store, v3 } from '@underlay/protocol'
+import { createObject, type Store, v3 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -29,8 +32,17 @@ import type { Ports } from '../ports.js'
 export const offsetConfig = {
   /** Records between points, about: a page walks at most this many past its point. */
   step: 4096,
-  /** Records one job walks before handing on to the next. */
-  walkChunk: 3_000_000,
+  /**
+   * Records one range of a type's walk holds, about: a job each, in the pool (32 at once).
+   * One chain of jobs took about 80 minutes for 120M journal articles (the full Crossref load).
+   */
+  rangeRecords: 2_000_000,
+  /**
+   * The farthest a page walks with no index (about 1.5 s): past it, the page answers that
+   * its index is being made. A page in the middle of 120M records, walked, ran past the
+   * Worker's CPU limit and the client's patience (the full Crossref load).
+   */
+  walkCap: 250_000,
 }
 /** Points further apart than this after an update: walk the type again instead. */
 const maxGap = () => 4 * offsetConfig.step
@@ -48,18 +60,28 @@ export interface OffsetIndex {
   points: [number, string][]
 }
 
-interface Partial {
+/** A type's walk cut into key ranges: range i starts at `cuts[i - 1]` and stops before `cuts[i]`. */
+interface Plan {
   hash: string
-  /** Records walked so far, and the last id walked. */
-  walked: number
-  last: string | null
+  cuts: string[]
+}
+
+/** One range walked: its live records, and [position within the range, id] every `step`. */
+interface RangeResult {
+  count: number
   points: [number, string][]
 }
 
+const typeKey = (collectionId: string, seq: number, type: string) =>
+  `v3-offsets/${collectionId}/${seq}/${encodeURIComponent(type)}`
 const indexKey = (collectionId: string, seq: number, type: string) =>
-  `v3-offsets/${collectionId}/${seq}/${encodeURIComponent(type)}.json`
-const partialKey = (collectionId: string, seq: number, type: string) =>
-  `v3-offsets/${collectionId}/${seq}/${encodeURIComponent(type)}.partial.json`
+  `${typeKey(collectionId, seq, type)}.json`
+const planKey = (collectionId: string, seq: number, type: string) =>
+  `${typeKey(collectionId, seq, type)}.plan.json`
+const rangeKey = (collectionId: string, seq: number, type: string, i: number) =>
+  `${typeKey(collectionId, seq, type)}.range-${i}.json`
+const combineKey = (collectionId: string, seq: number, type: string) =>
+  `${typeKey(collectionId, seq, type)}.combine`
 
 const loaded = new Map<string, OffsetIndex | null>()
 const asked = new Set<string>()
@@ -114,17 +136,60 @@ export async function offsetStart(
   return { from: { type, id }, skip: offset - pos }
 }
 
-/** Live record ids of one type in a version, after `after`, without the denylist. */
-async function* liveIds(store: Store, view: v3.View, type: string, after: string | null) {
+/** Live record ids of one type in a version from `from` and before `to`, without the denylist. */
+async function* liveIds(
+  store: Store,
+  view: v3.View,
+  type: string,
+  from: string | null,
+  to: string | null,
+) {
   for await (const group of v3.mergeGroups(
     store,
     view,
-    { type, ...(after !== null ? { after: { type, id: after } } : {}) },
+    {
+      type,
+      ...(from !== null ? { from: { type, id: from } } : {}),
+      ...(to !== null ? { to: { type, id: to } } : {}),
+    },
     { readAhead: WALK_READ_AHEAD },
   )) {
     const w = group[group.length - 1]!
     if (w.entry.kind === 'r') yield w.entry.id
   }
+}
+
+/**
+ * Where to cut a type's walk: about one cut per `rangeRecords` of its `count`, chosen evenly
+ * among the first ids of the view's files that begin in the type, or, with too few files
+ * for that, the first ids of their key blocks (1,024 entries each).
+ */
+async function planCuts(store: Store, view: v3.View, type: string, count: number) {
+  const want = Math.ceil(count / offsetConfig.rangeRecords)
+  if (want <= 1) return []
+  const ids = new Set<string>()
+  for (const f of view.files) if (f.first?.[0] === type) ids.add(f.first[1])
+  if (ids.size < want * 2) {
+    const holding = view.files.filter(
+      (f) =>
+        f.first &&
+        f.last &&
+        v3.compareKeys(f.first[0], '', type, '') <= 0 &&
+        v3.compareKeys(type, '', f.last[0], '\uffff') <= 0,
+    )
+    for (const f of holding.slice(0, 64)) {
+      const file = await v3.SortedFile.open(store, v3.recordKey(f.id), { id: f.id })
+      for (const kb of file.content.keyBlocks) if (kb[0] === type) ids.add(kb[1])
+    }
+  }
+  const sorted = [...ids].sort((a, b) => v3.compareKeys(type, a, type, b))
+  const cuts: string[] = []
+  for (let i = 1; i < want; i++) {
+    const c = sorted[Math.floor((i * sorted.length) / want)]
+    // A cut at the type's very first id would make an empty first range.
+    if (c !== undefined && c !== sorted[0] && c !== cuts[cuts.length - 1]) cuts.push(c)
+  }
+  return cuts
 }
 
 /** The previous version's index, moved forward by what this version changed; null if unfit. */
@@ -187,24 +252,69 @@ async function indexType(
       return true
     }
   }
-  // Walk the type, resuming from what an earlier job left.
-  const pk = partialKey(collectionId, seq, type)
-  let part = await readJson<Partial>(ports, pk)
-  if (!part || part.hash !== hash) part = { hash, walked: 0, last: null, points: [] }
-  let n = 0
-  for await (const id of liveIds(ports.stores.v3, view, type, part.last)) {
-    if (part.walked % offsetConfig.step === 0) part.points.push([part.walked, id])
-    part.walked++
-    part.last = id
-    if (++n === offsetConfig.walkChunk) {
-      await internal.put(pk, JSON.stringify(part))
-      return false
+  // Walk the type in ranges, in the pool. The first job to plan names the cuts; the ranges
+  // are queued once, by it, and the last range to finish writes the index.
+  const pk = planKey(collectionId, seq, type)
+  const existing = await readJson<Plan>(ports, pk)
+  if (existing?.hash === hash) return false
+  if (existing) await internal.delete(pk)
+  const [row] = await ports.db
+    .select({ typeCounts: schema.versions.typeCounts })
+    .from(schema.versions)
+    .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.seq, seq)))
+    .limit(1)
+  const cuts = await planCuts(ports.stores.v3, view, type, row?.typeCounts[type] ?? 0)
+  if (!(await createObject(internal, pk, JSON.stringify({ hash, cuts } satisfies Plan))))
+    return false
+  await ports.jobs.enqueueBatch(
+    Array.from({ length: cuts.length + 1 }, (_, i) => ({
+      type: 'v3.offsetsRange',
+      collectionId,
+      seq,
+      offsetType: type,
+      range: i,
+    })),
+  )
+  return false
+}
+
+/** Walk one range of a plan; the last range to finish puts the index together. */
+async function walkRange(ports: Ports, collectionId: string, seq: number, type: string, i: number) {
+  const internal = ports.stores.internal
+  const plan = await readJson<Plan>(ports, planKey(collectionId, seq, type))
+  if (!plan || i > plan.cuts.length) return
+  const rk = rangeKey(collectionId, seq, type, i)
+  if (!(await internal.head(rk))) {
+    const view = await v3.openView(ports.stores.v3, collectionId, { version: seq })
+    const from = i === 0 ? null : plan.cuts[i - 1]!
+    const to = i < plan.cuts.length ? plan.cuts[i]! : null
+    const result: RangeResult = { count: 0, points: [] }
+    for await (const id of liveIds(ports.stores.v3, view, type, from, to)) {
+      if (result.count % offsetConfig.step === 0) result.points.push([result.count, id])
+      result.count++
     }
+    await internal.put(rk, JSON.stringify(result))
   }
-  const index: OffsetIndex = { version: seq, hash, type, count: part.walked, points: part.points }
-  await internal.put(key, JSON.stringify(index))
-  await internal.delete(pk)
-  return true
+  // Every range walked: one job (the one that creates the claim) puts them together.
+  const parts = await Promise.all(
+    Array.from({ length: plan.cuts.length + 1 }, (_, j) =>
+      readJson<RangeResult>(ports, rangeKey(collectionId, seq, type, j)),
+    ),
+  )
+  if (parts.some((p) => p === null)) return
+  if (!(await createObject(internal, combineKey(collectionId, seq, type), '1'))) return
+  const points: [number, string][] = []
+  let before = 0
+  for (const p of parts as RangeResult[]) {
+    for (const [pos, id] of p.points) points.push([before + pos, id])
+    before += p.count
+  }
+  const index: OffsetIndex = { version: seq, hash: plan.hash, type, count: before, points }
+  await internal.put(indexKey(collectionId, seq, type), JSON.stringify(index))
+  for (let j = 0; j <= plan.cuts.length; j++)
+    await internal.delete(rangeKey(collectionId, seq, type, j))
+  await internal.delete(planKey(collectionId, seq, type))
+  await internal.delete(combineKey(collectionId, seq, type))
 }
 
 /** Index every type of a version with more than a few pages, and drop older indexes. */
@@ -213,38 +323,37 @@ export async function indexVersion(
   collectionId: string,
   seq: number,
   only?: string,
-): Promise<'done' | 'more'> {
+): Promise<void> {
   const [row] = await ports.db
     .select({ hash: schema.versions.hash, typeCounts: schema.versions.typeCounts })
     .from(schema.versions)
     .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.seq, seq)))
     .limit(1)
-  if (!row) return 'done'
+  if (!row) return
   const types = Object.entries(row.typeCounts)
     .filter(([t, n]) => !t.startsWith('$') && n > offsetConfig.step && (!only || t === only))
     .map(([t]) => t)
-  if (types.length === 0) return 'done'
+  if (types.length === 0) return
   const view = await v3.openView(ports.stores.v3, collectionId, { version: seq })
-  for (const t of types) {
-    if (!(await indexType(ports, collectionId, seq, row.hash, t, view))) return 'more'
-  }
+  // Every type at once: one moved forward here, or its ranges queued to the pool.
+  for (const t of types) await indexType(ports, collectionId, seq, row.hash, t, view)
   // The version before stays for a reader that opened it a moment ago; older ones go.
   if (!only && seq > 2) {
     for (const t of types) await ports.stores.internal.delete(indexKey(collectionId, seq - 2, t))
   }
-  return 'done'
 }
 
 registerJob('v3.offsets', async (job, ports) => {
-  const collectionId = String(job.collectionId)
-  const seq = Number(job.seq)
   const only = job.only === undefined ? undefined : String(job.only)
-  if ((await indexVersion(ports, collectionId, seq, only)) === 'more') {
-    await ports.jobs.enqueue({
-      type: 'v3.offsets',
-      collectionId,
-      seq,
-      ...(only !== undefined ? { only } : {}),
-    })
-  }
+  await indexVersion(ports, String(job.collectionId), Number(job.seq), only)
+})
+
+registerJob('v3.offsetsRange', async (job, ports) => {
+  await walkRange(
+    ports,
+    String(job.collectionId),
+    Number(job.seq),
+    String(job.offsetType),
+    Number(job.range),
+  )
 })

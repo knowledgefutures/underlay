@@ -99,6 +99,8 @@ export const V3_POOLED_JOBS: ReadonlySet<string> = new Set([
   'v3.uploadVerify',
   'v3.scanUnit',
   'v3.mergeUnit',
+  // One key range of a type's offset index (v3/offsets.ts).
+  'v3.offsetsRange',
 ])
 
 const handlers = new Map<string, JobHandler>()

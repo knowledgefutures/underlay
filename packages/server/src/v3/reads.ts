@@ -26,6 +26,7 @@ import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { deniedHashes } from '../lib/limits.js'
+import { previewRecord } from '../lib/preview.js'
 import { pullStream } from '../lib/streams.js'
 import { findVersion, type VersionRow } from '../versions/view.js'
 import { assetsOf, metadataOf, schemasOf } from './catalog.js'
@@ -137,6 +138,9 @@ async function recordPage(
       if (start) {
         range.from = start.from
         skip = start.skip
+      } else if (opts.offset > offsetConfig.walkCap) {
+        // Too far to walk: the index is asked for (offsetStart did), the page waits for it.
+        return { records: out, hasMore: false, preparing: true }
       }
     }
     if (skip > 0) {
@@ -197,10 +201,14 @@ export async function v3Detail(
     const t = shown[0] ?? null
     const offset = Math.max(0, Number(c.req.query('offset') ?? 0) || 0)
     const page = t ? await recordPage(c, v, { type: t.slug, offset, limit: limitOf() }) : null
+    const preview = c.req.query('preview') === '1'
     recordsPage = {
       type: t?.slug ?? null,
-      records: (page?.records ?? []).map((r) => recordJson(r.line, r.hash)),
+      records: (page?.records ?? []).map((r) =>
+        preview ? previewRecord(recordJson(r.line, r.hash)) : recordJson(r.line, r.hash),
+      ),
       total: t?.count ?? 0,
+      ...(page && 'preparing' in page && page.preparing ? { preparing: true } : {}),
     }
   }
   return c.json({
@@ -237,6 +245,14 @@ export async function v3Records(
     offset: q.cursor ? 0 : q.offset,
     limit: q.limit,
   })
+  if ('preparing' in page && page.preparing) {
+    c.header('Retry-After', '60')
+    return jsonError(
+      c,
+      503,
+      'Pages this far into the type are being indexed; try again in a minute, or page by cursor',
+    )
+  }
   const last = page.records[page.records.length - 1]
   return c.json({
     records: page.records.map((r) => recordJson(r.line, r.hash)),
