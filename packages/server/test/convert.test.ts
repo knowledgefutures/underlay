@@ -275,6 +275,24 @@ describe('converting a v2 collection to v3', () => {
     expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(4)
   })
 
+  it('flips a collection with no versions yet, and it takes a first push on v3', async () => {
+    const h = await harness({ newCollections: v2Layout })
+    const user = await h.member()
+    const c = await h.collection('empty', { recordLayout: v2Layout })
+    await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })
+    await h.drain()
+    expect(await conversion(h, c.id)).toMatchObject({ status: 'flipped', error: null })
+    const [row] = await h.ports.db
+      .select({ layout: schema.collections.recordLayout })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, c.id))
+    expect(row!.layout).toBe('v3')
+    await push(h, user, '/api/collections/org/empty', { schemas: { Author } }, [
+      { id: 'a1', type: 'Author', data: { name: 'Ada' } },
+    ])
+    expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(1)
+  })
+
   it('makes a collection with a private record private, only once allowed', async () => {
     const { h, user, c, base } = await v2Collection({ private: true })
     await requestConversion(h.ports, c.id, { flip: true, allowPrivate: false })

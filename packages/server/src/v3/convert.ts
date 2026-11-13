@@ -33,7 +33,7 @@ import {
   sha256Hex,
   v3,
 } from '@underlay/protocol'
-import { and, asc, eq, lt, or, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, lt, or, sql } from 'drizzle-orm'
 
 import { diffAll, type TypedDiff } from '../api/versions.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
@@ -566,8 +566,9 @@ async function flipToV3(
   rows: VersionRow[],
 ): Promise<'flipped' | 'private' | 'waiting'> {
   if (conv.private && collection.public && !conv.allowPrivate) return 'private'
-  const head = rows.at(-1)
-  if (!head || conv.versions.at(-1)?.seq !== head.seq) return 'waiting'
+  // A collection with no versions flips while it still has none (it was waiting for good).
+  const head = rows.at(-1) ?? null
+  if (head ? conv.versions.at(-1)?.seq !== head.seq : conv.versions.length > 0) return 'waiting'
   const db = ports.db
   const cid = collection.id
   const C = schema.collections
@@ -594,7 +595,7 @@ async function flipToV3(
         and(
           eq(C.id, cid),
           eq(C.recordLayout, conv.fromLayout),
-          eq(C.headVersionId, head.id),
+          head ? eq(C.headVersionId, head.id) : isNull(C.headVersionId),
           sql`NOT EXISTS (SELECT 1 FROM ${P} WHERE ${P.collectionId} = ${cid} AND ${P.status} IN ('open', 'committing'))`,
           // The conversion is still the one this job read: not begun afresh meanwhile.
           sql`EXISTS (SELECT 1 FROM ${T} WHERE ${T.collectionId} = ${cid} AND ${T.status} IN ('converting', 'converted') AND json_array_length(${T.versions}) = ${conv.versions.length})`,
