@@ -17,7 +17,6 @@ import {
   orgSummary,
   type OrgMember,
   type OrgTab,
-  seriesColor,
   UseThisData,
 } from '~/components/org-page'
 import { useAppContext } from '~/lib/app-context'
@@ -47,14 +46,6 @@ export default function OwnerPage() {
   // Members and KF admins see the settings link.
   const canManage = useIsOwner(owner)
   const slug = account.slug
-
-  // Each collection keeps one color across the page: by size, largest first.
-  const colors = useMemo(() => {
-    const bySize = [...collections].sort(
-      (a, b) => (b.recordCount ?? -1) - (a.recordCount ?? -1) || a.slug.localeCompare(b.slug),
-    )
-    return new Map(bySize.map((c, i) => [c.slug, seriesColor(i)]))
-  }, [collections])
 
   const pinned = useMemo(
     () =>
@@ -90,18 +81,11 @@ export default function OwnerPage() {
 
   let main: React.ReactNode
   if (tab === 'collections') {
-    main = (
-      <CollectionsBrowser
-        owner={slug}
-        collections={collections}
-        colors={colors}
-        newCollection={isMember}
-      />
-    )
+    main = <CollectionsBrowser owner={slug} collections={collections} newCollection={isMember} />
   } else if (tab === 'members') {
     main = <MembersSection owner={slug} members={members} />
   } else if (tab === 'activity') {
-    main = <ActivityList owner={slug} activity={activity} colors={colors} />
+    main = <ActivityList owner={slug} activity={activity} />
   } else if (collections.length === 0) {
     main = <NoCollections member={isMember} owner={slug} />
   } else if (collections.length === 1) {
@@ -110,7 +94,6 @@ export default function OwnerPage() {
       <CollectionSpotlight
         owner={slug}
         c={c}
-        color={colors.get(c.slug)!}
         versionCount={spotlight?.versionCount ?? null}
         readme={spotlight?.readme ?? null}
         sample={spotlight?.sample ?? null}
@@ -122,7 +105,7 @@ export default function OwnerPage() {
         <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
           Collections
         </h2>
-        <CardGrid owner={slug} collections={cards} colors={colors} />
+        <CardGrid owner={slug} collections={cards} />
       </section>
     )
   } else {
@@ -133,15 +116,10 @@ export default function OwnerPage() {
             <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
               Pinned
             </h2>
-            <CardGrid owner={slug} collections={pinned} colors={colors} />
+            <CardGrid owner={slug} collections={pinned} />
           </section>
         )}
-        <CollectionsBrowser
-          owner={slug}
-          collections={collections}
-          colors={colors}
-          newCollection={isMember}
-        />
+        <CollectionsBrowser owner={slug} collections={collections} newCollection={isMember} />
       </div>
     )
   }
@@ -164,7 +142,7 @@ export default function OwnerPage() {
           )}
           <UseThisData owner={slug} example={example} origin={origin} />
           {activity.length > 0 && tab !== 'activity' && (
-            <ActivityList owner={slug} activity={activity} colors={colors} limit={5} />
+            <ActivityList owner={slug} activity={activity} limit={5} />
           )}
         </aside>
       </div>

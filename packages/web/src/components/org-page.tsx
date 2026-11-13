@@ -72,10 +72,6 @@ export const COVER_COLORS = [
   '#3d3d38',
 ]
 
-/** Each collection's color in its type bars, in the order the org's collections are listed. */
-const SERIES = ['#1a4a6e', '#2d5a27', '#8a3b12', '#5b4f8a', '#8a5f12', '#6e5a3c', '#3d3d38']
-const SHADES = [1, 0.6, 0.42, 0.3, 0.2, 0.14]
-
 function hashIndex(s: string, n: number) {
   let h = 0
   for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0
@@ -84,8 +80,6 @@ function hashIndex(s: string, n: number) {
 
 export const coverColorFor = (a: Pick<OrgAccount, 'slug' | 'coverColor'>) =>
   a.coverColor ?? COVER_COLORS[hashIndex(a.slug, COVER_COLORS.length)]!
-
-export const seriesColor = (i: number) => SERIES[i % SERIES.length]!
 
 const n = (v: number) => v.toLocaleString('en-US')
 
@@ -328,35 +322,6 @@ export function orgSummary(collections: OrgCollection[]): string | null {
 
 // ---------------------------------------------------------------- Collections
 
-function TypeBar({
-  collection,
-  color,
-  className = '',
-}: {
-  collection: OrgCollection
-  color: string
-  className?: string
-}) {
-  const types = typesOf(collection)
-  if (!types.length) return null
-  return (
-    <div
-      role="img"
-      aria-label={`Records by type: ${types.map(([t, c]) => `${t} ${n(c)}`).join(', ')}`}
-      className={`flex gap-0.5 overflow-hidden ${className}`}
-    >
-      {types.map(([t, c], i) => (
-        <span
-          key={t}
-          title={`${t} ${n(c)}`}
-          className="block min-w-1"
-          style={{ flex: `${c} 0 0`, backgroundColor: color, opacity: SHADES[i] ?? 0.12 }}
-        />
-      ))}
-    </div>
-  )
-}
-
 function Tags({ tags }: { tags: string[] }) {
   if (!tags.length) return null
   return (
@@ -392,19 +357,10 @@ function Meta({ c }: { c: OrgCollection }) {
 }
 
 /** A large card: pinned collections, and every collection of an org with two to four. */
-export function CollectionCard({
-  owner,
-  c,
-  color,
-}: {
-  owner: string
-  c: OrgCollection
-  color: string
-}) {
+export function CollectionCard({ owner, c }: { owner: string; c: OrgCollection }) {
   const types = typesOf(c)
   return (
     <article className="border-rule rounded-surface flex min-w-0 flex-col overflow-hidden border bg-white/40">
-      <TypeBar collection={c} color={color} className="h-1.5" />
       <div className="flex flex-1 flex-col gap-3 px-5 pt-5 pb-4">
         <Tags tags={c.tags} />
         <div>
@@ -457,17 +413,12 @@ export function CollectionCard({
   )
 }
 
-function CollectionRow({ owner, c, color }: { owner: string; c: OrgCollection; color: string }) {
+function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
   const types = typesOf(c)
   return (
     <article className="border-rule flex flex-wrap gap-x-7 gap-y-3 border-b py-5">
       <div className="min-w-0 flex-[999_1_22rem]">
         <div className="flex items-center gap-2.5">
-          <span
-            aria-hidden="true"
-            className="h-3 w-3 shrink-0 rounded-[3px]"
-            style={{ backgroundColor: color }}
-          />
           <h3 className="text-base leading-snug font-semibold">
             <Link to={`/${owner}/${c.slug}`} className="text-ink hover:underline">
               {c.name}
@@ -479,11 +430,11 @@ function CollectionRow({ owner, c, color }: { owner: string; c: OrgCollection; c
             </span>
           )}
         </div>
-        <p className="text-ink-muted ml-[22px] font-mono text-xs">
+        <p className="text-ink-muted font-mono text-xs">
           {owner}/{c.slug}
         </p>
-        {c.description && <p className="text-ink-light mt-2 ml-[22px] text-sm">{c.description}</p>}
-        <div className="mt-3 ml-[22px] flex flex-wrap gap-1.5">
+        {c.description && <p className="text-ink-light mt-2 text-sm">{c.description}</p>}
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {types.slice(0, 3).map(([t, count]) => (
             <span
               key={t}
@@ -507,17 +458,20 @@ function CollectionRow({ owner, c, color }: { owner: string; c: OrgCollection; c
           ))}
         </div>
       </div>
-      <div className="ml-[22px] flex min-w-0 flex-[1_1_11rem] flex-col gap-1.5 sm:ml-0">
+      <div className="flex min-w-0 flex-[1_1_11rem] flex-col gap-0.5 text-sm sm:text-right">
         {c.recordCount !== null ? (
           <>
-            <div className="text-2xl font-bold tracking-tight tabular-nums">{n(c.recordCount)}</div>
-            <div className="text-ink-muted text-xs">
-              records{c.totalBytes ? ` · ${formatBytesFixed(c.totalBytes)}` : ''}
+            <div className="font-medium tabular-nums">
+              {n(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
             </div>
-            <TypeBar collection={c} color={color} className="h-2 w-full max-w-60 rounded-sm" />
             <div className="text-ink-muted text-xs">
-              {c.latestVersion}
-              {c.lastPushAt ? ` · ${formatDate(c.lastPushAt)}` : ''}
+              {[
+                c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
+                c.latestVersion,
+                c.lastPushAt ? formatDate(c.lastPushAt) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </div>
           </>
         ) : (
@@ -534,12 +488,10 @@ type Sort = 'records' | 'recent' | 'name'
 export function CollectionsBrowser({
   owner,
   collections,
-  colors,
   newCollection,
 }: {
   owner: string
   collections: OrgCollection[]
-  colors: Map<string, string>
   newCollection: boolean
 }) {
   const [q, setQ] = useState('')
@@ -647,7 +599,7 @@ export function CollectionsBrowser({
         </div>
       )}
       {shown.map((c) => (
-        <CollectionRow key={c.id} owner={owner} c={c} color={colors.get(c.slug)!} />
+        <CollectionRow key={c.id} owner={owner} c={c} />
       ))}
       {shown.length === 0 && (
         <p className="border-rule text-ink-muted border-b py-6 text-sm">
@@ -658,19 +610,11 @@ export function CollectionsBrowser({
   )
 }
 
-export function CardGrid({
-  owner,
-  collections,
-  colors,
-}: {
-  owner: string
-  collections: OrgCollection[]
-  colors: Map<string, string>
-}) {
+export function CardGrid({ owner, collections }: { owner: string; collections: OrgCollection[] }) {
   return (
     <div className="grid gap-5 sm:grid-cols-2">
       {collections.map((c) => (
-        <CollectionCard key={c.id} owner={owner} c={c} color={colors.get(c.slug)!} />
+        <CollectionCard key={c.id} owner={owner} c={c} />
       ))}
     </div>
   )
@@ -691,20 +635,17 @@ export function readmeExcerpt(readme: string | null | undefined): string | null 
 export function CollectionSpotlight({
   owner,
   c,
-  color,
   versionCount,
   readme,
   sample,
 }: {
   owner: string
   c: OrgCollection
-  color: string
   versionCount: number | null
   readme: string | null
   sample: { type: string; data: unknown } | null
 }) {
   const types = typesOf(c)
-  const total = types.reduce((s, [, count]) => s + count, 0)
   const excerpt = readmeExcerpt(readme)
   const excerptHtml = useMemo(() => (excerpt ? renderMarkdown(excerpt) : null), [excerpt])
   const stats: [string, string][] = []
@@ -721,7 +662,6 @@ export function CollectionSpotlight({
 
   return (
     <article className="border-rule rounded-surface overflow-hidden border bg-white/40">
-      <TypeBar collection={c} color={color} className="h-1.5" />
       <div className="flex flex-col gap-3 px-5 pt-6 pb-5 sm:px-8">
         <Tags tags={c.tags} />
         <div>
@@ -761,9 +701,9 @@ export function CollectionSpotlight({
               <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
                 Record types
               </h3>
-              <ul className="flex flex-col gap-3">
-                {types.slice(0, 8).map(([t, count], i) => (
-                  <li key={t}>
+              <ul className="flex flex-col gap-1.5">
+                {types.slice(0, 8).map(([t, count]) => (
+                  <li key={t} className="border-rule border-b border-dotted pb-1">
                     <div className="flex justify-between gap-2 text-[13px]">
                       <Link
                         to={`/${owner}/${c.slug}/records?type=${encodeURIComponent(t)}`}
@@ -772,16 +712,6 @@ export function CollectionSpotlight({
                         {t}
                       </Link>
                       <span className="tabular-nums">{n(count)}</span>
-                    </div>
-                    <div aria-hidden="true" className="bg-parchment-dark mt-1.5 h-1.5 rounded-sm">
-                      <div
-                        className="h-full min-w-1 rounded-sm"
-                        style={{
-                          width: `${total ? (count / total) * 100 : 0}%`,
-                          backgroundColor: color,
-                          opacity: SHADES[i] ?? 0.12,
-                        }}
-                      />
                     </div>
                   </li>
                 ))}
@@ -977,13 +907,11 @@ export function MembersSection({
 export function ActivityList({
   owner,
   activity,
-  colors,
   limit,
   heading = true,
 }: {
   owner: string
   activity: OrgActivity[]
-  colors: Map<string, string>
   limit?: number
   heading?: boolean
 }) {
@@ -995,13 +923,8 @@ export function ActivityList({
         {shown.map((a) => (
           <li
             key={`${a.collectionSlug}@${a.semver}`}
-            className="border-rule/60 flex gap-2.5 border-b py-2 text-[13px]"
+            className="border-rule/60 border-b py-2 text-[13px]"
           >
-            <span
-              aria-hidden="true"
-              className="mt-1.5 h-2 w-2 shrink-0 rounded-[2px]"
-              style={{ backgroundColor: colors.get(a.collectionSlug) ?? '#6b6b63' }}
-            />
             <div className="min-w-0">
               <div>
                 <Link
