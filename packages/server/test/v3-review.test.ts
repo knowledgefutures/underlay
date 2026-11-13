@@ -159,6 +159,48 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     }
   })
 
+  it('runs a verify again after a network error, rather than failing the upload', async () => {
+    const { h, user, base } = await setup()
+    const inline = uploadLimits.inlineFiles
+    uploadLimits.inlineFiles = 0
+    const v3store = h.ports.stores.v3
+    const read = { get: v3store.get.bind(v3store), tail: v3store.tail!.bind(v3store) }
+    let thrown = 0
+    // A read of a staged copy by the verify job, once.
+    const blip = (key: string) => {
+      if (thrown > 0 || !key.startsWith('uploads/')) return
+      if (!/verifyFile/.test(String(new Error().stack))) return
+      thrown++
+      throw new Error('Network connection lost.')
+    }
+    v3store.get = async (key, range) => (blip(key), read.get(key, range))
+    v3store.tail = async (key, length) => (blip(key), read.tail(key, length))
+    try {
+      // Larger than a reader's first read of its tail, so the verify reads its blocks.
+      const rows = [
+        v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
+        ...Array.from({ length: 400 }, (_, i) =>
+          v3.rowFromRecord(`a${String(i).padStart(4, '0')}`, 'Author', {
+            name: `${i} ${'y'.repeat(2000)}`,
+          }),
+        ),
+      ]
+      const up = await upload(h, user, base, await build(rows))
+      expect(thrown).toBe(1)
+      // Not failed: the job waits out its backoff and runs again.
+      expect(up).toMatchObject({ status: 'verifying', error: null })
+      await h.ports.db.update(schema.jobs).set({ runAt: new Date(0) })
+      await h.drain()
+      expect(await json(await h.request(`${base}/uploads/${up.id}`, { user }))).toMatchObject({
+        status: 'committed',
+      })
+    } finally {
+      v3store.get = read.get
+      v3store.tail = read.tail
+      uploadLimits.inlineFiles = inline
+    }
+  })
+
   it('takes an asset only from bytes uploaded to the collection, at their size', async () => {
     const { h, user, base } = await setup()
     await h.collection('other', { recordLayout: 'v3' })

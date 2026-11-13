@@ -866,10 +866,14 @@ registerJob('v3.uploadVerify', async (job, ports) => {
       })
     ).content
   } catch (err) {
+    // Only what the file holds fails the upload. Anything else (a connection lost, a store
+    // that answered 5xx) is thrown, and the job is run again: one network error took a
+    // 2,124-file commit down after 500 files had been verified (the full Crossref load).
+    if (!(err instanceof v3.FormatError || err instanceof InputRuleError)) throw err
     await fail(ports, upload.id, {
       statusCode: 422,
       error: `File ${fileId} is not valid`,
-      problems: [String((err as Error).message)],
+      problems: [err.message],
     })
     return
   }
