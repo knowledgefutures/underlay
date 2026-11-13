@@ -27,6 +27,11 @@ const accountRes = `{
   "logo": null,
   "bio": "Open infrastructure for knowledge",
   "website": "https://www.knowledgefutures.org",
+  "tagline": "Open infrastructure for knowledge",
+  "location": "Cambridge, MA",
+  "coverColor": "#22394f",
+  "provenanceNote": null,
+  "pinned": ["uuid"],
   "createdAt": "2026-01-15T00:00:00.000Z",
   "arkNaan": "12345",
   "arkShoulder": "ul"
@@ -45,9 +50,23 @@ const membersMeReq = `{ "public": true }`
 
 const updateOrgReq = `{
   "displayName": "Knowledge Futures",
-  "bio": "Open infrastructure for knowledge",
-  "website": "https://www.knowledgefutures.org"
+  "tagline": "Open infrastructure for knowledge",
+  "bio": "We build **open** tools for publishing and data.",
+  "website": "https://www.knowledgefutures.org",
+  "coverColor": "#22394f",
+  "pinned": ["uuid", "uuid"]
 }`
+
+const activityRes = `[
+  {
+    "collectionSlug": "pubpub-archive",
+    "collectionName": "PubPub Archive",
+    "semver": "v1.2.0",
+    "message": "Add 2025 pubs",
+    "recordCount": 48210,
+    "createdAt": "2026-04-01T00:00:00.000Z"
+  }
+]`
 
 const updateOrgRes = `{ "ok": true, "slug": "knowledge-futures" }`
 
@@ -166,9 +185,11 @@ export default function DocsApiAccounts() {
         <h2 id="get-api-accounts-slug">GET /api/accounts/:slug</h2>
         <p className="scope">No auth required</p>
         <p>
-          Get the public profile of any account. <code>arkNaan</code> and <code>arkShoulder</code>{' '}
-          are null when the account has no ARK settings of its own. An unknown slug returns{' '}
-          <code>404</code>.
+          Get the public profile of any account: what its page at <code>/:slug</code> shows.{' '}
+          <code>bio</code> is Markdown. <code>pinned</code> lists the ids of the collections shown
+          first on its page, in order, leaving out private ones unless you are a member.{' '}
+          <code>arkNaan</code> and <code>arkShoulder</code> are null when the account has no ARK
+          settings of its own. An unknown slug returns <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -206,6 +227,25 @@ export default function DocsApiAccounts() {
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
+        <h2 id="get-api-accounts-slug-activity">GET /api/accounts/:slug/activity</h2>
+        <p className="scope">No auth required</p>
+        <p>
+          Recent versions across an organization&rsquo;s collections, newest first (
+          <code>?limit=</code>, default 20, at most 50). Members see their private
+          collections&rsquo; versions too; everyone else sees public ones, with public record
+          counts. An unknown slug returns <code>404</code>.
+        </p>
+        <h3>
+          Response <span className="text-ink-muted font-normal">200</span>
+        </h3>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{activityRes}</code>
+        </pre>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
         <h2 id="put-api-accounts-slug-members-me">PUT /api/accounts/:slug/members/me</h2>
         <p className="scope">Auth: a member, by session or a write or admin key</p>
         <p>
@@ -226,10 +266,14 @@ export default function DocsApiAccounts() {
           Auth: an owner of the account, by session or an unscoped personal <code>admin</code> key
         </p>
         <p>
-          Update an organization&rsquo;s profile. Pass only the fields to change: <code>slug</code>,{' '}
-          <code>displayName</code>, <code>bio</code>, <code>website</code> and <code>kfOrgId</code>{' '}
-          (the KF account it belongs to, which must be one you belong to). <code>null</code> clears{' '}
-          <code>bio</code> or <code>website</code>; <code>kfOrgId</code> can move to another KF
+          Update an organization&rsquo;s profile and page. Pass only the fields to change:{' '}
+          <code>slug</code>, <code>displayName</code>, <code>tagline</code> (up to 160 characters),{' '}
+          <code>bio</code> (Markdown, up to 5,000), <code>website</code> (an <code>http</code> or{' '}
+          <code>https</code> address), <code>location</code>, <code>coverColor</code> (
+          <code>#rrggbb</code>), <code>provenanceNote</code> (up to 300), <code>pinned</code> (up to
+          four of its own collections&rsquo; ids, in order) and <code>kfOrgId</code> (the KF account
+          it belongs to, which must be one you belong to). <code>null</code> or an empty string
+          clears a text field or the cover color; <code>kfOrgId</code> can move to another KF
           account but can&rsquo;t be cleared (<code>422</code>).
         </p>
         <h3>Request</h3>
@@ -270,7 +314,10 @@ export default function DocsApiAccounts() {
               <td>
                 <code>422</code>
               </td>
-              <td>The new slug is not a valid slug.</td>
+              <td>
+                The new slug is not a valid slug, a field is too long, the website or cover color is
+                not valid, or <code>pinned</code> names another organization&rsquo;s collection.
+              </td>
             </tr>
           </tbody>
         </table>

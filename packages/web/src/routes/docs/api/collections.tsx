@@ -93,7 +93,16 @@ const listRes = `[
     "name": "PubPub Archive",
     "public": true,
     "createdAt": "2026-01-15T00:00:00.000Z",
-    "updatedAt": "2026-04-01T00:00:00.000Z"
+    "updatedAt": "2026-04-01T00:00:00.000Z",
+    "description": "Every pub published on PubPub",
+    "tags": ["Publishing"],
+    "license": "CC-BY-4.0",
+    "latestVersion": "v1.2.0",
+    "recordCount": 48210,
+    "totalBytes": 91234567,
+    "typeCounts": { "Pub": 48210 },
+    "lastPushAt": "2026-04-01T00:00:00.000Z",
+    "pinned": 0
   }
 ]`
 
@@ -387,9 +396,11 @@ export default function DocsApiCollections() {
         <h2 id="get-api-accounts-owner-collections">GET /api/accounts/:owner/collections</h2>
         <p className="scope">No auth required</p>
         <p>
-          List an account&rsquo;s collections, most recently updated first. Members of the account
-          see all of them; everyone else sees only public ones. An unknown account returns{' '}
-          <code>200</code> with an empty list.
+          List an account&rsquo;s collections, most recently updated first, with what each holds at
+          its latest version (null until it has one). Members of the account see all of them, with
+          private records counted; everyone else sees only public ones and public counts.{' '}
+          <code>pinned</code> is a collection&rsquo;s place among those the account pins to its
+          page, or null. An unknown account returns <code>200</code> with an empty list.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
