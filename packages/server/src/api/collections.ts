@@ -362,6 +362,8 @@ export function collectionRoutes() {
     })
   })
 
+  // An org's collections for its page: what each holds at its head version, as the
+  // explore list shows it, and `pinned`, its place among the org's pinned collections.
   app.get('/api/accounts/:owner/collections', async (c) => {
     const { db } = c.var.ports
     const p = c.var.principal
@@ -374,15 +376,9 @@ export function collectionRoutes() {
     const orgIds = await memberOrgIds(db, p)
     const member = orgIds.includes(org.id)
     const rows = await db
-      .select({
-        id: schema.collections.id,
-        slug: schema.collections.slug,
-        name: schema.collections.name,
-        public: schema.collections.public,
-        createdAt: schema.collections.createdAt,
-        updatedAt: schema.collections.updatedAt,
-      })
+      .select({ c: schema.collections, v: schema.versions })
       .from(schema.collections)
+      .leftJoin(schema.versions, eq(schema.versions.id, schema.collections.headVersionId))
       .where(
         and(
           eq(schema.collections.organizationId, org.id),
@@ -391,7 +387,70 @@ export function collectionRoutes() {
         ),
       )
       .orderBy(desc(schema.collections.updatedAt))
-    return c.json(rows)
+    const pinned = org.pinned ?? []
+    return c.json(
+      rows.map((r) => {
+        const v = r.v ? versionSummary(r.v, member) : null
+        const at = pinned.indexOf(r.c.id)
+        return {
+          id: r.c.id,
+          slug: r.c.slug,
+          name: r.c.name,
+          public: r.c.public,
+          createdAt: r.c.createdAt,
+          updatedAt: r.c.updatedAt,
+          description: r.c.summary?.description ?? null,
+          tags: r.c.summary?.tags ?? [],
+          license: r.c.summary?.license ?? null,
+          latestVersion: v?.semver ?? null,
+          recordCount: v?.recordCount ?? null,
+          totalBytes: v?.totalBytes ?? null,
+          typeCounts: v?.typeCounts ?? null,
+          lastPushAt: v?.createdAt ?? null,
+          pinned: at >= 0 ? at : null,
+        }
+      }),
+    )
+  })
+
+  // Recent versions across the org's collections the caller may see, newest first.
+  app.get('/api/accounts/:slug/activity', async (c) => {
+    const { db } = c.var.ports
+    const [org] = await db
+      .select()
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, c.req.param('slug')))
+      .limit(1)
+    if (!org) return jsonError(c, 404, 'Not found')
+    const member = (await memberOrgIds(db, c.var.principal)).includes(org.id)
+    const limit = Math.min(50, Math.max(1, Number(c.req.query('limit') ?? 20) || 20))
+    const rows = await db
+      .select({
+        slug: schema.collections.slug,
+        name: schema.collections.name,
+        v: schema.versions,
+      })
+      .from(schema.versions)
+      .innerJoin(schema.collections, eq(schema.collections.id, schema.versions.collectionId))
+      .where(
+        and(
+          eq(schema.collections.organizationId, org.id),
+          sql`${schema.collections.deletedAt} IS NULL`,
+          member ? undefined : eq(schema.collections.public, true),
+        ),
+      )
+      .orderBy(desc(schema.versions.createdAt))
+      .limit(limit)
+    return c.json(
+      rows.map((r) => ({
+        collectionSlug: r.slug,
+        collectionName: r.name,
+        semver: r.v.semver,
+        message: r.v.message,
+        recordCount: member ? r.v.recordCount : r.v.publicRecordCount,
+        createdAt: r.v.createdAt,
+      })),
+    )
   })
 
   app.get('/api/accounts/:slug', async (c) => {
@@ -407,6 +466,22 @@ export function collectionRoutes() {
       .from(schema.arkShoulders)
       .where(eq(schema.arkShoulders.organizationId, org.id))
       .limit(1)
+    // Pinned collections the caller may see: a private one's id stays with the members.
+    let pinned = org.pinned ?? []
+    if (pinned.length && !(await memberOrgIds(db, c.var.principal)).includes(org.id)) {
+      const open = await db
+        .select({ id: schema.collections.id })
+        .from(schema.collections)
+        .where(
+          and(
+            inArray(schema.collections.id, pinned),
+            eq(schema.collections.public, true),
+            sql`${schema.collections.deletedAt} IS NULL`,
+          ),
+        )
+      const ids = new Set(open.map((r) => r.id))
+      pinned = pinned.filter((id) => ids.has(id))
+    }
     // Public profile only (v1 returned the whole row, including kfOrgId).
     return c.json({
       id: org.id,
@@ -417,6 +492,11 @@ export function collectionRoutes() {
       logo: org.logo,
       bio: org.bio,
       website: org.website,
+      tagline: org.tagline,
+      location: org.location,
+      coverColor: org.coverColor,
+      provenanceNote: org.provenanceNote,
+      pinned,
       createdAt: org.createdAt,
       arkNaan: org.arkNaan,
       arkShoulder: shoulder?.shoulder ?? null,

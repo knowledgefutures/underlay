@@ -8,7 +8,7 @@
  *   DELETE /api/accounts/me/sessions/:id
  *   GET    /api/accounts/available-kf-orgs        KF orgs a new org may link to
  *   POST   /api/accounts/invitations/accept       {token}: an invitation id
- *   PATCH  /api/accounts/:slug                    org profile (owners: session or admin key)
+ *   PATCH  /api/accounts/:slug                    org profile and page (owners: session or admin key)
  *   DELETE /api/accounts/:slug                    an org (owners: session or admin key)
  *
  * Sessions, invitation acceptance and the guards on deletion are new in v2;
@@ -17,7 +17,7 @@
  * Deleting an org cascades to its collections in this schema, so an org that
  * still holds collections is refused: delete or transfer them first.
  */
-import { and, count, eq, isNull } from 'drizzle-orm'
+import { and, count, eq, inArray, isNull } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -80,6 +80,18 @@ async function slugProblem(c: Context<AppEnv>, slug: unknown, orgId: string) {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 const strOrNull = (v: unknown) => (v === null ? null : str(v))
+
+/** The org page's free-text fields and their length caps. */
+const PROFILE_TEXT = [
+  ['bio', 5000],
+  ['website', 300],
+  ['tagline', 160],
+  ['location', 100],
+  ['provenanceNote', 300],
+] as const
+
+/** Collections an org may pin to its page. */
+export const MAX_PINNED = 4
 
 export function accountRoutes() {
   const app = new Hono<AppEnv>()
@@ -240,10 +252,51 @@ export function accountRoutes() {
       return jsonError(c, 403, 'You are not a member of that KF organization')
     }
     const set: Partial<typeof schema.organization.$inferInsert> = {}
+    // The page's text fields: trimmed, empty means none, and each has a length cap.
+    for (const [key, max] of PROFILE_TEXT) {
+      const v = strOrNull(body[key])
+      if (v === undefined) continue
+      const t = v?.trim() ?? ''
+      if (t.length > max) return jsonError(c, 422, `${key} must be at most ${max} characters`)
+      // The page links to it, so nothing but a web address (never `javascript:`).
+      if (key === 'website' && t && !/^https?:\/\/[^\s]+$/i.test(t))
+        return jsonError(c, 422, 'website must start with http:// or https://')
+      set[key] = t || null
+    }
+    const cover = strOrNull(body.coverColor)
+    if (cover !== undefined) {
+      if (cover && !/^#[0-9a-fA-F]{6}$/.test(cover))
+        return jsonError(c, 422, 'coverColor must be a color like #22394f')
+      set.coverColor = cover ? cover.toLowerCase() : null
+    }
+    if (body.pinned !== undefined) {
+      const pinned = body.pinned
+      if (
+        !Array.isArray(pinned) ||
+        pinned.length > MAX_PINNED ||
+        pinned.some((id) => typeof id !== 'string') ||
+        new Set(pinned).size !== pinned.length
+      ) {
+        return jsonError(c, 422, `pinned must be up to ${MAX_PINNED} collection ids`)
+      }
+      if (pinned.length) {
+        const own = await c.var.ports.db
+          .select({ id: schema.collections.id })
+          .from(schema.collections)
+          .where(
+            and(
+              eq(schema.collections.organizationId, org.id),
+              inArray(schema.collections.id, pinned as string[]),
+              isNull(schema.collections.deletedAt),
+            ),
+          )
+        if (own.length !== pinned.length)
+          return jsonError(c, 422, "pinned may name only this organization's collections")
+      }
+      set.pinned = pinned as string[]
+    }
     if (str(body.slug) !== undefined) set.slug = str(body.slug)!
     if (str(body.displayName) !== undefined) set.name = str(body.displayName)!
-    if (strOrNull(body.bio) !== undefined) set.bio = strOrNull(body.bio)!
-    if (strOrNull(body.website) !== undefined) set.website = strOrNull(body.website)!
     if (kfOrgId !== undefined) set.kfOrgId = kfOrgId || null
     if (Object.keys(set).length) {
       await c.var.ports.db

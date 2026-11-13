@@ -146,9 +146,18 @@ export const organization = sqliteTable('organization', {
   logo: text('logo'),
   createdAt: createdAt(),
   metadata: text('metadata'),
+  /** The About text on the org's page, in Markdown. */
   bio: text('bio'),
   website: text('website'),
   avatarUrl: text('avatar_url'),
+  /** The org's page: one sentence under the name, where it is, and its cover color. */
+  tagline: text('tagline'),
+  location: text('location'),
+  coverColor: text('cover_color'),
+  /** For data published on someone else's behalf: who made it and who did not. */
+  provenanceNote: text('provenance_note'),
+  /** Collection ids shown as large cards on the org's page, in order. */
+  pinned: json<string[]>('pinned'),
   arkNaan: text('ark_naan'),
   kfOrgId: text('kf_org_id'),
   isDefault: bool('is_default').default(false),
