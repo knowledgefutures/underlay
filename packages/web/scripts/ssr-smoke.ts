@@ -422,7 +422,7 @@ try {
       path: '/org',
       status: 200,
       has: ['Smoke Org', 'org/authors', 'Record types', 'A record', 'Ada Lovelace'],
-      lacks: ['org/secret', 'Kurt', '<script>alert(1)', 'In numbers'],
+      lacks: ['org/secret', 'Kurt', '<script>alert(1)', '2 collections'],
     },
     {
       path: '/org',
@@ -433,7 +433,7 @@ try {
     {
       path: '/org',
       status: 200,
-      has: ['org/authors', 'org/secret', 'In numbers', 'Private', 'Settings'],
+      has: ['org/authors', 'org/secret', '2 collections · 3 records', 'Private', 'Settings'],
       lacks: ['A record'],
       user: 'u1',
     },

@@ -144,11 +144,14 @@ export function OrgHeader({
   tabs,
   tab,
   canManage,
+  summary,
 }: {
   account: OrgAccount
   tabs: { id: OrgTab; label: string; count?: number }[]
   tab: OrgTab
   canManage: boolean
+  /** What the org holds, in one line (orgSummary). */
+  summary: string | null
 }) {
   return (
     <section className="border-rule border-b">
@@ -209,6 +212,12 @@ export function OrgHeader({
             <Icon name="calendar" />
             Joined {formatDate(account.createdAt, 'month')}
           </span>
+          {summary && (
+            <span className="inline-flex items-center gap-1.5">
+              <Icon name="stack" />
+              {summary}
+            </span>
+          )}
         </div>
 
         {account.provenanceNote && (
@@ -242,7 +251,7 @@ export function OrgHeader({
   )
 }
 
-function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'copy' | 'check' }) {
+function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'stack' | 'copy' | 'check' }) {
   const paths = {
     pin: (
       <>
@@ -260,6 +269,13 @@ function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'copy' | 'check' }
       <>
         <rect x="3" y="4" width="18" height="18" rx="2" />
         <path d="M16 2v4M8 2v4M3 10h18" />
+      </>
+    ),
+    stack: (
+      <>
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+        <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
       </>
     ),
     copy: (
@@ -288,36 +304,26 @@ function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'copy' | 'check' }
   )
 }
 
-// ---------------------------------------------------------------- Numbers
+// ---------------------------------------------------------------- Summary
 
-export function HeadlineNumbers({ collections }: { collections: OrgCollection[] }) {
+/** "7 collections · 2,038,025 records · 1.1 GiB · updated Oct 30, 2026", for two or more. */
+export function orgSummary(collections: OrgCollection[]): string | null {
+  if (collections.length < 2) return null
   const records = collections.reduce((s, c) => s + (c.recordCount ?? 0), 0)
-  const types = collections.reduce((s, c) => s + typesOf(c).length, 0)
   const bytes = collections.reduce((s, c) => s + (c.totalBytes ?? 0), 0)
   const last = collections
     .map((c) => c.lastPushAt)
     .filter((d): d is string => !!d)
     .sort()
     .at(-1)
-  const items: [string, string][] = [
-    [n(records), records === 1 ? 'record' : 'records'],
-    [n(collections.length), 'collections'],
-    [n(types), types === 1 ? 'record type' : 'record types'],
-    [formatBytesFixed(bytes), 'of structured data'],
+  return [
+    `${n(collections.length)} collections`,
+    `${n(records)} ${records === 1 ? 'record' : 'records'}`,
+    bytes ? formatBytesFixed(bytes) : null,
+    last ? `updated ${formatDate(last)}` : null,
   ]
-  if (last) items.push([formatDate(last), 'last version published'])
-  return (
-    <section aria-label="In numbers" className="border-rule border-b">
-      <dl className="mx-auto flex max-w-5xl flex-wrap gap-x-12 gap-y-4 px-4 py-6">
-        {items.map(([value, label]) => (
-          <div key={label} className="flex flex-col-reverse">
-            <dt className="text-ink-muted text-xs">{label}</dt>
-            <dd className="text-2xl font-bold tracking-tight tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  )
+    .filter(Boolean)
+    .join(' · ')
 }
 
 // ---------------------------------------------------------------- Collections

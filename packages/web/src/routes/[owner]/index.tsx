@@ -8,13 +8,13 @@ import {
   CardGrid,
   CollectionsBrowser,
   CollectionSpotlight,
-  HeadlineNumbers,
   MembersSection,
   NoCollections,
   type OrgAccount,
   type OrgActivity,
   type OrgCollection,
   OrgHeader,
+  orgSummary,
   type OrgMember,
   type OrgTab,
   seriesColor,
@@ -148,10 +148,13 @@ export default function OwnerPage() {
 
   return (
     <BaseLayout>
-      <OrgHeader account={account} tabs={tabs} tab={tab} canManage={canManage} />
-      {tab === 'overview' && collections.length > 1 && (
-        <HeadlineNumbers collections={collections} />
-      )}
+      <OrgHeader
+        account={account}
+        tabs={tabs}
+        tab={tab}
+        canManage={canManage}
+        summary={orgSummary(collections)}
+      />
       <div className="mx-auto flex max-w-5xl flex-wrap items-start gap-x-10 gap-y-10 px-4 pt-8 pb-12">
         <div className="min-w-0 flex-[999_1_36rem]">{main}</div>
         <aside className="flex min-w-0 flex-[1_1_16rem] flex-col gap-8">
