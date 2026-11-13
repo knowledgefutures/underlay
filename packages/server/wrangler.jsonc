@@ -60,8 +60,7 @@
       "vars": {
         "APP_URL": "https://staging.underlay.org",
         "DEPLOYMENT": "staging",
-        // New collections are v3 (v3-deploy-plan.md, Phase 4). Production keeps the default,
-        // `today`, until Phase 5 step 3.
+        // New collections are v3 (v3-deploy-plan.md, Phase 4).
         "NEW_COLLECTION_LAYOUT": "v3",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-staging",
@@ -137,6 +136,8 @@
       "vars": {
         "APP_URL": "https://www.underlay.org",
         "DEPLOYMENT": "prod",
+        // New collections are v3 (v3-deploy-plan.md, Phase 5 step 7, 2026-11-13).
+        "NEW_COLLECTION_LAYOUT": "v3",
         "R2_ENDPOINT": "https://b66a542ad5e0af992703a2ce8d1d8747.r2.cloudflarestorage.com",
         "R2_BUCKET": "underlay-prod",
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
