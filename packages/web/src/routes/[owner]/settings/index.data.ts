@@ -12,11 +12,16 @@ export const handle = {
 export async function loader({ params, request }: LoaderFunctionArgs) {
   const api = loaderApi(request)
 
-  const [orgData, kfOrgs] = await Promise.all([
+  const [orgData, kfOrgs, collections] = await Promise.all([
     api.json(`/api/accounts/${params.owner}`, null),
     api.json('/api/accounts/available-kf-orgs', []),
+    api.json(`/api/accounts/${params.owner}/collections`, []),
   ])
 
   if (!orgData) throw new Response('Not Found', { status: 404 })
-  return { orgData, kfOrgs: Array.isArray(kfOrgs) ? kfOrgs : [] }
+  return {
+    orgData,
+    kfOrgs: Array.isArray(kfOrgs) ? kfOrgs : [],
+    collections: Array.isArray(collections) ? collections : [],
+  }
 }

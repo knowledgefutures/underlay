@@ -1,207 +1,169 @@
-import { Link, useLoaderData, useParams } from 'react-router'
+import { useMemo } from 'react'
+import { useLoaderData, useParams, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
-import { Breakable, ButtonLink, EmptyState } from '~/components/ui'
+import {
+  AboutSection,
+  ActivityList,
+  CardGrid,
+  CollectionsBrowser,
+  CollectionSpotlight,
+  HeadlineNumbers,
+  MembersSection,
+  NoCollections,
+  type OrgAccount,
+  type OrgActivity,
+  type OrgCollection,
+  OrgHeader,
+  type OrgMember,
+  type OrgTab,
+  seriesColor,
+  UseThisData,
+} from '~/components/org-page'
 import { useAppContext } from '~/lib/app-context'
-import { formatDate, timeAgo } from '~/lib/format'
 import { useIsOwner } from '~/lib/use-is-owner'
+
+/** Collections an org may show as cards without a list: more than this get the list. */
+const CARDS_ONLY = 4
 
 export default function OwnerPage() {
   const { owner } = useParams()
+  const [params] = useSearchParams()
   const { currentUser } = useAppContext()
-  const { account, collections, members } = useLoaderData() as {
-    account: any
-    collections: any[]
-    members: any[]
+  const { account, collections, members, activity, spotlight, origin } = useLoaderData() as {
+    account: OrgAccount
+    collections: OrgCollection[]
+    members: OrgMember[]
+    activity: OrgActivity[]
+    spotlight: {
+      versionCount: number | null
+      readme: string | null
+      sample: { type: string; data: unknown } | null
+    } | null
+    origin: string
   }
 
   const isMember = currentUser?.orgs?.some((o: any) => o.slug === owner) ?? false
   // Members and KF admins see the settings link.
-  const isOwner = useIsOwner(owner)
+  const canManage = useIsOwner(owner)
+  const slug = account.slug
+
+  // Each collection keeps one color across the page: by size, largest first.
+  const colors = useMemo(() => {
+    const bySize = [...collections].sort(
+      (a, b) => (b.recordCount ?? -1) - (a.recordCount ?? -1) || a.slug.localeCompare(b.slug),
+    )
+    return new Map(bySize.map((c, i) => [c.slug, seriesColor(i)]))
+  }, [collections])
+
+  const pinned = useMemo(
+    () =>
+      collections
+        .filter((c) => c.pinned !== null)
+        .sort((a, b) => (a.pinned ?? 0) - (b.pinned ?? 0)),
+    [collections],
+  )
+  // Two to four collections are all cards, pinned ones first.
+  const cards = useMemo(
+    () => [...pinned, ...collections.filter((c) => c.pinned === null)],
+    [pinned, collections],
+  )
+
+  // A tab shows only when there is something in it.
+  const tabs: { id: OrgTab; label: string; count?: number }[] = [
+    { id: 'overview', label: 'Overview' },
+  ]
+  if (collections.length > 1)
+    tabs.push({ id: 'collections', label: 'Collections', count: collections.length })
+  if (members.length) tabs.push({ id: 'members', label: 'Members', count: members.length })
+  if (activity.length) tabs.push({ id: 'activity', label: 'Activity' })
+  const asked = params.get('tab') as OrgTab | null
+  const tab: OrgTab = tabs.some((t) => t.id === asked) ? asked! : 'overview'
+
+  // The command line example: a pinned collection, else the largest.
+  const example =
+    pinned.find((c) => c.latestVersion) ??
+    collections
+      .filter((c) => c.latestVersion)
+      .sort((a, b) => (b.recordCount ?? 0) - (a.recordCount ?? 0))[0] ??
+    null
+
+  let main: React.ReactNode
+  if (tab === 'collections') {
+    main = (
+      <CollectionsBrowser
+        owner={slug}
+        collections={collections}
+        colors={colors}
+        newCollection={isMember}
+      />
+    )
+  } else if (tab === 'members') {
+    main = <MembersSection owner={slug} members={members} />
+  } else if (tab === 'activity') {
+    main = <ActivityList owner={slug} activity={activity} colors={colors} />
+  } else if (collections.length === 0) {
+    main = <NoCollections member={isMember} owner={slug} />
+  } else if (collections.length === 1) {
+    const c = collections[0]!
+    main = (
+      <CollectionSpotlight
+        owner={slug}
+        c={c}
+        color={colors.get(c.slug)!}
+        versionCount={spotlight?.versionCount ?? null}
+        readme={spotlight?.readme ?? null}
+        sample={spotlight?.sample ?? null}
+      />
+    )
+  } else if (collections.length <= CARDS_ONLY) {
+    main = (
+      <section>
+        <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
+          Collections
+        </h2>
+        <CardGrid owner={slug} collections={cards} colors={colors} />
+      </section>
+    )
+  } else {
+    main = (
+      <div className="flex flex-col gap-12">
+        {pinned.length > 0 && (
+          <section>
+            <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
+              Pinned
+            </h2>
+            <CardGrid owner={slug} collections={pinned} colors={colors} />
+          </section>
+        )}
+        <CollectionsBrowser
+          owner={slug}
+          collections={collections}
+          colors={colors}
+          newCollection={isMember}
+        />
+      </div>
+    )
+  }
 
   return (
     <BaseLayout>
-      <div className="mx-auto max-w-5xl px-4 py-8">
-        {/* Full-width header */}
-        <div className="mb-8 flex items-start gap-4">
-          {account.avatarUrl ? (
-            <img
-              src={account.avatarUrl}
-              alt={account.displayName}
-              className="border-rule h-14 w-14 shrink-0 rounded-full border object-cover"
-            />
-          ) : (
-            <div className="bg-parchment-dark border-rule text-ink-muted flex h-14 w-14 shrink-0 items-center justify-center rounded-full border text-xl font-semibold">
-              {account.displayName?.charAt(0)?.toUpperCase() ?? '?'}
-            </div>
+      <OrgHeader account={account} tabs={tabs} tab={tab} canManage={canManage} />
+      {tab === 'overview' && collections.length > 1 && (
+        <HeadlineNumbers collections={collections} />
+      )}
+      <div className="mx-auto flex max-w-5xl flex-wrap items-start gap-x-10 gap-y-10 px-4 pt-8 pb-12">
+        <div className="min-w-0 flex-[999_1_36rem]">{main}</div>
+        <aside className="flex min-w-0 flex-[1_1_16rem] flex-col gap-8">
+          {account.bio && <AboutSection bio={account.bio} />}
+          {members.length > 0 && tab !== 'members' && (
+            <MembersSection owner={slug} members={members} limit={8} />
           )}
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <div className="flex items-baseline gap-2">
-                <h1 className="text-xl font-semibold tracking-tight">{account.displayName}</h1>
-                <span className="text-ink-muted font-mono text-sm">@{account.slug}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {isOwner && (
-                  <Link
-                    to={`/${owner}/settings`}
-                    className="text-ink-muted hover:text-ink text-sm transition-colors"
-                  >
-                    Settings
-                  </Link>
-                )}
-              </div>
-            </div>
-
-            {account.bio && <p className="text-ink mt-1 text-sm leading-snug">{account.bio}</p>}
-
-            <div className="text-ink-muted mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-              {account.location && <span>{account.location}</span>}
-              {account.website && (
-                <a
-                  href={account.website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-link hover:underline"
-                >
-                  {account.website.replace(/^https?:\/\//, '')}
-                </a>
-              )}
-              <span>Joined {formatDate(account.createdAt, 'month')}</span>
-              <span>
-                <strong className="text-ink">{collections.length}</strong> collection
-                {collections.length !== 1 ? 's' : ''}
-              </span>
-              {members.length > 0 && (
-                <span>
-                  <strong className="text-ink">{members.length}</strong> member
-                  {members.length !== 1 ? 's' : ''}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Two-column body */}
-        <div className="flex gap-6">
-          {/* Main: collections table */}
-          <div className="min-w-0 flex-1">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-ink-muted text-[11px] font-semibold tracking-wide uppercase">
-                Collections
-              </h2>
-              {isMember && (
-                <ButtonLink to={`/new?owner=${owner}`} size="sm">
-                  New collection
-                </ButtonLink>
-              )}
-            </div>
-
-            {collections.length === 0 ? (
-              <EmptyState>
-                {isMember ? 'No collections yet.' : 'No public collections yet.'}
-              </EmptyState>
-            ) : (
-              <div className="border-rule rounded-surface overflow-x-auto border">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-ink/5 text-ink-muted text-left text-xs">
-                      <th className="py-2 pr-2 pl-3 font-medium">Collection</th>
-                      <th className="px-2 py-2 font-medium">Visibility</th>
-                      <th className="px-2 py-2 font-medium">Created</th>
-                      <th className="py-2 pr-3 pl-2 text-right font-medium">Updated</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {collections.map((c: any, i: number) => (
-                      <tr
-                        key={c.id}
-                        className={`hover:bg-parchment-dark transition-colors ${
-                          i < collections.length - 1 ? 'border-rule border-b' : ''
-                        }`}
-                      >
-                        <td className="py-2 pr-2 pl-3">
-                          <Link
-                            to={`/${owner}/${c.slug}`}
-                            className="text-link font-medium hover:underline"
-                          >
-                            {c.slug}
-                          </Link>
-                          {c.description && (
-                            <p className="text-ink-muted mt-0.5 line-clamp-1 text-xs">
-                              {c.description}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-2 py-2">
-                          <span className="text-ink-muted text-xs">
-                            {c.public ? 'public' : 'private'}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2">
-                          <span className="text-ink-muted text-xs">
-                            {c.createdAt ? timeAgo(c.createdAt) : '--'}
-                          </span>
-                        </td>
-                        <td className="py-2 pr-3 pl-2 text-right">
-                          <span className="text-ink-muted text-xs">
-                            {c.updatedAt ? timeAgo(c.updatedAt) : '--'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Right sidebar */}
-          <div className="hidden w-52 shrink-0 md:block">
-            {/* Members */}
-            {members.length > 0 && (
-              <div className="mb-5">
-                <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wide uppercase">
-                  Members
-                </h3>
-                <div className="space-y-0.5">
-                  {members.map((m: any, i: number) => (
-                    <div key={`m-${i}`} className="flex items-center gap-2 px-2 py-1">
-                      <span className="text-sm font-medium">{m.displayName}</span>
-                      {/* Roles, and who is hidden, are shown to the org's own members only. */}
-                      {m.role && <span className="text-ink-muted text-[10px]">{m.role}</span>}
-                      {m.public === false && (
-                        <span className="text-ink-muted text-[10px]">hidden</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Subscribe */}
-            <div>
-              <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wide uppercase">
-                Subscribe
-              </h3>
-              <div className="space-y-2">
-                <div>
-                  <p className="text-ink-muted mb-0.5 text-[10px] font-medium">AT Protocol</p>
-                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-words">
-                    <Breakable text={`at://did:web:underlay.org:${owner}`} />
-                  </code>
-                </div>
-                <div>
-                  <p className="text-ink-muted mb-0.5 text-[10px] font-medium">API</p>
-                  <code className="text-ink-muted bg-parchment-dark rounded-surface block px-2 py-1 text-[10px] break-words">
-                    <Breakable text={`GET /api/accounts/${owner}/collections`} />
-                  </code>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          <UseThisData owner={slug} example={example} origin={origin} />
+          {activity.length > 0 && tab !== 'activity' && (
+            <ActivityList owner={slug} activity={activity} colors={colors} limit={5} />
+          )}
+        </aside>
       </div>
     </BaseLayout>
   )

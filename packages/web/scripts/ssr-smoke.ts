@@ -417,6 +417,33 @@ try {
       user: 'u1',
     },
     { path: '/org', status: 200, has: [avatarUrl] },
+    // The org's page. One public collection fills it: its types, a record, its readme.
+    {
+      path: '/org',
+      status: 200,
+      has: ['Smoke Org', 'org/authors', 'Record types', 'A record', 'Ada Lovelace'],
+      lacks: ['org/secret', 'Kurt', '<script>alert(1)', 'In numbers'],
+    },
+    {
+      path: '/org',
+      status: 200,
+      has: ['People who wrote things', 'From the readme', 'Use this data'],
+    },
+    // A member sees both collections, as cards under the org's numbers.
+    {
+      path: '/org',
+      status: 200,
+      has: ['org/authors', 'org/secret', 'In numbers', 'Private', 'Settings'],
+      lacks: ['A record'],
+      user: 'u1',
+    },
+    { path: '/org?tab=activity', status: 200, has: ['authors', 'v1.0.0'] },
+    {
+      path: '/org/settings',
+      status: 200,
+      has: ['Tagline', 'Cover color', 'Pinned collections'],
+      user: 'u1',
+    },
     // The org's storage page: owners and admins only, credentials never shown.
     {
       path: '/org/settings/storage',

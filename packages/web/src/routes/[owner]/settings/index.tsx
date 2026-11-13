@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
+import type { OrgCollection } from '~/components/org-page'
+import OrgPageSettings from '~/components/org-page-settings'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, Input, SectionHeading, Select, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
@@ -8,9 +10,14 @@ import { useAppContext } from '~/lib/app-context'
 export default function OwnerSettings() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
-  const { orgData: initialOrgData, kfOrgs } = useLoaderData() as {
+  const {
+    orgData: initialOrgData,
+    kfOrgs,
+    collections,
+  } = useLoaderData() as {
     orgData: any
     kfOrgs: { id: string; name: string }[]
+    collections: OrgCollection[]
   }
 
   const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
@@ -24,6 +31,7 @@ export default function OwnerSettings() {
   // Profile form
   const [displayName, setDisplayName] = useState(initialOrgData.displayName ?? '')
   const [slugValue, setSlugValue] = useState(initialOrgData.slug ?? owner)
+  const [tagline, setTagline] = useState(initialOrgData.tagline ?? '')
   const [bio, setBio] = useState(initialOrgData.bio ?? '')
   const [website, setWebsite] = useState(initialOrgData.website ?? '')
   const [location, setLocation] = useState(initialOrgData.location ?? '')
@@ -59,7 +67,7 @@ export default function OwnerSettings() {
     setSubmitting('profile')
     const slugChanged = slugValue.trim() !== '' && slugValue.trim() !== owner
     try {
-      const payload: Record<string, any> = { displayName, bio, website, location }
+      const payload: Record<string, any> = { displayName, tagline, bio, website, location }
       if (slugChanged) payload.slug = slugValue.trim()
 
       const res = await fetch(`/api/accounts/${owner}`, {
@@ -271,16 +279,34 @@ export default function OwnerSettings() {
             />
           </div>
           <div>
+            <label htmlFor="tagline" className="mb-1 block text-sm font-medium">
+              Tagline
+            </label>
+            <Input
+              type="text"
+              id="tagline"
+              value={tagline}
+              maxLength={160}
+              onChange={(e) => setTagline(e.target.value)}
+              placeholder="One sentence on what this organization publishes"
+            />
+            <p className="text-ink-muted mt-1 text-xs">
+              Shown under the name, up to 160 characters.
+            </p>
+          </div>
+          <div>
             <label htmlFor="bio" className="mb-1 block text-sm font-medium">
-              Description
+              About
             </label>
             <Textarea
               id="bio"
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              rows={3}
-              placeholder="What does this organization do?"
+              rows={5}
+              maxLength={5000}
+              placeholder="What does this organization do, and what is its data for?"
             />
+            <p className="text-ink-muted mt-1 text-xs">Markdown. Shown beside the collections.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -336,6 +362,18 @@ export default function OwnerSettings() {
         <div className="text-ink-muted text-sm">
           <p>Only organization owners can update the profile.</p>
         </div>
+      )}
+
+      {isOwner && (
+        <OrgPageSettings
+          owner={owner!}
+          initial={{
+            coverColor: initialOrgData.coverColor ?? null,
+            pinned: initialOrgData.pinned ?? [],
+            provenanceNote: initialOrgData.provenanceNote ?? null,
+          }}
+          collections={collections}
+        />
       )}
 
       {/* ARK Identifiers */}
