@@ -610,7 +610,7 @@ export default function Home() {
           <p className="text-ink-light mt-4 max-w-[58ch] text-base leading-relaxed">
             Underlay is what institutions use to steward, curate, and publish their data.
             Universities, libraries, foundations, research labs, and publishers maintain open,
-            versioned collections that anyone can cite and build on.
+            versioned collections that anyone can cite, fork, and build on.
           </p>
           <Form action="/explore" method="get" role="search" className="mt-7 flex max-w-xl gap-2">
             <div className="relative min-w-0 flex-1">
