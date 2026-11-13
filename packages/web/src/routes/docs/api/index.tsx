@@ -37,12 +37,7 @@ export default function DocsApi() {
       <p>
         Slugs can change, and a slug an organization gives up can later name another one. An
         integration that keeps a reference to a collection should keep its id and use the{' '}
-        <code>_/</code> form. These routes are the protocol&rsquo;s read API, which any Underlay
-        server serves (
-        <Link to="/docs/protocol" className="text-link underline">
-          protocol
-        </Link>
-        ).
+        <code>_/</code> form.
       </p>
 
       <hr className="border-rule my-6" />
@@ -51,10 +46,10 @@ export default function DocsApi() {
       <p>
         <code>GET</code> and <code>HEAD</code> requests need no authentication to read public data.
         Writes (<code>POST</code>, <code>PATCH</code>, <code>PUT</code>, <code>DELETE</code>)
-        require authentication, with three exceptions. <code>POST /api/records/batch</code> and{' '}
-        <code>POST .../files/presign</code> are reads sent as POSTs, because their hash lists are
-        too long for a query string; they are reachable anonymously and make the same access checks
-        as the matching <code>GET</code>s. <code>POST /api/abuse-reports</code> is open to anyone.
+        require authentication, with two exceptions. <code>POST .../files/presign</code> is a read
+        sent as a POST, because its hash list is too long for a query string; it is reachable
+        anonymously and makes the same access checks as the matching <code>GET</code>.{' '}
+        <code>POST /api/abuse-reports</code> is open to anyone.
       </p>
       <p>
         A key may also be passed as <code>?token=</code> in the query string (this is how share and
@@ -91,9 +86,10 @@ export default function DocsApi() {
         A key never does more than its holder&rsquo;s role allows, and <code>read</code> and{' '}
         <code>write</code> keys act as a plain member even when the holder is an owner. Owner and
         admin actions on a collection (deleting it, changing whether it is public, transferring it,
-        managing its webhooks, storage and mirrors) need a signed-in session or an{' '}
-        <code>admin</code> key held by an owner or admin of the owning organization. So do changing
-        or deleting an organization, setting its NAAN, and deleting your account.
+        managing its webhooks and ARK settings) need a signed-in session or an <code>admin</code>{' '}
+        key held by an owner or admin of the owning organization. Changing or deleting an
+        organization (its owners only), setting its NAAN, and deleting your account also need a
+        session or an <code>admin</code> key.
       </p>
       <p>
         A key made in your account settings works in every organization you belong to. A key made on
@@ -106,8 +102,9 @@ export default function DocsApi() {
         A key scoped to specific collections (this is how share and agent links work) is confined to
         them: it is rejected with <code>403</code> on account and organization endpoints, cannot
         enumerate other collections, and is treated as anonymous outside its scope. Within its
-        collections it acts as a member, whatever its scope: it may push and upload, but changing
-        visibility, deleting, transferring, and managing webhooks or mirrors get <code>403</code>.
+        collections it acts as a member, whatever its scope: a write key may push and upload, but
+        changing visibility, deleting, transferring, and managing webhooks or ARK settings get{' '}
+        <code>403</code>.
       </p>
       <p>
         An <strong>agent link</strong>, created from a collection&rsquo;s Share panel, is{' '}
@@ -194,20 +191,19 @@ export default function DocsApi() {
           </tr>
           <tr className="border-rule border-b">
             <td className="py-2 pr-4">
-              <code>.../versions/:n/pack</code>, <code>.../versions/:n/records.ndjson</code> and{' '}
+              <code>.../versions/:n/records.ndjson</code> and{' '}
               <code>.../versions/:n/records.ndjson.gz</code>
             </td>
             <td className="py-2 font-mono">10</td>
           </tr>
           <tr className="border-rule border-b">
             <td className="py-2 pr-4">
-              <code>POST /api/records/batch</code>, <code>/api/records/:hash/provenance</code>,{' '}
               <code>.../diff</code> and <code>.../history</code>
             </td>
             <td className="py-2 font-mono">5</td>
           </tr>
           <tr className="border-rule border-b">
-            <td className="py-2 pr-4">Web pages (record pages cost 5)</td>
+            <td className="py-2 pr-4">Web pages</td>
             <td className="py-2 font-mono">2</td>
           </tr>
           <tr className="border-rule border-b">
@@ -280,8 +276,12 @@ export default function DocsApi() {
           otherwise read; any other file is <code>404</code>)
         </li>
         <li>
-          <code>503</code>: Storage is briefly busy while cleanup runs; retry after{' '}
-          <code>Retry-After</code> (30 seconds)
+          <code>501</code>: Not available yet, with <code>{'"code": "not_on_v3"'}</code> (for
+          example the log and pack routes, and adding a mirror)
+        </li>
+        <li>
+          <code>503</code>: Briefly unavailable: storage is busy while cleanup runs, or a deep page
+          of records is waiting for its index; retry after <code>Retry-After</code>
         </li>
       </ul>
 
@@ -312,6 +312,18 @@ export default function DocsApi() {
             Files
           </Link>
           : upload and download content-addressed files
+        </div>
+        <div>
+          <Link to="/docs/api/records" className="text-link underline">
+            Records and schemas
+          </Link>
+          : schema discovery and labels
+        </div>
+        <div>
+          <Link to="/docs/api/sync-and-integrations" className="text-link underline">
+            Sync and integrations
+          </Link>
+          : exports, webhooks, ARKs, health, abuse reports
         </div>
       </nav>
     </DocsLayout>

@@ -1,7 +1,13 @@
 # @underlay/cli
 
 The Underlay v2 command line. Source is in `src/`; `pnpm --filter @underlay/cli build` bundles it
-to `dist/cli.js`. Unpublished.
+to `dist/cli.js`.
+
+**Status: unpublished, and not working against www.underlay.org.** Nothing here is on npm: the
+npm package named `@underlay/cli` is an unrelated placeholder from 2023, so don't install it.
+Every production collection is on protocol v3, which answers the routes `clone`, `pull` and
+`push` depend on (`GET …/log` and `GET …/versions/:n/pack`) with 501 `not_on_v3`. `upload` is
+the only command written for v3 collections, and it is unpublished too.
 
 A working directory holds a local repository in `.underlay/`: a repository in the protocol layout
 (`repo/`), local versions, staging and remotes (`src/local.ts`). Versions are built with

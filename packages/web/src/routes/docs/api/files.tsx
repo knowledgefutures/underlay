@@ -142,11 +142,9 @@ export default function DocsApiFiles() {
         <p className="scope">Access follows the collection&rsquo;s visibility</p>
         <p>
           Check whether you can read a file through this collection. Returns headers only, no body.
-          For everyone, a file is readable here when it was in a public set of a published version.
-          Members can also read every file the collection holds: the latest version&rsquo;s private
-          files, and any file uploaded to this collection and verified, which covers earlier
-          versions&rsquo; private files and uploads not yet committed. To learn what to upload, use{' '}
-          <code>needed_files</code> from opening a push session.
+          Anyone who can read the collection can read a file that any of its versions names. Members
+          can also read files uploaded to this collection and verified, before any version names
+          them. To learn what to upload, use <code>needed_files</code> from opening a push session.
         </p>
         <h3>Parameters</h3>
         <table>
@@ -178,8 +176,8 @@ export default function DocsApiFiles() {
                 <code>404</code>
               </td>
               <td>
-                Not found, not readable by you, or the collection is private. A file you can&rsquo;t
-                read is <code>404</code> even when it has been withheld.
+                Not found, not readable by you, or a private collection you aren&rsquo;t a member
+                of. A file you can&rsquo;t read is <code>404</code> even when it has been withheld.
               </td>
             </tr>
             <tr>
@@ -207,10 +205,11 @@ export default function DocsApiFiles() {
           Download a file. After an access check in the context of this collection, the endpoint{' '}
           <strong>302-redirects to a short-lived, presigned storage URL</strong>; follow the
           redirect (e.g. <code>curl -L</code>) to fetch the bytes. The same files are readable as
-          for <code>HEAD</code>: public-version files anonymously, and for members (a session, a
-          key, or a share/agent token sent as a <code>Bearer</code> header or <code>?token=</code>)
-          every file the collection holds. Inaccessible files return <code>404</code>, withheld or
-          not; a readable file that has been withheld returns <code>451</code>.
+          for <code>HEAD</code>: for anyone who can read the collection, the files its versions
+          name, and for members (a session, a key, or a share/agent token sent as a{' '}
+          <code>Bearer</code> header or <code>?token=</code>) also files uploaded to it and not yet
+          in a version. Inaccessible files return <code>404</code>, withheld or not; a readable file
+          that has been withheld returns <code>451</code>.
         </p>
         <p>
           The presigned URL lasts 300 seconds and downloads the file as an attachment. The redirect
@@ -218,26 +217,13 @@ export default function DocsApiFiles() {
           shortly before the URL expires. This API path is the durable locator for the file; the
           redirect target is <strong>ephemeral and must not be persisted or shared</strong>, so
           always re-fetch through the API path. To resolve many files in one request, see the
-          presign endpoint below.
+          presign endpoint below. Downloading a file by its hash alone, outside a collection, is not
+          available yet.
         </p>
         <h3>Example</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{getExample}</code>
         </pre>
-      </div>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2 id="get-api-collections-files-hash">GET /api/collections/files/:hash</h2>
-        <p className="scope">No auth for files in public collections</p>
-        <p>
-          Download a file by hash alone. Redirects (<code>302</code>) to a presigned URL, like the
-          download above, when the file is readable through any collection you can read: a public
-          collection&rsquo;s public files, or any file of a collection in an organization you belong
-          to. Otherwise <code>404</code>, withheld or not; a readable file that has been withheld
-          returns <code>451</code>.
-        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -434,11 +420,11 @@ export default function DocsApiFiles() {
       <p>
         A reference is any object, at any depth in a record&rsquo;s <code>data</code>, whose{' '}
         <code>$file</code> is the string <code>sha256:</code> followed by 64 lowercase hex digits.
-        Each referenced file must be held by this collection: uploaded to it (a <code>PUT</code> or
-        a verified direct upload), or already in the version the push builds on (or, for public
-        files, in any earlier version). A file that only another collection holds does not count. If
-        any are missing, the commit returns <code>422</code> listing up to 100 of them, and the
-        session stays open: upload them and commit it again.
+        Each referenced file must be held by this collection: named by the version the push builds
+        on, or uploaded to it (a <code>PUT</code> or a verified direct upload). A file that only
+        another collection holds does not count. If any are missing, the commit returns{' '}
+        <code>422</code> listing up to 100 of them, and the session stays open: upload them and
+        commit it again.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{missingFilesRes}</code>

@@ -2,7 +2,7 @@
 
 Underlay is a protocol for giving structured data a permanent address. You push JSON records and a JSON Schema. You get back a versioned, content-addressed snapshot you can point to forever.
 
-Every piece of content — records, schemas, and files — is identified by its SHA-256 hash. A version is a tree of those hashes with a single root hash, so versions share the data they have in common, transfers only move what the other side doesn't have, and provenance is built in: a record's hash finds the collections and versions that include it.
+Records, schemas, and files are each identified by their SHA-256 hash. A collection is a log of commits, each naming immutable sorted-record-files, and a version is the log up to one commit, identified by that commit's hash (`ulv3:…`). Versions share the files they have in common.
 
 Schemas are first-class objects: inspectable, comparable, and alignable across independently authored datasets. Two collections that independently publish an identical Author schema share its schema hash — alignment falls out of the data model automatically. The infrastructure doesn't need to solve interoperability. It provides enough structure that interoperability can be solved dynamically by the tools and models that consume the data.
 
@@ -12,21 +12,22 @@ Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) publ
 
 ## Repository layout
 
-This branch is Underlay v2: one codebase that runs on Cloudflare Workers (D1, R2, Queues) and,
-for development and tests, on Node (SQLite, S3 or the filesystem). It is a pnpm workspace:
+One codebase that runs on Cloudflare Workers (D1, R2, Queues) and, for development and tests, on
+Node (SQLite, S3 or the filesystem). It is a pnpm workspace:
 
 | Package                                    | What it is                                                                                                                                                                                                                    |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/protocol` (`@underlay/protocol`) | The format: canonical JSON, hashing, validation, trees, version roots, the repository layout, the signed version log, tree sync and `fsck`. Stores for memory, the filesystem, S3 and R2. Runs in Node, Workers and browsers. |
 | `packages/server` (`@underlay/server`)     | The Hono app: API, push and commit, files, jobs, billing counters, storage locations. Worker entry `src/worker.ts`, Node entry `src/node/main.ts`. Migrations in `drizzle/`.                                                  |
 | `packages/web` (`@underlay/web`)           | The UI: React Router pages rendered on the server by both entries, plus the client bundle.                                                                                                                                    |
-| `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push.                                                                                                                                                  |
+| `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push. Unpublished, and its `clone`, `pull` and `push` don't work against production (see its README).                                                  |
 | `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                    |
 
 `docs/protocol-v2.md` is the specification of Underlay protocol v2, with test vectors in
 `packages/protocol/test/vectors/`. `docs/protocol-v3.md` is the draft of protocol v3 (a log of
 commits naming sorted-record-files), implemented in `packages/protocol/src/v3/`; the server
-keeps each collection on v2 or v3 (`collections.record_layout`). `docs/v1-read-api.md` is the inventory of v1's read API that
+keeps each collection on v2 or v3 (`collections.record_layout`). Every collection on
+www.underlay.org is on v3, so protocol v2 no longer describes production. `docs/v1-read-api.md` is the inventory of v1's read API that
 v2 was built against, and what v2 changes.
 
 ## Development

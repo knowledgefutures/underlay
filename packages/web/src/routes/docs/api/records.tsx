@@ -2,54 +2,6 @@ import { Link } from 'react-router'
 
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
-const batchExample = `curl -X POST https://www.underlay.org/api/records/batch \\
-  -H "Content-Type: application/json" \\
-  -d '{"hashes": ["3f2a9c...", "sha256:9c1e4b..."]}'`
-
-const batchRes = `HTTP/1.1 200 OK
-Content-Type: application/x-ndjson
-
-{"id":"pub-001","type":"Publication","data":{"title":"..."},"hash":"3f2a9c..."}
-{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"9c1e4b..."}`
-
-const provenanceRes = `{
-  "hash": "3f2a9c...",
-  "recordHash": "3f2a9c...",
-  "recordId": "pub-001",
-  "type": "Publication",
-  "data": { "title": "An Example Paper" },
-  "size": 182,
-  "firstSeen": "2026-01-15T00:00:00.000Z",
-  "createdAt": "2026-01-15T00:00:00.000Z",
-  "references": [
-    {
-      "owner": "kf",
-      "collection": "archive",
-      "collectionName": "PubPub Archive",
-      "semver": "v1.0.0",
-      "versionCreatedAt": "2026-01-15T00:00:00.000Z"
-    },
-    {
-      "owner": "kf",
-      "collection": "archive",
-      "collectionName": "PubPub Archive",
-      "semver": "v1.1.0",
-      "versionCreatedAt": "2026-02-02T00:00:00.000Z"
-    }
-  ]
-}`
-
-const firstRes = `{
-  "hash": "3f2a9c...",
-  "kind": "record",
-  "owner": "kf",
-  "collection": "archive",
-  "semver": "v1.0.0",
-  "createdAt": "2026-01-15T00:00:00.000Z",
-  "type": "Publication",
-  "id": "pub-001"
-}`
-
 const schemasRes = `[
   {
     "id": "b41c07...",
@@ -114,124 +66,23 @@ export default function DocsApiRecords() {
   return (
     <DocsLayout title="Records and schemas API">
       <p>
-        A record&rsquo;s hash identifies it in every collection that holds it. These endpoints look
-        records up by hash across collections, and find the schemas collections use. Record hashes
-        are 64 lowercase hex characters, with or without a <code>sha256:</code> prefix.
+        These endpoints find the schemas collections use, and label them. Looking records up by hash
+        across collections (a record&rsquo;s provenance, where it first appeared, or fetching
+        records by hash in a batch) is not available yet: read records through their collection with
+        the{' '}
+        <Link to="/docs/api/versions" className="text-link underline">
+          Versions API
+        </Link>
+        .
       </p>
 
       <h2 id="visibility">Visibility</h2>
       <p>
-        Every answer is limited to what the caller can read: the public set of a public collection,
-        plus both sets of the collections in the caller&rsquo;s own organizations. A record or
-        schema the caller can&rsquo;t read is treated as not existing, and counts include only what
-        the caller can see. All of these endpoints work anonymously.
+        Every answer is limited to what the caller can read: public collections, plus the
+        collections of the caller&rsquo;s own organizations. A schema the caller can&rsquo;t read is
+        treated as not existing, and counts include only what the caller can see. The read endpoints
+        work anonymously.
       </p>
-      <p>
-        The index that finds records by hash is updated by a background job after each push, so a
-        version pushed in the last few seconds may not show up yet in the record endpoints below.
-      </p>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2 id="post-api-records-batch">POST /api/records/batch</h2>
-        <p className="scope">No auth required</p>
-        <p>
-          Fetch up to 100 records by hash in one request. Body:{' '}
-          <code>{'{"hashes": ["<hash>", …]}'}</code>. The response is NDJSON, one{' '}
-          <code>{'{"id", "type", "data", "hash"}'}</code> per line, in the order the hashes were
-          given. A hash that isn&rsquo;t found, or that the caller can&rsquo;t read, is left out
-          rather than reported, so the response can have fewer lines than the request had hashes, or
-          none at all.
-        </p>
-        <p>This request counts as 5 requests against your rate limit.</p>
-        <h3>Example</h3>
-        <CodeBlock>{batchExample}</CodeBlock>
-        <CodeBlock>{batchRes}</CodeBlock>
-        <h3>Errors</h3>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>400</code>
-              </td>
-              <td>
-                <code>hashes</code> is missing, empty, or has more than 100 entries.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2 id="get-api-records-hash-provenance">GET /api/records/:hash/provenance</h2>
-        <p className="scope">No auth required</p>
-        <p>
-          A record and every version that contains it, across the collections the caller can read.{' '}
-          <code>references</code> has one entry per version, oldest first; <code>firstSeen</code>{' '}
-          (and its older name, <code>createdAt</code>) is the earliest of them. <code>size</code> is
-          the length of the record&rsquo;s canonical form in bytes.
-        </p>
-        <p>
-          Long histories are cut short: <code>references</code> lists at most the first 100 versions
-          of each collection, and covers at most 300 runs of consecutive versions overall. This
-          request counts as 5 requests against your rate limit.
-        </p>
-        <h3>
-          Response <span className="text-ink-muted font-normal">200</span>
-        </h3>
-        <CodeBlock>{provenanceRes}</CodeBlock>
-        <h3>Errors</h3>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>404</code>
-              </td>
-              <td>No collection the caller can read holds a record with this hash.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2 id="get-api-records-hash-first">GET /api/records/:hash/first</h2>
-        <p className="scope">No auth required</p>
-        <p>
-          Where a record or a file first appeared: the earliest version, among the collections the
-          caller can read, that added this hash. Cheaper than provenance when that is all you need.{' '}
-          <code>kind</code> is <code>record</code> or <code>file</code>; <code>type</code> and{' '}
-          <code>id</code> are present for records only. Returns <code>404</code> when no readable
-          collection has it.
-        </p>
-        <h3>
-          Response <span className="text-ink-muted font-normal">200</span>
-        </h3>
-        <CodeBlock>{firstRes}</CodeBlock>
-      </div>
-
-      <hr className="border-rule my-6" />
-
-      <div className="endpoint">
-        <h2 id="get-api-collections-files-hash">GET /api/collections/files/:hash</h2>
-        <p className="scope">No auth required</p>
-        <p>
-          Download a file by hash without naming a collection. If any collection the caller can read
-          holds the file, the endpoint 302-redirects to a short-lived presigned storage URL, as the{' '}
-          <Link
-            to="/docs/api/files#get-api-collections-owner-slug-files-hash"
-            className="text-link underline"
-          >
-            per-collection download
-          </Link>{' '}
-          does. Returns <code>404</code> when no readable collection has it, blocked or not, and{' '}
-          <code>451</code> when a readable file has been blocked.
-        </p>
-      </div>
 
       <hr className="border-rule my-6" />
 
@@ -341,7 +192,7 @@ export default function DocsApiRecords() {
                 <code>version</code>
               </td>
               <td>
-                A semver (<code>v1.2.0</code>), a version hash (<code>ulv2:…</code>), or{' '}
+                A semver (<code>v1.2.0</code>), a version id (<code>ulv3:…</code>), or{' '}
                 <code>latest</code> (the default)
               </td>
             </tr>

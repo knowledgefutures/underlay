@@ -1,1 +1,1 @@
-export const handle = { title: 'Repositories · Protocol · Underlay' }
+export const handle = { title: 'Layouts and collections · Protocol · Underlay' }

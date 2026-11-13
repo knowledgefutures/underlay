@@ -4,17 +4,31 @@ import DocsLayout from '~/components/DocsLayout'
 
 export default function ProtocolOverview() {
   return (
-    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v2 · Stable, frozen 2026-10-03">
+    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v3 · Draft">
       <p>
-        Version 2 of the Underlay protocol specifies the canonical encoding and hashing of records,
-        schemas and files; the input rules published data must satisfy; the construction of record
-        and file trees; the version root and its hash; the repository layout in which collections
-        are stored; the signed version log; the pack format by which versions are copied; and the
-        HTTP interface by which servers serve and accept versions.
+        Version 3 of the Underlay protocol defines four things: the{' '}
+        <strong>sorted-record-file</strong>, which holds records in key order; the{' '}
+        <strong>commit</strong>, which names the files one upload added; the{' '}
+        <strong>layout file</strong>, which lists the files that hold a collection after a rebuild;
+        and the <strong>collection</strong> that holds them. A collection is a log of numbered
+        commits, and a version is the log up to one commit.
       </p>
       <p>
-        These pages restate the normative specification, <code>docs/protocol-v2.md</code>, section
-        by section. Where they differ, the specification is authoritative.
+        It does not define how a server keeps these objects, when it rebuilds, whether it stores
+        identical files once, who may read a collection, or how it bills. Those are choices of each
+        server. Records, canonical JSON, the input rules, key order, and schemas are those of
+        version 2 unless version 3 changes them.
+      </p>
+      <p>
+        These pages restate the specification, <code>docs/protocol-v3.md</code>, section by section.
+        It is a draft: values and formats may still change, and a change to the file format changes
+        file ids. Where these pages and the specification differ, the specification is
+        authoritative.
+      </p>
+      <p>
+        Collections on underlay.org moved from protocol v2 to v3 on 2026-11-13. Their versions kept
+        their semvers, and their old <code>ulv2:</code> version ids still resolve wherever the API
+        takes a version id. Responses give the <code>ulv3:</code> id.
       </p>
 
       <h2 id="conformance">Conformance</h2>
@@ -22,108 +36,137 @@ export default function ProtocolOverview() {
         The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be interpreted as described
         in BCP 14 (<a href="https://www.rfc-editor.org/rfc/rfc2119">RFC 2119</a>,{' '}
         <a href="https://www.rfc-editor.org/rfc/rfc8174">RFC 8174</a>) when they appear in all
-        capitals. Notes and examples are informative.
+        capitals. Notes, examples, and sections marked informative are not normative.
       </p>
       <p>
-        A conforming implementation accepts and rejects the same inputs, builds the same trees and
-        computes the same hashes as the specification, byte for byte. A change to any rule that
-        alters what is accepted, how a tree is built or what is hashed requires a new protocol
-        version.
+        A conforming writer produces, from the same lines and entries, the same footer content and
+        so the same file id, whatever compressor, compression level, or write buffering it uses. A
+        conforming reader accepts and refuses the same files, commits, and layouts as the
+        specification. Version ids rest on commits and on the unlabeled files they name. A change to
+        a line, an unlabeled file, or a commit means a second format beside the first.
       </p>
 
       <h2 id="terminology">Terminology</h2>
       <ul>
         <li>
-          <strong>Collection</strong>: a named sequence of versions, identified by a collection id.
+          <strong>Record</strong>: an <code>id</code>, a <code>type</code>, and <code>data</code>{' '}
+          (any JSON value). Its <strong>key</strong> is (type, id).
         </li>
         <li>
-          <strong>Record</strong>: an <code>id</code>, a <code>type</code> and a JSON value{' '}
-          <code>data</code>.
+          <strong>Key order</strong>: by type, then by id, each compared as UTF-8 bytes.
         </li>
         <li>
-          <strong>Type</strong>: a named class of records, described by a <strong>schema</strong>{' '}
-          (JSON Schema draft-07).
+          <strong>Sorted-record-file</strong>: an immutable file of record lines in key order with a
+          table of contents, named by its <strong>file id</strong>.
         </li>
         <li>
-          <strong>File</strong>: a byte string, identified by its SHA-256 hash.
+          <strong>Commit</strong>: a numbered object naming the sorted-record-files one upload
+          added.
         </li>
         <li>
-          <strong>Access set</strong>: one of a version&rsquo;s two partitions, <code>public</code>{' '}
-          and <code>private</code>.
+          <strong>Version</strong>: the commits of a collection up to and including one commit. Its{' '}
+          <strong>version id</strong> is <code>ulv3:</code> followed by the SHA-256 of that
+          commit&rsquo;s bytes.
         </li>
         <li>
-          <strong>Tree</strong>: a sorted set of entries partitioned into tree nodes by their keys.
+          <strong>Rebuild</strong>: writing new sorted-record-files that hold the rows of older
+          ones.
         </li>
         <li>
-          <strong>Version</strong>: an immutable state of a collection, described by a root
-          document. Its <strong>version hash</strong> is <code>ulv2:</code> followed by the SHA-256
-          of the root.
+          <strong>Layout file</strong>: a numbered object, written by a rebuild, listing the
+          sorted-record-files that hold everything through a commit.
         </li>
         <li>
-          <strong>Repository</strong>: the objects that represent collections in a storage location.
+          <strong>Asset</strong>: a byte string named by its SHA-256.
         </li>
         <li>
-          <strong>Server</strong> (also <em>Underlay node</em>): an HTTP service that serves
-          collections and may accept publications.
+          <strong>Collection</strong>: a description, its commits, its layouts, and the files and
+          assets those name.
         </li>
         <li>
-          <strong>Owner</strong>: a party permitted to read a collection&rsquo;s private set, as
-          determined by the server.
+          <strong>Server</strong>: an HTTP service that keeps collections, serves them, and accepts
+          uploads. It creates commits and layouts.
         </li>
       </ul>
 
       <h2 id="properties">Properties</h2>
-      <p>Informative. The rules below have these consequences:</p>
+      <p>Informative. The rules have these consequences:</p>
       <ul>
         <li>
-          A tree depends only on its entries, not on the order of construction, so identical content
-          yields an identical version hash.
+          A sorted-record-file depends only on its rows, so the same rows give the same file id on
+          any machine.
         </li>
         <li>
-          Every object is verifiable against the hash that names it, and a version&rsquo;s public
-          content against its version hash.
+          Creating a commit reads only the commit before it, so it costs the same whatever the
+          collection holds. Checking an upload reads the schema rows it touches, and the records of
+          a type whose schema it tightens.
         </li>
         <li>
-          A reader of the public set learns of the private set only whether it exists; the private
-          set is committed to with a per-collection salt.
+          A version id rests on its commit, and through <code>previous</code> on the commits before
+          it and the files they name. Layout files and rebuilt files carry no version id, so a
+          server can rebuild without changing any version.
         </li>
         <li>
-          Publication, comparison and transfer cost in proportion to what changed, since unchanged
-          subtrees are shared by hash.
+          A reader checks what it reads against the id that names it: a footer against the file id,
+          a key block against the footer, a line against its entry.
         </li>
         <li>
-          Each collection&rsquo;s versions are recorded in a signed, hash-chained log, so a copy of
-          its repository in any location can be verified independently of the server that wrote it.
+          Who may read a collection is not part of the protocol. On underlay.org a collection is
+          public or private as a whole: there are no private records and no private types.
         </li>
       </ul>
+      <p>
+        Version 3 has no single hash over a version&rsquo;s records (a content root) and no proof
+        that a record is in a version. Neither is available yet.
+      </p>
 
       <h2 id="contents">Contents</h2>
       <ul>
         <li>
-          <Link to="/docs/protocol/records">Records and schemas</Link> (§§2–6): canonical JSON,
-          input rules, record and schema hashes, the validation dialect, files.
+          <Link to="/docs/protocol/records">Records and schemas</Link> (§2; v2 §§2–5, 7): canonical
+          JSON, input rules, record and removal lines, reserved types, key order, schemas,
+          validation, and assets.
         </li>
         <li>
-          <Link to="/docs/protocol/versions">Trees and versions</Link> (§§7–10): key order, tree
-          construction and encoding, access sets, the version root, semver.
+          <Link to="/docs/protocol/versions">Files and versions</Link> (§§3, 4, 6): the
+          sorted-record-file, commits, version ids, base, signatures, naming a file, semver, and
+          reading a version.
         </li>
         <li>
-          <Link to="/docs/protocol/repositories">Repositories</Link> (§§11–11.3): the repository
-          layout, the version log, packs, and the HTTP reads every server provides.
+          <Link to="/docs/protocol/repositories">Layouts and collections</Link> (§§5, 7–9): layout
+          files, rebuilds, collections and forks, and the reference server&rsquo;s storage.
         </li>
         <li>
-          <Link to="/docs/protocol/push-and-pull">Push and pull</Link> (§11.4, §13): delta push,
-          errors, and security considerations.
+          <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: how a commit is made on
+          underlay.org through the HTTP API today, how to read a version back, errors, and security
+          considerations.
         </li>
+      </ul>
+
+      <h2 id="not-available-yet">Not available yet</h2>
+      <ul>
+        <li>
+          Copying a collection by its log and packs: <code>GET …/log</code> and{' '}
+          <code>GET …/versions/:v/pack</code> answer <code>501</code> with code{' '}
+          <code>not_on_v3</code>.
+        </li>
+        <li>
+          Uploads of sorted-record-files built by a client. Today the server builds the files from a
+          push session.
+        </li>
+        <li>A command-line client.</li>
+        <li>Mirrors of a collection to another storage location.</li>
+        <li>Content roots and inclusion proofs.</li>
       </ul>
 
       <h2 id="reference">Reference</h2>
       <p>
-        Specification: <code>docs/protocol-v2.md</code> in the{' '}
+        Specification: <code>docs/protocol-v3.md</code> in the{' '}
         <a href="https://github.com/knowledgefutures/underlay">Underlay repository</a>. Reference
-        implementation: <code>@underlay/protocol</code> (<code>packages/protocol</code>), which runs
-        in Node, Cloudflare Workers and browsers. Test vectors:{' '}
-        <code>packages/protocol/test/vectors/v2.json</code>. The protocol is stewarded by{' '}
+        implementation: <code>packages/protocol/src/v3/</code> in the same repository, which runs in
+        Node and Cloudflare Workers. It is not published to npm. Test vectors:{' '}
+        <code>packages/protocol/test/vectors/v3-files.json</code> and <code>v3-commits.json</code>.
+        The protocol is stewarded by{' '}
         <a href="https://www.knowledgefutures.org">Knowledge Futures</a>.
       </p>
     </DocsLayout>

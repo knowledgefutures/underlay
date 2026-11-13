@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import DocsLayout from '~/components/DocsLayout'
+import { HELP_EMAIL } from '~/lib/contact'
 
 const loginNote = `# Sign in via KF Auth SSO at https://www.underlay.org/login
 # Your account is created automatically on first sign-in.
@@ -8,17 +9,18 @@ const loginNote = `# Sign in via KF Auth SSO at https://www.underlay.org/login
 
 const createCollectionCode = `export KEY="ul_abc123..."
 
-curl -X POST https://www.underlay.org/api/accounts/yourname/collections \\
+curl -X POST https://www.underlay.org/api/accounts/your-org/collections \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
     "slug": "my-dataset",
     "name": "My Dataset",
     "public": true
-  }'`
+  }'
+# → 201 {"id":"...","owner":"your-org","slug":"my-dataset","name":"My Dataset"}`
 
 const openCode = `# Open a push session. base is null for the first version.
-curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push \\
+curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{
@@ -44,7 +46,7 @@ curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push \
 # → {"session_id":"SESSION_ID","base":null,"needed_files":[],"expires_at":"...","limits":{...}}`
 
 const sendRecordsCode = `# Upload records as NDJSON, one per line
-curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/records \\
+curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push/SESSION_ID/records \\
   -H "Content-Type: application/x-ndjson" \\
   -H "Authorization: Bearer $KEY" \\
   --data-binary @- << 'EOF'
@@ -53,22 +55,25 @@ curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push/S
 EOF
 # → {"received":2}`
 
-const commitCode = `curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push/SESSION_ID/commit \\
+const commitCode = `curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → {"semver":"v1.0.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.0.0","hash":"ulv3:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
-const readCode = `# Get collection info
-curl https://www.underlay.org/api/collections/yourname/my-dataset
+const readCode = `# A public collection needs no key. For a private one, add
+# -H "Authorization: Bearer $KEY" to each request.
+
+# Get collection info
+curl https://www.underlay.org/api/collections/your-org/my-dataset
 
 # Get the records of v1.0.0 (or /versions/latest/records)
-curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/records
+curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.0.0/records
 
-# Get the manifest (list of record hashes)
-curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.0.0/manifest`
+# Get the manifest (record ids, types and hashes)
+curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.0.0/manifest`
 
 const updateCode = `# Open a session against the current version. Schemas and metadata
 # you leave out are kept.
-curl -X POST https://www.underlay.org/api/collections/yourname/my-dataset/push \\
+curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\
   -d '{"base": "v1.0.0", "message": "Add a book, drop another"}'
@@ -87,9 +92,9 @@ curl -X POST .../push/SESSION_ID/deletes \\
   --data-binary '{"type":"Book","id":"book-2"}'
 
 curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
-# → {"semver":"v1.1.0","hash":"ulv2:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.1.0","hash":"ulv3:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
-const diffCode = `curl https://www.underlay.org/api/collections/yourname/my-dataset/versions/v1.1.0/diff?from=v1.0.0
+const diffCode = `curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.1.0/diff?from=v1.0.0
 # → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],
 #    "removed":[{"id":"book-2","type":"Book"}],"pagination":{...},"meta":{...}}
 # Without ?from=, the diff is against the version before (here v1.0.0).`
@@ -97,15 +102,17 @@ const diffCode = `curl https://www.underlay.org/api/collections/yourname/my-data
 const filesCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
-# Upload
-curl -X PUT "https://www.underlay.org/api/collections/yourname/my-dataset/files/sha256:$HASH" \\
+# Upload (up to 32 MiB this way; larger files use POST .../files/uploads)
+curl -X PUT "https://www.underlay.org/api/collections/your-org/my-dataset/files/sha256:$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
+# → 201 {"hash":"...","status":"stored","size":...}
 
 # Reference in a record
 # {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}
-# A commit whose records reference a file this collection doesn't hold is refused (422, filesNeeded).
+# A commit whose records reference a file this collection doesn't hold is refused
+# (422, filesNeeded). The session stays open: upload those files and commit again.
 # The Book schema above lists "pdf", so the field is accepted.`
 
 const hashingNote = `// Record hashing: SHA-256 of the canonical form
@@ -133,8 +140,8 @@ export default function DocsQuickstart() {
   return (
     <DocsLayout title="Quickstart">
       <p>
-        Push your first version in 5 minutes. All you need is <code>curl</code> and a running
-        Underlay instance.
+        Push your first version in 5 minutes. All you need is <code>curl</code> and an account on{' '}
+        <code>www.underlay.org</code>.
       </p>
 
       <div className="border-rule bg-parchment-dark/30 rounded-surface mb-6 border p-4">
@@ -168,8 +175,24 @@ export default function DocsQuickstart() {
       <p>
         Save the <code>key</code> value. It's shown only once.
       </p>
+      <p>
+        Collections belong to organizations, so you need to be a member of one. You can create one
+        at{' '}
+        <Link to="/new-org" className="text-link hover:underline">
+          New organization
+        </Link>{' '}
+        if you belong to a Knowledge Futures account; to have an account set up, email{' '}
+        <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
+          {HELP_EMAIL}
+        </a>
+        . The examples below use <code>your-org</code> for the organization&rsquo;s slug.
+      </p>
 
       <h2>2. Create a collection</h2>
+      <p>
+        A collection is public or private as a whole. Send <code>"public": true</code> to make it
+        readable by anyone; without it, only members of your organization can read it.
+      </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{createCollectionCode}</code>
       </pre>
@@ -196,9 +219,10 @@ export default function DocsQuickstart() {
       <h3>3b. Upload records</h3>
       <p>
         Send records as NDJSON (one JSON object per line). For large datasets, split them into
-        batches within <code>limits.batch_lines</code> (10,000 on underlay.org) and{' '}
-        <code>limits.batch_bytes</code>. Add <code>"private": true</code> to a line to keep that
-        record out of public view.
+        batches within <code>limits.batch_lines</code> and <code>limits.batch_bytes</code> (10,000
+        lines and 8 MiB on underlay.org). Each record&rsquo;s type needs a schema in the session. A
+        batch with an invalid line is refused whole with <code>422</code> and the errors by line
+        number.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{sendRecordsCode}</code>
@@ -206,8 +230,11 @@ export default function DocsQuickstart() {
 
       <h3>3c. Commit</h3>
       <p>
-        Large commits answer <code>202</code>; poll <code>GET .../push/SESSION_ID</code> until its{' '}
-        <code>status</code> is <code>committed</code> or <code>failed</code>.
+        A small commit answers <code>201</code> with the new version. A large one (over 100,000
+        uploaded records, or any size with <code>?async=true</code>) runs in the background and
+        answers <code>202</code>; poll <code>GET .../push/SESSION_ID</code> until its{' '}
+        <code>status</code> is <code>committed</code> or <code>failed</code>, then read{' '}
+        <code>result</code> or <code>error</code>.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{commitCode}</code>
@@ -221,8 +248,9 @@ export default function DocsQuickstart() {
       <h2>5. Push an update</h2>
       <p>
         Set <code>base</code> to the current version and send only what changed. If someone else
-        pushed in the meantime, opening the session answers <code>409</code> with{' '}
-        <code>currentVersion</code>.
+        pushed in the meantime, opening the session (or committing it) answers <code>409</code> with{' '}
+        <code>currentVersion</code>. A push that changes nothing makes no version and answers{' '}
+        <code>409</code> at commit.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{updateCode}</code>
@@ -268,12 +296,11 @@ export default function DocsQuickstart() {
           <Link to="/docs/concepts">Core concepts</Link>: understand the data model
         </li>
         <li>
-          <Link to="/docs/integration">Integration guide</Link>: full push protocol, SQL mapping,
-          privacy controls
+          <Link to="/docs/integration">Integration guide</Link>: the full push flow, SQL mapping,
+          privacy, errors
         </li>
         <li>
-          <Link to="/docs/protocol">Protocol</Link>: hashing, trees, versions, and the push and pull
-          exchanges
+          <Link to="/docs/protocol">Protocol</Link>: how records, versions and pushes work
         </li>
       </ul>
     </DocsLayout>

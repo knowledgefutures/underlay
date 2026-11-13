@@ -24,18 +24,23 @@ export default function DocsConcepts() {
       <h2>Collection</h2>
       <p>
         A <strong>collection</strong> (plural: <strong>collections</strong>) is a named, versioned
-        body of structured data. It belongs to an account (a user or an organization) and is
-        identified by <code>:owner/:slug</code>, e.g. <code>knowledge-futures/pubpub-archive</code>.
+        body of structured data. It belongs to an organization and is identified by{' '}
+        <code>:owner/:slug</code>, e.g. <code>knowledge-futures/pubpub-archive</code>.
       </p>
       <p>
-        A collection can be public (browsable by anyone) or private (visible only to the owner and
-        org members). Each collection has its own independent version history.
+        A collection is public (readable by anyone) or private (readable only by members of the
+        organization that owns it), as a whole. Each collection has its own version history. A fork
+        starts with its parent&rsquo;s history up to the fork point, with the same version ids and
+        semvers.
       </p>
 
       <h2>Version</h2>
       <p>
-        A <strong>version</strong> is an immutable snapshot of a collection at a point in time. Each
-        version contains:
+        A collection&rsquo;s history is a log of <strong>commits</strong>. Each push, and each
+        metadata edit, adds one commit, which holds only what it changed: records added, changed or
+        removed, and changes to schemas, metadata and files. A <strong>version</strong> is the
+        collection as of one commit: what the commits up to it add up to, with the newest change to
+        each record winning. A published version never changes. Each version contains:
       </p>
       <ul>
         <li>
@@ -59,14 +64,16 @@ export default function DocsConcepts() {
       </p>
       <ul>
         <li>A type added or removed, or a schema changed → major bump</li>
-        <li>Records added, removed or changed (including made private or public) → minor bump</li>
+        <li>Records added, removed or changed → minor bump</li>
         <li>Metadata or file changes only (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
-        Each version also has a <strong>hash</strong>: <code>ulv2:</code> followed by the SHA-256 of
-        the version root, which covers the metadata, every public schema, record and file, and a
-        salted commitment to the private ones. Two versions with the same hash have identical
-        content.
+        Each version also has an <strong>id</strong> (the <code>hash</code> field in API responses):{' '}
+        <code>ulv3:</code> followed by the SHA-256 of its commit. A commit names the commit before
+        it, so the id fixes the version&rsquo;s content and its whole history. Versions converted
+        from Underlay&rsquo;s earlier format kept their semvers, and their old <code>ulv2:</code>{' '}
+        ids still work wherever the read API takes a version; responses show the <code>ulv3:</code>{' '}
+        id.
       </p>
 
       <h2>Record</h2>
@@ -84,20 +91,13 @@ export default function DocsConcepts() {
       </p>
       <ul>
         <li>
-          Records are stored in content-addressed trees, so versions share every part of the data
-          they have in common.
+          A commit stores only the records that changed, so versions share everything they have in
+          common.
         </li>
         <li>
           Pushing a new version only transfers what changed (see{' '}
           <Link to="/docs/protocol/push-and-pull" className="text-link underline">
             push and pull
-          </Link>
-          ).
-        </li>
-        <li>
-          A record&rsquo;s hash finds the collections and versions you can read that include it (
-          <Link to="/docs/api/records" className="text-link underline">
-            provenance
           </Link>
           ).
         </li>
@@ -128,7 +128,9 @@ export default function DocsConcepts() {
       <p>
         Files are uploaded before the commit that references them. The commit is refused unless
         every <code>$file</code> reference in your records points to a file this collection holds:
-        uploaded to it, or already in one of its versions.
+        uploaded to it, or already in its current version. A commit refused for missing files
+        answers <code>422</code> with the hashes in <code>filesNeeded</code>, and the push stays
+        open: upload them and commit again.
       </p>
 
       <h2>Accounts</h2>
@@ -139,7 +141,8 @@ export default function DocsConcepts() {
         </li>
         <li>
           <strong>Organizations</strong>: group accounts with members who have roles (owner, admin,
-          member). Each belongs to a Knowledge Futures account; to have one set up, email{' '}
+          member). Collections belong to organizations. Each organization belongs to a Knowledge
+          Futures account; to have one set up, email{' '}
           <a href={`mailto:${HELP_EMAIL}`}>{HELP_EMAIL}</a>.
         </li>
       </ul>
@@ -154,65 +157,25 @@ export default function DocsConcepts() {
 
       <h2>Privacy &amp; Visibility</h2>
       <p>
-        Underlay has privacy at three levels, so private data can sit alongside public data in the
-        same collection. Each version has a public set and a private set; members of the owning
-        organization read both, everyone else the public set.
+        Privacy is set per collection. A collection is <strong>public</strong> (listed in browse,
+        readable by anyone) or <strong>private</strong> (readable only by members of the
+        organization that owns it). The setting covers the whole collection: every version, record,
+        schema and file in it, earlier versions included. Only an organization&rsquo;s owners and
+        admins can change it. A collection created through the API is private unless the request
+        sends <code>"public": true</code>.
       </p>
-
-      <h3>Collection-level</h3>
       <p>
-        A collection can be <strong>public</strong> (listed in browse, readable by anyone) or{' '}
-        <strong>private</strong> (visible only to the owner and org members).
+        There are no private records or private types inside a collection. To keep some of your data
+        private, push it to a separate private collection. A push to a public collection is refused
+        with <code>422</code> if it marks a record <code>"private": true</code> or a type&rsquo;s
+        schema <code>"private": true</code>. In a private collection the mark is accepted and
+        changes nothing, since everything in it is already private. <code>"private": true</code> on
+        a field inside a schema is refused in any collection.
       </p>
       <p>
         A published version never changes, so anonymous reads of it are cached for up to about
         eleven minutes. Making a collection private can therefore take that long to reach every
         reader; making it public takes effect at once.
-      </p>
-
-      <h3>Type-level</h3>
-      <p>
-        Mark an entire record type as private in the schema by adding <code>"private": true</code>{' '}
-        at the root of the type&rsquo;s schema. All records of that type are hidden from public
-        readers, and the type is absent from every read, schemas included.
-      </p>
-
-      <h3>Record-level</h3>
-      <p>
-        Mark an individual record private by adding <code>"private": true</code> to its line when
-        you upload it. The flag is not part of the record&rsquo;s data or its hash:
-      </p>
-      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-        <code>{'{"id": "pub-001", "type": "Publication", "data": {...}, "private": true}'}</code>
-      </pre>
-      <p>
-        The record is absent from listings, manifests, diffs, exports and the NDJSON stream for
-        non-members; members of the owning org still see it.
-      </p>
-      <p>
-        <strong>Privacy belongs to the version, not the record.</strong> A record keeps its set from
-        one version to the next until you upload it again: uploading it with{' '}
-        <code>"private": true</code> makes it private, and uploading it without the flag makes it
-        public. Read the current flags back from <code>GET .../versions/:semver/manifest</code>,
-        which marks private entries with <code>private</code>.
-      </p>
-      <p>
-        Redaction is <strong>forward-only</strong>: marking a record private in a new version hides
-        it from that version on. Earlier versions are immutable and still serve it. Because file
-        access resolves across every version, a file referenced publicly in an earlier version also
-        stays downloadable after the referencing record is made private.
-      </p>
-
-      <h3>Fields</h3>
-      <p>
-        <code>"private": true</code> on a field inside a schema is refused. Put private fields in a
-        private type, or push the whole record as private.
-      </p>
-
-      <p>
-        A version&rsquo;s hash covers the private set only through a salted commitment, so public
-        readers can verify everything they can see without learning anything about the private
-        content. Members can check the private set against the commitment.
       </p>
     </DocsLayout>
   )

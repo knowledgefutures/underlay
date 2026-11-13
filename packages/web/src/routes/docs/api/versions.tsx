@@ -20,19 +20,19 @@ const openRes = `{
   "session_id": "uuid",
   "base": "v1.0.0",
   "needed_files": ["7a8b9c..."],
-  "expires_at": "2026-10-04T13:00:00.000Z",
+  "expires_at": "2026-10-05T00:00:00.000Z",
   "limits": {
     "open_bytes": 8388608,
-    "batch_bytes": 16777216,
+    "batch_bytes": 8388608,
     "batch_lines": 10000,
-    "session_idle_seconds": 3600,
+    "session_idle_seconds": 43200,
     "open_sessions": 20,
     "file_bytes": 33554432
   }
 }`
 
 const recordsReq = `{"id":"pub-002","type":"Publication","data":{"title":"New Paper"}}
-{"id":"pub-003","type":"Publication","data":{"title":"Draft"},"private":true}`
+{"id":"pub-003","type":"Publication","data":{"title":"Draft"}}`
 
 const recordsErr = `{
   "error": "Invalid records",
@@ -48,7 +48,7 @@ const deletesReq = `{"type":"Publication","id":"pub-old"}`
 
 const commitRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv2:a1b2c3d4...",
+  "hash": "ulv3:a1b2c3d4...",
   "recordCount": 3,
   "fileCount": 1,
   "changes": {"added": 2, "removed": 1, "updated": 0}
@@ -64,12 +64,12 @@ const sessionPollRes = `{
   "session_id": "uuid",
   "status": "committed",
   "records_received": 3110000,
-  "expires_at": "2026-10-04T13:00:00.000Z",
+  "expires_at": "2026-10-05T00:19:00.000Z",
   "created_at": "2026-10-04T12:00:00.000Z",
   "finalize_started_at": "2026-10-04T12:20:00.000Z",
   "result": {
     "semver": "v1.1.0",
-    "hash": "ulv2:a1b2c3d4...",
+    "hash": "ulv3:a1b2c3d4...",
     "recordCount": 3110000,
     "fileCount": 0,
     "changes": {"added": 3110000, "removed": 0, "updated": 0}
@@ -77,11 +77,11 @@ const sessionPollRes = `{
   "error": null
 }`
 
-const noCopy = `# 1. What the head holds: page the manifest (members also see private records)
+const noCopy = `# 1. What the head holds: page the manifest
 GET .../versions/latest/manifest?limit=25000           # then ?cursor=<nextCursor>
 # 2. Compare by (type, id): hash your current records (canonical form, SHA-256)
-#    new, changed hash, or changed privacy  -> upsert
-#    in the manifest but not in your data   -> delete
+#    new, or changed hash                 -> upsert
+#    in the manifest but not in your data -> delete
 # 3. Push only those, against the manifest's semver
 POST .../push  {"base": "<manifest semver>"}
 POST .../push/:sid/records   ...
@@ -94,7 +94,7 @@ const listRes = `[
     "major": 1,
     "minor": 1,
     "patch": 0,
-    "hash": "ulv2:a1b2c3d4...",
+    "hash": "ulv3:a1b2c3d4...",
     "baseSemver": "v1.0.0",
     "message": "Add new publications",
     "appId": "pubpub-sync",
@@ -125,8 +125,7 @@ const getRecordsRes = `{
       "id": "pub-002",
       "type": "Publication",
       "data": {"title": "Draft"},
-      "hash": "789abc...",
-      "private": true
+      "hash": "789abc..."
     }
   ],
   "pagination": {
@@ -162,16 +161,16 @@ Content-Type: application/x-ndjson
 X-Underlay-Record-Count: 3110000
 
 {"id":"pub-001","type":"Publication","data":{"title":"..."},"hash":"def456..."}
-{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"789abc...","private":true}
+{"id":"pub-002","type":"Publication","data":{"title":"..."},"hash":"789abc..."}
 {"id":"pub-003","type":"Publication","data":{"title":"..."},"hash":"a1b2c3..."}`
 
 const manifestRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv2:a1b2c3d4...",
+  "hash": "ulv3:a1b2c3d4...",
   "schemas": {"Publication": "abc123..."},
   "records": [
     {"id": "pub-001", "type": "Publication", "hash": "def456..."},
-    {"id": "pub-002", "type": "Publication", "hash": "789abc...", "private": true}
+    {"id": "pub-002", "type": "Publication", "hash": "789abc..."}
   ],
   "files": ["a1b2c3...", "d4e5f6..."],
   "pagination": {
@@ -183,15 +182,13 @@ const manifestRes = `{
 
 const manifestDeltaRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv2:a1b2c3d4...",
+  "hash": "ulv3:a1b2c3d4...",
   "since": "v1.0.0",
   "schemas": {"Publication": "abc123..."},
   "delta": {
     "added":   [{"id": "pub-003", "type": "Publication", "hash": "def456..."}],
     "updated": [{"id": "pub-001", "type": "Publication", "hash": "def456...",
-                 "previousHash": "abc123..."},
-                {"id": "pub-002", "type": "Publication", "hash": "789abc...",
-                 "previousHash": "789abc...", "private": true, "previousPrivate": false}],
+                 "previousHash": "abc123..."}],
     "removed": [{"id": "pub-old", "type": "Publication", "hash": "def456..."}]
   },
   "files": ["a1b2c3..."],
@@ -231,7 +228,7 @@ const filesRes = `[
     "size": 1048576,
     "mimeType": "application/pdf",
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "referenceCount": 2,
+    "referenceCount": 0,
     "references": []
   }
 ]`
@@ -243,16 +240,16 @@ export default function DocsApiVersions() {
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
         schemas, records and file references. You publish one with a <strong>delta push</strong>:
         open a session against the version you started from, upload the records you add or change
-        and the ids you delete, and commit. The same exchange works against any Underlay node (
-        <a href="/docs/protocol/push-and-pull">Push and pull</a>).
+        and the ids you delete, and commit.
       </p>
       <p>
-        <strong>Version hashes</strong> are <code>ulv2:&lt;sha256&gt;</code>, the hash of the
-        version&rsquo;s root, and are the same for every reader: the private set is in the root only
-        as a salted commitment (see{' '}
-        <a href="/docs/protocol/versions#version-root">Trees and versions</a>). Wherever a version
-        is named in a path (<code>:n</code>), it can be a semver (<code>v1.1.0</code>), a version
-        hash, or <code>latest</code>. Record, schema and file hashes are bare hex with no prefix.
+        <strong>Version ids</strong> are <code>ulv3:&lt;sha256&gt;</code>, the SHA-256 of the
+        version&rsquo;s commit, and are the same for every reader. Versions published before
+        Underlay moved to protocol v3, on November 13, 2026, also answer to the <code>ulv2:</code>{' '}
+        ids they had then, anywhere a version id is accepted; responses always give the{' '}
+        <code>ulv3:</code> id. Wherever a version is named in a path (<code>:n</code>), it can be a
+        semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record, schema and file
+        hashes are bare hex with no prefix.
       </p>
       <p>
         A version never changes, so responses under <code>.../versions/:n</code> are cached when{' '}
@@ -303,7 +300,10 @@ export default function DocsApiVersions() {
                 checked in full when the session opens (the draft-07 meta-schema, patterns,{' '}
                 <code>$ref</code>s that resolve, and the{' '}
                 <a href="/docs/protocol/records#schemas">schema rules</a>); one that fails is{' '}
-                <code>422</code>.
+                <code>422</code>. So is a type name that begins with <code>$</code>, a space,{' '}
+                <code>!</code>, <code>"</code> or <code>#</code>, or is <code>__proto__</code>, and,
+                in a public collection, a schema marked <code>"private": true</code> (see{' '}
+                <a href="#privacy">Privacy</a>).
               </td>
             </tr>
             <tr>
@@ -333,7 +333,10 @@ export default function DocsApiVersions() {
               <td>
                 <code>message</code>, <code>app_id</code>, <code>actor_id</code>
               </td>
-              <td>Strings recorded in the version&rsquo;s signed log entry.</td>
+              <td>
+                Strings recorded with the version. <code>message</code> is part of its commit; all
+                three appear in the version list (<code>actorId</code> to members only).
+              </td>
             </tr>
             <tr>
               <td>
@@ -365,8 +368,8 @@ export default function DocsApiVersions() {
         <p className="scope">Auth: write scope</p>
         <p>
           Upserts as NDJSON (<code>Content-Type: application/x-ndjson</code>), one record per line:{' '}
-          <code>{'{"id", "type", "data", "private"?}'}</code>. Call it as many times as you need, up
-          to <code>batch_lines</code> lines and <code>batch_bytes</code> bytes each.
+          <code>{'{"id", "type", "data"}'}</code>. Call it as many times as you need, up to{' '}
+          <code>batch_lines</code> lines and <code>batch_bytes</code> bytes each.
         </p>
         <h4>Request</h4>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -383,7 +386,8 @@ export default function DocsApiVersions() {
           session&rsquo;s type set. If any line fails, the answer is <code>422</code> and nothing
           from the batch is stored. <code>validationErrors</code> lists the first 100 failing lines,
           each with its 1-based <code>line</code> number; <code>totalErrors</code> is the full
-          count.
+          count. In a public collection, a batch with any line marked <code>"private": true</code>{' '}
+          is also <code>422</code> (see <a href="#privacy">Privacy</a>).
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{recordsErr}</code>
@@ -425,8 +429,11 @@ export default function DocsApiVersions() {
         <h3>POST .../push/:sid/commit</h3>
         <p className="scope">Auth: write scope</p>
         <p>
-          Build the version. No body is needed; <code>{'{"async": true}'}</code> is the one field
-          read.
+          Build the version. No body is needed. Two fields are read: <code>{'"async": true'}</code>{' '}
+          (below), and <code>{'"rebase": true'}</code>, which commits on the head as it is now
+          instead of the session&rsquo;s base: the session&rsquo;s records and deletes apply on top
+          of whatever landed since, and its schemas and metadata replace the head&rsquo;s. Use it
+          only when your changes don&rsquo;t depend on the base, such as a load of upserts.
         </p>
         <h4>
           Response <span className="text-ink-muted font-normal">201</span>
@@ -435,20 +442,22 @@ export default function DocsApiVersions() {
           <code>{commitRes}</code>
         </pre>
         <p>
-          <code>recordCount</code> here is every record in the version, private ones included: the
-          pusher is a member. Reads of the collection and its versions count what the caller may
-          see, so a public reader&rsquo;s count leaves private records out.
+          <code>recordCount</code> and <code>fileCount</code> count the whole version, not only what
+          this push changed; <code>changes</code> counts the records this push added, removed and
+          updated.
         </p>
         <p>
           The semver follows from what changed against the base: <strong>major</strong> when a type
           was added or removed or a schema changed, otherwise <strong>minor</strong> when any record
-          was added, removed or changed (moving between public and private counts), otherwise{' '}
-          <strong>patch</strong> (metadata or files only). A push that changes nothing makes no
-          version and answers <code>409</code>.
+          was added, removed or changed, otherwise <strong>patch</strong> (metadata or files only).
+          A push that changes nothing makes no version and answers <code>409</code>.
         </p>
         <p>
           Committing a session that is already committed answers its <code>201</code> result again.
-          A session in any other state that isn&rsquo;t open is <code>409</code> (
+          A session whose commit failed on the server&rsquo;s side (a <code>500</code> or{' '}
+          <code>503</code>) can be committed again; one refused for its content is <code>409</code>,
+          with the refusal as <code>cause</code>: push again in a new session. A session in any
+          other state that isn&rsquo;t open is <code>409</code> (
           <code>"Session is &lt;status&gt;"</code>).
         </p>
         <p>
@@ -464,7 +473,7 @@ export default function DocsApiVersions() {
         <p>
           A synchronous commit can also answer <code>202</code>, with{' '}
           <code>{'{"session_id", "status": "committing"}'}</code> and no <code>poll</code>, when the
-          server splits a large commit into parallel jobs. Treat both the same way: poll{' '}
+          server finishes a large commit in background jobs. Treat both the same way: poll{' '}
           <a href="#get-api-collections-owner-slug-push-sid">
             <code>GET .../push/:sid</code>
           </a>{' '}
@@ -494,10 +503,6 @@ export default function DocsApiVersions() {
             <code>validationErrors</code> and <code>totalErrors</code>: a schema change makes
             records of the base invalid.
           </li>
-          <li>
-            <code>503</code>{' '}
-            <code>"Storage cleanup ran while this push was committing. Push again."</code>
-          </li>
         </ul>
 
         <h3>Clients that keep no copy</h3>
@@ -510,23 +515,31 @@ export default function DocsApiVersions() {
           <code>{noCopy}</code>
         </pre>
 
-        <h3>Privacy</h3>
+        <h3 id="privacy">Privacy</h3>
+        <p>
+          A collection is public or private as a whole. There are no private records or private
+          types: to keep data from the public, push it to a private collection, which only members
+          of the owning organization can read.
+        </p>
         <ul>
           <li>
-            <strong>Type-level:</strong> <code>"private": true</code> at a schema&rsquo;s root hides
-            every record of that type from people outside the owning organization.
+            <strong>Public collection:</strong> a session whose schemas mark a type{' '}
+            <code>"private": true</code> is refused when it opens, and a records batch with a line
+            marked <code>"private": true</code> is refused, both with <code>422</code>:{' '}
+            <code>
+              "This collection is public, and keeps no private records. Make the collection private,
+              or push them to a private collection."
+            </code>{' '}
+            (for a type, the message names it).
           </li>
           <li>
-            <strong>Record-level:</strong> <code>"private": true</code> on a record line puts that
-            record in the version&rsquo;s private set. It belongs to this version&rsquo;s reference
-            to the record: a record keeps its flag until a later upload of the same id changes it.
+            <strong>Private collection:</strong> the mark is accepted and changes nothing, since
+            every record is already private.
           </li>
         </ul>
         <p>
           <code>"private": true</code> on a property inside a schema (field-level privacy) is
-          refused. Put private fields in a private type, or push the whole record as private.
-          Privacy is per version: marking a record private in v1.1.0 doesn&rsquo;t change v1.0.0,
-          which still serves it.
+          refused in either kind of collection.
         </p>
 
         <h3>Errors</h3>
@@ -538,8 +551,9 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 A body that isn&rsquo;t a JSON object, <code>metadata</code> that isn&rsquo;t an
-                object or <code>null</code>, <code>metadata_patch</code> that isn&rsquo;t an object,
-                an empty records or deletes batch, or file bytes that don&rsquo;t match their hash.
+                object or <code>null</code>, <code>metadata_patch</code> that isn&rsquo;t an object,{' '}
+                <code>rebase</code> that isn&rsquo;t a boolean, an empty records or deletes batch,
+                or file bytes that don&rsquo;t match their hash.
               </td>
             </tr>
             <tr>
@@ -569,8 +583,9 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 <code>base</code> isn&rsquo;t the head, or the head moved before the commit (both
-                with <code>currentVersion</code>, the head now); the session isn&rsquo;t open; or
-                the push changes nothing (<code>"No changes detected"</code>).
+                with <code>currentVersion</code>, the head now); the session isn&rsquo;t open (or
+                failed in a way another commit can&rsquo;t fix); or the push changes nothing (
+                <code>"No changes detected"</code>).
               </td>
             </tr>
             <tr>
@@ -588,9 +603,10 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 Records or deletes that fail (<code>validationErrors</code>), a line whose type
-                isn&rsquo;t in the session&rsquo;s type set, a schema that is refused (at open), a
-                commit with files not uploaded (<code>filesNeeded</code>), or a schema change that
-                base records fail (<code>"Schema validation failed"</code>).
+                isn&rsquo;t in the session&rsquo;s type set, a schema or type name that is refused
+                (at open), a type or record marked private in a public collection, a commit with
+                files not uploaded (<code>filesNeeded</code>), or a schema change that base records
+                fail (<code>"Schema validation failed"</code>).
               </td>
             </tr>
             <tr>
@@ -606,7 +622,9 @@ export default function DocsApiVersions() {
               <td>
                 <code>503</code>
               </td>
-              <td>Storage cleanup ran while the push was committing. Push again.</td>
+              <td>
+                Storage cleanup held up a file upload; retry after <code>Retry-After</code>.
+              </td>
             </tr>
           </tbody>
         </table>
@@ -674,6 +692,15 @@ export default function DocsApiVersions() {
                 <code>null</code>.
               </td>
             </tr>
+            <tr>
+              <td>
+                <code>progress</code>
+              </td>
+              <td>
+                Only while <code>open</code> or <code>committing</code>: the uploaded runs and, once
+                the commit has begun, its <code>phase</code>.
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -725,9 +752,8 @@ export default function DocsApiVersions() {
         </pre>
         <p>
           <code>recordCount</code>, <code>fileCount</code>, <code>totalBytes</code> and{' '}
-          <code>typeCounts</code> count the sets the caller may read: for anyone outside the
-          collection&rsquo;s members, public records only. <code>baseSemver</code> is the version
-          the push started from (<code>null</code> for the first). <code>pushedBy</code>,{' '}
+          <code>typeCounts</code> count the whole version. <code>baseSemver</code> is the version
+          before it (<code>null</code> for the first). <code>pushedBy</code>,{' '}
           <code>pushedByName</code> and <code>actorId</code> are for the collection&rsquo;s members
           only. <code>ark</code> is null when the collection&rsquo;s ARK is off.
         </p>
@@ -754,9 +780,9 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get a specific version by semver (e.g. <code>v1.1.0</code>) or version hash. Returns the
+          Get a specific version by semver (e.g. <code>v1.1.0</code>) or version id. Returns the
           version object as listed above, plus <code>metadata</code> and the <code>schemas</code> of
-          the types the caller may read.
+          its types.
         </p>
         <p>
           With <code>?records=&lt;type&gt;</code> (empty for the first type), it also returns{' '}
@@ -764,7 +790,8 @@ export default function DocsApiVersions() {
           type&rsquo;s records (<code>offset</code>, <code>limit</code> as on <code>/records</code>)
           and the type&rsquo;s total. <code>schemas</code> then holds only that type&rsquo;s schema;{' '}
           <code>typeCounts</code> still lists every type. The records page uses this to need only
-          one call.
+          one call. Where <code>/records</code> would answer <code>503</code> for a deep offset (see
+          below), <code>recordsPage</code> is empty and has <code>"preparing": true</code>.
         </p>
       </div>
 
@@ -811,8 +838,11 @@ export default function DocsApiVersions() {
                 <code>offset</code>
               </td>
               <td>
-                Skip this many records. It is a tree seek, O(tree height), and works at any depth.
-                Ignored when <code>after</code> is given.
+                Skip this many records. Ignored when <code>after</code> is given. With{' '}
+                <code>type</code>, a deep offset starts from an index of the type&rsquo;s positions,
+                which the server builds the first time one is asked for. An offset past 250,000
+                records whose index isn&rsquo;t ready yet is <code>503</code> with{' '}
+                <code>Retry-After: 60</code>. Paging by <code>after</code> never waits.
               </td>
             </tr>
           </tbody>
@@ -820,7 +850,8 @@ export default function DocsApiVersions() {
         <p className="text-ink-muted">
           Walking a whole collection is bounded by request count, not bytes: 60 rate units a minute
           anonymous, 5,000 signed in, and a page costs 1. Ask for the largest page you can handle: a
-          3-million-record collection is 6,000 requests at 500 per page and 1,500 at 2,000 per page.{' '}
+          3-million-record collection is 6,000 requests at 500 per page and 1,500 at 2,000 per page.
+          A page also ends before 4 MiB of records, so large records make smaller pages.{' '}
           <a href="#get-api-collections-owner-slug-versions-n-records-ndjson">
             <code>records.ndjson</code>
           </a>{' '}
@@ -833,18 +864,17 @@ export default function DocsApiVersions() {
           <code>{getRecordsRes}</code>
         </pre>
         <p>
-          Each record carries its <code>hash</code>. A member&rsquo;s view includes private records,
-          marked <code>"private": true</code>; anyone else sees public records only.
+          Each record carries its <code>hash</code>.
         </p>
         <p>
           Use <code>pagination.nextCursor</code> as the <code>after</code> parameter in the next
-          request, unchanged — treat it as opaque. When <code>hasMore</code> is false, you&rsquo;ve
+          request, unchanged: treat it as opaque. When <code>hasMore</code> is false, you&rsquo;ve
           reached the end.
         </p>
         <p className="text-ink-muted">
-          <code>pagination.total</code> is the exact count of records in the sets the caller may
-          read (public only for non-members), within <code>type</code> if given. The one exception:
-          records withheld from serving are counted but skipped.
+          <code>pagination.total</code> is the exact count of records in the version, within{' '}
+          <code>type</code> if given. The one exception: records withheld from serving are counted
+          but skipped.
         </p>
       </div>
 
@@ -856,9 +886,8 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          One record at a version. A member&rsquo;s private record is marked{' '}
-          <code>"private": true</code>. A record that doesn&rsquo;t exist, or that the caller may
-          not read, is <code>404</code>.
+          One record at a version. A record that doesn&rsquo;t exist, or is withheld from serving,
+          is <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -878,10 +907,9 @@ export default function DocsApiVersions() {
         <p>
           A record&rsquo;s history: each version where it was <code>added</code>,{' '}
           <code>updated</code> or <code>removed</code>, oldest first. <code>hash</code> is the
-          record&rsquo;s hash in that version, <code>null</code> when removed. Only the sets the
-          caller may read are consulted, so for a non-member a record made private reads as removed.
-          It looks back over the newest 500 versions; <code>truncated</code> is true when there may
-          be older ones. A record never seen is <code>404</code>. It costs 5 rate units.
+          record&rsquo;s hash in that version, <code>null</code> when removed. It covers every
+          version of the collection, so <code>truncated</code> is always false. A record never seen
+          is <code>404</code>. It costs 5 rate units.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -901,14 +929,11 @@ export default function DocsApiVersions() {
         <p>
           Every record in the version, streamed as newline-delimited JSON in a single response. This
           is the bulk read path: one request, costing 10 rate units, against 1,500 pages for a
-          3-million-record collection. The server streams from the version&rsquo;s record trees as
-          it reads them, so memory stays constant on both ends and you can process the first line
-          before the last is sent.
+          3-million-record collection. The server streams records as it reads them, so memory stays
+          constant on both ends and you can process the first line before the last is sent.
         </p>
         <p>
-          Lines come in the same order as <code>/records</code>: types in slug order, then ids. A
-          member gets private records too, each line ending <code>"private":true</code>; anyone else
-          gets public records only.
+          Lines come in the same order as <code>/records</code>: types in slug order, then ids.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -954,10 +979,10 @@ export default function DocsApiVersions() {
           <strong>Check completeness yourself.</strong> A stream that fails partway cannot report
           it: the <code>200</code> and headers were sent before anything went wrong.{' '}
           <code>X-Underlay-Record-Count</code> tells you how many lines to expect: the count for{' '}
-          <em>this</em> request, for the sets you may read and within <code>?type=</code> if you
-          passed one, and after the resume point if you gave one. It can exceed the lines sent only
-          by records withheld from serving. (Don&rsquo;t compare against the version&rsquo;s{' '}
-          <code>recordCount</code>: it covers every type.)
+          <em>this</em> request, within <code>?type=</code> if you passed one, and after the resume
+          point if you gave one. It can exceed the lines sent only by records withheld from serving.
+          (Don&rsquo;t compare against the version&rsquo;s <code>recordCount</code>: it covers every
+          type.)
         </p>
         <p>
           If you receive fewer, resume rather than start over: take the <code>type</code> and{' '}
@@ -975,17 +1000,16 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Public records as a gzip file (<code>Content-Type: application/gzip</code>, sent as an
-          attachment). With <code>?type=</code>, one type&rsquo;s; without it, every type&rsquo;s in
-          slug order. The server sends the records as stored, so the file is several gzip members
-          concatenated. Most gzip readers handle that; some, such as browsers&rsquo;{' '}
+          The version&rsquo;s records as a gzip file (<code>Content-Type: application/gzip</code>,
+          sent as an attachment). With <code>?type=</code>, one type&rsquo;s; without it, every
+          type&rsquo;s in slug order. The file is several gzip members concatenated, one about every
+          megabyte of records. Most gzip readers handle that; some, such as browsers&rsquo;{' '}
           <code>DecompressionStream</code>, stop after the first member.
         </p>
         <p>
           Lines are canonical records, <code>{'{"id", "type", "data"}'}</code>, without{' '}
-          <code>hash</code> (it is the SHA-256 of the line). Private records are never included,
-          even for members: use <code>records.ndjson</code> for those. A <code>type</code> with no
-          public records is <code>404</code>. It costs 10 rate units.
+          <code>hash</code> (it is the SHA-256 of the line). A <code>type</code> with no records is{' '}
+          <code>404</code>. It costs 10 rate units.
         </p>
       </div>
 
@@ -998,10 +1022,9 @@ export default function DocsApiVersions() {
         <p className="scope">No auth for public collections</p>
         <p>
           Get the manifest: every record&rsquo;s id, type and content hash, without the bodies, in
-          (type, id) order. Members also see private records, marked <code>"private": true</code>.
-          This is the cheapest way to learn what a version contains — at roughly 120 bytes per
-          entry, a million records is one order of magnitude smaller than fetching them — and what a
-          client that keeps no copy diffs against before it pushes.
+          (type, id) order. This is the cheapest way to learn what a version contains (at roughly
+          120 bytes per entry, a million records is an order of magnitude smaller than fetching
+          them), and what a client that keeps no copy diffs against before it pushes.
         </p>
         <h3>Query parameters</h3>
         <table>
@@ -1022,7 +1045,7 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 Opaque keyset cursor from <code>pagination.nextCursor</code>. Do not construct or
-                parse it — pass back exactly what you were given.
+                parse it: pass back exactly what you were given.
               </td>
             </tr>
             <tr>
@@ -1030,9 +1053,9 @@ export default function DocsApiVersions() {
                 <code>since</code>
               </td>
               <td>
-                A semver or <code>ulv2:</code> version hash. Return a delta against that version
-                instead of the full manifest: which records were added, updated and removed between
-                the two.
+                A semver or version id, at or before <code>:n</code> (a later one is{' '}
+                <code>400</code>). Return a delta against that version instead of the full manifest:
+                which records were added, updated and removed between the two.
               </td>
             </tr>
           </tbody>
@@ -1055,14 +1078,8 @@ export default function DocsApiVersions() {
           <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false.
         </p>
         <p>
-          For a member, an entry in the private set carries <code>"private": true</code> (for a
-          removal, the set it left). A record that moved between the sets is listed under{' '}
-          <code>updated</code>, with <code>previousPrivate</code> naming its former set;{' '}
-          <code>previousPrivate</code> is present only when the set changed, and a move that kept
-          the record&rsquo;s hash has <code>previousHash</code> equal to <code>hash</code>. A
-          non-member sees the public set only: a record made private reads as removed, and one made
-          public as added. <code>files</code> in a delta is the full file list of <code>:n</code>{' '}
-          that the caller may read (first page only), not a file delta.
+          <code>files</code> in a delta is the full file list of <code>:n</code> (first page only),
+          not a file delta.
         </p>
       </div>
 
@@ -1088,8 +1105,9 @@ export default function DocsApiVersions() {
                 <code>from</code>
               </td>
               <td>
-                Semver or version hash to diff from (e.g. <code>v1.0.0</code>). Default: the version
-                before <code>:n</code>.
+                Semver or version id to diff from (e.g. <code>v1.0.0</code>), at or before{' '}
+                <code>:n</code> (a later one is <code>400</code>). Default: the version before{' '}
+                <code>:n</code>.
               </td>
             </tr>
             <tr>
@@ -1105,7 +1123,7 @@ export default function DocsApiVersions() {
               <td>
                 Opaque keyset cursor from <code>pagination.nextCursor</code>, as on the manifest
                 endpoint. Diff returns full record bodies, so pages are much larger than manifest
-                pages — prefer <code>manifest?since=</code> when you only need the hashes.
+                pages: prefer <code>manifest?since=</code> when you only need the hashes.
               </td>
             </tr>
           </tbody>
@@ -1117,9 +1135,9 @@ export default function DocsApiVersions() {
           <code>{diffRes}</code>
         </pre>
         <p>
-          <code>removed</code> entries are <code>{'{"id", "type"}'}</code>, without bodies.{' '}
-          <code>filesAdded</code> and <code>filesRemoved</code> are computed on the first page only;
-          later pages report 0.
+          <code>removed</code> entries are <code>{'{"id", "type"}'}</code>, without bodies. A page
+          also ends before 4 MiB of record bodies, so it can hold fewer entries than{' '}
+          <code>limit</code>. <code>meta</code> describes the whole diff on every page.
         </p>
       </div>
 
@@ -1131,10 +1149,10 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          The files of the version that the caller may read, sorted by hash, at most 10,000.{' '}
-          <code>referenceCount</code> is how many records in those sets reference the file.{' '}
-          <code>references</code> is always empty: which records reference a file isn&rsquo;t
-          indexed.
+          The version&rsquo;s files, sorted by hash, at most 10,000. Which records reference a file
+          isn&rsquo;t indexed, so <code>referenceCount</code> is always 0 and{' '}
+          <code>references</code> always empty. <code>createdAt</code> is when the file was first
+          uploaded, or <code>null</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>

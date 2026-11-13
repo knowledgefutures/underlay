@@ -402,7 +402,7 @@ function UseTheData({ example }: { example: HomeExample | null }) {
               </p>
               <ul className="text-ink-light m-0 list-disc space-y-1 pl-5 text-sm">
                 <li>Paginated records, filterable by type</li>
-                <li>Single records by ID or hash</li>
+                <li>Single records by type and ID</li>
                 <li>Version history and diffs between versions</li>
               </ul>
               <Link to="/docs/api/records" className="text-link text-sm hover:underline">

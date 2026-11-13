@@ -75,18 +75,19 @@ curl -X POST .../push/SESSION_ID/deletes \\
 # 5. Commit
 curl -X POST .../push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.3.0","hash":"ulv2:...","recordCount":...,"fileCount":...,"changes":{...}}`
+# → 201 {"semver":"v1.3.0","hash":"ulv3:...","recordCount":...,"fileCount":...,"changes":{...}}`
 
 const snapshotDiff = `// hashRecord(record) → hex, as defined under "Record Hashing" below.
 const key = (r) => JSON.stringify([r.type, r.id])
 
 // 1. Read the current version's manifest, every page.
-const have = new Map() // key → { id, type, hash, private? }
+// The first page names the version (base); later pages read that same version.
+const have = new Map() // key → { id, type, hash }
 let base = null
 let cursor = null
 do {
   const query = cursor ? \`?cursor=\${encodeURIComponent(cursor)}\` : ''
-  const res = await fetch(\`\${api}/versions/latest/manifest\${query}\`, { headers: auth })
+  const res = await fetch(\`\${api}/versions/\${base ?? 'latest'}/manifest\${query}\`, { headers: auth })
   if (res.status === 404) break // no versions yet
   const page = await res.json()
   base = page.semver
@@ -94,12 +95,10 @@ do {
   cursor = page.pagination.hasMore ? page.pagination.nextCursor : null
 } while (cursor)
 
-// 2. Diff your full export against it. A record of a private type is private
-//    whatever its own flag says (privateTypes: the types whose schema has "private": true).
-const isPrivate = (r) => !!r.private || privateTypes.has(r.type)
+// 2. Diff your full export against it.
 const upserts = records.filter((r) => {
   const m = have.get(key(r))
-  return !m || m.hash !== hashRecord(r) || !!m.private !== isPrivate(r)
+  return !m || m.hash !== hashRecord(r)
 })
 const keep = new Set(records.map(key))
 const deletes = [...have.values()]
@@ -137,9 +136,9 @@ export default function DocsIntegration() {
       <h2>What is Underlay?</h2>
       <p>
         Underlay is a versioned registry for structured knowledge. Apps publish versions of their
-        data; Underlay keeps every version in content-addressed trees, so versions share what they
-        have in common, and serves them via a stable API. Think npm for data, or Docker Hub for
-        structured content.
+        data; Underlay keeps each collection as a log of commits, each holding only what changed,
+        and serves every version via a stable API. Think npm for data, or Docker Hub for structured
+        content.
       </p>
 
       <h2>Core Concepts</h2>
@@ -149,9 +148,10 @@ export default function DocsIntegration() {
           <code>:owner/:slug</code>.
         </li>
         <li>
-          <strong>Version</strong>: An immutable snapshot: a JSON Schema per type, records, file
-          references and metadata. Identified by semver (e.g. <code>v1.0.0</code>) or by its{' '}
-          <code>ulv2:</code> hash.
+          <strong>Version</strong>: The collection as of one commit in its log, and immutable: a
+          JSON Schema per type, records, file references and metadata. Identified by semver (e.g.{' '}
+          <code>v1.0.0</code>) or by its <code>ulv3:</code> id. Versions converted from the earlier
+          format also answer to their old <code>ulv2:</code> ids.
         </li>
         <li>
           <strong>Record</strong>: An <code>id</code>, a <code>type</code> and a <code>data</code>{' '}
@@ -195,12 +195,16 @@ export default function DocsIntegration() {
           <strong>Open a session</strong> with <code>base</code> set to the semver you diffed
           against (<code>null</code> for the first push; <code>null</code> means no conflict check),
           plus any schemas, metadata and files to declare. <code>schemas</code>, when sent, is the
-          full type set: a type left out is removed. <code>metadata</code> replaces the metadata,{' '}
-          <code>metadata_patch</code> merges into it. The response lists <code>needed_files</code>{' '}
-          and the server&rsquo;s <code>limits</code>.
+          full type set: a type left out is removed, with its records. <code>metadata</code>{' '}
+          replaces the metadata, <code>metadata_patch</code> merges into it. The response lists{' '}
+          <code>needed_files</code> and the server&rsquo;s <code>limits</code>. Files go in{' '}
+          <code>files.add</code> (or <code>files.remove</code>) as bare hex hashes, without{' '}
+          <code>sha256:</code>.
         </li>
         <li>
-          <strong>Upload files</strong> listed in <code>needed_files</code>, by hash.
+          <strong>Upload files</strong> listed in <code>needed_files</code>, by hash. Files your
+          records reference are added to the version whether or not you declared them; declaring
+          them tells you up front which ones to upload.
         </li>
         <li>
           <strong>Upload records</strong> that are new or changed, as NDJSON, in batches within{' '}
@@ -212,7 +216,11 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Commit</strong>. On <code>409 Conflict</code>, someone else published first: diff
-          against the new head and push again.
+          against the new head and push again. If your changes don&rsquo;t depend on the base (a
+          load of upserts), commit with the body <code>{'{"rebase": true}'}</code> instead: the
+          session&rsquo;s records and deletes apply on top of the current head, and its schemas and
+          metadata replace the head&rsquo;s. On <code>422</code> with <code>filesNeeded</code>,
+          upload those files and commit the same session again.
         </li>
       </ol>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -224,7 +232,8 @@ export default function DocsIntegration() {
         100,000 existing records) the commit runs in the background: it answers <code>202</code>,
         and you poll <code>GET .../push/SESSION_ID</code> until its <code>status</code> is{' '}
         <code>committed</code> or <code>failed</code>. Add <code>?async=true</code> to ask for that
-        at any size.
+        at any size. A background commit refused for missing files goes back to <code>open</code>,
+        with <code>filesNeeded</code> in its <code>error</code>.
       </p>
 
       <h2>Pushing a Full Export</h2>
@@ -244,8 +253,8 @@ export default function DocsIntegration() {
         <code>{snapshotDiff}</code>
       </pre>
       <p>
-        A record&rsquo;s set is part of the diff: a record that should become private or public is
-        uploaded again with its new <code>private</code> flag.
+        Uploading a record that matches the base changes nothing: the commit leaves it out. Deleting
+        a record the base doesn&rsquo;t have is ignored too.
       </p>
 
       <h2>Record Hashing</h2>
@@ -292,8 +301,11 @@ export default function DocsIntegration() {
       <p>
         To update metadata without changing records or schemas (e.g. editing the readme),{' '}
         <code>POST /api/collections/:owner/:slug/metadata</code> with the fields to change (
-        <code>null</code> clears one). This creates a patch version over the same trees, so it is
-        quick at any collection size.
+        <code>null</code> clears one). This adds a commit holding only the new metadata, a patch
+        version, so it is quick at any collection size. It answers <code>201</code> with the new{' '}
+        <code>semver</code> and <code>hash</code>, or <code>200</code> with{' '}
+        <code>"unchanged": true</code>. On a push, <code>metadata</code> replaces the metadata and{' '}
+        <code>metadata_patch</code> merges into it.
       </p>
 
       <h2>First Push Example</h2>
@@ -337,48 +349,56 @@ export default function DocsIntegration() {
       </p>
       <ul>
         <li>
-          Schema changes → <strong>major</strong> bump
+          Schema changes, including a type added or removed → <strong>major</strong> bump
         </li>
         <li>
-          Record changes, including a record becoming private or public → <strong>minor</strong>{' '}
-          bump
+          Record changes (added, changed or removed) → <strong>minor</strong> bump
         </li>
         <li>
           Metadata or file changes only → <strong>patch</strong> bump
         </li>
       </ul>
       <p>
-        The first version of a collection is always <code>v1.0.0</code>. A push that changes nothing
-        makes no version. The <code>base</code> when opening a push is a semver string (or{' '}
-        <code>null</code> for the first push).
+        The first version of a new collection is always <code>v1.0.0</code>. A push that changes
+        nothing makes no version (<code>409</code>, <code>No changes detected</code>). The{' '}
+        <code>base</code> when opening a push is a semver string (or <code>null</code> for the first
+        push).
       </p>
 
       <h2>Privacy</h2>
-      <p>You can control what's publicly visible at two levels:</p>
+      <p>
+        Privacy is set per collection: a collection is public (readable by anyone) or private
+        (readable only by members of the owning organization) as a whole, every version included.
+        There are no private records or private types. Create a collection with{' '}
+        <code>"public": true</code> to make it public; without it, it is private. Only the
+        organization&rsquo;s owners and admins can change visibility later.
+      </p>
+      <p>
+        If some of your data is public and some is not, push them to two collections: a public one
+        and a separate private one. A push to a public collection that marks anything private is
+        refused with <code>422</code>:
+      </p>
       <ul>
         <li>
-          <strong>Private types:</strong> Add <code>"private": true</code> at the root of a
-          type&rsquo;s schema. All records of that type are hidden from public readers.
+          A record line with <code>"private": true</code>: the records upload answers{' '}
+          <code>
+            This collection is public, and keeps no private records. Make the collection private, or
+            push them to a private collection.
+          </code>
         </li>
         <li>
-          <strong>Private records:</strong> Add <code>"private": true</code> to a record line when
-          uploading it. That record is hidden from public readers.
+          A schema with <code>"private": true</code> at its root: opening the session answers{' '}
+          <code>422</code> naming the types.
         </li>
       </ul>
       <p>
-        <code>"private": true</code> on a field inside a schema is refused. Put private fields in a
-        private type, or push the whole record as private.
-      </p>
-      <p>
-        Private content is stored in the same version; members of the owning organization see
-        everything, and public readers see the public set only. The version hash covers the private
-        set through a salted commitment, so public readers can verify the public set without
-        learning anything about the private one.
+        In a private collection the mark is accepted and changes nothing.{' '}
+        <code>"private": true</code> on a field inside a schema is refused in any collection.
       </p>
 
       <h2>API Reference</h2>
       <p>
-        Full API docs are at <Link to="/docs">/docs</Link>. The key endpoints:
+        Full API docs are at <Link to="/docs/api">/docs/api</Link>. The key endpoints:
       </p>
       <table>
         <tbody>
@@ -438,7 +458,7 @@ export default function DocsIntegration() {
               <code>GET .../versions/:semver/records.ndjson</code>
             </td>
             <td>
-              Stream every record in one request (NDJSON). The bulk read path — use this instead of
+              Stream every record in one request (NDJSON). The bulk read path: use it instead of
               paging when you want the whole collection
             </td>
           </tr>
@@ -459,18 +479,6 @@ export default function DocsIntegration() {
               <code>PUT .../files/:hash</code>
             </td>
             <td>Upload a file</td>
-          </tr>
-          <tr>
-            <td>
-              <code>POST /api/records/batch</code>
-            </td>
-            <td>Fetch up to 100 records by hash (NDJSON response)</td>
-          </tr>
-          <tr>
-            <td>
-              <code>GET /api/records/:hash/provenance</code>
-            </td>
-            <td>Find which collections you can read contain a record</td>
           </tr>
           <tr>
             <td>
@@ -505,16 +513,20 @@ export default function DocsIntegration() {
         </li>
         <li>
           <code>422 Unprocessable</code>: Records or deletes fail the input rules or their schema (
-          <code>validationErrors</code>, by line), a schema is refused when the session opens, or
-          the commit references files that haven&rsquo;t been uploaded (<code>filesNeeded</code>).
+          <code>validationErrors</code>, by line), a schema is refused when the session opens, a
+          record or type is marked private in a public collection, or the commit references files
+          that haven&rsquo;t been uploaded (<code>filesNeeded</code>; upload them and commit the
+          same session again).
         </li>
         <li>
           <code>429 Too Many Requests</code>: Too many push sessions open at once (
           <code>limits.open_sessions</code>), or a rate limit. Wait and retry.
         </li>
         <li>
-          <code>503 Service Unavailable</code>: Storage cleanup ran while the push was committing.
-          Push again.
+          <code>500</code> on a commit: poll <code>GET .../push/SESSION_ID</code>. The server
+          retries a stalled commit, so the session may still end <code>committed</code>. If it ends{' '}
+          <code>failed</code> with a <code>500</code> or <code>503</code> in <code>error</code>,
+          commit the same session again: its uploads are kept.
         </li>
       </ul>
 

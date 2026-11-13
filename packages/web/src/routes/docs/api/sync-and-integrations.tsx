@@ -23,42 +23,6 @@ function Endpoint({
   )
 }
 
-const logRes = `{
-  "collection": {
-    "id": "uuid",
-    "owner": { "id": "uuid", "did": null, "handle": "kf", "name": "Knowledge Futures" },
-    "slug": "archive",
-    "name": "PubPub Archive",
-    "description": null,
-    "visibility": "public",
-    "ark": "ark:12345/ulb9bq4n5gmv3k0",
-    "keys": [{ "id": "k1", "alg": "Ed25519", "publicKey": "base64url..." }]
-  },
-  "head": { "seq": 12, "entryHash": "a1b2...", "versionHash": "ulv2:e5f6..." },
-  "entries": [
-    {
-      "collectionId": "uuid",
-      "seq": 1,
-      "semver": "v1.0.0",
-      "versionHash": "ulv2:0c1d...",
-      "baseSemver": null,
-      "message": "First import",
-      "appId": null,
-      "actorId": "uuid",
-      "createdAt": "2026-01-15T00:00:00.000Z",
-      "prev": null,
-      "keyId": "k1",
-      "sig": "base64url..."
-    }
-  ]
-}`
-
-const packExample = `curl -o v3.2.0.tar \\
-  "https://www.underlay.org/api/collections/kf/archive/versions/v3.2.0/pack?base=v3.1.0"
-# x-underlay-version: ulv2:e5f6...
-# x-underlay-base: ulv2:9a8b...
-# x-underlay-sets: public`
-
 const exportExample = `curl -o archive.tar.gz \\
   "https://www.underlay.org/api/collections/kf/archive/export?version=v3.2.0"
 
@@ -71,6 +35,7 @@ tar -tzf archive.tar.gz
 
 const manifestRes = `{
   "collection": {
+    "id": "uuid",
     "owner": "kf",
     "slug": "archive",
     "name": "PubPub Archive",
@@ -78,7 +43,7 @@ const manifestRes = `{
   },
   "version": {
     "semver": "v3.2.0",
-    "hash": "ulv2:e5f6...",
+    "hash": "ulv3:e5f6...",
     "message": "April sync",
     "recordCount": 4521,
     "fileCount": 892,
@@ -135,7 +100,7 @@ X-Underlay-Signature: sha256=5d41402abc4b2a76b9719d911017c592...
   "collection": { "owner": "kf", "slug": "archive" },
   "version": {
     "semver": "v3.2.0",
-    "hash": "ulv2:e5f6...",
+    "hash": "ulv3:e5f6...",
     "major": 3,
     "minor": 2,
     "patch": 0,
@@ -160,11 +125,11 @@ function verifyUnderlaySignature(secret, rawBody, header) {
 // if (!verifyUnderlaySignature(SECRET, req.body, req.get('x-underlay-signature')))
 //   return res.sendStatus(401)`
 
-const arkShape = `https://www.underlay.org/ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
+const arkShape = `https://underlay.org/ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
 
-https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0                    the collection
-https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0             a version
-https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
+https://underlay.org/ark:12345/ulb9bq4n5gmv3k0                    the collection
+https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0             a version
+https://underlay.org/ark:12345/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
 
 const resolveRes = `{
   "type": "redirect",
@@ -174,7 +139,7 @@ const resolveRes = `{
     "who": "Knowledge Futures",
     "what": "PubPub Archive v3.2.0",
     "when": "20260401",
-    "where": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
+    "where": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
     "naan": "12345",
     "collectionName": "PubPub Archive",
     "ownerName": "Knowledge Futures",
@@ -182,48 +147,14 @@ const resolveRes = `{
     "message": "April sync",
     "appId": null,
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "arkUrl": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0"
+    "arkUrl": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0"
   }
-}`
-
-const locationReq = `{
-  "name": "Library mirror",
-  "endpoint": "https://s3.us-east-1.amazonaws.com",
-  "bucket": "kf-underlay-mirror",
-  "prefix": "underlay",
-  "accessKeyId": "AKIA...",
-  "secretAccessKey": "..."
-}`
-
-const placementsRes = `{
-  "headSeq": 12,
-  "placements": [
-    {
-      "id": "uuid",
-      "role": "mirror",
-      "sets": "public",
-      "inherited": false,
-      "state": "active",
-      "syncedSeq": 12,
-      "lag": 0,
-      "lastError": null,
-      "updatedAt": "2026-04-01T00:00:00.000Z",
-      "location": {
-        "id": "uuid",
-        "name": "Library mirror",
-        "kind": "s3",
-        "bucket": "kf-underlay-mirror",
-        "prefix": "underlay",
-        "status": "active"
-      }
-    }
-  ]
 }`
 
 const healthRes = `{
   "ok": true,
   "version": 2,
-  "deployment": "production",
+  "deployment": "prod",
   "time": "2026-04-01T00:00:00.000Z"
 }`
 
@@ -237,59 +168,29 @@ export default function DocsApiSyncAndIntegrations() {
   return (
     <DocsLayout title="Sync and integrations API">
       <p>
-        Endpoints for copying collections elsewhere and connecting them to other systems: tree sync
-        for mirrors and clients, whole-version exports, webhooks, ARK identifiers, storage you bring
-        yourself, and a couple of service endpoints. Paths below that start{' '}
-        <code>…/:owner/:slug</code> are under <code>/api/collections</code>. Where a{' '}
-        <code>version</code> is asked for, it is a semver (<code>v1.2.0</code>), a version hash (
-        <code>ulv2:…</code>) or <code>latest</code>.
+        Endpoints for copying collections elsewhere and connecting them to other systems:
+        whole-version exports, webhooks, ARK identifiers, and a couple of service endpoints. Paths
+        below that start <code>…/:owner/:slug</code> are under <code>/api/collections</code>. Where
+        a <code>version</code> is asked for, it is a semver (<code>v1.2.0</code>), a version id (
+        <code>ulv3:…</code>) or <code>latest</code>.
       </p>
 
       <hr className="border-rule my-6" />
 
       <h2 id="tree-sync">Tree sync</h2>
       <p>
-        How a mirror or client keeps a full copy of a collection&rsquo;s repository: read the signed
-        version log, then fetch each new version as a pack of only the objects it doesn&rsquo;t
-        already have. What a receiver must check is specified in the protocol&rsquo;s{' '}
-        <Link to="/docs/protocol/repositories#version-log" className="text-link underline">
-          version log
-        </Link>{' '}
-        and{' '}
-        <Link to="/docs/protocol/repositories#packs" className="text-link underline">
-          packs
-        </Link>{' '}
-        sections. A collection the caller can&rsquo;t read is a <code>404</code>.
+        Reading a collection&rsquo;s log and fetching versions as packs, for mirrors and clients
+        that keep a full copy, is not available yet: <code>GET …/:owner/:slug/log</code> and{' '}
+        <code>GET …/:owner/:slug/versions/:n/pack</code> answer <code>501</code> with{' '}
+        <code>{'"code": "not_on_v3"'}</code>. To copy a version, use the export below, or{' '}
+        <Link
+          to="/docs/api/versions#get-api-collections-owner-slug-versions-n-records-ndjson"
+          className="text-link underline"
+        >
+          records.ndjson
+        </Link>
+        .
       </p>
-
-      <Endpoint route="GET …/:owner/:slug/log?after=&limit=" scope="No auth for public collections">
-        <p>
-          The collection&rsquo;s <code>collection.json</code> (including the public keys that sign
-          its log), its current <code>head</code> (<code>null</code> before the first version), and
-          the log entries with <code>seq</code> greater than <code>after</code> (default 0), oldest
-          first. <code>limit</code> defaults to and is capped at 1,000; to read further, call again
-          with <code>after</code> set to the last <code>seq</code> you received.
-        </p>
-        <CodeBlock>{logRes}</CodeBlock>
-      </Endpoint>
-
-      <Endpoint
-        route="GET …/:owner/:slug/versions/:n/pack?base=&sets="
-        scope="No auth for public collections; sets=all needs membership"
-      >
-        <p>
-          A pack of version <code>:n</code>: an uncompressed tar (<code>application/x-tar</code>) of
-          the repository objects it reaches that version <code>base</code> does not, each under its
-          repository key. Without <code>base</code>, the pack holds everything. <code>sets</code> is{' '}
-          <code>public</code> (the default) or <code>all</code>, which adds the private set and
-          needs membership in the owning organization (<code>403</code> otherwise).{' '}
-          <code>base</code> must be a version of the same collection (<code>404</code> otherwise).
-          The response headers <code>x-underlay-version</code>, <code>x-underlay-base</code> (empty
-          without a base) and <code>x-underlay-sets</code> say what was packed. This request counts
-          as 10 requests against your rate limit.
-        </p>
-        <CodeBlock>{packExample}</CodeBlock>
-      </Endpoint>
 
       <hr className="border-rule my-6" />
 
@@ -299,10 +200,9 @@ export default function DocsApiSyncAndIntegrations() {
         scope="No auth for public collections"
       >
         <p>
-          A whole version as one archive, of what the caller can read: non-members get the public
-          set only. <code>version</code> defaults to <code>latest</code>; <code>format</code> is{' '}
-          <code>tar.gz</code> (the default) or <code>tar</code>. The archive is named{' '}
-          <code>&lt;owner&gt;-&lt;slug&gt;-&lt;semver&gt;.tar.gz</code> in{' '}
+          A whole version as one archive. <code>version</code> defaults to <code>latest</code>;{' '}
+          <code>format</code> is <code>tar.gz</code> (the default) or <code>tar</code>. The archive
+          is named <code>&lt;owner&gt;-&lt;slug&gt;-&lt;semver&gt;.tar.gz</code> in{' '}
           <code>Content-Disposition</code>. This request counts as 20 requests against your rate
           limit.
         </p>
@@ -328,7 +228,8 @@ export default function DocsApiSyncAndIntegrations() {
                 <code>records/&lt;Type&gt;.ndjson</code>
               </td>
               <td>
-                One file per type, one <code>{'{"id", "type", "data", "hash"}'}</code> per line
+                One file per type that has records, one{' '}
+                <code>{'{"id", "type", "data", "hash"}'}</code> per line
               </td>
             </tr>
             <tr>
@@ -351,9 +252,9 @@ export default function DocsApiSyncAndIntegrations() {
         <p>
           The archive streams as it is built, with no limit on the number of records; for very large
           collections, <code>format=tar</code> is quicker to produce. Entries are stamped with the
-          time the version was created, so exporting the same version again, with the same access,
-          gives a byte-identical archive. If something fails partway, the response is cut off rather
-          than completed, so treat an archive that doesn&rsquo;t end cleanly as failed.
+          time the version was created, so exporting the same version again gives a byte-identical
+          archive. If something fails partway, the response is cut off rather than completed, so
+          treat an archive that doesn&rsquo;t end cleanly as failed.
         </p>
       </Endpoint>
 
@@ -484,20 +385,20 @@ export default function DocsApiSyncAndIntegrations() {
 
       <Endpoint
         route="GET | PATCH …/:owner/:slug/ark"
-        scope="Auth: org member (PATCH: signed in, or a write or admin key)"
+        scope="Auth: org member (PATCH: org owner or admin, signed in or with an admin key)"
       >
         <p>
           GET returns <code>{'{"enabled", "customUrl", "arkUrl", "shoulder", "arkId"}'}</code>.
           PATCH takes <code>{'{"enabled"?, "customUrl"?}'}</code>: <code>customUrl</code> is an
           http(s) URL to redirect the collection and version ARKs to, or <code>null</code> to use
-          the Underlay pages. The first PATCH mints the collection&rsquo;s ARK. Returns{' '}
+          the Underlay pages. A collection that has no ARK yet gets one on its first PATCH. Returns{' '}
           <code>{'{"ok": true}'}</code>.
         </p>
       </Endpoint>
 
       <Endpoint
         route="GET | PUT | PATCH | DELETE …/:owner/:slug/ark/record-types"
-        scope="Auth: org member (changes: signed in, or a write or admin key)"
+        scope="Auth: org member (changes: org owner or admin, signed in or with an admin key)"
       >
         <p>
           Which record field a type&rsquo;s record ARKs redirect to. GET returns{' '}
@@ -525,99 +426,18 @@ export default function DocsApiSyncAndIntegrations() {
 
       <h2 id="storage-locations-and-mirrors">Storage locations and mirrors</h2>
       <p>
-        An organization can add its own S3-compatible buckets as <strong>locations</strong> and{' '}
-        <strong>mirror</strong> collections to them: Underlay keeps a copy of each version&rsquo;s
-        repository there. The credentials must be able to both write and read the bucket. Managing
-        locations and mirrors takes an owner or admin of the organization, signed in or with an
-        admin API key not confined to specific collections. Removing a location or mirror never
-        deletes what was copied to the bucket.
+        Mirroring collections to an organization&rsquo;s own S3-compatible bucket is not available
+        yet: adding a mirror to a collection (<code>POST …/:owner/:slug/placements</code>) answers{' '}
+        <code>501</code> with <code>{'"code": "not_on_v3"'}</code>.
       </p>
-
-      <Endpoint route="GET | POST /api/orgs/:org/locations" scope="Auth: org owner or admin">
-        <p>
-          GET returns <code>{'{"locations": [...]}'}</code> (credentials are never returned). POST
-          adds one:
-        </p>
-        <CodeBlock>{locationReq}</CodeBlock>
-        <p>
-          <code>endpoint</code> is an <code>https</code> address with no path; <code>prefix</code>{' '}
-          is optional. Before keeping the location, Underlay writes a check object, reads it back,
-          tests whether the bucket serves objects without credentials, and looks for lifecycle rules
-          that would delete mirrored objects. If the check fails the location is not kept and the
-          response is <code>422</code>; otherwise <code>201</code>{' '}
-          <code>{'{"location", "check"}'}</code>.
-        </p>
-      </Endpoint>
-
-      <Endpoint route="POST /api/orgs/:org/locations/:id/check" scope="Auth: org owner or admin">
-        <p>
-          Run the check again and update the location&rsquo;s status. Returns{' '}
-          <code>
-            {'{"location", "check": {"ok", "publicRead", "readBack", "error", "warnings"}}'}
-          </code>
-          .
-        </p>
-      </Endpoint>
-
-      <Endpoint route="DELETE /api/orgs/:org/locations/:id" scope="Auth: org owner or admin">
-        <p>
-          Remove a location and every mirror to it. Returns <code>204</code>.
-        </p>
-      </Endpoint>
-
-      <Endpoint
-        route="GET | POST | DELETE /api/orgs/:org/placements[/:id]"
-        scope="Auth: org owner or admin"
-      >
-        <p>
-          Organization defaults: every collection of the organization, existing and new, is mirrored
-          to each default location. POST <code>{'{"locationId", "sets"}'}</code>, where{' '}
-          <code>sets</code> is <code>public</code> (the default) or <code>public+private</code>.
-          Private sets need an <code>https</code> endpoint and a bucket that doesn&rsquo;t serve
-          objects without credentials (<code>422</code>). Deleting a default also removes the
-          organization&rsquo;s mirrors to that location.
-        </p>
-      </Endpoint>
-
-      <Endpoint route="GET …/:owner/:slug/placements" scope="Auth: org member">
-        <p>
-          Where the collection is stored: the primary and each mirror, with its state (
-          <code>active</code>, <code>backfilling</code>, <code>lagging</code>, <code>error</code>,{' '}
-          <code>paused</code>), how many versions it is behind (<code>lag</code>), and whether it
-          comes from an organization default (<code>inherited</code>).
-        </p>
-        <CodeBlock>{placementsRes}</CodeBlock>
-      </Endpoint>
-
-      <Endpoint route="POST …/:owner/:slug/placements" scope="Auth: org owner or admin">
-        <p>
-          Mirror this collection to a location: <code>{'{"locationId", "sets"}'}</code>, as for
-          organization defaults. The mirror starts in <code>backfilling</code>. Returns{' '}
-          <code>201</code>.
-        </p>
-      </Endpoint>
-
-      <Endpoint route="POST …/:owner/:slug/placements/:id/sync" scope="Auth: org owner or admin">
-        <p>
-          Start a mirror catching up again, for example after fixing a broken location. Returns{' '}
-          <code>202</code>.
-        </p>
-      </Endpoint>
-
-      <Endpoint route="DELETE …/:owner/:slug/placements/:id" scope="Auth: org owner or admin">
-        <p>
-          Stop mirroring the collection there. Returns <code>204</code>, or <code>409</code> for a
-          mirror that comes from an organization default (remove the default instead).
-        </p>
-      </Endpoint>
 
       <hr className="border-rule my-6" />
 
       <h2 id="health">Health</h2>
       <Endpoint route="GET /api/health" scope="No auth required">
         <p>
-          Whether the service is up. <code>deployment</code> names the deployment answering (for
-          example <code>production</code> or <code>staging</code>).
+          Whether the service is up. <code>deployment</code> names the deployment answering:{' '}
+          <code>prod</code> or <code>staging</code>.
         </p>
         <CodeBlock>{healthRes}</CodeBlock>
       </Endpoint>

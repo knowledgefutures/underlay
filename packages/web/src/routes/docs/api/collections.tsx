@@ -50,22 +50,30 @@ const getRes = `{
   "name": "PubPub Archive",
   "description": "Full archive of PubPub publications",
   "visibility": "public",
-  "ark": "https://www.underlay.org/ark:12345/ulb9bq4n5gmv3k0",
+  "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0",
   "createdAt": "2026-01-15T00:00:00.000Z",
   "updatedAt": "2026-04-01T00:00:00.000Z",
   "versionCount": 14,
-  "head": { "semver": "v3.2.0", "hash": "ulv2:e5f6..." },
+  "head": { "semver": "v3.2.0", "hash": "ulv3:e5f6..." },
   "public": true,
   "ownerSlug": "knowledge-futures",
   "ownerName": "Knowledge Futures",
   "latestVersion": {
     "semver": "v3.2.0",
+    "major": 3,
+    "minor": 2,
+    "patch": 0,
+    "hash": "ulv3:e5f6...",
+    "baseSemver": "v3.1.0",
+    "message": "April sync",
+    "appId": null,
     "recordCount": 4521,
     "fileCount": 892,
     "totalBytes": 1073741824,
-    "metadata": { "description": "Full archive...", "readme": "..." },
+    "typeCounts": [{ "type": "Publication", "count": 4521 }],
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "message": "April sync"
+    "ark": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
+    "metadata": { "description": "Full archive...", "readme": "..." }
   }
 }`
 
@@ -97,7 +105,7 @@ const metadataReq = `{
 
 const metadataRes = `{
   "semver": "v3.2.1",
-  "hash": "ulv2:e5f6a7b8...",
+  "hash": "ulv3:e5f6a7b8...",
   "status": "completed"
 }`
 
@@ -121,7 +129,7 @@ const forkRes = `{
     "version": "v3.2.0"
   },
   "version": {
-    "semver": "v1.0.0",
+    "semver": "v3.2.0",
     "recordCount": 4521
   }
 }`
@@ -212,10 +220,6 @@ export default function DocsApiCollections() {
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{browseRes}</code>
         </pre>
-        <p>
-          Counts are for the caller: members of the owning organization see totals that include
-          private records and files; everyone else sees the public ones.
-        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -295,10 +299,11 @@ export default function DocsApiCollections() {
           <code>{getRes}</code>
         </pre>
         <p>
-          Counts are for the caller: <code>recordCount</code>, <code>fileCount</code> and{' '}
-          <code>totalBytes</code> include private records and files for the collection&rsquo;s
-          members, and leave them out for everyone else. <code>ark</code> is null when the
-          collection&rsquo;s ARK is off. <code>latestVersion</code> is null before the first push.
+          <code>head</code> names the latest version by semver and version id. In{' '}
+          <code>latestVersion</code>, <code>pushedBy</code>, <code>pushedByName</code> and{' '}
+          <code>actorId</code> are added for the collection&rsquo;s members. <code>ark</code> is
+          null when the collection&rsquo;s ARK is off. <code>head</code> and{' '}
+          <code>latestVersion</code> are null before the first push.
         </p>
       </div>
 
@@ -364,8 +369,9 @@ export default function DocsApiCollections() {
           gets <code>403</code>)
         </p>
         <p>
-          Delete a collection with its versions, push sessions and webhooks. Stored records and
-          files are not deleted with it (they may be shared with other collections).
+          Delete a collection with its versions, push sessions and webhooks. Its stored data is
+          deleted later, after a grace period; records and files that another collection still uses,
+          such as a fork, are kept.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -401,10 +407,11 @@ export default function DocsApiCollections() {
         </h2>
         <p className="scope">Auth: write access</p>
         <p>
-          Update version metadata by creating a new patch version. The request body is a JSON object
-          (at most 8 MiB) whose fields are merged with the previous version&rsquo;s metadata. Use
-          this to update <code>description</code>, <code>readme</code>, <code>license</code>, or any
-          other metadata fields without pushing new records.
+          Update version metadata by creating a new patch version (a new commit, which fires
+          webhooks like any other version). The request body is a JSON object (at most 8 MiB) whose
+          fields are merged with the previous version&rsquo;s metadata. Use this to update{' '}
+          <code>description</code>, <code>readme</code>, <code>license</code>, or any other metadata
+          fields without pushing new records.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -462,14 +469,6 @@ export default function DocsApiCollections() {
                 <code>400</code>
               </td>
               <td>The body is not a JSON object, or breaks the input rules.</td>
-            </tr>
-            <tr>
-              <td>
-                <code>409</code>
-              </td>
-              <td>
-                Version conflict: another version was published while this one was made. Retry.
-              </td>
             </tr>
             <tr>
               <td>
@@ -556,14 +555,10 @@ export default function DocsApiCollections() {
         </p>
         <p>
           Fork any collection you can read into a target organization. The fork is a new, private
-          collection whose first version, <code>v1.0.0</code> with the message{' '}
-          <code>Forked from &lt;slug&gt; &lt;semver&gt;</code>, reuses the source&rsquo;s latest
-          version. Records, schemas, and files are referenced, not copied, so a fork takes no
-          additional storage. Both collections must share a storage location.
-        </p>
-        <p>
-          A member of the source&rsquo;s organization forks both its public and its private records.
-          Anyone else forks the public records only.
+          collection that keeps the source&rsquo;s history up to its latest version: the same
+          versions, with the same semvers and version ids. The next push to the fork follows on from
+          there. Records, schemas, and files are shared, not copied, so a fork takes no additional
+          storage. Whoever can read the source forks all of it.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">

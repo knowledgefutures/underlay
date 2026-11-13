@@ -227,7 +227,7 @@ export function agentRoutes() {
     }
     const recordLines = [
       { id: 'update-1', type: exampleType, data: exampleData },
-      { id: 'update-2', type: exampleType, data: exampleData, private: true },
+      { id: 'update-2', type: exampleType, data: exampleData },
     ]
       .map((r) => JSON.stringify(r))
       .join('\n')
@@ -324,12 +324,12 @@ Authorization: Bearer ${e(token)}
 Content-Type: application/x-ndjson
 
 ${e(recordLines)}</pre>
-<p>One JSON object per line with <code>id</code>, <code>type</code> and <code>data</code>; <code>data</code> must match the type&rsquo;s schema. A record with an existing (type, id) replaces it. <code>"private": true</code> shows the record to members of the owning organization only; leaving it out makes the record public. Any invalid line is a 422 listing the lines to fix, and nothing from that request is stored.</p>
+<p>One JSON object per line with <code>id</code>, <code>type</code> and <code>data</code>; <code>data</code> must match the type&rsquo;s schema. A record with an existing (type, id) replaces it. Privacy is set for the whole collection, not per record: everything you push to a public collection is public, and a line marked <code>"private": true</code> is refused there. Any invalid line is a 422 listing the lines to fix, and nothing from that request is stored.</p>
 
 <h3>Step 3: Commit</h3>
 <pre>POST ${e(`${api}/push/`)}&lt;session_id&gt;/commit
 Authorization: Bearer ${e(token)}</pre>
-<p>A 201 answers with the new version: <code>${e(JSON.stringify({ semver: 'v1.1.0', hash: 'ulv2:…', recordCount: 1, fileCount: 0 }))}</code>. A 409 &ldquo;Version conflict&rdquo; means someone published after you opened the session: open a new one with the current version as <code>base</code> and upload again.</p>
+<p>A 201 answers with the new version: <code>${e(JSON.stringify({ semver: 'v1.1.0', hash: 'ulv3:…', recordCount: 1, fileCount: 0 }))}</code>. A 409 &ldquo;Version conflict&rdquo; means someone published after you opened the session: open a new one with the current version as <code>base</code> and upload again.</p>
 
 <h2>Endpoints</h2>
 <table class="kv">
