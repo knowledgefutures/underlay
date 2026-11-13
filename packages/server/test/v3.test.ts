@@ -909,7 +909,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(broken.errors.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('mirrors no v3 collection yet: refused, and an inherited mirror waits', async () => {
+  it('mirrors v3 collections: a mirror is added, and one behind is caught up by the cron', async () => {
     const { h, user, c, base } = await setup()
     await push(h, user, base, { schemas: { Author } }, [author('a', 'A')])
     const res = await h.request(`${base}/placements`, {
@@ -917,8 +917,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       user,
       json: { locationId: 'anywhere' },
     })
-    expect(res.status).toBe(501)
-    expect(await json(res)).toMatchObject({ code: 'not_on_v3' })
+    expect(res.status).toBe(404)
     await h.ports.db.insert(schema.storageLocations).values({
       id: 'loc1',
       kind: 'platform',
@@ -926,14 +925,17 @@ describe.skipIf(!onV3)('v3 collections', () => {
       prefix: 'mirror',
       status: 'active',
     })
-    await h.ports.db.insert(schema.placements).values({
-      collectionId: c.id,
-      locationId: 'loc1',
-      role: 'mirror',
-      sets: 'public',
-      state: 'backfilling',
-    })
-    expect(await laggingPlacements(h.ports)).toEqual([])
+    const [p] = await h.ports.db
+      .insert(schema.placements)
+      .values({
+        collectionId: c.id,
+        locationId: 'loc1',
+        role: 'mirror',
+        sets: 'public+private',
+        state: 'backfilling',
+      })
+      .returning()
+    expect(await laggingPlacements(h.ports)).toEqual([p!.id])
   })
 
   it('sends pooled jobs to the v3 queue, one at a time or in a batch', async () => {

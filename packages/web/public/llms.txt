@@ -31,13 +31,13 @@ What a key may do:
 - read: read what its holder may read.
 - write: also publish (push, files, metadata, fork). Acts as a plain member of the org.
 - admin: keeps its holder's full role (owners and admins may then change visibility, delete,
-  transfer, and manage webhooks and ARK settings). A member's admin key is still a member's.
+  transfer, and manage webhooks, mirrors and ARK settings). A member's admin key is still a member's.
   Changing or deleting an organization, setting its NAAN and deleting your account also need a
   session or an admin key: an owner's write key gets 403.
 - A key confined to collections (metadata.collectionIds) works only on those collections, and is
   refused on account and organization endpoints and on fork. On its collections it acts as a
-  member whatever its scope: it may push, but visibility, deletion, transfer and webhooks are
-  403.
+  member whatever its scope: it may push, but visibility, deletion, transfer, webhooks and
+  mirrors are 403.
 
 Agent links: a collection's Share panel can create https://www.underlay.org/agent/ul_<key>, a
 write key confined to that collection that expires after 1 hour. GET /agent/:key is an HTML page
@@ -573,7 +573,6 @@ These answer on www.underlay.org, but do not work yet:
   GET /api/records/:hash/provenance, GET /api/records/:hash/first,
   GET /api/collections/files/:hash, and the page /records/:hash): they answer as for an unknown
   hash (404, or left out of a batch). Read records through a collection instead.
-- Mirrors to your own storage: adding a placement answers 501 "not_on_v3", and no mirror syncs.
 - A published command-line client, and uploads of files a client builds itself.
 
 ---
@@ -741,6 +740,23 @@ Each delivery is a POST with headers x-underlay-event, x-underlay-delivery and
 x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
 {event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
 patch, recordCount, fileCount}, bumpType}. version.hash is the ulv3: id.
+
+Mirrors to your own bucket (owners and admins: session or admin key):
+GET|POST /api/orgs/:org/locations         → list, or add an S3-compatible bucket {"name", "endpoint",
+    "bucket", "prefix"?, "accessKeyId", "secretAccessKey"}: checked by writing and reading back
+    an object (422 if it fails); credentials are never returned
+POST   /api/orgs/:org/locations/:id/check → check it again; DELETE /api/orgs/:org/locations/:id
+GET|POST|DELETE /api/orgs/:org/placements[/:id] → organization defaults: every collection mirrors there
+GET    /api/collections/:owner/:slug/placements          → the primary and each mirror: state
+    (active, backfilling, lagging, error, paused), syncedSeq, lag, lastError
+POST   /api/collections/:owner/:slug/placements          → {"locationId", "sets"} → 201
+POST   /api/collections/:owner/:slug/placements/:id/sync → catch up again → 202
+DELETE /api/collections/:owner/:slug/placements/:id      → stop (what was copied stays)
+A mirror holds the collection's signed commits, current layout, record files and files, at the
+keys the protocol uses, so the bucket reads with no Underlay server. sets is "public" (the
+default: public collections only; a private collection is 422, or "error" once made private)
+or "public+private" (needs a bucket that doesn't serve objects without credentials). New versions
+are copied after they are published. Nothing is deleted from the bucket.
 
 ARK identifiers:
 GET /ark:<NAAN>/<id>[.v1.2.0][/Type/id]   → 302 to the page; ?info or ?? for metadata, ?json for JSON

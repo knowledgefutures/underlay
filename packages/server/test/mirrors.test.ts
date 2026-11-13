@@ -11,6 +11,7 @@ import {
   type Repo,
   RepoSource,
   s3Store,
+  v3,
   verifyLog,
   verifyTree,
 } from '@underlay/protocol'
@@ -19,9 +20,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
+import { PRIVATE_COLLECTION_ERROR } from '../src/locations/mirror-v3.js'
 import { mirrorConfig } from '../src/locations/mirror.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { describeNotOnV3 } from './layouts.js'
+import { describeNotOnV3, onV3 } from './layouts.js'
 
 const fakes: FakeS3[] = []
 afterAll(async () => {
@@ -653,5 +655,170 @@ describeNotOnV3('not on v3 yet: mirrors (decision 8)')('bucket mirrors', () => {
     expect((await placements(h, user, path)).placements.some((p) => p.role === 'mirror')).toBe(
       false,
     )
+  })
+})
+
+describe.skipIf(!onV3)('bucket mirrors of v3 collections', () => {
+  async function setupV3(opts: { public?: boolean } = {}) {
+    const h = await harness()
+    const user = await h.member()
+    const c = await h.collection('books')
+    if (opts.public !== false)
+      await h.ports.db
+        .update(schema.collections)
+        .set({ public: true })
+        .where(eq(schema.collections.id, c.id))
+    const path = '/api/collections/org/books'
+    const cover = 'cover bytes'
+    expect(
+      (await h.request(`${path}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
+    ).toBe(201)
+    await push(h, user, path, { schemas: { Book } }, [
+      ...Array.from({ length: 2500 }, (_, i) => book(`b${i}`, `T${i}`)),
+      book('cover', 'with a cover', {
+        data: { title: 'c', cover: { $file: `sha256:${sha(cover)}` } },
+      }),
+    ])
+    const v2 = await push(
+      h,
+      user,
+      path,
+      {},
+      [book('b1', 'changed'), book('new', 'new')],
+      [{ type: 'Book', id: 'b2' }],
+    )
+    return { h, user, c, path, cover, v2 }
+  }
+
+  function bucketStore(f: FakeS3, prefix: string) {
+    const store = s3Store({
+      endpoint: f.url,
+      bucket: 'bucket',
+      accessKeyId: 'AKID',
+      secretAccessKey: 'secret',
+    })
+    return new PrefixedStore(store, prefix)
+  }
+
+  /** Every record of a version, as a reader of the store sees it. */
+  async function records(store: Parameters<typeof v3.openView>[0], id: string, version?: number) {
+    const view = await v3.openView(store, id, version === undefined ? {} : { version })
+    const out: string[] = []
+    for await (const r of v3.exportAll(store, view))
+      out.push(`${r.type}/${r.id}/${r.hash}/${new TextDecoder().decode(r.line!)}`)
+    return out
+  }
+
+  it('copies the collection, and the bucket reads as the server does with no database', async () => {
+    const { h, user, c, path, cover, v2 } = await setupV3()
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'mirror')
+    expect(loc.status).toBe(201)
+    const created = await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public' },
+    })
+    expect(created.status).toBe(201)
+    await h.drain()
+    const mirror = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    expect(mirror).toMatchObject({ syncedSeq: 2, lag: 0, state: 'active', lastError: null })
+
+    // The bucket holds the commits, signed and chained, and every version reads the same.
+    const bucket = bucketStore(f, 'mirror')
+    const head = await v3.verifyLog(bucket, c.id, { files: true })
+    expect(head?.commit.number).toBe(2)
+    expect(head?.id).toBe(v2.hash)
+    for (const version of [1, 2])
+      expect(await records(bucket, c.id, version)).toEqual(
+        await records(h.ports.stores.v3, c.id, version),
+      )
+    expect((await records(bucket, c.id)).filter((r) => r.startsWith('Book/')).length).toBe(2501)
+    const asset = await bucket.get(`assets/${sha(cover)}`)
+    expect(sha(await asset!.text())).toBe(sha(cover))
+
+    // The next version copies only what it added.
+    const before = f.requests.length
+    await push(h, user, path, {}, [book('b5', 'again')])
+    await h.drain()
+    expect(
+      (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!.syncedSeq,
+    ).toBe(3)
+    const puts = f.requests.slice(before).filter((r) => r.method === 'PUT').length
+    expect(puts).toBeLessThan(10)
+    expect(await records(bucket, c.id)).toEqual(await records(h.ports.stores.v3, c.id))
+  })
+
+  it('copies in budgeted steps without copying anything twice', async () => {
+    const { h, user, c, path } = await setupV3()
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'steps')
+    mirrorConfig.fileBytesPerJob = 1
+    await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public' },
+    })
+    await h.drain()
+    expect(
+      (await placements(h, user, path)).placements.find((p) => p.role === 'mirror'),
+    ).toMatchObject({ syncedSeq: 2, state: 'active' })
+    const bucket = bucketStore(f, 'steps')
+    expect(await records(bucket, c.id)).toEqual(await records(h.ports.stores.v3, c.id))
+    const keys = [...f.objects.keys()].filter((k) => k.startsWith('steps/'))
+    const puts = f.requests.filter((r) => r.method === 'PUT' && r.url.includes('/steps/')).length
+    expect(puts).toBeLessThanOrEqual(keys.length + 5)
+  })
+
+  it('mirrors a private collection only to a location for private data', async () => {
+    const { h, user, c, path } = await setupV3({ public: false })
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'priv')
+    const refused = await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public' },
+    })
+    expect(refused.status).toBe(422)
+    expect(((await refused.json()) as { error: string }).error).toBe(PRIVATE_COLLECTION_ERROR)
+    const ok = await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public+private' },
+    })
+    expect(ok.status).toBe(201)
+    await h.drain()
+    expect(
+      (await placements(h, user, path)).placements.find((p) => p.role === 'mirror'),
+    ).toMatchObject({ syncedSeq: 2, state: 'active' })
+    expect(await records(bucketStore(f, 'priv'), c.id)).toEqual(
+      await records(h.ports.stores.v3, c.id),
+    )
+  })
+
+  it('stops a public mirror once its collection is made private', async () => {
+    const { h, user, c, path } = await setupV3()
+    const f = await fake()
+    const loc = await addLocation(h, user, f, 'pub')
+    await h.request(`${path}/placements`, {
+      method: 'POST',
+      user,
+      json: { locationId: loc.body.location.id, sets: 'public' },
+    })
+    await h.drain()
+    await h.ports.db
+      .update(schema.collections)
+      .set({ public: false })
+      .where(eq(schema.collections.id, c.id))
+    const before = f.requests.filter((r) => r.method === 'PUT').length
+    await push(h, user, path, {}, [book('later', 'private now')])
+    await h.drain()
+    const mirror = (await placements(h, user, path)).placements.find((p) => p.role === 'mirror')!
+    expect(mirror).toMatchObject({
+      syncedSeq: 2,
+      state: 'error',
+      lastError: PRIVATE_COLLECTION_ERROR,
+    })
+    expect(f.requests.filter((r) => r.method === 'PUT').length).toBe(before)
   })
 })

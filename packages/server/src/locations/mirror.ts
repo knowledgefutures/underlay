@@ -46,6 +46,7 @@ import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import type { Ports } from '../ports.js'
 import { locationStore } from './locations.js'
+import { v3MirrorStep } from './mirror-v3.js'
 
 const LEASE_MS = 15 * 60 * 1000
 
@@ -251,6 +252,15 @@ export async function mirrorStep(ports: Ports, placementId: string): Promise<boo
   const saved = claimed[0]!.cursor
 
   try {
+    const [col] = await db
+      .select({ public: schema.collections.public, recordLayout: schema.collections.recordLayout })
+      .from(schema.collections)
+      .where(eq(schema.collections.id, collectionId))
+    if (col?.recordLayout === 'v3')
+      return await v3MirrorStep(ports, p, await locationStore(ports, loc), {
+        id: collectionId,
+        public: col.public,
+      })
     const repo = await ports.stores.forCollection(collectionId)
     const dest = await locationStore(ports, loc)
     const sets: SyncSets = p.sets === 'public+private' ? 'all' : 'public'
@@ -429,9 +439,6 @@ export async function laggingPlacements(ports: Ports): Promise<string[]> {
         eq(schema.placements.role, 'mirror'),
         ne(schema.placements.state, 'paused'),
         lt(schema.placements.syncedSeq, schema.versions.seq),
-        // No mirrors of v3 collections yet (v3-deploy-plan.md, decision 8): an org's
-        // default mirror waits for them.
-        ne(schema.collections.recordLayout, 'v3'),
       ),
     )
   return rows.map((r) => r.id)

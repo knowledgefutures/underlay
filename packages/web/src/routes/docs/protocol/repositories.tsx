@@ -187,8 +187,11 @@ export default function ProtocolRepositories() {
           <code>trash/</code> for seven days. An object&rsquo;s age alone is never the test.
         </li>
         <li>
-          <strong>Mirrors.</strong> Copies of a collection in another storage location are not
-          available yet.
+          <strong>Mirrors.</strong> A mirror to an organization&rsquo;s own bucket holds the same
+          objects at the same keys: the description, every commit, the current layout, the files
+          those name, and the assets, with the hints written last. It never deletes, so files a
+          rebuild replaced stay in the bucket, and a reader opens it as it opens the server&rsquo;s
+          store. Only a mirror for private data holds a private collection.
         </li>
       </ul>
     </DocsLayout>

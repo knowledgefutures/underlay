@@ -151,6 +151,40 @@ const resolveRes = `{
   }
 }`
 
+const locationReq = `{
+  "name": "Library mirror",
+  "endpoint": "https://s3.us-east-1.amazonaws.com",
+  "bucket": "kf-underlay-mirror",
+  "prefix": "underlay",
+  "accessKeyId": "AKIA...",
+  "secretAccessKey": "..."
+}`
+
+const placementsRes = `{
+  "headSeq": 12,
+  "placements": [
+    {
+      "id": "uuid",
+      "role": "mirror",
+      "sets": "public",
+      "inherited": false,
+      "state": "active",
+      "syncedSeq": 12,
+      "lag": 0,
+      "lastError": null,
+      "updatedAt": "2026-04-01T00:00:00.000Z",
+      "location": {
+        "id": "uuid",
+        "name": "Library mirror",
+        "kind": "s3",
+        "bucket": "kf-underlay-mirror",
+        "prefix": "underlay",
+        "status": "active"
+      }
+    }
+  ]
+}`
+
 const healthRes = `{
   "ok": true,
   "version": 2,
@@ -426,10 +460,98 @@ export default function DocsApiSyncAndIntegrations() {
 
       <h2 id="storage-locations-and-mirrors">Storage locations and mirrors</h2>
       <p>
-        Mirroring collections to an organization&rsquo;s own S3-compatible bucket is not available
-        yet: adding a mirror to a collection (<code>POST …/:owner/:slug/placements</code>) answers{' '}
-        <code>501</code> with <code>{'"code": "not_on_v3"'}</code>.
+        An organization can add its own S3-compatible buckets as <strong>locations</strong> and{' '}
+        <strong>mirror</strong> collections to them: Underlay keeps a copy of each collection there,
+        its signed commits, current layout, record files and files, at the keys the protocol uses
+        (see <Link to="/docs/protocol/repositories">Layouts and collections</Link>), so anyone with
+        access to the bucket can read every version without Underlay. A new version is copied after
+        it is published. The credentials must be able to both write and read the bucket. Managing
+        locations and mirrors takes an owner or admin of the organization, signed in or with an
+        admin API key not confined to specific collections. Removing a location or mirror never
+        deletes what was copied to the bucket.
       </p>
+
+      <Endpoint route="GET | POST /api/orgs/:org/locations" scope="Auth: org owner or admin">
+        <p>
+          GET returns <code>{'{"locations": [...]}'}</code> (credentials are never returned). POST
+          adds one:
+        </p>
+        <CodeBlock>{locationReq}</CodeBlock>
+        <p>
+          <code>endpoint</code> is an <code>https</code> address with no path; <code>prefix</code>{' '}
+          is optional. Before keeping the location, Underlay writes a check object, reads it back,
+          tests whether the bucket serves objects without credentials, and looks for lifecycle rules
+          that would delete mirrored objects. If the check fails the location is not kept and the
+          response is <code>422</code>; otherwise <code>201</code>{' '}
+          <code>{'{"location", "check"}'}</code>.
+        </p>
+      </Endpoint>
+
+      <Endpoint route="POST /api/orgs/:org/locations/:id/check" scope="Auth: org owner or admin">
+        <p>
+          Run the check again and update the location&rsquo;s status. Returns{' '}
+          <code>
+            {'{"location", "check": {"ok", "publicRead", "readBack", "error", "warnings"}}'}
+          </code>
+          .
+        </p>
+      </Endpoint>
+
+      <Endpoint route="DELETE /api/orgs/:org/locations/:id" scope="Auth: org owner or admin">
+        <p>
+          Remove a location and every mirror to it. Returns <code>204</code>.
+        </p>
+      </Endpoint>
+
+      <Endpoint
+        route="GET | POST | DELETE /api/orgs/:org/placements[/:id]"
+        scope="Auth: org owner or admin"
+      >
+        <p>
+          Organization defaults: every collection of the organization, existing and new, is mirrored
+          to each default location. POST <code>{'{"locationId", "sets"}'}</code>, where{' '}
+          <code>sets</code> is <code>public</code> (the default: public collections only) or{' '}
+          <code>public+private</code> (private collections too). <code>public+private</code> needs
+          an <code>https</code> endpoint and a bucket that doesn&rsquo;t serve objects without
+          credentials (<code>422</code>). A <code>public</code> default never copies a private
+          collection: its mirror of one shows <code>error</code> and says why. Deleting a default
+          also removes the organization&rsquo;s mirrors to that location.
+        </p>
+      </Endpoint>
+
+      <Endpoint route="GET …/:owner/:slug/placements" scope="Auth: org member">
+        <p>
+          Where the collection is stored: the primary and each mirror, with its state (
+          <code>active</code>, <code>backfilling</code>, <code>lagging</code>, <code>error</code>,{' '}
+          <code>paused</code>), how many versions it is behind (<code>lag</code>), and whether it
+          comes from an organization default (<code>inherited</code>).
+        </p>
+        <CodeBlock>{placementsRes}</CodeBlock>
+      </Endpoint>
+
+      <Endpoint route="POST …/:owner/:slug/placements" scope="Auth: org owner or admin">
+        <p>
+          Mirror this collection to a location: <code>{'{"locationId", "sets"}'}</code>, as for
+          organization defaults. The mirror starts in <code>backfilling</code>. Returns{' '}
+          <code>201</code>, or <code>422</code> for a <code>public</code> mirror of a private
+          collection. A mirror of a collection made private later stops, in <code>error</code>.
+        </p>
+      </Endpoint>
+
+      <Endpoint route="POST …/:owner/:slug/placements/:id/sync" scope="Auth: org owner or admin">
+        <p>
+          Start a mirror catching up again, for example after fixing a broken location. Returns{' '}
+          <code>202</code>.
+        </p>
+      </Endpoint>
+
+      <Endpoint route="DELETE …/:owner/:slug/placements/:id" scope="Auth: org owner or admin">
+        <p>
+          Stop mirroring the collection there. What was copied stays in the bucket. Returns{' '}
+          <code>204</code>, or <code>409</code> for a mirror that comes from an organization default
+          (remove the default instead).
+        </p>
+      </Endpoint>
 
       <hr className="border-rule my-6" />
 

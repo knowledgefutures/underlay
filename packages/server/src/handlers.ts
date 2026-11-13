@@ -59,11 +59,12 @@ registerJob('version.published', async (job, ports) => {
     })
     .from(schema.versions)
     .where(eq(schema.versions.id, String(job.versionId)))
-  // v3: the rebuild policy and the record pages' offset index. No reference index
-  // (decision 6) and no mirrors (decision 8) for v3 collections.
+  // v3: the rebuild policy, the record pages' offset index, and mirrors
+  // (locations/mirror-v3.ts). No reference index (decision 6) for v3 collections.
   if (v && (await ports.stores.layoutOf(v.collectionId)) === 'v3') {
     await ports.jobs.enqueue({ type: 'v3.rebuild', collectionId: v.collectionId })
     await ports.jobs.enqueue({ type: 'v3.offsets', collectionId: v.collectionId, seq: v.seq })
+    await queueMirrors(ports, v.collectionId)
     return
   }
   await ports.jobs.enqueue({ type: 'refs.index', versionId: String(job.versionId) })

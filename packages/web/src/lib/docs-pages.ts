@@ -182,7 +182,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Sync and integrations API',
         label: 'Sync and integrations',
         href: '/docs/api/sync-and-integrations',
-        blurb: 'Exports, webhooks, ARKs, health, abuse reports',
+        blurb: 'Exports, webhooks, ARKs, mirrors, health, abuse reports',
         headings: [
           'Tree sync',
           'Export',

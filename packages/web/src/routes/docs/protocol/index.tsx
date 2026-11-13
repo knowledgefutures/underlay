@@ -155,7 +155,6 @@ export default function ProtocolOverview() {
           push session.
         </li>
         <li>A command-line client.</li>
-        <li>Mirrors of a collection to another storage location.</li>
         <li>Content roots and inclusion proofs.</li>
       </ul>
 

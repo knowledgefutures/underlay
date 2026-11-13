@@ -56,8 +56,8 @@ const MOVING = new Set<Placement['state']>(['backfilling', 'lagging'])
 const POLL_MS = 4000
 
 export const SETS_LABELS: Record<Placement['sets'], string> = {
-  public: 'Public records',
-  'public+private': 'Public and private records',
+  public: 'Public collections only',
+  'public+private': 'Public and private collections',
 }
 
 function where(l: Placement['location']): string {
@@ -144,9 +144,10 @@ export default function MirrorsSettings({
   return (
     <div>
       <p className="text-ink-muted mb-3 text-sm">
-        Every version is stored in the primary location. Mirrors copy each version, its files and
-        its signed version log into a bucket your organization controls, as a complete repository
-        anyone with access to the bucket can read without Underlay.
+        Every version is stored in the primary location. Mirrors copy the collection&rsquo;s signed
+        commits, its record files and its files into a bucket your organization controls, in the
+        Underlay protocol&rsquo;s own layout, so anyone with access to the bucket can read every
+        version without Underlay. A mirror of public collections only holds no private collection.
       </p>
 
       {error && (
