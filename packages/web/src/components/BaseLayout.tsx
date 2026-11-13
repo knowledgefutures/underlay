@@ -9,10 +9,13 @@ import { UNDERLAY_UPDATES_URL } from '~/lib/kf-updates'
 export default function BaseLayout({
   children,
   tinted = false,
+  flushFooter = false,
 }: {
   children: React.ReactNode
   /** The header takes the darker tint and no rule, to run into a hero of the same color. */
   tinted?: boolean
+  /** No space above the footer, for a page whose last section is a full-width band. */
+  flushFooter?: boolean
 }) {
   const { currentUser } = useAppContext()
   const isSteward = currentUser?.kfRole === 'admin'
@@ -60,7 +63,7 @@ export default function BaseLayout({
 
       <main className="flex-1">{children}</main>
 
-      <footer className="border-rule mt-16 border-t">
+      <footer className={`border-rule border-t ${flushFooter ? '' : 'mt-16'}`}>
         <div className="text-ink-muted mx-auto flex max-w-5xl items-center justify-between px-4 py-6 text-xs">
           <div className="flex items-center gap-1.5">
             <span>&copy; {new Date().getFullYear()}</span>

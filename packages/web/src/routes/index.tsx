@@ -599,7 +599,7 @@ export default function Home() {
   const band = () => `border-rule border-t ${bands++ % 2 ? 'bg-parchment-dark/50' : 'bg-parchment'}`
 
   return (
-    <BaseLayout tinted>
+    <BaseLayout tinted flushFooter>
       {/* Hero */}
       <section className="bg-parchment-dark relative overflow-hidden">
         <HeroBackground />
