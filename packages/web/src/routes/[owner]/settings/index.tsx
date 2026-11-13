@@ -1,8 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
-import type { OrgCollection } from '~/components/org-page'
-import OrgPageSettings from '~/components/org-page-settings'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, Input, SectionHeading, Select, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
@@ -10,14 +8,9 @@ import { useAppContext } from '~/lib/app-context'
 export default function OwnerSettings() {
   const { owner } = useParams()
   const { currentUser } = useAppContext()
-  const {
-    orgData: initialOrgData,
-    kfOrgs,
-    collections,
-  } = useLoaderData() as {
+  const { orgData: initialOrgData, kfOrgs } = useLoaderData() as {
     orgData: any
     kfOrgs: { id: string; name: string }[]
-    collections: OrgCollection[]
   }
 
   const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
@@ -362,18 +355,6 @@ export default function OwnerSettings() {
         <div className="text-ink-muted text-sm">
           <p>Only organization owners can update the profile.</p>
         </div>
-      )}
-
-      {isOwner && (
-        <OrgPageSettings
-          owner={owner!}
-          initial={{
-            coverColor: initialOrgData.coverColor ?? null,
-            pinned: initialOrgData.pinned ?? [],
-            provenanceNote: initialOrgData.provenanceNote ?? null,
-          }}
-          collections={collections}
-        />
       )}
 
       {/* ARK Identifiers */}

@@ -269,6 +269,11 @@ export function accountRoutes() {
         return jsonError(c, 422, 'coverColor must be a color like #22394f')
       set.coverColor = cover ? cover.toLowerCase() : null
     }
+    if (body.coverTint !== undefined) {
+      if (typeof body.coverTint !== 'boolean')
+        return jsonError(c, 422, 'coverTint must be true or false')
+      set.coverTint = body.coverTint
+    }
     if (body.pinned !== undefined) {
       const pinned = body.pinned
       if (

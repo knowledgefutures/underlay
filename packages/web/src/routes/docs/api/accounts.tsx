@@ -30,6 +30,8 @@ const accountRes = `{
   "tagline": "Open infrastructure for knowledge",
   "location": "Cambridge, MA",
   "coverColor": "#22394f",
+  "coverImageUrl": null,
+  "coverTint": true,
   "provenanceNote": null,
   "pinned": ["uuid"],
   "createdAt": "2026-01-15T00:00:00.000Z",
@@ -269,12 +271,13 @@ export default function DocsApiAccounts() {
           Update an organization&rsquo;s profile and page. Pass only the fields to change:{' '}
           <code>slug</code>, <code>displayName</code>, <code>tagline</code> (up to 160 characters),{' '}
           <code>bio</code> (Markdown, up to 5,000), <code>website</code> (an <code>http</code> or{' '}
-          <code>https</code> address), <code>location</code>, <code>coverColor</code> (
-          <code>#rrggbb</code>), <code>provenanceNote</code> (up to 300), <code>pinned</code> (up to
-          four of its own collections&rsquo; ids, in order) and <code>kfOrgId</code> (the KF account
-          it belongs to, which must be one you belong to). <code>null</code> or an empty string
-          clears a text field or the cover color; <code>kfOrgId</code> can move to another KF
-          account but can&rsquo;t be cleared (<code>422</code>).
+          <code>https</code> address), <code>location</code>, <code>coverTint</code> (whether a
+          cover image takes the cover color), <code>coverColor</code> (<code>#rrggbb</code>),{' '}
+          <code>provenanceNote</code> (up to 300), <code>pinned</code> (up to four of its own
+          collections&rsquo; ids, in order) and <code>kfOrgId</code> (the KF account it belongs to,
+          which must be one you belong to). <code>null</code> or an empty string clears a text field
+          or the cover color; <code>kfOrgId</code> can move to another KF account but can&rsquo;t be
+          cleared (<code>422</code>).
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">

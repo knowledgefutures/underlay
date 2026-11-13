@@ -94,6 +94,12 @@ describe('org page', () => {
       pinned: [],
     })
 
+    expect((await patch({ coverTint: false })).status).toBe(200)
+    expect(await (await call('/api/accounts/org')).json()).toMatchObject({
+      coverTint: false,
+      coverImageUrl: null,
+    })
+    expect((await patch({ coverTint: 'no' })).status).toBe(422)
     expect((await patch({ tagline: 'x'.repeat(161) })).status).toBe(422)
     expect((await patch({ coverColor: 'red' })).status).toBe(422)
     expect((await patch({ coverColor: 'url(x)' })).status).toBe(422)

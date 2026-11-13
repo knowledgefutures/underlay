@@ -50,7 +50,7 @@ export function orgSettingsRail(owner: string): SettingsRailGroup[] {
       heading: 'Organization',
       items: [
         { label: 'Profile', to: `/${owner}/settings` },
-        { label: 'Page', to: `/${owner}/settings#page` },
+        { label: 'Page', to: `/${owner}/settings/page` },
         { label: 'Members', to: `/${owner}/settings/members` },
         { label: 'Storage', to: `/${owner}/settings/storage` },
       ],

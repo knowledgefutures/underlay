@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { AVATAR_MAX_BYTES, avatarRoutes } from '../src/api/avatars.js'
+import { AVATAR_MAX_BYTES, avatarRoutes, COVER_MAX_BYTES } from '../src/api/avatars.js'
 import type { AppEnv } from '../src/app.js'
 import * as schema from '../src/db/schema.js'
 import { sniffRaster } from '../src/lib/avatars.js'
@@ -76,7 +76,13 @@ function headers(o: Opts) {
   return hs
 }
 
-async function upload(bytes: Uint8Array, type: string, o: Opts = { user: 'u1' }, name = 'logo') {
+async function upload(
+  bytes: Uint8Array,
+  type: string,
+  o: Opts = { user: 'u1' },
+  name = 'logo',
+  path = 'avatar',
+) {
   const form = new FormData()
   form.append('avatar', new File([bytes as BlobPart], name, { type }))
   // Sent as encoded bytes: when the route stops reading an oversize body, Node's
@@ -86,7 +92,7 @@ async function upload(bytes: Uint8Array, type: string, o: Opts = { user: 'u1' },
   const hs = headers(o)
   hs.set('content-type', encoded.headers.get('content-type')!)
   return app.fetch(
-    new Request('http://test/api/accounts/org/avatar', {
+    new Request(`http://test/api/accounts/org/${path}`, {
       method: 'POST',
       headers: hs,
       body: await encoded.arrayBuffer(),
@@ -94,9 +100,9 @@ async function upload(bytes: Uint8Array, type: string, o: Opts = { user: 'u1' },
   )
 }
 
-function remove(o: Opts = { user: 'u1' }) {
+function remove(o: Opts = { user: 'u1' }, path = 'avatar') {
   return app.fetch(
-    new Request('http://test/api/accounts/org/avatar', { method: 'DELETE', headers: headers(o) }),
+    new Request(`http://test/api/accounts/org/${path}`, { method: 'DELETE', headers: headers(o) }),
   )
 }
 
@@ -111,8 +117,16 @@ async function avatarUrl() {
 async function setAvatarUrl(url: string | null) {
   await h.ports.db
     .update(schema.organization)
-    .set({ avatarUrl: url })
+    .set({ avatarUrl: url, coverImageUrl: null })
     .where(eq(schema.organization.id, 'org1'))
+}
+
+async function coverImageUrl() {
+  const [org] = await h.ports.db
+    .select({ coverImageUrl: schema.organization.coverImageUrl })
+    .from(schema.organization)
+    .where(eq(schema.organization.id, 'org1'))
+  return org!.coverImageUrl
 }
 
 beforeAll(async () => {
@@ -307,6 +321,39 @@ describe('org avatars', () => {
     expect((await upload(png(), 'image/png')).status).toBe(503)
     expect((await remove()).status).toBe(503)
     expect(await avatarUrl()).toBe('https://assets.underlay.org/avatars/org1/1.png')
+  })
+})
+
+describe('org cover images', () => {
+  const cover = (bytes: Uint8Array, o: Opts = { user: 'u1' }) =>
+    upload(bytes, 'image/png', o, 'cover.png', 'cover')
+
+  it('an owner uploads a cover beside the logo, then removes it, leaving the logo', async () => {
+    const logo = ((await (await upload(png(), 'image/png')).json()) as { avatarUrl: string })
+      .avatarUrl
+    // The same picture as the logo: its own object, so removing one keeps the other.
+    const res = await cover(png())
+    expect(res.status).toBe(200)
+    const url = ((await res.json()) as { coverImageUrl: string }).coverImageUrl
+    expect(url).toMatch(new RegExp(`^${BASE}/avatars/org1/cover-[0-9a-f]{64}\\.png$`))
+    expect(await coverImageUrl()).toBe(url)
+    expect(await avatarUrl()).toBe(logo)
+    expect(store.objects.size).toBe(2)
+
+    expect((await remove({ user: 'u1' }, 'cover')).status).toBe(200)
+    expect(await coverImageUrl()).toBeNull()
+    expect([...store.objects.keys()]).toEqual([logo.slice(BASE.length + 1)])
+  })
+
+  it('takes images larger than a logo may be, up to its own cap', async () => {
+    expect((await cover(png(1, AVATAR_MAX_BYTES + 1024))).status).toBe(200)
+    expect((await cover(png(2, COVER_MAX_BYTES + 1))).status).toBe(413)
+  })
+
+  it('owners only', async () => {
+    expect((await cover(png(), { user: 'u-admin' })).status).toBe(403)
+    expect((await remove({ user: 'u-member' }, 'cover')).status).toBe(403)
+    expect(await coverImageUrl()).toBeNull()
   })
 })
 

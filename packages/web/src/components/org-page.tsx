@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 
-import { buttonClasses, ButtonLink, EmptyState, Input, Select } from '~/components/ui'
+import { ButtonLink, EmptyState, Input, Select } from '~/components/ui'
 import { formatBytesFixed, formatDate, tagLabel } from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 
@@ -21,6 +21,8 @@ export interface OrgAccount {
   tagline: string | null
   location: string | null
   coverColor: string | null
+  coverImageUrl: string | null
+  coverTint: boolean
   provenanceNote: string | null
   pinned: string[]
   createdAt: string
@@ -131,6 +133,37 @@ export function OrgLogo({
 
 // ---------------------------------------------------------------- Header
 
+/**
+ * The band across the top of the page: the cover color, with the org's image over it.
+ * Tinted, the image takes the color's hue and keeps its own light and dark (a duotone),
+ * so any photo sits with the page and the logo stays readable over it.
+ */
+export function Cover({
+  account,
+  className = '',
+}: {
+  account: Pick<OrgAccount, 'slug' | 'coverColor' | 'coverImageUrl' | 'coverTint'>
+  className?: string
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`relative overflow-hidden ${className}`}
+      style={{ backgroundColor: coverColorFor(account) }}
+    >
+      {account.coverImageUrl && (
+        <img
+          src={account.coverImageUrl}
+          alt=""
+          className={`absolute inset-0 h-full w-full object-cover ${
+            account.coverTint ? 'opacity-80 mix-blend-luminosity' : ''
+          }`}
+        />
+      )}
+    </div>
+  )
+}
+
 export type OrgTab = 'overview' | 'collections' | 'members' | 'activity'
 
 export function OrgHeader({
@@ -149,16 +182,12 @@ export function OrgHeader({
 }) {
   return (
     <section className="border-rule border-b">
-      <div
-        aria-hidden="true"
-        className="h-24 sm:h-36"
-        style={{ backgroundColor: coverColorFor(account) }}
-      />
+      <Cover account={account} className="h-24 sm:h-36" />
       <div className="mx-auto max-w-5xl px-4">
         <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
           <OrgLogo
             account={account}
-            className="border-parchment -mt-12 h-24 w-24 shrink-0 rounded-[14px] border-4 text-2xl sm:-mt-14 sm:h-28 sm:w-28 sm:text-3xl"
+            className="border-parchment relative z-10 -mt-12 h-24 w-24 shrink-0 rounded-[14px] border-4 text-2xl sm:-mt-14 sm:h-28 sm:w-28 sm:text-3xl"
           />
           <div className="min-w-0 flex-[999_1_18rem] sm:pt-3">
             <h1 className="text-3xl leading-tight font-bold tracking-tight">
@@ -166,16 +195,13 @@ export function OrgHeader({
             </h1>
             <p className="text-ink-muted font-mono text-sm">@{account.slug}</p>
           </div>
-          <div className="flex flex-auto flex-wrap justify-end gap-2 sm:pt-4">
-            {canManage && (
+          {canManage && (
+            <div className="flex flex-auto flex-wrap justify-end gap-2 sm:pt-4">
               <ButtonLink to={`/${account.slug}/settings`} variant="secondary">
                 Settings
               </ButtonLink>
-            )}
-            <a href="#use" className={buttonClasses('primary', 'md', 'visited:text-parchment')}>
-              Use this data
-            </a>
-          </div>
+            </div>
+          )}
         </div>
 
         {account.tagline && (

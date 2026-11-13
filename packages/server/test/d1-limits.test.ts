@@ -92,11 +92,12 @@ describe('D1 limits', () => {
     await push(h, user, '/api/collections/org/c', { schemas: { Author } }, [
       { id: 'a', type: 'Author', data: { name: 'A' } },
     ])
-    for (let i = 0; i < 120; i += 25) {
+    // Twenty at a time: an org row binds five values (its defaults included).
+    for (let i = 0; i < 120; i += 20) {
       await h.ports.db
         .insert(schema.organization)
         .values(
-          Array.from({ length: 25 }, (_, j) => ({ id: `o${i + j}`, name: 'O', slug: `o${i + j}` })),
+          Array.from({ length: 20 }, (_, j) => ({ id: `o${i + j}`, name: 'O', slug: `o${i + j}` })),
         )
     }
     // Ten at a time: a member row binds five values, and D1 allows 100 a statement.

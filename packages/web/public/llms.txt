@@ -717,12 +717,12 @@ Organizations:
 POST   /api/auth/organization/create   → {"name", "slug", "kfOrgId"} (403 without a KF account you belong to)
 GET    /api/auth/organization/list     → your organizations
 GET    /api/accounts/:slug             → an organization's profile (public): name, bio (Markdown),
-    website, tagline, location, coverColor, provenanceNote, pinned (collection ids), ARK settings
+    website, tagline, location, coverColor, coverImageUrl, coverTint, provenanceNote, pinned (collection ids), ARK settings
 GET    /api/accounts/:slug/members     → its members (public)
 GET    /api/accounts/:slug/activity    → recent versions across its collections, newest first
     (?limit= default 20, max 50): [{collectionSlug, collectionName, semver, message, recordCount, createdAt}]
 PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?, tagline?, location?,
-    coverColor? (#rrggbb), provenanceNote?, pinned? (up to 4 of its collection ids)} (owners: session or admin key)
+    coverColor? (#rrggbb), coverTint? (boolean), provenanceNote?, pinned? (up to 4 of its collection ids)} (owners: session or admin key)
 DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections)
 PATCH  /api/accounts/:slug/ark         → {"naan": "<digits>" | null} (owners and admins: session or admin key)
 GET    /api/accounts/me                → you and your memberships (session or unscoped personal key)

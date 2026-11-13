@@ -495,6 +495,8 @@ export function collectionRoutes() {
       tagline: org.tagline,
       location: org.location,
       coverColor: org.coverColor,
+      coverImageUrl: org.coverImageUrl,
+      coverTint: org.coverTint,
       provenanceNote: org.provenanceNote,
       pinned,
       createdAt: org.createdAt,

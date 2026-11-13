@@ -422,7 +422,7 @@ try {
       path: '/org',
       status: 200,
       has: ['Smoke Org', 'org/authors', 'Record types', 'A record', 'Ada Lovelace'],
-      lacks: ['org/secret', 'Kurt', '<script>alert(1)', '2 collections'],
+      lacks: ['org/secret', 'Kurt', '<script>alert(1)', '2 collections', 'href="#use"'],
     },
     {
       path: '/org',
@@ -441,9 +441,18 @@ try {
     {
       path: '/org/settings',
       status: 200,
-      has: ['Tagline', 'Cover color', 'Pinned collections'],
+      has: ['Tagline', 'About'],
+      lacks: ['Cover color'],
       user: 'u1',
     },
+    // The org's page settings: their own page, not a section of the profile.
+    {
+      path: '/org/settings/page',
+      status: 200,
+      has: ['Cover image', 'Cover color', 'Pinned collections', 'Provenance note'],
+      user: 'u1',
+    },
+    { path: '/org/settings/page', status: 302, location: '/login' },
     // The org's storage page: owners and admins only, credentials never shown.
     {
       path: '/org/settings/storage',

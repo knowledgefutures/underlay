@@ -154,6 +154,9 @@ export const organization = sqliteTable('organization', {
   tagline: text('tagline'),
   location: text('location'),
   coverColor: text('cover_color'),
+  /** An image across the top of the page, under the cover color when `coverTint`. */
+  coverImageUrl: text('cover_image_url'),
+  coverTint: bool('cover_tint').notNull().default(true),
   /** For data published on someone else's behalf: who made it and who did not. */
   provenanceNote: text('provenance_note'),
   /** Collection ids shown as large cards on the org's page, in order. */

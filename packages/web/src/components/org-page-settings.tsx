@@ -1,11 +1,12 @@
 /**
- * Org settings for the org's page: its cover color, pinned collections, and a
- * provenance note. Saved with its own button, apart from the profile form.
+ * Org settings for the org's page (`/:owner/settings/page`): its cover (a color, and an
+ * image over it, tinted or not), pinned collections, and a provenance note. The image
+ * uploads when it's picked, as the logo does; the rest saves with the button.
  */
 import { type FormEvent, useState } from 'react'
 
-import { COVER_COLORS, coverColorFor, type OrgCollection } from '~/components/org-page'
-import { Alert, Button, Input, SectionHeading, Select } from '~/components/ui'
+import { COVER_COLORS, Cover, coverColorFor, type OrgCollection } from '~/components/org-page'
+import { Alert, Button, Checkbox, Input, Select } from '~/components/ui'
 
 const MAX_PINNED = 4
 
@@ -15,7 +16,13 @@ export default function OrgPageSettings({
   collections,
 }: {
   owner: string
-  initial: { coverColor: string | null; pinned: string[]; provenanceNote: string | null }
+  initial: {
+    coverColor: string | null
+    coverImageUrl: string | null
+    coverTint: boolean
+    pinned: string[]
+    provenanceNote: string | null
+  }
   collections: OrgCollection[]
 }) {
   const [coverColor, setCoverColor] = useState<string | null>(initial.coverColor)
@@ -26,6 +33,9 @@ export default function OrgPageSettings({
     initial.pinned.filter((id) => collections.some((c) => c.id === id)),
   )
   const [note, setNote] = useState(initial.provenanceNote ?? '')
+  const [coverImageUrl, setCoverImageUrl] = useState(initial.coverImageUrl)
+  const [coverTint, setCoverTint] = useState(initial.coverTint)
+  const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -50,7 +60,7 @@ export default function OrgPageSettings({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ coverColor, pinned, provenanceNote: note }),
+        body: JSON.stringify({ coverColor, coverTint, pinned, provenanceNote: note }),
       })
       const body = await res.json().catch(() => ({}))
       setMessage(
@@ -60,6 +70,38 @@ export default function OrgPageSettings({
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Uploads as soon as a file is picked, or removes the image: one button each. */
+  async function changeImage(file: File | null) {
+    setUploading(true)
+    setMessage(null)
+    try {
+      let res: Response
+      if (file) {
+        const form = new FormData()
+        form.append('cover', file)
+        res = await fetch(`/api/accounts/${owner}/cover`, {
+          method: 'POST',
+          credentials: 'include',
+          body: form,
+        })
+      } else {
+        res = await fetch(`/api/accounts/${owner}/cover`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+      }
+      const body = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setCoverImageUrl(file ? body.coverImageUrl : null)
+        setMessage({ ok: true, text: file ? 'Cover image updated.' : 'Cover image removed.' })
+      } else {
+        setMessage({ ok: false, text: body.error ?? 'Upload failed.' })
+      }
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -92,18 +134,78 @@ export default function OrgPageSettings({
   }
 
   return (
-    <form id="page" onSubmit={save} className="border-rule mb-10 space-y-6 border-t pt-6">
+    <form onSubmit={save} className="mb-10 space-y-6">
+      {message && <Alert variant={message.ok ? 'success' : 'error'}>{message.text}</Alert>}
+
       <div>
-        <SectionHeading className="mb-1">Page</SectionHeading>
-        <p className="text-ink-muted text-sm">How the organization's public page looks.</p>
+        <p className="mb-1 text-sm font-medium">Cover</p>
+        <p className="text-ink-muted mb-3 text-xs">
+          The band across the top of the page, behind the logo.
+        </p>
+        <Cover
+          account={{ slug: owner, coverColor, coverImageUrl, coverTint }}
+          className="rounded-surface border-rule h-28 border"
+        />
       </div>
 
-      {message && <Alert variant={message.ok ? 'success' : 'error'}>{message.text}</Alert>}
+      <fieldset>
+        <legend className="mb-1 text-sm font-medium">Cover image</legend>
+        <p className="text-ink-muted mb-3 text-xs">
+          Optional. A wide photo or graphic, at least 1600 pixels across. JPEG, PNG, GIF or WebP, up
+          to 3 MiB.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            className={`border-rule bg-parchment hover:bg-parchment-dark rounded-control inline-flex cursor-pointer items-center border px-2.5 py-1 text-xs font-medium transition-colors focus-within:outline-2 ${uploading ? 'pointer-events-none opacity-60' : ''}`}
+          >
+            <input
+              type="file"
+              name="cover"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              className="sr-only"
+              disabled={uploading}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                if (file) void changeImage(file)
+              }}
+            />
+            {uploading ? 'Uploading…' : coverImageUrl ? 'Replace image…' : 'Upload image…'}
+          </label>
+          {coverImageUrl && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={uploading}
+              onClick={() => void changeImage(null)}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+        {coverImageUrl && (
+          <label className="mt-3 flex items-start gap-2 text-sm">
+            <Checkbox
+              checked={coverTint}
+              onChange={(e) => setCoverTint(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              Tint the image with the cover color
+              <span className="text-ink-muted block text-xs">
+                Keeps a busy photo quiet behind the logo. Saved with the button below.
+              </span>
+            </span>
+          </label>
+        )}
+      </fieldset>
 
       <fieldset>
         <legend className="mb-1 text-sm font-medium">Cover color</legend>
         <p className="text-ink-muted mb-3 text-xs">
-          The band across the top of the page, behind the logo. Auto picks one from the slug.
+          {coverImageUrl
+            ? 'Shows while the image loads, and tints it when that is on.'
+            : 'Auto picks one from the slug.'}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           {swatch(null, 'Automatic')}
