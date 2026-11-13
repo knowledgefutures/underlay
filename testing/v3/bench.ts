@@ -275,8 +275,12 @@ async function suite(name: string): Promise<void> {
       if (!t.base || !t.collection || !t.key)
         throw new Error('api-crossref needs --to, --collection, and UL_KEY')
       let keys: [string, string][] = []
-      await step(w, 'api-load', '', async () => {
-        const r = await API.apiCrossrefLoad(w, o, t)
+      // `--upload <id>`: an upload already sent; wait for it rather than build and send again.
+      const resume = str('upload', '')
+      await step(w, 'api-load', resume ? 'resumed' : '', async () => {
+        const r = resume
+          ? await API.apiCrossrefResume(w, t, resume)
+          : await API.apiCrossrefLoad(w, o, t)
         keys = r.keys as [string, string][]
         return r
       })

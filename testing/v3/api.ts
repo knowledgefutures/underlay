@@ -9,7 +9,7 @@
  *
  * Builds happen here, on the bench's workers; everything else is the server's.
  */
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { fileStore, v3 } from '../../packages/protocol/src/index.js'
@@ -181,6 +181,45 @@ export async function apiCrossrefLoad(w: World, o: CrossrefOptions, t: ApiTarget
     buildSeconds: build.m.seconds,
     ...sent,
     keys: refs.map((f) => f.first).filter(Boolean),
+  }
+}
+
+/**
+ * An upload already sent (`--upload <id>`, after a run stopped while the server worked on
+ * it): wait for it to commit, and take the keys for reads from the files built here, as a
+ * load does.
+ */
+export async function apiCrossrefResume(w: World, t: ApiTarget, id: string): Promise<Result> {
+  const { call } = client(t)
+  const t0 = performance.now()
+  let lastLog = 0
+  let s: Record<string, any> = await call('GET', `/uploads/${id}`)
+  while (s.status !== 'committed') {
+    if (s.status === 'failed' || s.status === 'open' || s.status === 'expired')
+      throw new Error(`upload ${id} ${s.status}: ${JSON.stringify(s.error)}`)
+    await new Promise((r) => setTimeout(r, 15_000))
+    s = await call('GET', `/uploads/${id}`)
+    if (performance.now() - lastLog > 60_000) {
+      lastLog = performance.now()
+      log(`upload ${id}: ${s.status}, ${s.files_verified} of ${s.files_named} verified`)
+    }
+  }
+  const local = fileStore(w.storeDir)
+  const keys: [string, string][] = []
+  const root = join(w.storeDir, 'uploads')
+  for (const session of await readdir(root)) {
+    for (const name of await readdir(join(root, session))) {
+      if (!/^[0-9a-f]{64}$/.test(name)) continue
+      const file = await v3.SortedFile.open(local, `uploads/${session}/${name}`)
+      if (file.content.first) keys.push(file.content.first as [string, string])
+    }
+  }
+  keys.sort((a, b) => v3.compareKeys(a[0], a[1], b[0], b[1]))
+  return {
+    upload: id,
+    waitSeconds: round((performance.now() - t0) / 1000, 1),
+    result: s.result,
+    keys,
   }
 }
 
