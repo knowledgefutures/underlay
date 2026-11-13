@@ -39,7 +39,7 @@ function HeroBackground() {
         position:absolute;
         width:${size}px;
         height:${size * aspect}px;
-        background:rgba(235,228,214,${0.25 + rng(i * 7 + 6) * 0.3});
+        background:rgba(245,240,232,${0.25 + rng(i * 7 + 6) * 0.3});
         border-radius:${2 + rng(i * 7 + 4) * 4}px;
         pointer-events:none;
       `
@@ -594,11 +594,14 @@ export default function Home() {
     | undefined
   const featured = data?.featured ?? []
   const example = data?.example ?? null
+  // Sections below the hero alternate light and tinted, counting only those that render.
+  let bands = 0
+  const band = () => `border-rule border-t ${bands++ % 2 ? 'bg-parchment-dark/50' : 'bg-parchment'}`
 
   return (
-    <BaseLayout>
+    <BaseLayout tinted>
       {/* Hero */}
-      <section className="relative overflow-hidden">
+      <section className="bg-parchment-dark relative overflow-hidden">
         <HeroBackground />
         <div className="relative mx-auto max-w-5xl px-4 pt-16 pb-14">
           <h1 className="max-w-[24ch] font-sans text-3xl leading-tight font-semibold tracking-tight text-balance md:text-[2.625rem] md:leading-[1.12]">
@@ -634,7 +637,7 @@ export default function Home() {
       </section>
 
       {/* Collections */}
-      <section className="border-rule border-t">
+      <section className={band()}>
         <div className="mx-auto max-w-5xl px-4 py-16">
           <SectionHead title="Collections">
             A collection is a dataset published as typed JSON records. Each update is validated
@@ -667,7 +670,7 @@ export default function Home() {
       </section>
 
       {/* Using the data */}
-      <section id="use" className="border-rule border-t">
+      <section id="use" className={band()}>
         <div className="mx-auto max-w-5xl px-4 py-16">
           <SectionHead title="Using the data">
             Public collections require no account or API key.
@@ -685,7 +688,7 @@ export default function Home() {
 
       {/* In the registry */}
       {featured.length > 0 && (
-        <section className="border-rule border-t">
+        <section className={band()}>
           <div className="mx-auto max-w-5xl px-4 py-16">
             <SectionHead title="In the registry" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -709,7 +712,7 @@ export default function Home() {
       )}
 
       {/* Audiences */}
-      <section className="border-rule border-t">
+      <section className={band()}>
         <div className="mx-auto max-w-5xl px-4 py-16">
           <SectionHead title="For institutions that steward data" />
           <div className="bg-rule border-rule rounded-surface grid grid-cols-1 gap-px overflow-hidden border md:grid-cols-2">
@@ -724,7 +727,7 @@ export default function Home() {
       </section>
 
       {/* Publishing */}
-      <section className="border-rule border-t">
+      <section className={band()}>
         <div className="mx-auto max-w-5xl px-4 py-16">
           <SectionHead title="Publishing">
             Data is published in its existing structure. Schemas describe it once, and each

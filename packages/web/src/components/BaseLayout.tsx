@@ -6,13 +6,20 @@ import UserMenu from '~/components/UserMenu'
 import { useAppContext } from '~/lib/app-context'
 import { UNDERLAY_UPDATES_URL } from '~/lib/kf-updates'
 
-export default function BaseLayout({ children }: { children: React.ReactNode }) {
+export default function BaseLayout({
+  children,
+  tinted = false,
+}: {
+  children: React.ReactNode
+  /** The header takes the darker tint and no rule, to run into a hero of the same color. */
+  tinted?: boolean
+}) {
   const { currentUser } = useAppContext()
   const isSteward = currentUser?.kfRole === 'admin'
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-rule border-b">
+      <header className={tinted ? 'bg-parchment-dark' : 'border-rule border-b'}>
         <nav className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
           <Link to="/" className="flex shrink-0 items-center gap-2.5 no-underline">
             <img src="/logoLight.svg" alt="Underlay" className="h-6" />
