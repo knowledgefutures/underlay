@@ -90,8 +90,11 @@ export const seriesColor = (i: number) => SERIES[i % SERIES.length]!
 const n = (v: number) => v.toLocaleString('en-US')
 
 /** A collection's record types, most records first. */
+/** A collection's record types that hold records, most records first. */
 export const typesOf = (c: Pick<OrgCollection, 'typeCounts'>) =>
-  Object.entries(c.typeCounts ?? {}).sort((a, b) => b[1] - a[1])
+  Object.entries(c.typeCounts ?? {})
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
 
 /** "NYC" for nyc, "NYC" for New York City, "WC" for Wren Creek Field Station. */
 export function initials(name: string): string {
@@ -540,7 +543,11 @@ export function CollectionsBrowser({
   const topics = useMemo(() => {
     const counts = new Map<string, number>()
     for (const c of collections) for (const t of c.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 8)
+    // A tag every collection has filters nothing out.
+    return [...counts.entries()]
+      .filter(([, count]) => count < collections.length)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 8)
   }, [collections])
 
   const shown = useMemo(() => {
@@ -610,7 +617,7 @@ export function CollectionsBrowser({
           </Select>
         </div>
       </div>
-      {topics.length > 1 && (
+      {topics.length > 0 && (
         <div role="group" aria-label="Topic" className="mb-2 flex flex-wrap gap-1.5">
           <button
             type="button"
@@ -999,8 +1006,8 @@ export function ActivityList({
                 </Link>{' '}
                 <span className="text-ink-muted">{a.semver}</span>
               </div>
-              <div className="text-ink-muted text-xs">
-                {activityLine(a)} · {formatDate(a.createdAt)}
+              <div className="text-ink-muted line-clamp-2 text-xs" title={a.message ?? undefined}>
+                {formatDate(a.createdAt)} · {activityLine(a)}
               </div>
             </div>
           </li>
@@ -1022,8 +1029,9 @@ export function ActivityList({
 /** A version's message, or its record count when the message is only the push's default. */
 function activityLine(a: OrgActivity): string {
   const records = `${n(a.recordCount)} ${a.recordCount === 1 ? 'record' : 'records'}`
-  if (!a.message || /^Push \d+ records?$/.test(a.message.trim())) return records
-  return a.message
+  const first = a.message?.trim().split('\n')[0]?.trim()
+  if (!first || /^Push \d+ records?$/.test(first)) return records
+  return first
 }
 
 export function NoCollections({ member, owner }: { member: boolean; owner: string }) {
