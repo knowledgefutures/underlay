@@ -132,9 +132,12 @@ Versions are immutable, so a response for a version named by semver or hash may 
 
 ### Collections
 GET /api/collections                       → public collections
-    ?q= (name contains), owner=, tag=, sort=name|records (default: recently updated),
-    limit= (default 50, max 100), offset=, mine=true (your organizations' collections; session)
-    → {collections: [...], facets: {owners, tags}, featuredTags, featuredCollections}
+    ?q= (name, slug, description, or owner name contains), owner=, tag=,
+    sort=name|records (default: recently updated), limit= (default 50, max 100), offset=,
+    mine=true (your organizations' collections; session)
+    → {collections: [...], facets: {owners, tags}, organizations, featuredTags, featuredCollections}
+    organizations: with q, the owners whose name or slug contains it, among those with a
+    collection in the list: [{slug, name, avatarUrl, count}]
 GET /api/collections/:owner/:slug          → {id, owner: {id, did, handle, name}, slug, name,
     description, visibility: public|private, ark, createdAt, updatedAt, versionCount,
     head: {semver, hash} | null}, plus public, ownerSlug, ownerName and latestVersion (a summary)

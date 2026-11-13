@@ -24,6 +24,7 @@ const browseRes = `{
     "owners": [{ "slug": "knowledge-futures", "name": "Knowledge Futures", "count": 12 }],
     "tags": [{ "name": "publishing", "count": 4 }]
   },
+  "organizations": [],
   "featuredTags": ["publishing"],
   "featuredCollections": []
 }`
@@ -143,7 +144,10 @@ export default function DocsApiCollections() {
         <p>
           Browse public collections, or with <code>mine=true</code> the collections of every
           organization you belong to, public or not. <code>facets</code> count owners and tags
-          across every collection in that set, not just this page and whatever the other filters.{' '}
+          across every collection in that set, not just this page and whatever the other filters.
+          With <code>q</code>, <code>organizations</code> lists the owners whose name or slug
+          contains it, among those with a collection in that set: <code>slug</code>,{' '}
+          <code>name</code>, <code>avatarUrl</code>, and their <code>count</code> of collections.{' '}
           <code>featuredTags</code> and <code>featuredCollections</code> are the site&rsquo;s picks
           for the explore page.
         </p>
@@ -154,7 +158,10 @@ export default function DocsApiCollections() {
               <td>
                 <code>q</code>
               </td>
-              <td>Collections whose name contains this text</td>
+              <td>
+                Collections whose name, slug, or description contains this text, or whose
+                owner&rsquo;s name or slug does
+              </td>
             </tr>
             <tr>
               <td>

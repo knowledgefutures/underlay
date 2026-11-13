@@ -216,6 +216,7 @@ try {
       status: 200,
       has: [
         'A protocol for radically accessible structured knowledge',
+        'Using the data',
         'authors',
         '<title>Underlay</title>',
       ],
@@ -223,7 +224,13 @@ try {
     {
       path: '/explore',
       status: 200,
-      has: ['Browse public knowledge collections', '>authors<', 'Smoke Org', 'v1.0.0'],
+      has: ['Search public collections', '>authors<', 'Smoke Org', 'v1.0.0'],
+      lacks: ['secret'],
+    },
+    {
+      path: '/explore?q=smoke',
+      status: 200,
+      has: ['Organizations', 'Smoke Org', '>authors<'],
       lacks: ['secret'],
     },
     {

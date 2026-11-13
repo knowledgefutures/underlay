@@ -11,7 +11,7 @@ export default function ExplorePage() {
         <div className="mb-8">
           <h1 className="mb-1 font-sans text-xl font-semibold tracking-tight">Explore</h1>
           <p className="text-ink-muted text-sm">
-            Browse public knowledge collections published to Underlay.
+            Search public collections and the organizations that publish them.
           </p>
         </div>
 

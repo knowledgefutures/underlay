@@ -11,7 +11,7 @@
  * Everything here is SQLite rows: no repository reads. Lists show what a
  * caller may see: public counts to non-members, full counts to members.
  */
-import { and, asc, count, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -158,7 +158,17 @@ export function collectionRoutes() {
       ? inArray(schema.collections.organizationId, myOrgs)
       : eq(schema.collections.public, true)
     const conds = [visible, sql`${schema.collections.deletedAt} IS NULL`]
-    if (q) conds.push(like(schema.collections.name, `%${q}%`))
+    // A search matches a collection's name, slug or description, or its owner's name or slug.
+    const search = q?.trim().slice(0, 100)
+    const pattern = search ? `%${search}%` : ''
+    const ownerMatches = sql`(${schema.organization.name} LIKE ${pattern} OR ${schema.organization.slug} LIKE ${pattern})`
+    if (search) {
+      conds.push(
+        sql`(${schema.collections.name} LIKE ${pattern} OR ${schema.collections.slug} LIKE ${pattern}
+          OR json_extract(${schema.collections.summary}, '$.description') LIKE ${pattern}
+          OR ${ownerMatches})`,
+      )
+    }
     if (owner) conds.push(eq(schema.organization.slug, owner))
     if (tag) {
       conds.push(
@@ -222,6 +232,26 @@ export function collectionRoutes() {
       GROUP BY t.value ORDER BY count DESC LIMIT 50
     `)) as { name: string; count: number }[]
 
+    // Organizations whose name or slug matches the search, among those with a collection in view.
+    const organizations = search
+      ? await db
+          .select({
+            slug: schema.organization.slug,
+            name: schema.organization.name,
+            avatarUrl: schema.organization.avatarUrl,
+            count: count(),
+          })
+          .from(schema.collections)
+          .innerJoin(
+            schema.organization,
+            eq(schema.organization.id, schema.collections.organizationId),
+          )
+          .where(and(visible, sql`${schema.collections.deletedAt} IS NULL`, ownerMatches))
+          .groupBy(schema.organization.id)
+          .orderBy(desc(count()))
+          .limit(24)
+      : []
+
     const settings = await db
       .select()
       .from(schema.instanceSettings)
@@ -268,6 +298,7 @@ export function collectionRoutes() {
     return c.json({
       collections: rows.map(item),
       facets: { owners: ownerFacets, tags: tagFacets },
+      organizations,
       featuredTags,
       featuredCollections,
     })

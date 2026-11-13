@@ -32,11 +32,24 @@ interface TagFacet {
   count: number
 }
 
+interface Organization {
+  slug: string
+  name: string
+  avatarUrl: string | null
+  count: number
+}
+
 type SortKey = 'featured' | 'updated' | 'name' | 'records'
+type Scope = 'all' | 'collections' | 'organizations'
+
+/** Organizations shown under "All" before "Show all organizations". */
+const ORGS_PREVIEW = 6
 
 export interface ExploreData {
   collections: Collection[]
   facets: { owners: OwnerFacet[]; tags?: TagFacet[] }
+  /** With a search, the owners whose name or slug matches it. */
+  organizations?: Organization[]
   featuredTags?: string[]
   featuredCollections?: Collection[]
 }
@@ -61,10 +74,15 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
   const [featuredCollections, setFeaturedCollections] = useState<Collection[]>(
     initial?.featuredCollections ?? [],
   )
+  const [organizations, setOrganizations] = useState<Organization[]>(initial?.organizations ?? [])
+  const [scope, setScope] = useState<Scope>('all')
+  const [allOrgs, setAllOrgs] = useState(false)
   const [loading, setLoading] = useState(!initial)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const isFiltered = !!(query || selectedOwner || selectedTag)
+  const showOrgs = !!query && organizations.length > 0
+  const activeScope: Scope = showOrgs ? scope : 'all'
 
   function syncUrl(q: string, owner: string | null, sortBy: SortKey, tag: string | null) {
     const next = new URLSearchParams()
@@ -94,13 +112,16 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
       setCollections(data.collections)
       setOwners(data.facets.owners)
       setTagFacets(data.facets.tags ?? [])
+      setOrganizations(data.organizations ?? [])
       if (data.featuredTags) setFeaturedTags(data.featuredTags)
       if (data.featuredCollections) setFeaturedCollections(data.featuredCollections)
     } catch {
       setCollections([])
       setOwners([])
       setTagFacets([])
+      setOrganizations([])
     }
+    setAllOrgs(false)
     setLoading(false)
   }
 
@@ -207,8 +228,8 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
             </svg>
             <input
               type="search"
-              placeholder="Search collections..."
-              aria-label="Search collections"
+              placeholder="Search collections and organizations"
+              aria-label="Search collections and organizations"
               className="bg-parchment border-rule placeholder:text-ink-muted focus:border-ink rounded-control w-full border py-2 pr-3 pl-10 text-sm focus:outline-none"
               value={query}
               onChange={(e) => handleInput(e.target.value)}
@@ -262,6 +283,81 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
           </div>
         )}
 
+        {/* With a search that matches organizations: All / Collections / Organizations */}
+        {showOrgs && (
+          <div className="border-rule mb-5 flex gap-1 border-b" role="tablist">
+            {(
+              [
+                ['all', 'All'],
+                ['collections', 'Collections'],
+                ['organizations', 'Organizations'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={activeScope === key}
+                onClick={() => setScope(key)}
+                className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors ${
+                  activeScope === key
+                    ? 'border-ink text-ink font-medium'
+                    : 'text-ink-muted hover:text-ink border-transparent'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {showOrgs && activeScope !== 'collections' && (
+          <div className="mb-8">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <h3 className="text-ink-muted text-xs font-semibold tracking-wide uppercase">
+                Organizations
+              </h3>
+              {activeScope === 'all' && organizations.length > ORGS_PREVIEW && !allOrgs && (
+                <button
+                  onClick={() => setAllOrgs(true)}
+                  className="text-link text-xs hover:underline"
+                >
+                  Show all organizations
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {(activeScope === 'all' && !allOrgs
+                ? organizations.slice(0, ORGS_PREVIEW)
+                : organizations
+              ).map((o) => (
+                <Link
+                  key={o.slug}
+                  to={`/${o.slug}`}
+                  className="border-rule hover:border-ink-muted/50 rounded-surface flex items-center gap-3 border p-3 transition-all hover:shadow-sm"
+                >
+                  {o.avatarUrl ? (
+                    <img
+                      src={o.avatarUrl}
+                      alt=""
+                      className="rounded-control h-9 w-9 shrink-0 object-cover"
+                    />
+                  ) : (
+                    <span className="bg-ink-light text-parchment rounded-control flex h-9 w-9 shrink-0 items-center justify-center text-sm font-semibold">
+                      {(o.name || o.slug).charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{o.name || o.slug}</span>
+                    <span className="text-ink-muted block truncate text-xs">
+                      {o.slug} · {o.count} collection{o.count !== 1 ? 's' : ''}
+                    </span>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Mobile owner filter */}
         {owners.length > 0 && (
           <div className="mb-4 flex flex-wrap gap-1.5 md:hidden">
@@ -291,7 +387,7 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
           </div>
         )}
 
-        {loading ? (
+        {activeScope === 'organizations' ? null : loading ? (
           <p className="text-ink-muted py-8 text-center text-sm">Loading...</p>
         ) : collections.length === 0 ? (
           <div className="py-12 text-center">
