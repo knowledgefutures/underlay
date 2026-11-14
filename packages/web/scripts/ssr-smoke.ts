@@ -438,7 +438,7 @@ try {
     {
       path: '/org',
       status: 200,
-      has: ['org/authors', 'org/secret', '2 collections · 3 records', 'Private', 'Settings'],
+      has: ['org/authors', 'org/secret', '2 collections', '3 records', 'Private', 'Settings'],
       lacks: ['A record'],
       user: 'u1',
     },

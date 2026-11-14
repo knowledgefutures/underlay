@@ -244,7 +244,15 @@ export default function DocsApiAccounts() {
           to case. <code>role</code> is <code>member</code> (the default) or <code>admin</code>,
           which only an owner may add; owners are invited instead.{' '}
           <code>GET /api/accounts/:slug/members/pending</code> lists the adds still waiting, and{' '}
-          <code>DELETE /api/accounts/:slug/members/pending/:id</code> drops one.
+          <code>DELETE /api/accounts/:slug/members/pending/:id</code> drops one. Someone added
+          without an account gets an email from KF Auth with a link that signs them in;{' '}
+          <code>emailed</code> says whether it went out, and <code>emailError</code> why not.
+        </p>
+        <p>
+          <code>POST /api/accounts/:slug/invitations/:id/email</code> has KF Auth email a pending
+          invitation, with a link that signs the person in and opens its accept page. The settings
+          page calls it after creating an invitation, and again for "Email again". It answers{' '}
+          <code>503</code> when the email could not be sent.
         </p>
         <h3>Request</h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">

@@ -53,6 +53,26 @@ export interface ProfileContext {
   waitUntil: (p: Promise<unknown>) => void
 }
 
+/**
+ * An email KF Auth sends on this app's behalf: a one-click link that signs the person in,
+ * making a KF account first if they have none (KF's client invitations, signing-in.md).
+ */
+export interface KfInvite {
+  email: string
+  /** Where they land after signing in: an absolute URL on this app's origin. */
+  return_to: string
+  subject?: string
+  /** HTML with `{{invitation_url}}` where the link goes. */
+  html?: string
+}
+
+export interface KfInviteResult {
+  ok: boolean
+  /** KF Auth's HTTP status; 0 when it couldn't be reached or isn't configured. */
+  status: number
+  error?: string
+}
+
 export interface Kf {
   /**
    * Profile for the app shell: fresh for 30 s. With `ctx`, one up to a day old
@@ -75,6 +95,8 @@ export interface Kf {
    * request arrived at, which a proxy may have rewritten.
    */
   isConsoleCall(token: string | undefined, method: string, registeredUrl: string): Promise<boolean>
+  /** Have KF Auth email someone a sign-in link (KfInvite). Absent where KF isn't wired. */
+  invite?(invite: KfInvite): Promise<KfInviteResult>
 }
 
 const PROFILE_TTL_MS = 30_000
@@ -336,6 +358,28 @@ export function createKf(
     },
     async entitled(userId, kfOrgId) {
       return (await kf.orgs(userId)).some((o) => o.id === kfOrgId)
+    },
+    async invite(invite) {
+      if (!cfg.clientSecret) return { ok: false, status: 0, error: 'KF Auth is not configured' }
+      try {
+        const res = await call(`${cfg.internalUrl}/api/client/invitations`, {
+          method: 'POST',
+          headers: { authorization: basic, 'content-type': 'application/json' },
+          body: JSON.stringify(invite),
+        })
+        if (res.ok) return { ok: true, status: res.status }
+        const body = (await res.json().catch(() => null)) as {
+          error?: string
+          message?: string
+        } | null
+        return {
+          ok: false,
+          status: res.status,
+          error: body?.error ?? body?.message ?? res.statusText,
+        }
+      } catch (err) {
+        return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) }
+      }
     },
     async isConsoleCall(token, method, registeredUrl) {
       if (!token) return false

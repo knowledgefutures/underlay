@@ -1,16 +1,26 @@
 import { and, eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 
+import type { KfInvite, KfInviteResult } from '../src/auth/kf.js'
 import * as schema from '../src/db/schema.js'
 import { applyPendingMembers } from '../src/lib/pending-members.js'
 import { cleanup } from './harness.js'
-import { setup } from './kf-app.js'
+import { fakeKf, setup } from './kf-app.js'
 
 afterAll(cleanup)
 
 /** Org "org" owned by u1, with an admin and a member, and Bea, who has an account but no org. */
-async function org() {
-  const s = await setup()
+async function org(answer: KfInviteResult = { ok: true, status: 201 }) {
+  const sent: KfInvite[] = []
+  const s = await setup({
+    kf: () => ({
+      ...fakeKf,
+      invite: async (invite) => {
+        sent.push(invite)
+        return answer
+      },
+    }),
+  })
   const { h, db, user } = s
   await h.member('u1')
   for (const [id, role] of [
@@ -30,10 +40,73 @@ async function org() {
         .from(schema.member)
         .where(and(eq(schema.member.organizationId, 'org1'), eq(schema.member.userId, userId)))
     )[0]?.role ?? null
-  return { ...s, add, roleOf }
+  return { ...s, add, roleOf, sent }
 }
 
 describe('adding members by email', () => {
+  it('emails someone without an account a link that signs them in to the org', async () => {
+    const { add, sent } = await org()
+    await add('u1', { email: 'bea@example.org' })
+    expect(sent).toEqual([]) // Bea has an account: added, nothing sent.
+    await add('u1', { email: 'new@example.org' })
+    expect(sent).toEqual([
+      expect.objectContaining({
+        email: 'new@example.org',
+        return_to: 'http://test/login?return_to=%2Forg',
+        subject: "You've been added to Org on Underlay",
+      }),
+    ])
+    expect(sent[0]!.html).toContain('{{invitation_url}}')
+  })
+
+  it('keeps the add when the email fails, and says why', async () => {
+    const { add, db } = await org({ ok: false, status: 403, error: 'invitations disabled' })
+    const res = await add('u1', { email: 'new@example.org' })
+    expect(res.status).toBe(202)
+    expect(await res.json()).toMatchObject({
+      emailed: false,
+      emailError: expect.stringMatching(/refused/),
+    })
+    expect(await db.select().from(schema.pendingMembers)).toHaveLength(1)
+  })
+
+  it('emails a pending invitation through KF Auth, landing on its accept page', async () => {
+    const { call, db, sent } = await org()
+    const later = new Date(Date.now() + 86_400_000)
+    await db.insert(schema.invitation).values([
+      {
+        id: 'inv1',
+        organizationId: 'org1',
+        email: 'pat@example.org',
+        role: 'admin',
+        expiresAt: later,
+        inviterId: 'u1',
+      },
+      {
+        id: 'old',
+        organizationId: 'org1',
+        email: 'old@example.org',
+        expiresAt: new Date(1000),
+        inviterId: 'u1',
+      },
+    ])
+    const email = (id: string, user = 'u1') =>
+      call(`/api/accounts/org/invitations/${id}/email`, { method: 'POST', user })
+    expect((await email('inv1', 'u-member')).status).toBe(403)
+    expect((await email('old')).status).toBe(404)
+    expect((await email('nope')).status).toBe(404)
+    const res = await email('inv1')
+    expect(res.status).toBe(200)
+    expect(sent).toEqual([
+      expect.objectContaining({
+        email: 'pat@example.org',
+        return_to: 'http://test/login?return_to=%2Finvitations%2Faccept%3Finvitation%3Dinv1',
+        subject: 'Join Org on Underlay',
+      }),
+    ])
+    expect(sent[0]!.html).toContain('as an admin')
+  })
+
   it('adds someone with an account at once, matching the address in any case', async () => {
     const { add, roleOf } = await org()
     const res = await add('u1', { email: '  bea@EXAMPLE.org ' })
@@ -49,7 +122,11 @@ describe('adding members by email', () => {
     const { add, call, db, roleOf } = await org()
     const res = await add('u-admin', { email: 'New.Person@example.org' })
     expect(res.status).toBe(202)
-    expect(await res.json()).toEqual({ status: 'pending', email: 'new.person@example.org' })
+    expect(await res.json()).toEqual({
+      status: 'pending',
+      email: 'new.person@example.org',
+      emailed: true,
+    })
     const pending = (await (
       await call('/api/accounts/org/members/pending', { user: 'u1' })
     ).json()) as any[]

@@ -172,7 +172,16 @@ export function createApp(setup: Setup) {
     )
     const body = (await res.json().catch(() => null)) as { url?: string } | null
     if (!body?.url) return next()
-    const redirect = new Response(null, { status: 302, headers: { location: body.url } })
+    // KF Auth's invitation emails come back here with login_hint (the invited address):
+    // passed on, it signs a new account straight in (KF's signing-in.md, Invitations).
+    const location = new URL(body.url)
+    const hint = c.req.query('login_hint')
+    if (hint && hint.length <= 254 && !/\s/.test(hint))
+      location.searchParams.set('login_hint', hint)
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: location.toString() },
+    })
     for (const cookie of res.headers.getSetCookie()) redirect.headers.append('set-cookie', cookie)
     return redirect
   })

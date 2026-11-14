@@ -722,6 +722,8 @@ GET    /api/accounts/:slug/members     → its members (public)
 POST   /api/accounts/:slug/members     → {email, role?: member|admin}: joins now if they have an account (201),
     else on first sign-in with that address (202); owners and admins (an admin only by an owner)
 GET    /api/accounts/:slug/members/pending → adds waiting for a first sign-in; DELETE …/pending/:id drops one
+    (a pending add is emailed a KF Auth sign-in link: {emailed, emailError?})
+POST   /api/accounts/:slug/invitations/:id/email → KF Auth emails a pending invitation (owners and admins; 503 if not sent)
 GET    /api/accounts/:slug/activity    → recent versions across its collections, newest first
     (?limit= default 20, max 50): [{collectionSlug, collectionName, semver, message, recordCount, createdAt}]
 PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?, tagline?, location?,

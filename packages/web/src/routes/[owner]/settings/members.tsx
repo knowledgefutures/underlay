@@ -66,6 +66,7 @@ export default function OwnerSettingsMembers() {
     setSubmitting(true)
     const added: string[] = []
     const waiting: string[] = []
+    const unsent: string[] = []
     const failed: string[] = []
     try {
       for (const email of emails) {
@@ -77,19 +78,24 @@ export default function OwnerSettingsMembers() {
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) failed.push(`${email}: ${body.error ?? 'failed'}`)
-        else if (body.status === 'pending') waiting.push(email)
-        else added.push(body.name ?? email)
+        else if (body.status === 'pending') {
+          waiting.push(email)
+          if (!body.emailed) unsent.push(`${email} (${body.emailError ?? 'not sent'})`)
+        } else added.push(body.name ?? email)
       }
     } finally {
       setSubmitting(false)
     }
     const parts = []
     if (added.length) parts.push(`Added ${added.join(', ')}.`)
-    if (waiting.length)
-      parts.push(`${waiting.join(', ')} will join the first time they sign in to Underlay.`)
-    if (parts.length) setSuccess(parts.join(' '))
-    if (failed.length) setError(failed.join('; '))
+    if (waiting.length) parts.push(`${waiting.join(', ')} will join when they sign in to Underlay.`)
+    // Addresses that failed stay in the field to fix and retry.
     setAddEmails(failed.map((f) => f.split(':')[0]).join(', '))
+    const problems = [...failed]
+    if (unsent.length)
+      problems.push(`Added, but the sign-in email didn't go out to ${unsent.join(', ')}`)
+    if (parts.length) setSuccess(parts.join(' '))
+    if (problems.length) setError(problems.join('; '))
     await Promise.all([loadMembers(orgId), loadPendingAdds(owner)])
   }
 
@@ -116,7 +122,7 @@ export default function OwnerSettingsMembers() {
     loadInvitations(orgId)
     if (owner) loadListed(owner)
     if (owner && isAdmin) loadPendingAdds(owner)
-  }, [orgId, owner])
+  }, [orgId, owner, isAdmin])
 
   if (currentUser && !org) {
     window.location.href = `/${owner}`
@@ -198,24 +204,46 @@ export default function OwnerSettingsMembers() {
     clearMessages()
     setSubmitting(true)
     try {
-      const { error: err } = await authClient.organization.inviteMember({
+      const { data, error: err } = await authClient.organization.inviteMember({
         email: inviteEmail,
         role: inviteRole,
         organizationId: orgId,
       } as any)
       if (err) {
-        setError(err.message ?? 'Failed to send invitation.')
+        setError(err.message ?? 'Failed to create the invitation.')
       } else {
-        // Nothing emails invitations yet: the inviter shares the link below.
-        setSuccess(
-          `Invitation created for ${inviteEmail}. Copy its link below and send it to them.`,
-        )
+        // KF Auth emails it; if that fails, the link below still works.
+        const id = (data as { id?: string } | null)?.id
+        const emailed = id ? await emailInvitation(id) : 'no invitation id came back'
+        if (emailed === true) setSuccess(`Emailed an invitation to ${inviteEmail}.`)
+        else
+          setError(
+            `Invitation created for ${inviteEmail}, but the email didn't go out (${emailed}). Copy its link below and send it yourself.`,
+          )
         setInviteEmail('')
         await loadInvitations(orgId)
       }
     } finally {
       setSubmitting(false)
     }
+  }
+
+  /** Has KF Auth email the invitation: true, or why not. */
+  async function emailInvitation(invitationId: string): Promise<true | string> {
+    const res = await fetch(`/api/accounts/${owner}/invitations/${invitationId}/email`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    if (res.ok) return true
+    const body = await res.json().catch(() => ({}))
+    return body.error ?? 'the email service did not answer'
+  }
+
+  async function handleEmailAgain(invitationId: string, email: string) {
+    clearMessages()
+    const emailed = await emailInvitation(invitationId)
+    if (emailed === true) setSuccess(`Emailed the invitation to ${email} again.`)
+    else setError(`The email didn't go out (${emailed}).`)
   }
 
   async function copyInviteLink(invitationId: string) {
@@ -325,8 +353,8 @@ export default function OwnerSettingsMembers() {
         <div className="border-rule mb-6 space-y-3 border-t pt-6">
           <h3 className="text-ink-muted text-xs font-semibold">Add members</h3>
           <p className="text-ink-muted text-sm">
-            Anyone with an Underlay account joins at once. Anyone else joins the first time they
-            sign in with that address. They can leave at any time.
+            Anyone with an Underlay account joins at once. Anyone else gets an email with a link to
+            sign in, and joins when they do. They can leave at any time.
           </p>
           <form onSubmit={handleAddMembers} className="flex flex-wrap items-end gap-3">
             <div className="min-w-0 flex-[1_1_16rem]">
@@ -389,8 +417,8 @@ export default function OwnerSettingsMembers() {
         <div className="border-rule space-y-4 border-t pt-6">
           <h3 className="text-ink-muted text-xs font-semibold">Invite with a link</h3>
           <p className="text-ink-muted text-sm">
-            For an owner, or anyone who should accept first. Underlay doesn't email invitations yet:
-            copy the link and send it yourself.
+            For an owner, or anyone who should accept first. They get an email from Knowledge
+            Futures with a link; you can also copy it and send it yourself.
           </p>
           <form onSubmit={handleInviteMember} className="flex items-end gap-3">
             <div className="flex-1">
@@ -448,6 +476,13 @@ export default function OwnerSettingsMembers() {
                 </div>
                 {isAdmin && (
                   <div className="flex items-center gap-3">
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() => handleEmailAgain(inv.id, inv.email)}
+                    >
+                      Email again
+                    </Button>
                     <Button variant="link" size="sm" onClick={() => copyInviteLink(inv.id)}>
                       {copied === inv.id ? 'Copied' : 'Copy link'}
                     </Button>

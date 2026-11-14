@@ -188,8 +188,8 @@ export function OrgHeader({
   tabs: { id: OrgTab; label: string; count?: number }[]
   tab: OrgTab
   canManage: boolean
-  /** What the org holds, in one line (orgSummary). */
-  summary: string | null
+  /** What the org holds (orgSummary): collections and records. */
+  summary: string[]
 }) {
   return (
     <section className="border-rule border-b">
@@ -216,19 +216,15 @@ export function OrgHeader({
           <p className="mt-5 max-w-2xl text-lg leading-snug">{account.tagline}</p>
         )}
 
-        <div
-          className={`text-ink-light flex flex-wrap items-center gap-x-5 gap-y-1 text-sm ${account.tagline ? 'mt-2' : 'mt-5'}`}
+        {/* One line of plain facts, one separator, no icons. */}
+        <p
+          className={`text-ink-light flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${account.tagline ? 'mt-2' : 'mt-5'}`}
         >
-          {account.location && (
-            <span className="inline-flex items-center gap-1.5">
-              <Icon name="pin" />
-              {account.location}
-            </span>
-          )}
-          {account.website && (
-            <span className="inline-flex items-center gap-1.5">
-              <Icon name="link" />
+          {[
+            account.location,
+            account.website ? (
               <a
+                key="website"
                 href={account.website}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -236,19 +232,23 @@ export function OrgHeader({
               >
                 {account.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               </a>
-            </span>
-          )}
-          <span className="inline-flex items-center gap-1.5">
-            <Icon name="calendar" />
-            Joined {formatDate(account.createdAt, 'month')}
-          </span>
-          {summary && (
-            <span className="inline-flex items-center gap-1.5">
-              <Icon name="stack" />
-              {summary}
-            </span>
-          )}
-        </div>
+            ) : null,
+            ...summary,
+            `Joined ${formatDate(account.createdAt, 'month')}`,
+          ]
+            .filter(Boolean)
+            .map((item, i, all) => (
+              // The dot follows its item, so a wrapped line starts with a fact, not a dot.
+              <span key={i} className="inline-flex items-center gap-x-2">
+                {item}
+                {i < all.length - 1 && (
+                  <span aria-hidden="true" className="text-ink-muted">
+                    ·
+                  </span>
+                )}
+              </span>
+            ))}
+        </p>
 
         {account.provenanceNote && (
           <p className="text-ink-muted mt-1.5 text-xs">{account.provenanceNote}</p>
@@ -281,33 +281,8 @@ export function OrgHeader({
   )
 }
 
-function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'stack' | 'copy' | 'check' }) {
+function Icon({ name }: { name: 'copy' | 'check' }) {
   const paths = {
-    pin: (
-      <>
-        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-        <circle cx="12" cy="10" r="3" />
-      </>
-    ),
-    link: (
-      <>
-        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-      </>
-    ),
-    calendar: (
-      <>
-        <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
-      </>
-    ),
-    stack: (
-      <>
-        <ellipse cx="12" cy="5" rx="9" ry="3" />
-        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-        <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
-      </>
-    ),
     copy: (
       <>
         <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -336,24 +311,14 @@ function Icon({ name }: { name: 'pin' | 'link' | 'calendar' | 'stack' | 'copy' |
 
 // ---------------------------------------------------------------- Summary
 
-/** "7 collections · 2,038,025 records · 1.1 GiB · updated Oct 30, 2026", for two or more. */
-export function orgSummary(collections: OrgCollection[]): string | null {
-  if (collections.length < 2) return null
+/** "7 collections", "2,038,025 records": what the org holds, for two or more. */
+export function orgSummary(collections: OrgCollection[]): string[] {
+  if (collections.length < 2) return []
   const records = collections.reduce((s, c) => s + (c.recordCount ?? 0), 0)
-  const bytes = collections.reduce((s, c) => s + (c.totalBytes ?? 0), 0)
-  const last = collections
-    .map((c) => c.lastPushAt)
-    .filter((d): d is string => !!d)
-    .sort()
-    .at(-1)
   return [
     `${n(collections.length)} collections`,
     `${n(records)} ${records === 1 ? 'record' : 'records'}`,
-    bytes ? formatBytesFixed(bytes) : null,
-    last ? `updated ${formatDate(last)}` : null,
   ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 // ---------------------------------------------------------------- Collections
