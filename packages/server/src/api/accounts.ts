@@ -22,6 +22,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import { NO_KF_ACCOUNT } from '../auth/auth.js'
+import { isUniqueViolation } from '../db/errors.js'
 import * as schema from '../db/schema.js'
 import { deleteOrgAvatars } from '../lib/avatars.js'
 import { validateOrgSlug } from '../lib/slug.js'
@@ -92,6 +93,8 @@ const PROFILE_TEXT = [
 
 /** Collections an org may pin to its page. */
 export const MAX_PINNED = 4
+/** An organization's display name, in characters. */
+export const MAX_DISPLAY_NAME = 100
 
 export function accountRoutes() {
   const app = new Hono<AppEnv>()
@@ -220,11 +223,14 @@ export function accountRoutes() {
       ...(existing
         ? []
         : [
-            db.insert(schema.member).values({
-              organizationId: inv.invitation.organizationId,
-              userId,
-              role: inv.invitation.role ?? 'member',
-            }),
+            db
+              .insert(schema.member)
+              .values({
+                organizationId: inv.invitation.organizationId,
+                userId,
+                role: inv.invitation.role ?? 'member',
+              })
+              .onConflictDoNothing(),
           ]),
     ])
     return c.json({ ok: true, orgSlug: inv.orgSlug })
@@ -301,13 +307,29 @@ export function accountRoutes() {
       set.pinned = pinned as string[]
     }
     if (str(body.slug) !== undefined) set.slug = str(body.slug)!
-    if (str(body.displayName) !== undefined) set.name = str(body.displayName)!
+    if (body.displayName !== undefined) {
+      // It heads the org's pages and invitation emails' subjects.
+      const name = typeof body.displayName === 'string' ? body.displayName.trim() : ''
+      if (!name) return jsonError(c, 422, 'displayName must not be empty')
+      if (name.length > MAX_DISPLAY_NAME)
+        return jsonError(c, 422, `displayName must be at most ${MAX_DISPLAY_NAME} characters`)
+      // oxlint-disable-next-line no-control-regex
+      if (/[\u0000-\u001f\u007f]/.test(name))
+        return jsonError(c, 422, 'displayName must not contain control characters')
+      set.name = name
+    }
     if (kfOrgId !== undefined) set.kfOrgId = kfOrgId || null
     if (Object.keys(set).length) {
-      await c.var.ports.db
-        .update(schema.organization)
-        .set(set)
-        .where(eq(schema.organization.id, org.id))
+      try {
+        await c.var.ports.db
+          .update(schema.organization)
+          .set(set)
+          .where(eq(schema.organization.id, org.id))
+      } catch (err) {
+        // Another org took the slug since slugProblem checked it.
+        if (isUniqueViolation(err)) return jsonError(c, 409, 'That slug is already taken')
+        throw err
+      }
       // Each collection.json names its owner by slug and name (spec 11.1).
       if (set.slug !== undefined || set.name !== undefined)
         await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })

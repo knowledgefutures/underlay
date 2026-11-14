@@ -71,8 +71,9 @@ curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.0.
 # Get the manifest (record ids, types and hashes)
 curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.0.0/manifest`
 
-const updateCode = `# Open a session against the current version. Schemas and metadata
-# you leave out are kept.
+const updateCode = `# Open a session against the current version. Leave out "schemas" and
+# "metadata" to keep the current ones. If you do send "schemas", send every
+# type: a type left out is removed, with all its records.
 curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer $KEY" \\

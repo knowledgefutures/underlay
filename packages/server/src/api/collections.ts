@@ -160,12 +160,14 @@ export function collectionRoutes() {
     const conds = [visible, sql`${schema.collections.deletedAt} IS NULL`]
     // A search matches a collection's name, slug or description, or its owner's name or slug.
     const search = q?.trim().slice(0, 100)
-    const pattern = search ? `%${search}%` : ''
-    const ownerMatches = sql`(${schema.organization.name} LIKE ${pattern} OR ${schema.organization.slug} LIKE ${pattern})`
+    // `%` and `_` in the search are literal characters, not wildcards.
+    const pattern = search ? `%${search.replace(/[\\%_]/g, (m) => `\\${m}`)}%` : ''
+    const like = (col: unknown) => sql`${col} LIKE ${pattern} ESCAPE '\\'`
+    const ownerMatches = sql`(${like(schema.organization.name)} OR ${like(schema.organization.slug)})`
     if (search) {
       conds.push(
-        sql`(${schema.collections.name} LIKE ${pattern} OR ${schema.collections.slug} LIKE ${pattern}
-          OR json_extract(${schema.collections.summary}, '$.description') LIKE ${pattern}
+        sql`(${like(schema.collections.name)} OR ${like(schema.collections.slug)}
+          OR ${like(sql`json_extract(${schema.collections.summary}, '$.description')`)}
           OR ${ownerMatches})`,
       )
     }
@@ -182,6 +184,8 @@ export function collectionRoutes() {
         : sort === 'records'
           ? [desc(schema.versions.publicRecordCount)]
           : [desc(schema.collections.updatedAt)]
+    // A tiebreaker, so offset pages neither repeat nor skip rows that sort the same.
+    order.push(asc(schema.collections.id))
 
     const rows = await db
       .select({ c: schema.collections, owner: schema.organization, v: schema.versions })

@@ -42,12 +42,17 @@ export async function forkV3(
   const V = schema.versions
   const U = schema.schemaUsage
   // Every column as the parent's row has it (in the table's order, as INSERT … SELECT
-  // needs), but a new id and the fork's collection.
+  // needs), but a new id, the fork's collection, and none of who pushed it: the
+  // parent shows that to its own members only, and recovery finds a session's
+  // version by its push session id.
   const rows = db
     .select({
       ...getTableColumns(V),
       id: sql<string>`lower(hex(randomblob(16)))`.as('id'),
       collectionId: lit<string>(fork.id).as('collection_id'),
+      pushedBy: sql<string | null>`NULL`.as('pushed_by'),
+      actorId: sql<string | null>`NULL`.as('actor_id'),
+      pushSessionId: sql<string | null>`NULL`.as('push_session_id'),
     })
     .from(V)
     .where(and(eq(V.collectionId, parent.id), lte(V.seq, at)))

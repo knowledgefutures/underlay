@@ -195,7 +195,7 @@ export function fileRoutes() {
       )
       .limit(1)
     if (!u) return jsonError(c, 404, 'Upload not found')
-    const body = (await c.req.json().catch(() => ({}))) as { parts?: unknown } | null
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as { parts?: unknown } | null
     const parts = body?.parts
     if (u.multipartUploadId) {
       const valid =

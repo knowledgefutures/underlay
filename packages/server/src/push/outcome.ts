@@ -17,8 +17,11 @@ import { SESSION_TTL_MS, transition } from './session.js'
 export const MISSING_FILES = 'Missing files'
 
 export interface Outcome {
-  /** 202: a parallel commit is still running. 503: storage cleanup got in the way; push again. */
-  status: 201 | 202 | 409 | 422 | 400 | 503
+  /**
+   * 202: a parallel commit is still running. 503: storage cleanup got in the way; push
+   * again. 500: the commit threw; the same session may commit again.
+   */
+  status: 201 | 202 | 409 | 422 | 400 | 500 | 503
   body: Record<string, unknown>
 }
 

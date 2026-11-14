@@ -31,6 +31,7 @@ import { MAX_PATTERN_LENGTH, MAX_SCHEMA_BYTES } from './constants.js'
 import { hashSchema } from './hash.js'
 import { checkTypeSlug } from './input-rules.js'
 import { jcs } from './jcs.js'
+import { hasNestedRepeat } from './regex-safety.js'
 import { utf8ByteLength } from './utf8.js'
 
 const MAX_CACHED_VALIDATORS = 500
@@ -641,7 +642,7 @@ export function checkSchema(slug: string, body: unknown): string | null {
   if (utf8ByteLength(canonical) > MAX_SCHEMA_BYTES) {
     return `Schema "${slug}" exceeds maximum size of ${MAX_SCHEMA_BYTES} bytes`
   }
-  const longPattern = findLongPattern(body)
+  const longPattern = findPattern(body, (p) => p.length > MAX_PATTERN_LENGTH)
   if (longPattern) {
     return `Schema "${slug}" has a ${longPattern} longer than ${MAX_PATTERN_LENGTH} characters`
   }
@@ -658,11 +659,30 @@ export function checkSchema(slug: string, body: unknown): string | null {
   return null
 }
 
-/** `node` is a schema, or an array of schemas; the walk is `findBadPattern`'s. */
-function findLongPattern(node: unknown): string | null {
+/**
+ * Why a schema's patterns could take minutes to run, or null: a `pattern` or
+ * `patternProperties` key that nests one unbounded repeat inside another
+ * (`hasNestedRepeat`), which backtracks exponentially on a short string. Apart
+ * from `checkSchema`, so a server can apply it to new schemas only and keep
+ * accepting the ones collections already have.
+ */
+export function checkPatternSafety(slug: string, body: unknown): string | null {
+  const slow = findPattern(body, hasNestedRepeat)
+  return slow
+    ? `Schema "${slug}" has a ${slow} that nests one unbounded repeat inside another ` +
+        '(like "(a+)+"), which can take minutes to test; rewrite it without the nesting'
+    : null
+}
+
+/**
+ * The first regex in a schema that `bad` refuses, named for the message: a
+ * `pattern`, or a key of `patternProperties`. `node` is a schema, or an array of
+ * schemas; the walk is `findBadPattern`'s.
+ */
+function findPattern(node: unknown, bad: (pattern: string) => boolean): string | null {
   if (Array.isArray(node)) {
     for (const item of node) {
-      const found = findLongPattern(item)
+      const found = findPattern(item, bad)
       if (found) return found
     }
     return null
@@ -671,20 +691,16 @@ function findLongPattern(node: unknown): string | null {
   for (const [key, value] of Object.entries(node)) {
     // A `pattern` member inside instance data is no regex.
     if (DATA_KEYWORDS.has(key)) continue
-    if (key === 'pattern' && typeof value === 'string' && value.length > MAX_PATTERN_LENGTH) {
-      return '"pattern"'
-    }
+    if (key === 'pattern' && typeof value === 'string' && bad(value)) return '"pattern"'
     // Keys of patternProperties are regexes too; v1 didn't bound them.
     if (key === 'patternProperties' && isObject(value)) {
-      if (Object.keys(value).some((p) => p.length > MAX_PATTERN_LENGTH)) {
-        return '"patternProperties" pattern'
-      }
+      if (Object.keys(value).some(bad)) return '"patternProperties" pattern'
     }
     // A map's keys are names, not keywords: a property called "enum" is a schema.
     const found =
       MAP_KEYWORDS.has(key) && isObject(value)
-        ? findLongPattern(Object.values(value))
-        : findLongPattern(value)
+        ? findPattern(Object.values(value), bad)
+        : findPattern(value, bad)
     if (found) return found
   }
   return null

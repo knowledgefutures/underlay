@@ -16,6 +16,7 @@ import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import { fenced } from '../cleanup/fence.js'
+import { isUniqueViolation } from '../db/errors.js'
 import * as schema from '../db/schema.js'
 import { validateCollectionSlug } from '../lib/slug.js'
 import { headBase } from '../push/delta.js'
@@ -88,13 +89,20 @@ export function manageRoutes() {
       typeof body?.description === 'string' && body.description.trim()
         ? body.description.trim().slice(0, 1000)
         : null
-    const col = await createCollectionRows(c.var.ports, {
-      organizationId: org.id,
-      slug,
-      name,
-      public: body?.public === true,
-      ...(description ? { summary: { description } } : {}),
-    })
+    let col: Awaited<ReturnType<typeof createCollectionRows>>
+    try {
+      col = await createCollectionRows(c.var.ports, {
+        organizationId: org.id,
+        slug,
+        name,
+        public: body?.public === true,
+        ...(description ? { summary: { description } } : {}),
+      })
+    } catch (err) {
+      // Another request created the slug since the check above.
+      if (isUniqueViolation(err)) return jsonError(c, 409, 'Collection already exists')
+      throw err
+    }
     // Every new collection gets an ARK, as in v1.
     await ensureCollectionArk(c.var.ports.db, { id: col.id, organizationId: org.id })
     return c.json({ id: col.id, owner: org.slug, slug, name }, 201)
@@ -103,14 +111,16 @@ export function manageRoutes() {
   app.patch('/api/collections/:owner/:slug', async (c) => {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
-    const body = (await c.req.json().catch(() => ({}))) as {
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as {
       name?: unknown
       slug?: unknown
       public?: unknown
     }
     const set: Partial<typeof schema.collections.$inferInsert> = {}
     if (typeof body.name === 'string' && body.name.trim()) set.name = body.name.trim().slice(0, 200)
-    if (body.public !== undefined) {
+    // A form that sends the visibility it already has (the settings page always
+    // does) is not changing it: members may still rename.
+    if (body.public !== undefined && (body.public === true) !== access.collection.public) {
       // Visibility is an admin decision (v1 rule): it changes who can read every version.
       const refused = keyCannotManage(c)
       if (refused) return refused
@@ -135,10 +145,15 @@ export function manageRoutes() {
       set.slug = body.slug as string
     }
     if (Object.keys(set).length > 0) {
-      await c.var.ports.db
-        .update(schema.collections)
-        .set({ ...set, updatedAt: new Date() })
-        .where(eq(schema.collections.id, access.collection.id))
+      try {
+        await c.var.ports.db
+          .update(schema.collections)
+          .set({ ...set, updatedAt: new Date() })
+          .where(eq(schema.collections.id, access.collection.id))
+      } catch (err) {
+        if (isUniqueViolation(err)) return jsonError(c, 409, 'Collection already exists')
+        throw err
+      }
       // collection.json carries the name, slug and visibility (spec 11.1).
       await c.var.ports.jobs.enqueue({
         type: 'collection.info',
@@ -200,7 +215,7 @@ export function manageRoutes() {
     const refused = keyCannotManage(c)
     if (refused) return refused
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Forbidden')
-    const body = (await c.req.json().catch(() => ({}))) as { targetOrgSlug?: unknown }
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as { targetOrgSlug?: unknown }
     if (typeof body.targetOrgSlug !== 'string')
       return jsonError(c, 400, '"targetOrgSlug" is required')
     const target = await membership(c, body.targetOrgSlug)

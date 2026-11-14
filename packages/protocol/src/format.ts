@@ -17,6 +17,7 @@ export { fileRefs } from './file-refs.js'
 export {
   checkSchema,
   checkSchemaBounds,
+  checkPatternSafety,
   checkSchemaFull,
   compileSchema,
   type ExtraFieldWarning,

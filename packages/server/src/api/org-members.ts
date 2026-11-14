@@ -88,9 +88,13 @@ export function orgMemberRoutes() {
     if (user) {
       if (await roleIn(c, ctx.org.id, user.id))
         return c.json({ status: 'already-member', name: user.name })
-      await db
+      const added = await db
         .insert(schema.member)
         .values({ organizationId: ctx.org.id, userId: user.id, role: role as string })
+        .onConflictDoNothing()
+        .returning({ id: schema.member.id })
+      // Another request added them first.
+      if (!added.length) return c.json({ status: 'already-member', name: user.name })
       return c.json({ status: 'added', name: user.name }, 201)
     }
     // No account here yet: they join when they first sign in with this address.

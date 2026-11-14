@@ -187,6 +187,9 @@ export const member = sqliteTable(
   (t) => [
     index('member_organization_id_idx').on(t.organizationId),
     index('member_user_id_idx').on(t.userId),
+    // One membership a person per org: two adds at once made two rows, and removing
+    // one left the person a member (hackathon audit, 2026-11-13, Q4).
+    uniqueIndex('member_org_user_uq').on(t.organizationId, t.userId),
   ],
 )
 

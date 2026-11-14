@@ -10,13 +10,16 @@
  *   GET    /:owner/:slug/webhooks/:id/deliveries?limit
  *   POST   /:owner/:slug/webhooks/:id/deliveries/:deliveryId/retry
  */
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
 import { generateWebhookSecret, validateWebhookUrl } from '../webhooks/webhooks.js'
 import { type CollectionAccess, jsonError, requireCollection } from './access.js'
+
+/** Webhooks one collection may have. */
+export const MAX_WEBHOOKS = 10
 
 const BUMPS = ['major', 'minor', 'patch'] as const
 type Bump = (typeof BUMPS)[number]
@@ -70,6 +73,13 @@ export function webhookRoutes() {
     const bumpFilter = body.bumpFilter === undefined ? [...BUMPS] : bumpList(body.bumpFilter)
     if (!bumpFilter)
       return jsonError(c, 400, '"bumpFilter" must be a non-empty list of major, minor, patch')
+    // Each delivery holds a slot on the shared interactive queue for up to its timeout.
+    const [{ n }] = (await c.var.ports.db
+      .select({ n: count() })
+      .from(schema.collectionWebhooks)
+      .where(eq(schema.collectionWebhooks.collectionId, access.collection.id))) as [{ n: number }]
+    if (n >= MAX_WEBHOOKS)
+      return jsonError(c, 409, `A collection may have at most ${MAX_WEBHOOKS} webhooks`)
     const secret = generateWebhookSecret()
     const [created] = await c.var.ports.db
       .insert(schema.collectionWebhooks)
@@ -88,7 +98,7 @@ export function webhookRoutes() {
   app.patch('/:owner/:slug/webhooks/:id', async (c) => {
     const access = await requireAdmin(c)
     if (access instanceof Response) return access
-    const body = (await c.req.json().catch(() => ({}))) as {
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as {
       url?: unknown
       bumpFilter?: unknown
       enabled?: unknown

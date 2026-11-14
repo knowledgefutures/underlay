@@ -125,7 +125,7 @@ export function locationRoutes() {
     const ports = c.var.ports
     if (!ports.locationKey)
       return jsonError(c, 409, 'This deployment has no LOCATION_KEY; locations are unavailable')
-    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
     const endpointError = checkEndpoint(body.endpoint, allowInsecure(c))
     if (endpointError) return jsonError(c, 400, endpointError, { field: 'endpoint' })
     const name = str(body.name, 200)
@@ -192,7 +192,10 @@ export function locationRoutes() {
   app.post('/api/orgs/:org/placements', async (c) => {
     const org = await orgAdmin(c)
     if (org instanceof Response) return org
-    const body = (await c.req.json().catch(() => ({}))) as { locationId?: unknown; sets?: unknown }
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as {
+      locationId?: unknown
+      sets?: unknown
+    }
     const loc = await orgLocation(c, org.id, String(body.locationId ?? ''))
     if (!loc) return jsonError(c, 404, 'Location not found')
     const sets = String(body.sets ?? 'public')
@@ -307,7 +310,10 @@ export function locationRoutes() {
     const access = await requireCollection(c, 'write')
     if (access instanceof Response) return access
     if (!isAdmin(access.role)) return jsonError(c, 403, 'Only org owners and admins manage mirrors')
-    const body = (await c.req.json().catch(() => ({}))) as { locationId?: unknown; sets?: unknown }
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as {
+      locationId?: unknown
+      sets?: unknown
+    }
     const loc = await orgLocation(c, access.owner.id, String(body.locationId ?? ''))
     if (!loc) return jsonError(c, 404, 'Location not found')
     const sets = String(body.sets ?? 'public')

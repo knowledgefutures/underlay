@@ -73,12 +73,27 @@ export interface LoaderApi {
  * API accepts it on GETs), so a shared-link viewer keeps their access across a
  * collection's pages. Leave it off for routes outside a collection.
  */
+/**
+ * Whether a path has a `.` or `..` segment, as the URL parser sees one: `%2e` is
+ * a dot, and `\` separates segments as `/` does.
+ */
+export function hasDotSegment(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0]!
+  return pathname
+    .replace(/\\/g, '/')
+    .split('/')
+    .some((seg) => /^(\.|%2e){1,2}$/i.test(seg))
+}
+
 export function loaderApi(request: Request, { share = false } = {}): LoaderApi {
   const base = fetchBase(request.url)
   const token = share ? new URL(request.url).searchParams.get('token') : null
   const headers = ssrHeaders(request)
   const prefetching = !import.meta.env.SSR && request.headers.has(PREFETCH_HEADER)
   const get = (path: string) => {
+    // Loaders build paths from route params, which arrive decoded (`%2F` is `/`):
+    // a dot segment would walk out of the route's API prefix to any other route.
+    if (hasDotSegment(path)) return Promise.resolve(new Response(null, { status: 404 }))
     const url = new URL(path, base)
     if (token) url.searchParams.set('token', token)
     if (!import.meta.env.SSR) {

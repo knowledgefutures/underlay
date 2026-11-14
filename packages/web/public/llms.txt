@@ -296,8 +296,8 @@ Authorization: Bearer ul_<key>
 }
 
 Every field is optional:
-- base: the semver you diffed against. If it isn't the head: 409 with currentVersion. null or
-  absent applies your changes to whatever the head is; use null for the first push.
+- base: the semver you diffed against. If it isn't the head: 409 with currentVersion. null,
+  "latest" or absent applies your changes to whatever the head is; use null for the first push.
 - schemas: the FULL type set, type → JSON Schema. It replaces the base's: a type you leave out
   is removed with its records. Omit it to keep the base's types. Every schema of the resulting
   set (kept ones too) is checked in full here: draft-07 meta-schema, patterns, $refs that

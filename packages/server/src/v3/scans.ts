@@ -219,8 +219,16 @@ registerJob('v3.scanUnit', async (job, ports) => {
   const problems = await scanResults(ports, state)
   if (problems === null) return
   // Every unit is in; exactly one job gets here first and takes the finish.
-  if (!(await createObject(ports.stores.internal, `v3-scans/${state.id}/finished`, '1'))) return
-  await scanFinished[state.then.kind]?.(ports, state, problems)
+  const finished = `v3-scans/${state.id}/finished`
+  if (!(await createObject(ports.stores.internal, finished, '1'))) return
+  try {
+    await scanFinished[state.then.kind]?.(ports, state, problems)
+  } catch (err) {
+    // Give the finish back, so this job's retry (or the sweep's nudge) can take it;
+    // otherwise every later attempt sees the marker and returns.
+    await ports.stores.internal.delete(finished).catch(() => undefined)
+    throw err
+  }
   await dropScan(ports, state)
-  await ports.stores.internal.delete(`v3-scans/${state.id}/finished`)
+  await ports.stores.internal.delete(finished)
 })

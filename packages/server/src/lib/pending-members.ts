@@ -46,7 +46,10 @@ export async function applyPendingMembers(db: Db, userId: string, email: string)
   const joins = pending.filter((p) => !have.has(p.organizationId))
   await db.batch([
     ...joins.map((p) =>
-      db.insert(schema.member).values({ organizationId: p.organizationId, userId, role: p.role }),
+      db
+        .insert(schema.member)
+        .values({ organizationId: p.organizationId, userId, role: p.role })
+        .onConflictDoNothing(),
     ),
     db.delete(schema.pendingMembers).where(
       inArray(

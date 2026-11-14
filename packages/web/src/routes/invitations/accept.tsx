@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
 import { Alert, Button, buttonClasses } from '~/components/ui'
@@ -8,7 +8,8 @@ import { useAppContext } from '~/lib/app-context'
 export default function InvitationsAccept() {
   const { currentUser } = useAppContext()
 
-  const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '')
+  // From the router, so the server's render has the token too (window has none there).
+  const [params] = useSearchParams()
   // Not ?token=, which the server reads as an API key.
   const token = params.get('invitation') ?? ''
   // KF Auth handles both sign-in and new accounts; /login returns here afterwards.

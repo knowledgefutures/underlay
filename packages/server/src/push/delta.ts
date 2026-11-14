@@ -144,7 +144,9 @@ export async function prepareRecords(
       fail({ line: i + 1, errors: [`${err.code}: ${err.message}`] })
       continue
     }
-    const typeSchema = inputs.schemas[rec.type]
+    const typeSchema = Object.hasOwn(inputs.schemas, rec.type)
+      ? inputs.schemas[rec.type]
+      : undefined
     if (!typeSchema) {
       fail({
         line: i + 1,
@@ -306,7 +308,7 @@ export async function ingestDeletes(
       fail({ line: i + 1, errors: [`${err.code}: ${err.message}`] })
       return
     }
-    if (!inputs.schemas[d.type]) {
+    if (!Object.hasOwn(inputs.schemas, d.type)) {
       fail({
         line: i + 1,
         recordId: d.id,

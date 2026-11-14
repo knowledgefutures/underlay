@@ -288,7 +288,7 @@ export function schemaRoutes() {
     if (!p) return jsonError(c, 401, 'Authentication required')
     if (p.scope === 'read') return jsonError(c, 403, 'Write access required')
     const hash = c.req.param('id')
-    const body = (await c.req.json().catch(() => ({}))) as { label?: unknown }
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as { label?: unknown }
     const label = typeof body.label === 'string' ? body.label.trim() : ''
     if (!label) return jsonError(c, 400, 'Label is required')
     if (label.length > MAX_LABEL_LENGTH)

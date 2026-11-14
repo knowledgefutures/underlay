@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   checkSchema,
   checkSchemaBounds,
+  checkPatternSafety,
   checkSchemaFull,
   compileSchema,
   InputRuleError,
@@ -449,6 +450,33 @@ describe('checkSchema', () => {
     expect(
       checkSchema('T', { definitions: { enum: { patternProperties: { [long]: {} } } } }),
     ).toMatch(/"patternProperties" pattern longer than 256/)
+  })
+
+  it('refuses patterns that nest one unbounded repeat in another', () => {
+    for (const p of ['^(a+)+$', '(a*)*', '(\\w+\\s?)*$', '(?:x+)+', '((a+)b)+', '(.*,)*x'])
+      expect(
+        checkPatternSafety('T', { properties: { s: { type: 'string', pattern: p } } }),
+      ).toMatch(/"pattern" that nests one unbounded repeat/)
+    expect(checkPatternSafety('T', { patternProperties: { '^(a+)+$': {} } })).toMatch(
+      /"patternProperties" pattern that nests/,
+    )
+    for (const p of [
+      '^[a-z]+$',
+      '(\\d{3}-)+',
+      '^(\\d{1,3}\\.){3}\\d{1,3}$',
+      '^10\\.\\d{4,9}/.+$',
+      '[(+]+',
+      '\\(a+\\)+',
+      '(ab)+',
+      '^(a+)?$',
+    ])
+      expect(checkPatternSafety('T', { properties: { s: { type: 'string', pattern: p } } })).toBe(
+        null,
+      )
+    // checkSchema itself still accepts it: schemas collections already hold keep working.
+    expect(checkSchema('T', { properties: { s: { type: 'string', pattern: '^(a+)+$' } } })).toBe(
+      null,
+    )
   })
 
   it('checks type slugs', () => {

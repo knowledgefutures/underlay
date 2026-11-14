@@ -25,6 +25,7 @@
  * the bytes installed, whatever the client sends meanwhile.
  */
 import {
+  checkPatternSafety,
   checkSchemaFull,
   compileSchema,
   copyObject,
@@ -669,7 +670,10 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
       if (Object.hasOwn(schemas, type)) delete schemas[type]
       continue
     }
-    const err = v3.checkKey(v3.SCHEMA_TYPE, type) ?? checkSchemaFull(type, body)
+    const err =
+      v3.checkKey(v3.SCHEMA_TYPE, type) ??
+      checkSchemaFull(type, body) ??
+      checkPatternSafety(type, body)
     if (err) problems.push(err)
     else schemas[type] = body
   }

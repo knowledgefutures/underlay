@@ -9,7 +9,7 @@
  *   GET    /:owner/:slug/push/:sid                 status (and result after an async commit)
  *   DELETE /:owner/:slug/push/:sid                 abandon
  */
-import { hashSchema, parseSemver, schemaRelaxes } from '@underlay/protocol'
+import { checkPatternSafety, hashSchema, parseSemver, schemaRelaxes } from '@underlay/protocol'
 import { and, count, eq, isNotNull, isNull, sum } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
@@ -26,7 +26,8 @@ import {
   ingestRecords,
   MAX_BATCH_BYTES,
 } from '../push/delta.js'
-import { finalizeSession } from '../push/finalize.js'
+import { finalizeSession, type Outcome } from '../push/finalize.js'
+import { settleSession } from '../push/outcome.js'
 import { unitProgress } from '../push/recover.js'
 import {
   createSession,
@@ -113,9 +114,12 @@ async function baseInputs(c: Context<AppEnv>, collectionId: string, baseHash: st
   return { schemas, metadata: root.metadata }
 }
 
-/** Check a requested base semver against the head. Null/undefined means "no check". */
+/**
+ * Check a requested base semver against the head. Null, undefined and "latest"
+ * (as the read routes take it) mean "no check": the session opens on the head.
+ */
 function baseConflict(requested: unknown, head: { semver: string } | null): boolean {
-  if (requested === null || requested === undefined) return false
+  if (requested === null || requested === undefined || requested === 'latest') return false
   if (typeof requested !== 'string') return true
   return parseSemver(requested).semver !== (head?.semver ?? null)
 }
@@ -187,7 +191,26 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
       202,
     )
   }
-  const outcome = await finalizeSession(ports, session.id)
+  let outcome: Outcome
+  try {
+    outcome = await finalizeSession(ports, session.id)
+  } catch (err) {
+    // A commit that threw (a storage or database blip) would otherwise stay
+    // `committing` until the sweep fails it. Fail it now with a 500, which
+    // retryable() lets the client commit again from the same session.
+    console.error(`push commit ${session.id} failed`, err)
+    const failed: Outcome = {
+      status: 500,
+      body: {
+        error: 'The commit failed on the server. Commit this session again.',
+        statusCode: 500,
+      },
+    }
+    await settleSession(ports, session.id, failed).catch(() => false)
+    const now = await getSession(ports, session.id)
+    if (now?.status === 'committed') return c.json(now.result ?? {}, 201)
+    return c.json(failed.body, 500)
+  }
   return c.json(outcome.body, outcome.status)
 }
 
@@ -355,6 +378,16 @@ export function pushRoutes() {
         ? v3SchemaError(access.collection.public, schemas as SessionInputs['schemas'])
         : null)
     if (schemaErr) return jsonError(c, 422, schemaErr)
+    // Patterns that backtrack for minutes: refused in new and changed schemas only,
+    // so a collection that already holds one can still push.
+    if (body.schemas !== undefined) {
+      for (const [slug, s] of Object.entries(schemas as Record<string, unknown>)) {
+        const kept = base.schemas[slug]
+        if (kept && hashSchema(kept) === hashSchema(s)) continue
+        const slow = checkPatternSafety(slug, s)
+        if (slow) return jsonError(c, 422, slow)
+      }
+    }
     const patch = body.metadata_patch
     const metadata =
       body.metadata !== undefined
