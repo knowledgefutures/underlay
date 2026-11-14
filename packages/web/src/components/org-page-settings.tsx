@@ -248,8 +248,8 @@ export default function OrgPageSettings({
       <fieldset>
         <legend className="mb-1 text-sm font-medium">Pinned collections</legend>
         <p className="text-ink-muted mb-3 text-xs">
-          Up to {MAX_PINNED}, shown as large cards above the full list when the organization has
-          more than {MAX_PINNED} collections, and first otherwise.
+          Up to {MAX_PINNED}, shown as small cards above the list of all collections. With none
+          pinned, the page shows just the list.
         </p>
         {pinned.length > 0 && (
           <ol className="border-rule rounded-surface mb-3 border">

@@ -422,17 +422,13 @@ try {
       user: 'u1',
     },
     { path: '/org', status: 200, has: [avatarUrl] },
-    // The org's page. One public collection fills it: its types, a record, its readme.
+    // The org's page: its collections as a list (nothing pinned, so no cards), the same
+    // shape for one collection as for many.
     {
       path: '/org',
       status: 200,
-      has: ['Smoke Org', 'org/authors', 'Record types', 'A record', 'Ada Lovelace'],
-      lacks: ['org/secret', 'Kurt', '<script>alert(1)', '2 collections', 'href="#use"'],
-    },
-    {
-      path: '/org',
-      status: 200,
-      has: ['People who wrote things', 'From the readme', 'Use this data'],
+      has: ['Smoke Org', 'org/authors', 'All collections', 'Use this data'],
+      lacks: ['org/secret', 'Kurt', 'Pinned', 'Search collections', 'href="#use"'],
     },
     // A member sees both collections, as cards under the org's numbers.
     {

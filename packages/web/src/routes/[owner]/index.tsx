@@ -5,9 +5,7 @@ import BaseLayout from '~/components/BaseLayout'
 import {
   AboutSection,
   ActivityList,
-  CardGrid,
   CollectionsBrowser,
-  CollectionSpotlight,
   MembersSection,
   NoCollections,
   type OrgAccount,
@@ -17,28 +15,24 @@ import {
   orgSummary,
   type OrgMember,
   type OrgTab,
+  PinnedCards,
   UseThisData,
 } from '~/components/org-page'
 import { useAppContext } from '~/lib/app-context'
 import { useIsOwner } from '~/lib/use-is-owner'
 
-/** Collections an org may show as cards without a list: more than this get the list. */
-const CARDS_ONLY = 4
+/** Search, sort and topics show from this many collections; fewer read at a glance. */
+const CONTROLS_FROM = 5
 
 export default function OwnerPage() {
   const { owner } = useParams()
   const [params] = useSearchParams()
   const { currentUser } = useAppContext()
-  const { account, collections, members, activity, spotlight, origin } = useLoaderData() as {
+  const { account, collections, members, activity, origin } = useLoaderData() as {
     account: OrgAccount
     collections: OrgCollection[]
     members: OrgMember[]
     activity: OrgActivity[]
-    spotlight: {
-      versionCount: number | null
-      readme: string | null
-      sample: { type: string; data: unknown } | null
-    } | null
     origin: string
   }
 
@@ -54,17 +48,12 @@ export default function OwnerPage() {
         .sort((a, b) => (a.pinned ?? 0) - (b.pinned ?? 0)),
     [collections],
   )
-  // Two to four collections are all cards, pinned ones first.
-  const cards = useMemo(
-    () => [...pinned, ...collections.filter((c) => c.pinned === null)],
-    [pinned, collections],
-  )
 
   // A tab shows only when there is something in it.
   const tabs: { id: OrgTab; label: string; count?: number }[] = [
     { id: 'overview', label: 'Overview' },
   ]
-  if (collections.length > 1)
+  if (collections.length)
     tabs.push({ id: 'collections', label: 'Collections', count: collections.length })
   if (members.length) tabs.push({ id: 'members', label: 'Members', count: members.length })
   if (activity.length) tabs.push({ id: 'activity', label: 'Activity' })
@@ -79,47 +68,37 @@ export default function OwnerPage() {
       .sort((a, b) => (b.recordCount ?? 0) - (a.recordCount ?? 0))[0] ??
     null
 
+  // Every org's page has the same shape: the collections it pinned, if any, as small
+  // cards, then the list of all of them.
+  const list = (
+    <CollectionsBrowser
+      owner={slug}
+      collections={collections}
+      newCollection={isMember}
+      controls={collections.length >= CONTROLS_FROM}
+    />
+  )
   let main: React.ReactNode
   if (tab === 'collections') {
-    main = <CollectionsBrowser owner={slug} collections={collections} newCollection={isMember} />
+    main = list
   } else if (tab === 'members') {
     main = <MembersSection owner={slug} members={members} />
   } else if (tab === 'activity') {
     main = <ActivityList owner={slug} activity={activity} />
   } else if (collections.length === 0) {
     main = <NoCollections member={isMember} owner={slug} />
-  } else if (collections.length === 1) {
-    const c = collections[0]!
-    main = (
-      <CollectionSpotlight
-        owner={slug}
-        c={c}
-        versionCount={spotlight?.versionCount ?? null}
-        readme={spotlight?.readme ?? null}
-        sample={spotlight?.sample ?? null}
-      />
-    )
-  } else if (collections.length <= CARDS_ONLY) {
-    main = (
-      <section>
-        <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-          Collections
-        </h2>
-        <CardGrid owner={slug} collections={cards} />
-      </section>
-    )
   } else {
     main = (
-      <div className="flex flex-col gap-12">
+      <div className="flex flex-col gap-10">
         {pinned.length > 0 && (
           <section>
             <h2 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
               Pinned
             </h2>
-            <CardGrid owner={slug} collections={pinned} />
+            <PinnedCards owner={slug} collections={pinned} />
           </section>
         )}
-        <CollectionsBrowser owner={slug} collections={collections} newCollection={isMember} />
+        {list}
       </div>
     )
   }

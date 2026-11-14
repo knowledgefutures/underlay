@@ -1,8 +1,7 @@
 /**
- * The pieces of an organization's page (`/:owner`): its header, the collection cards,
- * list and one-collection spotlight, and the sidebar. The route decides which show,
- * by how many collections the org has: one fills the page, two to four are cards, five
- * or more are pinned cards and a list with filters.
+ * The pieces of an organization's page (`/:owner`): its header, the collections it pinned,
+ * the list of all its collections, and the sidebar. Every org's page has that same shape;
+ * only search, sort and topic filters wait until there are enough collections to need them.
  */
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
@@ -321,97 +320,6 @@ export function orgSummary(collections: OrgCollection[]): string[] {
 
 // ---------------------------------------------------------------- Collections
 
-function Tags({ tags }: { tags: string[] }) {
-  if (!tags.length) return null
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {tags.map((t) => (
-        <span
-          key={t}
-          className="border-rule text-ink-light rounded-full border px-2 py-px text-[11px]"
-        >
-          {tagLabel(t)}
-        </span>
-      ))}
-    </div>
-  )
-}
-
-function Meta({ c }: { c: OrgCollection }) {
-  const parts = [
-    c.latestVersion,
-    c.recordCount !== null ? `${n(c.recordCount)} records` : null,
-    c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
-    c.license,
-    c.lastPushAt ? `Published ${formatDate(c.lastPushAt)}` : null,
-  ].filter(Boolean)
-  if (!c.public) parts.unshift('Private')
-  return (
-    <div className="text-ink-muted flex flex-wrap gap-x-3.5 gap-y-1 text-xs">
-      {parts.map((p) => (
-        <span key={p}>{p}</span>
-      ))}
-    </div>
-  )
-}
-
-/** A large card: pinned collections, and every collection of an org with two to four. */
-export function CollectionCard({ owner, c }: { owner: string; c: OrgCollection }) {
-  const types = typesOf(c)
-  return (
-    <article className="border-rule rounded-surface flex min-w-0 flex-col overflow-hidden border bg-white/40">
-      <div className="flex flex-1 flex-col gap-3 px-5 pt-5 pb-4">
-        <Tags tags={c.tags} />
-        <div>
-          <h3 className="text-xl leading-snug font-semibold">
-            <Link to={`/${owner}/${c.slug}`} className="text-ink hover:underline">
-              {c.name}
-            </Link>
-          </h3>
-          <p className="text-ink-muted font-mono text-xs">
-            {owner}/{c.slug}
-          </p>
-        </div>
-        {c.description && <p className="text-ink-light text-sm">{c.description}</p>}
-        {types.length > 0 && (
-          <dl className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-5 gap-y-1.5 text-[13px]">
-            {types.slice(0, 6).map(([t, count]) => (
-              <div
-                key={t}
-                className="border-rule flex justify-between gap-2 border-b border-dotted"
-              >
-                <dt className="text-ink-light truncate font-mono text-xs leading-5">{t}</dt>
-                <dd className="tabular-nums">{n(count)}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        {types.length > 6 && (
-          <p className="text-ink-muted -mt-1 text-xs">and {types.length - 6} more types</p>
-        )}
-        <div className="mt-auto pt-1">
-          <Meta c={c} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <ButtonLink to={`/${owner}/${c.slug}`} size="sm">
-            Open
-          </ButtonLink>
-          {c.latestVersion && (
-            <>
-              <ButtonLink to={`/${owner}/${c.slug}/records`} size="sm" variant="secondary">
-                Records
-              </ButtonLink>
-              <ButtonLink to={`/${owner}/${c.slug}/schemas`} size="sm" variant="secondary">
-                Schemas
-              </ButtonLink>
-            </>
-          )}
-        </div>
-      </div>
-    </article>
-  )
-}
-
 function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
   const types = typesOf(c)
   return (
@@ -470,15 +378,18 @@ function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
 
 type Sort = 'records' | 'recent' | 'name'
 
-/** Every collection, with a search, topic filter and sort, for orgs with five or more. */
+/** Every collection, as a list; with search, sort and topic filters when `controls`. */
 export function CollectionsBrowser({
   owner,
   collections,
   newCollection,
+  controls,
 }: {
   owner: string
   collections: OrgCollection[]
   newCollection: boolean
+  /** Search, sort and topic filters: for an org with enough collections to need them. */
+  controls: boolean
 }) {
   const [q, setQ] = useState('')
   const [topic, setTopic] = useState<string | null>(null)
@@ -537,30 +448,32 @@ export function CollectionsBrowser({
       </div>
       {/* Search and sort on one line; the topics one row under them, scrolling sideways
           when there are many, so the controls never outgrow the list. */}
-      <div className="flex gap-2">
-        <label htmlFor="org-search" className="sr-only">
-          Search collections
-        </label>
-        <Input
-          id="org-search"
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search collections"
-          className="min-w-0 flex-1"
-        />
-        <div className="w-40 shrink-0">
-          <label htmlFor="org-sort" className="sr-only">
-            Sort
+      {controls && (
+        <div className="flex gap-2">
+          <label htmlFor="org-search" className="sr-only">
+            Search collections
           </label>
-          <Select id="org-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-            <option value="records">Most records</option>
-            <option value="recent">Recently published</option>
-            <option value="name">Name</option>
-          </Select>
+          <Input
+            id="org-search"
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search collections"
+            className="min-w-0 flex-1"
+          />
+          <div className="w-40 shrink-0">
+            <label htmlFor="org-sort" className="sr-only">
+              Sort
+            </label>
+            <Select id="org-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+              <option value="records">Most records</option>
+              <option value="recent">Recently published</option>
+              <option value="name">Name</option>
+            </Select>
+          </div>
         </div>
-      </div>
-      {topics.length > 0 && (
+      )}
+      {controls && topics.length > 0 && (
         <div
           role="group"
           aria-label="Topic"
@@ -587,7 +500,7 @@ export function CollectionsBrowser({
           ))}
         </div>
       )}
-      <div className="border-rule mt-4 border-t">
+      <div className={`border-rule border-t ${controls ? 'mt-4' : ''}`}>
         {filtered && (
           <p className="text-ink-muted border-rule border-b py-2 text-xs">
             Showing {shown.length} of {collections.length}
@@ -606,173 +519,40 @@ export function CollectionsBrowser({
   )
 }
 
-export function CardGrid({ owner, collections }: { owner: string; collections: OrgCollection[] }) {
-  return (
-    <div className="grid gap-5 sm:grid-cols-2">
-      {collections.map((c) => (
-        <CollectionCard key={c.id} owner={owner} c={c} />
-      ))}
-    </div>
-  )
-}
-
-/** The first paragraph of prose in a README: past its title and any lists or tables. */
-export function readmeExcerpt(readme: string | null | undefined): string | null {
-  if (!readme) return null
-  for (const block of readme.split(/\n\s*\n/)) {
-    const t = block.trim()
-    if (!t || /^(#|\||[-*+] |\d+\. |>|```|\*\*[^*]+:\*\*|!\[)/.test(t)) continue
-    return t
-  }
-  return null
-}
-
-/** An org with one collection: the collection is the page. */
-export function CollectionSpotlight({
+/**
+ * The collections an org pinned, as small cards above its list: a name, a line of
+ * description, and what it holds. The whole card is the link.
+ */
+export function PinnedCards({
   owner,
-  c,
-  versionCount,
-  readme,
-  sample,
+  collections,
 }: {
   owner: string
-  c: OrgCollection
-  versionCount: number | null
-  readme: string | null
-  sample: { type: string; data: unknown } | null
+  collections: OrgCollection[]
 }) {
-  const types = typesOf(c)
-  const excerpt = readmeExcerpt(readme)
-  const excerptHtml = useMemo(() => (excerpt ? renderMarkdown(excerpt) : null), [excerpt])
-  const stats: [string, string][] = []
-  if (c.recordCount !== null) stats.push([n(c.recordCount), 'records'])
-  if (types.length)
-    stats.push([n(types.length), types.length === 1 ? 'record type' : 'record types'])
-  if (c.latestVersion)
-    stats.push([
-      c.latestVersion,
-      versionCount ? `${n(versionCount)} version${versionCount === 1 ? '' : 's'}` : 'version',
-    ])
-  if (c.totalBytes) stats.push([formatBytesFixed(c.totalBytes), 'size'])
-  if (c.license) stats.push([c.license, 'license'])
-
   return (
-    <article className="border-rule rounded-surface overflow-hidden border bg-white/40">
-      <div className="flex flex-col gap-3 px-5 pt-6 pb-5 sm:px-8">
-        <Tags tags={c.tags} />
-        <div>
-          <h2 className="text-2xl leading-tight font-bold tracking-tight sm:text-[28px]">
-            <Link to={`/${owner}/${c.slug}`} className="text-ink hover:underline">
-              {c.name}
-            </Link>
-          </h2>
-          <p className="text-ink-muted mt-1 font-mono text-sm">
-            {owner}/{c.slug}
-            {!c.public && ' · Private'}
-          </p>
-        </div>
-        {c.description && (
-          <p className="text-ink-light max-w-2xl text-base leading-relaxed">{c.description}</p>
-        )}
-      </div>
-
-      {stats.length > 0 && (
-        <dl className="border-rule flex flex-wrap border-y">
-          {stats.map(([value, label]) => (
-            <div
-              key={label}
-              className="border-rule flex flex-[1_1_8rem] flex-col-reverse border-r px-5 py-4 last:border-r-0 sm:px-8"
-            >
-              <dt className="text-ink-muted text-xs">{label}</dt>
-              <dd className="text-xl font-bold tabular-nums">{value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-
-      {(types.length > 0 || sample) && (
-        <div className="flex flex-wrap gap-7 px-5 py-6 sm:px-8">
-          {types.length > 0 && (
-            <div className="min-w-0 flex-[1_1_16rem]">
-              <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-                Record types
-              </h3>
-              <ul className="flex flex-col gap-1.5">
-                {types.slice(0, 8).map(([t, count]) => (
-                  <li key={t} className="border-rule border-b border-dotted pb-1">
-                    <div className="flex justify-between gap-2 text-[13px]">
-                      <Link
-                        to={`/${owner}/${c.slug}/records?type=${encodeURIComponent(t)}`}
-                        className="text-ink font-mono hover:underline"
-                      >
-                        {t}
-                      </Link>
-                      <span className="tabular-nums">{n(count)}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {types.length > 8 && (
-                <p className="text-ink-muted mt-2 text-xs">and {types.length - 8} more types</p>
-              )}
-            </div>
+    <div className="grid gap-3 sm:grid-cols-2">
+      {collections.map((c) => (
+        <Link
+          key={c.id}
+          to={`/${owner}/${c.slug}`}
+          className="border-rule rounded-surface hover:border-ink-muted/60 flex min-w-0 flex-col gap-1 border bg-white/40 px-4 py-3 no-underline transition-colors"
+        >
+          <span className="text-ink truncate text-[15px] leading-snug font-semibold">{c.name}</span>
+          {c.description && (
+            <span className="text-ink-light line-clamp-2 text-[13px] leading-snug">
+              {c.description}
+            </span>
           )}
-          {sample && (
-            <div className="min-w-0 flex-[1_1_18rem]">
-              <h3 className="text-ink-muted mb-3 text-xs font-semibold tracking-wide uppercase">
-                A record
-              </h3>
-              <pre className="bg-ink text-parchment rounded-surface max-h-80 overflow-auto px-4 py-3 font-mono text-xs leading-relaxed">
-                {JSON.stringify({ type: sample.type, ...(sample.data as object) }, null, 2)}
-              </pre>
-              <Link
-                to={`/${owner}/${c.slug}/records?type=${encodeURIComponent(sample.type)}`}
-                className="text-link mt-2 inline-block text-sm hover:underline"
-              >
-                Browse all {n(c.typeCounts?.[sample.type] ?? 0)} {sample.type} records
-              </Link>
-            </div>
+          {c.recordCount !== null && (
+            <span className="text-ink-muted mt-auto pt-1 text-xs">
+              {n(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
+              {c.totalBytes ? ` · ${formatBytesFixed(c.totalBytes)}` : ''}
+            </span>
           )}
-        </div>
-      )}
-
-      {excerptHtml && (
-        <div className="px-5 pb-6 sm:px-8">
-          <h3 className="text-ink-muted mb-2 text-xs font-semibold tracking-wide uppercase">
-            From the readme
-          </h3>
-          <div
-            className="prose prose-sm text-ink-light max-w-2xl"
-            dangerouslySetInnerHTML={{ __html: excerptHtml }}
-          />
-          <Link
-            to={`/${owner}/${c.slug}`}
-            className="text-link mt-1 inline-block text-sm hover:underline"
-          >
-            Read the full readme
-          </Link>
-        </div>
-      )}
-
-      <div className="border-rule flex flex-wrap items-center gap-2 border-t px-5 py-4 sm:px-8">
-        <ButtonLink to={`/${owner}/${c.slug}`}>Open collection</ButtonLink>
-        {c.latestVersion && (
-          <>
-            <ButtonLink to={`/${owner}/${c.slug}/schemas`} variant="secondary">
-              Schemas
-            </ButtonLink>
-            <ButtonLink to={`/${owner}/${c.slug}/versions`} variant="secondary">
-              Versions
-            </ButtonLink>
-          </>
-        )}
-        {c.lastPushAt && (
-          <span className="text-ink-muted ml-auto text-xs">
-            Published {formatDate(c.lastPushAt)}
-          </span>
-        )}
-      </div>
-    </article>
+        </Link>
+      ))}
+    </div>
   )
 }
 
