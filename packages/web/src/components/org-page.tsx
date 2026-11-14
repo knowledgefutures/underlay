@@ -435,29 +435,16 @@ function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
           {owner}/{c.slug}
         </p>
         {c.description && <p className="text-ink-light mt-2 text-sm">{c.description}</p>}
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {types.slice(0, 3).map(([t, count]) => (
-            <span
-              key={t}
-              className="bg-parchment-dark rounded-control px-2 py-px font-mono text-[11px]"
-            >
-              {t} <span className="text-ink-muted">{n(count)}</span>
-            </span>
-          ))}
-          {types.length > 3 && (
-            <span className="bg-parchment-dark rounded-control px-2 py-px font-mono text-[11px]">
-              +{types.length - 3} more
-            </span>
-          )}
-          {c.tags.map((t) => (
-            <span
-              key={t}
-              className="border-rule text-ink-light rounded-full border px-2 py-px text-[11px]"
-            >
-              {tagLabel(t)}
-            </span>
-          ))}
-        </div>
+        {/* Its record types, on one line; topics are the filters above. */}
+        {types.length > 0 && (
+          <p className="text-ink-muted mt-2 truncate font-mono text-[11px]">
+            {types
+              .slice(0, 4)
+              .map(([t, count]) => `${t} ${n(count)}`)
+              .join(' · ')}
+            {types.length > 4 ? ` · +${types.length - 4} more` : ''}
+          </p>
+        )}
       </div>
       <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-0.5 text-sm sm:text-right">
         {c.recordCount !== null ? (
@@ -531,42 +518,41 @@ export function CollectionsBrowser({
   }, [collections, q, topic, sort])
 
   const chip = (on: boolean) =>
-    `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors ${
-      on ? 'border-ink bg-ink text-parchment' : 'border-rule text-ink hover:bg-parchment-dark'
+    `inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs transition-colors ${
+      on
+        ? 'border-ink bg-ink text-parchment'
+        : 'border-rule text-ink-light hover:text-ink hover:bg-parchment-dark'
     }`
+  const filtered = shown.length !== collections.length
 
   return (
     <section>
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-ink-muted text-xs font-semibold tracking-wide uppercase">
           All collections
         </h2>
-        <div className="flex items-center gap-3">
-          <span className="text-ink-muted text-xs">
-            Showing {shown.length} of {collections.length}
-          </span>
-          {newCollection && (
-            <ButtonLink to={`/new?owner=${owner}`} size="sm">
-              New collection
-            </ButtonLink>
-          )}
-        </div>
+        {newCollection && (
+          <ButtonLink to={`/new?owner=${owner}`} size="sm" variant="secondary">
+            New collection
+          </ButtonLink>
+        )}
       </div>
-      <div className="mb-3 flex flex-wrap items-end gap-3">
-        <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-1">
-          <label htmlFor="org-search" className="text-ink-muted text-xs">
-            Search
-          </label>
-          <Input
-            id="org-search"
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Name, description or record type"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="org-sort" className="text-ink-muted text-xs">
+      {/* Search and sort on one line; the topics one row under them, scrolling sideways
+          when there are many, so the controls never outgrow the list. */}
+      <div className="flex gap-2">
+        <label htmlFor="org-search" className="sr-only">
+          Search collections
+        </label>
+        <Input
+          id="org-search"
+          type="search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search collections"
+          className="min-w-0 flex-1"
+        />
+        <div className="w-40 shrink-0">
+          <label htmlFor="org-sort" className="sr-only">
             Sort
           </label>
           <Select id="org-sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
@@ -577,14 +563,18 @@ export function CollectionsBrowser({
         </div>
       </div>
       {topics.length > 0 && (
-        <div role="group" aria-label="Topic" className="mb-2 flex flex-wrap gap-1.5">
+        <div
+          role="group"
+          aria-label="Topic"
+          className="mt-3 flex [scrollbar-width:none] gap-1.5 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] pr-8 [&::-webkit-scrollbar]:hidden"
+        >
           <button
             type="button"
             className={chip(topic === null)}
             aria-pressed={topic === null}
             onClick={() => setTopic(null)}
           >
-            All <span className="opacity-70">{collections.length}</span>
+            All
           </button>
           {topics.map(([t, count]) => (
             <button
@@ -594,19 +584,26 @@ export function CollectionsBrowser({
               aria-pressed={topic === t}
               onClick={() => setTopic(topic === t ? null : t)}
             >
-              {tagLabel(t)} <span className="opacity-70">{count}</span>
+              {tagLabel(t)} <span className="opacity-60">{count}</span>
             </button>
           ))}
         </div>
       )}
-      {shown.map((c) => (
-        <CollectionRow key={c.id} owner={owner} c={c} />
-      ))}
-      {shown.length === 0 && (
-        <p className="border-rule text-ink-muted border-b py-6 text-sm">
-          No collections match. Clear the search or pick another topic.
-        </p>
-      )}
+      <div className="border-rule mt-4 border-t">
+        {filtered && (
+          <p className="text-ink-muted border-rule border-b py-2 text-xs">
+            Showing {shown.length} of {collections.length}
+          </p>
+        )}
+        {shown.map((c) => (
+          <CollectionRow key={c.id} owner={owner} c={c} />
+        ))}
+        {shown.length === 0 && (
+          <p className="border-rule text-ink-muted border-b py-6 text-sm">
+            No collections match. Clear the search or pick another topic.
+          </p>
+        )}
+      </div>
     </section>
   )
 }
@@ -806,8 +803,8 @@ function CopyLine({ label, text }: { label: string; text: string }) {
   return (
     <div>
       <div className="text-ink-light mb-1 text-xs font-medium">{label}</div>
-      <div className="bg-ink text-parchment rounded-control flex items-center gap-1.5 py-1 pr-1 pl-2.5">
-        <code className="min-w-0 flex-1 bg-transparent p-0 font-mono text-[11px] break-all text-inherit">
+      <div className="bg-parchment-dark/60 border-rule rounded-control flex items-center gap-1.5 border py-1 pr-1 pl-2.5">
+        <code className="text-ink min-w-0 flex-1 bg-transparent p-0 font-mono text-[11px] break-all">
           {text}
         </code>
         <button
@@ -819,7 +816,7 @@ function CopyLine({ label, text }: { label: string; text: string }) {
               setTimeout(() => setCopied(false), 1500)
             })
           }}
-          className="bg-ink-light rounded-control flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center"
+          className="text-ink-muted hover:text-ink hover:bg-parchment rounded-control flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center transition-colors"
         >
           <Icon name={copied ? 'check' : 'copy'} />
         </button>
