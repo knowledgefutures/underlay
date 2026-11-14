@@ -20,6 +20,7 @@ import { and, eq, ne } from 'drizzle-orm'
 import type { Principal } from '../api/access.js'
 import type { Authenticate } from '../app.js'
 import * as schema from '../db/schema.js'
+import { applyPendingMembers } from '../lib/pending-members.js'
 import { validateOrgSlug } from '../lib/slug.js'
 import type { Db, Ports } from '../ports.js'
 import type { Kf } from './kf.js'
@@ -175,6 +176,24 @@ export function createAuth(
       },
       // No organization for a new user (v1 made a personal one): collections
       // belong to organizations, and an organization to a KF account.
+      session: {
+        create: {
+          // Orgs that added this person's address before they had an account here
+          // (api/org-members.ts): they join as they sign in. Never blocks the sign-in.
+          after: async (session) => {
+            try {
+              const [u] = await db
+                .select({ email: schema.user.email })
+                .from(schema.user)
+                .where(eq(schema.user.id, session.userId))
+                .limit(1)
+              if (u?.email) await applyPendingMembers(db, session.userId, u.email)
+            } catch (err) {
+              console.error('[pending-members]', err)
+            }
+          },
+        },
+      },
     },
   })
 }

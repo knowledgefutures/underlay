@@ -17,6 +17,7 @@ import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
 import { locationRoutes } from './api/locations.js'
 import { manageRoutes } from './api/manage.js'
+import { orgMemberRoutes } from './api/org-members.js'
 import { pushRoutes } from './api/push.js'
 import { recordRoutes } from './api/records.js'
 import { schemaRoutes } from './api/schemas.js'
@@ -345,6 +346,7 @@ export function createApp(setup: Setup) {
   app.route('/', locationRoutes())
   // Before collectionRoutes: /api/accounts/me would match /api/accounts/:slug.
   app.route('/', accountRoutes())
+  app.route('/', orgMemberRoutes())
   app.route('/', adminRoutes())
   app.route('/', cleanupRoutes())
   app.route('/', statsRoutes())

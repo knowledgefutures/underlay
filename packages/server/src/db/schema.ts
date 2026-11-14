@@ -190,6 +190,29 @@ export const member = sqliteTable(
   ],
 )
 
+/**
+ * People an org added by email who have no account here yet. They become members the first
+ * time they sign in with that address (lib/pending-members.ts); nothing is sent to them.
+ * `email` is stored lower case.
+ */
+export const pendingMembers = sqliteTable(
+  'pending_members',
+  {
+    id: id(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    role: text('role').notNull().default('member'),
+    addedBy: text('added_by'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('pending_members_org_email_uq').on(t.organizationId, t.email),
+    index('pending_members_email_idx').on(t.email),
+  ],
+)
+
 export const invitation = sqliteTable(
   'invitation',
   {

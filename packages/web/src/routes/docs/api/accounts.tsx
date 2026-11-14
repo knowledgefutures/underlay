@@ -59,6 +59,8 @@ const updateOrgReq = `{
   "pinned": ["uuid", "uuid"]
 }`
 
+const addMemberReq = `{ "email": "ada@example.org", "role": "member" }`
+
 const activityRes = `[
   {
     "collectionSlug": "pubpub-archive",
@@ -223,6 +225,30 @@ export default function DocsApiAccounts() {
         </h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{membersPublicRes}</code>
+        </pre>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
+        <h2 id="post-api-accounts-slug-members">POST /api/accounts/:slug/members</h2>
+        <p className="scope">
+          Auth: an owner or admin of the organization, by session or an unscoped personal{' '}
+          <code>admin</code> key
+        </p>
+        <p>
+          Add someone by email, with no invitation to accept. Someone with an Underlay account joins
+          at once (<code>201</code>, <code>status: "added"</code>, or <code>"already-member"</code>
+          ). Anyone else is remembered and joins the first time they sign in with that address (
+          <code>202</code>, <code>status: "pending"</code>). The address is matched without regard
+          to case. <code>role</code> is <code>member</code> (the default) or <code>admin</code>,
+          which only an owner may add; owners are invited instead.{' '}
+          <code>GET /api/accounts/:slug/members/pending</code> lists the adds still waiting, and{' '}
+          <code>DELETE /api/accounts/:slug/members/pending/:id</code> drops one.
+        </p>
+        <h3>Request</h3>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{addMemberReq}</code>
         </pre>
       </div>
 

@@ -335,7 +335,12 @@ try {
       has: ['All collections, in all your organizations'],
       user: 'u1',
     },
-    { path: '/org/settings/members', status: 200, has: ['Members — org'], user: 'u1' },
+    {
+      path: '/org/settings/members',
+      status: 200,
+      has: ['Members — org', 'Add members', 'Invite with a link'],
+      user: 'u1',
+    },
     { path: '/new-org', status: 200, user: 'u1' },
     { path: '/invitations/accept?invitation=x', status: 200, has: ['Organization Invitation'] },
     // Links copied before ?token= became ?invitation= (?token= is an API key).

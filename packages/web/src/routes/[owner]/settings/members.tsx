@@ -26,6 +26,10 @@ export default function OwnerSettingsMembers() {
   /** Whether the org's public page lists the signed-in member; null until loaded. */
   const [listed, setListed] = useState<boolean | null>(null)
 
+  const [addEmails, setAddEmails] = useState('')
+  const [addRole, setAddRole] = useState('member')
+  const [pendingAdds, setPendingAdds] = useState<{ id: string; email: string; role: string }[]>([])
+
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('member')
   const [copied, setCopied] = useState('')
@@ -44,6 +48,62 @@ export default function OwnerSettingsMembers() {
     if (data) setInvitations(Array.isArray(data) ? data : [])
   }
 
+  async function loadPendingAdds(slug: string) {
+    const res = await fetch(`/api/accounts/${slug}/members/pending`, { credentials: 'include' })
+    setPendingAdds(res.ok ? await res.json() : [])
+  }
+
+  /** Adds each address: members at once if they have an account here, else on first sign-in. */
+  async function handleAddMembers(e: FormEvent) {
+    e.preventDefault()
+    if (!orgId || !owner) return
+    clearMessages()
+    const emails = addEmails
+      .split(/[\s,;]+/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+    if (!emails.length) return
+    setSubmitting(true)
+    const added: string[] = []
+    const waiting: string[] = []
+    const failed: string[] = []
+    try {
+      for (const email of emails) {
+        const res = await fetch(`/api/accounts/${owner}/members`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email, role: addRole }),
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) failed.push(`${email}: ${body.error ?? 'failed'}`)
+        else if (body.status === 'pending') waiting.push(email)
+        else added.push(body.name ?? email)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+    const parts = []
+    if (added.length) parts.push(`Added ${added.join(', ')}.`)
+    if (waiting.length)
+      parts.push(`${waiting.join(', ')} will join the first time they sign in to Underlay.`)
+    if (parts.length) setSuccess(parts.join(' '))
+    if (failed.length) setError(failed.join('; '))
+    setAddEmails(failed.map((f) => f.split(':')[0]).join(', '))
+    await Promise.all([loadMembers(orgId), loadPendingAdds(owner)])
+  }
+
+  async function handleRemovePendingAdd(id: string) {
+    if (!owner) return
+    clearMessages()
+    const res = await fetch(`/api/accounts/${owner}/members/pending/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) setError('Failed to remove.')
+    await loadPendingAdds(owner)
+  }
+
   async function loadListed(slug: string) {
     const res = await fetch(`/api/accounts/${slug}/members`, { credentials: 'include' })
     const rows = res.ok ? ((await res.json()) as { you?: boolean; public?: boolean }[]) : []
@@ -55,6 +115,7 @@ export default function OwnerSettingsMembers() {
     loadMembers(orgId)
     loadInvitations(orgId)
     if (owner) loadListed(owner)
+    if (owner && isAdmin) loadPendingAdds(owner)
   }, [orgId, owner])
 
   if (currentUser && !org) {
@@ -261,8 +322,76 @@ export default function OwnerSettingsMembers() {
       </div>
 
       {isAdmin && (
+        <div className="border-rule mb-6 space-y-3 border-t pt-6">
+          <h3 className="text-ink-muted text-xs font-semibold">Add members</h3>
+          <p className="text-ink-muted text-sm">
+            Anyone with an Underlay account joins at once. Anyone else joins the first time they
+            sign in with that address. They can leave at any time.
+          </p>
+          <form onSubmit={handleAddMembers} className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-[1_1_16rem]">
+              <label htmlFor="addEmails" className="mb-1 block text-xs font-medium">
+                Email addresses
+              </label>
+              <Input
+                id="addEmails"
+                value={addEmails}
+                onChange={(e) => setAddEmails(e.target.value)}
+                required
+                placeholder="ada@example.org, alan@example.org"
+              />
+            </div>
+            <div>
+              <label htmlFor="addRole" className="mb-1 block text-xs font-medium">
+                Role
+              </label>
+              <select
+                id="addRole"
+                value={addRole}
+                onChange={(e) => setAddRole(e.target.value)}
+                className="bg-parchment border-rule focus:border-ink rounded-control cursor-pointer border px-3 py-2 text-sm focus:outline-none"
+              >
+                <option value="member">Member</option>
+                {isOwner && <option value="admin">Admin</option>}
+              </select>
+            </div>
+            <Button type="submit" disabled={submitting} className="whitespace-nowrap">
+              {submitting ? 'Adding…' : 'Add'}
+            </Button>
+          </form>
+          {pendingAdds.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <p className="text-ink-muted text-xs">Joining when they first sign in</p>
+              {pendingAdds.map((p) => (
+                <div
+                  key={p.id}
+                  className="border-rule rounded-surface flex items-center justify-between border border-dashed p-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-sm">{p.email}</span>
+                    <Badge>{p.role}</Badge>
+                  </div>
+                  <Button
+                    variant="dangerLink"
+                    size="sm"
+                    onClick={() => handleRemovePendingAdd(p.id)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isAdmin && (
         <div className="border-rule space-y-4 border-t pt-6">
-          <h3 className="text-ink-muted text-xs font-semibold">Invite by email</h3>
+          <h3 className="text-ink-muted text-xs font-semibold">Invite with a link</h3>
+          <p className="text-ink-muted text-sm">
+            For an owner, or anyone who should accept first. Underlay doesn't email invitations yet:
+            copy the link and send it yourself.
+          </p>
           <form onSubmit={handleInviteMember} className="flex items-end gap-3">
             <div className="flex-1">
               <label htmlFor="inviteEmail" className="mb-1 block text-xs font-medium">
