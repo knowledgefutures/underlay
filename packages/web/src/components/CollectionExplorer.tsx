@@ -262,9 +262,9 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                   to={`/${c.ownerSlug}/${c.slug}`}
                   className="border-rule hover:border-ink-muted/50 rounded-surface group border p-4 transition-all hover:shadow-sm"
                 >
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-ink-muted text-xs">{c.ownerSlug}/</span>
-                    <span className="text-sm font-semibold">{c.slug}</span>
+                  <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+                    <span className="text-ink-muted shrink-0 text-xs">{c.ownerSlug}/</span>
+                    <span className="min-w-0 truncate text-sm font-semibold">{c.slug}</span>
                   </div>
                   {c.description && (
                     <p className="text-ink-muted mt-1.5 line-clamp-2 text-xs leading-relaxed">
@@ -413,15 +413,16 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                   className="border-rule hover:border-ink-muted/50 rounded-surface group flex items-start gap-4 border px-3 py-2.5 transition-all hover:shadow-sm"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-1.5">
-                      <span className="text-ink-muted text-xs">{c.ownerSlug}/</span>
-                      <span className="text-sm font-semibold">{c.slug}</span>
+                    {/* One line: the owner and name never wrap; the tags give way first. */}
+                    <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+                      <span className="text-ink-muted shrink-0 text-xs">{c.ownerSlug}/</span>
+                      <span className="min-w-0 truncate text-sm font-semibold">{c.slug}</span>
                       {c.tags && c.tags.length > 0 && (
-                        <span className="flex gap-1">
+                        <span className="hidden min-w-0 shrink-[100] gap-1 overflow-hidden sm:flex">
                           {c.tags.slice(0, 2).map((tag) => (
                             <span
                               key={tag}
-                              className="bg-parchment-dark text-ink-muted rounded-control px-1.5 py-0.5 text-[10px] leading-none"
+                              className="bg-parchment-dark text-ink-muted rounded-control shrink-0 px-1.5 py-0.5 text-[10px] leading-none"
                             >
                               {tagLabel(tag)}
                             </span>
@@ -435,13 +436,13 @@ export default function CollectionExplorer({ initial }: { initial?: ExploreData 
                       </p>
                     )}
                   </div>
-                  <div className="text-ink-muted flex shrink-0 items-center gap-3 pt-0.5 text-xs tabular-nums">
+                  <div className="text-ink-muted flex shrink-0 items-center gap-3 pt-0.5 text-xs whitespace-nowrap tabular-nums">
                     {c.latestVersion && <span className="font-mono">{c.latestVersion}</span>}
                     {c.recordCount != null && (
-                      <span className="w-14 text-right">{formatCount(c.recordCount)} rec</span>
+                      <span className="min-w-14 text-right">{formatCount(c.recordCount)} rec</span>
                     )}
                     {c.totalBytes != null && c.totalBytes > 0 && (
-                      <span className="hidden w-14 text-right sm:inline">
+                      <span className="hidden min-w-16 text-right sm:inline">
                         {formatBytesFixed(c.totalBytes)}
                       </span>
                     )}
