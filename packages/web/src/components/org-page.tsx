@@ -188,7 +188,7 @@ export function OrgHeader({
   tabs: { id: OrgTab; label: string; count?: number }[]
   tab: OrgTab
   canManage: boolean
-  /** What the org holds (orgSummary): collections and records. */
+  /** What the org holds (orgSummary): records and size. */
   summary: string[]
 }) {
   return (
@@ -233,8 +233,8 @@ export function OrgHeader({
                 {account.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
               </a>
             ) : null,
-            ...summary,
             `Joined ${formatDate(account.createdAt, 'month')}`,
+            ...summary,
           ]
             .filter(Boolean)
             .map((item, i, all) => (
@@ -311,14 +311,12 @@ function Icon({ name }: { name: 'copy' | 'check' }) {
 
 // ---------------------------------------------------------------- Summary
 
-/** "7 collections", "2,038,025 records": what the org holds, for two or more. */
+/** "2,038,025 records", "1.1 GiB": what the org holds. The collection count is on its tab. */
 export function orgSummary(collections: OrgCollection[]): string[] {
-  if (collections.length < 2) return []
   const records = collections.reduce((s, c) => s + (c.recordCount ?? 0), 0)
-  return [
-    `${n(collections.length)} collections`,
-    `${n(records)} ${records === 1 ? 'record' : 'records'}`,
-  ]
+  const bytes = collections.reduce((s, c) => s + (c.totalBytes ?? 0), 0)
+  if (!records) return []
+  return [`${n(records)} ${records === 1 ? 'record' : 'records'}`, formatBytesFixed(bytes)]
 }
 
 // ---------------------------------------------------------------- Collections
