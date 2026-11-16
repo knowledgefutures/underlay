@@ -21,7 +21,7 @@ import {
 import { useAppContext } from '~/lib/app-context'
 import { useIsOwner } from '~/lib/use-is-owner'
 
-/** Search, sort and topics show from this many collections; fewer read at a glance. */
+/** Search, sort and tags show from this many collections; fewer read at a glance. */
 const CONTROLS_FROM = 5
 
 export default function OwnerPage() {
@@ -68,8 +68,8 @@ export default function OwnerPage() {
       .sort((a, b) => (b.recordCount ?? 0) - (a.recordCount ?? 0))[0] ??
     null
 
-  // Every org's page has the same shape: the collections it pinned, if any, as small
-  // cards, then the list of all of them.
+  // Every org's page has the same shape: the collections it pinned, if any, two to a
+  // row, then all of them, as the same cards.
   const list = (
     <CollectionsBrowser
       owner={slug}

@@ -1,13 +1,13 @@
 /**
  * The pieces of an organization's page (`/:owner`): its header, the collections it pinned,
  * the list of all its collections, and the sidebar. Every org's page has that same shape;
- * only search, sort and topic filters wait until there are enough collections to need them.
+ * only search, sort and tag filters wait until there are enough collections to need them.
  */
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 
 import { ButtonLink, EmptyState, Input, Select } from '~/components/ui'
-import { formatBytesFixed, formatDate, tagLabel } from '~/lib/format'
+import { formatBytesFixed, formatCount, formatDate, tagLabel } from '~/lib/format'
 import { renderMarkdown } from '~/lib/markdown'
 
 export interface OrgAccount {
@@ -83,13 +83,6 @@ export const coverColorFor = (a: Pick<OrgAccount, 'slug' | 'coverColor'>) =>
   a.coverColor ?? COVER_COLORS[hashIndex(a.slug, COVER_COLORS.length)]!
 
 const n = (v: number) => v.toLocaleString('en-US')
-
-/** A collection's record types, most records first. */
-/** A collection's record types that hold records, most records first. */
-export const typesOf = (c: Pick<OrgCollection, 'typeCounts'>) =>
-  Object.entries(c.typeCounts ?? {})
-    .filter(([, count]) => count > 0)
-    .sort((a, b) => b[1] - a[1])
 
 /** "NYC" for nyc, "NYC" for New York City, "WC" for Wren Creek Field Station. */
 export function initials(name: string): string {
@@ -320,65 +313,91 @@ export function orgSummary(collections: OrgCollection[]): string[] {
 
 // ---------------------------------------------------------------- Collections
 
-function CollectionRow({ owner, c }: { owner: string; c: OrgCollection }) {
-  const types = typesOf(c)
+/**
+ * A collection as a card: its owner/slug over its name, two lines of description, its
+ * tags, and a footer with what it holds. The whole card is the link (the title's link
+ * stretches over it); the tags sit above that and filter the list, when `onTag` is given.
+ */
+function CollectionCard({
+  owner,
+  c,
+  tag,
+  onTag,
+}: {
+  owner: string
+  c: OrgCollection
+  /** The tag the list is filtered to, if any. */
+  tag?: string | null
+  onTag?: (tag: string) => void
+}) {
+  const facts =
+    c.recordCount === null
+      ? []
+      : [
+          c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
+          c.lastPushAt ? `Updated ${formatDate(c.lastPushAt)}` : null,
+        ].filter(Boolean)
   return (
-    <article className="border-rule flex flex-wrap gap-x-7 gap-y-3 border-b py-5">
-      <div className="min-w-0 flex-[999_1_22rem]">
-        <div className="flex items-center gap-2.5">
-          <h3 className="text-base leading-snug font-semibold">
-            <Link to={`/${owner}/${c.slug}`} className="text-ink hover:underline">
-              {c.name}
-            </Link>
-          </h3>
-          {!c.public && (
-            <span className="border-rule text-ink-muted rounded-full border px-2 text-[11px]">
-              Private
-            </span>
-          )}
+    <article className="group border-rule rounded-surface hover:border-ink-muted/60 relative flex min-w-0 flex-col gap-1.5 border bg-white/40 px-4 py-4 transition-colors hover:bg-white/70 sm:px-[18px]">
+      <p className="text-ink-muted truncate font-mono text-[11.5px] leading-4">
+        {owner}/{c.slug}
+      </p>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <h3 className="min-w-0 text-[15.5px] leading-snug font-semibold">
+          <Link
+            to={`/${owner}/${c.slug}`}
+            className="text-ink underline-offset-3 group-hover:underline after:absolute after:inset-0 after:content-['']"
+          >
+            {c.name}
+          </Link>
+        </h3>
+        {!c.public && (
+          <span className="border-rule text-ink-muted shrink-0 rounded-full border px-2 text-[11px]">
+            Private
+          </span>
+        )}
+      </div>
+      {c.description && (
+        <p className="text-ink-light line-clamp-2 max-w-[72ch] text-[13.5px]">{c.description}</p>
+      )}
+      {onTag && c.tags.length > 0 && (
+        <div className="relative z-10 mt-0.5 flex flex-wrap gap-1.5 self-start">
+          {c.tags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={tag === t}
+              title={`Show collections tagged ${tagLabel(t)}`}
+              onClick={() => onTag(t)}
+              className={`cursor-pointer rounded-full border px-2.5 text-[11.5px] leading-5 transition-colors ${
+                tag === t
+                  ? 'border-ink bg-ink text-parchment'
+                  : 'border-rule text-ink-muted hover:border-ink-muted hover:text-ink'
+              }`}
+            >
+              {tagLabel(t)}
+            </button>
+          ))}
         </div>
-        <p className="text-ink-muted font-mono text-xs">
-          {owner}/{c.slug}
-        </p>
-        {c.description && <p className="text-ink-light mt-2 text-sm">{c.description}</p>}
-        {/* Its record types, on one line; topics are the filters above. */}
-        {types.length > 0 && (
-          <p className="text-ink-muted mt-2 truncate font-mono text-[11px]">
-            {types
-              .slice(0, 4)
-              .map(([t, count]) => `${t} ${n(count)}`)
-              .join(' · ')}
-            {types.length > 4 ? ` · +${types.length - 4} more` : ''}
-          </p>
-        )}
-      </div>
-      <div className="flex min-w-0 flex-[1_1_14rem] flex-col gap-0.5 text-sm sm:text-right">
-        {c.recordCount !== null ? (
-          <>
-            <div className="font-medium tabular-nums">
-              {n(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
-            </div>
-            <div className="text-ink-muted text-xs">
-              {[
-                c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
-                c.latestVersion,
-                c.lastPushAt ? formatDate(c.lastPushAt) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            </div>
-          </>
+      )}
+      <p className="border-rule/55 text-ink-muted mt-auto border-t pt-2.5 text-[12.5px] tabular-nums">
+        {c.recordCount === null ? (
+          'No versions yet'
         ) : (
-          <div className="text-ink-muted text-xs">No versions yet</div>
+          <>
+            <span className="text-ink font-medium">{formatCount(c.recordCount)}</span>{' '}
+            {c.recordCount === 1 ? 'record' : 'records'}
+            {facts.map((f) => ` · ${f}`).join('')}
+          </>
         )}
-      </div>
+      </p>
     </article>
   )
 }
 
 type Sort = 'records' | 'recent' | 'name'
 
-/** Every collection, as a list; with search, sort and topic filters when `controls`. */
+/** Every collection, as cards; with search, sort and tag filters when `controls`. */
 export function CollectionsBrowser({
   owner,
   collections,
@@ -388,14 +407,14 @@ export function CollectionsBrowser({
   owner: string
   collections: OrgCollection[]
   newCollection: boolean
-  /** Search, sort and topic filters: for an org with enough collections to need them. */
+  /** Search, sort and tag filters: for an org with enough collections to need them. */
   controls: boolean
 }) {
   const [q, setQ] = useState('')
-  const [topic, setTopic] = useState<string | null>(null)
+  const [tag, setTag] = useState<string | null>(null)
   const [sort, setSort] = useState<Sort>('records')
 
-  const topics = useMemo(() => {
+  const tags = useMemo(() => {
     const counts = new Map<string, number>()
     for (const c of collections) for (const t of c.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
     // A tag every collection has filters nothing out.
@@ -404,15 +423,20 @@ export function CollectionsBrowser({
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8)
   }, [collections])
+  // A tag picked from a card stays in the row even when it isn't one of the eight.
+  const tagRow =
+    tag && !tags.some(([t]) => t === tag)
+      ? [[tag, collections.filter((c) => c.tags.includes(tag)).length] as const, ...tags]
+      : tags
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
     return collections
-      .filter((c) => !topic || c.tags.includes(topic))
+      .filter((c) => !tag || c.tags.includes(tag))
       .filter(
         (c) =>
           !needle ||
-          [c.name, c.slug, c.description ?? '', ...Object.keys(c.typeCounts ?? {})]
+          [c.name, c.slug, c.description ?? '', ...c.tags, ...Object.keys(c.typeCounts ?? {})]
             .join(' ')
             .toLowerCase()
             .includes(needle),
@@ -424,7 +448,7 @@ export function CollectionsBrowser({
             ? (b.lastPushAt ?? '').localeCompare(a.lastPushAt ?? '')
             : (b.recordCount ?? -1) - (a.recordCount ?? -1),
       )
-  }, [collections, q, topic, sort])
+  }, [collections, q, tag, sort])
 
   const chip = (on: boolean) =>
     `inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs transition-colors ${
@@ -433,6 +457,7 @@ export function CollectionsBrowser({
         : 'border-rule text-ink-light hover:text-ink hover:bg-parchment-dark'
     }`
   const filtered = shown.length !== collections.length
+  const pickTag = (t: string) => setTag(tag === t ? null : t)
 
   return (
     <section>
@@ -446,7 +471,7 @@ export function CollectionsBrowser({
           </ButtonLink>
         )}
       </div>
-      {/* Search and sort on one line; the topics one row under them, scrolling sideways
+      {/* Search and sort on one line; the tags one row under them, scrolling sideways
           when there are many, so the controls never outgrow the list. */}
       {controls && (
         <div className="flex gap-2">
@@ -473,45 +498,56 @@ export function CollectionsBrowser({
           </div>
         </div>
       )}
-      {controls && topics.length > 0 && (
+      {controls && tagRow.length > 0 && (
         <div
           role="group"
-          aria-label="Topic"
+          aria-label="Tags"
           className="mt-3 flex [scrollbar-width:none] gap-1.5 overflow-x-auto [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] pr-8 [&::-webkit-scrollbar]:hidden"
         >
           <button
             type="button"
-            className={chip(topic === null)}
-            aria-pressed={topic === null}
-            onClick={() => setTopic(null)}
+            className={chip(tag === null)}
+            aria-pressed={tag === null}
+            onClick={() => setTag(null)}
           >
             All
           </button>
-          {topics.map(([t, count]) => (
+          {tagRow.map(([t, count]) => (
             <button
               key={t}
               type="button"
-              className={chip(topic === t)}
-              aria-pressed={topic === t}
-              onClick={() => setTopic(topic === t ? null : t)}
+              className={chip(tag === t)}
+              aria-pressed={tag === t}
+              onClick={() => pickTag(t)}
             >
               {tagLabel(t)} <span className="opacity-60">{count}</span>
             </button>
           ))}
         </div>
       )}
-      <div className={`border-rule border-t ${controls ? 'mt-4' : ''}`}>
-        {filtered && (
-          <p className="text-ink-muted border-rule border-b py-2 text-xs">
-            Showing {shown.length} of {collections.length}
-          </p>
-        )}
+      {filtered && (
+        <p className={`text-ink-muted text-xs ${controls ? 'mt-3' : ''}`}>
+          Showing {shown.length} of {collections.length}
+          {tag ? ` tagged ${tagLabel(tag)}` : ''}.{' '}
+          <button
+            type="button"
+            onClick={() => {
+              setTag(null)
+              setQ('')
+            }}
+            className="text-link cursor-pointer hover:underline"
+          >
+            Show all
+          </button>
+        </p>
+      )}
+      <div className={`flex flex-col gap-3 ${controls || filtered ? 'mt-4' : ''}`}>
         {shown.map((c) => (
-          <CollectionRow key={c.id} owner={owner} c={c} />
+          <CollectionCard key={c.id} owner={owner} c={c} tag={tag} onTag={pickTag} />
         ))}
         {shown.length === 0 && (
-          <p className="border-rule text-ink-muted border-b py-6 text-sm">
-            No collections match. Clear the search or pick another topic.
+          <p className="text-ink-muted py-4 text-sm">
+            No collections match. Clear the search or pick another tag.
           </p>
         )}
       </div>
@@ -520,8 +556,8 @@ export function CollectionsBrowser({
 }
 
 /**
- * The collections an org pinned, as small cards above its list: a name, a line of
- * description, and what it holds. The whole card is the link.
+ * The collections an org pinned, above its list: the same cards, two to a row, without
+ * the tags (they filter the list below, which these sit outside of).
  */
 export function PinnedCards({
   owner,
@@ -533,24 +569,7 @@ export function PinnedCards({
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {collections.map((c) => (
-        <Link
-          key={c.id}
-          to={`/${owner}/${c.slug}`}
-          className="border-rule rounded-surface hover:border-ink-muted/60 flex min-w-0 flex-col gap-1 border bg-white/40 px-4 py-3 no-underline transition-colors"
-        >
-          <span className="text-ink truncate text-[15px] leading-snug font-semibold">{c.name}</span>
-          {c.description && (
-            <span className="text-ink-light line-clamp-2 text-[13px] leading-snug">
-              {c.description}
-            </span>
-          )}
-          {c.recordCount !== null && (
-            <span className="text-ink-muted mt-auto pt-1 text-xs">
-              {n(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
-              {c.totalBytes ? ` · ${formatBytesFixed(c.totalBytes)}` : ''}
-            </span>
-          )}
-        </Link>
+        <CollectionCard key={c.id} owner={owner} c={c} />
       ))}
     </div>
   )
