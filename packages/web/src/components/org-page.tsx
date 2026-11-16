@@ -316,7 +316,8 @@ export function orgSummary(collections: OrgCollection[]): string[] {
 /**
  * A collection as a card. Two lines read across it: the owner/slug, small, over the name,
  * and opposite them, right-aligned, its size and date, small, over its record count. The
- * description and tags run below both. The whole card is the link (the title's link
+ * description and tags run below both. On a narrow card (a phone, a pinned card) size,
+ * date and count move to a footer line instead. The whole card is the link (the title's link
  * stretches over it); the tags sit above that and filter the list, when `onTag` is given.
  */
 function CollectionCard({
@@ -341,8 +342,8 @@ function CollectionCard({
         <p className="text-ink-muted truncate font-mono text-[11.5px]">
           {owner}/{c.slug}
         </p>
-        {/* On a narrow card (a pinned one) size and date give way, and the record count
-            moves up beside the slug, small, so the name has the card's width. */}
+        {/* On a narrow card (a phone, a pinned card) what it holds moves to a footer, so
+            the slug and the name have the card's width. */}
         <p
           className="text-ink-muted hidden text-right text-xs whitespace-nowrap tabular-nums @[26rem]:block"
           title={c.lastPushAt ? `Last updated ${formatDate(c.lastPushAt)}` : undefined}
@@ -364,7 +365,7 @@ function CollectionCard({
             </span>
           )}
         </div>
-        <p className="text-ink-muted @[26rem]:text-ink col-start-2 row-start-1 text-right text-xs whitespace-nowrap tabular-nums @[26rem]:row-start-2 @[26rem]:text-sm @[26rem]:font-medium">
+        <p className="hidden text-right text-sm font-medium whitespace-nowrap tabular-nums @[26rem]:block">
           {c.recordCount === null ? (
             <span className="text-ink-muted text-xs font-normal">No versions yet</span>
           ) : (
@@ -397,6 +398,17 @@ function CollectionCard({
           ))}
         </div>
       )}
+      <p className="border-rule/55 text-ink-muted mt-3 border-t pt-2.5 text-xs tabular-nums @[26rem]:hidden">
+        {c.recordCount === null ? (
+          'No versions yet'
+        ) : (
+          <>
+            <span className="text-ink font-medium">{formatCount(c.recordCount)}</span>{' '}
+            {c.recordCount === 1 ? 'record' : 'records'}
+            {details.map((d) => ` · ${d}`).join('')}
+          </>
+        )}
+      </p>
     </article>
   )
 }
