@@ -214,12 +214,7 @@ try {
     {
       path: '/',
       status: 200,
-      has: [
-        'A protocol for radically accessible structured knowledge',
-        'Using the data',
-        'authors',
-        '<title>Underlay</title>',
-      ],
+      has: ['radically accessible</span>', 'Using the data', 'authors', '<title>Underlay</title>'],
     },
     {
       path: '/explore',

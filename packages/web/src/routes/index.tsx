@@ -604,8 +604,11 @@ export default function Home() {
       <section className="bg-parchment-dark relative overflow-hidden">
         <HeroBackground />
         <div className="relative mx-auto max-w-5xl px-4 pt-16 pb-14">
-          <h1 className="max-w-[24ch] font-sans text-3xl leading-tight font-semibold tracking-tight text-balance md:text-[2.625rem] md:leading-[1.12]">
-            A protocol for radically accessible structured knowledge.
+          {/* One phrase per line; the spaces keep the text a single sentence. */}
+          <h1 className="font-sans text-3xl leading-tight font-semibold tracking-tight md:text-[2.625rem] md:leading-[1.12]">
+            <span className="block">A protocol for</span>{' '}
+            <span className="block">radically accessible</span>{' '}
+            <span className="block">structured knowledge.</span>
           </h1>
           <p className="text-ink-light mt-4 max-w-[58ch] text-base leading-relaxed">
             Underlay is what institutions use to steward, curate, and publish their data.
