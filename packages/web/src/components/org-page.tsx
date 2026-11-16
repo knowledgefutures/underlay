@@ -314,9 +314,10 @@ export function orgSummary(collections: OrgCollection[]): string[] {
 // ---------------------------------------------------------------- Collections
 
 /**
- * A collection as a card: its owner/slug over its name, two lines of description, its
- * tags, and a footer with what it holds. The whole card is the link (the title's link
- * stretches over it); the tags sit above that and filter the list, when `onTag` is given.
+ * A collection as a card: on the left its owner/slug over its name, two lines of
+ * description and its tags; on the right, what it holds. A narrow card (a pinned one)
+ * puts what it holds underneath. The whole card is the link (the title's link stretches
+ * over it); the tags sit above that and filter the list, when `onTag` is given.
  */
 function CollectionCard({
   owner,
@@ -330,67 +331,83 @@ function CollectionCard({
   tag?: string | null
   onTag?: (tag: string) => void
 }) {
-  const facts =
-    c.recordCount === null
-      ? []
-      : [
-          c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
-          c.lastPushAt ? `Updated ${formatDate(c.lastPushAt)}` : null,
-        ].filter(Boolean)
+  const details = [
+    c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
+    c.lastPushAt ? `Updated ${formatDate(c.lastPushAt)}` : null,
+  ].filter(Boolean)
   return (
-    <article className="group border-rule rounded-surface hover:border-ink-muted/60 relative flex min-w-0 flex-col gap-1.5 border bg-white/40 px-4 py-4 transition-colors hover:bg-white/70 sm:px-[18px]">
-      <p className="text-ink-muted truncate font-mono text-[11.5px] leading-4">
-        {owner}/{c.slug}
-      </p>
-      <div className="flex min-w-0 items-center gap-2.5">
-        <h3 className="min-w-0 text-[15.5px] leading-snug font-semibold">
-          <Link
-            to={`/${owner}/${c.slug}`}
-            className="text-ink underline-offset-3 group-hover:underline after:absolute after:inset-0 after:content-['']"
-          >
-            {c.name}
-          </Link>
-        </h3>
-        {!c.public && (
-          <span className="border-rule text-ink-muted shrink-0 rounded-full border px-2 text-[11px]">
-            Private
-          </span>
-        )}
-      </div>
-      {c.description && (
-        <p className="text-ink-light line-clamp-2 max-w-[72ch] text-[13.5px]">{c.description}</p>
-      )}
-      {onTag && c.tags.length > 0 && (
-        <div className="relative z-10 mt-0.5 flex flex-wrap gap-1.5 self-start">
-          {c.tags.map((t) => (
-            <button
-              key={t}
-              type="button"
-              aria-pressed={tag === t}
-              title={`Show collections tagged ${tagLabel(t)}`}
-              onClick={() => onTag(t)}
-              className={`cursor-pointer rounded-full border px-2.5 text-[11.5px] leading-5 transition-colors ${
-                tag === t
-                  ? 'border-ink bg-ink text-parchment'
-                  : 'border-rule text-ink-muted hover:border-ink-muted hover:text-ink'
-              }`}
-            >
-              {tagLabel(t)}
-            </button>
-          ))}
+    <article className="group border-rule rounded-surface hover:border-ink-muted/60 @container relative min-w-0 border bg-white/15 px-4 py-4 transition-colors hover:bg-white/45 sm:px-[18px]">
+      <div className="flex flex-wrap gap-x-7 gap-y-2.5">
+        <div className="flex min-w-0 flex-[999_1_22rem] flex-col gap-1.5">
+          <p className="text-ink-muted truncate font-mono text-[11.5px] leading-4">
+            {owner}/{c.slug}
+          </p>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <h3 className="min-w-0 text-[15.5px] leading-snug font-semibold">
+              <Link
+                to={`/${owner}/${c.slug}`}
+                className="text-ink underline-offset-3 group-hover:underline after:absolute after:inset-0 after:content-['']"
+              >
+                {c.name}
+              </Link>
+            </h3>
+            {!c.public && (
+              <span className="border-rule text-ink-muted shrink-0 rounded-full border px-2 text-[11px]">
+                Private
+              </span>
+            )}
+          </div>
+          {c.description && (
+            <p className="text-ink-light line-clamp-2 max-w-[72ch] text-[13.5px]">
+              {c.description}
+            </p>
+          )}
+          {onTag && c.tags.length > 0 && (
+            <div className="relative z-10 mt-0.5 flex flex-wrap gap-1.5 self-start">
+              {c.tags.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={tag === t}
+                  title={`Show collections tagged ${tagLabel(t)}`}
+                  onClick={() => onTag(t)}
+                  className={`cursor-pointer rounded-full border px-2.5 text-[11.5px] leading-5 transition-colors ${
+                    tag === t
+                      ? 'border-ink bg-ink text-parchment'
+                      : 'border-rule text-ink-muted hover:border-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {tagLabel(t)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-      <p className="border-rule/55 text-ink-muted mt-auto border-t pt-2.5 text-[12.5px] tabular-nums">
-        {c.recordCount === null ? (
-          'No versions yet'
-        ) : (
-          <>
-            <span className="text-ink font-medium">{formatCount(c.recordCount)}</span>{' '}
-            {c.recordCount === 1 ? 'record' : 'records'}
-            {facts.map((f) => ` · ${f}`).join('')}
-          </>
-        )}
-      </p>
+        {/* What it holds: beside the text, right-aligned, when the card is wide enough for
+            both (22rem + 9rem + the gap); under it otherwise. */}
+        <div className="flex min-w-0 flex-[1_1_9rem] flex-col gap-0.5 text-sm tabular-nums @[33rem]:pt-[22px] @[33rem]:text-right">
+          {c.recordCount !== null ? (
+            <>
+              <div className="font-medium">
+                {formatCount(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
+              </div>
+              {/* One fact a line beside the text; on one line, with dots, under it. */}
+              {details.length > 0 && (
+                <div className="text-ink-muted text-xs @[33rem]:flex @[33rem]:flex-col @[33rem]:gap-0.5">
+                  {details.map((d, i) => (
+                    <span key={d} className="whitespace-nowrap">
+                      {i > 0 && <span className="@[33rem]:hidden"> · </span>}
+                      {d}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-ink-muted text-xs">No versions yet</div>
+          )}
+        </div>
+      </div>
     </article>
   )
 }
