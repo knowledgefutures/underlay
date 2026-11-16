@@ -314,10 +314,10 @@ export function orgSummary(collections: OrgCollection[]): string[] {
 // ---------------------------------------------------------------- Collections
 
 /**
- * A collection as a card: on the left its owner/slug over its name, two lines of
- * description and its tags; on the right, what it holds. A narrow card (a pinned one)
- * puts what it holds underneath. The whole card is the link (the title's link stretches
- * over it); the tags sit above that and filter the list, when `onTag` is given.
+ * A collection as a card. Two lines read across it: the owner/slug, small, over the name,
+ * and opposite them, right-aligned, its size and date, small, over its record count. The
+ * description and tags run below both. The whole card is the link (the title's link
+ * stretches over it); the tags sit above that and filter the list, when `onTag` is given.
  */
 function CollectionCard({
   owner,
@@ -333,81 +333,70 @@ function CollectionCard({
 }) {
   const details = [
     c.totalBytes ? formatBytesFixed(c.totalBytes) : null,
-    c.lastPushAt ? `Updated ${formatDate(c.lastPushAt)}` : null,
+    c.lastPushAt ? formatDate(c.lastPushAt) : null,
   ].filter(Boolean)
   return (
-    <article className="group border-rule rounded-surface hover:border-ink-muted/60 @container relative min-w-0 border bg-white/15 px-4 py-4 transition-colors hover:bg-white/45 sm:px-[18px]">
-      <div className="flex flex-wrap gap-x-7 gap-y-2.5">
-        <div className="flex min-w-0 flex-[999_1_22rem] flex-col gap-1.5">
-          <p className="text-ink-muted truncate font-mono text-[11.5px] leading-4">
-            {owner}/{c.slug}
-          </p>
-          <div className="flex min-w-0 items-center gap-2.5">
-            <h3 className="min-w-0 text-[15.5px] leading-snug font-semibold">
-              <Link
-                to={`/${owner}/${c.slug}`}
-                className="text-ink underline-offset-3 group-hover:underline after:absolute after:inset-0 after:content-['']"
-              >
-                {c.name}
-              </Link>
-            </h3>
-            {!c.public && (
-              <span className="border-rule text-ink-muted shrink-0 rounded-full border px-2 text-[11px]">
-                Private
-              </span>
-            )}
-          </div>
-          {c.description && (
-            <p className="text-ink-light line-clamp-2 max-w-[72ch] text-[13.5px]">
-              {c.description}
-            </p>
-          )}
-          {onTag && c.tags.length > 0 && (
-            <div className="relative z-10 mt-0.5 flex flex-wrap gap-1.5 self-start">
-              {c.tags.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  aria-pressed={tag === t}
-                  title={`Show collections tagged ${tagLabel(t)}`}
-                  onClick={() => onTag(t)}
-                  className={`cursor-pointer rounded-full border px-2.5 text-[11.5px] leading-5 transition-colors ${
-                    tag === t
-                      ? 'border-ink bg-ink text-parchment'
-                      : 'border-rule text-ink-muted hover:border-ink-muted hover:text-ink'
-                  }`}
-                >
-                  {tagLabel(t)}
-                </button>
-              ))}
-            </div>
+    <article className="group border-rule rounded-surface hover:border-ink-muted/60 @container relative min-w-0 border bg-white/30 px-4 py-4 transition-colors hover:bg-white/55 sm:px-[18px]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-5 gap-y-1">
+        <p className="text-ink-muted truncate font-mono text-[11.5px]">
+          {owner}/{c.slug}
+        </p>
+        {/* On a narrow card (a pinned one) size and date give way, and the record count
+            moves up beside the slug, small, so the name has the card's width. */}
+        <p
+          className="text-ink-muted hidden text-right text-xs whitespace-nowrap tabular-nums @[26rem]:block"
+          title={c.lastPushAt ? `Last updated ${formatDate(c.lastPushAt)}` : undefined}
+        >
+          {details.join(' · ')}
+        </p>
+        <div className="col-span-2 col-start-1 flex min-w-0 items-baseline gap-2.5 @[26rem]:col-span-1">
+          <h3 className="min-w-0 text-base leading-snug font-semibold">
+            <Link
+              to={`/${owner}/${c.slug}`}
+              className="text-ink underline-offset-3 group-hover:underline after:absolute after:inset-0 after:content-['']"
+            >
+              {c.name}
+            </Link>
+          </h3>
+          {!c.public && (
+            <span className="border-rule text-ink-muted shrink-0 rounded-full border px-2 text-[11px]">
+              Private
+            </span>
           )}
         </div>
-        {/* What it holds: beside the text, right-aligned, when the card is wide enough for
-            both (22rem + 9rem + the gap); under it otherwise. */}
-        <div className="flex min-w-0 flex-[1_1_9rem] flex-col gap-0.5 text-sm tabular-nums @[33rem]:pt-[22px] @[33rem]:text-right">
-          {c.recordCount !== null ? (
-            <>
-              <div className="font-medium">
-                {formatCount(c.recordCount)} {c.recordCount === 1 ? 'record' : 'records'}
-              </div>
-              {/* One fact a line beside the text; on one line, with dots, under it. */}
-              {details.length > 0 && (
-                <div className="text-ink-muted text-xs @[33rem]:flex @[33rem]:flex-col @[33rem]:gap-0.5">
-                  {details.map((d, i) => (
-                    <span key={d} className="whitespace-nowrap">
-                      {i > 0 && <span className="@[33rem]:hidden"> · </span>}
-                      {d}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </>
+        <p className="text-ink-muted @[26rem]:text-ink col-start-2 row-start-1 text-right text-xs whitespace-nowrap tabular-nums @[26rem]:row-start-2 @[26rem]:text-sm @[26rem]:font-medium">
+          {c.recordCount === null ? (
+            <span className="text-ink-muted text-xs font-normal">No versions yet</span>
           ) : (
-            <div className="text-ink-muted text-xs">No versions yet</div>
+            `${formatCount(c.recordCount)} ${c.recordCount === 1 ? 'record' : 'records'}`
           )}
-        </div>
+        </p>
       </div>
+      {c.description && (
+        <p className="text-ink-light mt-2 line-clamp-2 max-w-[72ch] text-[13.5px]">
+          {c.description}
+        </p>
+      )}
+      {onTag && c.tags.length > 0 && (
+        <div className="relative z-10 mt-2.5 flex flex-wrap gap-1.5">
+          {c.tags.map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={tag === t}
+              title={`Show collections tagged ${tagLabel(t)}`}
+              onClick={() => onTag(t)}
+              className={`cursor-pointer rounded-full border px-2.5 text-[11.5px] leading-5 transition-colors ${
+                tag === t
+                  ? 'border-ink bg-ink text-parchment'
+                  : 'border-rule text-ink-muted hover:border-ink-muted hover:text-ink'
+              }`}
+            >
+              {tagLabel(t)}
+            </button>
+          ))}
+        </div>
+      )}
     </article>
   )
 }
