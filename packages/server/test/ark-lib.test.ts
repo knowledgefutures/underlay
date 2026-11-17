@@ -8,7 +8,9 @@ import {
   collectionToArkId,
   computeNcdaCheckChar,
   formatErcDate,
+  KF_NAAN,
   nextShoulderCounter,
+  orgNaan,
   parseArkPath,
 } from '../src/lib/ark.js'
 
@@ -178,6 +180,13 @@ describe('parseArkPath', () => {
 })
 
 describe('buildArkUrl', () => {
+  test('links KF’s NAAN through n2t.net, the global resolver', () => {
+    const check = computeNcdaCheckChar('bcdfghjkmn')
+    expect(buildArkUrl(KF_NAAN, 'ulb3', 'bcdfghjkmn', 'v1.0.0')).toBe(
+      `https://n2t.net/ark:71144/ulb3bcdfghjkmn${check}.v1.0.0`,
+    )
+  })
+
   test('builds a basic ARK URL', () => {
     const url = buildArkUrl('12345', 'ulb3', 'bcdfghjkmn')
     const check = computeNcdaCheckChar('bcdfghjkmn')
@@ -247,5 +256,14 @@ describe('buildErc', () => {
     expect(erc).toContain('where: https://underlay.org/ark:12345/ulb3test')
     expect(erc).toContain('erc-support:')
     expect(erc).toContain('who: Underlay')
+  })
+})
+
+describe('orgNaan', () => {
+  test('is the org’s own NAAN, else the default with KF’s switch on, else none', () => {
+    expect(orgNaan({ arkNaan: '99999', arkKfNaan: false })).toBe('99999')
+    expect(orgNaan({ arkNaan: '99999', arkKfNaan: true })).toBe('99999')
+    expect(orgNaan({ arkNaan: null, arkKfNaan: true })).toBe('12345')
+    expect(orgNaan({ arkNaan: null, arkKfNaan: false })).toBeNull()
   })
 })

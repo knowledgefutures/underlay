@@ -161,7 +161,11 @@ export const organization = sqliteTable('organization', {
   provenanceNote: text('provenance_note'),
   /** Collection ids shown as large cards on the org's page, in order. */
   pinned: json<string[]>('pinned'),
+  /** The org's own NAAN: its ARKs are minted under it, and its owners turn them on. */
   arkNaan: text('ark_naan'),
+  /** Set by a KF steward: the org's ARKs use KF's NAAN (`ARK_NAAN`). Without it or
+   *  `arkNaan` the org has no ARKs. */
+  arkKfNaan: bool('ark_kf_naan').notNull().default(false),
   kfOrgId: text('kf_org_id'),
   isDefault: bool('is_default').default(false),
 })
@@ -1148,6 +1152,7 @@ export const arkCollections = sqliteTable('ark_collections', {
     .primaryKey()
     .references(() => collections.id, { onDelete: 'cascade' }),
   arkId: text('ark_id').notNull().unique(),
+  /** Live only while the org has a NAAN. New collections are minted with it off. */
   enabled: bool('enabled').notNull().default(true),
   customUrl: text('custom_url'),
   createdAt: createdAt(),
@@ -1164,6 +1169,24 @@ export const arkRecordTypes = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.collectionId, t.recordType] })],
 )
+
+/**
+ * A live ARK whose collection was deleted. The ARK's promise is that it is never
+ * reused and answers with a tombstone, so this outlives the collection, its
+ * storage tombstone and its org.
+ */
+export const arkTombstones = sqliteTable('ark_tombstones', {
+  arkId: text('ark_id').primaryKey(),
+  shoulder: text('shoulder').notNull(),
+  naan: text('naan').notNull(),
+  collectionId: text('collection_id').notNull(),
+  organizationId: text('organization_id').notNull(),
+  ownerName: text('owner_name').notNull(),
+  collectionName: text('collection_name').notNull(),
+  deletedAt: ts('deleted_at')
+    .notNull()
+    .$defaultFn(() => new Date()),
+})
 
 export const instanceSettings = sqliteTable('instance_settings', {
   key: text('key').primaryKey(),

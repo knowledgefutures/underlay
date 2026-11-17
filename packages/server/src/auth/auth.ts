@@ -107,6 +107,8 @@ export function createAuth(
               // Server-controlled, as in v1: a caller must not claim another
               // institution's NAAN.
               arkNaan: { type: 'string', required: false, input: false },
+              // KF's NAAN for the org: only a KF steward turns it on (api/ark.ts).
+              arkKfNaan: { type: 'boolean', required: false, input: false },
               // Picked in the new-org form, and checked in the hooks below against
               // the caller's own KF orgs: /api/kf/summary trusts it.
               kfOrgId: { type: 'string', required: false, input: true },

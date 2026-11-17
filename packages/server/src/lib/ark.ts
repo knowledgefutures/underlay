@@ -7,11 +7,34 @@
  */
 import { createHash } from 'node:crypto'
 
-// Workers only have process.env under nodejs_compat; don't crash without it.
-export const DEFAULT_NAAN = globalThis.process?.env?.ARK_DEFAULT_NAAN ?? '12345'
+/**
+ * Knowledge Futures' NAAN, registered with the ARK Alliance to resolve at
+ * www.underlay.org/ark:… An org uses it only when a KF steward turns ARKs on for it.
+ */
+export const KF_NAAN = '71144'
+/**
+ * The NAAN this deployment mints under for orgs without their own: KF's in
+ * production (wrangler var `ARK_NAAN`), the ARK spec's example NAAN elsewhere.
+ * Workers only have process.env under nodejs_compat; don't crash without it.
+ */
+export const DEFAULT_NAAN = globalThis.process?.env?.ARK_NAAN ?? '12345'
 // ARKs are persistent identifiers, so they always name the canonical site,
 // whichever deployment minted or serves them.
 const SITE_URL = 'https://underlay.org'
+// The global resolver: n2t.net forwards KF's NAAN to underlay.org through the ARK
+// registry, so these links outlive any change of host.
+const N2T_URL = 'https://n2t.net'
+
+/** Where an ARK under this NAAN is linked: n2t.net for KF's, underlay.org otherwise. */
+export const arkResolver = (naan: string) => (naan === KF_NAAN ? N2T_URL : SITE_URL)
+
+/**
+ * The NAAN an org's ARKs are under, or null when it has no ARKs: its own NAAN, or
+ * the deployment's when a KF steward turned ARKs on for it.
+ */
+export function orgNaan(org: { arkNaan: string | null; arkKfNaan: boolean | null }) {
+  return org.arkNaan ?? (org.arkKfNaan ? DEFAULT_NAAN : null)
+}
 
 // Betanumeric: consonants (no 'l') + digits
 export const BETANUMERIC = 'bcdfghjkmnpqrstvwxz0123456789' // 29 chars
@@ -123,7 +146,7 @@ export function buildArkUrl(
   if (semver !== undefined) name += `.${semver}`
   if (recordType && recordId)
     name += `/${encodeURIComponent(recordType)}/${encodeURIComponent(recordId)}`
-  return `${SITE_URL}/ark:${naan}/${name}`
+  return `${arkResolver(naan)}/ark:${naan}/${name}`
 }
 
 // Formats a date as YYYYMMDD for ERC responses.

@@ -510,6 +510,8 @@ export function collectionRoutes() {
       pinned,
       createdAt: org.createdAt,
       arkNaan: org.arkNaan,
+      // KF's NAAN, turned on for the org by a KF steward (api/ark.ts).
+      arkKfNaan: org.arkKfNaan,
       arkShoulder: shoulder?.shoulder ?? null,
     })
   })

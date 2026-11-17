@@ -2,8 +2,9 @@ import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { arkRoutes, getOrMintShoulder } from '../src/api/ark.js'
+import { arkRoutes, ensureCollectionArk, getOrMintShoulder } from '../src/api/ark.js'
 import type { AppEnv } from '../src/app.js'
+import type { Kf } from '../src/auth/kf.js'
 import * as schema from '../src/db/schema.js'
 import { buildArkUrl, collectionToArkId, computeNcdaCheckChar } from '../src/lib/ark.js'
 import { cleanup, type Harness, harness } from './harness.js'
@@ -34,6 +35,10 @@ function arkApp(h: Harness) {
       | 'write'
       | 'admin'
     c.set('principal', user ? { userId: user, scope, collectionIds: null } : null)
+    // 'steward' is a KF admin (api/admin.ts stewardOnly); everyone else is not.
+    c.set('kf', {
+      role: async (id: string) => (id === 'steward' ? 'admin' : 'user'),
+    } as unknown as Kf)
     await next()
   })
   app.route('/', arkRoutes())
@@ -112,7 +117,9 @@ beforeAll(async () => {
     name: () => '',
   }
 
-  // Enabling the ARK mints the org's shoulder and the collection's id.
+  // The org has KF's NAAN (a steward's switch); enabling the ARK mints the org's
+  // shoulder and the collection's id.
+  await kfNaan(h, true)
   res = await req(`${base}/ark`, { method: 'PATCH', user, json: { enabled: true } })
   expect(await body(res)).toEqual({ ok: true })
   res = await req(`${base}/ark`, { user })
@@ -123,6 +130,12 @@ beforeAll(async () => {
       .slice(2)
       .join('/')
 })
+
+const kfNaan = (h: Harness, on: boolean) =>
+  h.ports.db
+    .update(schema.organization)
+    .set({ arkKfNaan: on })
+    .where(eq(schema.organization.id, 'org1'))
 
 const addOrg2 = () =>
   t.h.ports.db
@@ -142,6 +155,9 @@ describe('collection ARK settings', () => {
       arkUrl: expect.stringMatching(/^https:\/\/underlay\.org\/ark:12345\/ulb\d/),
       shoulder: expect.stringMatching(/^ulb\d$/),
       arkId: collectionToArkId(t.collectionId),
+      available: true,
+      naan: '12345',
+      naanSource: 'kf',
     })
   })
 
@@ -213,6 +229,9 @@ describe('collection ARK settings', () => {
       arkUrl: null,
       shoulder: null,
       arkId: null,
+      available: true,
+      naan: '12345',
+      naanSource: 'kf',
     })
     // A private collection stays hidden from non-members.
     expect((await t.req(`/api/collections/org/bare/ark`, { user: 'stranger' })).status).toBe(404)
@@ -486,6 +505,8 @@ describe('organization NAAN', () => {
     expect((await patch({ naan: '99999' }, t.user, 'write')).status).toBe(403)
     expect((await patch({ naan: 'abc' }, t.user)).status).toBe(400)
     expect((await patch({ naan: '12345' }, t.user)).status).toBe(409)
+    // KF's NAAN is only ever a steward's to give.
+    expect((await patch({ naan: '71144' }, t.user)).status).toBe(409)
     expect(
       (
         await t.req('/api/accounts/nope/ark', {
@@ -501,6 +522,12 @@ describe('organization NAAN', () => {
     try {
       const settings = await body(await t.req(`${base}/ark`, { user: t.user }))
       expect(settings.arkUrl).toMatch(/^https:\/\/underlay\.org\/ark:99999\//)
+      expect(settings.naanSource).toBe('own')
+      // Its own NAAN is enough without KF's.
+      await kfNaan(t.h, false)
+      expect((await body(await t.req(`${base}/ark`, { user: t.user }))).available).toBe(true)
+      expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(200)
+      await kfNaan(t.h, true)
       // Resolution answers with the org's NAAN, whichever the ARK was written with.
       const r = await body(await resolve(`ark:12345/${t.name()}`))
       expect(r.metadata.naan).toBe('99999')
@@ -522,5 +549,116 @@ describe('organization NAAN', () => {
     } finally {
       await patch({ naan: null }, t.user)
     }
+  })
+})
+
+describe('which orgs have ARKs', () => {
+  it('mints a new collection with its ARK off', async () => {
+    const c = await t.h.collection('fresh')
+    await ensureCollectionArk(t.h.ports.db, { id: c.id, organizationId: 'org1' })
+    const s = await body(await t.req('/api/collections/org/fresh/ark', { user: t.user }))
+    expect(s).toMatchObject({ enabled: false, available: true })
+  })
+
+  it('has none without its own NAAN or KF’s', async () => {
+    await kfNaan(t.h, false)
+    try {
+      const s = await body(await t.req(`${base}/ark`, { user: t.user }))
+      expect(s).toMatchObject({ enabled: false, arkUrl: null, available: false, naan: null })
+      expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(404)
+      expect((await t.req(`/ark:12345/${t.name()}`)).status).toBe(404)
+      // An owner can turn one off, but not on.
+      const patch = (enabled: boolean) =>
+        t.req(`${base}/ark`, { method: 'PATCH', user: t.user, json: { enabled } })
+      expect((await patch(true)).status).toBe(403)
+      expect((await patch(false)).status).toBe(200)
+      expect((await patch(true)).status).toBe(403)
+    } finally {
+      await kfNaan(t.h, true)
+      await t.req(`${base}/ark`, { method: 'PATCH', user: t.user, json: { enabled: true } })
+    }
+    expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(200)
+  })
+
+  it('gets KF’s NAAN from a KF steward only', async () => {
+    const path = '/api/admin/accounts/org/ark'
+    const patch = (json: unknown, user?: string) =>
+      t.req(path, { method: 'PATCH', json, ...(user ? { user } : {}) })
+    expect((await patch({ kfNaan: false })).status).toBe(401)
+    // The org's own owner is not a KF steward.
+    expect((await patch({ kfNaan: false }, t.user)).status).toBe(403)
+    expect((await t.req(path, { user: t.user })).status).toBe(403)
+    expect((await patch({ kfNaan: 'yes' }, 'steward')).status).toBe(400)
+    expect(
+      (
+        await t.req('/api/admin/accounts/nope/ark', {
+          method: 'PATCH',
+          user: 'steward',
+          json: { kfNaan: true },
+        })
+      ).status,
+    ).toBe(404)
+    try {
+      expect((await patch({ kfNaan: false }, 'steward')).status).toBe(200)
+      expect(await body(await t.req(path, { user: 'steward' }))).toEqual({
+        naan: null,
+        kfNaan: false,
+        kfNaanValue: '12345',
+      })
+      expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(404)
+      expect((await patch({ kfNaan: true }, 'steward')).status).toBe(200)
+      expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(200)
+    } finally {
+      await kfNaan(t.h, true)
+    }
+  })
+})
+
+describe('deleted collections', () => {
+  it('leave a tombstone for a live ARK and a 404 for an ARK that was off', async () => {
+    const mk = async (slug: string, on: boolean) => {
+      const c = await t.h.collection(slug)
+      await t.req(`/api/collections/org/${slug}/ark`, {
+        method: 'PATCH',
+        user: t.user,
+        json: { enabled: on },
+      })
+      const name = new URL(
+        buildArkUrl(
+          '12345',
+          (await body(await t.req(`/api/collections/org/${slug}/ark`, { user: t.user })))
+            .shoulder ?? 'ulb0',
+          collectionToArkId(c.id),
+        ),
+      ).pathname
+        .split('/')
+        .slice(2)
+        .join('/')
+      const res = await t.h.request(`/api/collections/org/${slug}`, {
+        method: 'DELETE',
+        user: t.user,
+      })
+      expect(res.status).toBe(200)
+      return name
+    }
+    const live = await mk('doomed', true)
+    const off = await mk('quiet', false)
+
+    const r = await resolve(`ark:12345/${live}`)
+    expect(r.status).toBe(410)
+    expect(await body(r)).toMatchObject({
+      type: 'gone',
+      metadata: { collectionName: 'doomed', ownerName: 'Org', naan: '12345' },
+    })
+    const page = await t.req(`/ark:12345/${live}`)
+    expect(page.status).toBe(410)
+    expect(await page.text()).toMatch(
+      /^This ARK identified the collection "doomed" by Org, which was deleted on \d{4}-\d{2}-\d{2}\./,
+    )
+    expect((await t.req(`/ark:12345/${live}?json`)).status).toBe(410)
+    // Versions of it are gone too.
+    expect((await resolve(`ark:12345/${live}.v1.0.0`)).status).toBe(410)
+
+    expect((await resolve(`ark:12345/${off}`)).status).toBe(404)
   })
 })

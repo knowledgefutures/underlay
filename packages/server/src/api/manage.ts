@@ -33,7 +33,7 @@ import {
   reachesOrg,
   requireCollection,
 } from './access.js'
-import { ensureCollectionArk } from './ark.js'
+import { arkTombstoneFor, ensureCollectionArk } from './ark.js'
 import { readJson } from './body.js'
 
 /** A metadata patch, like a push's opening body, is at most 8 MB. */
@@ -209,6 +209,8 @@ export function manageRoutes() {
       .select({ n: count(), bytes: sql<number>`coalesce(sum(${schema.versions.totalBytes}), 0)` })
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, col.id))
+    // A live ARK outlives its collection as a tombstone (the ARK policy's promise).
+    const arkGrave = await arkTombstoneFor(db, col, access.owner)
     await db.batch([
       db
         .insert(schema.collectionTombstones)
@@ -235,6 +237,7 @@ export function manageRoutes() {
           },
         }),
       db.delete(schema.collections).where(eq(schema.collections.id, col.id)),
+      ...(arkGrave ? [db.insert(schema.arkTombstones).values(arkGrave).onConflictDoNothing()] : []),
     ])
     return c.json({ ok: true })
   })

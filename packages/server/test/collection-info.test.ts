@@ -95,7 +95,8 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('collection.js
     info = await readCollectionInfo(repo, c.id)
     expect(info!.owner).toEqual({ id: 'org1', did: null, handle: 'the-press', name: 'The Press' })
 
-    // Enabling the ARK puts it in the file.
+    // Enabling the ARK (the org has KF's NAAN) puts it in the file.
+    await h.ports.db.update(schema.organization).set({ arkKfNaan: true })
     const ark = await h.request('/api/collections/the-press/library/ark', {
       method: 'PATCH',
       user,

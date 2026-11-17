@@ -143,6 +143,9 @@
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
         "OIDC_ACCOUNT_URL": "https://auth.knowledgefutures.org/profile",
         "OIDC_CLIENT_ID": "kf_underlay",
+        // Knowledge Futures' NAAN, for orgs a KF steward turns ARKs on for (lib/ark.ts).
+        // Elsewhere ARKs use the spec's example NAAN, 12345, which resolves nowhere.
+        "ARK_NAAN": "71144",
         // v1's public assets domain. It serves v1's underlay-public until the DNS switch,
         // then underlay-prod-public (PUBLIC_ASSETS); logos uploaded before then don't show.
         "ASSETS_BASE_URL": "https://assets.underlay.org",

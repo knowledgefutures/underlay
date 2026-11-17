@@ -277,6 +277,11 @@ describe('collection management', () => {
       ndjson: [{ id: 'a', type: 'Author', data: { name: 'A' } }],
     })
     await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
+    // A new collection's ARK starts off, and turns on once the org has a NAAN (KF's here).
+    expect((await json(await h.request(base))).ark).toBeNull()
+    await h.ports.db.update(schema.organization).set({ arkKfNaan: true })
+    const on = await h.request(`${base}/ark`, { method: 'PATCH', user, json: { enabled: true } })
+    expect(on.status).toBe(200)
     const col = await json(await h.request(base))
     expect(col.ark).toMatch(/\/ark:\d+\/ul\w+$/)
     expect(col.latestVersion.ark).toBe(`${col.ark}.v1.0.0`)

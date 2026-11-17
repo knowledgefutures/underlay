@@ -9,10 +9,17 @@
  *   PUT    /api/collections/:owner/:slug/ark/record-types          {recordType, redirectUrlField}
  *   DELETE /api/collections/:owner/:slug/ark/record-types/:type
  *   PATCH  /api/accounts/:slug/ark                                 {naan | null}
+ *   GET    /api/admin/accounts/:slug/ark                           stewards: {naan, kfNaan, kfNaanValue}
+ *   PATCH  /api/admin/accounts/:slug/ark                           stewards: {kfNaan: boolean}
  *   GET    /ark:NAAN/…                                             302, ?info / ?? ERC text, ?json metadata
  *
  * Resolution sees what the caller may read: a non-member resolves only public
  * collections and their public set, as everywhere else in v2.
+ *
+ * An org has ARKs only with a NAAN: its own, set by its owners, or KF's, which a KF
+ * steward turns on (`organization.arkKfNaan`). Without one its collections' ARKs are
+ * neither shown nor resolved, and can't be turned on. A collection's ARK starts off.
+ * A live ARK whose collection is deleted answers 410 with a tombstone, never 404.
  */
 import { and, asc, eq, ne, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
@@ -25,7 +32,9 @@ import {
   collectionToArkId,
   DEFAULT_NAAN,
   formatErcDate,
+  KF_NAAN,
   nextShoulderCounter,
+  orgNaan,
   parseArkPath,
 } from '../lib/ark.js'
 import { deniedHashes } from '../lib/limits.js'
@@ -43,6 +52,7 @@ import {
   type Principal,
   reachesOrg,
 } from './access.js'
+import { stewardOnly } from './admin.js'
 
 // --- Shoulders and collection ARKs (also for wiring ARK fields into other routes) ---
 
@@ -66,6 +76,13 @@ export async function getOrMintShoulder(db: Db, organizationId: string): Promise
     const counter = nextShoulderCounter(countRow?.count ?? 0)
     const digit = Math.floor(Math.random() * 10).toString()
     const shoulder = `ul${counter}${digit}`
+    // A deleted collection's ARK keeps its shoulder: never hand it to another org.
+    const [buried] = await db
+      .select({ arkId: schema.arkTombstones.arkId })
+      .from(schema.arkTombstones)
+      .where(eq(schema.arkTombstones.shoulder, shoulder))
+      .limit(1)
+    if (buried) continue
     // A concurrent mint can take the same shoulder; nothing inserted means retry.
     const inserted = await db
       .insert(schema.arkShoulders)
@@ -77,7 +94,7 @@ export async function getOrMintShoulder(db: Db, organizationId: string): Promise
   throw new Error('Failed to mint ARK shoulder after 10 attempts')
 }
 
-/** Mint a collection's ARK (and its org's shoulder) if it has none. For collection creation. */
+/** Mint a collection's ARK, turned off, and its org's shoulder, if it has none. For creation. */
 export async function ensureCollectionArk(
   db: Db,
   collection: { id: string; organizationId: string },
@@ -85,8 +102,49 @@ export async function ensureCollectionArk(
   await getOrMintShoulder(db, collection.organizationId)
   await db
     .insert(schema.arkCollections)
-    .values({ collectionId: collection.id, arkId: collectionToArkId(collection.id) })
+    .values({
+      collectionId: collection.id,
+      arkId: collectionToArkId(collection.id),
+      enabled: false,
+    })
     .onConflictDoNothing()
+}
+
+interface ArkOwner {
+  id: string
+  name: string
+  arkNaan: string | null
+  arkKfNaan: boolean | null
+}
+
+/**
+ * For a collection about to be deleted: if its ARK is live, the tombstone row that
+ * keeps it answering. Null otherwise (an ARK never shown was never promised).
+ */
+export async function arkTombstoneFor(
+  db: Db,
+  collection: { id: string; name: string },
+  owner: ArkOwner,
+): Promise<typeof schema.arkTombstones.$inferInsert | null> {
+  const naan = orgNaan(owner)
+  if (!naan) return null
+  const [row] = await db
+    .select()
+    .from(schema.arkCollections)
+    .where(eq(schema.arkCollections.collectionId, collection.id))
+    .limit(1)
+  if (!row?.enabled) return null
+  const shoulder = await orgShoulder(db, owner.id)
+  if (!shoulder) return null
+  return {
+    arkId: row.arkId,
+    shoulder,
+    naan,
+    collectionId: collection.id,
+    organizationId: owner.id,
+    ownerName: owner.name,
+    collectionName: collection.name,
+  }
 }
 
 /**
@@ -96,8 +154,10 @@ export async function ensureCollectionArk(
 export async function collectionArk(
   db: Db,
   collectionId: string,
-  owner: { id: string; arkNaan: string | null },
+  owner: { id: string; arkNaan: string | null; arkKfNaan: boolean | null },
 ): Promise<((semver?: string) => string) | null> {
+  const naan = orgNaan(owner)
+  if (!naan) return null
   const [row] = await db
     .select()
     .from(schema.arkCollections)
@@ -106,16 +166,52 @@ export async function collectionArk(
   if (!row?.enabled) return null
   const shoulder = await orgShoulder(db, owner.id)
   if (!shoulder) return null
-  return (semver) => buildArkUrl(owner.arkNaan ?? DEFAULT_NAAN, shoulder, row.arkId, semver)
+  return (semver) => buildArkUrl(naan, shoulder, row.arkId, semver)
 }
 
 // --- Resolution ---
 
 export type ArkResolution =
   | { type: 'redirect'; url: string; metadata: Record<string, unknown> }
+  | { type: 'gone'; metadata: Record<string, unknown> }
   | { type: 'not_found'; error?: string }
 
 const notFound: ArkResolution = { type: 'not_found' }
+
+/** No live collection behind an ARK: a deleted one's answers with its tombstone. */
+async function buriedArk(
+  db: Db,
+  shoulder: string,
+  collectionArkId: string,
+): Promise<ArkResolution> {
+  const [buried] = await db
+    .select()
+    .from(schema.arkTombstones)
+    .where(
+      and(
+        eq(schema.arkTombstones.arkId, collectionArkId),
+        eq(schema.arkTombstones.shoulder, shoulder),
+      ),
+    )
+    .limit(1)
+  if (!buried) return notFound
+  const arkUrl = buildArkUrl(buried.naan, shoulder, collectionArkId)
+  return {
+    type: 'gone',
+    metadata: {
+      type: 'collection',
+      who: buried.ownerName,
+      what: buried.collectionName,
+      when: formatErcDate(buried.deletedAt),
+      where: arkUrl,
+      naan: buried.naan,
+      collectionName: buried.collectionName,
+      ownerName: buried.ownerName,
+      deletedAt: buried.deletedAt,
+      arkUrl,
+    },
+  }
+}
 
 /**
  * Resolve `ark:NAAN/name` (anything before "ark:" is ignored) for a caller.
@@ -135,7 +231,6 @@ export async function resolveArk(
   if (afterLabel.startsWith('/')) afterLabel = afterLabel.slice(1)
   const slashIdx = afterLabel.indexOf('/')
   if (slashIdx === -1) return notFound
-  const naan = afterLabel.slice(0, slashIdx)
   const pathAfterNaan = afterLabel.slice(slashIdx + 1)
   if (!pathAfterNaan) return notFound
 
@@ -154,7 +249,7 @@ export async function resolveArk(
     .from(schema.arkShoulders)
     .where(eq(schema.arkShoulders.shoulder, shoulder))
     .limit(1)
-  if (!shoulderRow) return notFound
+  if (!shoulderRow) return buriedArk(db, shoulder, collectionArkId)
 
   const [row] = await db
     .select({
@@ -167,7 +262,8 @@ export async function resolveArk(
     .innerJoin(schema.organization, eq(schema.collections.organizationId, schema.organization.id))
     .where(eq(schema.arkCollections.arkId, collectionArkId))
     .limit(1)
-  if (!row || !row.ark.enabled) return notFound
+  if (!row) return buriedArk(db, shoulder, collectionArkId)
+  if (!row.ark.enabled) return notFound
   // The shoulder must be the collection owner's: another org's shoulder in
   // front of this collection's id is not its ARK.
   if (shoulderRow.organizationId !== row.collection.organizationId) return notFound
@@ -179,7 +275,10 @@ export async function resolveArk(
   const member = access.isMember
 
   const { collection, owner } = row
-  const resolvedNaan = owner.arkNaan ?? naan
+  // An org without a NAAN has no ARKs. One with a NAAN answers under it, whichever
+  // NAAN the ARK was written with.
+  const resolvedNaan = orgNaan(owner)
+  if (!resolvedNaan) return notFound
 
   let v: VersionRow | null = null
   if (version !== undefined) {
@@ -352,6 +451,29 @@ async function arkPage(c: Context<AppEnv>): Promise<Response> {
 
   const { metadata } = res
   const search = url.search
+  if (res.type === 'gone') {
+    if (search === '?json') {
+      return new Response(JSON.stringify(metadata, null, 2), {
+        status: 410,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const m = metadata as Record<string, string>
+    const erc = buildErc({
+      type: 'collection',
+      who: m.who!,
+      what: m.what!,
+      when: m.when!,
+      where: m.where!,
+      naan: m.naan!,
+    })
+    const day = new Date(metadata.deletedAt as Date).toISOString().slice(0, 10)
+    return text(
+      `This ARK identified the collection "${m.collectionName}" by ${m.ownerName}, ` +
+        `which was deleted on ${day}. It will not be assigned to anything else.\n\n${erc}`,
+      410,
+    )
+  }
   if (search === '?info' || search === '??' || search === '%3F%3F') {
     const m = metadata as Record<string, string | undefined>
     return text(
@@ -445,7 +567,8 @@ export function arkRoutes() {
     if (!path) return jsonError(c, 400, 'Missing path')
     const res = await resolveArk(c.var.ports, c.var.principal, path)
     if (!res) return jsonError(c, 400, 'Invalid ARK path')
-    return res.type === 'not_found' ? c.json(res, 404) : c.json(res)
+    if (res.type === 'not_found') return c.json(res, 404)
+    return c.json(res, res.type === 'gone' ? 410 : 200)
   })
 
   app.get('/api/collections/:owner/:slug/ark', async (c) => {
@@ -457,15 +580,30 @@ export function arkRoutes() {
       .from(schema.arkCollections)
       .where(eq(schema.arkCollections.collectionId, access.collection.id))
       .limit(1)
+    // available: the org has a NAAN, so the ARK can be on; naanSource says whose.
+    const naan = orgNaan(access.owner)
+    const availability = {
+      available: !!naan,
+      naan,
+      naanSource: access.owner.arkNaan ? 'own' : naan ? 'kf' : null,
+    }
     const shoulder = row ? await orgShoulder(db, access.owner.id) : null
-    if (!row || !shoulder)
-      return c.json({ enabled: false, customUrl: null, arkUrl: null, shoulder: null, arkId: null })
+    if (!row || !shoulder || !naan)
+      return c.json({
+        enabled: false,
+        customUrl: row?.customUrl ?? null,
+        arkUrl: null,
+        shoulder: null,
+        arkId: null,
+        ...availability,
+      })
     return c.json({
       enabled: row.enabled,
       customUrl: row.customUrl,
-      arkUrl: buildArkUrl(access.owner.arkNaan ?? DEFAULT_NAAN, shoulder, row.arkId),
+      arkUrl: buildArkUrl(naan, shoulder, row.arkId),
       shoulder,
       arkId: row.arkId,
+      ...availability,
     })
   })
 
@@ -485,6 +623,12 @@ export function arkRoutes() {
     if (customUrl != null && customUrl !== '' && !isHttpUrl(customUrl))
       return jsonError(c, 422, 'customUrl must be an http(s) URL')
     const url = customUrl === undefined ? undefined : (customUrl as string | null) || null
+    if (enabled === true && !orgNaan(access.owner))
+      return jsonError(
+        c,
+        403,
+        "ARKs aren't on for this organization. Set its own NAAN in its settings, or ask Knowledge Futures to turn them on.",
+      )
 
     const { db } = c.var.ports
     const coll = access.collection
@@ -603,12 +747,47 @@ export function arkRoutes() {
         .from(schema.organization)
         .where(and(eq(schema.organization.arkNaan, naan), ne(schema.organization.id, org.id)))
         .limit(1)
-      if (naan === DEFAULT_NAAN || taken) return jsonError(c, 409, 'That NAAN is already in use')
+      if (naan === DEFAULT_NAAN || naan === KF_NAAN || taken)
+        return jsonError(c, 409, 'That NAAN is already in use')
     }
     await db
       .update(schema.organization)
       .set({ arkNaan: naan })
       .where(eq(schema.organization.id, org.id))
+    await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
+    return c.json({ ok: true })
+  })
+
+  // KF's NAAN for an org, which only a steward turns on or off: KF answers for it.
+  app.get('/api/admin/accounts/:slug/ark', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const [org] = await c.var.ports.db
+      .select()
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, c.req.param('slug')))
+      .limit(1)
+    if (!org) return jsonError(c, 404, 'Org not found')
+    return c.json({ naan: org.arkNaan, kfNaan: org.arkKfNaan, kfNaanValue: DEFAULT_NAAN })
+  })
+
+  app.patch('/api/admin/accounts/:slug/ark', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const body = (await c.req.json().catch(() => null)) as { kfNaan?: unknown } | null
+    if (typeof body?.kfNaan !== 'boolean') return jsonError(c, 400, 'kfNaan must be a boolean')
+    const { db } = c.var.ports
+    const [org] = await db
+      .select({ id: schema.organization.id })
+      .from(schema.organization)
+      .where(eq(schema.organization.slug, c.req.param('slug')))
+      .limit(1)
+    if (!org) return jsonError(c, 404, 'Org not found')
+    await db
+      .update(schema.organization)
+      .set({ arkKfNaan: body.kfNaan })
+      .where(eq(schema.organization.id, org.id))
+    // Each collection.json carries its ARK, which this shows or hides.
     await c.var.ports.jobs.enqueue({ type: 'collection.info.org', organizationId: org.id })
     return c.json({ ok: true })
   })
