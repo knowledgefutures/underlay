@@ -877,7 +877,17 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
     )
   const footer: Line[] = [rule(width)]
   if (v.busy) footer.push(L([S('Pushing…', C.bl)]))
-  else if (!versions) footer.push(L([S('Nothing included: space includes a collection', C.mu)]))
+  else if (!versions)
+    footer.push(
+      L([
+        S(
+          v.plans.some((p) => behindOf(v, p))
+            ? 'Behind its authority: l pulls first, then this screen shows your versions on top'
+            : 'Nothing included: space includes a collection',
+          C.mu,
+        ),
+      ]),
+    )
   else if (loud)
     footer.push(
       L([
@@ -981,9 +991,9 @@ export function pickPane(v: PickView, width: number): Pane {
         '      ' +
           P('COLLECTION', 26) +
           P('ACCESS', 9) +
-          R('RECORDS', 13) +
-          R('SIZE', 9) +
-          '   HERE OR ADD',
+          P('HERE OR ADD', 19) +
+          R('RECORDS', 12) +
+          R('SIZE', 9),
         C.mu,
       ),
     ]),
@@ -1023,11 +1033,12 @@ export function pickPane(v: PickView, width: number): Pane {
         [
           S(on ? '› ' : '  ', C.gr, true),
           S(c.here ? '    ' : sel ? '[x] ' : '[ ] ', sel ? C.fg : C.mu),
-          S(P(name.slice(0, 26), 26), on ? C.wh : C.fg, on),
-          S(P(c.public ? 'public' : 'private', 9), c.public ? C.mu : C.mu),
-          S(R(count(c.recordCount), 13), C.mu),
+          S(P(name.length > 25 ? name.slice(0, 24) + '…' : name, 26), on ? C.wh : C.fg, on),
+          S(P(c.public ? 'public' : 'private', 9), C.mu),
+          // What is here, or what will be added, before the counts: it is what this screen is for.
+          S(P(here, 19), c.here ? C.fg : sel ? C.bl : C.mu),
+          S(R(count(c.recordCount), 12), C.mu),
           S(R(bytes(c.totalBytes), 9), C.mu),
-          S('   ' + here, c.here ? C.fg : sel ? C.bl : C.mu),
         ],
         on ? C.sel : undefined,
       ),
@@ -1035,7 +1046,7 @@ export function pickPane(v: PickView, width: number): Pane {
   })
   const chosen = [...v.selected.entries()]
   const footer: Line[] = [rule(width)]
-  if (v.status) footer.push(L([S(v.status, C.bl)]))
+  if (v.status) footer.push(...wrap(v.status, width - 2, C.bl))
   else if (chosen.length) {
     const all = chosen.filter(([, k]) => k === 'all').map(([n]) => n.split('/')[1])
     const meta = chosen.filter(([, k]) => k === 'none').map(([n]) => n.split('/')[1])
@@ -1229,7 +1240,7 @@ export function filePane(v: FileView, width: number): Pane {
     )
   }
   const footer: Line[] = [rule(width)]
-  if (v.status) footer.push(L([S(v.status, C.bl)]))
+  if (v.status) footer.push(...wrap(v.status, width - 2, C.bl))
   else
     footer.push(
       L([

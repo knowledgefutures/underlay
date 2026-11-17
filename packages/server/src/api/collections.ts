@@ -212,6 +212,8 @@ export function collectionRoutes() {
         description: r.c.summary?.description ?? null,
         tags: r.c.summary?.tags ?? [],
         latestVersion: v?.semver ?? null,
+        // The protocol its versions are in: a client that syncs v3 only (the CLI) skips 2.
+        protocol: r.c.recordLayout === 'v3' ? 3 : 2,
         recordCount: v?.recordCount ?? null,
         fileCount: v?.fileCount ?? null,
         totalBytes: v?.totalBytes ?? null,
@@ -408,6 +410,8 @@ export function collectionRoutes() {
           tags: r.c.summary?.tags ?? [],
           license: r.c.summary?.license ?? null,
           latestVersion: v?.semver ?? null,
+          // The protocol its versions are in: a client that syncs v3 only (the CLI) skips 2.
+          protocol: r.c.recordLayout === 'v3' ? 3 : 2,
           recordCount: v?.recordCount ?? null,
           totalBytes: v?.totalBytes ?? null,
           typeCounts: v?.typeCounts ?? null,

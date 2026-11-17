@@ -261,11 +261,15 @@ export function App({
   const reloadSoon = useRef<NodeJS.Timeout | null>(null)
   const tick = useRef(0)
 
+  // Every action is followed by a fresh read: the screen shows its result at once, not at
+  // the next periodic refresh.
+  const reloadRef = useRef<(() => Promise<void>) | null>(null)
   const attempt = useCallback(async (what: string, work: () => Promise<string | void>) => {
     setStatus(`${what}…`)
     try {
       const done = await work()
       setStatus(done ?? '')
+      await reloadRef.current?.()
     } catch (err) {
       setStatus(
         err instanceof CliError
@@ -285,6 +289,8 @@ export function App({
       setStatus(`Reading home: ${(err as Error).message}`)
     }
   }, [ctx])
+
+  reloadRef.current = reload
 
   const refreshRemotes = useCallback(async () => {
     const s = await loadSnapshot(ctx)
@@ -356,10 +362,14 @@ export function App({
   )
   useEffect(() => {
     if (side && !side.items.some((i) => itemId(i) === sel)) {
-      const first = side.items.find((i) => i.kind === 'coll') ?? side.items[0]
+      // A collection, else a remote you are signed in to: not a signed-out one.
+      const first =
+        side.items.find((i) => i.kind === 'coll') ??
+        side.items.find((i) => i.kind === 'remote' && ctx.env.keys.get(i.name) !== null) ??
+        side.items[0]
       if (first) setSel(itemId(first))
     }
-  }, [side, sel])
+  }, [side, sel, ctx])
 
   const item = side?.items.find((i) => itemId(i) === sel) ?? null
   const collRow =
@@ -415,6 +425,11 @@ export function App({
   // A run's log, followed while it is shown.
   const runId = shownRun?.id ?? ''
   const runLive = shownRun?.status === 'running' || shownRun?.status === 'paused'
+  // "Run … started" stops being true when the run ends: the run's own screen says how it went.
+  useEffect(() => {
+    if (shownRun && !runLive)
+      setStatus((st) => (st.startsWith(`Run ${shownRun.id} started`) ? '' : st))
+  }, [shownRun, runLive])
   useEffect(() => {
     if (!shownRun) return
     const read = () => {
@@ -460,6 +475,16 @@ export function App({
     const chosen = push_.plans.filter(
       (p) => push_.included.has(p.coll.key) && !push_.behind[p.coll.key],
     )
+    // Nothing to send is not a push that went well.
+    if (chosen.length === 0) {
+      const behind = push_.plans.some((p) => push_.behind[p.coll.key])
+      setStatus(
+        behind
+          ? 'Behind its authority: l pulls first'
+          : 'Nothing included: space includes a collection',
+      )
+      return
+    }
     setPush((v) => ({
       ...v,
       busy: true,
@@ -526,17 +551,28 @@ export function App({
   const addPicked = useCallback(async () => {
     const chosen = [...pick.selected.entries()]
     if (!chosen.length) return
-    for (const [name, k] of chosen) {
-      setPick((v) => ({ ...v, status: `Adding ${name}…` }))
+    // Each on its own: one that fails doesn't stop the rest, and stays selected to retry.
+    const failed = new Map<string, 'all' | 'none'>()
+    const problems: string[] = []
+    let added = 0
+    for (const [i, [name, k]] of chosen.entries()) {
+      setPick((v) => ({ ...v, status: `Adding ${name} (${i + 1} of ${chosen.length})…` }))
       try {
         await addCollection(ctx, `${pick.remote}/${name}`, { keep: k })
+        added++
       } catch (err) {
-        setPick((v) => ({ ...v, status: `${name}: ${(err as Error).message}` }))
-        return
+        failed.set(name, k)
+        problems.push((err as Error).message)
       }
     }
     const l = await loadRemote(ctx, pick.remote)
-    setPick((v) => ({ ...v, selected: new Map(), status: `Added ${chosen.length}`, listing: l }))
+    const done = added ? `Added ${added} of ${chosen.length}` : `Added none of ${chosen.length}`
+    setPick((v) => ({
+      ...v,
+      selected: failed,
+      listing: l,
+      status: problems.length ? `${done}. ${problems.join(' · ')}` : `Added ${added}`,
+    }))
     void reload()
   }, [ctx, pick, reload])
 
@@ -723,6 +759,20 @@ export function App({
         return
       }
       if (input === 'y') return void runPush()
+      // Pull what is behind, from here: their versions in, yours replayed on top, then the
+      // plan again.
+      if (input === 'l' && push_.plans.some((p) => push_.behind[p.coll.key]))
+        return void attempt('Pulling', async () => {
+          const said: string[] = []
+          for (const p of push_.plans.filter((x) => push_.behind[x.coll.key])) {
+            const r = await pull(ctx, p.coll)
+            said.push(
+              `${p.coll.meta.name}: ${r.fetched} new${r.replayed.length ? `, yours replayed as ${r.replayed.map((x) => x.to.commit.semver).join(', ')}` : ''}`,
+            )
+          }
+          await openPush()
+          return said.join(' · ')
+        })
       const p = push_.plans[push_.cursor]
       if (input === 'd' && p)
         return (setOverlay(null), setSel(`c:${p.coll.key}`), setTab('Changes'))
@@ -1095,8 +1145,19 @@ export function App({
         setFocus('main')
       )
     if (input === 'p') return void openPush()
-    if (input === '+')
-      return void openPick(item?.kind === 'remote' ? item.name : ctx.settings.defaultRemote)
+    if (input === '+') {
+      // The selected remote if you are signed in there; else your default, or the first
+      // server you are signed in to. A signed-out remote's list is a dead end.
+      const signedIn = (n: string) => ctx.env.keys.get(n) !== null
+      const remotes = snap?.remotes.map((r) => r.name) ?? []
+      const target =
+        item?.kind === 'remote' && signedIn(item.name)
+          ? item.name
+          : signedIn(ctx.settings.defaultRemote)
+            ? ctx.settings.defaultRemote
+            : (remotes.find(signedIn) ?? ctx.settings.defaultRemote)
+      return void openPick(target)
+    }
     if (input === 'h') return (setRunsCursor(0), setOverlay('runs'), setFocus('main'))
     if (input === 'f')
       return setPrompt({

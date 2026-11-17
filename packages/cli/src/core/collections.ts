@@ -2,7 +2,7 @@
  * Collections on this machine: listing a remote's, adding them, starting new ones, what is
  * kept, and how each stands (local-tool-build.md phase 1).
  */
-import { writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
@@ -14,6 +14,9 @@ import { type CollectionMeta, type CollectionRef, keyOf, parseRef } from './home
 import { Remote, type RemoteCollection } from './remote.js'
 import { fetchKept, pull } from './sync.js'
 import { cidOf, schemasAt, unpushedOf, viewOf } from './versions.js'
+
+/** Collections the CLI can sync: v3. A v2 collection is left out of every list. */
+const syncable = (c: RemoteCollection) => c.protocol === undefined || c.protocol === 3
 
 export const KEEP_MARK: Record<Keep, string> = { all: '■', some: '◧', none: '□' }
 
@@ -40,7 +43,7 @@ export async function listRemote(ctx: Ctx, name: string): Promise<RemoteListing>
       slug: o.slug,
       name: o.name,
       role: o.role,
-      collections: (await remote.orgCollections(o.slug)).map((c) => ({
+      collections: (await remote.orgCollections(o.slug)).filter(syncable).map((c) => ({
         ...c,
         here:
           here.find((h) => h.authority === name && h.org === o.slug && h.name === c.slug) ?? null,
@@ -54,7 +57,7 @@ export async function listRemote(ctx: Ctx, name: string): Promise<RemoteListing>
 export async function listPublic(ctx: Ctx, name: string, q?: string) {
   const remote = Remote.open(ctx.env, ctx.settings, name, ctx.say)
   const here = ctx.home.collections()
-  return (await remote.publicCollections(q)).map((c) => ({
+  return (await remote.publicCollections(q)).filter(syncable).map((c) => ({
     ...c,
     here:
       here.find((h) => h.authority === name && h.org === c.ownerSlug && h.name === c.slug) ?? null,
@@ -72,6 +75,8 @@ export async function addCollection(
     throw new CliError(`${keyOf(ref)} is here already (underlay pull)`)
   const remote = Remote.open(ctx.env, ctx.settings, ref.authority, ctx.say)
   const info = await remote.collection(ref.org, ref.name)
+  // Nothing is written for a collection that can't be followed (a v2 one).
+  await remote.checkSyncable(ref.org, ref.name)
   const keep = opts.keep ?? ruleFor(ctx.settings, keyOf(ref)).keep ?? 'all'
   const meta: CollectionMeta = {
     ...ref,
@@ -91,12 +96,32 @@ export async function addCollection(
     `# ${info.name}\n\n${info.description ?? ''}\n\nOn ${ref.authority}: ${remote.url}/${ref.org}/${ref.name}\n`,
   )
   const coll = openColl(ctx, meta)
-  const pulled = await pull(ctx, coll)
-  // All the head's schemas, not only those that changed since nothing.
-  if ((await v3.headNumber(coll.store.fs, meta.id)) > 0) {
-    ctx.home.writeSchemas(meta, await schemasAt(coll.data, await viewOf(coll)))
+  try {
+    const pulled = await pull(ctx, coll)
+    // All the head's schemas, not only those that changed since nothing.
+    if ((await v3.headNumber(coll.store.fs, meta.id)) > 0) {
+      ctx.home.writeSchemas(meta, await schemasAt(coll.data, await viewOf(coll)))
+    }
+    return { coll: openColl(ctx, ctx.home.collection(ref)), pulled }
+  } catch (err) {
+    // A collection half added is worse than none: it would sit in the sidebar, unpulled, and
+    // the next add of it would say it is here already.
+    rmSync(ctx.home.collectionDir(ref), { recursive: true, force: true })
+    await dropLocalLog(coll)
+    throw err
   }
-  return { coll: openColl(ctx, ctx.home.collection(ref)), pulled }
+}
+
+/** The store's log and notes for a collection (its record files stay: others may name them). */
+async function dropLocalLog(c: Coll): Promise<void> {
+  const prefix = v3.collectionPrefix(cidOf(c))
+  let cursor: string | undefined
+  do {
+    const page = await c.store.fs.list(prefix, cursor)
+    for (const k of page.keys) await c.store.fs.delete(k)
+    cursor = page.cursor
+  } while (cursor)
+  rmSync(c.store.statePath(cidOf(c)), { force: true })
 }
 
 /** Start a collection that is not on its authority yet; its first push creates it there. */

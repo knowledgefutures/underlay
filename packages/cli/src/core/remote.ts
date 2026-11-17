@@ -66,6 +66,8 @@ export interface RemoteCollection {
   recordCount: number | null
   totalBytes: number | null
   lastPushAt: string | null
+  /** The protocol its versions are in; absent from a server older than this field. */
+  protocol?: number
 }
 
 export interface CommitEntry {
@@ -161,6 +163,18 @@ export class Remote {
           : res.status === 404 && !this.key
             ? ' (or sign in)'
             : ''
+      if (res.status === 409 && /Commits are for v3 collections/.test(String(why)))
+        throw new RemoteError(
+          `${path
+            .replace(/^\/api\/collections\//, '')
+            .split('/')
+            .slice(0, 2)
+            .join(
+              '/',
+            )} on ${this.name} uses Underlay's older protocol (v2); the CLI works with v3 collections only`,
+          409,
+          body,
+        )
       throw new RemoteError(`${this.name}${path}: ${res.status} ${why}${hint}`, res.status, body)
     }
     return body as T
@@ -204,6 +218,14 @@ export class Remote {
   }
 
   /** Every commit after `after`, page by page. */
+  /**
+   * Can this collection be followed by its commits? Not one on protocol v2, which a server
+   * answers 409; a newer server converts those to v3.
+   */
+  async checkSyncable(org: string, name: string): Promise<void> {
+    await this.json(`${this.collectionPath(org, name)}/commits?after=0&limit=1`)
+  }
+
   async commitsAfter(org: string, name: string, after: number): Promise<CommitPage> {
     const base = this.collectionPath(org, name)
     const first = await this.json<CommitPage>(`${base}/commits?after=${after}`)
