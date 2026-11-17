@@ -20,6 +20,7 @@ const K = {
   left: '\u001B[D',
   enter: '\r',
   esc: '\u001B',
+  backspace: '\u007F',
   tab: '\t',
 }
 const wait = (ms = 120) => new Promise((r) => setTimeout(r, ms))
@@ -66,6 +67,34 @@ async function server() {
   await w.h.collection('old', { recordLayout: 'today' })
   return w
 }
+
+describe('a new collection', () => {
+  it('checks the name as you type, makes it here, and says how to fill it', async () => {
+    const w = await server()
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('Servers')
+    await d.press('n')
+    await d.until('New collection')
+    // The org comes from the server's list once it is read.
+    await d.until(/org\s+org/)
+    for (const ch of 'members') await d.press(ch)
+    await d.until('keeps "members" for itself; choose another name')
+    for (let i = 0; i < 7; i++) await d.press(K.backspace)
+    for (const ch of 'lib') await d.press(ch)
+    await d.until('already has org/lib: + adds it instead')
+    for (const ch of '-notes') await d.press(ch)
+    await d.until('Makes test/org/lib-notes here')
+    await d.press(K.enter)
+    const f = await d.until('Made org/lib-notes here; your first push creates it on test')
+    expect(f).toContain('No versions yet. To fill it:')
+    expect(f).toContain('// underlay: writes org/lib-notes')
+    expect(w.home.readCollection({ authority: 'test', org: 'org', name: 'lib-notes' })?.isNew).toBe(
+      true,
+    )
+    ui.unmount()
+  })
+})
 
 describe('adding collections from a remote', () => {
   it('lists no v2 collection, adds several at once, and carries on past one that fails', async () => {

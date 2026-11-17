@@ -281,15 +281,28 @@ export function collectionPane(
     if (d.readme) lines.push(...wrap(d.readme, width - 2), blank())
     capsAt = lines.length
     lines.push(head('HERE'))
-    if (d.versions.length === 0)
+    if (d.versions.length === 0) {
+      // A new, empty collection: the ways to fill it.
+      lines.push(L([S('  No versions yet. To fill it:')]), blank())
       lines.push(
+        ...caps([{ k: 'f', l: 'add a file: CSV, Excel, JSON, Parquet, or SQLite' }], width - 4),
+      )
+      if (writers.length) lines.push(...caps([{ k: 'R', l: `run ${writers[0]!.name}` }], width - 4))
+      else
+        lines.push(
+          L([S(' R ', C.fg, false, C.cap), S(' run a script that writes it', C.mu)]),
+          L([S("     none yet: a script's first line says", C.dim)]),
+          L([S(`     // underlay: writes ${m.org}/${m.name}`, C.dim)]),
+        )
+      lines.push(
+        ...caps([{ k: 'a', l: 'prompt for an agent to write one' }], width - 4),
+        blank(),
         L([
-          S('  No versions yet. A run, an import, or ', C.mu),
-          S('underlay save', C.fg),
-          S(' makes the first.', C.mu),
+          S('  Its schemas go in ', C.mu),
+          S(`collections/${m.authority}/${m.org}/${m.name}/schemas/`),
         ]),
       )
-    else if (d.filesHere < d.filesTotal)
+    } else if (d.filesHere < d.filesTotal)
       lines.push(
         L([
           S(`  ${KEEP_MARK[m.keep]} `, keepColor(m.keep)),

@@ -12,6 +12,7 @@ import { type Keep, ruleFor } from './config.js'
 import { type Coll, type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
 import { type CollectionMeta, type CollectionRef, keyOf, parseRef } from './home.js'
+import { nameProblem } from './names.js'
 import { Remote, type RemoteCollection } from './remote.js'
 import { fetchKept, pull } from './sync.js'
 import { cidOf, schemasAt, unpushedOf, viewOf } from './versions.js'
@@ -158,6 +159,8 @@ export function newCollection(
 ): CollectionMeta {
   const ref = parseRef(text, ctx.settings.defaultRemote)
   if (ctx.home.readCollection(ref)) throw new CliError(`${keyOf(ref)} is here already`)
+  const bad = nameProblem(ref.name, ref.authority)
+  if (bad) throw new CliError(bad)
   const meta: CollectionMeta = {
     ...ref,
     id: crypto.randomUUID(),

@@ -5,6 +5,7 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
 const KEYS: [string, string][] = [
   ['c', 'Collections on this machine: where you start, and where esc takes you back to'],
+  ['n', 'A new collection: server, org, name, and access; the first push creates it on the server'],
   ['s', 'Servers'],
   ['r', 'Scripts and views'],
   ['↑ ↓', 'Move through the card that has the keys'],

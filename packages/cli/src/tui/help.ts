@@ -25,6 +25,7 @@ export const SECTIONS: [Section, Hint[]][] = [
     'anywhere',
     [
       ['c', 'collections on this machine'],
+      ['n', 'a new collection (from Collections)'],
       ['s', 'servers'],
       ['r', 'scripts and views'],
       ['↑↓', 'move in that card'],

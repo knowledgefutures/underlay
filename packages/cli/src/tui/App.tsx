@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addCollection,
   KEEP_LABEL,
+  newCollection,
   removeCollection,
   type RemoteListing,
   setKeep,
@@ -34,8 +35,9 @@ import { type Ctx, openColl } from '../core/context.js'
 import { CliError, tildePath } from '../core/env.js'
 import { bytes, diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
-import { parseRef } from '../core/home.js'
+import { type CollectionMeta, keyOf, parseRef } from '../core/home.js'
 import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/importers.js'
+import { nameProblem } from '../core/names.js'
 import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
 import { type FileProgress, pull, push, pushPlan, StaleError } from '../core/sync.js'
@@ -56,6 +58,7 @@ import {
 import { Frame, KeyBar, Lines, windowed } from './frame.js'
 import { helpView, type Section } from './help.js'
 import { C, type Key, type Line, type Pane } from './lines.js'
+import { fieldsOf, type NewForm, newPane, typedField } from './newform.js'
 import {
   collectionPane,
   FILE_FIELDS,
@@ -89,7 +92,7 @@ import {
   settingsList,
 } from './settings.js'
 
-type Overlay = null | 'push' | 'pick' | 'settings' | 'file' | 'runs' | { run: string }
+type Overlay = null | 'push' | 'pick' | 'settings' | 'file' | 'runs' | 'new' | { run: string }
 
 interface Prompt {
   label: string
@@ -249,6 +252,14 @@ export function App({
   const [scroll, setScroll] = useState(0)
   // The version selected in the Versions tab, newest first.
   const [vCursor, setVCursor] = useState(0)
+  // The new-collection form, what made it open, and what to do once the collection is made.
+  const [newForm, setNewForm] = useState<NewForm | null>(null)
+  const newThen = useRef<{
+    back: Overlay
+    made?: (meta: CollectionMeta) => Promise<string | void>
+  }>({
+    back: null,
+  })
   const [runLog, setRunLog] = useState<{ id: string; lines: string[] }>({ id: '', lines: [] })
   const [push_, setPush] = useState<PushView>({
     plans: [],
@@ -723,6 +734,62 @@ export function App({
     setScroll(0)
   }
 
+  /** Your orgs on a server, or null when signed out there (or not read yet). */
+  const orgsOn = (server: string): string[] | null => {
+    const l = remotes[server]
+    return l && 'orgs' in l && l.signedIn ? l.orgs.map((o) => o.slug) : null
+  }
+  /** What is wrong with the form, checked as you type: the first push isn't where you find out. */
+  const newProblem = (f: NewForm): string | null => {
+    if (!f.org) return 'Choose an org'
+    const bad = nameProblem(f.name, f.server)
+    if (bad) return bad
+    if (ctx.home.readCollection({ authority: f.server, org: f.org, name: f.name }))
+      return `${f.org}/${f.name} is already here`
+    const l = remotes[f.server]
+    if (
+      l &&
+      'orgs' in l &&
+      l.orgs.some((o) => o.slug === f.org && o.collections.some((c) => c.slug === f.name))
+    )
+      return `${f.server} already has ${f.org}/${f.name}: + adds it instead`
+    if (f.type !== null && !/^[A-Za-z][A-Za-z0-9_]*$/.test(f.type))
+      return 'A type is letters, numbers, and underscores, starting with a letter'
+    return null
+  }
+  /** Open the new-collection form, filled in from what is known, and what follows making it. */
+  const openNew = (
+    init: Partial<NewForm> = {},
+    then: { back: Overlay; made?: (meta: CollectionMeta) => Promise<string | void> } = {
+      back: null,
+    },
+  ) => {
+    const servers = snap?.remotes.map((r) => r.name) ?? [ctx.settings.defaultRemote]
+    const server =
+      init.server ??
+      (item?.kind === 'remote' ? item.name : collRow?.meta.authority) ??
+      ctx.settings.defaultRemote
+    const orgs = orgsOn(server)
+    newThen.current = then
+    setNewForm({
+      servers,
+      server,
+      orgs,
+      org: init.org ?? orgs?.[0] ?? '',
+      name: '',
+      title: '',
+      type: null,
+      access: 'private',
+      field: 'name',
+      from: null,
+      then: null,
+      ...init,
+    })
+    setOverlay('new')
+    setFocus('main')
+    void refreshRemotes()
+  }
+
   /** Which section of the help screen is where you are. */
   const hereSection = (): Section =>
     overlay === 'settings'
@@ -778,6 +845,7 @@ export function App({
       return setHelp(null)
     }
     const typing =
+      overlay === 'new' ||
       (overlay === 'settings' && settings.editing !== null) ||
       (overlay === 'pick' && pick.searching)
     if (input === '?' && !typing) return setHelp({ from: hereSection(), scroll: null })
@@ -786,6 +854,67 @@ export function App({
       if (input === 'c') return goPane('collections')
       if (input === 's') return goPane('servers')
       if (input === 'r') return goPane('scripts')
+    }
+
+    // The new-collection form.
+    if (overlay === 'new' && newForm) {
+      const f = newForm
+      const fields = fieldsOf(f)
+      const i = fields.indexOf(f.field)
+      if (key.escape) {
+        setNewForm(null)
+        const back = newThen.current.back
+        return back ? setOverlay(back) : goPane('collections')
+      }
+      if (key.tab || key.downArrow)
+        return setNewForm({ ...f, field: fields[(i + 1) % fields.length]! })
+      if (key.upArrow)
+        return setNewForm({ ...f, field: fields[(i + fields.length - 1) % fields.length]! })
+      if (key.return) {
+        const problem = newProblem(f)
+        if (problem) return setStatus(problem)
+        return void attempt(`Making ${f.org}/${f.name}`, async () => {
+          const meta = newCollection(ctx, `${f.server}/${f.org}/${f.name}`, {
+            access: f.access,
+            ...(f.title.trim() ? { title: f.title.trim() } : {}),
+          })
+          setNewForm(null)
+          await reload()
+          const made = newThen.current.made
+          if (made) return (await made(meta)) ?? ''
+          setSel(`c:${keyOf(meta)}`)
+          setOverlay(null)
+          setFocus('main')
+          setTab('Overview')
+          return `Made ${f.org}/${f.name} here; your first push creates it on ${f.server}`
+        })
+      }
+      if (f.field === 'server' && (key.leftArrow || key.rightArrow) && f.servers.length > 1) {
+        const at = f.servers.indexOf(f.server)
+        const server =
+          f.servers[(at + (key.rightArrow ? 1 : f.servers.length - 1)) % f.servers.length]!
+        const orgs = orgsOn(server)
+        return setNewForm({ ...f, server, orgs, org: orgs?.[0] ?? '' })
+      }
+      if (f.field === 'org' && f.orgs && (key.leftArrow || key.rightArrow) && f.orgs.length > 1) {
+        const at = f.orgs.indexOf(f.org)
+        return setNewForm({
+          ...f,
+          org: f.orgs[(at + (key.rightArrow ? 1 : f.orgs.length - 1)) % f.orgs.length]!,
+        })
+      }
+      if (f.field === 'access' && input === ' ')
+        return setNewForm({ ...f, access: f.access === 'private' ? 'public' : 'private' })
+      if (typedField(f, f.field)) {
+        const k = f.field as 'name' | 'title' | 'type' | 'org'
+        if (key.backspace || key.delete) return setNewForm({ ...f, [k]: f[k]!.slice(0, -1) })
+        if (input && !key.ctrl && !key.meta) {
+          // Names and orgs are slugs: lowercase, and a space becomes a hyphen.
+          const add = k === 'name' || k === 'org' ? input.toLowerCase().replace(/ /g, '-') : input
+          return setNewForm({ ...f, [k]: f[k]! + add })
+        }
+      }
+      return
     }
 
     // The push screen takes typing.
@@ -1205,6 +1334,9 @@ export function App({
       )
     if (input === 'p') return void openPush(collRow?.key)
     if (input === 'P') return void openPush()
+    // n: a new collection, from the Collections card (in a collection's Records tab, n pages).
+    if (input === 'n' && !overlay && card === 'collections' && (focus === 'side' || !collRow))
+      return openNew()
     if (input === '+') {
       // The selected remote if you are signed in there; else your default, or the first
       // server you are signed in to. A signed-out remote's list is a dead end.
@@ -1437,6 +1569,7 @@ export function App({
   const mainW = Math.max(40, columns - sideW - 1)
   const pane: Pane = (() => {
     const inner = mainW - 4
+    if (overlay === 'new' && newForm) return newPane(newForm, newProblem(newForm), inner)
     if (overlay === 'push') return pushPane(push_, side.user, inner)
     if (overlay === 'pick') return pickPane(pick, inner)
     if (overlay === 'file' && file) return filePane(file, inner)
@@ -1636,6 +1769,7 @@ export function App({
           <Frame
             title="Collections on this machine"
             keyHint="c"
+            {...(lit('collections') ? { meta: 'n new' } : {})}
             color={lit('collections') ? C.bl : C.mu}
             border={lit('collections') ? C.bl : C.dim}
             width={sideW}
