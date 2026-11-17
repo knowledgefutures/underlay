@@ -416,8 +416,9 @@ underlay reword scratch "A better message"`}</CodeBlock>
         </li>
         <li>
           The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
-          Changes, Versions), a script&apos;s output as it runs, a finished run, the push screen, a
-          remote&apos;s list of collections to add, or a file you added.
+          Versions, where choosing a version shows what it changed), a script&apos;s output as it
+          runs, a finished run, the push screen, a remote&apos;s list of collections to add, or a
+          file you added.
         </li>
         <li>
           <strong>Settings</strong> (<code>,</code>) and <strong>Keys</strong> (<code>?</code>) take

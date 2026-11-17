@@ -166,14 +166,20 @@ describe('everyday flows in the terminal UI', () => {
     expect(d.frame()).toMatch(/notes\s+new/)
     // Into the main pane, across to Versions.
     await d.press(K.tab)
-    for (let i = 0; i < 5; i++) await d.press(K.right)
+    for (let i = 0; i < 4; i++) await d.press(K.right)
     let f = await d.until('not pushed')
     expect(f).toMatch(/v1\.1\.0.*not pushed/)
+    // The selected version's changes, below the list.
+    f = await d.until(/v1\.1\.0 CHANGED/)
+    expect(f).toMatch(/Thing\s+\+1 ~0 −0/)
+    expect(f).toMatch(/\+ b\s+Thing/)
+    await d.press(K.down)
+    f = await d.until(/v1\.0\.0 CHANGED/)
     await d.press('u')
     f = await d.until('Dropped v1.1.0')
     expect(f).not.toMatch(/v1\.1\.0\s+2/)
     // Records tab lists what is there.
-    await d.press(K.left, K.left, K.left, K.left)
+    await d.press(K.left, K.left, K.left)
     f = await d.until(/Thing\s+a\s/)
     ui.unmount()
   })

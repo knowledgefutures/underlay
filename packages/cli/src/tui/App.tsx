@@ -244,6 +244,8 @@ export function App({
     (Awaited<ReturnType<typeof diffVersions>> & { from: number; to: number }) | undefined
   >()
   const [scroll, setScroll] = useState(0)
+  // The version selected in the Versions tab, newest first.
+  const [vCursor, setVCursor] = useState(0)
   const [runLog, setRunLog] = useState<{ id: string; lines: string[] }>({ id: '', lines: [] })
   const [push_, setPush] = useState<PushView>({
     plans: [],
@@ -409,6 +411,7 @@ export function App({
     let gone = false
     setRecords(undefined)
     setDiff(undefined)
+    setVCursor(0)
     void loadCollection(ctx, collRow.meta).then(
       (d) => !gone && setDetail({ key: collRow.key, d }),
       (err) => !gone && setStatus((err as Error).message),
@@ -424,18 +427,21 @@ export function App({
       void loadRecords(ctx, collRow.meta, null, 200).then(setRecords, (e) =>
         setStatus((e as Error).message),
       )
-    if (tab === 'Changes' && !diff) {
+    // The selected version's changes, against the one before it.
+    // A detail read before an undo can name a version that is gone: wait for the new one.
+    const v =
+      tab === 'Versions' && detail?.key === collRow.key ? detail.d.versions[vCursor] : undefined
+    const head = collRow.status.head?.number ?? 0
+    if (v && v.number <= head && diff?.to !== v.number) {
       const c = openColl(ctx, collRow.meta)
-      const head = collRow.status.head?.number ?? 0
-      const pushedTo = collRow.status.remote?.number ?? 0
-      const from = pushedTo < head ? pushedTo : Math.max(0, head - 1)
-      void diffVersions(c, from, head).then(
-        (d) => setDiff({ ...d, from, to: head }),
-        (e) => setStatus((e as Error).message),
+      const to = v.number
+      void diffVersions(c, to - 1, to).then(
+        (d) => setDiff({ ...d, from: to - 1, to }),
+        () => {},
       )
     }
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, collVersion, records, diff])
+  }, [tab, collVersion, records, diff, vCursor, detail])
 
   // A run's log, followed while it is shown.
   const runId = shownRun?.id ?? ''
@@ -823,7 +829,7 @@ export function App({
         })
       const p = push_.plans[push_.cursor]
       if (input === 'd' && p)
-        return (setOverlay(null), setSel(`c:${p.coll.key}`), setTab('Changes'))
+        return (setOverlay(null), setSel(`c:${p.coll.key}`), setTab('Versions'), setVCursor(0))
       if (input === 'S' && p)
         return void attempt('Squashing', async () => {
           const s = await squash(p.coll, undefined, null, ctx.env.now())
@@ -1219,6 +1225,13 @@ export function App({
     if (key.escape) return goPane('collections')
     if (key.tab) return setFocus((f) => (f === 'side' ? 'main' : 'side'))
 
+    // In the Versions tab, with the pane's keys, up and down choose a version.
+    if (focus === 'main' && collRow && tab === 'Versions' && (key.upArrow || key.downArrow)) {
+      const n = detail?.key === collRow.key ? detail.d.versions.length : 0
+      return setVCursor((i) =>
+        Math.min(Math.max(0, n - 1), Math.max(0, i + (key.upArrow ? -1 : 1))),
+      )
+    }
     // Up and down move through the card that has the keys, wherever the keys are.
     if (key.upArrow || key.downArrow) {
       const items = (side?.items ?? []).filter((i) => paneOf(itemId(i)) === card)
@@ -1282,7 +1295,7 @@ export function App({
         const i = TABS.indexOf(tab)
         return setTab(TABS[(i + (key.rightArrow ? 1 : TABS.length - 1)) % TABS.length]!)
       }
-      if (/^[1-6]$/.test(input)) return setTab(TABS[Number(input) - 1]!)
+      if (/^[1-5]$/.test(input)) return setTab(TABS[Number(input) - 1]!)
       if (input === 'l')
         return void attempt(`Pulling ${collRow.key}`, async () => {
           const r = await pull(ctx, c)
@@ -1411,6 +1424,7 @@ export function App({
           url: openColl(ctx, collRow.meta).remote().url,
           behind: behind[collRow.key] ?? 0,
           handoff: !!ctx.settings.handoffSend,
+          vCursor,
         },
         inner,
       )

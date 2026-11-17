@@ -198,7 +198,7 @@ export function sidebar(
 
 // --- A collection ---
 
-export const TABS = ['Overview', 'Records', 'Schemas', 'Files', 'Changes', 'Versions'] as const
+export const TABS = ['Overview', 'Records', 'Schemas', 'Files', 'Versions'] as const
 export type Tab = (typeof TABS)[number]
 
 function tabLine(tab: Tab): Line {
@@ -212,13 +212,15 @@ export interface CollectionExtra {
   diff?: {
     from: number
     to: number
-    rows: { kind: string; type: string; id: string }[]
+    rows: { kind: string; type: string; id: string; fields?: string[] }[]
     byType: Record<string, { added: number; changed: number; removed: number }>
   }
   scripts: ScriptRow[]
   storeRoot: string
   url: string
   behind: number
+  /** The selected version in the Versions tab, newest first. */
+  vCursor?: number
   /** Whether handoff.send is set, so A sends the prompt. */
   handoff?: boolean
 }
@@ -453,40 +455,10 @@ export function collectionPane(
         S(`Records: ${d.filesHere} of ${d.filesTotal} record files here, in ${x.storeRoot}`, C.dim),
       ]),
     )
-  } else if (tab === 'Changes') {
-    if (!x.diff) lines.push(L([S('Loading…', C.mu)]))
-    else {
-      lines.push(
-        L([
-          S(
-            `${x.diff.from === x.diff.to ? 'No versions' : `From ${x.diff.from} to ${x.diff.to}`}`,
-            C.mu,
-          ),
-          S(unpushed.length ? '  what a push would send' : '  the newest version', C.mu),
-        ]),
-      )
-      for (const [t, n] of Object.entries(x.diff.byType))
-        lines.push(
-          L([
-            S('  ' + P(t, 20)),
-            S(R(`+${count(n.added)}`, 8), C.gr),
-            S(R(`~${count(n.changed)}`, 8), C.or),
-            S(R(`−${count(n.removed)}`, 8), C.rd),
-          ]),
-        )
-      lines.push(blank())
-      for (const r of x.diff.rows)
-        lines.push(
-          L([
-            S(`  ${r.kind} `, r.kind === '+' ? C.gr : r.kind === '-' ? C.rd : C.or),
-            S(P(r.id.slice(0, 30), 32)),
-            S(r.type, C.mu),
-          ]),
-        )
-    }
   } else {
-    // Wide enough for "✓ <server>" and a gap before the date.
+    // Versions, newest first; the selected one's changes show below the list.
     const whereW = Math.max(14, m.authority.length + 4)
+    const at = Math.min(x.vCursor ?? 0, Math.max(0, d.versions.length - 1))
     lines.push(
       L([
         S(
@@ -502,17 +474,64 @@ export function collectionPane(
         ),
       ]),
     )
-    for (const v of d.versions)
+    d.versions.forEach((v, i) => {
+      const on = i === at
       lines.push(
-        L([
-          S('  ' + P(v.semver, 9), v.pushed ? C.fg : C.bl),
-          S(R(v.number, 5), C.mu),
-          S('  ' + P(shortId(v.id), 8), C.mu),
-          S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
-          S(P(ago(v.createdAt), 12), C.mu),
-          S((v.message ?? '').slice(0, 40)),
-        ]),
+        L(
+          [
+            S(on ? '▌ ' : '  ', C.bl),
+            S(P(v.semver, 9), v.pushed ? (on ? C.wh : C.fg) : C.bl, on),
+            S(R(v.number, 5), C.mu),
+            S('  ' + P(shortId(v.id), 8), C.mu),
+            S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
+            S(P(ago(v.createdAt), 12), C.mu),
+            S((v.message ?? '').slice(0, 40)),
+          ],
+          on ? C.sel : undefined,
+        ),
       )
+    })
+    const v = d.versions[at]
+    if (v) {
+      lines.push(blank())
+      const dv = x.diff && x.diff.to === v.number ? x.diff : null
+      if (!dv) lines.push(L([S(`  ${v.semver} CHANGED`, C.mu), S('  loading…', C.mu)]))
+      else {
+        const types = Object.entries(dv.byType)
+        lines.push(
+          L([
+            S(`  ${v.semver} CHANGED`, C.mu),
+            ...(types.length ? [] : [S('   nothing but metadata', C.mu)]),
+          ]),
+        )
+        for (const [t, n] of types)
+          lines.push(
+            L([
+              S('    ' + P(t, 20)),
+              S(`+${count(n.added)} `, C.gr),
+              S(`~${count(n.changed)} `, C.or),
+              S(`−${count(n.removed)}`, C.rd),
+            ]),
+          )
+        const total = types.reduce((a, [, n]) => a + n.added + n.changed + n.removed, 0)
+        const shown = dv.rows.slice(0, 12)
+        for (const r of shown)
+          lines.push(
+            L([
+              S(
+                `    ${r.kind === '-' ? '−' : r.kind} `,
+                r.kind === '+' ? C.gr : r.kind === '-' ? C.rd : C.or,
+              ),
+              S(P(r.id.slice(0, 30), 32)),
+              S(P(r.type, 14), C.mu),
+              S((r.fields ?? []).join(', ').slice(0, 40), C.mu),
+            ]),
+          )
+        if (total > shown.length)
+          lines.push(L([S(`    … ${count(total - shown.length)} more`, C.mu)]))
+      }
+    }
+    pane.keys = [{ k: '↑↓', l: 'version' }, ...pane.keys]
     if (waiting) acts.push({ k: 'u', l: 'undo newest' }, { k: 'e', l: 'reword newest' })
     if (waiting > 1) acts.push({ k: 'S', l: 'squash not pushed' })
   }

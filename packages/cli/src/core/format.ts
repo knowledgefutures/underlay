@@ -42,6 +42,8 @@ export interface DiffRow {
   type: string
   id: string
   kind: '+' | '~' | '-'
+  /** For a changed record: the top-level fields that changed (for the first few only). */
+  fields?: string[]
 }
 
 /** What changed between two versions here: each key, and counts by type. */
@@ -50,6 +52,7 @@ export async function diffVersions(
   from: number,
   to: number,
   limit = 200,
+  fieldsFor = 12,
 ): Promise<{
   rows: DiffRow[]
   byType: Record<string, { added: number; changed: number; removed: number }>
@@ -60,14 +63,39 @@ export async function diffVersions(
   const rows: DiffRow[] = []
   let more = false
   if (to === 0) return { rows, byType, more }
+  const before = from > 0 ? await viewOf(c, from) : null
+  let fieldsLeft = fieldsFor
   for await (const ch of v3.changes(c.data, view, from, { before: true })) {
+    // Reserved rows ($schema, $asset, $meta) aren't records.
+    if (ch.type.startsWith('$')) continue
     const kind = !ch.before ? '+' : !ch.after ? '-' : '~'
     const t = (byType[ch.type] ??= { added: 0, changed: 0, removed: 0 })
     if (kind === '+') t.added++
     else if (kind === '-') t.removed++
     else t.changed++
-    if (rows.length < limit) rows.push({ type: ch.type, id: ch.id, kind })
-    else more = true
+    if (rows.length >= limit) {
+      more = true
+      continue
+    }
+    const row: DiffRow = { type: ch.type, id: ch.id, kind }
+    if (kind === '~' && before && fieldsLeft > 0) {
+      fieldsLeft--
+      row.fields = changedFields(
+        await ch.line(),
+        (await v3.getRecord(c.data, before, ch.type, ch.id))?.line ?? null,
+      )
+    }
+    rows.push(row)
   }
   return { rows, byType, more }
+}
+
+const dec = new TextDecoder()
+/** The top-level fields of a record's data that differ between two of its lines. */
+function changedFields(a: Uint8Array | null, b: Uint8Array | null): string[] {
+  if (!a || !b) return []
+  const da = (JSON.parse(dec.decode(a)) as { data?: Record<string, unknown> }).data ?? {}
+  const db = (JSON.parse(dec.decode(b)) as { data?: Record<string, unknown> }).data ?? {}
+  const keys = new Set([...Object.keys(da), ...Object.keys(db)])
+  return [...keys].filter((k) => JSON.stringify(da[k]) !== JSON.stringify(db[k]))
 }
