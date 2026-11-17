@@ -12,6 +12,7 @@ import { agentRoutes } from './api/agent.js'
 import { arkRoutes } from './api/ark.js'
 import { avatarRoutes } from './api/avatars.js'
 import { cleanupRoutes } from './api/cleanup.js'
+import { cliRoutes } from './api/cli.js'
 import { collectionRoutes } from './api/collections.js'
 import { commitRoutes } from './api/commits.js'
 import { exportRoutes } from './api/export.js'
@@ -338,6 +339,8 @@ export function createApp(setup: Setup) {
     }),
   )
 
+  // The CLI's install script, with this deployment's origin in it.
+  app.route('/', cliRoutes())
   app.route('/', arkRoutes())
   // Agent links (web's share panel): a page, budgeted as one above.
   app.route('/', agentRoutes())

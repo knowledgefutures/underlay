@@ -302,6 +302,11 @@ try {
       has: ['Delta push', 'Clients without a copy'],
     },
     { path: '/docs', status: 200 },
+    {
+      path: '/cli',
+      status: 200,
+      has: ['The Underlay CLI', '/cli/install.sh | sh', 'underlay login'],
+    },
     { path: '/docs/api/records', status: 200, has: ['/api/schemas', 'Visibility'] },
     { path: '/docs/api/sync-and-integrations', status: 200, has: ['Tree sync', 'Webhooks'] },
     { path: '/org/secret', status: 404 },

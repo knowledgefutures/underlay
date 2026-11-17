@@ -53,6 +53,22 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         ],
       },
       {
+        title: 'The Underlay CLI',
+        label: 'CLI',
+        href: '/cli',
+        blurb: 'Collections on your machine: scripts, versions, push',
+        headings: [
+          'Install',
+          'Sign in',
+          'Make a workspace',
+          'Add a collection',
+          'Run a script',
+          'Push',
+          'The terminal UI',
+          'Update or remove',
+        ],
+      },
+      {
         title: 'Integration Guide',
         href: '/docs/integration',
         blurb: 'Push data from any app, no SDK',

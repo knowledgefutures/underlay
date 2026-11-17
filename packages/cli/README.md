@@ -4,8 +4,14 @@ One program, `underlay`, for collections on your machine: commands, a terminal U
 `underlay` in a terminal), and later `underlay serve`. Design: `_meta/planning/kf/underlay/local-tool.md`;
 build plan: `local-tool-build.md` beside it.
 
-**Status: unpublished.** The npm name `@underlay/cli` belongs to an unrelated 2023 package. Run it
-from source:
+**Install:** `curl -fsSL https://underlay.org/cli/install.sh | sh` (or staging's, for staging's
+build). It downloads the bundled CLI (one file, Node.js 22.6 or later) from the site it is served
+by, checks its SHA-256, and puts `underlay` in `~/.local/bin`. The site serves it because the web
+build copies it there (`packages/web/scripts/cli-assets.ts`); the script is
+`packages/server/src/api/cli.ts`; the page is `/cli`. Not on npm: the name `@underlay/cli`
+belongs to an unrelated 2023 package.
+
+From source:
 
 ```
 pnpm --filter @underlay/cli build

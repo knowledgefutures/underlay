@@ -7,3 +7,9 @@
 # them for good and never ask again.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The CLI (scripts/cli-assets.ts): same name every release, so asked for again each time.
+/cli/*
+  Cache-Control: public, max-age=300
+/cli/underlay.js.sha256
+  Content-Type: text/plain; charset=utf-8
