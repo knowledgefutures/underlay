@@ -30,7 +30,7 @@ const Member = {
   required: ['name'],
 }
 
-const SCRIPT = `// underlay: writes test/org/members
+const SCRIPT = `// underlay: writes test/org/roster
 // underlay: takes *.json
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -38,12 +38,12 @@ const names = process.argv.slice(2)
 const out = join(process.env.UNDERLAY_OUT, 'test/org')
 mkdirSync(out, { recursive: true })
 console.log('writing', names.length)
-writeFileSync(join(out, 'members.ndjson'), names.map((n) => JSON.stringify({ id: n.toLowerCase(), type: 'Member', data: { name: n } })).join('\\n') + '\\n')
+writeFileSync(join(out, 'roster.ndjson'), names.map((n) => JSON.stringify({ id: n.toLowerCase(), type: 'Member', data: { name: n } })).join('\\n') + '\\n')
 `
 
 async function setup() {
   const w = await world()
-  const meta = newCollection(w.ctx, 'test/org/members')
+  const meta = newCollection(w.ctx, 'test/org/roster')
   w.home.writeSchemas(meta, { Member })
   mkdirSync(join(w.home.root, 'scripts', 'mitp'), { recursive: true })
   writeFileSync(join(w.home.root, 'scripts', 'mitp', 'members.mjs'), SCRIPT)
@@ -60,7 +60,7 @@ describe('scripts and runs', () => {
     const scripts = listScripts(w.ctx)
     expect(scripts.map((s) => [s.name, s.kind, s.writes])).toEqual([
       ['home/check', 'check', []],
-      ['home/mitp/members', 'script', ['test/org/members']],
+      ['home/mitp/members', 'script', ['test/org/roster']],
     ])
     expect(takesFile('*.json', 'inputs/x.json')).toBe(true)
     expect(takesFile('*.xlsx, *.csv', 'roster.CSV')).toBe(true)
@@ -71,14 +71,14 @@ describe('scripts and runs', () => {
     const r1 = await runScript(w.ctx, info, ['Ada', 'Grace'], { onOutput: (t) => (printed += t) })
     expect(printed).toContain('writing 2')
     expect(r1).toMatchObject({ status: 'ok', exitCode: 0, unchanged: [] })
-    expect(r1.saved).toMatchObject([{ collection: 'test/org/members', semver: 'v1.0.0', added: 2 }])
+    expect(r1.saved).toMatchObject([{ collection: 'test/org/roster', semver: 'v1.0.0', added: 2 }])
     expect(readFileSync(r1.log, 'utf8')).toContain('writing 2')
     const c = openColl(w.ctx, w.meta)
     expect(c.store.state(w.meta.id).versions[r1.saved[0]!.id]?.run).toBe(r1.id)
 
     const r2 = await runScript(w.ctx, info, ['Ada', 'Grace'])
     expect(r2.saved).toEqual([])
-    expect(r2.unchanged).toEqual(['test/org/members'])
+    expect(r2.unchanged).toEqual(['test/org/roster'])
     const r3 = await runScript(w.ctx, info, ['Ada'])
     expect(r3.saved).toMatchObject([{ semver: 'v1.1.0', removed: 1 }])
 
@@ -87,10 +87,10 @@ describe('scripts and runs', () => {
     expect(listRuns(w.ctx).map((r) => r.status)).toEqual(['failed', 'ok', 'ok', 'ok'])
 
     // Two runs never write one collection at once.
-    const release = lock(w.ctx, 'test/org/members', 'someone')
+    const release = lock(w.ctx, 'test/org/roster', 'someone')
     // The lock of this same process is taken over (it is ours); another process's is not.
     writeFileSync(
-      join(w.home.stateDir, 'locks', 'test__org__members.lock'),
+      join(w.home.stateDir, 'locks', 'test__org__roster.lock'),
       JSON.stringify({ pid: process.ppid, run: 'other' }),
     )
     await expect(runScript(w.ctx, info, ['Ada'])).rejects.toThrow(/being written by run other/)
@@ -123,7 +123,7 @@ describe('built-in importers', () => {
       personal: ['Email'],
     })
     expect(shape.matches[0]).toMatchObject({
-      collection: 'test/org/members',
+      collection: 'test/org/roster',
       type: 'Member',
       column: 'person_id',
       hits: 2,
@@ -131,7 +131,7 @@ describe('built-in importers', () => {
     })
     const t = await readTable(join(w.home.root, shape.path))
     const opts = defaultOptions(w.ctx, shape.path, t, {
-      collection: 'test/org/members',
+      collection: 'test/org/roster',
       type: 'Member',
       id: 'person_id',
     })
@@ -140,7 +140,7 @@ describe('built-in importers', () => {
     const info = findScript(w.ctx, rel)
     expect(info).toMatchObject({
       kind: 'import',
-      writes: ['test/org/members'],
+      writes: ['test/org/roster'],
       mode: 'set',
       types: ['Member'],
     })
@@ -170,7 +170,7 @@ describe('built-in importers', () => {
     const ts = eject(w.ctx, info)
     expect(findScript(w.ctx, ts)).toMatchObject({
       kind: 'script',
-      writes: ['test/org/members'],
+      writes: ['test/org/roster'],
       types: ['Member'],
     })
     expect((await unpushedOf(c)).length).toBe(3)

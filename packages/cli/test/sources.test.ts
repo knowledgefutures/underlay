@@ -16,7 +16,7 @@ import { tmp, world } from './world.js'
 
 const Member = { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }
 
-const WRITER = `// underlay: writes org/members
+const WRITER = `// underlay: writes org/roster
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { helper } from './helper.mjs'
 const out = process.env.UNDERLAY_OUT + '/test/org'
@@ -24,7 +24,7 @@ mkdirSync(out, { recursive: true })
 console.log('cwd', process.cwd())
 console.log('home', process.env.UNDERLAY_HOME)
 console.log('secret', process.env.UL_TEST_TOKEN ?? 'none')
-writeFileSync(out + '/members.ndjson', JSON.stringify({ id: 'a', type: 'Member', data: { name: helper() } }) + '\\n')
+writeFileSync(out + '/roster.ndjson', JSON.stringify({ id: 'a', type: 'Member', data: { name: helper() } }) + '\\n')
 `
 
 /** A script folder like underlay-scrapers: an underlay.toml, scripts under src/, a helper. */
@@ -40,15 +40,15 @@ function scriptFolder(opts: { need?: string[] } = {}) {
   writeFileSync(join(root, 'src', 'mitp', 'helper.mjs'), "export const helper = () => 'Ada'\n")
   writeFileSync(
     join(root, 'src', 'mitp', 'units.sh'),
-    '# underlay: check, reads org/members, org/units\necho ok\n',
+    '# underlay: check, reads org/roster, org/units\necho ok\n',
   )
   writeFileSync(
     join(root, 'src', 'mitp', 'held.html'),
-    '<!doctype html>\n<!-- underlay: view, reads org/members -->\n<title>Held</title>\n',
+    '<!doctype html>\n<!-- underlay: view, reads org/roster -->\n<title>Held</title>\n',
   )
   writeFileSync(
     join(root, 'src', 'mitp', 'review.mjs'),
-    `// underlay: serves, reads org/members
+    `// underlay: serves, reads org/roster
 import { createServer } from 'node:http'
 createServer((_q, r) => r.end('review ' + process.env.UNDERLAY_HOME)).listen(Number(process.env.PORT))
 `,
@@ -59,7 +59,7 @@ createServer((_q, r) => r.end('review ' + process.env.UNDERLAY_HOME)).listen(Num
 
 async function setup(opts: { need?: string[] } = {}) {
   const w = await world()
-  const meta = newCollection(w.ctx, 'test/org/members')
+  const meta = newCollection(w.ctx, 'test/org/roster')
   w.home.writeSchemas(meta, { Member })
   const root = scriptFolder(opts)
   addSource(w.env, root)
@@ -85,10 +85,10 @@ describe('home and script folders', () => {
     const w = await setup()
     const s = listScripts(w.ctx)
     expect(s.map((x) => [x.name, x.kind, x.view, x.writes, x.reads])).toEqual([
-      ['scrapers/mitp/held', 'view', 'page', [], ['test/org/members']],
-      ['scrapers/mitp/members', 'script', null, ['test/org/members'], []],
-      ['scrapers/mitp/review', 'view', 'server', [], ['test/org/members']],
-      ['scrapers/mitp/units', 'check', null, [], ['test/org/members', 'test/org/units']],
+      ['scrapers/mitp/held', 'view', 'page', [], ['test/org/roster']],
+      ['scrapers/mitp/members', 'script', null, ['test/org/roster'], []],
+      ['scrapers/mitp/review', 'view', 'server', [], ['test/org/roster']],
+      ['scrapers/mitp/units', 'check', null, [], ['test/org/roster', 'test/org/units']],
     ])
     expect(w.ctx.sources.map((x) => [x.name, x.how])).toEqual([
       ['home', 'home'],
@@ -120,7 +120,7 @@ describe('home and script folders', () => {
     const r = await runScript(w.ctx, info, [])
     expect(r.status).toBe('ok')
     expect(r.script).toBe('scrapers/mitp/members')
-    expect(r.saved).toMatchObject([{ collection: 'test/org/members', added: 1 }])
+    expect(r.saved).toMatchObject([{ collection: 'test/org/roster', added: 1 }])
     const log = readFileSync(r.log, 'utf8')
     expect(log).toContain(`cwd ${realpathSync(w.root)}`)
     expect(log).toContain(`home ${w.home.root}`)
