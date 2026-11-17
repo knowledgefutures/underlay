@@ -12,6 +12,7 @@ import { createObject, type Store } from '../repo/types.js'
 import { type BumpType, parseSemver } from '../semver.js'
 import { sha256Hex } from '../sha256.js'
 import { utf8 } from '../utf8.js'
+import { readReceipt, verifyReceipt } from './author.js'
 import { recordKey } from './build.js'
 import { NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
 import type { FileRef, KeyPair } from './file.js'
@@ -690,6 +691,11 @@ export interface VerifyLogOptions {
   previous?: string
   /** If given, every commit must be signed by one of these keys (the server's). */
   serverKeys?: PublicKeyInfo[]
+  /**
+   * With `serverKeys`: a commit the author built, which carries no server signature, counts
+   * as signed when its receipt (Section 4.7) is signed by one of them.
+   */
+  receipts?: boolean
   /** If given, every change must be signed by one of these keys (authors'). */
   authorKeys?: PublicKeyInfo[]
 }
@@ -728,7 +734,9 @@ export async function verifyLog(
       }
     }
     if (opts.serverKeys && !(await verifyCommit(c.commit, opts.serverKeys))) {
-      throw bad('the commit is not signed by an accepted server key')
+      const receipt = opts.receipts ? await readReceipt(store, collection, n) : null
+      if (!receipt || !(await verifyReceipt(receipt, c, opts.serverKeys)))
+        throw bad('neither the commit nor its receipt is signed by an accepted server key')
     }
     seen.add(c.id)
     if (prev) {

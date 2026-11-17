@@ -1,6 +1,7 @@
 # Underlay protocol, version 3 (draft)
 
-**Status:** Draft, 2026-11-12. Not stable. Implemented in `packages/protocol/src/v3/`. Where this
+**Status:** Draft, 2026-11-12; authority, author-built commits, receipts and the routes that
+follow a collection added 2026-11-16 (Sections 4.6 to 4.8). Not stable. Implemented in `packages/protocol/src/v3/`. Where this
 document and the code disagree while both are drafts, fix whichever is wrong and say so in the
 commit. Test vectors for files and commits are in `packages/protocol/test/vectors/`
 (`v3-files.json`, `v3-commits.json`), written by `packages/protocol/scripts/gen-vectors-v3.ts`.
@@ -200,6 +201,10 @@ A commit has two parts. A **change** is what an author sent: the files of one up
 version they were working from, and a message. The rest is what the server adds when the change
 lands: its number, the commit before it, the semver, and the time.
 
+Either the server builds the commit around a change it was sent, or the author builds the whole
+commit and the collection's authority stores it unchanged (4.6). A commit is the same object
+either way, and its id is the hash of its bytes as built.
+
 - **Version id** = `ulv3:` + SHA-256 hex of the commit's bytes.
 - The files a commit names MUST be unlabeled: files as their author built them, with no commit
   numbers inside. A server MUST refuse a change that names a labeled file. Within one commit
@@ -242,8 +247,9 @@ the raw public key. `keyId` and `sig` are both `null`, or neither is.
 
 - **The author signs the change:** its `collection`, `files`, `base`, `message`, and `keyId`.
   The signature does not cover the commit's `number` or `previous`.
-- **The server signs the commit:** every member but its own `sig`, the changes and their
-  signatures included.
+- **The server signs the commit it builds:** every member but its own `sig`, the changes and
+  their signatures included. A commit its author built (4.6) carries the author's key and
+  signature, or none; the authority's word is its receipt (4.7), beside the commit.
 - A change that loses the race for a number is committed at the next free number with the
   author's signature unchanged. Only the server's part is made again.
 - Which keys a reader trusts, for either signature, is not part of this protocol.
@@ -284,6 +290,66 @@ record of that type the version carries over MUST satisfy the new schema, and th
 be refused if any does not. A change that only relaxes the schema (every document valid before
 is valid after) needs no check of the records carried over. A record whose line a server
 withholds is not checked.
+
+### 4.6 Authority, and commits built by their author
+
+Each collection names one **authority**: the server that accepts its versions, and so settles
+its numbers. It is `authority` in the collection's description (Section 8), a server's address
+(`underlay.org`, `localhost:4417`); without it, the server that holds the collection is its
+authority. Only the authority accepts a version. Another server holding the collection (a
+mirror, a copy) takes only commits the authority has accepted, with their receipts, and never
+numbers anything.
+
+An author MAY build the whole commit: it names the version it follows as `previous`, so its
+number is one more than that version's and its semver follows by 4.4. Its id is the hash of the
+commit as built, the same on the author's machine and on every server that later holds it. The
+authority:
+
+- MUST store the commit's bytes unchanged, created only if absent, when its `number` is one more
+  than its newest commit's and its `previous` is that commit's id;
+- MUST refuse it when it follows another version, and answer with its newest version (number,
+  id, semver), so the author can build its commits again on that one and send them again;
+- MUST check what it checks of any change: that each file named came with the upload and checks
+  out (4.3), that the records satisfy the schemas (4.5), and that the semver is what the
+  commit's rows call for (4.4), comparing `$schema` rows with the version before and counting
+  every other row as a change;
+- SHOULD refuse a `createdAt` far from when the commit was sent (the reference server allows
+  ten minutes either way).
+
+**Replaying.** An author whose commit was refused builds it again on the newest version: the
+change stays as it was, except a `base` that named one of the commits being replayed, which
+names its replayed id; the number, `previous`, semver and time are made again, so the id
+changes, as a rebased commit's does. A commit already accepted is never replayed.
+
+### 4.7 Receipts
+
+When the authority accepts a commit, whoever built it, it writes a **receipt** beside it, at
+`commits/<number>.receipt.json`, created only if absent:
+
+```
+{"underlay": 3, "collection": collection id, "number": n, "version": version id,
+ "receivedAt": ISO 8601 UTC, "server": the authority's address,
+ "keyId": string | null, "sig": string | null}
+```
+
+signed as in 4.2, over every member but `sig`. A receipt is not hashed into anything: a version
+id never depends on the server that holds it. A reader that checks signatures accepts a commit
+signed by a key it trusts, or a commit whose receipt is.
+
+### 4.8 Following a collection
+
+Under a collection's URL, a server serves:
+
+- `GET …/commits?after=<n>&limit=<k>`: the commits after `n` in order, each as
+  `{"number", "id", "commit": its exact text, "receipt": receipt | null}`, with `head` (the newest
+  number), `more`, and `collection` (`id` and `authority`);
+- `GET …/commits/<n>`: one commit in the same form;
+- `GET …/layout`: `{"layout": the current layout file | null}`;
+- `GET …/record-files/<file id>`: a sorted-record-file's bytes, with byte ranges, for a file the
+  current layout or a commit after its `through` names, and no other.
+
+A client follows the log with the first, and reads any version it keeps by fetching the current
+layout and the files it and later commits name: exactly the files the version needs.
 
 ## 5. Layout file
 
@@ -350,7 +416,8 @@ cannot be recreated in full.
 
 A collection is:
 
-- a description: a JSON object with at least `id`; for a fork, where it was forked from
+- a description: a JSON object with at least `id`; `authority` (4.6), if it is not the server
+  that holds it; for a fork, where it was forked from
   (`forkedFrom`: collection id, commit number, version id) and its `lineage`: the collections
   whose ids its earlier commits carry, oldest first, each with the last commit number that
   carries it;
@@ -390,7 +457,8 @@ sweep/                            the sweep's own state
   and pushes again.
 - **Changes are unsigned.** The server keeps no authors' keys: it records who pushed in its
   catalog and signs the commit. It refuses a change sent with a `keyId` and `sig`, since it
-  could not check them and its own signature would then cover a key id nobody verified.
+  could not check them and its own signature would then cover a key id nobody verified. A
+  commit its author built is refused signed for the same reason; its receipt is signed.
 - `latest.json` is `{"commit": n}`, overwritten after each commit; `latest-layout.json` is
   `{"layout": m}`, overwritten after each layout. Two objects, so each has one writer and no
   key is written twice when a layout follows a commit. A reader starts from them and probes
