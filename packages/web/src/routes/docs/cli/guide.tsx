@@ -119,6 +119,8 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
         <code>--keep none</code>, only its schemas and history are kept, and records are fetched
         from its authority when something reads them; <code>--keep some --types A,B</code> keeps
         some types. <code>underlay keep</code> and <code>underlay forget</code> change this later.
+        <code>underlay remove</code> takes a collection off your machine altogether; it stays on its
+        server.
       </p>
       <table className="border-collapse">
         <tbody>

@@ -124,6 +124,23 @@ async function dropLocalLog(c: Coll): Promise<void> {
   rmSync(c.store.statePath(cidOf(c)), { force: true })
 }
 
+/**
+ * Take a collection off this machine: its folder, and the store's copy of its history. It is
+ * untouched on its authority, and can be added again. Versions not yet pushed would be lost,
+ * so a collection with any is kept unless `force`.
+ */
+export async function removeCollection(ctx: Ctx, c: Coll, force = false): Promise<void> {
+  const unpushed =
+    c.meta.isNew || (await v3.headNumber(c.store.fs, cidOf(c))) === 0 ? [] : await unpushedOf(c)
+  const n = c.meta.isNew ? await v3.headNumber(c.store.fs, cidOf(c)) : unpushed.length
+  if (n > 0 && !force)
+    throw new CliError(
+      `${c.key} has ${n} version${n === 1 ? '' : 's'} not pushed, which would be lost: push first, or --force`,
+    )
+  rmSync(ctx.home.collectionDir(c.meta), { recursive: true, force: true })
+  await dropLocalLog(c)
+}
+
 /** Start a collection that is not on its authority yet; its first push creates it there. */
 export function newCollection(
   ctx: Ctx,

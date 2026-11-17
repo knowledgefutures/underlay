@@ -329,4 +329,27 @@ describe('everyday flows in the terminal UI', () => {
     expect(f).not.toContain('org/open-data')
     ui.unmount()
   })
+
+  it('removes a collection from this machine, but not one with versions not yet pushed', async () => {
+    const w = await server()
+    const { addCollection, removeCollection } = await import('../src/core/collections.js')
+    const { coll: lib } = await addCollection(w.ctx, 'test/org/lib')
+    await removeCollection(w.ctx, lib)
+    expect(w.home.readCollection(lib.meta)).toBeNull()
+    // Added again, from nothing.
+    await addCollection(w.ctx, 'test/org/lib')
+    const meta = newCollection(w.ctx, 'test/org/draft')
+    w.home.writeSchemas(meta, { Thing })
+    const c = openColl(w.ctx, meta)
+    await saveVersion(c, {
+      rows: [v3.rowFromRecord('a', 'Thing', { name: 'a' })],
+      mode: 'set',
+      schemas: { Thing },
+      message: 'm',
+      now: new Date(),
+    })
+    await expect(removeCollection(w.ctx, c)).rejects.toThrow(/1 version not pushed/)
+    await removeCollection(w.ctx, c, true)
+    expect(w.home.readCollection(meta)).toBeNull()
+  })
 })

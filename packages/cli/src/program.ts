@@ -16,6 +16,7 @@ import { Command, Option } from 'commander'
 import { askHidden, confirm, confirmTyped } from './commands/prompt.js'
 import {
   addCollection,
+  removeCollection,
   collectionStatus,
   forget,
   keep,
@@ -466,6 +467,17 @@ program
   .description('Keep only metadata here; files go unless something else needs them')
   .argument('<collection>')
   .action(async (name: string) => say(`Let go of ${await forget(ctx(), coll(ctx(), name))} files`))
+
+program
+  .command('remove')
+  .description('Take a collection off this machine; it stays on its server, and can be added again')
+  .argument('<collection>')
+  .option('--force', 'even with versions not yet pushed, which are lost')
+  .action(async (name: string, o: { force?: boolean }) => {
+    const c = coll(ctx(), name)
+    await removeCollection(ctx(), c, !!o.force)
+    say(`Removed ${c.key} from this machine`)
+  })
 
 program
   .command('status')
