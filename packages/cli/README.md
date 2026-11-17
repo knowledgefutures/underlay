@@ -1,52 +1,57 @@
-# @underlay/cli
+# @underlay/cli: the Underlay CLI
 
-The Underlay v2 command line. Source is in `src/`; `pnpm --filter @underlay/cli build` bundles it
-to `dist/cli.js`.
+One program, `underlay`, for collections on your machine: commands, a terminal UI (plain
+`underlay` in a terminal), and later `underlay serve`. Design: `_meta/planning/kf/underlay/local-tool.md`;
+build plan: `local-tool-build.md` beside it.
 
-**Status: unpublished, and not working against www.underlay.org.** Nothing here is on npm: the
-npm package named `@underlay/cli` is an unrelated placeholder from 2023, so don't install it.
-Every production collection is on protocol v3, which answers the routes `clone`, `pull` and
-`push` depend on (`GET …/log` and `GET …/versions/:n/pack`) with 501 `not_on_v3`. `upload` is
-the only command written for v3 collections, and it is unpublished too.
-
-A working directory holds a local repository in `.underlay/`: a repository in the protocol layout
-(`repo/`), local versions, staging and remotes (`src/local.ts`). Versions are built with
-`buildVersion` from `@underlay/protocol`, the registry's own commit engine, so pushing a version
-gives the registry the same trees.
+**Status: unpublished.** The npm name `@underlay/cli` belongs to an unrelated 2023 package. Run it
+from source:
 
 ```
-underlay init [dir] | clone <url> <owner/slug> [dir] [--token]
-underlay schema-set <file>        stage the type set ({type: schema})
-underlay add <file> [--strip-unknown-fields]
-                                  stage records (NDJSON {id, type, data, private?})
-underlay rm <type> <ids…>         stage deletes
-underlay meta-set <file> | --clear
-underlay file add <paths…>        store files records reference ({"$file":"sha256:…"})
-underlay commit -m <message>
-underlay status | log | diff <from> <to>
-underlay fsck [--files]           verify the local repository
-underlay remote add <name> <url> -c <owner/slug> [-t <token>] | remove | list
-underlay pull [remote] [--force]  remote defaults to origin
-underlay push [remote]
-underlay upload <rows.ndjson> --to <url> -c <owner/slug> [-m <message>] [--sorted] [--upload <id>]
+pnpm --filter @underlay/cli build
+cd packages/cli && pnpm link --global      # puts `underlay` on your PATH
 ```
 
-- **upload** is for a v3 collection and uses no local repository: it sorts the rows, builds
-  sorted-record-files in `.underlay-upload/`, sends each by presigned URL, and commits them;
-  the server verifies the files and lands the commit. `--upload <id>` takes an interrupted
-  upload up again without sending the files already there.
+Pushing and pulling need the server routes from phase 0 (author-built commits, receipts,
+`…/commits`, `…/layout`, `…/record-files/:id`) on the remote.
 
-- **pull** verifies the registry's signed log after what was last seen, then receives the newest
-  version as a pack against the last synced one; every tree is re-derived before it's accepted.
-  With a token it asks for the private sets too (`sets=all`), and falls back to the public sets
-  if the token can't read them.
-- **push** sends the local changes since the last sync as a delta push (upserts with their set,
-  and deletes), uploads the files they need, and then requires the registry's new version to be
-  the local one: the same hash, or, when the registry's private salt differs from a new local
-  repository's, the same records, files and metadata, checked by pulling it back. It refuses
-  while the registry has versions not yet pulled.
-- **Privacy** is carried: `private: true` on a record puts it in the private set locally and on
-  the registry, and private types (`"private": true` in the schema) are private throughout.
+## Using it
 
-Before publishing: the npm name `@underlay/cli` belongs to a 2023 package from the earlier
-Underlay project, so publishing needs that account or another name.
+```
+underlay init ~/Underlay                  a workspace: underlay.toml, AGENTS.md, folders
+underlay login [remote]                   an API key from <remote>/settings/keys, kept in the keychain
+underlay ls [remote] [--public [q]]       your orgs' collections (■ ◧ □ here, + not)
+underlay add underlay.org/mitp/mit-ai     its folder, schemas and log; its files unless --keep none
+underlay new localhost:3000/travis/x      one that isn't on its authority yet; push creates it
+underlay status [--json] [--fetch]
+underlay run <script> [args] [--detach]   saves a version for each collection it changed
+underlay runs [id] [--follow]             history; pause, resume, cancel <id>
+underlay log | diff | export <collection>
+underlay save <collection> [--from f.ndjson] [-m msg]   schema edits, or records by hand
+underlay undo | squash | reword           versions not yet pushed
+underlay pull [collections…]              theirs in, yours replayed on top
+underlay push [collections…]              asks; public or many removals need `push` typed
+underlay add-file <path>                  into inputs/, its shape, the collection it matches
+underlay import <file> --collection C --type T [--id col]   the built-in importer, saved as
+                                          scripts/imports/<name>.toml and run
+underlay read <file> [--sheet S]          rows as NDJSON; underlay eject <import>
+underlay config [list|get|set|unset|edit|rule add|rule rm]
+```
+
+Scripts: anything executable in `scripts/` (or `.ts`, `.js`, `.py`, `.sh`), declaring what it
+writes in a header comment (`// underlay: writes underlay.org/mitp/mit-ai`) or a `.toml` beside
+it. It writes NDJSON to `$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson`: the whole collection by
+default (`mode additions` for changes only; `types` and `where` to narrow what it is the whole
+of). `AGENTS.md` in each workspace says the same for agents.
+
+## Code
+
+- `src/core/`: the library. `config` (the two TOML files, rules), `workspace`, `store` (record
+  files and local logs, fetching files from the authority on read), `versions` (save, undo,
+  squash, reword, replay), `sync` (pull, push), `scripts`, `runs`, `importers`, `remote` (the
+  API, with retries), `handoff`.
+- `src/commands/` and `src/cli.ts`: the commands.
+- `src/tui/`: the terminal UI (Ink), loaded only when it opens.
+
+Tests (`pnpm --filter @underlay/cli test`) run push and pull against the server's own app
+in-process (`test/world.ts`), never a real server.

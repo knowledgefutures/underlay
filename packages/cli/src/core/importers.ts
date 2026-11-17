@@ -7,7 +7,7 @@
  * `scripts/imports/<name>.toml`; running it writes the collection's NDJSON, and the run
  * saves a version like any other. `eject` turns it into an editable script.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, relative, resolve } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
@@ -252,7 +252,7 @@ export interface Shape {
 /** Copy a file into `inputs/` (unless it is in the workspace already) and read its shape. */
 export async function addFile(ctx: Ctx, path: string): Promise<Shape> {
   const abs = resolve(path)
-  if (!existsSync(abs)) throw new CliError(`No file ${path}`)
+  if (!existsSync(abs) || !statSync(abs).isFile()) throw new CliError(`No file ${path}`)
   let at = abs
   if (relative(ctx.ws.root, abs).startsWith('..')) {
     mkdirSync(join(ctx.ws.root, 'inputs'), { recursive: true })
