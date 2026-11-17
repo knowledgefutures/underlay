@@ -9,7 +9,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "vite build && vite build --ssr && tsx scripts/cli-assets.ts",
+    "build": "tsx scripts/cli-assets.ts && vite build && vite build --ssr",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/ssr-smoke.ts"
   },

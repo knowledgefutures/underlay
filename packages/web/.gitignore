@@ -1,0 +1,3 @@
+# Made by scripts/cli-assets.ts at every build: the CLI, its screenshots and its reference.
+public/cli/
+src/generated/

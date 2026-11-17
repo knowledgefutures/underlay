@@ -27,6 +27,20 @@ import {
   wrap,
 } from './lines.js'
 
+/** A time in this machine's zone: `14:39`, or `11-16 14:39`. */
+export function localTime(iso: string, withDate = false): string {
+  const d = new Date(iso)
+  const p2 = (n: number) => String(n).padStart(2, '0')
+  const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`
+  return withDate ? `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${hm}` : hm
+}
+
+/** A path with the home folder as `~`. */
+const home = (p: string) => {
+  const h = process.env.HOME ?? ''
+  return h && p.startsWith(h + '/') ? '~' + p.slice(h.length) : p
+}
+
 // --- The sidebar ---
 
 export type Item =
@@ -307,7 +321,7 @@ export function collectionPane(
         lines.push(
           L([
             S(`  ${P(v.semver, 8)}`, C.bl),
-            S(`${v.createdAt.slice(5, 16).replace('T', ' ')}  `, C.mu),
+            S(`${localTime(v.createdAt, true)}  `, C.mu),
             S(P((v.message ?? '').slice(0, 30), 31)),
             ...stat(v.stats),
           ]),
@@ -566,7 +580,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
   lines.push(
     L([
       S('  output  ', C.mu),
-      S(r.log.replace(/log\.txt$/, '')),
+      S(home(r.log.replace(/log\.txt$/, ''))),
       S(`  ${count(log.length)} lines`, C.mu),
     ]),
   )
@@ -582,7 +596,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
     )
   return {
     title: r.script,
-    meta: `${ok ? 'finished' : r.status} ${(r.endedAt ?? '').slice(11, 16)} · ${duration(r.startedAt, r.endedAt)} · exit ${r.exitCode ?? '–'}`,
+    meta: `${ok ? 'finished' : r.status} ${r.endedAt ? localTime(r.endedAt) : ''} · ${duration(r.startedAt, r.endedAt)} · exit ${r.exitCode ?? '–'}`,
     color: ok ? C.gr : C.rd,
     lines,
     keys: [
@@ -800,7 +814,13 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
   for (const p of inc)
     if (p.removed)
       lines.push(
-        L([S('  ! ', C.or), S(`${p.coll.meta.name} removes ${count(p.removed)} records`, C.or)]),
+        L([
+          S('  ! ', C.or),
+          S(
+            `${p.coll.meta.name} removes ${count(p.removed)} record${p.removed === 1 ? '' : 's'}`,
+            C.or,
+          ),
+        ]),
       )
   const pub = inc.filter((p) => p.access === 'public')
   if (pub.length)

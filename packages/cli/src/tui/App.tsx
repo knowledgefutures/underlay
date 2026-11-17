@@ -222,7 +222,7 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
   return rows.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group))
 }
 
-export function App({ ctx }: { ctx: Ctx }) {
+export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) {
   const { exit, suspendTerminal } = useApp()
   const size = useWindowSize()
   const columns = size.columns || 120
@@ -230,7 +230,7 @@ export function App({ ctx }: { ctx: Ctx }) {
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [remotes, setRemotes] = useState<Record<string, RemoteListing | { error: string }>>({})
   const [behind, setBehind] = useState<Record<string, number>>({})
-  const [sel, setSel] = useState('')
+  const [sel, setSel] = useState(initial?.sel ?? '')
   const [focus, setFocus] = useState<'side' | 'main'>('side')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [tab, setTab] = useState<Tab>('Overview')
