@@ -1,0 +1,378 @@
+import { Link } from 'react-router'
+
+import { cliEyebrow, CliScreens } from '~/components/CliDocs'
+import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
+
+const KEYS: [string, string][] = [
+  ['↑ ↓', 'Move through the sidebar'],
+  ['tab', 'Move between the sidebar and the main pane'],
+  ['← →', 'Switch a collection’s tabs'],
+  ['r', 'Run the selected script, or one that writes the selected collection'],
+  ['x, space, R', 'While a script runs: cancel, pause or resume, restart'],
+  ['u', 'Undo the newest version not yet pushed, or a finished run’s versions'],
+  ['l', 'Pull the selected collection'],
+  ['k', 'Keep all, some, or none of the selected collection'],
+  ['p', 'Push'],
+  ['+', 'Add collections from a remote'],
+  ['f', 'Add a file (or drop one on the terminal)'],
+  ['h', 'Every run'],
+  [',', 'Settings'],
+  ['c, C', 'Copy a prompt for an agent; send it to the handoff command'],
+  ['o', 'Open the collection on its server'],
+  ['q', 'Quit'],
+]
+
+export default function CliGuide() {
+  return (
+    <DocsLayout title="Guide" eyebrow={cliEyebrow}>
+      <p>
+        How the CLI works: workspaces and what is kept on your machine, scripts and imports,
+        versions, pull and push, the terminal UI, and agents. For every command and option, see{' '}
+        <Link to="/docs/cli/commands">Commands</Link>.
+      </p>
+
+      <h2>Workspaces</h2>
+      <p>
+        A workspace is a folder for your collections, scripts and views. It is plain files, so you
+        can commit it to git and share it. <code>underlay init</code> makes one.
+      </p>
+
+      <table className="border-collapse">
+        <tbody>
+          <tr>
+            <td>
+              <code>underlay.toml</code>
+            </td>
+            <td>The workspace&apos;s remotes and defaults.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>collections/</code>
+            </td>
+            <td>
+              A folder for each collection at <code>&lt;server&gt;/&lt;org&gt;/&lt;name&gt;/</code>,
+              named by its authority: <code>collection.toml</code> (its id, authority, and what is
+              kept), <code>README.md</code>, and a JSON Schema for each type in{' '}
+              <code>schemas/</code>. Schemas you edit here go up with the next version.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>scripts/</code>
+            </td>
+            <td>
+              Scripts that write collections, and saved imports in <code>scripts/imports/</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>views/</code>
+            </td>
+            <td>Small static pages for looking at results.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>inputs/</code>
+            </td>
+            <td>Files you add, and rows an import held back.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>AGENTS.md</code>
+            </td>
+            <td>How the workspace works, for an agent working in it.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>.underlay/</code>
+            </td>
+            <td>This machine&apos;s run history and locks. Ignored by git.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>What is kept on your machine</h2>
+      <p>
+        Records are not kept in the workspace. They live in the store,{' '}
+        <code>~/.local/share/underlay</code> by default, with versions not yet pushed and run logs.
+        A record file is kept once however many collections name it.
+      </p>
+      <p>
+        <code>underlay add</code> keeps all of a collection&apos;s records. With{' '}
+        <code>--keep none</code>, only its schemas and history are kept, and records are fetched
+        from its authority when something reads them; <code>--keep some --types A,B</code> keeps
+        some types. <code>underlay keep</code> and <code>underlay forget</code> change this later.
+      </p>
+      <table className="border-collapse">
+        <tbody>
+          {[
+            ['■', 'All of the collection’s records are here'],
+            ['◧', 'Some of them'],
+            ['□', 'Its schemas and history only'],
+            ['↑2', 'Two versions here that are not pushed'],
+            [
+              '↓1',
+              'One version on the authority not yet pulled (in underlay status, with --fetch)',
+            ],
+            ['new', 'Not on its authority yet: the first push creates it'],
+            ['▶', 'A script is writing it now'],
+          ].map(([k, v]) => (
+            <tr key={k}>
+              <td>
+                <code>{k}</code>
+              </td>
+              <td>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2>Settings</h2>
+      <p>
+        Your own settings are in <code>~/.config/underlay/config.toml</code>: the store, your
+        workspaces, where keys are kept. The workspace&apos;s are in <code>underlay.toml</code> and
+        win where both set something, except paths, which stay yours. <code>underlay config</code>{' '}
+        lists every setting and where it is set.
+      </p>
+      <CodeBlock>{`underlay config
+underlay config set defaults.remote underlay.org
+underlay config set store.path /Volumes/Data/underlay --personal`}</CodeBlock>
+      <p>
+        A store rule sends some collections&apos; records somewhere else, or sets how much of them
+        is kept. The most specific match wins.
+      </p>
+      <CodeBlock>{`underlay config rule add 'underlay.org/your-org/*' --keep all
+underlay config rule add 'underlay.org/your-org/private' --path ~/Private/underlay`}</CodeBlock>
+
+      <h2>Scripts</h2>
+      <p>
+        A script is a <code>.ts</code>, <code>.js</code>, <code>.mjs</code>, <code>.py</code> or{' '}
+        <code>.sh</code> file in <code>scripts/</code>, or any executable. Its first lines name the
+        collections it writes. When it runs, <code>UNDERLAY_OUT</code> is a folder to write to: one
+        NDJSON file for each collection, at{' '}
+        <code>&lt;server&gt;/&lt;org&gt;/&lt;name&gt;.ndjson</code>, one record a line.
+      </p>
+      <CodeBlock>{`// scripts/scratch.mjs
+// underlay: writes underlay.org/your-org/scratch
+import { mkdirSync, writeFileSync } from 'node:fs'
+
+const dir = process.env.UNDERLAY_OUT + '/underlay.org/your-org'
+mkdirSync(dir, { recursive: true })
+
+const records = [
+  { id: 'a', type: 'Thing', data: { name: 'First' } },
+  { id: 'b', type: 'Thing', data: { name: 'Second' } },
+]
+writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).join('\\n'))`}</CodeBlock>
+
+      <h2>What a script declares</h2>
+      <table className="border-collapse">
+        <tbody>
+          <tr>
+            <td>
+              <code>writes</code>
+            </td>
+            <td>
+              The collections it writes. A script that writes none is a check: it passes or fails.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>reads</code>
+            </td>
+            <td>Collections it reads, for the record.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>takes</code>
+            </td>
+            <td>
+              The files it takes, as a pattern such as <code>*.xlsx</code>. Files you add offer the
+              scripts that take them.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>mode</code>
+            </td>
+            <td>
+              <code>set</code> (the default) or <code>additions</code>; see below.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>types</code>
+            </td>
+            <td>
+              With <code>set</code>, the types the script writes the whole of.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Each goes on a line of its own, as <code>// underlay: mode additions</code> (or with{' '}
+        <code>#</code> in Python and shell). They can also go in a <code>.toml</code> file beside
+        the script with the same name, which may set <code>run</code>, the command that runs it.
+      </p>
+
+      <h2>Runs</h2>
+      <CodeBlock>{`underlay run scratch [args]
+underlay runs                 # every run, newest first
+underlay runs <id> --follow   # one run's output`}</CodeBlock>
+      <ul>
+        <li>
+          A script writes the whole collection. When it exits, the CLI compares what it wrote with
+          the newest version and saves a new version with what changed. Records it left out are
+          removed. With <code>mode additions</code>, its output is additions and changes only; a
+          record it writes as <code>{'{"id", "type", "removed": true}'}</code> is removed.
+        </li>
+        <li>
+          Every record is checked against its type&apos;s schema before the version is saved, as the
+          server will check it. A script that exits non-zero saves nothing.
+        </li>
+        <li>
+          A run records the script&apos;s git commit, the files it read, its output, and the
+          versions it saved. Two runs never write one collection at once.
+        </li>
+        <li>
+          A run started from the terminal UI keeps running when you close it.{' '}
+          <code>underlay pause</code>, <code>resume</code> and <code>cancel</code> take a run&apos;s
+          id.
+        </li>
+      </ul>
+
+      <h2>Imports</h2>
+      <p>
+        A spreadsheet, CSV, TSV, JSON, Parquet or SQLite file can be imported without a script.{' '}
+        <code>underlay add-file</code> copies it into <code>inputs/</code>, shows its sheets and
+        columns, and finds the collection whose ids it shares.
+      </p>
+      <CodeBlock>{`underlay add-file ~/Downloads/roster.xlsx
+underlay import inputs/roster.xlsx --collection underlay.org/your-org/staff \\
+    --type Person --id staff_id`}</CodeBlock>
+      <ul>
+        <li>
+          <code>underlay import</code> saves its options as <code>scripts/imports/roster.toml</code>{' '}
+          and runs it. Next month,{' '}
+          <code>underlay run imports/roster inputs/roster-2026-12.xlsx</code>.
+        </li>
+        <li>
+          Columns are matched to the schema&apos;s fields by name. Columns that look personal, such
+          as email or phone, are left out unless you pass <code>--personal</code>;{' '}
+          <code>--column name=field</code> maps one by hand.
+        </li>
+        <li>
+          Rows without an id are held in <code>inputs/&lt;import&gt;-held.ndjson</code> rather than
+          guessed at, and nothing is removed while rows are held. Choices for them go in{' '}
+          <code>inputs/&lt;import&gt;-decisions.json</code>, which the next run reads.
+        </li>
+        <li>
+          <code>underlay eject</code> turns an import into a script you can edit, with its options
+          written in. <code>underlay read</code> prints a file&apos;s rows as NDJSON.
+        </li>
+      </ul>
+      <h2>Versions</h2>
+      <p>
+        A version is saved on your machine by a run, an import, or <code>underlay save</code>. It is
+        a real version of the collection, with its number and id, but nobody else sees it until you
+        push it.
+      </p>
+
+      <CodeBlock>{`underlay log scratch      # versions, and which are pushed
+underlay diff scratch     # what a push would send
+underlay undo scratch     # drop the newest version not yet pushed
+underlay squash scratch   # merge versions not yet pushed into one
+underlay reword scratch "A better message"`}</CodeBlock>
+      <p>
+        Squash is useful before a push: the states in between are never uploaded.{' '}
+        <code>underlay save</code> saves a version by hand, from schema edits or an NDJSON file, and{' '}
+        <code>underlay export</code> prints a version&apos;s records as NDJSON.
+      </p>
+
+      <h2>Pull</h2>
+      <CodeBlock>{`underlay pull             # every collection, or name some`}</CodeBlock>
+      <p>
+        Pull follows each collection&apos;s authority and brings in versions others pushed, with the
+        files of what you keep. Your versions not yet pushed are rebuilt on top of them and
+        renumbered.
+      </p>
+
+      <h2>Push</h2>
+      <CodeBlock>{`underlay push             # every collection, or name some`}</CodeBlock>
+      <ul>
+        <li>
+          Push lists each collection and version it will send, and checks that nothing newer is on
+          the authority. A public collection, or one that would lose many records, needs{' '}
+          <code>push</code> typed out. Otherwise <code>y</code> is enough, and <code>--yes</code>{' '}
+          answers it.
+        </li>
+        <li>
+          Versions arrive as you saved them: the same numbers, contents and ids, so a version you
+          cite from your machine is the version on the server. The server signs a receipt for each
+          one (<Link to="/docs/protocol/push-and-pull">Push and pull</Link>).
+        </li>
+        <li>
+          If someone pushed first, the server refuses and your versions are rebuilt on top of
+          theirs, renumbered, and shown to you again before you push.
+        </li>
+        <li>
+          A collection made with <code>underlay new</code> is created on its authority by its first
+          push.
+        </li>
+      </ul>
+      <h2>Terminal UI</h2>
+      <p>
+        Plain <code>underlay</code> in a terminal opens it, in the workspace you are in (or your
+        default one). It calls the same code as the commands and watches the workspace, so what a
+        command, another terminal, or an agent does shows up as it happens.
+      </p>
+      <CliScreens />
+
+      <ul>
+        <li>
+          <strong>Remotes</strong>: the servers you can use, whether you are signed in, and how many
+          of your organizations&apos; collections there are on your machine.
+        </li>
+        <li>
+          <strong>On this machine</strong>: your collections, by authority and organization, with
+          what is kept and how each stands against its authority.
+        </li>
+        <li>
+          <strong>Scripts and views</strong>: each script with its last result, and your views.
+        </li>
+        <li>
+          The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
+          Changes, Versions), a script&apos;s output as it runs, a finished run, the push screen, a
+          remote&apos;s list of collections to add, a file you added, or settings.
+        </li>
+      </ul>
+
+      <h2>Keys</h2>
+      <p>The keys for the screen you are on are along the bottom.</p>
+      <table className="border-collapse">
+        <tbody>
+          {KEYS.map(([k, v]) => (
+            <tr key={k}>
+              <td>
+                <code>{k}</code>
+              </td>
+              <td>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h2>Agents</h2>
+      <p>
+        An agent works in a workspace with the same commands you use, and reads{' '}
+        <code>AGENTS.md</code> to learn how. <code>underlay status --json</code> gives it the state
+        of everything. Agents save versions; pushing is yours to do.
+      </p>
+      <p>
+        To hand work to an agent from the terminal UI, <code>c</code> copies a prompt about what you
+        are looking at, and <code>C</code> sends it to the command set in <code>handoff.send</code>,
+        which takes the prompt on its standard input.
+      </p>
+      <CodeBlock>{`underlay config set handoff.send 'your-agent-command -'`}</CodeBlock>
+    </DocsLayout>
+  )
+}

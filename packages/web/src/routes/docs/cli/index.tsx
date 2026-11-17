@@ -51,31 +51,64 @@ export default function CliOverview() {
         workspaces and their records stay.
       </p>
 
-      <h2>In this section</h2>
-      <ul>
-        <li>
-          <Link to="/docs/cli/start">Getting started</Link>: from installing to your first pushed
-          version.
-        </li>
-        <li>
-          <Link to="/docs/cli/workspaces">Workspaces</Link>: the folder, what is kept on your
-          machine, settings, and agents.
-        </li>
-        <li>
-          <Link to="/docs/cli/scripts">Scripts and imports</Link>: how scripts write collections,
-          and importing a file without one.
-        </li>
-        <li>
-          <Link to="/docs/cli/versions">Versions, pull and push</Link>: reviewing and changing
-          versions before they leave your machine.
-        </li>
-        <li>
-          <Link to="/docs/cli/ui">Terminal UI</Link>: its screens and keys.
-        </li>
-        <li>
-          <Link to="/docs/cli/commands">Commands</Link>: every command and option.
-        </li>
-      </ul>
+      <h2>Getting started</h2>
+      <p>
+        From nothing to a pushed version. The examples use underlay.org; for another server, use its
+        address in place of <code>underlay.org</code> (for example <code>staging.underlay.org</code>
+        , or <code>localhost:3000</code> for one on your machine). Use a scratch collection while
+        you try it.
+      </p>
+
+      <h3>1. Sign in</h3>
+      <p>
+        Make an API key on the server&apos;s settings page (on underlay.org,{' '}
+        <Link to="/settings/keys">Settings › API keys</Link>), then paste it when asked. On a Mac
+        the key is kept in your keychain; elsewhere in a file only you can read.
+      </p>
+      <CodeBlock>{`underlay login underlay.org
+underlay remotes          # where you are signed in`}</CodeBlock>
+
+      <h3>2. Make a workspace</h3>
+      <p>
+        A folder for your collections, scripts and views. Set the server your collections usually
+        come from, so you can leave it out of collection names.
+      </p>
+      <CodeBlock>{`underlay init ~/Underlay
+cd ~/Underlay
+underlay config set defaults.remote underlay.org`}</CodeBlock>
+
+      <h3>3. Add a collection, or start one</h3>
+      <CodeBlock>{`underlay ls                                  # your organizations' collections
+underlay add underlay.org/your-org/a-collection
+underlay new underlay.org/your-org/scratch   # not there yet: your first push creates it`}</CodeBlock>
+
+      <h3>4. Write a script and run it</h3>
+      <p>
+        Put a JSON Schema for each type in the collection&apos;s folder, as{' '}
+        <code>collections/underlay.org/your-org/scratch/schemas/Thing.json</code>, and a script in{' '}
+        <code>scripts/</code>:
+      </p>
+      <CodeBlock>{`// scripts/scratch.mjs
+// underlay: writes underlay.org/your-org/scratch
+import { mkdirSync, writeFileSync } from 'node:fs'
+
+const dir = process.env.UNDERLAY_OUT + '/underlay.org/your-org'
+mkdirSync(dir, { recursive: true })
+
+const records = [
+  { id: 'a', type: 'Thing', data: { name: 'First' } },
+  { id: 'b', type: 'Thing', data: { name: 'Second' } },
+]
+writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).join('\\n'))`}</CodeBlock>
+      <CodeBlock>{`underlay run scratch
+underlay diff scratch     # what the run saved`}</CodeBlock>
+
+      <h3>5. Push</h3>
+      <CodeBlock>{`underlay push`}</CodeBlock>
+      <p>
+        Push lists what it will send and asks first. Or run plain <code>underlay</code> and do all
+        of this in the <Link to="/docs/cli/guide#terminal-ui">terminal UI</Link>.
+      </p>
     </DocsLayout>
   )
 }
