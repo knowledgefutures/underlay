@@ -12,7 +12,7 @@
  */
 import { createObject, v3 } from '@underlay/protocol'
 
-import { fetchAssets, sendAssets } from './assets.js'
+import { fetchAssets, sendAssets, unpushedAssets } from './assets.js'
 import type { Coll, Ctx } from './context.js'
 import { CliError } from './env.js'
 import { RemoteError } from './remote.js'
@@ -202,6 +202,8 @@ export interface PushPlan {
   from: { number: number; semver: string } | null
   versions: PushVersion[]
   removed: number
+  /** Files (assets) its versions name that the authority's newest doesn't: sent first. */
+  files: number
 }
 
 /** What a push would copy, for the confirmation. */
@@ -226,6 +228,7 @@ export async function pushPlan(c: Coll): Promise<PushPlan | null> {
     from: state.remote ? { number: state.remote.number, semver: state.remote.semver } : null,
     versions,
     removed: versions.reduce((n, v) => n + (v.stats?.removed ?? 0), 0),
+    files: (await unpushedAssets(c)).length,
   }
 }
 

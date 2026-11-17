@@ -466,25 +466,38 @@ export function App({
 
   // --- Actions ---
 
-  const openPush = useCallback(async () => {
-    const s = await loadSnapshot(ctx)
-    const plans = (
-      await Promise.all(s.collections.map((c) => pushPlan(openColl(ctx, c.meta))))
-    ).filter((p) => p !== null)
-    const b = await loadBehind(ctx, s.collections)
-    setBehind(b)
-    setPush({
-      plans,
-      included: new Set(plans.filter((p) => !b[p.coll.key]).map((p) => p.coll.key)),
-      behind: b,
-      cursor: 0,
-      typed: '',
-      progress: [],
-      busy: false,
-    })
-    setOverlay('push')
-    setFocus('main')
-  }, [ctx])
+  /** The push screen: for one collection (p on it), or for every one with versions to push (P). */
+  // Which collection the push screen is for, so reopening it after a squash keeps it.
+  const pushScope = useRef<string | undefined>(undefined)
+  const openPush = useCallback(
+    async (only?: string) => {
+      pushScope.current = only
+      const s = await loadSnapshot(ctx)
+      const plans = (
+        await Promise.all(
+          s.collections
+            .filter((c) => !only || c.key === only)
+            .map((c) => pushPlan(openColl(ctx, c.meta))),
+        )
+      ).filter((p) => p !== null)
+      if (only && !plans.length)
+        return setStatus(`${only.split('/').pop()} has no versions that aren't pushed`)
+      const b = await loadBehind(ctx, s.collections)
+      setBehind(b)
+      setPush({
+        plans,
+        included: new Set(plans.filter((p) => !b[p.coll.key]).map((p) => p.coll.key)),
+        behind: b,
+        cursor: 0,
+        typed: '',
+        progress: [],
+        busy: false,
+      })
+      setOverlay('push')
+      setFocus('main')
+    },
+    [ctx],
+  )
 
   const runPush = useCallback(async () => {
     const chosen = push_.plans.filter(
@@ -805,7 +818,7 @@ export function App({
               `${p.coll.meta.name}: ${r.fetched} new${r.replayed.length ? `, yours replayed as ${r.replayed.map((x) => x.to.commit.semver).join(', ')}` : ''}`,
             )
           }
-          await openPush()
+          await openPush(pushScope.current)
           return said.join(' · ')
         })
       const p = push_.plans[push_.cursor]
@@ -814,7 +827,7 @@ export function App({
       if (input === 'S' && p)
         return void attempt('Squashing', async () => {
           const s = await squash(p.coll, undefined, null, ctx.env.now())
-          await openPush()
+          await openPush(pushScope.current)
           return s ? `Squashed into ${s.commit.semver}` : 'They cancelled out'
         })
       if (input === 'e' && p) {
@@ -825,7 +838,7 @@ export function App({
           submit: async (v) => {
             const { reword } = await import('../core/versions.js')
             await reword(p.coll, last.number, v, ctx.env.now())
-            await openPush()
+            await openPush(pushScope.current)
           },
         })
       }
@@ -1181,7 +1194,8 @@ export function App({
         setOverlay('settings'),
         setFocus('main')
       )
-    if (input === 'p') return void openPush()
+    if (input === 'p') return void openPush(collRow?.key)
+    if (input === 'P') return void openPush()
     if (input === '+') {
       // The selected remote if you are signed in there; else your default, or the first
       // server you are signed in to. A signed-out remote's list is a dead end.
@@ -1305,7 +1319,7 @@ export function App({
         const now = collRow.meta.keep
         const levels: Record<string, Keep> = { e: 'all', d: 'records', m: 'none' }
         return setPrompt({
-          label: `Keep here: e everything, d data without assets, m metadata only (now ${KEEP_LABEL[now]})`,
+          label: `Keep here: e everything, d data without files, m metadata only (now ${KEEP_LABEL[now]})`,
           value: '',
           submit: async (v) => {
             const level = levels[v.trim().toLowerCase()]
@@ -1396,6 +1410,7 @@ export function App({
           storeRoot: tildePath(ctx.env, openColl(ctx, collRow.meta).store.root),
           url: openColl(ctx, collRow.meta).remote().url,
           behind: behind[collRow.key] ?? 0,
+          handoff: !!ctx.settings.handoffSend,
         },
         inner,
       )
@@ -1436,8 +1451,11 @@ export function App({
   const paneRows = bodyH - 2 - footer.length
   const paneLines = shownRun && !overlay ? pane.lines : pane.lines.slice(0, Math.max(0, paneRows))
   const globalKeys: Key[] = [
+    { k: 'c', l: 'collections' },
+    { k: 's', l: 'servers' },
+    { k: 'r', l: 'scripts' },
     { k: '+', l: 'add' },
-    { k: 'p', l: 'push' },
+    { k: 'P', l: 'push all' },
     { k: 'h', l: 'runs' },
     { k: 'f', l: 'file' },
     { k: ',', l: 'settings' },
@@ -1590,8 +1608,9 @@ export function App({
         <Frame
           title={pane.title}
           {...(pane.meta ? { meta: pane.meta } : {})}
-          {...(pane.color ? { color: pane.color } : {})}
-          border={pane.border ?? (focus === 'main' ? C.fg : C.dim)}
+          // Lit when it has the keys, as the cards are; push and the like keep their own colour.
+          color={pane.color ?? (focus === 'main' ? C.bl : C.fg)}
+          border={pane.border ?? (focus === 'main' ? C.bl : C.dim)}
           width={mainW}
           height={bodyH}
         >

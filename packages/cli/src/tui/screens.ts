@@ -14,6 +14,7 @@ import type { PushPlan } from '../core/sync.js'
 import { beside, birdLines, PECK } from './bird.js'
 import type { CollectionDetail, CollectionRow, ScriptRow, Snapshot } from './data.js'
 import {
+  caps,
   blank,
   C,
   head,
@@ -218,6 +219,8 @@ export interface CollectionExtra {
   storeRoot: string
   url: string
   behind: number
+  /** Whether handoff.send is set, so A sends the prompt. */
+  handoff?: boolean
 }
 
 const stat = (st?: { added: number; changed: number; removed: number }) =>
@@ -242,22 +245,30 @@ export function collectionPane(
     title: `${m.org}/${m.name}`,
     meta: `on ${m.authority}${m.title ? ` · ${m.title}` : ''} · ${m.access}${m.isNew ? ' · new' : ''}`,
     lines,
-    keys: [
-      { k: 'p', l: 'push…' },
-      { k: 'u', l: 'undo last change' },
-      { k: 'k', l: 'keep…' },
-      { k: 'l', l: 'pull' },
-      { k: 'R', l: 'run a script' },
-      { k: '←→', l: 'tabs' },
-      { k: 'a', l: 'prompt for an agent' },
-      { k: 'o', l: `open on ${m.authority}` },
-      { k: '+', l: 'add from a remote' },
-    ],
+    // The collection's own actions are drawn in the pane (below); the key bar keeps the rest.
+    keys: [{ k: '←→', l: 'tabs' }],
   }
   if (!d) {
     lines.push(L([S('Loading…', C.mu)]))
     return pane
   }
+  // What each action would do now; one with nothing to do isn't shown.
+  const waiting = d.versions.filter((v) => !v.pushed).length
+  const writers = x.scripts.filter((s) =>
+    s.writes.some((w) => w === row.key || row.key.endsWith('/' + w)),
+  )
+  const acts: Key[] = []
+  if (waiting) acts.push({ k: 'p', l: `push ${waiting} version${waiting === 1 ? '' : 's'}` })
+  if (!m.isNew) acts.push({ k: 'l', l: x.behind ? `pull ${x.behind} newer` : 'pull' })
+  if (writers.length === 1) acts.push({ k: 'R', l: `run ${writers[0]!.name}` })
+  else if (writers.length > 1) acts.push({ k: 'R', l: `run… (${writers.length} scripts)` })
+  acts.push({ k: 'k', l: `keep: ${KEEP_LABEL[m.keep]}` })
+  acts.push({ k: 'a', l: 'prompt for an agent' })
+  if (x.handoff) acts.push({ k: 'A', l: 'send to an agent' })
+  if (!m.isNew) acts.push({ k: 'o', l: `open on ${m.authority}` })
+  acts.push({ k: 'D', l: 'remove from this machine' })
+  // Where they go: under the description on Overview, under the tabs elsewhere.
+  let capsAt = lines.length
   const touching = x.scripts.filter(
     (s) =>
       s.writes.some((w) => w === row.key || row.key.endsWith('/' + w)) ||
@@ -266,6 +277,7 @@ export function collectionPane(
   const unpushed = d.versions.filter((v) => !v.pushed)
   if (tab === 'Overview') {
     if (d.readme) lines.push(...wrap(d.readme, width - 2), blank())
+    capsAt = lines.length
     lines.push(head('HERE'))
     if (d.versions.length === 0)
       lines.push(
@@ -378,7 +390,8 @@ export function collectionPane(
           S(r.data.slice(0, Math.max(10, width - 40)), C.mu),
         ]),
       )
-    pane.keys = [{ k: '↑↓', l: 'scroll' }, { k: 'n', l: 'next page' }, ...pane.keys.slice(5)]
+    acts.push({ k: 'n', l: 'next page' })
+    pane.keys = [{ k: '↑↓', l: 'scroll' }, ...pane.keys]
   } else if (tab === 'Schemas') {
     for (const [t, s] of Object.entries(d.schemas)) {
       const props = (s as { properties?: Record<string, { type?: unknown }> }).properties ?? {}
@@ -500,13 +513,10 @@ export function collectionPane(
           S((v.message ?? '').slice(0, 40)),
         ]),
       )
-    pane.keys = [
-      { k: 'u', l: 'undo newest' },
-      { k: 'S', l: 'squash not pushed' },
-      { k: 'e', l: 'reword newest' },
-      ...pane.keys.slice(5),
-    ]
+    if (waiting) acts.push({ k: 'u', l: 'undo newest' }, { k: 'e', l: 'reword newest' })
+    if (waiting > 1) acts.push({ k: 'S', l: 'squash not pushed' })
   }
+  lines.splice(capsAt, 0, ...caps(acts, width - 2), blank())
   return pane
 }
 
@@ -857,6 +867,13 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
   })
   lines.push(blank(), head('COPIED EXACTLY AS THEY ARE HERE: SAME NUMBERS, SAME CONTENTS'))
   for (const p of inc)
+    if (p.files)
+      lines.push(
+        L([
+          S(`  ${p.coll.meta.name}: ${p.files} file${p.files === 1 ? '' : 's'} sent first`, C.mu),
+        ]),
+      )
+  for (const p of inc)
     for (const x of p.versions)
       lines.push(
         L([
@@ -938,7 +955,10 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
     )
   else footer.push(L([S(`y copies ${versions} version${versions === 1 ? '' : 's'}; esc cancels`)]))
   return {
-    title: `Push to ${authorities.join(', ')}`,
+    title:
+      v.plans.length === 1
+        ? `Push ${v.plans[0]!.coll.meta.org}/${v.plans[0]!.coll.meta.name}`
+        : `Push ${v.plans.length} collections to ${authorities.join(', ')}`,
     meta: user ? `as ${user}` : '',
     color: C.or,
     border: C.or,

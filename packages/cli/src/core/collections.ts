@@ -24,7 +24,7 @@ export const KEEP_MARK: Record<Keep, string> = { all: ' ', records: '◐', some:
 /** Each level in words. */
 export const KEEP_LABEL: Record<Keep, string> = {
   all: 'everything',
-  records: 'data, no assets',
+  records: 'data, no files',
   some: 'some types',
   none: 'metadata only',
 }
