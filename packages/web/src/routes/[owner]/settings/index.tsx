@@ -361,6 +361,14 @@ export default function OwnerSettings() {
         <div id="ark" className="border-rule mb-10 border-t pt-6">
           <SectionHeading>ARK Identifiers</SectionHeading>
 
+          <p className="text-ink-muted mb-4 text-sm">
+            {initialOrgData.arkNaan
+              ? 'Collections can have ARKs under the organization’s own NAAN.'
+              : initialOrgData.arkKfNaan
+                ? 'Knowledge Futures has turned on its NAAN for this organization, so collections can have ARKs. A NAAN of your own takes its place.'
+                : 'ARKs are off for this organization. Set a NAAN registered to it, or ask Knowledge Futures to turn on its NAAN.'}
+          </p>
+
           {initialOrgData.arkShoulder && (
             <div className="mb-4">
               <p className="text-ink-muted mb-1 text-xs">Assigned shoulder</p>
@@ -380,12 +388,16 @@ export default function OwnerSettings() {
                 id="arkNaan"
                 value={arkNaan}
                 onChange={(e) => setArkNaan(e.target.value)}
-                placeholder="Leave blank to use default (12345)"
+                placeholder="Your organization’s NAAN"
                 pattern="[0-9]{1,16}"
                 className="font-mono"
               />
               <p className="text-ink-muted mt-1 text-xs">
-                If set, overrides the default NAAN for all ARKs created by this organization.
+                One registered to your organization at{' '}
+                <a href="https://arks.org" className="text-link hover:underline">
+                  arks.org
+                </a>
+                , pointed at underlay.org. All of the organization&rsquo;s ARKs use it.
               </p>
             </div>
             <Button type="submit" disabled={submitting === 'ark'}>

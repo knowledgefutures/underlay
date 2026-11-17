@@ -35,8 +35,9 @@ const accountRes = `{
   "provenanceNote": null,
   "pinned": ["uuid"],
   "createdAt": "2026-01-15T00:00:00.000Z",
-  "arkNaan": "12345",
-  "arkShoulder": "ul"
+  "arkNaan": null,
+  "arkKfNaan": true,
+  "arkShoulder": "ulb3"
 }`
 
 const membersRes = `[
@@ -192,8 +193,10 @@ export default function DocsApiAccounts() {
           Get the public profile of any account: what its page at <code>/:slug</code> shows.{' '}
           <code>bio</code> is Markdown. <code>pinned</code> lists the ids of the collections shown
           first on its page, in order, leaving out private ones unless you are a member.{' '}
-          <code>arkNaan</code> and <code>arkShoulder</code> are null when the account has no ARK
-          settings of its own. An unknown slug returns <code>404</code>.
+          <code>arkNaan</code> is the account&rsquo;s own NAAN, and <code>arkKfNaan</code> whether
+          Knowledge Futures turned on its NAAN for it; with neither, it has no ARKs.{' '}
+          <code>arkShoulder</code> is null until it has a collection. An unknown slug returns{' '}
+          <code>404</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>

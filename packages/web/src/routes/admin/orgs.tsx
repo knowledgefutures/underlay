@@ -19,6 +19,7 @@ interface Org {
   members: number
   collections: number
   publicCollections: number
+  arks: 'own' | 'kf' | null
   records: number
   latestBytes: number
   historyBytes: number
@@ -62,6 +63,12 @@ export default function AdminOrgs() {
       numeric: true,
       sort: (o) => o.collections,
       render: (o) => o.collections,
+    },
+    {
+      key: 'arks',
+      label: 'ARKs',
+      sort: (o) => o.arks ?? '',
+      render: (o) => (o.arks === 'own' ? 'own NAAN' : o.arks === 'kf' ? 'KF NAAN' : ''),
     },
     {
       key: 'records',

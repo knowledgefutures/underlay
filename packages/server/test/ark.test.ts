@@ -604,6 +604,8 @@ describe('which orgs have ARKs', () => {
         naan: null,
         kfNaan: false,
         kfNaanValue: '12345',
+        // links has its ARK on (fresh, minted off, doesn't count).
+        collectionsOn: 1,
       })
       expect((await resolve(`ark:12345/${t.name()}`)).status).toBe(404)
       expect((await patch({ kfNaan: true }, 'steward')).status).toBe(200)

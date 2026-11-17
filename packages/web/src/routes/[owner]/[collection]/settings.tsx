@@ -445,6 +445,24 @@ export default function CollectionSettingsPage() {
         className="border-rule mb-10 scroll-mt-6 border-t pt-6"
       >
         <SectionHeading>ARK Identifiers</SectionHeading>
+        {!arkSettings.available && (
+          <p className="text-ink-muted text-sm">
+            ARKs aren&rsquo;t on for this organization. An owner can set its own NAAN in the{' '}
+            <Link to={`/${owner}/settings`} className="text-link hover:underline">
+              organization&rsquo;s settings
+            </Link>
+            , or Knowledge Futures can turn on its NAAN for the organization.
+          </p>
+        )}
+        {arkSettings.available && (
+          <p className="text-ink-muted mb-3 text-sm">
+            {arkSettings.naanSource === 'own'
+              ? `Under the organization’s NAAN, ${arkSettings.naan}.`
+              : `Under Knowledge Futures’ NAAN, ${arkSettings.naan}.`}{' '}
+            An ARK is meant to be permanent: once it is on, leave it on. If the collection is
+            deleted, its ARK says so.
+          </p>
+        )}
         {arkPath && arkSettings.enabled && (
           <p className="text-ink-muted mb-3 text-sm">
             Current ARK:{' '}
@@ -453,12 +471,12 @@ export default function CollectionSettingsPage() {
             </Link>
           </p>
         )}
-        {!isOrgAdmin && (
+        {arkSettings.available && !isOrgAdmin && (
           <p className="text-ink-muted text-sm">
             Only the organization's owners and admins can change ARK settings.
           </p>
         )}
-        {isOrgAdmin && (
+        {arkSettings.available && isOrgAdmin && (
           <form onSubmit={handleUpdateArk} className="space-y-4">
             <div className="flex items-center gap-2">
               <Checkbox

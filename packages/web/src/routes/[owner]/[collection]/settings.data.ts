@@ -16,7 +16,12 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 
   const [data, arkSettings, webhooksResult, placements, locations] = await Promise.all([
     api.json(prefix, null),
-    api.json(`${prefix}/ark`, { enabled: false, customUrl: null, arkUrl: null }),
+    api.json(`${prefix}/ark`, {
+      enabled: false,
+      customUrl: null,
+      arkUrl: null,
+      available: false,
+    }),
     api.json(`${prefix}/webhooks`, { webhooks: [] }),
     api.json(`${prefix}/placements`, { headSeq: 0, placements: [] }),
     // Owners and admins only; anyone else gets 403 and no add-mirror form.

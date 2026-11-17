@@ -158,9 +158,17 @@ function sums(cols: CollectionFigures[]): Sums {
 /** The organizations, with members and their collections' figures summed; and the collections. */
 async function orgFigures(c: Context<AppEnv>) {
   const [orgs, members, cols] = await Promise.all([
-    rows<{ id: string; slug: string; name: string; createdAt: number }>(
+    rows<{
+      id: string
+      slug: string
+      name: string
+      createdAt: number
+      arkNaan: string | null
+      arkKfNaan: number
+    }>(
       c,
-      sql`SELECT id, slug, name, created_at AS createdAt FROM organization`,
+      sql`SELECT id, slug, name, created_at AS createdAt, ark_naan AS arkNaan,
+          ark_kf_naan AS arkKfNaan FROM organization`,
     ),
     rows<{ orgId: string; n: number }>(
       c,
@@ -178,6 +186,8 @@ async function orgFigures(c: Context<AppEnv>) {
       slug: o.slug,
       name: o.name,
       createdAt: n(o.createdAt),
+      // Whose NAAN the org's ARKs use: its own, KF's (a steward's switch), or none.
+      arks: o.arkNaan ? ('own' as const) : o.arkKfNaan ? ('kf' as const) : null,
       members: memberCount.get(o.id) ?? 0,
       collections: mine.length,
       publicCollections: mine.filter((col) => col.public).length,

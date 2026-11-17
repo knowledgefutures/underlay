@@ -125,11 +125,11 @@ function verifyUnderlaySignature(secret, rawBody, header) {
 // if (!verifyUnderlaySignature(SECRET, req.body, req.get('x-underlay-signature')))
 //   return res.sendStatus(401)`
 
-const arkShape = `https://underlay.org/ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
+const arkShape = `ark:<NAAN>/<shoulder><id><check>[.vX.Y.Z][/<Type>/<id>]
 
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0                    the collection
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0             a version
-https://underlay.org/ark:12345/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
+https://n2t.net/ark:71144/ulb9bq4n5gmv3k0                    the collection
+https://n2t.net/ark:71144/ulb9bq4n5gmv3k0.v3.2.0             a version
+https://n2t.net/ark:71144/ulb9bq4n5gmv3k0/Publication/pub-1  a record`
 
 const resolveRes = `{
   "type": "redirect",
@@ -139,15 +139,15 @@ const resolveRes = `{
     "who": "Knowledge Futures",
     "what": "PubPub Archive v3.2.0",
     "when": "20260401",
-    "where": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0",
-    "naan": "12345",
+    "where": "https://n2t.net/ark:71144/ulb9bq4n5gmv3k0.v3.2.0",
+    "naan": "71144",
     "collectionName": "PubPub Archive",
     "ownerName": "Knowledge Futures",
     "semver": "v3.2.0",
     "message": "April sync",
     "appId": null,
     "createdAt": "2026-04-01T00:00:00.000Z",
-    "arkUrl": "https://underlay.org/ark:12345/ulb9bq4n5gmv3k0.v3.2.0"
+    "arkUrl": "https://n2t.net/ark:71144/ulb9bq4n5gmv3k0.v3.2.0"
   }
 }`
 
@@ -399,6 +399,19 @@ export default function DocsApiSyncAndIntegrations() {
         , a persistent identifier that redirects to the collection, to one of its versions, or to a
         URL a record names. Resolution sees what the caller can read, as everywhere else.
       </p>
+      <p>
+        An organization has ARKs only with a NAAN: its own, registered at arks.org and set below, or
+        Knowledge Futures&rsquo; NAAN, 71144, which Knowledge Futures turns on for an organization
+        on request. A collection&rsquo;s ARK starts off; an owner or admin turns it on. ARKs under
+        71144 are linked through{' '}
+        <a href="https://n2t.net" className="text-link underline">
+          n2t.net
+        </a>
+        , the global ARK resolver, which forwards them here; ARKs under an organization&rsquo;s own
+        NAAN are linked on underlay.org. Every <code>/ark:</code> path resolves on underlay.org too.
+        An ARK is never reassigned: when a collection with a live ARK is deleted, the ARK answers{' '}
+        <code>410</code> with a tombstone naming what it was.
+      </p>
       <CodeBlock>{arkShape}</CodeBlock>
 
       <Endpoint route="GET /ark:<NAAN>/<name>" scope="No auth required">
@@ -409,7 +422,8 @@ export default function DocsApiSyncAndIntegrations() {
           readable, or the field isn&rsquo;t an http(s) URL. Append <code>?info</code> or{' '}
           <code>??</code> for an Electronic Resource Citation (ERC) as plain text, or{' '}
           <code>?json</code> for the metadata as JSON. <code>/ark:&lt;NAAN&gt;/</code> alone returns
-          the NAAN&rsquo;s policy statement.
+          the NAAN&rsquo;s policy statement. A deleted collection&rsquo;s ARK is a <code>410</code>{' '}
+          with a plain-text tombstone (or its metadata, with <code>?json</code>).
         </p>
       </Endpoint>
 
@@ -417,9 +431,10 @@ export default function DocsApiSyncAndIntegrations() {
         <p>
           Resolve an ARK without following it. <code>path</code> is anything containing{' '}
           <code>ark:&lt;NAAN&gt;/…</code> (<code>400</code> otherwise). Returns{' '}
-          <code>{'{"type": "redirect", "url", "metadata"}'}</code>, or <code>404</code> with{' '}
-          <code>{'{"type": "not_found"}'}</code>. A relative <code>url</code> is a page on this
-          site.
+          <code>{'{"type": "redirect", "url", "metadata"}'}</code>, <code>410</code> with{' '}
+          <code>{'{"type": "gone", "metadata"}'}</code> for a deleted collection, or{' '}
+          <code>404</code> with <code>{'{"type": "not_found"}'}</code>. A relative <code>url</code>{' '}
+          is a page on this site.
         </p>
         <CodeBlock>{resolveRes}</CodeBlock>
       </Endpoint>
@@ -429,11 +444,18 @@ export default function DocsApiSyncAndIntegrations() {
         scope="Auth: org member (PATCH: org owner or admin, signed in or with an admin key)"
       >
         <p>
-          GET returns <code>{'{"enabled", "customUrl", "arkUrl", "shoulder", "arkId"}'}</code>.
-          PATCH takes <code>{'{"enabled"?, "customUrl"?}'}</code>: <code>customUrl</code> is an
-          http(s) URL to redirect the collection and version ARKs to, or <code>null</code> to use
-          the Underlay pages. A collection that has no ARK yet gets one on its first PATCH. Returns{' '}
-          <code>{'{"ok": true}'}</code>.
+          GET returns{' '}
+          <code>
+            {
+              '{"enabled", "customUrl", "arkUrl", "shoulder", "arkId", "available", "naan", "naanSource"}'
+            }
+          </code>
+          : <code>available</code> is whether the organization has a NAAN, and{' '}
+          <code>naanSource</code> is <code>&quot;own&quot;</code>, <code>&quot;kf&quot;</code> or{' '}
+          <code>null</code>. PATCH takes <code>{'{"enabled"?, "customUrl"?}'}</code>:{' '}
+          <code>customUrl</code> is an http(s) URL to redirect the collection and version ARKs to,
+          or <code>null</code> to use the Underlay pages. Turning an ARK on without a NAAN is a{' '}
+          <code>403</code>. Returns <code>{'{"ok": true}'}</code>.
         </p>
       </Endpoint>
 
@@ -457,9 +479,9 @@ export default function DocsApiSyncAndIntegrations() {
       >
         <p>
           Set the NAAN the organization&rsquo;s ARKs are minted under:{' '}
-          <code>{'{"naan": "…"}'}</code> (digits, at most 16), or <code>null</code> for the default.
-          A NAAN another organization already uses is a <code>409</code>. Read and write keys, and
-          keys confined to specific collections, get <code>403</code>.
+          <code>{'{"naan": "…"}'}</code> (digits, at most 16), or <code>null</code> for none. A NAAN
+          another organization already uses, or Knowledge Futures&rsquo;, is a <code>409</code>.
+          Read and write keys, and keys confined to specific collections, get <code>403</code>.
         </p>
       </Endpoint>
 

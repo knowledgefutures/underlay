@@ -768,7 +768,20 @@ export function arkRoutes() {
       .where(eq(schema.organization.slug, c.req.param('slug')))
       .limit(1)
     if (!org) return jsonError(c, 404, 'Org not found')
-    return c.json({ naan: org.arkNaan, kfNaan: org.arkKfNaan, kfNaanValue: DEFAULT_NAAN })
+    // Collections whose owners turned their ARK on: live while the org has a NAAN.
+    const [on] = await c.var.ports.db
+      .select({ n: sql<number>`count(*)` })
+      .from(schema.arkCollections)
+      .innerJoin(schema.collections, eq(schema.arkCollections.collectionId, schema.collections.id))
+      .where(
+        and(eq(schema.collections.organizationId, org.id), eq(schema.arkCollections.enabled, true)),
+      )
+    return c.json({
+      naan: org.arkNaan,
+      kfNaan: org.arkKfNaan,
+      kfNaanValue: DEFAULT_NAAN,
+      collectionsOn: Number(on?.n ?? 0),
+    })
   })
 
   app.patch('/api/admin/accounts/:slug/ark', async (c) => {

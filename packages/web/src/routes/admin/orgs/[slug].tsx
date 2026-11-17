@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, useLoaderData } from 'react-router'
 
 import {
@@ -13,7 +14,7 @@ import {
   UsageChart,
 } from '~/components/admin-stats'
 import AdminLayout from '~/components/AdminLayout'
-import { Badge, SectionHeading } from '~/components/ui'
+import { Badge, Button, SectionHeading } from '~/components/ui'
 import { formatBytes } from '~/lib/format'
 
 interface Collection {
@@ -48,6 +49,60 @@ interface OrgStats {
   daily: ({ day: string } & Usage)[]
   members: { name: string; email: string; role: string }[]
   collections: Collection[]
+  ark: OrgArk | null
+}
+
+interface OrgArk {
+  naan: string | null
+  kfNaan: boolean
+  kfNaanValue: string
+  collectionsOn: number
+}
+
+/** KF's NAAN for the org: only a steward turns it on, since KF answers for those ARKs. */
+function ArkSwitch({ slug, initial }: { slug: string; initial: OrgArk }) {
+  const [ark, setArk] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const flip = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/accounts/${encodeURIComponent(slug)}/ark`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ kfNaan: !ark.kfNaan }),
+      })
+      if (res.ok) setArk({ ...ark, kfNaan: !ark.kfNaan })
+      else setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const on = plural(ark.collectionsOn, 'collection')
+  return (
+    <div className="mb-8 text-sm">
+      <p className="mb-2">
+        {ark.naan
+          ? `Own NAAN, ${ark.naan}: its ARKs don't need KF's.`
+          : ark.kfNaan
+            ? `On, under KF's NAAN ${ark.kfNaanValue}. ${on} with the ARK on.`
+            : `Off. ${on} with the ARK on, which would go live under KF's NAAN ${ark.kfNaanValue}.`}
+      </p>
+      {!ark.naan && (
+        <Button type="button" onClick={flip} disabled={busy}>
+          {ark.kfNaan ? `Turn off KF's NAAN` : `Turn on KF's NAAN`}
+        </Button>
+      )}
+      {ark.naan && ark.kfNaan && (
+        <Button type="button" onClick={flip} disabled={busy}>
+          Turn off KF's NAAN (unused)
+        </Button>
+      )}
+      {error && <p className="mt-2 text-red-700">{error}</p>}
+    </div>
+  )
 }
 
 export default function AdminOrg() {
@@ -173,6 +228,13 @@ export default function AdminOrg() {
         />
         <StatTile label="Reference log events" value={compact(t.refEvents)} />
       </StatGrid>
+
+      {data.ark && (
+        <>
+          <SectionHeading>ARKs</SectionHeading>
+          <ArkSwitch slug={org.slug} initial={data.ark} />
+        </>
+      )}
 
       <SectionHeading>Collections</SectionHeading>
       {data.collections.length === 0 ? (
