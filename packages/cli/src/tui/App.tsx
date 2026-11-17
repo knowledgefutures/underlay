@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addCollection,
   KEEP_LABEL,
+  removeCollection,
   type RemoteListing,
   setKeep,
   wouldLetGo,
@@ -94,6 +95,8 @@ interface Prompt {
   label: string
   value: string
   submit: (v: string) => void | Promise<void>
+  /** Drawn in red: answering it loses something that can't be fetched again. */
+  loud?: boolean
 }
 
 /** The sidebar's three cards; the one that has the keys is the one its selection is in. */
@@ -1388,6 +1391,41 @@ export function App({
       }
       if (input === 'a' || input === 'A')
         return handoff(input === 'A', { kind: 'collection', key: collRow.key })
+      if (input === 'D') {
+        // Typing its name confirms; "lose them" when versions not pushed would go with it.
+        const m = collRow.meta
+        const versions = detail?.key === collRow.key ? detail.d.versions : []
+        const waiting = versions.filter((v) => !v.pushed)
+        const lose = m.isNew ? versions.length > 0 : waiting.length > 0
+        const name = m.isNew ? `${m.org}/${m.name}` : m.name
+        const want = lose ? 'lose them' : m.name
+        const label = !lose
+          ? `Remove ${name} from this machine? It stays on ${m.authority}. Type ${want} to remove it`
+          : m.isNew
+            ? `Remove ${name}? It was never pushed, so everything in it is lost. Type ${want} to remove it`
+            : `Remove ${name}? Its version${waiting.length === 1 ? '' : 's'} not pushed (${waiting
+                .map((v) => v.semver)
+                .reverse()
+                .join(
+                  ', ',
+                )}) ${waiting.length === 1 ? 'is' : 'are'} lost: ${waiting.length === 1 ? "it isn't" : "they aren't"} on ${m.authority}. Type ${want} to remove it`
+        return setPrompt({
+          label,
+          value: '',
+          loud: lose,
+          submit: (typed) => {
+            if (typed.trim() !== want) return setStatus(`Kept ${name}`)
+            void attempt(`Removing ${name}`, async () => {
+              await removeCollection(ctx, c, lose)
+              await reload()
+              goPane('collections')
+              return m.isNew
+                ? `Removed ${name} from this machine`
+                : `Removed ${name} from this machine; + adds it again from ${m.authority}`
+            })
+          },
+        })
+      }
     }
   })
 
@@ -1481,7 +1519,7 @@ export function App({
   const lit = (p: SidePane) => focus === 'side' && !overlay && card === p
   const statusLine = prompt ? (
     <Text wrap="truncate-end">
-      <Text color={C.bl}>{prompt.label}: </Text>
+      <Text color={prompt.loud ? C.rd : C.bl}>{prompt.label}: </Text>
       <Text color={C.wh}>{prompt.value}▏</Text>
     </Text>
   ) : status ? (
@@ -1636,7 +1674,7 @@ export function App({
       </Box>
       {prompt ? (
         <Text wrap="truncate-end">
-          <Text color={C.bl}>{prompt.label}: </Text>
+          <Text color={prompt.loud ? C.rd : C.bl}>{prompt.label}: </Text>
           <Text color={C.wh}>{prompt.value}▏</Text>
         </Text>
       ) : status ? (

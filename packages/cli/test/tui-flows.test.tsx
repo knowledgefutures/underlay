@@ -181,6 +181,18 @@ describe('everyday flows in the terminal UI', () => {
     // Records tab lists what is there.
     await d.press(K.left, K.left, K.left)
     f = await d.until(/Thing\s+a\s/)
+    // D asks first: anything but the answer keeps it; "lose them" removes one never pushed.
+    await d.press(K.esc, 'D')
+    await d.until(/Remove \S+\/notes\? It was never pushed/)
+    for (const ch of 'notes') await d.press(ch)
+    await d.press(K.enter)
+    await d.until('Kept')
+    await d.press('D')
+    await d.until('never pushed')
+    for (const ch of 'lose them') await d.press(ch)
+    await d.press(K.enter)
+    f = await d.until('Removed')
+    expect(f).not.toMatch(/notes\s+new/)
     ui.unmount()
   })
 
