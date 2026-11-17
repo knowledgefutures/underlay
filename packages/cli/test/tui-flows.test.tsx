@@ -3,12 +3,18 @@
  * app in-process: what each screen shows after each key, including when something fails
  * part way. Each test is a flow someone tried or will try, not one screen once.
  */
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { v3 } from '@underlay/protocol'
 import { render } from 'ink-testing-library'
 import { describe, expect, it } from 'vitest'
 
 import { newCollection } from '../src/core/collections.js'
 import { openColl } from '../src/core/context.js'
+import { runImport } from '../src/core/importers.js'
+import { runScript } from '../src/core/runs.js'
+import { findScript } from '../src/core/scripts.js'
 import { saveVersion } from '../src/core/versions.js'
 import { App } from '../src/tui/App.js'
 import { world } from './world.js'
@@ -92,6 +98,58 @@ describe('a new collection', () => {
     expect(w.home.readCollection({ authority: 'test', org: 'org', name: 'lib-notes' })?.isNew).toBe(
       true,
     )
+    ui.unmount()
+  })
+})
+
+describe('a new collection from a spreadsheet', () => {
+  it('offers to make one, drafts its schema from the columns, and imports it', async () => {
+    const w = await server()
+    const csv = join(w.home.root, '..', 'roster-2026.csv')
+    writeFileSync(
+      csv,
+      'member_id,name,unit,joined,email\nm1,Ada,CSAIL,2019-09-01,a@x.org\nm2,Bo,LIDS,2020-01-15,\nm3,Cy,CSAIL,2026-01-15,c@x.org\n',
+    )
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('Servers')
+    await d.press('f')
+    await d.until('A file to add')
+    for (const ch of csv) await d.press(ch)
+    await d.press(K.enter)
+    let f = await d.until('Make a new collection from this file')
+    expect(f).toContain('no collection here')
+    // n: the form, filled in from the file.
+    await d.press('n')
+    f = await d.until('from roster-2026.csv')
+    expect(f).toMatch(/name\s+roster▏/)
+    expect(f).toMatch(/type\s+Roster/)
+    await d.press(K.down)
+    for (let i = 0; i < 6; i++) await d.press(K.backspace)
+    for (const ch of 'Member') await d.press(ch)
+    await d.until(/org\s+org/)
+    await d.press(K.enter)
+    // Back on the file, with a schema drafted for Member.
+    f = await d.until('SCHEMA FOR Member')
+    expect(f).toContain('Made org/roster here; now shape its schema')
+    expect(f).toMatch(/member_id\s+member_id\s+the id\s+the id: 3 val/)
+    expect(f).toMatch(/unit\s+unit\s+text\s+2 values: CSA/)
+    expect(f).toMatch(/joined\s+joined\s+date\s+2019-09-01 to/)
+    expect(f).toMatch(/✗\s+email\s+left out\s+looks pers/)
+    await d.press(K.enter)
+    await d.until(/Saved schemas\/Member\.json and imports\/roster-2026/)
+    const meta = w.home.collection({ authority: 'test', org: 'org', name: 'roster' })
+    const schema = w.home.schemas(meta).Member as {
+      properties: Record<string, unknown>
+      required: string[]
+    }
+    expect(Object.keys(schema.properties)).toEqual(['name', 'unit', 'joined'])
+    expect(schema.required).toEqual(['name', 'unit', 'joined'])
+    // The saved import runs as any script does (here in-process; the UI starts it detached).
+    const r = await runScript(w.ctx, findScript(w.ctx, 'imports/roster-2026'), [csv], {
+      importer: (i, a, o, l) => runImport(w.ctx, i, a, o, l),
+    })
+    expect(r.saved).toMatchObject([{ collection: 'test/org/roster', semver: 'v1.0.0', added: 3 }])
     ui.unmount()
   })
 })

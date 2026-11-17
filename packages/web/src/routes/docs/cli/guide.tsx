@@ -333,6 +333,16 @@ underlay import inputs/roster.xlsx --collection underlay.org/your-org/staff \\
           written in. <code>underlay read</code> prints a file&apos;s rows as NDJSON.
         </li>
       </ul>
+      <p>
+        In the terminal UI, a file whose ids match nothing here offers{' '}
+        <strong>Make a new collection from this file</strong> (<code>n</code>), with its name and
+        type taken from the file. When the type has no schema yet, the file screen drafts one from
+        the columns: a field for each column but the id, its type guessed from every value, and
+        required where no row leaves it blank. Columns that look personal start left out.{' '}
+        <code>space</code> keeps or leaves out a column, <code>←→</code> changes its type,{' '}
+        <code>e</code> opens the draft as JSON, <code>A</code> hands it to an agent to shape, and{' '}
+        <code>enter</code> saves it to the collection&apos;s <code>schemas/</code> and imports.
+      </p>
 
       <h2>Views</h2>
       <p>

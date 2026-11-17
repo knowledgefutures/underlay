@@ -6,6 +6,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, watch } from 'node:fs'
+import { join } from 'node:path'
 
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -32,12 +33,20 @@ import {
   type Keep,
 } from '../core/config.js'
 import { type Ctx, openColl } from '../core/context.js'
+import { type ColumnDraft, draftColumns, schemaFrom, TYPES } from '../core/draft.js'
 import { CliError, tildePath } from '../core/env.js'
 import { bytes, diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
 import { type CollectionMeta, keyOf, parseRef } from '../core/home.js'
-import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/importers.js'
-import { nameProblem } from '../core/names.js'
+import {
+  addFile,
+  defaultOptions,
+  eject,
+  type ImportOptions,
+  readTable,
+  saveImport,
+} from '../core/importers.js'
+import { nameFromFile, nameProblem, typeFromName } from '../core/names.js'
 import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
 import { type FileProgress, pull, push, pushPlan, StaleError } from '../core/sync.js'
@@ -256,7 +265,7 @@ export function App({
   const [newForm, setNewForm] = useState<NewForm | null>(null)
   const newThen = useRef<{
     back: Overlay
-    made?: (meta: CollectionMeta) => Promise<string | void>
+    made?: (meta: CollectionMeta, form: NewForm) => Promise<string | void>
   }>({
     back: null,
   })
@@ -624,6 +633,37 @@ export function App({
     void reload()
   }, [ctx, pick, reload])
 
+  // --- A schema drafted for an import whose type has none ---
+
+  /** The draft for these options, or null when the type has a schema already. */
+  const draftFor = useCallback(
+    async (o: ImportOptions | null, path: string): Promise<ColumnDraft[] | null> => {
+      if (!o) return null
+      const ref = parseRef(o.collection, ctx.settings.defaultRemote)
+      if (ctx.home.schemas(ref)[o.type] !== undefined) return null
+      const t = await readTable(inputPath(ctx, path), o.sheet ? { sheet: o.sheet } : {})
+      return draftColumns(t, o.id)
+    },
+    [ctx],
+  )
+  const schemaRel = (o: ImportOptions) => `schemas/${o.type}.json`
+  /** With a draft, the cursor starts on its first column after the id: it is what needs you. */
+  const draftStart = (draft: ColumnDraft[] | null) =>
+    draft ? FILE_FIELDS.length + Math.min(1, draft.length - 1) : 0
+  /** Write the drafted schema into the collection's schemas/; its path. */
+  const saveDraft = (o: ImportOptions, draft: ColumnDraft[]) => {
+    const ref = parseRef(o.collection, ctx.settings.defaultRemote)
+    ctx.home.writeSchemas(ref, { [o.type]: schemaFrom(draft, o.id) })
+    return join(ctx.home.collectionDir(ref), schemaRel(o))
+  }
+  /** The import's columns as the draft keeps them. */
+  const withDraftColumns = (o: ImportOptions, draft: ColumnDraft[]): ImportOptions => ({
+    ...o,
+    columns: Object.fromEntries(
+      draft.filter((c) => c.column !== o.id).map((c) => [c.column, c.keep ? c.field : '']),
+    ),
+  })
+
   const openFile = useCallback(
     async (path: string) => {
       await attempt('Reading the file', async () => {
@@ -659,13 +699,14 @@ export function App({
             options = null
           }
         }
-        setFile({ shape, options, field: 0, status: '' })
+        const draft = await draftFor(options, shape.path)
+        setFile({ shape, options, field: draftStart(draft), status: '', draft })
         setOverlay('file')
         setFocus('main')
         return ''
       })
     },
-    [ctx, snap, attempt],
+    [ctx, snap, attempt, draftFor],
   )
 
   const handoff = useCallback(
@@ -760,7 +801,10 @@ export function App({
   /** Open the new-collection form, filled in from what is known, and what follows making it. */
   const openNew = (
     init: Partial<NewForm> = {},
-    then: { back: Overlay; made?: (meta: CollectionMeta) => Promise<string | void> } = {
+    then: {
+      back: Overlay
+      made?: (meta: CollectionMeta, form: NewForm) => Promise<string | void>
+    } = {
       back: null,
     },
   ) => {
@@ -881,7 +925,7 @@ export function App({
           setNewForm(null)
           await reload()
           const made = newThen.current.made
-          if (made) return (await made(meta)) ?? ''
+          if (made) return (await made(meta, f)) ?? ''
           setSel(`c:${keyOf(meta)}`)
           setOverlay(null)
           setFocus('main')
@@ -1172,14 +1216,76 @@ export function App({
 
     if (overlay === 'file' && file) {
       if (key.escape) return goPane('collections')
-      if (key.tab || key.downArrow)
-        return setFile({ ...file, field: (file.field + 1) % FILE_FIELDS.length })
-      if (key.upArrow)
-        return setFile({
-          ...file,
-          field: (file.field + FILE_FIELDS.length - 1) % FILE_FIELDS.length,
-        })
+      const rows = FILE_FIELDS.length + (file.draft?.length ?? 0)
+      if (key.tab || key.downArrow) return setFile({ ...file, field: (file.field + 1) % rows })
+      if (key.upArrow) return setFile({ ...file, field: (file.field + rows - 1) % rows })
       const o = file.options
+      // n: nothing here matches, so make a collection from the file.
+      if (input === 'n' && !file.shape.matches.length) {
+        const t = file.shape.tables.find((x) => x.name === o?.sheet) ?? file.shape.tables[0]
+        const base = file.shape.path.split('/').pop()!
+        return openNew(
+          {
+            name: nameFromFile(base),
+            type: typeFromName(file.shape.tables.length > 1 && t ? t.name : base),
+            from: base,
+            then: 'make it, then shape its schema',
+          },
+          {
+            back: 'file',
+            made: async (meta, f) => {
+              const tt = await readTable(inputPath(ctx, file.shape.path), {
+                ...(file.shape.tables.length > 1 && t ? { sheet: t.name } : {}),
+              })
+              const options = defaultOptions(ctx, file.shape.path, tt, {
+                collection: keyOf(meta),
+                type: f.type || 'Record',
+                ...(file.shape.tables.length > 1 ? { sheet: tt.name } : {}),
+              })
+              const draft = await draftFor(options, file.shape.path)
+              setFile({ ...file, options, field: draftStart(draft), draft })
+              setOverlay('file')
+              setFocus('main')
+              return `Made ${meta.org}/${meta.name} here; now shape its schema`
+            },
+          },
+        )
+      }
+      // A drafted column: ←→ its type, space keeps it or leaves it out (the id stays).
+      const di = file.field - FILE_FIELDS.length
+      if (file.draft && di >= 0) {
+        const c = file.draft[di]!
+        const set = (patch: Partial<ColumnDraft>) =>
+          setFile({
+            ...file,
+            draft: file.draft!.map((x, j) => (j === di ? { ...x, ...patch } : x)),
+          })
+        if (di > 0 && (key.leftArrow || key.rightArrow)) {
+          const at = TYPES.indexOf(c.type)
+          return set({
+            type: TYPES[(at + (key.rightArrow ? 1 : TYPES.length - 1)) % TYPES.length]!,
+          })
+        }
+        if (di > 0 && input === ' ') return set({ keep: !c.keep })
+        if (key.leftArrow || key.rightArrow || input === ' ') return
+      }
+      // e: the draft as JSON in $EDITOR; what you save there is the schema.
+      if (input === 'e' && file.draft && o) {
+        const draft = file.draft
+        const path = saveDraft(o, draft)
+        return void editInEditor(path).then(() =>
+          setFile((fv) =>
+            fv
+              ? {
+                  ...fv,
+                  draft: null,
+                  options: withDraftColumns(o, draft),
+                  status: `Saved ${schemaRel(o)} from your edit; enter imports`,
+                }
+              : fv,
+          ),
+        )
+      }
       if (o && (key.leftArrow || key.rightArrow)) {
         const dir = key.rightArrow ? 1 : -1
         const f = FILE_FIELDS[file.field]!
@@ -1220,16 +1326,28 @@ export function App({
                 id: tt.columns.includes(next.id) ? next.id : tt.columns[0]!,
                 ...(next.sheet ? { sheet: next.sheet } : {}),
               })
-              setFile((fv) =>
-                fv
-                  ? { ...fv, options: { ...d, missing_id: next.missing_id, mode: next.mode } }
-                  : fv,
+              const options = { ...d, missing_id: next.missing_id, mode: next.mode }
+              void draftFor(options, file.shape.path).then((draft) =>
+                setFile((fv) => (fv ? { ...fv, options, draft } : fv)),
               )
             },
             (e) => setStatus((e as Error).message),
           )
         }
         return setFile({ ...file, options: next })
+      }
+      if (key.return && o && file.draft) {
+        saveDraft(o, file.draft)
+        const withCols = withDraftColumns(o, file.draft)
+        setFile({ ...file, options: withCols, draft: null })
+        const name = file.shape.path
+          .split('/')
+          .pop()!
+          .replace(/\.[^.]+$/, '')
+          .replace(/[^A-Za-z0-9._-]/g, '-')
+        const rel = saveImport(ctx, name, withCols)
+        startRun(rel, [file.shape.path])
+        return setStatus(`Saved ${schemaRel(o)} and imports/${name}; importing`)
       }
       if (key.return && o) {
         const name = file.shape.path
@@ -1255,7 +1373,20 @@ export function App({
         return void reload()
       }
       if (input === 'a' || input === 'A')
-        return handoff(input === 'A', { kind: 'file', shape: file.shape })
+        return handoff(input === 'A', {
+          kind: 'file',
+          shape: file.shape,
+          ...(file.draft && o
+            ? {
+                draft: {
+                  collection: o.collection,
+                  type: o.type,
+                  schema: schemaFrom(file.draft, o.id),
+                  path: schemaRel(o),
+                },
+              }
+            : {}),
+        })
       return
     }
 
@@ -1634,7 +1765,8 @@ export function App({
     )
   const footer = pane.footer ?? []
   const paneRows = bodyH - 2 - footer.length
-  const paneLines = shownRun && !overlay ? pane.lines : pane.lines.slice(0, Math.max(0, paneRows))
+  // Every line; the window below keeps the selected one in view, so a long pane scrolls to it.
+  const paneLines = pane.lines
   const globalKeys: Key[] = [
     { k: 'c', l: 'collections' },
     { k: 's', l: 'servers' },

@@ -1,6 +1,7 @@
 import type { RemoteListing } from '../core/collections.js'
 import { KEEP_LABEL, KEEP_MARK } from '../core/collections.js'
 import type { Keep } from '../core/config.js'
+import type { ColumnDraft } from '../core/draft.js'
 import { ago, bytes, count, duration, shortId } from '../core/format.js'
 import type { ImportOptions, Shape } from '../core/importers.js'
 import type { RemoteCollection } from '../core/remote.js'
@@ -1203,8 +1204,11 @@ export interface SettingRow {
 export interface FileView {
   shape: Shape
   options: ImportOptions | null
+  /** An option, or past the options a drafted column. */
   field: number
   status: string
+  /** A schema drafted from the columns, while the import's type has none. */
+  draft?: ColumnDraft[] | null
 }
 
 export const FILE_FIELDS = ['sheet', 'collection', 'type', 'id', 'missing_id', 'mode'] as const
@@ -1237,6 +1241,14 @@ export function filePane(v: FileView, width: number): Pane {
         : [S('   no collection here shares its ids', C.mu)]),
     ]),
     blank(),
+    // Nothing here matches: a new collection from it comes first.
+    ...(best || v.draft
+      ? []
+      : [
+          L([S(' n ', C.fg, false, C.cap), S(' Make a new collection from this file', C.wh, true)]),
+          L([S('     or add it to a collection here: the options below', C.mu)]),
+          blank(),
+        ]),
     head('SCRIPTS THAT TAKE IT'),
     L(
       [
@@ -1245,7 +1257,7 @@ export function filePane(v: FileView, width: number): Pane {
         S(P(`${s.format}  built in`, 40), C.wh, true),
         S('a sheet into one type; options below', C.mu),
       ],
-      C.sel,
+      // Not a cursor: the pane scrolls to the highlighted row, which is the option you're on.
     ),
     ...s.scripts.map((x) =>
       L([
@@ -1269,7 +1281,7 @@ export function filePane(v: FileView, width: number): Pane {
   const o = v.options
   if (!o)
     lines.push(
-      L([S('    No collection here to import into: add one, or `underlay new` one, first', C.mu)]),
+      L([S('    No collection here to import into yet: n makes one from this file', C.mu)]),
     )
   else {
     const vals: Record<string, [string, string]> = {
@@ -1300,19 +1312,50 @@ export function filePane(v: FileView, width: number): Pane {
         ),
       )
     })
-    lines.push(L([S('    ' + P('columns', 13), C.mu)]))
-    for (const [col, field] of Object.entries(o.columns).slice(0, 10))
+    if (v.draft) {
+      // The type has no schema yet: one drafted from the columns, to keep or change.
+      const d = v.draft
       lines.push(
+        blank(),
         L([
-          S('      ' + P(col.slice(0, 16), 17), C.mu),
-          S('→ ', C.mu),
-          S(P(field || 'left out', 16), field ? C.fg : C.or),
-          S(
-            !field && /mail|phone|address|birth/i.test(col) ? 'personal data, off by default' : '',
-            C.mu,
-          ),
+          S('  SCHEMA FOR ', C.mu),
+          S(o.type, C.wh, true),
+          S(`   drafted from ${d.length} columns · not saved yet`, C.mu),
         ]),
+        L([S('     ' + P('column', 13) + P('field', 13) + P('type', 14) + 'why', C.mu)]),
       )
+      d.forEach((c, i) => {
+        const on = v.field === FILE_FIELDS.length + i
+        lines.push(
+          L(
+            [
+              S(on ? '▌ ' : '  ', C.bl),
+              S(c.keep ? '✓  ' : '✗  ', c.keep ? C.gr : C.or),
+              S(P(c.column.slice(0, 12), 13), on ? C.wh : C.fg, on),
+              S(P(c.keep ? c.field.slice(0, 12) : 'left out', 13), c.keep ? C.fg : C.mu),
+              S(P(c.keep ? (i === 0 ? 'the id' : c.type) : '', 14)),
+              S(c.why.slice(0, Math.max(10, width - 46)), C.mu),
+            ],
+            on ? C.sel : undefined,
+          ),
+        )
+      })
+    } else lines.push(L([S('    ' + P('columns', 13), C.mu)]))
+    if (!v.draft)
+      for (const [col, field] of Object.entries(o.columns).slice(0, 10))
+        lines.push(
+          L([
+            S('      ' + P(col.slice(0, 16), 17), C.mu),
+            S('→ ', C.mu),
+            S(P(field || 'left out', 16), field ? C.fg : C.or),
+            S(
+              !field && /mail|phone|address|birth/i.test(col)
+                ? 'personal data, off by default'
+                : '',
+              C.mu,
+            ),
+          ]),
+        )
     lines.push(
       blank(),
       L([
@@ -1336,13 +1379,29 @@ export function filePane(v: FileView, width: number): Pane {
     footer.push(
       L([
         S('Messier than this? ', C.mu),
-        S('C', C.fg, true),
+        S('A', C.fg, true),
         S(' hands the file to an agent, ', C.mu),
-        S('c', C.fg, true),
+        S('a', C.fg, true),
         S(' copies the prompt; ', C.mu),
         S('x', C.fg, true),
         S(' ejects an editable script.', C.mu),
       ]),
+    )
+  if (v.draft)
+    footer.splice(
+      1,
+      footer.length - 1,
+      ...caps(
+        [
+          { k: '↑↓', l: 'column' },
+          { k: 'space', l: 'keep or leave out' },
+          { k: '←→', l: 'type' },
+          { k: 'e', l: 'edit as JSON' },
+          { k: 'A', l: 'shape it with an agent' },
+          { k: 'enter', l: 'save the schema and import' },
+        ],
+        width - 2,
+      ),
     )
   return {
     title: s.path,

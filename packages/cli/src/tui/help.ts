@@ -112,8 +112,11 @@ export const SECTIONS: [Section, Hint[]][] = [
   [
     'a file',
     [
+      ['n', 'a new collection from it'],
       ['tab', 'next option'],
-      ['←→', 'change it'],
+      ['←→', "change it, or a column's type"],
+      ['space', 'keep or leave out a column'],
+      ['e', 'edit the drafted schema'],
       ['enter', 'run the import'],
       ['x', 'eject to a .ts to edit'],
       ['A', 'hand to an agent'],

@@ -12,7 +12,12 @@ import type { RunRecord } from './runs.js'
 
 export type HandoffTarget =
   | { kind: 'collection'; key: string }
-  | { kind: 'file'; shape: Shape }
+  | {
+      kind: 'file'
+      shape: Shape
+      /** A schema drafted for the import's type, to shape. */
+      draft?: { collection: string; type: string; schema: unknown; path: string }
+    }
   | { kind: 'run'; run: RunRecord }
 
 export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
@@ -23,6 +28,27 @@ export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
       'Task: <say what you want done with it>',
       '',
       `\`underlay export ${t.key}\` prints its records as NDJSON; \`underlay log ${t.key}\` its versions.`,
+    )
+  } else if (t.kind === 'file' && t.draft) {
+    // Shape the schema the importer drafted, from the file it was drafted from.
+    const s = t.shape
+    const d = t.draft
+    const table = s.tables[0]
+    lines.push(
+      `Task: shape the schema for ${d.type} in ${d.collection} from ${s.path} (${table ? `${table.rows} rows, ${table.columns.length} columns` : s.format}).`,
+      'The draft below was guessed from the columns: a field for each column but the id, required where no row is blank.',
+      ...(table?.personal.length
+        ? [
+            `Columns that look personal were left out unless the data needs them: ${table.personal.join(', ')}.`,
+          ]
+        : []),
+      `Write it to collections/${d.collection}/${d.path}, then tell me what you changed and why.`,
+      '',
+      'Draft:',
+      JSON.stringify(d.schema, null, 2),
+      '',
+      'Sample rows:',
+      ...(table?.sample ?? []).map((r) => JSON.stringify(r)),
     )
   } else if (t.kind === 'file') {
     const s = t.shape
