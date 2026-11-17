@@ -24,6 +24,7 @@ import {
   listPublic,
   listRemote,
   newCollection,
+  publish,
   setKeep,
 } from './core/collections.js'
 import {
@@ -41,7 +42,7 @@ import {
 import { coll, type Ctx, openColl, openCtx } from './core/context.js'
 import { CliError, defaultEnv, type Env, expandPath, tildePath } from './core/env.js'
 import { ago, bytes, count, diffVersions, duration, shortId } from './core/format.js'
-import { Home, keyOf } from './core/home.js'
+import { Home, isLocal, keyOf, LOCAL } from './core/home.js'
 import {
   addFile,
   defaultOptions,
@@ -452,9 +453,11 @@ program
   })
 program
   .command('new')
-  .description('Start a collection that is not on its authority yet; the first push creates it')
-  .argument('<collection>', 'authority/org/name (localhost:3000/… for one only you need)')
-  .option('--public', 'public once pushed (default private)')
+  .description(
+    'Start a collection: a name alone keeps it on this machine (underlay publish gives it a server later); org/name or authority/org/name makes it there with its first push',
+  )
+  .argument('<collection>', 'name, org/name, or authority/org/name')
+  .option('--public', 'public once pushed (default private; not for a local one)')
   .option('--title <title>')
   .option('--from-run <id>', 'with what a run wrote for it: schemas drafted, records as v1.0.0')
   .action(async (r: string, o: { public?: boolean; title?: string; fromRun?: string }) => {
@@ -476,9 +479,39 @@ program
       )
     }
     say(
-      `New: ${keyOf(meta)} (${meta.access}). Put its schemas in ${tildePath(env, c.home.collectionDir(meta))}/schemas/<Type>.json`,
+      isLocal(meta)
+        ? `New: ${keyOf(meta)}, on this machine only. Put its schemas in ${tildePath(env, c.home.collectionDir(meta))}/schemas/<Type>.json; underlay publish ${meta.name} <server>/<org>/${meta.name} gives it a server`
+        : `New: ${keyOf(meta)} (${meta.access}). Put its schemas in ${tildePath(env, c.home.collectionDir(meta))}/schemas/<Type>.json`,
     )
   })
+program
+  .command('publish')
+  .description(
+    'Give a collection on this machine a server: it moves to authority/org/name, and its first push creates it there with its versions',
+  )
+  .argument('<collection>', 'the local collection')
+  .argument('<to>', 'org/name on the default server, or authority/org/name')
+  .option('--public', 'public once pushed (default private)')
+  .option('--title <title>')
+  .option('--push', 'push it now (asks first, as push does)')
+  .action(
+    async (name: string, to: string, o: { public?: boolean; title?: string; push?: boolean }) => {
+      const c = ctx()
+      const meta = publish(c, c.home.resolve(name), to, {
+        access: o.public ? 'public' : 'private',
+        ...(o.title ? { title: o.title } : {}),
+      })
+      say(
+        `${name} is now ${keyOf(meta)} (${meta.access}), not on ${meta.authority} yet: underlay push ${keyOf(meta)} creates it there`,
+      )
+      const scripts = listScripts(c).filter((s) => s.writes.includes(name))
+      if (scripts.length)
+        say(
+          `Scripts that write ${name} still name it so: change them to write ${keyOf(meta)} (${scripts.map((s) => s.name).join(', ')})`,
+        )
+      if (o.push) await pushNamed([keyOf(meta)], {})
+    },
+  )
 program
   .command('keep')
   .description(
@@ -605,10 +638,11 @@ program
     say(`Home ${tildePath(env, c.home.root)}   store ${tildePath(env, c.settings.storePath)}`)
     let last = ''
     for (const r of rows) {
-      if (r.authority !== last) say(`${(last = r.authority)}`)
+      const local = isLocal(r.ref)
+      if (r.authority !== last) say((last = r.authority) === LOCAL ? 'This machine' : last)
       const sync = [
-        r.isNew ? 'new' : '',
-        r.unpushed > 0 ? `↑${r.unpushed}` : '',
+        r.isNew && !local ? 'new' : '',
+        r.unpushed > 0 && !local ? `↑${r.unpushed}` : '',
         r.behind ? `↓${r.behind}` : '',
         runs.some(
           (x) =>
@@ -622,7 +656,7 @@ program
         .filter(Boolean)
         .join(' ')
       say(
-        `  ${KEEP_MARK[r.keep]} ${`${r.ref.org}/${r.ref.name}`.padEnd(34)} ${(r.head?.semver ?? '–').padEnd(8)} ${sync}`,
+        `  ${KEEP_MARK[r.keep]} ${(local ? r.ref.name : `${r.ref.org}/${r.ref.name}`).padEnd(34)}${(r.head?.semver ?? '–').padEnd(8)} ${sync}`,
       )
     }
     if (rows.length === 0) say('No collections here yet: underlay ls, then underlay add')
@@ -697,9 +731,18 @@ program
   )
   .argument('[collections...]')
   .option('--yes', 'skip the y/N question (never the typed one)')
-  .action(async (names: string[], o: { yes?: boolean }) => {
+  .action((names: string[], o: { yes?: boolean }) => pushNamed(names, o))
+
+/** Push the collections named (every one with versions to push when none is), asking first. */
+async function pushNamed(names: string[], o: { yes?: boolean }) {
+  {
     const c = ctx()
     const metas = names.length ? names.map((n) => c.home.resolve(n)) : c.home.collections()
+    const local = names.length ? metas.find(isLocal) : undefined
+    if (local)
+      throw new CliError(
+        `${local.name} is on this machine only: underlay publish ${local.name} <server>/<org>/${local.name} gives it a server`,
+      )
     const plans = (await Promise.all(metas.map((m) => pushPlan(openColl(c, m))))).filter(
       (p): p is PushPlan => p !== null,
     )
@@ -733,7 +776,8 @@ program
     } finally {
       peck?.stop()
     }
-  })
+  }
+}
 
 // --- Scripts, runs, versions ---
 

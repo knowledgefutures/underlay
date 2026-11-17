@@ -194,15 +194,89 @@ describe('inside a collection', () => {
 })
 
 describe('a new collection', () => {
-  it('checks the name as you type, makes it here, and says how to fill it', async () => {
+  it('starts on this machine, then publishes to a server and pushes its versions', async () => {
+    const w = await server()
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('Servers')
+    await d.press('+')
+    let f = await d.until('New collection')
+    // No server, org or access to choose: only a name.
+    expect(f).toMatch(/server\s+this machine\s+←→ this machine or a server/)
+    expect(f).not.toMatch(/ org {6}/)
+    expect(f).not.toMatch(/access/)
+    // Names the servers keep for themselves are fine here.
+    for (const ch of 'members') await d.press(ch)
+    f = await d.until('Makes members on this machine')
+    expect(f).not.toContain('keeps "members"')
+    for (let i = 0; i < 7; i++) await d.press(K.backspace)
+    for (const ch of 'notes') await d.press(ch)
+    await d.press(K.enter)
+    f = await d.until('Made notes on this machine; p publishes it to a server')
+    expect(f).toContain('This machine')
+    expect(f).toContain('// underlay: writes notes')
+    expect(f).toMatch(/p\s+publish to a server/)
+    const meta = w.home.collection({ authority: 'local', org: '_', name: 'notes' })
+    w.home.writeSchemas(meta, { Person: { type: 'object' } })
+    await saveVersion(openColl(w.ctx, meta), {
+      rows: [v3.rowFromRecord('ada', 'Person', { name: 'Ada' })],
+      mode: 'set',
+      schemas: { Person: { type: 'object' } },
+      message: 'first',
+      now: new Date(),
+    })
+
+    // p publishes: the server, its org, the name and access; then the push screen.
+    await d.press('p')
+    f = await d.until('Publish notes')
+    f = await d.until(/org\s+org/)
+    expect(f).toMatch(/server\s+test/)
+    expect(f).toMatch(/name\s+notes/)
+    expect(f).toContain('Moves notes to test/org/notes')
+    await d.press(K.enter)
+    f = await d.until('COPIED EXACTLY AS THEY ARE HERE')
+    expect(f).toContain('notes is created on test by this push')
+    expect(w.home.readCollection(meta)).toBeNull()
+    await d.press('y')
+    f = await d.until('Done. esc goes back.')
+    expect(f).toContain('✓ test')
+    expect(w.home.collection({ authority: 'test', org: 'org', name: 'notes' }).isNew).toBe(false)
+    ui.unmount()
+  })
+
+  it('signs in from the form when a server is chosen while signed out', async () => {
+    const w = await server()
+    const key = w.ctx.env.keys.get('test')!
+    w.ctx.env.keys.delete('test')
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('Servers')
+    await d.press('+')
+    await d.until('New collection')
+    await d.press(K.up, K.right)
+    let f = await d.until(/key\s+paste a key; enter signs in/)
+    expect(f).toMatch(/Not signed in to test\. Make a key at\s+.*\n.*http.*\/settings\/keys/)
+    expect(f).toContain('Sign in to test: paste a key, then enter')
+    await d.press(K.down)
+    for (const ch of key) await d.press(ch)
+    await d.press(K.enter)
+    f = await d.until(/Signed in to test as/)
+    expect(f).toMatch(/org\s+org/)
+    expect(w.ctx.env.keys.get('test')).toBe(key)
+    ui.unmount()
+  })
+
+  it('checks the name as you type, makes it on a server, and says how to fill it', async () => {
     const w = await server()
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
     await d.press('+')
     await d.until('New collection')
-    // The org comes from the server's list once it is read.
+    // ←→ on the server: a server instead of this machine, and its org.
+    await d.press(K.up, K.right)
     await d.until(/org\s+org/)
+    await d.press(K.down, K.down)
     for (const ch of 'members') await d.press(ch)
     await d.until('keeps "members" for itself; choose another name')
     for (let i = 0; i < 7; i++) await d.press(K.backspace)
@@ -246,18 +320,17 @@ describe('a new collection from a spreadsheet', () => {
     await d.press(K.down)
     for (let i = 0; i < 6; i++) await d.press(K.backspace)
     for (const ch of 'Member') await d.press(ch)
-    await d.until(/org\s+org/)
     await d.press(K.enter)
-    // Back on the file, with a schema drafted for Member.
+    // Back on the file, with a schema drafted for Member, for a collection on this machine.
     f = await d.until('SCHEMA FOR Member')
-    expect(f).toContain('Made org/roster here; now shape its schema')
+    expect(f).toContain('Made roster here; now shape its schema')
     expect(f).toMatch(/member_id\s+member_id\s+the id\s+the id: 3 val/)
     expect(f).toMatch(/unit\s+unit\s+text\s+2 values: CSA/)
     expect(f).toMatch(/joined\s+joined\s+date\s+2019-09-01 to/)
     expect(f).toMatch(/✗\s+email\s+left out\s+looks pers/)
     await d.press(K.enter)
     await d.until(/Saved schemas\/Member\.json and imports\/roster-2026/)
-    const meta = w.home.collection({ authority: 'test', org: 'org', name: 'roster' })
+    const meta = w.home.collection({ authority: 'local', org: '_', name: 'roster' })
     const schema = w.home.schemas(meta).Member as {
       properties: Record<string, unknown>
       required: string[]
@@ -268,7 +341,7 @@ describe('a new collection from a spreadsheet', () => {
     const r = await runScript(w.ctx, findScript(w.ctx, 'imports/roster-2026'), [csv], {
       importer: (i, a, o, l) => runImport(w.ctx, i, a, o, l),
     })
-    expect(r.saved).toMatchObject([{ collection: 'test/org/roster', semver: 'v1.0.0', added: 3 }])
+    expect(r.saved).toMatchObject([{ collection: 'roster', semver: 'v1.0.0', added: 3 }])
     ui.unmount()
   })
 })

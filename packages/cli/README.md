@@ -30,7 +30,9 @@ underlay secret set <NAME>                a secret a script folder needs, kept i
 underlay login [remote]                   an API key from <remote>/settings/keys, kept in the keychain
 underlay ls [remote] [--public [q]]       your orgs' collections (■ ◧ □ here, + not)
 underlay add underlay.org/mitp/mit-ai     its folder, schemas and log; its files unless --keep none
-underlay new localhost:3000/travis/x      one that isn't on its authority yet; push creates it
+underlay new scratch                      one on this machine only: no server, org or sign-in
+underlay new underlay.org/mitp/x          one that isn't on its authority yet; push creates it
+underlay publish scratch mitp/scratch     a local one to a server; its first push creates it
 underlay status [--json] [--fetch]
 underlay run <script> [args] [--detach]   saves a version for each collection it changed
 underlay view <view>                      a page, or a script that serves one on $PORT

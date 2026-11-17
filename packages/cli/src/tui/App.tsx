@@ -17,6 +17,7 @@ import {
   addCollection,
   KEEP_LABEL,
   newCollection,
+  publish,
   removeCollection,
   type RemoteListing,
   setKeep,
@@ -39,7 +40,15 @@ import { type ColumnDraft, draftColumns, schemaFrom, TYPES } from '../core/draft
 import { CliError, tildePath } from '../core/env.js'
 import { bytes, diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
-import { type CollectionMeta, keyOf, parseRef } from '../core/home.js'
+import {
+  type CollectionMeta,
+  isLocal,
+  keyOf,
+  LOCAL,
+  LOCAL_ORG,
+  parseRef,
+  shortKey,
+} from '../core/home.js'
 import {
   addFile,
   defaultOptions,
@@ -49,6 +58,7 @@ import {
   saveImport,
 } from '../core/importers.js'
 import { nameFromFile, nameProblem, typeFromName } from '../core/names.js'
+import { Remote } from '../core/remote.js'
 import {
   inputPath,
   readRun,
@@ -77,7 +87,7 @@ import { Frame, KeyBar, Lines, windowed, windowStart } from './frame.js'
 import { helpView, type Section } from './help.js'
 import { C, type Key, type Line, type Pane } from './lines.js'
 import { type MouseEvent, parseMouse } from './mouse.js'
-import { fieldsOf, type NewForm, newPane, typedField } from './newform.js'
+import { fieldsOf, formKey, isLocalForm, type NewForm, newPane, typedField } from './newform.js'
 import {
   collectionPane,
   FILE_FIELDS,
@@ -85,6 +95,7 @@ import {
   filePane,
   itemId,
   messagePane,
+  namesKey,
   pickPane,
   pickRows,
   type PickView,
@@ -831,6 +842,16 @@ export function App({
   }
   /** What is wrong with the form, checked as you type: the first push isn't where you find out. */
   const newProblem = (f: NewForm): string | null => {
+    if (isLocalForm(f)) {
+      const bad = nameProblem(f.name, null)
+      if (bad) return bad
+      if (ctx.home.readCollection({ authority: LOCAL, org: LOCAL_ORG, name: f.name }))
+        return `${f.name} is already here`
+      if (f.type !== null && !/^[A-Za-z][A-Za-z0-9_]*$/.test(f.type))
+        return 'A type is letters, numbers, and underscores, starting with a letter'
+      return null
+    }
+    if (!f.signedIn) return `Sign in to ${f.server}: paste a key, then enter`
     if (!f.org) return 'Choose an org'
     const bad = nameProblem(f.name, f.server)
     if (bad) return bad
@@ -857,18 +878,19 @@ export function App({
       back: null,
     },
   ) => {
-    const servers = snap?.remotes.map((r) => r.name) ?? [ctx.settings.defaultRemote]
+    // The default server first: the one → goes to from this machine.
+    const def = ctx.settings.defaultRemote
+    const remoteNames = [def, ...(snap?.remotes.map((r) => r.name) ?? []).filter((n) => n !== def)]
+    const publishing = init.publishing ?? null
+    // This machine comes first when making one; publishing is to a server.
+    const servers = publishing ? remoteNames : ['', ...remoteNames]
+    // From a server's row, that server; otherwise this machine (publishing: the default server).
     const server =
       init.server ??
-      (item?.kind === 'remote' ? item.name : collRow?.meta.authority) ??
-      ctx.settings.defaultRemote
-    const orgs = orgsOn(server)
+      (item?.kind === 'remote' ? item.name : publishing ? ctx.settings.defaultRemote : '')
     newThen.current = then
     setNewForm({
       servers,
-      server,
-      orgs,
-      org: init.org ?? orgs?.[0] ?? '',
       name: '',
       title: '',
       type: null,
@@ -876,12 +898,47 @@ export function App({
       field: 'name',
       from: null,
       then: null,
+      publishing: null,
+      ...serverFields(server, init.org),
       ...init,
     })
     setOverlay('new')
     setFocus('main')
     void refreshRemotes()
   }
+  /** The form's fields that follow from its server: signed in, where a key comes from, the orgs. */
+  const serverFields = (server: string, org?: string) => {
+    const orgs = server ? orgsOn(server) : null
+    return {
+      server,
+      signedIn: server !== '' && ctx.env.keys.get(server) !== null,
+      keyUrl: `${snap?.remotes.find((r) => r.name === server)?.url ?? `https://${server}`}/settings/keys`,
+      key: '',
+      orgs,
+      org: org ?? orgs?.[0] ?? '',
+    }
+  }
+  /** Publish a local collection: the form, for a server, then the push screen. */
+  const openPublish = (meta: CollectionMeta) => {
+    const versions = detail?.key === keyOf(meta) ? detail.d.versions.length : undefined
+    openNew(
+      {
+        publishing: meta,
+        name: meta.name,
+        title: meta.title ?? '',
+        ...(versions !== undefined ? { versions } : {}),
+      },
+      { back: null },
+    )
+  }
+  // The orgs fill in once the server's list is read (or after signing in there).
+  useEffect(() => {
+    if (!newForm || newForm.orgs || !newForm.server) return
+    const l = remotes[newForm.server]
+    if (!l || !('orgs' in l) || !l.signedIn) return
+    const orgs = l.orgs.map((o) => o.slug)
+    setNewForm({ ...newForm, orgs, org: newForm.org || orgs[0] || '' })
+  }, [remotes, newForm])
 
   /** Move within the collection pane: the selected version, record or file, or the scroll. */
   const moveInPane = (delta: number) => {
@@ -1004,14 +1061,44 @@ export function App({
         return setNewForm({ ...f, field: fields[(i + 1) % fields.length]! })
       if (key.upArrow)
         return setNewForm({ ...f, field: fields[(i + fields.length - 1) % fields.length]! })
+      if (key.return && f.field === 'key' && f.key.trim()) {
+        // Sign in from the form, as `underlay login` does.
+        const keyText = f.key.trim()
+        return void attempt(`Signing in to ${f.server}`, async () => {
+          const url = Remote.open(ctx.env, ctx.settings, f.server).url
+          const me = await new Remote(f.server, url, keyText, ctx.env.fetch).me()
+          ctx.env.keys.set(f.server, keyText)
+          if (!ctx.settings.remotes.some((r) => r.name === f.server))
+            setSetting(ctx.env, `remotes.${f.server}.url`, url)
+          const orgs = me.orgs.map((o) => o.slug)
+          setNewForm({ ...f, signedIn: true, key: '', orgs, org: orgs[0] ?? '', field: 'org' })
+          void refreshRemotes()
+          return `Signed in to ${f.server} as ${me.name}`
+        })
+      }
       if (key.return) {
         const problem = newProblem(f)
         if (problem) return setStatus(problem)
-        return void attempt(`Making ${f.org}/${f.name}`, async () => {
-          const meta = newCollection(ctx, `${f.server}/${f.org}/${f.name}`, {
-            access: f.access,
-            ...(f.title.trim() ? { title: f.title.trim() } : {}),
+        const to = formKey(f)
+        const opts = {
+          access: f.access,
+          ...(f.title.trim() ? { title: f.title.trim() } : {}),
+        }
+        if (f.publishing) {
+          const from = f.publishing
+          return void attempt(`Publishing ${from.name}`, async () => {
+            const meta = publish(ctx, from, to, opts)
+            setNewForm(null)
+            await reload()
+            setSel(`c:${keyOf(meta)}`)
+            setTab('Overview')
+            // Its versions, to push now; esc there leaves it new on the server, pushed later.
+            await openPush(keyOf(meta))
+            return `${from.name} is now ${keyOf(meta)}; this push creates it on ${meta.authority}`
           })
+        }
+        return void attempt(`Making ${f.name}`, async () => {
+          const meta = newCollection(ctx, to, opts)
           setNewForm(null)
           await reload()
           const made = newThen.current.made
@@ -1020,15 +1107,16 @@ export function App({
           setOverlay(null)
           setFocus('main')
           setTab('Overview')
-          return `Made ${f.org}/${f.name} here; your first push creates it on ${f.server}`
+          return isLocal(meta)
+            ? `Made ${meta.name} on this machine; p publishes it to a server`
+            : `Made ${f.org}/${f.name} here; your first push creates it on ${f.server}`
         })
       }
       if (f.field === 'server' && (key.leftArrow || key.rightArrow) && f.servers.length > 1) {
         const at = f.servers.indexOf(f.server)
         const server =
           f.servers[(at + (key.rightArrow ? 1 : f.servers.length - 1)) % f.servers.length]!
-        const orgs = orgsOn(server)
-        return setNewForm({ ...f, server, orgs, org: orgs?.[0] ?? '' })
+        return setNewForm({ ...f, ...serverFields(server) })
       }
       if (f.field === 'org' && f.orgs && (key.leftArrow || key.rightArrow) && f.orgs.length > 1) {
         const at = f.orgs.indexOf(f.org)
@@ -1040,7 +1128,7 @@ export function App({
       if (f.field === 'access' && input === ' ')
         return setNewForm({ ...f, access: f.access === 'private' ? 'public' : 'private' })
       if (typedField(f, f.field)) {
-        const k = f.field as 'name' | 'title' | 'type' | 'org'
+        const k = f.field as 'name' | 'title' | 'type' | 'org' | 'key'
         if (key.backspace || key.delete) return setNewForm({ ...f, [k]: f[k]!.slice(0, -1) })
         if (input && !key.ctrl && !key.meta) {
           // Names and orgs are slugs: lowercase, and a space becomes a hyphen.
@@ -1336,7 +1424,7 @@ export function App({
               setFile({ ...file, options, field: draftStart(draft), draft })
               setOverlay('file')
               setFocus('main')
-              return `Made ${meta.org}/${meta.name} here; now shape its schema`
+              return `Made ${shortKey(meta)} here; now shape its schema`
             },
           },
         )
@@ -1524,8 +1612,7 @@ export function App({
         const runId = shownRun.id
         return openNew(
           {
-            server: ref.authority,
-            org: ref.org,
+            ...(isLocal(ref) ? { server: '' } : { server: ref.authority, org: ref.org }),
             name: ref.name,
             from: `${shownRun.script}'s run ${runId}`,
           },
@@ -1538,7 +1625,7 @@ export function App({
               setOverlay(null)
               setFocus('main')
               setTab('Overview')
-              return `Made ${meta.org}/${meta.name} with this run's ${s.added.toLocaleString('en-US')} ${s.types.join(', ')} records as ${s.semver}, not pushed`
+              return `Made ${shortKey(meta)} with this run's ${s.added.toLocaleString('en-US')} ${s.types.join(', ')} records as ${s.semver}, not pushed`
             },
           },
         )
@@ -1579,6 +1666,7 @@ export function App({
         setOverlay('settings'),
         setFocus('main')
       )
+    if (input === 'p' && collRow && isLocal(collRow.meta)) return openPublish(collRow.meta)
     if (input === 'p') return void openPush(collRow?.key)
     if (input === 'P') return void openPush()
     // n: a new collection, from the Collections card (in a collection's Records tab, n pages).
@@ -1749,7 +1837,7 @@ export function App({
       }
       if (input === 'R') {
         const writers = (snap?.scripts ?? []).filter((s) =>
-          s.writes.some((w) => w === collRow.key || collRow.key.endsWith('/' + w)),
+          s.writes.some((w) => namesKey(w, collRow.key)),
         )
         if (writers.length === 1) return startRun(writers[0]!.path)
         if (!writers.length) return setStatus('No script declares that it writes this collection')
@@ -1760,6 +1848,7 @@ export function App({
         })
       }
       if (input === 'o') {
+        if (isLocal(collRow.meta)) return setStatus(`${collRow.key} is on this machine only`)
         const url = `${c.remote().url}/${collRow.meta.org}/${collRow.meta.name}`
         spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], {
           stdio: 'ignore',
@@ -1775,18 +1864,20 @@ export function App({
         const versions = detail?.key === collRow.key ? detail.d.versions : []
         const waiting = versions.filter((v) => !v.pushed)
         const lose = m.isNew ? versions.length > 0 : waiting.length > 0
-        const name = m.isNew ? `${m.org}/${m.name}` : m.name
+        const name = m.isNew && !isLocal(m) ? `${m.org}/${m.name}` : m.name
         const want = lose ? 'lose them' : m.name
-        const label = !lose
-          ? `Remove ${name} from this machine? It stays on ${m.authority}. Type ${want} to remove it`
-          : m.isNew
-            ? `Remove ${name}? It was never pushed, so everything in it is lost. Type ${want} to remove it`
-            : `Remove ${name}? Its version${waiting.length === 1 ? '' : 's'} not pushed (${waiting
-                .map((v) => v.semver)
-                .reverse()
-                .join(
-                  ', ',
-                )}) ${waiting.length === 1 ? 'is' : 'are'} lost: ${waiting.length === 1 ? "it isn't" : "they aren't"} on ${m.authority}. Type ${want} to remove it`
+        const label = isLocal(m)
+          ? `Delete ${name}? It is on this machine only${lose ? ', so everything in it is lost' : ''}. Type ${want} to delete it`
+          : !lose
+            ? `Remove ${name} from this machine? It stays on ${m.authority}. Type ${want} to remove it`
+            : m.isNew
+              ? `Remove ${name}? It was never pushed, so everything in it is lost. Type ${want} to remove it`
+              : `Remove ${name}? Its version${waiting.length === 1 ? '' : 's'} not pushed (${waiting
+                  .map((v) => v.semver)
+                  .reverse()
+                  .join(
+                    ', ',
+                  )}) ${waiting.length === 1 ? 'is' : 'are'} lost: ${waiting.length === 1 ? "it isn't" : "they aren't"} on ${m.authority}. Type ${want} to remove it`
         return setPrompt({
           label,
           value: '',
@@ -1946,7 +2037,7 @@ export function App({
           ...(diff ? { diff } : {}),
           scripts: snap.scripts,
           storeRoot: tildePath(ctx.env, openColl(ctx, collRow.meta).store.root),
-          url: openColl(ctx, collRow.meta).remote().url,
+          url: isLocal(collRow.meta) ? '' : openColl(ctx, collRow.meta).remote().url,
           behind: behind[collRow.key] ?? 0,
           handoff: !!ctx.settings.handoffSend,
           vCursor,

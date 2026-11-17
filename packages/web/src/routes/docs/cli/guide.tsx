@@ -424,8 +424,10 @@ underlay reword scratch "A better message"`}</CodeBlock>
           theirs, renumbered, and shown to you again before you push.
         </li>
         <li>
-          A collection made with <code>underlay new</code> is created on its authority by its first
-          push.
+          A collection made with <code>underlay new org/name</code> is created on its authority by
+          its first push. One made with a name alone stays on this machine until{' '}
+          <code>underlay publish</code> gives it a server; its first push then sends the versions
+          made here, unchanged.
         </li>
       </ul>
       <h2>Terminal UI</h2>

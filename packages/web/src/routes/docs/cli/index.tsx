@@ -54,60 +54,69 @@ export default function CliOverview() {
 
       <h2>Getting started</h2>
       <p>
-        From nothing to a pushed version. The examples use underlay.org; for another server, use its
-        address in place of <code>underlay.org</code> (for example <code>staging.underlay.org</code>
-        , or <code>localhost:3000</code> for one on your machine). Use a scratch collection while
-        you try it.
+        From nothing to a pushed version. A collection starts on your machine, with no server or
+        sign-in, and you publish it to a server when you want one. The examples use underlay.org;
+        for another server, use its address in place of <code>underlay.org</code> (for example{' '}
+        <code>staging.underlay.org</code>).
       </p>
 
-      <h3>1. Sign in</h3>
+      <h3>1. Make your home</h3>
+      <p>
+        A folder for your collections and your own scripts, at <code>~/Underlay</code>.
+      </p>
+      <CodeBlock>{`underlay init`}</CodeBlock>
+
+      <h3>2. Start a collection</h3>
+      <p>
+        A name alone makes one on this machine only. Its versions are numbered here until you
+        publish it.
+      </p>
+      <CodeBlock>{`underlay new scratch`}</CodeBlock>
+
+      <h3>3. Write a script and run it</h3>
+      <p>
+        Put a JSON Schema for each type in the collection&apos;s folder, as{' '}
+        <code>~/Underlay/collections/local/_/scratch/schemas/Thing.json</code>, and a script in{' '}
+        <code>~/Underlay/scripts/</code>:
+      </p>
+      <CodeBlock>{`// ~/Underlay/scripts/scratch.mjs
+// underlay: writes scratch
+import { writeFileSync } from 'node:fs'
+
+const records = [
+  { id: 'a', type: 'Thing', data: { name: 'First' } },
+  { id: 'b', type: 'Thing', data: { name: 'Second' } },
+]
+writeFileSync(
+  process.env.UNDERLAY_OUT + '/scratch.ndjson',
+  records.map((r) => JSON.stringify(r)).join('\\n'),
+)`}</CodeBlock>
+      <CodeBlock>{`underlay run scratch
+underlay diff scratch     # what the run saved`}</CodeBlock>
+
+      <h3>4. Sign in to a server</h3>
       <p>
         Make an API key on the server&apos;s settings page (on underlay.org,{' '}
         <Link to="/settings/keys">Settings › API keys</Link>), then paste it when asked. On a Mac
         the key is kept in your keychain; elsewhere in a file only you can read.
       </p>
       <CodeBlock>{`underlay login underlay.org
-underlay remotes          # where you are signed in`}</CodeBlock>
+underlay ls               # your organizations' collections, to add with underlay add`}</CodeBlock>
 
-      <h3>2. Make your home</h3>
+      <h3>5. Publish and push</h3>
       <p>
-        A folder for your collections and your own scripts, at <code>~/Underlay</code>. Set the
-        server your collections usually come from, so you can leave it out of collection names.
+        Publishing gives the collection its server, org and name there. Its first push creates it
+        with the versions you made, unchanged. Push lists what it will send and asks first.
       </p>
-      <CodeBlock>{`underlay init
-underlay config set defaults.remote underlay.org`}</CodeBlock>
-
-      <h3>3. Add a collection, or start one</h3>
-      <CodeBlock>{`underlay ls                                  # your organizations' collections
-underlay add underlay.org/your-org/a-collection
-underlay new underlay.org/your-org/scratch   # not there yet: your first push creates it`}</CodeBlock>
-
-      <h3>4. Write a script and run it</h3>
+      <CodeBlock>{`underlay publish scratch underlay.org/your-org/scratch
+underlay push`}</CodeBlock>
       <p>
-        Put a JSON Schema for each type in the collection&apos;s folder, as{' '}
-        <code>~/Underlay/collections/underlay.org/your-org/scratch/schemas/Thing.json</code>, and a
-        script in <code>~/Underlay/scripts/</code>:
-      </p>
-      <CodeBlock>{`// ~/Underlay/scripts/scratch.mjs
-// underlay: writes underlay.org/your-org/scratch
-import { mkdirSync, writeFileSync } from 'node:fs'
-
-const dir = process.env.UNDERLAY_OUT + '/underlay.org/your-org'
-mkdirSync(dir, { recursive: true })
-
-const records = [
-  { id: 'a', type: 'Thing', data: { name: 'First' } },
-  { id: 'b', type: 'Thing', data: { name: 'Second' } },
-]
-writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).join('\\n'))`}</CodeBlock>
-      <CodeBlock>{`underlay run scratch
-underlay diff scratch     # what the run saved`}</CodeBlock>
-
-      <h3>5. Push</h3>
-      <CodeBlock>{`underlay push`}</CodeBlock>
-      <p>
-        Push lists what it will send and asks first. Or run plain <code>underlay</code> and do all
-        of this in the <Link to="/docs/cli/guide#terminal-ui">terminal UI</Link>.
+        A script names a published collection in full, so change its first line to{' '}
+        <code>// underlay: writes underlay.org/your-org/scratch</code> and have it write{' '}
+        <code>$UNDERLAY_OUT/underlay.org/your-org/scratch.ndjson</code>. Or run plain{' '}
+        <code>underlay</code> and do all of this in the{' '}
+        <Link to="/docs/cli/guide#terminal-ui">terminal UI</Link>, where <code>+</code> starts a
+        collection and <code>p</code> on it publishes it, signing you in there if you aren&apos;t.
       </p>
     </DocsLayout>
   )

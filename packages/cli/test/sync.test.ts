@@ -12,10 +12,12 @@ import {
   forget,
   keep,
   newCollection,
+  publish,
   setKeep,
   wouldLetGo,
 } from '../src/core/collections.js'
 import { type Coll, openColl } from '../src/core/context.js'
+import { keyOf } from '../src/core/home.js'
 import { type FileProgress, pull, push, pushPlan, StaleError } from '../src/core/sync.js'
 import {
   headOf,
@@ -45,6 +47,47 @@ async function save(
 ) {
   return saveVersion(c, { rows, mode: 'set', schemas, message, now: new Date() })
 }
+
+describe('a collection on this machine only', () => {
+  it('needs no server until it is published, then pushes the versions made here unchanged', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'scratch', { access: 'public' })
+    expect(meta).toMatchObject({ authority: 'local', org: '_', name: 'scratch', isNew: true })
+    // A local one has no access: that is chosen when it is published.
+    expect(meta.access).toBe('private')
+    expect(keyOf(meta)).toBe('scratch')
+    expect(w.home.resolve('scratch').id).toBe(meta.id)
+    w.home.writeSchemas(meta, { Person })
+    const a = openColl(w.ctx, meta)
+    const one = await save(a, { Person }, people('Ada'))
+    const two = await save(a, { Person }, people('Ada', 'Grace'))
+    // Nothing to push, and no server to ask.
+    expect(await pushPlan(a)).toBeNull()
+    await expect(push(w.ctx, a)).rejects.toThrow(/on this machine only: underlay publish scratch/)
+    expect(await pull(w.ctx, a)).toMatchObject({ fetched: 0 })
+
+    // A name a server keeps for itself is fine here, but not where it is published.
+    expect(() => publish(w.ctx, meta, 'test/org/members')).toThrow(/keeps "members"/)
+    expect(() => publish(w.ctx, meta, 'other-name')).toThrow(/Publish to a server/)
+
+    const moved = publish(w.ctx, meta, 'test/org/scratch', { access: 'public', title: 'Scratch' })
+    expect(moved).toMatchObject({ authority: 'test', org: 'org', id: meta.id, isNew: true })
+    expect(moved.access).toBe('public')
+    expect(w.home.readCollection(meta)).toBeNull()
+    expect(w.home.schemas(moved)).toEqual({ Person })
+    const b = openColl(w.ctx, moved)
+    expect((await pushPlan(b))!.versions.map((v) => v.id)).toEqual([
+      one.version!.id,
+      two.version!.id,
+    ])
+    await push(w.ctx, b)
+    expect((await v3.findHead(w.h.ports.stores.v3, meta.id))?.id).toBe(two.version!.id)
+    expect(w.home.collection(moved).isNew).toBe(false)
+    expect(() => publish(w.ctx, w.home.collection(moved), 'test/org/again')).toThrow(
+      /on test already/,
+    )
+  })
+})
 
 describe('versions here, push and pull', () => {
   it('saves versions from whole sets, pushes them unchanged, and another machine pulls them', async () => {

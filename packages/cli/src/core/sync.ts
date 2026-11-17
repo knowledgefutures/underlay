@@ -15,6 +15,7 @@ import { createObject, v3 } from '@underlay/protocol'
 import { fetchAssets, sendAssets, unpushedAssets } from './assets.js'
 import type { Coll, Ctx } from './context.js'
 import { CliError } from './env.js'
+import { isLocal } from './home.js'
 import { RemoteError } from './remote.js'
 import { cidOf, headOf, logOf, replayOnto, schemasAt, unpushedOf, viewOf } from './versions.js'
 
@@ -206,8 +207,9 @@ export interface PushPlan {
   files: number
 }
 
-/** What a push would copy, for the confirmation. */
+/** What a push would copy, for the confirmation. None for a local collection: it has no server. */
 export async function pushPlan(c: Coll): Promise<PushPlan | null> {
+  if (isLocal(c.meta)) return null
   const list = await unpushedOf(c)
   if (list.length === 0) return null
   const state = c.store.state(cidOf(c))

@@ -15,11 +15,15 @@ const RESERVED = new Set([
   'usage',
 ])
 
-/** What is wrong with a collection name for a server, or null. */
-export function nameProblem(name: string, server: string): string | null {
+/**
+ * What is wrong with a collection name for a server, or null. A local one (server null) takes
+ * the same names, so it can be published as it is, but none is kept for the server's pages.
+ */
+export function nameProblem(name: string, server: string | null): string | null {
   if (name.length < 2 || name.length > 64 || !SLUG_RE.test(name))
     return 'A name is lowercase letters, numbers, and hyphens'
-  if (RESERVED.has(name)) return `${server} keeps "${name}" for itself; choose another name`
+  if (server && RESERVED.has(name))
+    return `${server} keeps "${name}" for itself; choose another name`
   return null
 }
 

@@ -54,6 +54,27 @@ async function setup() {
   return { ...w, meta }
 }
 
+describe('a script that writes a local collection', () => {
+  it('names it by its name alone and writes $UNDERLAY_OUT/<name>.ndjson', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'notes')
+    w.home.writeSchemas(meta, { Member })
+    writeFileSync(
+      join(w.home.root, 'scripts', 'notes.mjs'),
+      `// underlay: writes notes
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+writeFileSync(join(process.env.UNDERLAY_OUT, 'notes.ndjson'), JSON.stringify({ id: 'ada', type: 'Member', data: { name: 'Ada' } }) + '\\n')
+`,
+    )
+    const info = findScript(w.ctx, 'notes')
+    expect(info.writes).toEqual(['notes'])
+    const r = await runScript(w.ctx, info, [])
+    expect(r).toMatchObject({ status: 'ok' })
+    expect(r.saved).toMatchObject([{ collection: 'notes', semver: 'v1.0.0', added: 1 }])
+  })
+})
+
 describe('scripts and runs', () => {
   it('reads declarations, runs a script, and saves a version for what changed', async () => {
     const w = await setup()

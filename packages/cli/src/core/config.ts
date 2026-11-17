@@ -228,8 +228,8 @@ export const SETTINGS: SettingDef[] = [
     group: 'Remotes',
     path: ['defaults', 'remote'],
     default: 'underlay.org',
-    about: 'The remote `underlay new`, `ls` and `login` use when none is named',
-    help: 'The remote that underlay new and login use when you do not name one. Signing in to another while signed out of this one makes that one the default. A collection you add keeps its own authority whatever this says.',
+    about: 'The remote `org/name`, `ls` and `login` mean when none is named',
+    help: 'The remote that a collection named org/name is on, and that ls and login use, when you do not name one. A name alone is a collection on this machine only, whatever this says. Signing in to another while signed out of this one makes that one the default. A collection you add keeps its own authority whatever this says.',
   },
   {
     key: 'store.path',

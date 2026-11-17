@@ -213,7 +213,10 @@ function inputsOf(ctx: Ctx, args: string[]): RunRecord['inputs'] {
   return out
 }
 
-/** The output files a run wrote: `<out>/<authority>/<org>/<name>.ndjson`. */
+/**
+ * The output files a run wrote: `<out>/<authority>/<org>/<name>.ndjson`, or `<out>/<name>.ndjson`
+ * for a local collection. Each is named by its collection's key.
+ */
 function outputsOf(out: string): string[] {
   const found: string[] = []
   const walk = (dir: string, depth: number) => {
@@ -222,7 +225,7 @@ function outputsOf(out: string): string[] {
       const abs = join(dir, n)
       if (statSync(abs).isDirectory()) {
         if (depth < 2) walk(abs, depth + 1)
-      } else if (depth === 2 && n.endsWith('.ndjson'))
+      } else if ((depth === 2 || depth === 0) && n.endsWith('.ndjson'))
         found.push(relative(out, abs).slice(0, -'.ndjson'.length))
     }
   }
@@ -273,7 +276,7 @@ async function filesFor(
   }
   if (missing.length) {
     const m = missing[0]!
-    const name = c.key.split('/').slice(1).join('/')
+    const name = c.key.split('/').slice(-2).join('/')
     throw new CliError(
       `${name}: ${missing.length} record${missing.length === 1 ? ' points' : 's point'} to a file the run didn't write: ${m.type} ${m.id}  ${m.field}  sha256:${m.hash.slice(0, 6)}… Write it to $UNDERLAY_OUT/files/, or leave the field out.`,
     )

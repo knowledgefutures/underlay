@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process'
 
 import type { Ctx } from './context.js'
 import { CliError } from './env.js'
+import { parseRef } from './home.js'
 import type { Shape } from './importers.js'
 import type { RunRecord } from './runs.js'
 
@@ -24,7 +25,7 @@ export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
   const lines = [`Work in the Underlay home at ${ctx.home.root}. Read AGENTS.md there first.`, '']
   if (t.kind === 'collection') {
     lines.push(
-      `About the collection ${t.key} (collections/${t.key}/: collection.toml, README.md, schemas/).`,
+      `About the collection ${t.key} (${ctx.home.rel(ctx.home.collectionDir(parseRef(t.key, ctx.settings.defaultRemote)))}/: collection.toml, README.md, schemas/).`,
       'Task: <say what you want done with it>',
       '',
       `\`underlay export ${t.key}\` prints its records as NDJSON; \`underlay log ${t.key}\` its versions.`,

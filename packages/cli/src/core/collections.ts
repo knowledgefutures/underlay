@@ -2,8 +2,8 @@
  * Collections on this machine: listing a remote's, adding them, starting new ones, what is
  * kept, and how each stands (local-tool-build.md phase 1).
  */
-import { rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
@@ -11,7 +11,7 @@ import { assetsHere, fetchAssets, forgetAssets, listAssets } from './assets.js'
 import { type Keep, ruleFor } from './config.js'
 import { type Coll, type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
-import { type CollectionMeta, type CollectionRef, keyOf, parseRef } from './home.js'
+import { type CollectionMeta, type CollectionRef, isLocal, keyOf, parseRef } from './home.js'
 import { nameProblem } from './names.js'
 import { Remote, type RemoteCollection } from './remote.js'
 import { fetchKept, pull } from './sync.js'
@@ -145,13 +145,23 @@ export async function removeCollection(ctx: Ctx, c: Coll, force = false): Promis
   const n = c.meta.isNew ? await v3.headNumber(c.store.fs, cidOf(c)) : unpushed.length
   if (n > 0 && !force)
     throw new CliError(
-      `${c.key} has ${n} version${n === 1 ? '' : 's'} not pushed, which would be lost: push first, or --force`,
+      isLocal(c.meta)
+        ? `${c.key} has ${n} version${n === 1 ? '' : 's'}, here only, which would be lost: --force to delete them`
+        : `${c.key} has ${n} version${n === 1 ? '' : 's'} not pushed, which would be lost: push first, or --force`,
     )
   rmSync(ctx.home.collectionDir(c.meta), { recursive: true, force: true })
   await dropLocalLog(c)
 }
 
-/** Start a collection that is not on its authority yet; its first push creates it there. */
+const readmeOf = (ref: CollectionRef, title: string | null) =>
+  isLocal(ref)
+    ? `# ${title ?? ref.name}\n\nOn this machine only. \`underlay publish ${ref.name} <server>/<org>/${ref.name}\` sends it to a server.\n`
+    : `# ${title ?? ref.name}\n\nNew: not on ${ref.authority} yet. Its first push creates it there.\n`
+
+/**
+ * Start a collection. A name alone makes one on this machine only; `org/name` or
+ * `authority/org/name` makes one that is not on its authority yet, which its first push creates.
+ */
 export function newCollection(
   ctx: Ctx,
   text: string,
@@ -159,7 +169,7 @@ export function newCollection(
 ): CollectionMeta {
   const ref = parseRef(text, ctx.settings.defaultRemote)
   if (ctx.home.readCollection(ref)) throw new CliError(`${keyOf(ref)} is here already`)
-  const bad = nameProblem(ref.name, ref.authority)
+  const bad = nameProblem(ref.name, isLocal(ref) ? null : ref.authority)
   if (bad) throw new CliError(bad)
   const meta: CollectionMeta = {
     ...ref,
@@ -167,18 +177,59 @@ export function newCollection(
     copies: [],
     keep: 'all',
     types: [],
-    access: opts.access ?? 'private',
+    access: isLocal(ref) ? 'private' : (opts.access ?? 'private'),
     isNew: true,
     title: opts.title ?? null,
     pulled: null,
     pushed: null,
   }
   ctx.home.writeCollection(meta)
-  writeFileSync(
-    join(ctx.home.collectionDir(ref), 'README.md'),
-    `# ${opts.title ?? ref.name}\n\nNew: not on ${ref.authority} yet. Its first push creates it there.\n`,
-  )
+  writeFileSync(join(ctx.home.collectionDir(ref), 'README.md'), readmeOf(ref, meta.title))
   return meta
+}
+
+/**
+ * Give a local collection a server: its folder moves under `authority/org/name` and it becomes
+ * new there, so its first push creates it with the versions made here, unchanged (they are
+ * stored by the collection's id, which stays). Nothing is sent: push does that.
+ */
+export function publish(
+  ctx: Ctx,
+  meta: CollectionMeta,
+  text: string,
+  opts: { access?: 'public' | 'private'; title?: string } = {},
+): CollectionMeta {
+  if (!isLocal(meta)) throw new CliError(`${keyOf(meta)} is on ${meta.authority} already`)
+  const ref = parseRef(text, ctx.settings.defaultRemote)
+  if (isLocal(ref))
+    throw new CliError(`Publish to a server: org/${ref.name} or <server>/<org>/${ref.name}`)
+  const bad = nameProblem(ref.name, ref.authority)
+  if (bad) throw new CliError(bad)
+  if (ctx.home.readCollection(ref)) throw new CliError(`${keyOf(ref)} is here already`)
+  const from = ruleFor(ctx.settings, keyOf(meta)).path
+  const to = ruleFor(ctx.settings, keyOf(ref)).path
+  if (from !== to)
+    throw new CliError(
+      `A store rule keeps ${keyOf(ref)} in ${to}, and ${meta.name}'s versions are in ${from}: change the rule first`,
+    )
+  const oldDir = ctx.home.collectionDir(meta)
+  const newDir = ctx.home.collectionDir(ref)
+  mkdirSync(dirname(newDir), { recursive: true })
+  renameSync(oldDir, newDir)
+  const title = opts.title ?? meta.title
+  const next: CollectionMeta = {
+    ...meta,
+    ...ref,
+    access: opts.access ?? meta.access,
+    title,
+    isNew: true,
+  }
+  ctx.home.writeCollection(next)
+  // The README says where it is: rewritten unless it was edited.
+  const readme = join(newDir, 'README.md')
+  if (!existsSync(readme) || readFileSync(readme, 'utf8') === readmeOf(meta, meta.title))
+    writeFileSync(readme, readmeOf(ref, title))
+  return next
 }
 
 /** Keep all of a collection here (or only some types), fetching what is missing. */

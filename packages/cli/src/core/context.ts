@@ -7,7 +7,7 @@ import type { Store } from '@underlay/protocol'
 import { loadSettings, type Settings } from './config.js'
 import { ruleFor } from './config.js'
 import { CliError, type Env, tildePath } from './env.js'
-import { type CollectionMeta, Home, keyOf } from './home.js'
+import { type CollectionMeta, Home, isLocal, keyOf } from './home.js'
 import { Remote } from './remote.js'
 import { type Source, sourcesOf } from './sources.js'
 import { FetchingStore, LocalStore } from './store.js'
@@ -62,7 +62,13 @@ export function openColl(ctx: Ctx, meta: CollectionMeta): Coll {
   const key = keyOf(meta)
   const store = storeAt(ruleFor(ctx.settings, key).path)
   let remote: Remote | null = null
-  const remoteOf = () => (remote ??= Remote.open(ctx.env, ctx.settings, meta.authority, ctx.say))
+  const remoteOf = () => {
+    if (isLocal(meta))
+      throw new CliError(
+        `${key} is on this machine only: underlay publish ${key} <server>/<org>/${key} gives it a server`,
+      )
+    return (remote ??= Remote.open(ctx.env, ctx.settings, meta.authority, ctx.say))
+  }
   const data = new FetchingStore(
     store.fs,
     meta.isNew ? null : (id) => remoteOf().file(meta.org, meta.name, id),

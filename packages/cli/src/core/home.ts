@@ -2,8 +2,8 @@
  * Home: yours, never shared (local-tool.md "Home and script folders").
  *
  *   AGENTS.md, CLAUDE.md                for agents working here
- *   collections/<authority>/<org>/<name>/
- *     collection.toml                   id, authority, copies, what to keep, last pull and push
+ *   collections/<authority>/<org>/<name>/   (local/_/<name>/ for one on this machine only)
+ *     collection.toml                  id, authority, copies, what to keep, last pull and push
  *     README.md
  *     schemas/<Type>.json               edited here, saved with the next version
  *   scripts/                            your own scripts and views: the script folder `home`
@@ -25,20 +25,42 @@ export interface CollectionRef {
   name: string
 }
 
-export const keyOf = (c: CollectionRef) => `${c.authority}/${c.org}/${c.name}`
+/**
+ * The authority of a collection on this machine only: no server, no org, no access. This
+ * machine numbers its versions until `publish` moves it under a server, whose first push
+ * creates it there.
+ */
+export const LOCAL = 'local'
+/** A local collection's org on disk: `collections/local/_/<name>/`. Never shown. */
+export const LOCAL_ORG = '_'
+
+export const isLocal = (c: CollectionRef) => c.authority === LOCAL
+
+/** `authority/org/name`, or the name alone for a local collection. */
+export const keyOf = (c: CollectionRef) =>
+  isLocal(c) ? c.name : `${c.authority}/${c.org}/${c.name}`
+
+/** A collection as people say it: `org/name`, or the name alone for a local one. */
+export const shortKey = (c: CollectionRef) => (isLocal(c) ? c.name : `${c.org}/${c.name}`)
 
 const PART = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const AUTHORITY = /^[A-Za-z0-9][A-Za-z0-9.-]*(:\d+)?$/
 
-/** `authority/org/name`, or `org/name` on the default remote. */
+/** `authority/org/name`, `org/name` on the default remote, or a name alone: a local one. */
 export function parseRef(text: string, defaultAuthority: string): CollectionRef {
   const parts = text
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '')
     .split('/')
+  if (parts.length === 1) parts.unshift(LOCAL, LOCAL_ORG)
   if (parts.length === 2) parts.unshift(defaultAuthority)
   if (parts.length !== 3) throw new CliError(`Name a collection as authority/org/name: ${text}`)
   const [authority, org, name] = parts as [string, string, string]
+  if (authority === LOCAL) {
+    if (org !== LOCAL_ORG || !PART.test(name))
+      throw new CliError(`Name a collection on this machine by its name alone: ${text}`)
+    return { authority, org, name }
+  }
   if (!AUTHORITY.test(authority)) throw new CliError(`Not a server address: ${authority}`)
   if (!PART.test(org) || !PART.test(name)) throw new CliError(`Not an org/name: ${org}/${name}`)
   return { authority: authority.replace(/^www\./, ''), org, name }
@@ -141,6 +163,9 @@ export class Home {
   /** A collection on disk by `authority/org/name`, `org/name`, or its name alone if that is unique. */
   resolve(text: string): CollectionMeta {
     const all = this.collections()
+    // A key said in full wins: a name alone is a local collection's key, when there is one.
+    const exact = all.find((c) => keyOf(c) === text)
+    if (exact) return exact
     const hits = all.filter(
       (c) => keyOf(c) === text || `${c.org}/${c.name}` === text || c.name === text,
     )
@@ -224,6 +249,8 @@ Shared scripts live in script folders: git repos listed in ~/.config/underlay/co
   which server numbers its versions (its authority), the collection's id, and how much of it
   is kept here; \`schemas/<Type>.json\` are its JSON Schemas, edited here and saved with the
   next version. Records are not in this folder: they live in the store (\`underlay status\`).
+  A collection on this machine only is \`collections/local/_/<name>/\`, named by its name
+  alone, until \`underlay publish\` sends it to a server.
 - \`scripts/\`: this person's own scripts and views (the script folder named \`home\`).
 - \`scripts/imports/*.toml\`: built-in importers with their options.
 - \`inputs/\`: files dropped in, and files views write. Never shared.
@@ -232,7 +259,8 @@ Shared scripts live in script folders: git repos listed in ~/.config/underlay/co
 
 A script is a file in \`scripts/\` here or in a script folder that declares itself in a
 header comment (or a \`.toml\` beside it with the same name). Files without one aren't
-scripts. Name collections as \`org/name\` or \`authority/org/name\`:
+scripts. Name collections as \`org/name\` or \`authority/org/name\`, and one on this machine
+only by its name alone:
 
 \`\`\`
 // underlay: writes underlay.org/mitp/mit-ai
@@ -247,7 +275,8 @@ scripts. Name collections as \`org/name\` or \`authority/org/name\`:
 
 \`underlay run <script> [args]\` runs it in its own folder with \`UNDERLAY_OUT\` set to a
 folder and \`UNDERLAY_HOME\` to this one. For each collection it writes, it writes NDJSON to
-\`$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson\`: one record a line,
+\`$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson\` (\`$UNDERLAY_OUT/<name>.ndjson\` for a local
+one): one record a line,
 \`{"id": "...", "type": "...", "data": {...}}\`. Write the whole collection each time: the
 tool compares it with the current version, saves a version with what changed, and records
 missing from the output are removed. Read a collection with \`underlay export <collection>\`

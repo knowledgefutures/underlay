@@ -3,6 +3,7 @@ import { KEEP_LABEL, KEEP_MARK } from '../core/collections.js'
 import type { Keep } from '../core/config.js'
 import type { ColumnDraft } from '../core/draft.js'
 import { ago, bytes, count, duration, shortId } from '../core/format.js'
+import { isLocal, LOCAL } from '../core/home.js'
 import type { ImportOptions, Shape } from '../core/importers.js'
 import type { RemoteCollection } from '../core/remote.js'
 import type { RunRecord } from '../core/runs.js'
@@ -123,37 +124,48 @@ export function sidebar(
   })
 
   const cols: Line[] = []
-  const byAuthority = new Map<string, CollectionRow[]>()
+  // This machine's first, then each server's.
+  const byAuthority = new Map<string, CollectionRow[]>(
+    snap.collections.some((c) => isLocal(c.meta)) ? [[LOCAL, []]] : [],
+  )
   for (const c of snap.collections) {
     const list = byAuthority.get(c.meta.authority) ?? []
     list.push(c)
     byAuthority.set(c.meta.authority, list)
   }
-  const nameW = Math.max(8, inner - 4 - 7)
   for (const [authority, list] of byAuthority) {
-    cols.push(L([S(authority, C.fg, true)]))
+    const local = authority === LOCAL
+    // A local collection has no org: its name sits where an org would.
+    const indent = local ? '  ' : '    '
+    const nameW = Math.max(8, inner - indent.length - 7)
+    cols.push(L([S(local ? 'This machine' : authority, C.fg, true)]))
     let org = ''
     for (const c of list) {
-      if (c.meta.org !== org) cols.push(L([S('  ' + (org = c.meta.org), C.mu)]))
+      if (!local && c.meta.org !== org) cols.push(L([S('  ' + (org = c.meta.org), C.mu)]))
       const item: Item = { kind: 'coll', key: c.key }
       items.push(item)
       const on = sel === itemId(item)
-      const sync = c.meta.isNew
-        ? S(' new', C.or)
-        : c.running
-          ? S(' ▶', C.bl)
-          : c.status.unpushed > 0
-            ? S(` ↑${c.status.unpushed}`, C.bl)
-            : behind[c.key]
-              ? S(` ↓${behind[c.key]}`, C.gr)
-              : S('')
-      const extra = c.running && c.status.unpushed > 0 ? S(` ↑${c.status.unpushed}`, C.bl) : S('')
+      // A local one has nothing to push or pull: only a run shows.
+      const sync =
+        c.meta.isNew && !local
+          ? S(' new', C.or)
+          : c.running
+            ? S(' ▶', C.bl)
+            : local
+              ? S('')
+              : c.status.unpushed > 0
+                ? S(` ↑${c.status.unpushed}`, C.bl)
+                : behind[c.key]
+                  ? S(` ↓${behind[c.key]}`, C.gr)
+                  : S('')
+      const extra =
+        c.running && !local && c.status.unpushed > 0 ? S(` ↑${c.status.unpushed}`, C.bl) : S('')
       cols.push(
         withItem(
           itemId(item),
           L(
             [
-              S(on ? '▌   ' : '    ', C.bl),
+              S(on ? '▌' + indent.slice(1) : indent, C.bl),
               S(P(c.meta.name.slice(0, nameW), nameW), on ? C.wh : C.fg, on),
               S(KEEP_MARK[c.meta.keep], keepColor(c.meta.keep)),
               sync,
@@ -254,6 +266,10 @@ const stat = (st?: { added: number; changed: number; removed: number }) =>
       ]
     : [S(R('', 20))]
 
+/** A script's `writes` or `reads` names this collection: its key, or the end of it. */
+export const namesKey = (w: string, key: string) =>
+  w === key || (w.includes('/') && key.endsWith('/' + w))
+
 export function collectionPane(
   row: CollectionRow,
   d: CollectionDetail | null,
@@ -262,10 +278,13 @@ export function collectionPane(
   width: number,
 ): Pane {
   const m = row.meta
+  const local = isLocal(m)
   const lines: Line[] = [tabLine(tab), blank()]
   const pane: Pane = {
-    title: `${m.org}/${m.name}`,
-    meta: `on ${m.authority}${m.title ? ` · ${m.title}` : ''} · ${m.access}${m.isNew ? ' · new' : ''}`,
+    title: local ? m.name : `${m.org}/${m.name}`,
+    meta: local
+      ? `on this machine${m.title ? ` · ${m.title}` : ''}`
+      : `on ${m.authority}${m.title ? ` · ${m.title}` : ''} · ${m.access}${m.isNew ? ' · new' : ''}`,
     lines,
     // The collection's own actions are drawn in the pane (below); the key bar keeps the rest.
     keys: [{ k: '←→', l: 'tabs' }],
@@ -276,11 +295,10 @@ export function collectionPane(
   }
   // What each action would do now; one with nothing to do isn't shown.
   const waiting = d.versions.filter((v) => !v.pushed).length
-  const writers = x.scripts.filter((s) =>
-    s.writes.some((w) => w === row.key || row.key.endsWith('/' + w)),
-  )
+  const writers = x.scripts.filter((s) => s.writes.some((w) => namesKey(w, row.key)))
   const acts: Key[] = []
-  if (waiting) acts.push({ k: 'p', l: `push ${waiting} version${waiting === 1 ? '' : 's'}` })
+  if (local) acts.push({ k: 'p', l: 'publish to a server' })
+  else if (waiting) acts.push({ k: 'p', l: `push ${waiting} version${waiting === 1 ? '' : 's'}` })
   if (!m.isNew) acts.push({ k: 'l', l: x.behind ? `pull ${x.behind} newer` : 'pull' })
   if (writers.length === 1) acts.push({ k: 'R', l: `run ${writers[0]!.name}` })
   else if (writers.length > 1) acts.push({ k: 'R', l: `run… (${writers.length} scripts)` })
@@ -292,9 +310,7 @@ export function collectionPane(
   // Where they go: under the description on Overview, under the tabs elsewhere.
   let capsAt = lines.length
   const touching = x.scripts.filter(
-    (s) =>
-      s.writes.some((w) => w === row.key || row.key.endsWith('/' + w)) ||
-      s.reads.some((w) => w === row.key || row.key.endsWith('/' + w)),
+    (s) => s.writes.some((w) => namesKey(w, row.key)) || s.reads.some((w) => namesKey(w, row.key)),
   )
   const unpushed = d.versions.filter((v) => !v.pushed)
   if (tab === 'Overview') {
@@ -314,7 +330,7 @@ export function collectionPane(
         lines.push(
           L([S(' R ', C.fg, false, C.cap), S(' run a script that writes it', C.mu)]),
           L([S("     none yet: a script's first line says", C.dim)]),
-          L([S(`     // underlay: writes ${m.org}/${m.name}`, C.dim)]),
+          L([S(`     // underlay: writes ${local ? m.name : `${m.org}/${m.name}`}`, C.dim)]),
         )
       lines.push(
         ...caps([{ k: 'a', l: 'prompt for an agent to write one' }], width - 4),
@@ -361,7 +377,7 @@ export function collectionPane(
     }
     lines.push(blank())
     if (unpushed.length) {
-      lines.push(head('NOT PUSHED'))
+      lines.push(head(local ? 'VERSIONS' : 'NOT PUSHED'))
       for (const v of unpushed.slice(0, 6))
         lines.push(
           L([
@@ -377,12 +393,21 @@ export function collectionPane(
     const pushed = d.versions.find((v) => v.pushed)
     lines.push(
       L([
-        S('  ' + P(m.authority, 24)),
-        S(m.isNew ? 'not there yet' : (pushed?.semver ?? 'no versions'), C.fg),
+        S('  ' + P(local ? 'this machine' : m.authority, 24)),
         S(
-          m.isNew
-            ? ' · its first push creates it'
-            : ` · ${m.pushed ? `pushed ${m.pushed.slice(0, 10)}` : 'pulled'} · ${m.access}${x.behind ? ` · ${x.behind} newer there: l pulls` : ' · nothing newer'}`,
+          local
+            ? (d.versions[0]?.semver ?? 'no versions')
+            : m.isNew
+              ? 'not there yet'
+              : (pushed?.semver ?? 'no versions'),
+          C.fg,
+        ),
+        S(
+          local
+            ? ' · on no server: p publishes it to one'
+            : m.isNew
+              ? ' · its first push creates it'
+              : ` · ${m.pushed ? `pushed ${m.pushed.slice(0, 10)}` : 'pulled'} · ${m.access}${x.behind ? ` · ${x.behind} newer there: l pulls` : ' · nothing newer'}`,
           C.mu,
         ),
       ]),
@@ -393,7 +418,7 @@ export function collectionPane(
     if (touching.length) {
       lines.push(head('SCRIPTS THAT TOUCH IT'))
       for (const s of touching) {
-        const writes = s.writes.some((w) => w === row.key || row.key.endsWith('/' + w))
+        const writes = s.writes.some((w) => namesKey(w, row.key))
         const last = s.last
           ? `; ${s.last.status === 'ok' ? 'ran' : s.last.status} ${ago(s.last.endedAt ?? s.last.startedAt)}`
           : ''
@@ -404,7 +429,7 @@ export function collectionPane(
       lines.push(blank())
     }
     lines.push(head('IN YOUR HOME'))
-    lines.push(L([S(`  collections/${row.key}/`, C.mu)]))
+    lines.push(L([S(`  collections/${m.authority}/${m.org}/${m.name}/`, C.mu)]))
     lines.push(
       L([
         S(
@@ -489,7 +514,7 @@ export function collectionPane(
       lines.push(
         L([
           S('No files. ', C.fg),
-          S(`underlay asset add ${m.org}/${m.name} <file> adds one.`, C.mu),
+          S(`underlay asset add ${local ? m.name : `${m.org}/${m.name}`} <file> adds one.`, C.mu),
         ]),
       )
     else {
@@ -566,7 +591,10 @@ export function collectionPane(
               S(P(v.semver, 9), v.pushed ? (on ? C.wh : C.fg) : C.bl, on),
               S(R(v.number, 5), C.mu),
               S('  ' + P(shortId(v.id), 8), C.mu),
-              S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
+              S(
+                P(v.pushed ? `✓ ${m.authority}` : local ? 'here' : 'not pushed', whereW),
+                v.pushed ? C.gr : C.bl,
+              ),
               S(P(ago(v.createdAt), 12), C.mu),
               S((v.message ?? '').slice(0, 40)),
             ],
