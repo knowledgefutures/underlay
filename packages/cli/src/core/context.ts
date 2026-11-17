@@ -1,38 +1,44 @@
 /**
- * What a command works with: the machine (Env), the workspace, the merged settings, and
+ * What a command works with: the machine (Env), home, the settings, the script folders, and
  * where to say things. And a collection opened in it: its store and its authority.
  */
-import { existsSync } from 'node:fs'
-
 import type { Store } from '@underlay/protocol'
 
-import { loadSettings, ruleFor, type Settings, workspaceConfigPath } from './config.js'
-import { CliError, type Env } from './env.js'
+import { loadSettings, type Settings } from './config.js'
+import { ruleFor } from './config.js'
+import { CliError, type Env, tildePath } from './env.js'
+import { type CollectionMeta, Home, keyOf } from './home.js'
 import { Remote } from './remote.js'
+import { type Source, sourcesOf } from './sources.js'
 import { FetchingStore, LocalStore } from './store.js'
-import { type CollectionMeta, keyOf, Workspace } from './workspace.js'
 
 export type Say = (line: string) => void
 
 export interface Ctx {
   env: Env
-  ws: Workspace
+  home: Home
   settings: Settings
+  /** Home's scripts, the listed script folders, and the one the command runs in. */
+  sources: Source[]
+  /** The working directory the script folders were found from. */
+  cwd: string
   say: Say
 }
 
-/** The workspace the command runs in: the one holding `cwd`, else the default one. */
-export function findWorkspace(env: Env, cwd = process.cwd()): Workspace | null {
-  const here = Workspace.find(cwd)
-  if (here) return here
-  const d = loadSettings(env, null).defaultWorkspace
-  return d && existsSync(workspaceConfigPath(d)) ? new Workspace(d) : null
+export function openCtx(env: Env, say: Say, cwd = process.cwd()): Ctx {
+  const settings = loadSettings(env)
+  if (!Home.exists(settings.home))
+    throw new CliError(
+      `No Underlay home at ${tildePath(env, settings.home)}: run \`underlay init\` to make one`,
+    )
+  const home = new Home(settings.home)
+  return { env, home, settings, sources: sourcesOf(settings, home, cwd), cwd, say }
 }
 
-export function openCtx(env: Env, say: Say, cwd = process.cwd()): Ctx {
-  const ws = findWorkspace(env, cwd)
-  if (!ws) throw new CliError('Not in an Underlay workspace: run `underlay init` to make one here')
-  return { env, ws, settings: loadSettings(env, ws.root), say }
+/** Settings and script folders read again: the settings screen or an editor may have changed them. */
+export function refreshCtx(ctx: Ctx): void {
+  ctx.settings = loadSettings(ctx.env)
+  ctx.sources = sourcesOf(ctx.settings, ctx.home, ctx.cwd)
 }
 
 export interface Coll {
@@ -66,5 +72,5 @@ export function openColl(ctx: Ctx, meta: CollectionMeta): Coll {
 
 /** A collection by name, opened. */
 export function coll(ctx: Ctx, name: string): Coll {
-  return openColl(ctx, ctx.ws.resolve(name))
+  return openColl(ctx, ctx.home.resolve(name))
 }

@@ -1,12 +1,11 @@
 /**
  * The terminal UI (local-tool-build.md phase 5): a sidebar of three cards (Remotes, On this
  * machine, Scripts and views) beside one main pane, with a key bar along the bottom. It calls
- * the library directly and watches the workspace, so what an agent or another terminal does
+ * the library directly and watches home and the script folders, so what an agent or another terminal does
  * shows up as it happens. Runs start detached, so closing the UI never stops one.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, watch } from 'node:fs'
-import { join } from 'node:path'
 
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -17,21 +16,22 @@ import {
   getSetting,
   personalPath,
   removeRule,
+  removeSource,
   setRule,
   setSetting,
   SETTINGS,
-  workspaceConfigPath,
 } from '../core/config.js'
 import { type Ctx, openColl } from '../core/context.js'
 import { CliError, tildePath } from '../core/env.js'
 import { diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
+import { parseRef } from '../core/home.js'
 import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/importers.js'
-import { readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
+import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
 import { pull, push, pushPlan, StaleError } from '../core/sync.js'
 import { squash, undo, unpushedOf, cidOf } from '../core/versions.js'
-import { parseRef } from '../core/workspace.js'
+import { openInBrowser, serveView, type ServedView } from '../core/views.js'
 import {
   type CollectionDetail,
   loadBehind,
@@ -169,10 +169,9 @@ function KeyBar({ keys, width }: { keys: Key[]; width: number }) {
 }
 
 const settingRows = (ctx: Ctx): SettingRow[] => {
-  const root = ctx.ws.root
   const rows: SettingRow[] = []
   for (const d of SETTINGS) {
-    const v = getSetting(ctx.env, root, d.key)
+    const v = getSetting(ctx.env, d.key)
     const group = d.group === 'Remotes' ? 'Remotes' : d.group
     rows.push({
       group,
@@ -184,15 +183,33 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
       kind: 'setting',
     })
   }
-  rows.splice(1, 0, {
-    group: 'Workspace',
-    key: '',
-    label: 'this workspace',
-    value: tildePath(ctx.env, root),
-    from: 'here',
-    about: 'collections, scripts, views',
-    kind: 'info',
-  })
+  if (ctx.env.homeDir)
+    rows.splice(1, 0, {
+      group: 'Home',
+      key: '',
+      label: 'UNDERLAY_HOME',
+      value: tildePath(ctx.env, ctx.env.homeDir),
+      from: 'env',
+      about: 'set in the environment: wins over home',
+      kind: 'info',
+    })
+  for (const x of ctx.sources)
+    rows.push({
+      group: 'Script folders',
+      key: x.name,
+      label: x.name,
+      value: tildePath(ctx.env, x.root),
+      from: x.how === 'listed' ? 'set' : x.how,
+      about:
+        x.how === 'home'
+          ? 'home’s own scripts/'
+          : x.how === 'here'
+            ? 'the folder you are in (it has an underlay.toml)'
+            : x.exists
+              ? `listed in config.toml${x.need.length ? `; needs ${x.need.join(', ')}` : ''}`
+              : 'not on this machine',
+      kind: x.how === 'listed' ? 'source' : 'info',
+    })
   for (const r of ctx.settings.rules)
     rows.push({
       group: 'Rules',
@@ -201,12 +218,12 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
       value: [r.path ? `path ${tildePath(ctx.env, r.path)}` : '', r.keep ? `keep ${r.keep}` : '']
         .filter(Boolean)
         .join(', '),
-      from: r.from,
+      from: 'set',
       about: 'most specific match wins',
       kind: 'rule',
     })
   for (const r of ctx.settings.remotes) {
-    const v = getSetting(ctx.env, root, `remotes.${r.name}.url`)
+    const v = getSetting(ctx.env, `remotes.${r.name}.url`)
     const signed = ctx.env.keys.get(r.name) !== null
     rows.push({
       group: 'Remotes',
@@ -218,7 +235,7 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
       kind: 'remote',
     })
   }
-  const order = ['Workspace', 'Store', 'Rules', 'Remotes', 'Handoff', 'Serve']
+  const order = ['Home', 'Store', 'Rules', 'Remotes', 'Script folders', 'Handoff', 'Serve']
   return rows.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group))
 }
 
@@ -234,6 +251,18 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
   const [focus, setFocus] = useState<'side' | 'main'>('side')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [tab, setTab] = useState<Tab>('Overview')
+  // Views that serve, started from here: stopped when the UI closes.
+  const served = useRef(new Map<string, ServedView>())
+  const [, setServedTick] = useState(0)
+  useEffect(() => {
+    const views = served.current
+    const stopAll = () => views.forEach((v) => v.stop())
+    process.once('exit', stopAll)
+    return () => {
+      stopAll()
+      process.off('exit', stopAll)
+    }
+  }, [])
   const [detail, setDetail] = useState<{ key: string; d: CollectionDetail } | null>(null)
   const [records, setRecords] = useState<{ type: string; id: string; data: string }[] | undefined>()
   const [diff, setDiff] = useState<
@@ -295,7 +324,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       const s = await loadSnapshot(ctx)
       setSnap(s)
     } catch (err) {
-      setStatus(`Reading the workspace: ${(err as Error).message}`)
+      setStatus(`Reading home: ${(err as Error).message}`)
     }
   }, [ctx])
 
@@ -320,7 +349,11 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       if (reloadSoon.current) clearTimeout(reloadSoon.current)
       reloadSoon.current = setTimeout(() => void reload(), 250)
     }
-    for (const dir of [ctx.ws.root, ctx.settings.storePath]) {
+    for (const dir of [
+      ctx.home.root,
+      ctx.settings.storePath,
+      ...ctx.sources.filter((x) => x.how !== 'home' && x.exists).map((x) => x.root),
+    ]) {
       try {
         watchers.push(
           watch(dir, { recursive: true }, (_e, name) => {
@@ -329,6 +362,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
               (name.startsWith('.git') ||
                 name.includes('/tmp/') ||
                 name.startsWith('tmp/') ||
+                name.includes('node_modules') ||
                 name.startsWith('records/'))
             )
               return
@@ -373,7 +407,9 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
   const collRow =
     item?.kind === 'coll' ? (snap?.collections.find((c) => c.key === item.key) ?? null) : null
   const script =
-    item?.kind === 'script' ? (snap?.scripts.find((s) => s.path === item.path) ?? null) : null
+    item?.kind === 'script' || item?.kind === 'view'
+      ? (snap?.scripts.find((s) => s.path === item.path) ?? null)
+      : null
   const shownRun: RunRecord | null = (() => {
     if (overlay && typeof overlay === 'object')
       return snap?.runs.find((r) => r.id === overlay.run) ?? null
@@ -552,10 +588,10 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         const target = m?.collection ?? snap?.collections[0]?.key
         let options = null
         if (target) {
-          const meta = ctx.ws.collection(parseRef(target, ctx.settings.defaultRemote))
-          const type = m?.type ?? Object.keys(ctx.ws.schemas(meta))[0] ?? 'Record'
+          const meta = ctx.home.collection(parseRef(target, ctx.settings.defaultRemote))
+          const type = m?.type ?? Object.keys(ctx.home.schemas(meta))[0] ?? 'Record'
           const t = await readTable(
-            join(ctx.ws.root, shape.path),
+            inputPath(ctx, shape.path),
             m && shape.tables.length > 1
               ? { sheet: m.table }
               : shape.tables.length > 1
@@ -778,12 +814,12 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
             if (row.kind === 'rule') {
               const keepM = /keep (all|some|none)/.exec(s.editing)?.[1]
               const pathM = /path ([^,]+)/.exec(s.editing)?.[1]?.trim()
-              setRule(ctx.env, ctx.ws.root, {
+              setRule(ctx.env, {
                 match: row.key,
                 ...(pathM ? { path: pathM } : {}),
                 ...(keepM ? { keep: keepM as 'all' } : {}),
               })
-            } else setSetting(ctx.env, ctx.ws.root, row.key, s.editing)
+            } else setSetting(ctx.env, row.key, s.editing)
             setStatus(`${row.label} saved`)
           } catch (err) {
             setStatus((err as Error).message)
@@ -801,11 +837,12 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       if (key.downArrow)
         return setSettings({ ...s, cursor: Math.min(s.rows.length - 1, s.cursor + 1) })
       const row = s.rows[s.cursor]
-      if (key.return && row && row.kind !== 'info')
+      if (key.return && row && row.kind !== 'info' && row.kind !== 'source')
         return setSettings({ ...s, editing: row.from === 'default' ? '' : row.value })
       if (input === 'd' && row) {
-        if (row.kind === 'rule') removeRule(ctx.env, ctx.ws.root, row.key)
-        else if (row.kind !== 'info') setSetting(ctx.env, ctx.ws.root, row.key, undefined)
+        if (row.kind === 'rule') removeRule(ctx.env, row.key)
+        else if (row.kind === 'source') removeSource(ctx.env, row.key)
+        else if (row.kind !== 'info') setSetting(ctx.env, row.key, undefined)
         void reload()
         return setSettings({ ...s, rows: settingRows(ctx) })
       }
@@ -820,7 +857,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
             const words = rest.join(' ')
             const k = /keep (all|some|none)/.exec(words)?.[1] as 'all' | undefined
             const p = /path (\S+)/.exec(words)?.[1]
-            setRule(ctx.env, ctx.ws.root, {
+            setRule(ctx.env, {
               match,
               ...(p ? { path: p } : {}),
               ...(k ? { keep: k } : {}),
@@ -828,10 +865,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
             setSettings((x) => ({ ...x, rows: settingRows(ctx) }))
           },
         })
-      if (input === 'o')
-        return void editInEditor(
-          row?.from === 'workspace' ? workspaceConfigPath(ctx.ws.root) : personalPath(ctx.env),
-        )
+      if (input === 'o') return void editInEditor(personalPath(ctx.env))
       return
     }
 
@@ -866,7 +900,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
           )
         if (f === 'type') {
           const types = Object.keys(
-            ctx.ws.schemas(parseRef(o.collection, ctx.settings.defaultRemote)),
+            ctx.home.schemas(parseRef(o.collection, ctx.settings.defaultRemote)),
           )
           if (types.length) next.type = cycle(types, o.type)
         }
@@ -875,7 +909,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         if (f === 'mode') next.mode = o.mode === 'set' ? 'additions' : 'set'
         if (f === 'sheet' || f === 'collection' || f === 'id' || f === 'type') {
           // Columns follow the sheet and the schema.
-          void readTable(join(ctx.ws.root, file.shape.path), {
+          void readTable(inputPath(ctx, file.shape.path), {
             ...(next.sheet ? { sheet: next.sheet } : {}),
           }).then(
             (tt) => {
@@ -913,7 +947,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
           .replace(/[^A-Za-z0-9._-]/g, '-')
         const rel = saveImport(ctx, name, o)
         try {
-          setStatus(`Wrote ${eject(ctx, findScript(ctx.ws, rel))}`)
+          setStatus(`Wrote ${eject(ctx, findScript(ctx, rel))}`)
         } catch (err) {
           setStatus((err as Error).message)
         }
@@ -959,13 +993,13 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       }
       if (input === 'R') {
         if (live) signalRun(ctx, shownRun.id, 'cancel')
-        return startRun(shownRun.script, shownRun.args)
+        return startRun(shownRun.path ?? shownRun.script, shownRun.args)
       }
       if (!live && input === 'u' && shownRun.saved.length)
         return void attempt('Undoing this run', async () => {
           const undone: string[] = []
           for (const s of shownRun.saved) {
-            const meta = ctx.ws.resolve(s.collection)
+            const meta = ctx.home.resolve(s.collection)
             const c = openColl(ctx, meta)
             const list = await unpushedOf(c)
             const note = c.store.state(cidOf(c)).versions[list.at(-1)?.id ?? '']
@@ -1023,13 +1057,36 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     }
 
     if (item?.kind === 'remote' && key.return) return void openPick(item.name)
-    if (item?.kind === 'view' && input === 'v') {
-      const p = join(ctx.ws.root, 'views', item.name, 'index.html')
-      spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [p], {
-        stdio: 'ignore',
-        detached: true,
-      }).unref()
-      return setStatus(`Opened ${p}`)
+    if (script?.kind === 'view') {
+      if (input === 'v') {
+        if (script.view === 'page') {
+          openInBrowser(script.path)
+          return setStatus(`Opened ${tildePath(ctx.env, script.path)}`)
+        }
+        const running = served.current.get(script.path)
+        if (running) {
+          openInBrowser(running.url)
+          return setStatus(`Opened ${running.url}`)
+        }
+        return void attempt(`Starting ${script.name}`, async () => {
+          const v = await serveView(ctx, script)
+          served.current.set(script.path, v)
+          v.child.once('exit', () => {
+            served.current.delete(script.path)
+            setServedTick((n) => n + 1)
+          })
+          setServedTick((n) => n + 1)
+          openInBrowser(v.url)
+          return `${script.name} at ${v.url}`
+        })
+      }
+      if (input === 's' && served.current.has(script.path)) {
+        served.current.get(script.path)!.stop()
+        served.current.delete(script.path)
+        setServedTick((n) => n + 1)
+        return setStatus(`Stopped ${script.name}`)
+      }
+      return
     }
     if (script) {
       if (input === 'r')
@@ -1087,7 +1144,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         return void attempt(`Keeping ${next}`, async () => {
           if (next === 'none') return `Let go of ${await forget(ctx, c)} files`
           if (next === 'some') {
-            const types = Object.keys(ctx.ws.schemas(collRow.meta)).slice(0, 1)
+            const types = Object.keys(ctx.home.schemas(collRow.meta)).slice(0, 1)
             return `Fetched ${await keep(ctx, c, types)} files (some: ${types.join(', ')}; underlay keep --types to choose)`
           }
           return `Fetched ${await keep(ctx, c)} files`
@@ -1108,7 +1165,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         return setPrompt({
           label: `Which script: ${writers.map((w) => w.name).join(', ')}`,
           value: writers[0]!.name,
-          submit: (v) => startRun(findScript(ctx.ws, v).path),
+          submit: (v) => startRun(findScript(ctx, v).path),
         })
       }
       if (input === 'o') {
@@ -1126,7 +1183,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
 
   // --- Layout ---
 
-  if (!snap || !side) return <Text color={C.mu}>Reading {tildePath(ctx.env, ctx.ws.root)}…</Text>
+  if (!snap || !side) return <Text color={C.mu}>Reading {tildePath(ctx.env, ctx.home.root)}…</Text>
 
   const sideW = Math.min(40, Math.max(30, Math.floor(columns * 0.27)))
   const mainW = Math.max(40, columns - sideW - 1)
@@ -1161,9 +1218,9 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         },
         inner,
       )
+    if (script?.kind === 'view')
+      return viewPane(script, served.current.get(script.path) ?? null, inner)
     if (script) return scriptPane(script, inner)
-    if (item?.kind === 'view')
-      return viewPane(item.name, ctx.ws.root, ctx.settings.servePort, inner)
     if (item?.kind === 'remote') {
       const r = snap.remotes.find((x) => x.name === item.name)!
       return messagePane(
@@ -1180,7 +1237,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     }
     return messagePane(
       'Underlay',
-      'Nothing here yet. + adds collections from a remote; f adds a file; scripts go in scripts/.',
+      'Nothing here yet. + adds collections from a remote; f adds a file; scripts go in your home’s scripts/ or a script folder (underlay sources add).',
       inner,
     )
   })()

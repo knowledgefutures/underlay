@@ -16,6 +16,8 @@ export interface Env {
   configDir: string
   /** `~/.local/share/underlay`: the default store. */
   dataDir: string
+  /** `UNDERLAY_HOME`: home, over what config.toml says. */
+  homeDir?: string | null
   fetch: Fetch
   keys: KeyStore
   now(): Date
@@ -39,6 +41,7 @@ export function defaultEnv(vars: NodeJS.ProcessEnv = process.env): Env {
     home,
     configDir,
     dataDir,
+    homeDir: vars.UNDERLAY_HOME ? resolve(vars.UNDERLAY_HOME) : null,
     fetch: (url, init) => fetch(url, init),
     keys: keychainOrFile(configDir, vars),
     now: () => new Date(),

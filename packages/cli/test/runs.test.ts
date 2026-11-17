@@ -44,26 +44,29 @@ writeFileSync(join(out, 'members.ndjson'), names.map((n) => JSON.stringify({ id:
 async function setup() {
   const w = await world()
   const meta = newCollection(w.ctx, 'test/org/members')
-  w.ws.writeSchemas(meta, { Member })
-  mkdirSync(join(w.ws.root, 'scripts', 'mitp'), { recursive: true })
-  writeFileSync(join(w.ws.root, 'scripts', 'mitp', 'members.mjs'), SCRIPT)
-  writeFileSync(join(w.ws.root, 'scripts', 'check.sh'), 'echo checking; exit 3\n')
+  w.home.writeSchemas(meta, { Member })
+  mkdirSync(join(w.home.root, 'scripts', 'mitp'), { recursive: true })
+  writeFileSync(join(w.home.root, 'scripts', 'mitp', 'members.mjs'), SCRIPT)
+  writeFileSync(
+    join(w.home.root, 'scripts', 'check.sh'),
+    '# underlay: check\necho checking; exit 3\n',
+  )
   return { ...w, meta }
 }
 
 describe('scripts and runs', () => {
   it('reads declarations, runs a script, and saves a version for what changed', async () => {
     const w = await setup()
-    const scripts = listScripts(w.ws)
+    const scripts = listScripts(w.ctx)
     expect(scripts.map((s) => [s.name, s.kind, s.writes])).toEqual([
-      ['check', 'check', []],
-      ['mitp/members', 'script', ['test/org/members']],
+      ['home/check', 'check', []],
+      ['home/mitp/members', 'script', ['test/org/members']],
     ])
     expect(takesFile('*.json', 'inputs/x.json')).toBe(true)
     expect(takesFile('*.xlsx, *.csv', 'roster.CSV')).toBe(true)
     expect(takesFile('*.json', 'x.jsonl')).toBe(false)
 
-    const info = findScript(w.ws, 'members')
+    const info = findScript(w.ctx, 'members')
     let printed = ''
     const r1 = await runScript(w.ctx, info, ['Ada', 'Grace'], { onOutput: (t) => (printed += t) })
     expect(printed).toContain('writing 2')
@@ -79,7 +82,7 @@ describe('scripts and runs', () => {
     const r3 = await runScript(w.ctx, info, ['Ada'])
     expect(r3.saved).toMatchObject([{ semver: 'v1.1.0', removed: 1 }])
 
-    const check = await runScript(w.ctx, findScript(w.ws, 'check.sh'), [])
+    const check = await runScript(w.ctx, findScript(w.ctx, 'check.sh'), [])
     expect(check).toMatchObject({ status: 'failed', exitCode: 3, saved: [] })
     expect(listRuns(w.ctx).map((r) => r.status)).toEqual(['failed', 'ok', 'ok', 'ok'])
 
@@ -87,7 +90,7 @@ describe('scripts and runs', () => {
     const release = lock(w.ctx, 'test/org/members', 'someone')
     // The lock of this same process is taken over (it is ours); another process's is not.
     writeFileSync(
-      join(w.ws.stateDir, 'locks', 'test__org__members.lock'),
+      join(w.home.stateDir, 'locks', 'test__org__members.lock'),
       JSON.stringify({ pid: process.ppid, run: 'other' }),
     )
     await expect(runScript(w.ctx, info, ['Ada'])).rejects.toThrow(/being written by run other/)
@@ -126,7 +129,7 @@ describe('built-in importers', () => {
       hits: 2,
       of: 3,
     })
-    const t = await readTable(join(w.ws.root, shape.path))
+    const t = await readTable(join(w.home.root, shape.path))
     const opts = defaultOptions(w.ctx, shape.path, t, {
       collection: 'test/org/members',
       type: 'Member',
@@ -134,7 +137,7 @@ describe('built-in importers', () => {
     })
     expect(opts.columns).toEqual({ Name: 'name', Unit: 'unit', Year: 'year', Email: '' })
     const rel = saveImport(w.ctx, 'roster', opts)
-    const info = findScript(w.ws, rel)
+    const info = findScript(w.ctx, rel)
     expect(info).toMatchObject({
       kind: 'import',
       writes: ['test/org/members'],
@@ -165,7 +168,7 @@ describe('built-in importers', () => {
 
     // Ejected, it is a script that declares the same things.
     const ts = eject(w.ctx, info)
-    expect(findScript(w.ws, ts)).toMatchObject({
+    expect(findScript(w.ctx, ts)).toMatchObject({
       kind: 'script',
       writes: ['test/org/members'],
       types: ['Member'],

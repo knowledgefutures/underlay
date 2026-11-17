@@ -1,6 +1,6 @@
 /**
  * The store (local-tool.md "Configuration"): record files, versions not yet pushed, and run
- * logs, outside the workspace. Default `~/.local/share/underlay`; a rule may send a
+ * logs, outside home. Default `~/.local/share/underlay`; a rule may send a
  * collection's records elsewhere, which is then a store of its own.
  *
  * A store is laid out as a v3 server lays out its bucket (protocol-v3 Section 9), so the

@@ -101,11 +101,11 @@ export async function pull(ctx: Ctx, c: Coll, now = ctx.env.now()): Promise<Pull
   }
 
   result.files = await fetchKept(c)
-  // Schemas the authority changed come into the workspace; others are left as edited here.
+  // Schemas the authority changed come into home; others are left as edited here.
   if (incoming.length > 0) {
     const view = await viewOf(c, c.store.state(cid).remote!.number)
     const now2 = await schemasAt(c.data, view)
-    const here = ctx.ws.schemas(c.meta)
+    const here = ctx.home.schemas(c.meta)
     const changed: Record<string, unknown> = {}
     for (const [t, body] of Object.entries(now2)) {
       if (JSON.stringify(oldSchemas[t]) === JSON.stringify(body)) continue
@@ -119,10 +119,10 @@ export async function pull(ctx: Ctx, c: Coll, now = ctx.env.now()): Promise<Pull
         )
       changed[t] = body
     }
-    ctx.ws.writeSchemas(c.meta, changed)
+    ctx.home.writeSchemas(c.meta, changed)
     result.schemas = Object.keys(changed)
   }
-  ctx.ws.writeCollection({ ...c.meta, pulled: now.toISOString() })
+  ctx.home.writeCollection({ ...c.meta, pulled: now.toISOString() })
   return result
 }
 
@@ -239,7 +239,7 @@ export async function push(ctx: Ctx, c: Coll, say = ctx.say): Promise<v3.StoredC
       const there = await remote.collection(org, name).catch(() => null)
       if (!(err instanceof RemoteError && err.status === 409 && there?.id === cid)) throw err
     }
-    ctx.ws.writeCollection({ ...c.meta, isNew: false })
+    ctx.home.writeCollection({ ...c.meta, isNew: false })
     c.meta.isNew = false
   }
   const pushed: v3.StoredCommit[] = []
@@ -280,7 +280,7 @@ export async function push(ctx: Ctx, c: Coll, say = ctx.say): Promise<v3.StoredC
     pushed.push(s)
     say(`  ${s.commit.semver} ✓ ${c.meta.authority}`)
   }
-  ctx.ws.writeCollection({ ...ctx.ws.collection(c.meta), pushed: ctx.env.now().toISOString() })
+  ctx.home.writeCollection({ ...ctx.home.collection(c.meta), pushed: ctx.env.now().toISOString() })
   return pushed
 }
 

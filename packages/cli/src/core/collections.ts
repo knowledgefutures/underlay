@@ -10,10 +10,10 @@ import { v3 } from '@underlay/protocol'
 import { type Keep, ruleFor } from './config.js'
 import { type Coll, type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
+import { type CollectionMeta, type CollectionRef, keyOf, parseRef } from './home.js'
 import { Remote, type RemoteCollection } from './remote.js'
 import { fetchKept, pull } from './sync.js'
 import { cidOf, schemasAt, unpushedOf, viewOf } from './versions.js'
-import { type CollectionMeta, type CollectionRef, keyOf, parseRef } from './workspace.js'
 
 export const KEEP_MARK: Record<Keep, string> = { all: '■', some: '◧', none: '□' }
 
@@ -34,7 +34,7 @@ export async function listRemote(ctx: Ctx, name: string): Promise<RemoteListing>
   const remote = Remote.open(ctx.env, ctx.settings, name, ctx.say)
   if (!remote.signedIn) return { remote: name, signedIn: false, user: null, orgs: [] }
   const me = await remote.me()
-  const here = ctx.ws.collections()
+  const here = ctx.home.collections()
   const orgs = await Promise.all(
     me.orgs.map(async (o) => ({
       slug: o.slug,
@@ -53,7 +53,7 @@ export async function listRemote(ctx: Ctx, name: string): Promise<RemoteListing>
 /** Public collections on a remote, by search. */
 export async function listPublic(ctx: Ctx, name: string, q?: string) {
   const remote = Remote.open(ctx.env, ctx.settings, name, ctx.say)
-  const here = ctx.ws.collections()
+  const here = ctx.home.collections()
   return (await remote.publicCollections(q)).map((c) => ({
     ...c,
     here:
@@ -68,7 +68,7 @@ export async function addCollection(
   opts: { keep?: Keep; types?: string[] } = {},
 ): Promise<{ coll: Coll; pulled: Awaited<ReturnType<typeof pull>> }> {
   const ref = parseRef(text, ctx.settings.defaultRemote)
-  if (ctx.ws.readCollection(ref))
+  if (ctx.home.readCollection(ref))
     throw new CliError(`${keyOf(ref)} is here already (underlay pull)`)
   const remote = Remote.open(ctx.env, ctx.settings, ref.authority, ctx.say)
   const info = await remote.collection(ref.org, ref.name)
@@ -85,18 +85,18 @@ export async function addCollection(
     pulled: null,
     pushed: null,
   }
-  ctx.ws.writeCollection(meta)
+  ctx.home.writeCollection(meta)
   writeFileSync(
-    join(ctx.ws.collectionDir(ref), 'README.md'),
+    join(ctx.home.collectionDir(ref), 'README.md'),
     `# ${info.name}\n\n${info.description ?? ''}\n\nOn ${ref.authority}: ${remote.url}/${ref.org}/${ref.name}\n`,
   )
   const coll = openColl(ctx, meta)
   const pulled = await pull(ctx, coll)
   // All the head's schemas, not only those that changed since nothing.
   if ((await v3.headNumber(coll.store.fs, meta.id)) > 0) {
-    ctx.ws.writeSchemas(meta, await schemasAt(coll.data, await viewOf(coll)))
+    ctx.home.writeSchemas(meta, await schemasAt(coll.data, await viewOf(coll)))
   }
-  return { coll: openColl(ctx, ctx.ws.collection(ref)), pulled }
+  return { coll: openColl(ctx, ctx.home.collection(ref)), pulled }
 }
 
 /** Start a collection that is not on its authority yet; its first push creates it there. */
@@ -106,7 +106,7 @@ export function newCollection(
   opts: { access?: 'public' | 'private'; title?: string } = {},
 ): CollectionMeta {
   const ref = parseRef(text, ctx.settings.defaultRemote)
-  if (ctx.ws.readCollection(ref)) throw new CliError(`${keyOf(ref)} is here already`)
+  if (ctx.home.readCollection(ref)) throw new CliError(`${keyOf(ref)} is here already`)
   const meta: CollectionMeta = {
     ...ref,
     id: crypto.randomUUID(),
@@ -119,9 +119,9 @@ export function newCollection(
     pulled: null,
     pushed: null,
   }
-  ctx.ws.writeCollection(meta)
+  ctx.home.writeCollection(meta)
   writeFileSync(
-    join(ctx.ws.collectionDir(ref), 'README.md'),
+    join(ctx.home.collectionDir(ref), 'README.md'),
     `# ${opts.title ?? ref.name}\n\nNew: not on ${ref.authority} yet. Its first push creates it there.\n`,
   )
   return meta
@@ -134,19 +134,19 @@ export async function keep(ctx: Ctx, c: Coll, types?: string[]): Promise<number>
     keep: types?.length ? 'some' : 'all',
     types: types ?? [],
   }
-  ctx.ws.writeCollection(meta)
+  ctx.home.writeCollection(meta)
   return fetchKept(openColl(ctx, meta))
 }
 
 /** Keep only a collection's metadata here: its files go, unless something else names them. */
 export async function forget(ctx: Ctx, c: Coll): Promise<number> {
-  ctx.ws.writeCollection({ ...c.meta, keep: 'none', types: [] })
+  ctx.home.writeCollection({ ...c.meta, keep: 'none', types: [] })
   if ((await v3.headNumber(c.store.fs, cidOf(c))) === 0) return 0
   const view = await viewOf(c)
   // Files a version not yet pushed names stay: they can't be fetched again.
   const needed = new Set<string>()
   for (const s of await unpushedOf(c)) for (const f of v3.commitFiles(s.commit)) needed.add(f.id)
-  for (const other of ctx.ws.collections()) {
+  for (const other of ctx.home.collections()) {
     if (other.keep === 'none' || keyOf(other) === c.key) continue
     const o = openColl(ctx, other)
     if (o.store.root !== c.store.root || (await v3.headNumber(o.store.fs, other.id)) === 0) continue

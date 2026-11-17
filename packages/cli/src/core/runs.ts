@@ -5,7 +5,7 @@
  * recorded: script, git commit, inputs, output, and the versions it saved.
  *
  * A run holds a lock on each collection it writes, so two runs never save the same one at
- * once. Its record is in the workspace (`.underlay/runs/<id>.json`); its log and output are
+ * once. Its record is in home (`.underlay/runs/<id>.json`); its log and output are
  * in the store. A run started from the terminal UI runs detached, so closing the UI doesn't
  * stop it: its process id is in the record, for pause, resume and cancel.
  */
@@ -27,15 +27,16 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
 import { openColl, storeAt, type Ctx } from './context.js'
 import { CliError } from './env.js'
+import { parseRef } from './home.js'
 import { type ScriptInfo } from './scripts.js'
+import { secretsFor } from './sources.js'
 import { saveVersion } from './versions.js'
-import { keyOf, parseRef } from './workspace.js'
 
 export interface SavedVersion {
   collection: string
@@ -50,7 +51,10 @@ export interface SavedVersion {
 
 export interface RunRecord {
   id: string
+  /** The script's name: `scrapers/mitp/monthly`. */
   script: string
+  /** Its file. */
+  path?: string
   args: string[]
   startedAt: string
   endedAt: string | null
@@ -69,7 +73,7 @@ export interface RunRecord {
   error: string | null
 }
 
-const runsDir = (ctx: Ctx) => join(ctx.ws.stateDir, 'runs')
+const runsDir = (ctx: Ctx) => join(ctx.home.stateDir, 'runs')
 const recordPath = (ctx: Ctx, id: string) => join(runsDir(ctx), `${id}.json`)
 
 export function readRun(ctx: Ctx, id: string): RunRecord {
@@ -122,12 +126,12 @@ export const newRunId = (now: Date) =>
 // --- Locks ---
 
 const lockPath = (ctx: Ctx, key: string) =>
-  join(ctx.ws.stateDir, 'locks', key.replaceAll('/', '__') + '.lock')
+  join(ctx.home.stateDir, 'locks', key.replaceAll('/', '__') + '.lock')
 
 /** Take the lock on a collection for this process; a lock whose process is gone is taken over. */
 export function lock(ctx: Ctx, key: string, run: string): () => void {
   const p = lockPath(ctx, key)
-  mkdirSync(join(ctx.ws.stateDir, 'locks'), { recursive: true })
+  mkdirSync(join(ctx.home.stateDir, 'locks'), { recursive: true })
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const fd = openSync(p, 'wx')
@@ -156,6 +160,7 @@ export function lockedBy(ctx: Ctx, key: string): string | null {
 // --- Running ---
 
 function gitOf(root: string): RunRecord['git'] {
+  // Uncommitted changes anywhere in the script's folder count: its helpers run with it.
   try {
     const commit = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -163,7 +168,7 @@ function gitOf(root: string): RunRecord['git'] {
       .toString()
       .trim()
     const dirty =
-      execFileSync('git', ['-C', root, 'status', '--porcelain', '--', 'scripts'], {
+      execFileSync('git', ['-C', root, 'status', '--porcelain', '--', '.'], {
         stdio: ['ignore', 'pipe', 'ignore'],
       })
         .toString()
@@ -174,14 +179,26 @@ function gitOf(root: string): RunRecord['git'] {
   }
 }
 
+/** An argument that names a file: here, else in home (`inputs/roster.xlsx`). Absolute, or null. */
+export function fileArg(ctx: Ctx, a: string): string | null {
+  for (const p of isAbsolute(a) ? [a] : [resolve(ctx.cwd, a), resolve(ctx.home.root, a)])
+    if (existsSync(p) && statSync(p).isFile()) return p
+  return null
+}
+
+/** Where an input is, from its path in a run record. */
+export const inputPath = (ctx: Ctx, path: string) =>
+  isAbsolute(path) ? path : join(ctx.home.root, path)
+
 function inputsOf(ctx: Ctx, args: string[]): RunRecord['inputs'] {
   const out: RunRecord['inputs'] = []
   for (const a of args) {
-    const p = resolve(ctx.ws.root, a)
-    if (!existsSync(p) || !statSync(p).isFile()) continue
+    const p = fileArg(ctx, a)
+    if (!p) continue
     const bytes = readFileSync(p)
+    const rel = relative(ctx.home.root, p)
     out.push({
-      path: relative(ctx.ws.root, p),
+      path: rel.startsWith('..') ? p : rel,
       sha256: createHash('sha256').update(bytes).digest('hex'),
       bytes: bytes.byteLength,
     })
@@ -240,9 +257,13 @@ export async function runScript(
   const dir = store.runDir(id)
   const out = join(dir, 'out')
   mkdirSync(out, { recursive: true })
+  // Files named in the arguments go to the script as absolute paths: it runs in its own folder.
+  args = args.map((a) => fileArg(ctx, a) ?? a)
+  const secrets = info.command ? secretsFor(ctx.env, info.need, info.name) : {}
   const record: RunRecord = {
     id,
-    script: info.path,
+    script: info.name,
+    path: info.path,
     args,
     startedAt: now.toISOString(),
     endedAt: null,
@@ -250,7 +271,7 @@ export async function runScript(
     exitCode: null,
     pid: process.pid,
     scriptPid: null,
-    git: gitOf(ctx.ws.root),
+    git: gitOf(info.cwd),
     inputs: inputsOf(ctx, args),
     log: join(dir, 'log.txt'),
     out,
@@ -258,8 +279,9 @@ export async function runScript(
     unchanged: [],
     error: null,
   }
-  const writes = info.writes.map((w) => keyOf(parseRef(w, ctx.settings.defaultRemote)))
-  for (const w of writes) ctx.ws.collection(parseRef(w, ctx.settings.defaultRemote))
+  if (info.kind === 'view') throw new CliError(`${info.name} is a view: underlay view ${info.name}`)
+  const writes = info.writes
+  for (const w of writes) ctx.home.collection(parseRef(w, ctx.settings.defaultRemote))
   const releases: (() => void)[] = []
   try {
     for (const w of writes) releases.push(lock(ctx, w, id))
@@ -288,15 +310,14 @@ export async function runScript(
     } else {
       code = await new Promise<number | null>((done, fail) => {
         const child = spawn(info.command![0]!, [...info.command!.slice(1), ...args], {
-          cwd: ctx.ws.root,
+          cwd: info.cwd,
           env: {
             ...process.env,
+            ...secrets,
             UNDERLAY_OUT: out,
-            UNDERLAY_WORKSPACE: ctx.ws.root,
+            UNDERLAY_HOME: ctx.home.root,
             UNDERLAY_RUN: id,
-            ...(record.inputs[0]
-              ? { UNDERLAY_INPUT: join(ctx.ws.root, record.inputs[0].path) }
-              : {}),
+            ...(record.inputs[0] ? { UNDERLAY_INPUT: inputPath(ctx, record.inputs[0].path) } : {}),
           },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
@@ -318,11 +339,9 @@ export async function runScript(
       // Each collection it wrote, compared with the head.
       for (const key of outputsOf(out)) {
         const ref = parseRef(key, ctx.settings.defaultRemote)
-        const meta = ctx.ws.readCollection(ref)
+        const meta = ctx.home.readCollection(ref)
         if (!meta) {
-          emit(
-            `underlay: ${key} is not in this workspace; its output is left in ${relative(ctx.ws.root, out) || out}\n`,
-          )
+          emit(`underlay: ${key} isn’t in your home; its output is left in ${out}\n`)
           continue
         }
         if (!writes.includes(key)) releases.push(lock(ctx, key, id))
@@ -332,7 +351,7 @@ export async function runScript(
           mode,
           ...(info.types ? { types: info.types } : {}),
           ...(info.where ? { where: info.where } : {}),
-          schemas: ctx.ws.schemas(meta),
+          schemas: ctx.home.schemas(meta),
           message: `${info.name}${args.length ? ' ' + args.join(' ') : ''}`,
           run: id,
           now: ctx.env.now(),
@@ -387,15 +406,18 @@ export function signalRun(ctx: Ctx, id: string, what: 'pause' | 'resume' | 'canc
   return r
 }
 
-/** Start a run in its own process, detached: it outlives the terminal UI. Its id. */
+/**
+ * Start a run in its own process, detached: it outlives the terminal UI. Its id. It runs from
+ * the same folder with the same home, so it finds the same script folders.
+ */
 export function startDetached(ctx: Ctx, script: string, args: string[]): string {
   const id = newRunId(ctx.env.now())
   const cli = process.argv[1]!
   const child = spawn(process.execPath, [cli, 'run', script, ...args, '--run-id', id, '--quiet'], {
-    cwd: ctx.ws.root,
+    cwd: ctx.cwd,
     detached: true,
     stdio: 'ignore',
-    env: process.env,
+    env: { ...process.env, UNDERLAY_HOME: ctx.home.root },
   })
   child.unref()
   return id

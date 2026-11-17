@@ -16,10 +16,7 @@ export type HandoffTarget =
   | { kind: 'run'; run: RunRecord }
 
 export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
-  const lines = [
-    `Work in the Underlay workspace at ${ctx.ws.root}. Read AGENTS.md there first.`,
-    '',
-  ]
+  const lines = [`Work in the Underlay home at ${ctx.home.root}. Read AGENTS.md there first.`, '']
   if (t.kind === 'collection') {
     lines.push(
       `About the collection ${t.key} (collections/${t.key}/: collection.toml, README.md, schemas/).`,
@@ -31,7 +28,7 @@ export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
     const s = t.shape
     const m = s.matches[0]
     lines.push(
-      `Task: write a script in scripts/imports/ that imports ${s.path} (${s.format}).`,
+      `Task: write a script in ${ctx.home.root}/scripts/imports/ that imports ${s.path} (${s.format}).`,
       ...s.tables.map(
         (x) =>
           `- ${x.name}: ${x.rows} rows; columns ${x.columns.join(', ')}${x.personal.length ? `; looks personal, leave out unless needed: ${x.personal.join(', ')}` : ''}`,
@@ -40,13 +37,13 @@ export function handoffPrompt(ctx: Ctx, t: HandoffTarget): string {
         ? `It matches ${m.collection}: ${m.hits} of ${m.of} ${m.column} values are ${m.type} ids there. Its schemas are in collections/${m.collection}/schemas/.`
         : 'No collection here shares its ids yet: say which it belongs in.',
       'The built-in importer could not handle it as one sheet to one type; the script can do what it needs.',
-      'Hold back rows you are unsure of: write them to inputs/ with the reason, rather than guessing.',
+      'Hold back rows you are unsure of: write them to inputs/ in the home with the reason, rather than guessing.',
       'Run it with `underlay run`.',
     )
   } else {
     const r = t.run
     lines.push(
-      `Task: the run ${r.id} of ${r.script} ${r.status === 'failed' ? 'failed' : r.status}${r.error ? ` (${r.error})` : ''}. Find out why and fix the script.`,
+      `Task: the run ${r.id} of ${r.script}${r.path ? ` (${r.path})` : ''} ${r.status === 'failed' ? 'failed' : r.status}${r.error ? ` (${r.error})` : ''}. Find out why and fix the script.`,
       `Its log: ${r.log}`,
       r.args.length ? `It was run with: ${r.args.join(' ')}` : '',
       `Run it again with \`underlay run ${r.script}\`.`,
@@ -69,14 +66,14 @@ export function copyText(text: string): boolean {
   return false
 }
 
-/** Send a prompt to the workspace's handoff command, on its stdin. */
+/** Send a prompt to the handoff command, on its stdin. */
 export function sendHandoff(ctx: Ctx, text: string): string {
   const cmd = ctx.settings.handoffSend
   if (!cmd)
     throw new CliError(
       'No handoff command: set handoff.send (for example: hopper draft new --project <key> -)',
     )
-  const r = spawnSync('sh', ['-c', cmd], { input: text, cwd: ctx.ws.root, encoding: 'utf8' })
+  const r = spawnSync('sh', ['-c', cmd], { input: text, cwd: ctx.home.root, encoding: 'utf8' })
   if (r.status !== 0)
     throw new CliError(
       `${cmd}: ${(r.stderr || r.stdout || `exit ${r.status}`).trim().slice(0, 200)}`,

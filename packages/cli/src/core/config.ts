@@ -1,19 +1,19 @@
 /**
- * The two configuration files (local-tool.md "Configuration"):
+ * Settings (local-tool.md "Configuration"): one file, yours,
  *
- *   ~/.config/underlay/config.toml   yours: workspaces, the store, sign-ins, handoff, serve
- *   <workspace>/underlay.toml        shared through git: remotes, defaults, store rules
+ *   ~/.config/underlay/config.toml   home, the store and its rules, remotes, script folders,
+ *                                    handoff, serve
  *
- * The workspace's file overrides the personal one where both set something, except paths,
- * which stay personal. The files are the source of truth; `underlay config` and the
- * settings screen edit them, keeping each file's header comment.
+ * Home and the store are personal, so nothing shared sets them. A script folder's own
+ * `underlay.toml` says only what belongs to its code (sources.ts). The file is the source of
+ * truth; `underlay config` and the settings screen edit it, keeping its header comment.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { parse, stringify } from 'smol-toml'
 
-import { CliError, type Env, expandPath } from './env.js'
+import { CliError, type Env, expandPath, tildePath } from './env.js'
 
 export type Keep = 'all' | 'some' | 'none'
 
@@ -22,8 +22,6 @@ export interface StoreRule {
   match: string
   path?: string
   keep?: Keep
-  /** Which file the rule is in. */
-  from: 'personal' | 'workspace'
 }
 
 export interface RemoteConfig {
@@ -32,9 +30,16 @@ export interface RemoteConfig {
   url: string
 }
 
+/** A script folder listed in config.toml. */
+export interface SourceConfig {
+  name: string
+  path: string
+}
+
 export interface Settings {
-  workspaces: string[]
-  defaultWorkspace: string | null
+  /** Home: collections, inputs, your own scripts. */
+  home: string
+  sources: SourceConfig[]
   storePath: string
   /** Bytes, or null for no limit. */
   storeLimit: number | null
@@ -47,7 +52,7 @@ export interface Settings {
   keys: string
 }
 
-/** Remotes every workspace knows without saying so. */
+/** Remotes known without saying so. */
 export const BUILT_IN_REMOTES: RemoteConfig[] = [
   { name: 'underlay.org', url: 'https://www.underlay.org' },
   { name: 'staging.underlay.org', url: 'https://staging.underlay.org' },
@@ -60,12 +65,7 @@ export function urlOf(name: string): string {
 }
 
 export const PERSONAL_HEADER = `# Underlay CLI: your settings (local-tool.md "Configuration").
-# The workspace's underlay.toml overrides these where both set something, except paths.
 # Edit here, with \`underlay config set\`, or in the settings screen (,).
-`
-
-export const WORKSPACE_HEADER = `# An Underlay workspace: collections, scripts and views (see AGENTS.md).
-# Shared through git. Your own settings are in ~/.config/underlay/config.toml.
 `
 
 export type Toml = Record<string, any>
@@ -109,7 +109,7 @@ export class TomlFile {
 }
 
 export const personalPath = (env: Env) => join(env.configDir, 'config.toml')
-export const workspaceConfigPath = (root: string) => join(root, 'underlay.toml')
+const personalFile = (env: Env) => TomlFile.read(personalPath(env), PERSONAL_HEADER)
 
 const UNITS: Record<string, number> = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 }
 export function parseSize(s: string): number {
@@ -120,41 +120,46 @@ export function parseSize(s: string): number {
 
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 
-function rulesOf(t: Toml, from: StoreRule['from'], env: Env): StoreRule[] {
-  const list = (t.store?.rule ?? []) as Toml[]
-  return list.flatMap((r) => {
+export const DEFAULT_HOME = '~/Underlay'
+
+/** The settings, from config.toml and the defaults. */
+export function loadSettings(env: Env): Settings {
+  const p = TomlFile.read(personalPath(env)).data
+  const remotes = new Map(BUILT_IN_REMOTES.map((r) => [r.name, r]))
+  for (const [name, r] of Object.entries((p.remotes ?? {}) as Record<string, Toml>))
+    remotes.set(name, { name, url: str(r.url) ?? remotes.get(name)?.url ?? urlOf(name) })
+  const limit = str(p.store?.limit)
+  const rules = ((p.store?.rule ?? []) as Toml[]).flatMap((r): StoreRule[] => {
     if (typeof r.match !== 'string') return []
     const keep = str(r.keep)
-    const rule: StoreRule = { match: r.match, from }
-    // Paths stay personal: a workspace's rule cannot send records somewhere on your disk.
-    if (from === 'personal' && typeof r.path === 'string') rule.path = expandPath(env, r.path)
-    if (keep === 'all' || keep === 'some' || keep === 'none') rule.keep = keep
-    return [rule]
+    return [
+      {
+        match: r.match,
+        ...(typeof r.path === 'string' ? { path: expandPath(env, r.path) } : {}),
+        ...(keep === 'all' || keep === 'some' || keep === 'none' ? { keep } : {}),
+      },
+    ]
   })
-}
-
-/** Both files, merged. */
-export function loadSettings(env: Env, workspaceRoot: string | null): Settings {
-  const p = TomlFile.read(personalPath(env)).data
-  const w = workspaceRoot ? TomlFile.read(workspaceConfigPath(workspaceRoot)).data : {}
-  const remotes = new Map(BUILT_IN_REMOTES.map((r) => [r.name, r]))
-  for (const t of [p, w]) {
-    for (const [name, r] of Object.entries((t.remotes ?? {}) as Record<string, Toml>)) {
-      remotes.set(name, { name, url: str(r.url) ?? remotes.get(name)?.url ?? urlOf(name) })
-    }
-  }
-  const limit = str(w.store?.limit) ?? str(p.store?.limit)
+  const sources = ((p.sources ?? []) as Toml[]).flatMap((s): SourceConfig[] =>
+    typeof s.path === 'string'
+      ? [
+          {
+            name: str(s.name) ?? basename(expandPath(env, s.path)),
+            path: expandPath(env, s.path),
+          },
+        ]
+      : [],
+  )
   return {
-    workspaces: ((p.workspace?.known ?? []) as string[]).map((x) => expandPath(env, x)),
-    defaultWorkspace: str(p.workspace?.default) ? expandPath(env, p.workspace.default) : null,
+    home: env.homeDir ?? expandPath(env, str(p.home) ?? DEFAULT_HOME),
+    sources,
     storePath: str(p.store?.path) ? expandPath(env, p.store.path) : env.dataDir,
     storeLimit: limit ? parseSize(limit) : null,
-    // Workspace rules first: among equally specific matches, the shared one wins.
-    rules: [...rulesOf(w, 'workspace', env), ...rulesOf(p, 'personal', env)],
+    rules,
     remotes: [...remotes.values()],
-    defaultRemote: str(w.defaults?.remote) ?? str(p.defaults?.remote) ?? 'underlay.org',
-    handoffSend: str(w.handoff?.send) ?? str(p.handoff?.send) ?? null,
-    servePort: Number(w.serve?.port ?? p.serve?.port ?? 4417),
+    defaultRemote: str(p.defaults?.remote) ?? 'underlay.org',
+    handoffSend: str(p.handoff?.send) ?? null,
+    servePort: Number(p.serve?.port ?? 4417),
     keys: env.keys.kind,
   }
 }
@@ -191,9 +196,7 @@ export function ruleFor(s: Settings, key: string): { path: string; keep: Keep | 
 /** A setting the settings screen and `underlay config` know. */
 export interface SettingDef {
   key: string
-  group: 'Workspace' | 'Store' | 'Remotes' | 'Handoff' | 'Serve'
-  /** Which file it goes in when set: personal for paths and sign-ins. */
-  file: 'personal' | 'workspace'
+  group: 'Home' | 'Store' | 'Remotes' | 'Handoff' | 'Serve'
   /** The TOML path. */
   path: string[]
   default: string
@@ -203,17 +206,15 @@ export interface SettingDef {
 
 export const SETTINGS: SettingDef[] = [
   {
-    key: 'workspace.default',
-    group: 'Workspace',
-    file: 'personal',
-    path: ['workspace', 'default'],
-    default: '(the folder you are in)',
-    about: 'The workspace plain `underlay` opens when not run inside one',
+    key: 'home',
+    group: 'Home',
+    path: ['home'],
+    default: DEFAULT_HOME,
+    about: 'Your collections, inputs and own scripts (UNDERLAY_HOME overrides it)',
   },
   {
     key: 'defaults.remote',
-    group: 'Workspace',
-    file: 'workspace',
+    group: 'Remotes',
     path: ['defaults', 'remote'],
     default: 'underlay.org',
     about: 'The remote `underlay new`, `ls` and `login` use when none is named',
@@ -221,7 +222,6 @@ export const SETTINGS: SettingDef[] = [
   {
     key: 'store.path',
     group: 'Store',
-    file: 'personal',
     path: ['store', 'path'],
     default: '~/.local/share/underlay',
     about: 'Where record files, unpushed versions and run logs live: outside Dropbox and iCloud',
@@ -229,7 +229,6 @@ export const SETTINGS: SettingDef[] = [
   {
     key: 'store.limit',
     group: 'Store',
-    file: 'personal',
     path: ['store', 'limit'],
     default: '(none)',
     about: 'Fetched data past this is let go; unpushed versions never are',
@@ -238,7 +237,6 @@ export const SETTINGS: SettingDef[] = [
   {
     key: 'handoff.send',
     group: 'Handoff',
-    file: 'workspace',
     path: ['handoff', 'send'],
     default: '(copy only)',
     about: 'A command that takes a handoff prompt on stdin (C in the app)',
@@ -246,7 +244,6 @@ export const SETTINGS: SettingDef[] = [
   {
     key: 'serve.port',
     group: 'Serve',
-    file: 'personal',
     path: ['serve', 'port'],
     default: '4417',
     about: 'The port `underlay serve` listens on',
@@ -267,7 +264,6 @@ export function settingDef(key: string): SettingDef {
     return {
       key,
       group: 'Remotes',
-      file: 'workspace',
       path: ['remotes', m[1]!, 'url'],
       default: BUILT_IN_REMOTES.find((r) => r.name === m[1])?.url ?? urlOf(m[1]!),
       about: `Where ${m[1]} is served`,
@@ -284,44 +280,25 @@ export function settingDef(key: string): SettingDef {
   )
 }
 
-export function fileFor(env: Env, workspaceRoot: string | null, which: 'personal' | 'workspace') {
-  if (which === 'workspace' && workspaceRoot)
-    return TomlFile.read(workspaceConfigPath(workspaceRoot), WORKSPACE_HEADER)
-  return TomlFile.read(personalPath(env), PERSONAL_HEADER)
-}
-
 function dig(t: Toml, path: string[]): unknown {
   let at: any = t
   for (const p of path) at = at?.[p]
   return at
 }
 
-/** A setting's value, and where it comes from. */
-export function getSetting(
-  env: Env,
-  root: string | null,
-  key: string,
-): { value: string; from: 'workspace' | 'personal' | 'default' } {
+/** A setting's value, and whether it is set or the default. */
+export function getSetting(env: Env, key: string): { value: string; from: 'set' | 'default' } {
   const def = settingDef(key)
-  const w = root ? dig(TomlFile.read(workspaceConfigPath(root)).data, def.path) : undefined
-  const p = dig(TomlFile.read(personalPath(env)).data, def.path)
-  // Paths stay personal.
-  if (w !== undefined && def.file === 'workspace') return { value: String(w), from: 'workspace' }
-  if (p !== undefined) return { value: String(p), from: 'personal' }
-  if (w !== undefined) return { value: String(w), from: 'workspace' }
-  return { value: def.default, from: 'default' }
+  const v = dig(TomlFile.read(personalPath(env)).data, def.path)
+  return v === undefined
+    ? { value: def.default, from: 'default' }
+    : { value: String(v), from: 'set' }
 }
 
-/** Set a setting in its file (or the one asked for); undefined removes it. */
-export function setSetting(
-  env: Env,
-  root: string | null,
-  key: string,
-  value: string | undefined,
-  where?: 'personal' | 'workspace',
-): string {
+/** Set a setting; undefined removes it. The file's path. */
+export function setSetting(env: Env, key: string, value: string | undefined): string {
   const def = settingDef(key)
-  const file = fileFor(env, root, where ?? (root ? def.file : 'personal'))
+  const file = personalFile(env)
   let at: Toml = file.data
   for (const p of def.path.slice(0, -1)) at = at[p] ??= {}
   const last = def.path.at(-1)!
@@ -331,13 +308,9 @@ export function setSetting(
   return file.path
 }
 
-/** Add a store rule (personal when it has a path), or replace one with the same match. */
-export function setRule(
-  env: Env,
-  root: string | null,
-  rule: { match: string; path?: string; keep?: Keep },
-): string {
-  const file = fileFor(env, root, rule.path || !root ? 'personal' : 'workspace')
+/** Add a store rule, or replace one with the same match. */
+export function setRule(env: Env, rule: { match: string; path?: string; keep?: Keep }): string {
+  const file = personalFile(env)
   const store = (file.data.store ??= {})
   const list = ((store.rule ??= []) as Toml[]).filter((r) => r.match !== rule.match)
   list.push({
@@ -350,30 +323,40 @@ export function setRule(
   return file.path
 }
 
-export function removeRule(env: Env, root: string | null, match: string): boolean {
-  let removed = false
-  for (const which of ['workspace', 'personal'] as const) {
-    if (which === 'workspace' && !root) continue
-    const file = fileFor(env, root, which)
-    const list = (file.data.store?.rule ?? []) as Toml[]
-    const kept = list.filter((r) => r.match !== match)
-    if (kept.length !== list.length) {
-      file.data.store.rule = kept
-      file.write()
-      removed = true
-    }
-  }
-  return removed
+export function removeRule(env: Env, match: string): boolean {
+  const file = personalFile(env)
+  const list = (file.data.store?.rule ?? []) as Toml[]
+  const kept = list.filter((r) => r.match !== match)
+  if (kept.length === list.length) return false
+  file.data.store.rule = kept
+  file.write()
+  return true
 }
 
-/** Remember a workspace in the personal file; the first becomes the default. */
-export function rememberWorkspace(env: Env, root: string): void {
-  const file = fileFor(env, null, 'personal')
-  const ws = (file.data.workspace ??= {})
-  const known = new Set<string>(((ws.known ?? []) as string[]).map((x) => expandPath(env, x)))
-  if (known.has(root) && ws.default) return
-  known.add(root)
-  ws.known = [...known]
-  ws.default ??= root
+/** List a script folder in config.toml under a short name (the folder's own by default). */
+export function addSource(env: Env, path: string, name?: string): SourceConfig {
+  const abs = expandPath(env, path)
+  if (!existsSync(abs)) throw new CliError(`No folder ${path}`)
+  const short = name ?? basename(abs)
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(short))
+    throw new CliError(`Name it with letters, digits, ".", "_" or "-": ${short}`)
+  if (short === 'home') throw new CliError('"home" is your home’s own scripts: name it --name …')
+  const file = personalFile(env)
+  const list = ((file.data.sources ??= []) as Toml[]).filter(
+    (s) => s.name !== short && expandPath(env, String(s.path)) !== abs,
+  )
+  list.push({ name: short, path: tildePath(env, abs) })
+  file.data.sources = list
   file.write()
+  return { name: short, path: abs }
+}
+
+export function removeSource(env: Env, name: string): boolean {
+  const file = personalFile(env)
+  const list = (file.data.sources ?? []) as Toml[]
+  const kept = list.filter((s) => s.name !== name)
+  if (kept.length === list.length) return false
+  file.data.sources = kept
+  file.write()
+  return true
 }

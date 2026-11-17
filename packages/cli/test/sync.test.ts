@@ -38,7 +38,7 @@ describe('versions here, push and pull', () => {
   it('saves versions from whole sets, pushes them unchanged, and another machine pulls them', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/staff', { title: 'People' })
-    w.ws.writeSchemas(meta, { Person })
+    w.home.writeSchemas(meta, { Person })
     const a = openColl(w.ctx, meta)
 
     const one = await save(a, { Person }, people('Ada', 'Grace'))
@@ -70,13 +70,13 @@ describe('versions here, push and pull', () => {
     expect(theirs?.id).toBe(three.version!.id)
     expect(await v3.readReceipt(a.store.fs, meta.id, 3)).toMatchObject({ version: theirs!.id })
     expect(await unpushedOf(a)).toEqual([])
-    expect(w.ws.collection(meta).isNew).toBe(false)
+    expect(w.home.collection(meta).isNew).toBe(false)
 
     // Another machine adds it: the same ids, the files, the schemas.
     const m = w.machine()
     const { coll: b } = await addCollection(m.ctx, 'test/org/staff')
     expect((await logOf(b)).map((s) => s.id)).toEqual(pushed.map((s) => s.id))
-    expect(m.ws.schemas(b.meta)).toEqual({ Person })
+    expect(m.home.schemas(b.meta)).toEqual({ Person })
     const view = await v3.openView(b.store.fs, meta.id)
     const ids = []
     for await (const r of v3.exportAll(b.store.fs, view, { type: 'Person' })) ids.push(r.id)
@@ -85,7 +85,7 @@ describe('versions here, push and pull', () => {
 
     // Forget lets the files go; reading fetches them again.
     expect(await forget(m.ctx, b)).toBeGreaterThan(0)
-    const b2 = openColl(m.ctx, m.ws.collection(b.meta))
+    const b2 = openColl(m.ctx, m.home.collection(b.meta))
     const again = []
     for await (const r of v3.exportAll(b2.data, await v3.openView(b2.data, meta.id), {
       type: 'Person',
@@ -98,7 +98,7 @@ describe('versions here, push and pull', () => {
   it('replays versions here on top when someone pushed first, and pushes them renumbered', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/race')
-    w.ws.writeSchemas(meta, { Person })
+    w.home.writeSchemas(meta, { Person })
     const a = openColl(w.ctx, meta)
     await save(a, { Person }, people('Ada'))
     await push(w.ctx, a)
@@ -133,7 +133,7 @@ describe('versions here, push and pull', () => {
   it('undoes, rewords and squashes versions not yet pushed, never pushed ones', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/edits')
-    w.ws.writeSchemas(meta, { Person })
+    w.home.writeSchemas(meta, { Person })
     const a = openColl(w.ctx, meta)
     await save(a, { Person }, people('Ada'), 'one')
     await push(w.ctx, a)

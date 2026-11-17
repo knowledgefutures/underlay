@@ -1,4 +1,4 @@
-/** Plain `underlay` in a terminal: the terminal UI over the workspace it runs in. */
+/** Plain `underlay` in a terminal: the terminal UI over your home and script folders. */
 import { render } from 'ink'
 
 import { openCtx } from '../core/context.js'

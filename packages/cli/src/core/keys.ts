@@ -87,7 +87,11 @@ export function keychainOrFile(configDir: string, vars: NodeJS.ProcessEnv): KeyS
       : fileKeys(configDir)
   return {
     kind: base.kind,
-    get: (remote) => vars[envName(remote)] ?? vars.UNDERLAY_KEY ?? base.get(remote),
+    // A script folder's secret (`secret:<NAME>`) is never a remote's key from the environment.
+    get: (remote) =>
+      remote.startsWith('secret:')
+        ? base.get(remote)
+        : (vars[envName(remote)] ?? vars.UNDERLAY_KEY ?? base.get(remote)),
     set: (remote, key) => base.set(remote, key),
     delete: (remote) => base.delete(remote),
   }

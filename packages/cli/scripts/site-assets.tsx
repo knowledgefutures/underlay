@@ -3,7 +3,7 @@
  * (packages/web/scripts/cli-assets.ts), so the page never shows an older CLI than it serves:
  *
  *   screenshot-collection.svg, screenshot-run.svg, screenshot-push.svg
- *       the terminal UI, rendered by Ink into a fake terminal over a small made-up workspace
+ *       the terminal UI, rendered by Ink into a fake terminal over a small made-up home
  *       (a campus library and a field station; no real organizations), at a fixed clock
  *   cli-reference.json
  *       every command, its arguments, description and options, from src/program.ts
@@ -47,7 +47,7 @@ const { fileKeys } = await import('../src/core/keys.js')
 const { readRun, runScript } = await import('../src/core/runs.js')
 const { findScript } = await import('../src/core/scripts.js')
 const { saveVersion } = await import('../src/core/versions.js')
-const { Workspace } = await import('../src/core/workspace.js')
+const { Home } = await import('../src/core/home.js')
 const { program } = await import('../src/program.js')
 const { App } = await import('../src/tui/App.js')
 const { C } = await import('../src/tui/lines.js')
@@ -57,8 +57,9 @@ const { frameToSvg } = await import('./ansi-svg.js')
 
 const GROUPS: [string, string[]][] = [
   ['Set up', ['init', 'config', 'login', 'logout', 'remotes']],
+  ['Script folders', ['sources', 'secret']],
   ['Collections', ['ls', 'add', 'new', 'keep', 'forget', 'status']],
-  ['Scripts and runs', ['run', 'runs', 'pause', 'resume', 'cancel']],
+  ['Scripts and runs', ['run', 'runs', 'pause', 'resume', 'cancel', 'view', 'schema']],
   ['Versions', ['log', 'diff', 'export', 'save', 'undo', 'squash', 'reword']],
   ['Files and imports', ['add-file', 'import', 'read', 'eject']],
   ['Pull and push', ['pull', 'push']],
@@ -101,7 +102,7 @@ if (missing.length)
 mkdirSync(dirname(referencePath), { recursive: true })
 writeFileSync(referencePath, JSON.stringify(reference, null, 1) + '\n')
 
-// --- A made-up workspace ---
+// --- A made-up home and script folder ---
 
 const home = mkdtempSync(join(tmpdir(), 'ul-site-'))
 try {
@@ -179,11 +180,16 @@ try {
     keys,
     now: () => new Date(),
   }
-  const ws = Workspace.init(join(home, 'Underlay'))
-  const conf = TomlFile.read(join(ws.root, 'underlay.toml'))
+  const ws = Home.init(join(home, 'Underlay'))
+  // A script folder: a git repo of the library's scripts, listed under the name `library`.
+  const lib = join(home, 'code', 'library-scripts')
+  mkdirSync(join(lib, 'checks'), { recursive: true })
+  writeFileSync(join(lib, 'underlay.toml'), '# Scripts for the campus library\n')
+  const conf = TomlFile.read(join(configDir, 'config.toml'))
   conf.data.remotes = { 'localhost:3000': { url: 'http://localhost:3000' } }
+  conf.data.sources = [{ name: 'library', path: '~/code/library-scripts' }]
   conf.write()
-  const ctx = openCtx(env, () => {}, ws.root)
+  const ctx = openCtx(env, () => {}, home)
 
   const Thesis = {
     type: 'object',
@@ -378,16 +384,13 @@ try {
   })
   newCollection(ctx, 'localhost:3000/sam/scratch', { title: 'Scratch' })
 
-  // Scripts: a monthly runner, an import, and a check.
-  mkdirSync(join(ws.root, 'scripts', 'library'), { recursive: true })
-  mkdirSync(join(ws.root, 'scripts', 'checks'), { recursive: true })
-  mkdirSync(join(ws.root, 'views', 'held-rows'), { recursive: true })
+  // Scripts: a monthly runner, a check, and a view in the script folder; an import in home.
   writeFileSync(
-    join(ws.root, 'views', 'held-rows', 'index.html'),
-    '<!doctype html><title>Held rows</title>\n',
+    join(lib, 'held-rows.html'),
+    '<!doctype html>\n<!-- underlay: view, reads underlay.org/campus-library/staff-roster -->\n<title>Held rows</title>\n',
   )
   writeFileSync(
-    join(ws.root, 'records.json'),
+    join(lib, 'records.json'),
     JSON.stringify(
       t
         .map((r, i) => (i === 12 ? { ...r, data: { ...r.data, department: 'Linguistics' } } : r))
@@ -395,7 +398,7 @@ try {
     ),
   )
   writeFileSync(
-    join(ws.root, 'scripts', 'library', 'monthly.mjs'),
+    join(lib, 'monthly.mjs'),
     `// underlay: writes underlay.org/campus-library/theses
 // underlay: reads underlay.org/campus-library/departments
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -412,8 +415,8 @@ console.log('done')
 `,
   )
   writeFileSync(
-    join(ws.root, 'scripts', 'checks', 'departments.sh'),
-    '# underlay: reads underlay.org/campus-library/departments\necho "2 theses name a department that is not in departments"; exit 1\n',
+    join(lib, 'checks', 'departments.sh'),
+    '# underlay: check, reads underlay.org/campus-library/departments\necho "2 theses name a department that is not in departments"; exit 1\n',
   )
   const imp = TomlFile.read(join(ws.root, 'scripts', 'imports', 'staff-roster.toml'))
   imp.data = {
@@ -429,7 +432,7 @@ console.log('done')
   }
   imp.write()
 
-  const run = await runScript(ctx, findScript(ws, 'library/monthly'), [])
+  const run = await runScript(ctx, findScript(ctx, 'library/monthly'), [])
   if (run.status !== 'ok' || !run.saved.length)
     throw new Error(`site-assets.tsx: the demo run did not save: ${run.error}`)
   // As a real harvest takes: four minutes, finished 41 minutes ago.
@@ -443,7 +446,7 @@ console.log('done')
       endedAt: new Date(end).toISOString(),
     }),
   )
-  const check = await runScript(ctx, findScript(ws, 'checks/departments.sh'), [])
+  const check = await runScript(ctx, findScript(ctx, 'library/checks/departments'), [])
   const crec = readRun(ctx, check.id)
   writeFileSync(
     join(ws.stateDir, 'runs', `${check.id}.json`),
@@ -539,7 +542,7 @@ console.log('done')
     'AUTHORITY',
     'SCRIPTS THAT TOUCH IT',
   ])
-  await shoot('run', 's:scripts/library/monthly.mjs', ['SAVED HERE AS NEW VERSIONS', 'THIS RUN'])
+  await shoot('run', `s:${join(lib, 'monthly.mjs')}`, ['SAVED HERE AS NEW VERSIONS', 'THIS RUN'])
   await shoot(
     'push',
     'c:underlay.org/campus-library/theses',

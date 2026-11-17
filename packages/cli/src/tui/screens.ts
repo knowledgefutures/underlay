@@ -47,7 +47,7 @@ export type Item =
   | { kind: 'remote'; name: string }
   | { kind: 'coll'; key: string }
   | { kind: 'script'; path: string }
-  | { kind: 'view'; name: string }
+  | { kind: 'view'; path: string }
 
 export const itemId = (i: Item) =>
   i.kind === 'remote'
@@ -56,7 +56,7 @@ export const itemId = (i: Item) =>
       ? `c:${i.key}`
       : i.kind === 'script'
         ? `s:${i.path}`
-        : `v:${i.name}`
+        : `v:${i.path}`
 
 export interface Sidebar {
   remotes: Line[]
@@ -157,41 +157,33 @@ export function sidebar(
 
   const scripts: Line[] = []
   const sw = Math.max(8, inner - 4 - 6)
+  // Under each script folder's name when there is more than one.
+  const folders = new Set(snap.scripts.map((s) => s.source))
+  let folder = ''
   for (const s of snap.scripts) {
-    const item: Item = { kind: 'script', path: s.path }
+    if (folders.size > 1 && s.source !== folder) scripts.push(L([S((folder = s.source), C.mu)]))
+    const view = s.kind === 'view'
+    const item: Item = view ? { kind: 'view', path: s.path } : { kind: 'script', path: s.path }
     items.push(item)
     const on = sel === itemId(item)
-    const mark = scriptMark(s)
-    const when = s.last
-      ? s.last.status === 'running'
-        ? duration(s.last.startedAt, null)
-        : ago(s.last.endedAt ?? s.last.startedAt)
-      : s.kind === 'check'
-        ? 'check'
-        : ''
+    const mark = view ? '◇' : scriptMark(s)
+    const when = view
+      ? 'view'
+      : s.last
+        ? s.last.status === 'running'
+          ? duration(s.last.startedAt, null)
+          : ago(s.last.endedAt ?? s.last.startedAt)
+        : s.kind === 'check' || s.kind === 'import'
+          ? s.kind
+          : ''
+    const label = folders.size > 1 ? s.name.slice(s.source.length + 1) : s.name
     scripts.push(
       L(
         [
           S(on ? '› ' : '  ', C.gr, true),
-          S(mark + ' ', markColor(mark)),
-          S(P(s.name.slice(0, sw), sw), on ? C.wh : C.fg, on),
+          S(mark + ' ', view ? C.bl : markColor(mark)),
+          S(P(label.slice(0, sw), sw), on ? C.wh : C.fg, on),
           S(R(when.replace(' ago', '').replace('just now', 'now'), 6), mark === '▶' ? C.bl : C.mu),
-        ],
-        on ? C.sel : undefined,
-      ),
-    )
-  }
-  for (const v of snap.views) {
-    const item: Item = { kind: 'view', name: v }
-    items.push(item)
-    const on = sel === itemId(item)
-    scripts.push(
-      L(
-        [
-          S(on ? '› ' : '  ', C.gr, true),
-          S('◇ ', C.bl),
-          S(P(v.slice(0, sw), sw), on ? C.wh : C.fg, on),
-          S(R('view', 6), C.mu),
         ],
         on ? C.sel : undefined,
       ),
@@ -613,6 +605,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
 export function scriptPane(s: ScriptRow, width: number): Pane {
   const lines: Line[] = [
     L([S('  kind    ', C.mu), S(s.kind)]),
+    L([S('  file    ', C.mu), S(home(s.path), C.mu)]),
     L([S('  writes  ', C.mu), S(s.writes.join(', ') || 'nothing (a check)')]),
     ...(s.reads.length ? [L([S('  reads   ', C.mu), S(s.reads.join(', '))])] : []),
     ...(s.takes ? [L([S('  takes   ', C.mu), S(s.takes)])] : []),
@@ -639,7 +632,7 @@ export function scriptPane(s: ScriptRow, width: number): Pane {
     ),
   ]
   return {
-    title: s.path,
+    title: s.name,
     meta: s.kind,
     lines,
     keys: [
@@ -1062,7 +1055,7 @@ export interface SettingRow {
   value: string
   from: string
   about: string
-  kind: 'setting' | 'rule' | 'remote' | 'info'
+  kind: 'setting' | 'rule' | 'remote' | 'source' | 'info'
 }
 
 export function settingsPane(
@@ -1100,14 +1093,14 @@ export function settingsPane(
     blank(),
     L([
       S(
-        "The files are the source of truth: ~/.config/underlay/config.toml and the workspace's underlay.toml.",
+        'The file is the source of truth: ~/.config/underlay/config.toml. Script folders are added with underlay sources add.',
         C.mu,
       ),
     ]),
   )
   return {
     title: 'Settings',
-    meta: 'every setting from config.toml and underlay.toml',
+    meta: 'every setting from config.toml',
     color: C.bl,
     border: C.bl,
     lines,
@@ -1291,23 +1284,27 @@ export function filePane(v: FileView, width: number): Pane {
   }
 }
 
-export function viewPane(name: string, root: string, port: number, width: number): Pane {
+export function viewPane(s: ScriptRow, served: { url: string } | null, width: number): Pane {
+  const page = s.view === 'page'
   return {
-    title: `views/${name}`,
-    meta: 'a static page',
+    title: s.name,
+    meta: page ? 'a page' : served ? `serving at ${served.url}` : 'a view that serves',
     lines: [
       ...wrap(
-        `A view is a static page an agent writes. It reads collections through the local API that \`underlay serve\` gives on localhost:${port}, with the same read routes as underlay.org, and saves choices to files under inputs/ that a script reads on its next run.`,
+        page
+          ? 'A page: v opens it in the browser as it is. It saves choices to files in your home’s inputs/ that a script reads on its next run.'
+          : 'A script that serves a page: v starts it with PORT set to a free port, waits until it listens, and opens it. It stops when you press s or close the app.',
         width - 2,
         C.mu,
       ),
       blank(),
-      L([S('  ' + `${root}/views/${name}/index.html`)]),
-      blank(),
-      L([S('underlay serve is phase 7 of the build: v opens the file directly until then.', C.or)]),
+      L([S('  ' + home(s.path))]),
+      ...(s.reads.length ? [blank(), L([S('  reads   ', C.mu), S(s.reads.join(', '))])] : []),
+      ...(served ? [blank(), L([S('  ' + served.url, C.gr)])] : []),
     ],
     keys: [
-      { k: 'v', l: 'open in a browser' },
+      { k: 'v', l: served ? 'open again' : 'open in a browser' },
+      ...(served ? [{ k: 's', l: 'stop' }] : []),
       { k: 'esc', l: 'back' },
     ],
   }

@@ -1,9 +1,9 @@
 /**
- * What the terminal UI shows, read from the workspace and the store through the library:
- * a snapshot of the sidebar, and what each main pane needs. The UI re-reads the snapshot
- * whenever the workspace changes on disk, so an agent's or another terminal's work shows up.
+ * What the terminal UI shows, read from home, the script folders and the store through the
+ * library: a snapshot of the sidebar, and what each main pane needs. The UI re-reads the
+ * snapshot whenever they change on disk, so an agent's or another terminal's work shows up.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
@@ -14,13 +14,12 @@ import {
   listRemote,
   type RemoteListing,
 } from '../core/collections.js'
-import { loadSettings } from '../core/config.js'
-import { type Ctx, openColl } from '../core/context.js'
+import { type Ctx, openColl, refreshCtx } from '../core/context.js'
+import { type CollectionMeta, keyOf } from '../core/home.js'
 import { listRuns, type RunRecord } from '../core/runs.js'
 import { listScripts, type ScriptInfo } from '../core/scripts.js'
 import { remoteHead } from '../core/sync.js'
 import { cidOf, logOf, PAST_RESERVED, schemasAt, unpushedOf, viewOf } from '../core/versions.js'
-import { type CollectionMeta, keyOf } from '../core/workspace.js'
 
 export interface RemoteRow {
   name: string
@@ -43,40 +42,34 @@ export interface ScriptRow extends ScriptInfo {
 export interface Snapshot {
   remotes: RemoteRow[]
   collections: CollectionRow[]
+  /** Scripts and views, from every script folder. */
   scripts: ScriptRow[]
-  views: string[]
   runs: RunRecord[]
 }
 
 export async function loadSnapshot(ctx: Ctx): Promise<Snapshot> {
   // Settings are read again: the settings screen, or someone's editor, may have changed them.
-  ctx.settings = loadSettings(ctx.env, ctx.ws.root)
+  refreshCtx(ctx)
   const runs = listRuns(ctx)
-  const scripts = listScripts(ctx.ws).map((s) => ({
+  const scripts = listScripts(ctx).map((s) => ({
     ...s,
-    last: runs.find((r) => r.script === s.path) ?? null,
+    last: runs.find((r) => r.script === s.name) ?? null,
   }))
   const running = new Set(
     runs
       .filter((r) => r.status === 'running' || r.status === 'paused')
-      .flatMap((r) => scripts.find((s) => s.path === r.script)?.writes ?? []),
+      .flatMap((r) => scripts.find((s) => s.name === r.script)?.writes ?? []),
   )
   const collections: CollectionRow[] = []
-  for (const meta of ctx.ws.collections()) {
+  for (const meta of ctx.home.collections()) {
     const key = keyOf(meta)
     collections.push({
       meta,
       key,
       status: await collectionStatus(ctx, meta),
-      running: [...running].some((w) => w === key || key.endsWith('/' + w)),
+      running: running.has(key),
     })
   }
-  const vdir = join(ctx.ws.root, 'views')
-  const views = existsSync(vdir)
-    ? readdirSync(vdir)
-        .filter((n) => !n.startsWith('.') && statSync(join(vdir, n)).isDirectory())
-        .sort()
-    : []
   return {
     remotes: ctx.settings.remotes.map((r) => ({
       name: r.name,
@@ -85,7 +78,6 @@ export async function loadSnapshot(ctx: Ctx): Promise<Snapshot> {
     })),
     collections,
     scripts,
-    views,
     runs,
   }
 }
@@ -142,7 +134,7 @@ export interface CollectionDetail {
 /** What the collection pane shows. Counts read key entries only, from files here. */
 export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<CollectionDetail> {
   const c = openColl(ctx, meta)
-  const readmePath = join(ctx.ws.collectionDir(meta), 'README.md')
+  const readmePath = join(ctx.home.collectionDir(meta), 'README.md')
   const readme = existsSync(readmePath)
     ? readFileSync(readmePath, 'utf8')
         .replace(/^# .*\n+/, '')
@@ -169,7 +161,7 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
   let bytes = 0
   let filesHere = 0
   let filesTotal = 0
-  let schemas: Record<string, unknown> = ctx.ws.schemas(meta)
+  let schemas: Record<string, unknown> = ctx.home.schemas(meta)
   if (versions.length > 0) {
     const view = await viewOf(c)
     filesTotal = view.files.length

@@ -95,7 +95,7 @@ export interface SaveInput {
   types?: string[]
   /** With `set`: only records whose data has these values are the script's (`unit = CSAIL`). */
   where?: Record<string, unknown>
-  /** The schemas in force after the version: the workspace's `schemas/`. */
+  /** The schemas in force after the version: home's `schemas/`. */
   schemas: Record<string, unknown>
   message: string | null
   run?: string
@@ -116,8 +116,8 @@ function inScope(input: SaveInput, type: string, line: Uint8Array | null): boole
 }
 
 /**
- * Save a version: the rows compared with the head, and what changed (with any schema the
- * workspace changed) written as files and committed here. Null when nothing changed.
+ * Save a version: the rows compared with the head, and what changed (with any schema changed
+ * in home) written as files and committed here. Null when nothing changed.
  */
 export async function saveVersion(c: Coll, input: SaveInput): Promise<SaveResult> {
   const cid = cidOf(c)
@@ -126,7 +126,7 @@ export async function saveVersion(c: Coll, input: SaveInput): Promise<SaveResult
   const view = head ? await v3.openView(c.data, cid) : emptyView(cid)
   const stats = { added: 0, changed: 0, removed: 0, schemas: 0 }
 
-  // --- Schema rows: the workspace's schemas against the head's ---
+  // --- Schema rows: home's schemas against the head's ---
   const headSchemas = await schemasAt(c.data, view)
   const schemaRows: v3.LineRow[] = []
   for (const [type, body] of Object.entries(input.schemas)) {

@@ -1,21 +1,22 @@
 /**
- * The workspace: a folder that can be committed and synced (local-tool.md "The workspace").
+ * Home: yours, never shared (local-tool.md "Home and script folders").
  *
- *   underlay.toml                       remotes, defaults, store rules
- *   AGENTS.md, CLAUDE.md                for agents working in the folder
+ *   AGENTS.md, CLAUDE.md                for agents working here
  *   collections/<authority>/<org>/<name>/
  *     collection.toml                   id, authority, copies, what to keep, last pull and push
  *     README.md
  *     schemas/<Type>.json               edited here, saved with the next version
- *   scripts/   views/   inputs/
- *   .underlay/                          this machine's runs and locks (ignored by git)
+ *   scripts/                            your own scripts and views: the script folder `home`
+ *   inputs/                             dropped files, and files views write
+ *   .underlay/                          runs and locks
  *
- * Records stay out of it: they live in the store.
+ * Where it is comes from config.toml (`home`, default ~/Underlay) or `UNDERLAY_HOME`.
+ * Records stay out of it: they live in the store. Shared scripts live in script folders.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
-import { type Keep, TomlFile, WORKSPACE_HEADER, workspaceConfigPath } from './config.js'
+import { type Keep, TomlFile } from './config.js'
 import { CliError } from './env.js'
 
 export interface CollectionRef {
@@ -59,37 +60,19 @@ export interface CollectionMeta extends CollectionRef {
   pushed: string | null
 }
 
-export class Workspace {
+export class Home {
   constructor(readonly root: string) {}
 
-  /** The workspace holding `from`, or null. */
-  static find(from = process.cwd()): Workspace | null {
-    let dir = resolve(from)
-    for (;;) {
-      if (existsSync(workspaceConfigPath(dir))) return new Workspace(dir)
-      const up = dirname(dir)
-      if (up === dir) return null
-      dir = up
-    }
+  /** Home is made: `underlay init` has run there. */
+  static exists(root: string): boolean {
+    return existsSync(join(root, '.underlay')) && existsSync(join(root, 'collections'))
   }
 
-  static init(dir: string): Workspace {
+  static init(dir: string): Home {
     const root = resolve(dir)
     mkdirSync(root, { recursive: true })
-    const ws = new Workspace(root)
-    if (!existsSync(workspaceConfigPath(root))) {
-      const file = TomlFile.read(workspaceConfigPath(root), WORKSPACE_HEADER)
-      file.data = { defaults: { remote: 'underlay.org' } }
-      file.write()
-    }
-    for (const d of [
-      'collections',
-      'scripts',
-      'scripts/imports',
-      'views',
-      'inputs',
-      '.underlay/runs',
-    ])
+    const home = new Home(root)
+    for (const d of ['collections', 'scripts', 'inputs', '.underlay/runs'])
       mkdirSync(join(root, d), { recursive: true })
     writeIfAbsent(join(root, 'AGENTS.md'), AGENTS_MD)
     writeIfAbsent(join(root, 'CLAUDE.md'), 'Read AGENTS.md: it says how this folder works.\n')
@@ -97,7 +80,15 @@ export class Workspace {
     const ignored = existsSync(gi) ? readFileSync(gi, 'utf8') : ''
     if (!ignored.split('\n').includes('.underlay/'))
       writeFileSync(gi, ignored + (ignored && !ignored.endsWith('\n') ? '\n' : '') + '.underlay/\n')
-    return ws
+    return home
+  }
+
+  get scriptsDir() {
+    return join(this.root, 'scripts')
+  }
+
+  get inputsDir() {
+    return join(this.root, 'inputs')
   }
 
   get stateDir() {
@@ -143,8 +134,7 @@ export class Workspace {
   /** The collection a ref names, which must be on disk. */
   collection(c: CollectionRef): CollectionMeta {
     const m = this.readCollection(c)
-    if (!m)
-      throw new CliError(`${keyOf(c)} is not in this workspace (underlay add, or underlay new)`)
+    if (!m) throw new CliError(`${keyOf(c)} isn’t in your home (underlay add, or underlay new)`)
     return m
   }
 
@@ -155,7 +145,7 @@ export class Workspace {
       (c) => keyOf(c) === text || `${c.org}/${c.name}` === text || c.name === text,
     )
     if (hits.length === 1) return hits[0]!
-    if (hits.length === 0) throw new CliError(`No collection ${text} in this workspace`)
+    if (hits.length === 0) throw new CliError(`No collection ${text} in your home`)
     throw new CliError(`${text} could be ${hits.map(keyOf).join(' or ')}: say which`)
   }
 
@@ -221,40 +211,47 @@ function writeIfAbsent(path: string, text: string) {
   if (!existsSync(path)) writeFileSync(path, text)
 }
 
-export const AGENTS_MD = `# This folder is an Underlay workspace
+export const AGENTS_MD = `# This folder is an Underlay home
 
-It holds collections of records, the scripts that make new versions of them, and small
-views. The \`underlay\` command (the Underlay CLI) works on it; run \`underlay --help\`.
+It holds the collections of records on this machine, the files dropped in, and its owner's
+own scripts. The \`underlay\` command (the Underlay CLI) works on it; run \`underlay --help\`.
+Shared scripts live in script folders: git repos listed in ~/.config/underlay/config.toml
+(\`underlay sources\`).
 
 ## Layout
 
-- \`underlay.toml\`: remotes and defaults, shared through git.
 - \`collections/<authority>/<org>/<name>/\`: one folder per collection. \`collection.toml\` says
-  which server numbers its versions (its authority) and how much of it is kept here;
-  \`schemas/<Type>.json\` are its JSON Schemas, edited here and saved with the next version.
-  Records are not in this folder: they live in the store (\`underlay status\` says where).
-- \`scripts/\`: scripts that write collections. One script may write several.
+  which server numbers its versions (its authority), the collection's id, and how much of it
+  is kept here; \`schemas/<Type>.json\` are its JSON Schemas, edited here and saved with the
+  next version. Records are not in this folder: they live in the store (\`underlay status\`).
+- \`scripts/\`: this person's own scripts and views (the script folder named \`home\`).
 - \`scripts/imports/*.toml\`: built-in importers with their options.
-- \`views/<name>/index.html\`: small static pages, served by \`underlay serve\`.
-- \`inputs/\`: files dropped in, and files views write.
+- \`inputs/\`: files dropped in, and files views write. Never shared.
 
 ## Scripts
 
-A script is any executable (or a \`.ts\`, \`.js\`, \`.py\` or \`.sh\` file). Declare what it writes
-in a header comment or a \`.toml\` beside it:
+A script is a file in \`scripts/\` here or in a script folder that declares itself in a
+header comment (or a \`.toml\` beside it with the same name). Files without one aren't
+scripts. Name collections as \`org/name\` or \`authority/org/name\`:
 
 \`\`\`
 // underlay: writes underlay.org/mitp/mit-ai
-// underlay: reads underlay.org/mitp/units
+// underlay: reads mitp/units
 // underlay: takes *.xlsx
 \`\`\`
 
-\`underlay run <script> [args]\` runs it with \`UNDERLAY_OUT\` set to a folder. For each collection
-it writes, it writes NDJSON to \`$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson\`: one record a
-line, \`{"id": "...", "type": "...", "data": {...}}\`. Write the whole collection each time: the
+- \`writes\`: it writes those collections. \`check\`: it writes nothing and exits non-zero on
+  a problem. \`takes\`: a file pattern it imports.
+- \`view\` in an \`.html\` file (\`<!-- underlay: view -->\`): a page, opened in a browser.
+  \`serves\` in a script: it serves a page on \`$PORT\`; \`underlay view <name>\` runs it.
+
+\`underlay run <script> [args]\` runs it in its own folder with \`UNDERLAY_OUT\` set to a
+folder and \`UNDERLAY_HOME\` to this one. For each collection it writes, it writes NDJSON to
+\`$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson\`: one record a line,
+\`{"id": "...", "type": "...", "data": {...}}\`. Write the whole collection each time: the
 tool compares it with the current version, saves a version with what changed, and records
-missing from the output are removed. A script that writes nothing and exits non-zero on a
-problem is a check. Read a collection with \`underlay export <collection>\` (NDJSON).
+missing from the output are removed. Read a collection with \`underlay export <collection>\`
+(NDJSON) and its schemas with \`underlay schema <collection>\`.
 
 ## Commands
 

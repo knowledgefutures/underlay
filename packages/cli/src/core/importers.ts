@@ -3,21 +3,22 @@
  *
  * One reader a format, each giving a file's sheets or tables as rows of plain objects:
  * CSV and TSV, Excel, JSON and NDJSON, Parquet, and SQLite (`node:sqlite`). An import maps
- * one sheet or table to one type in one collection, with options kept in
- * `scripts/imports/<name>.toml`; running it writes the collection's NDJSON, and the run
+ * one sheet or table to one type in one collection, with options kept in a `.toml` (saved in
+ * home's `scripts/imports/<name>.toml`, and movable to a script folder); running it writes the collection's NDJSON, and the run
  * saves a version like any other. `eject` turns it into an editable script.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, extname, join, relative, resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, extname, join, relative } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
 import { TomlFile } from './config.js'
 import { type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
+import { keyOf, parseRef } from './home.js'
+import { fileArg } from './runs.js'
 import { listScripts, type ScriptInfo, takesFile } from './scripts.js'
 import { PAST_RESERVED, viewOf } from './versions.js'
-import { keyOf, parseRef } from './workspace.js'
 
 export type Format = 'csv' | 'tsv' | 'xlsx' | 'json' | 'ndjson' | 'parquet' | 'sqlite'
 export type Row = Record<string, unknown>
@@ -205,7 +206,7 @@ export async function matchTable(ctx: Ctx, t: Table): Promise<Match[]> {
   const cols = idColumns(t)
   if (cols.length === 0) return []
   const out: Match[] = []
-  for (const meta of ctx.ws.collections()) {
+  for (const meta of ctx.home.collections()) {
     // Matched against what is here: a collection kept as metadata only is not fetched.
     if (meta.keep === 'none') continue
     const c = openColl(ctx, meta)
@@ -249,14 +250,14 @@ export interface Shape {
   scripts: ScriptInfo[]
 }
 
-/** Copy a file into `inputs/` (unless it is in the workspace already) and read its shape. */
+/** Copy a file into home's `inputs/` (unless it is in home already) and read its shape. */
 export async function addFile(ctx: Ctx, path: string): Promise<Shape> {
-  const abs = resolve(path)
-  if (!existsSync(abs) || !statSync(abs).isFile()) throw new CliError(`No file ${path}`)
+  const abs = fileArg(ctx, path)
+  if (!abs) throw new CliError(`No file ${path}`)
   let at = abs
-  if (relative(ctx.ws.root, abs).startsWith('..')) {
-    mkdirSync(join(ctx.ws.root, 'inputs'), { recursive: true })
-    at = join(ctx.ws.root, 'inputs', basename(abs))
+  if (relative(ctx.home.root, abs).startsWith('..')) {
+    mkdirSync(ctx.home.inputsDir, { recursive: true })
+    at = join(ctx.home.inputsDir, basename(abs))
     copyFileSync(abs, at)
   }
   return shapeOf(ctx, at)
@@ -268,7 +269,7 @@ export async function shapeOf(ctx: Ctx, at: string): Promise<Shape> {
   for (const t of tables)
     for (const m of (await matchTable(ctx, t)).slice(0, 3)) matches.push({ ...m, table: t.name })
   return {
-    path: relative(ctx.ws.root, at),
+    path: relative(ctx.home.root, at),
     format: formatOf(at),
     tables: tables.map((t) => ({
       name: t.name,
@@ -279,7 +280,7 @@ export async function shapeOf(ctx: Ctx, at: string): Promise<Shape> {
       sample: t.rows.slice(0, 5),
     })),
     matches: matches.sort((a, b) => b.hits / b.of - a.hits / a.of),
-    scripts: listScripts(ctx.ws).filter((s) => takesFile(s.takes, at)),
+    scripts: listScripts(ctx).filter((s) => takesFile(s.takes, at)),
   }
 }
 
@@ -313,8 +314,10 @@ export function defaultOptions(
   o: { collection: string; type: string; id?: string; sheet?: string; personal?: boolean },
 ): ImportOptions {
   const ref = parseRef(o.collection, ctx.settings.defaultRemote)
-  ctx.ws.collection(ref)
-  const schema = ctx.ws.schemas(ref)[o.type] as { properties?: Record<string, unknown> } | undefined
+  ctx.home.collection(ref)
+  const schema = ctx.home.schemas(ref)[o.type] as
+    | { properties?: Record<string, unknown> }
+    | undefined
   const fields = Object.keys(schema?.properties ?? {})
   const id = o.id ?? idColumns(t)[0]
   if (!id) throw new CliError(`No column of ${t.name} looks like an id: say which with --id`)
@@ -327,7 +330,7 @@ export function defaultOptions(
   return {
     importer: formatOf(file),
     takes: `*${extname(file).toLowerCase()}`,
-    file: relative(ctx.ws.root, resolve(ctx.ws.root, file)),
+    file: homeRel(ctx, fileArg(ctx, file) ?? file),
     ...(o.sheet ? { sheet: o.sheet } : {}),
     collection: keyOf(ref),
     type: o.type,
@@ -338,20 +341,31 @@ export function defaultOptions(
   }
 }
 
+/** A path in home as home-relative (`inputs/roster.xlsx`), else as it is. */
+const homeRel = (ctx: Ctx, p: string) => {
+  const rel = relative(ctx.home.root, p)
+  return rel.startsWith('..') ? p : rel
+}
+
+/** Save an import's options in home's `scripts/imports/`. Its script name: `home/imports/<name>`. */
 export function saveImport(ctx: Ctx, name: string, o: ImportOptions): string {
-  const rel = `scripts/imports/${name}.toml`
+  const path = join(ctx.home.scriptsDir, 'imports', `${name}.toml`)
+  const script = `home/imports/${name}`
   const file = TomlFile.read(
-    join(ctx.ws.root, rel),
-    `# A built-in import (underlay import). Run it with: underlay run ${rel} [file]\n# Eject it to an editable script with: underlay eject ${rel}\n`,
+    path,
+    `# A built-in import (underlay import). Run it with: underlay run ${script} [file]\n# Eject it to an editable script with: underlay eject ${script}\n`,
   )
   file.data = { ...o }
   file.write()
-  return rel
+  return script
 }
 
-export function readImport(ctx: Ctx, info: ScriptInfo): ImportOptions {
-  return TomlFile.read(join(ctx.ws.root, info.path)).data as ImportOptions
+export function readImport(info: ScriptInfo): ImportOptions {
+  return TomlFile.read(info.path).data as ImportOptions
 }
+
+/** An import's short name, for its held rows and decisions in inputs/. */
+const importName = (info: ScriptInfo) => basename(info.path, '.toml')
 
 /** Coerce a cell to what the schema's property wants, where it can. */
 function coerce(v: unknown, prop: { type?: string | string[] } | undefined): unknown {
@@ -366,10 +380,9 @@ function coerce(v: unknown, prop: { type?: string | string[] } | undefined): unk
 }
 
 /** The held rows' file and the choices a view writes for them. */
-export const heldPath = (ctx: Ctx, name: string) =>
-  join(ctx.ws.root, 'inputs', `${name}-held.ndjson`)
+export const heldPath = (ctx: Ctx, name: string) => join(ctx.home.inputsDir, `${name}-held.ndjson`)
 export const decisionsPath = (ctx: Ctx, name: string) =>
-  join(ctx.ws.root, 'inputs', `${name}-decisions.json`)
+  join(ctx.home.inputsDir, `${name}-decisions.json`)
 
 /** Run an import: the table read, mapped to records, written as the collection's NDJSON. */
 export async function runImport(
@@ -379,17 +392,17 @@ export async function runImport(
   out: string,
   log: (l: string) => void,
 ): Promise<{ mode?: 'additions' }> {
-  const o = readImport(ctx, info)
-  const file = resolve(ctx.ws.root, args[0] ?? o.file)
+  const o = readImport(info)
+  const file = fileArg(ctx, args[0] ?? o.file) ?? args[0] ?? o.file
   const t = await readTable(file, {
     ...(o.sheet ? { sheet: o.sheet } : {}),
     ...(o.query ? { query: o.query } : {}),
   })
   const ref = parseRef(o.collection, ctx.settings.defaultRemote)
-  const schema = ctx.ws.schemas(ref)[o.type] as
+  const schema = ctx.home.schemas(ref)[o.type] as
     | { properties?: Record<string, { type?: string }> }
     | undefined
-  const name = info.name.replace(/^imports\//, '')
+  const name = importName(info)
   const decisions: Record<string, string | null> = existsSync(decisionsPath(ctx, name))
     ? JSON.parse(readFileSync(decisionsPath(ctx, name), 'utf8'))
     : {}
@@ -419,9 +432,9 @@ export async function runImport(
   )
   if (held.length > 0) {
     writeFileSync(heldPath(ctx, name), held.join('\n') + '\n')
-    log(`Held ${held.length} rows without an id: ${relative(ctx.ws.root, heldPath(ctx, name))}`)
+    log(`Held ${held.length} rows without an id: ${relative(ctx.home.root, heldPath(ctx, name))}`)
     log(
-      `Choose for them in ${relative(ctx.ws.root, decisionsPath(ctx, name))} ({"<row>": "<id>" or null}), and run again.`,
+      `Choose for them in ${relative(ctx.home.root, decisionsPath(ctx, name))} ({"<row>": "<id>" or null}), and run again.`,
     )
     if (o.mode === 'set') {
       // Their records can't be told from the ones the file dropped: nothing is removed.
@@ -434,9 +447,9 @@ export async function runImport(
 
 /** Turn an import into an editable script with its options written in. */
 export function eject(ctx: Ctx, info: ScriptInfo): string {
-  const o = readImport(ctx, info)
-  const rel = info.path.replace(/\.toml$/, '.ts')
-  const abs = join(ctx.ws.root, rel)
+  const o = readImport(info)
+  const abs = info.path.replace(/\.toml$/, '.ts')
+  const rel = homeRel(ctx, abs)
   if (existsSync(abs)) throw new CliError(`${rel} is there already`)
   const readArgs = [
     o.sheet ? `'--sheet', ${JSON.stringify(o.sheet)}` : '',
@@ -450,7 +463,7 @@ export function eject(ctx: Ctx, info: ScriptInfo): string {
 // underlay: takes ${o.takes}
 // underlay: mode ${o.mode}
 // underlay: types ${o.type}
-// Ejected from ${info.path} on ${ctx.env.now().toISOString().slice(0, 10)}: edit freely.
+// Ejected from ${info.name} on ${ctx.env.now().toISOString().slice(0, 10)}: edit freely.
 // It reads the file with \`underlay read\` (rows as JSON objects) and writes the records.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'

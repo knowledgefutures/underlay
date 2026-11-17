@@ -33,7 +33,7 @@ describe('the terminal UI', () => {
   it('shows what is here, a finished run, push, a remote’s list and settings', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/roster', { access: 'public' })
-    w.ws.writeSchemas(meta, { Member })
+    w.home.writeSchemas(meta, { Member })
     const c = openColl(w.ctx, meta)
     await saveVersion(c, {
       rows: [v3.rowFromRecord('a', 'Member', { name: 'Ada' })],
@@ -43,9 +43,9 @@ describe('the terminal UI', () => {
       now: new Date(),
     })
     await push(w.ctx, c)
-    mkdirSync(join(w.ws.root, 'scripts'), { recursive: true })
+    mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
     writeFileSync(
-      join(w.ws.root, 'scripts', 'roster.mjs'),
+      join(w.home.root, 'scripts', 'roster.mjs'),
       `// underlay: writes test/org/roster
 import { mkdirSync, writeFileSync } from 'node:fs'
 mkdirSync(process.env.UNDERLAY_OUT + '/test/org', { recursive: true })
@@ -53,7 +53,7 @@ console.log('fetched 2 members')
 writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","type":"Member","data":{"name":"Ada"}}\\n{"id":"b","type":"Member","data":{"name":"Bo"}}\\n')
 `,
     )
-    await runScript(w.ctx, findScript(w.ws, 'roster'), [], {
+    await runScript(w.ctx, findScript(w.ctx, 'roster'), [], {
       importer: (i, a, o, l) => runImport(w.ctx, i, a, o, l),
     })
 
@@ -105,7 +105,7 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
     await wait()
 
     // A file dropped on the terminal: its shape, what it matches, and the importer's options.
-    const csv = join(w.ws.root, '..', 'roster-2026.csv')
+    const csv = join(w.home.root, '..', 'roster-2026.csv')
     writeFileSync(csv, 'member_id,name,email\na,Ada,a@x\nb,Bo,\nz,Zed,\n')
     ui.stdin.write('f')
     await wait()

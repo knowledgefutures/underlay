@@ -7,6 +7,8 @@
  * UI call the library in src/core directly.
  */
 import { spawnSync } from 'node:child_process'
+import { existsSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 import { Command, Option } from 'commander'
@@ -23,20 +25,21 @@ import {
   newCollection,
 } from './core/collections.js'
 import {
+  addSource,
   type Keep,
   loadSettings,
   personalPath,
-  rememberWorkspace,
   removeRule,
+  removeSource,
   SETTINGS,
   setRule,
   setSetting,
   getSetting,
-  workspaceConfigPath,
 } from './core/config.js'
-import { coll, type Ctx, findWorkspace, openColl, openCtx } from './core/context.js'
-import { CliError, defaultEnv, type Env, tildePath } from './core/env.js'
+import { coll, type Ctx, openColl, openCtx } from './core/context.js'
+import { CliError, defaultEnv, type Env, expandPath, tildePath } from './core/env.js'
 import { ago, bytes, count, diffVersions, duration, shortId } from './core/format.js'
+import { Home, keyOf } from './core/home.js'
 import {
   addFile,
   defaultOptions,
@@ -48,10 +51,11 @@ import {
 } from './core/importers.js'
 import { Remote } from './core/remote.js'
 import { listRuns, readLog, readRun, runScript, signalRun, startDetached } from './core/runs.js'
-import { findScript, listScripts } from './core/scripts.js'
+import { findScript, listScripts, type ScriptInfo } from './core/scripts.js'
+import { secretKey, SOURCE_FILE, SOURCE_HEADER } from './core/sources.js'
 import { isLoud, pull, push, pushPlan, type PushPlan, remoteHead, StaleError } from './core/sync.js'
 import { cidOf, logOf, reword, saveVersion, squash, undo, viewOf } from './core/versions.js'
-import { keyOf, Workspace } from './core/workspace.js'
+import { openInBrowser, serveView } from './core/views.js'
 
 /** Set by scripts/build.mjs to the commit the bundle was built from; absent when run from source. */
 declare const UNDERLAY_BUILD: string | undefined
@@ -66,6 +70,8 @@ const ctx = (): Ctx => openCtx(env, say)
 const json = (v: unknown) => say(JSON.stringify(v, null, 2))
 const keepOpt = () =>
   new Option('--keep <keep>', 'how much to keep here').choices(['all', 'some', 'none'])
+const kindLabel = (s: ScriptInfo) =>
+  s.kind === 'script' ? '' : s.kind === 'view' ? (s.view === 'server' ? 'serves' : 'view') : s.kind
 const list = (v: string) =>
   v
     .split(',')
@@ -80,89 +86,160 @@ export const program = new Command()
   .version(FULL_VERSION)
   .showHelpAfterError()
 
-// --- Workspace and config ---
+// --- Home, script folders, and config ---
 
 program
   .command('init')
-  .description('Make a workspace: underlay.toml, AGENTS.md, and the folders')
-  .argument('[dir]', 'folder', '.')
-  .action((dir: string) => {
-    const ws = Workspace.init(dir)
-    rememberWorkspace(env, ws.root)
-    say(`Workspace in ${tildePath(env, ws.root)}`)
+  .description('Make your home: collections, scripts, inputs, and AGENTS.md (default ~/Underlay)')
+  .argument('[dir]', 'folder (default: home in config.toml, or ~/Underlay)')
+  .action((dir: string | undefined) => {
+    const s = loadSettings(env)
+    const root = dir ? expandPath(env, dir) : s.home
+    const home = Home.init(root)
+    if (root !== s.home) {
+      if (env.homeDir) say(`UNDERLAY_HOME is set: it still wins over config.toml`)
+      setSetting(env, 'home', tildePath(env, home.root))
+    }
+    say(`Home in ${tildePath(env, home.root)}`)
     say(`Next: underlay login, then underlay ls, then underlay add <authority>/<org>/<name>`)
+    say(`Shared scripts: underlay sources add <folder>`)
   })
 
-const config = program.command('config').description('Settings, in config.toml and underlay.toml')
-config
-  .command('list', { isDefault: true })
-  .description('Every setting, its value, and where it is set')
+const sources = program
+  .command('sources')
+  .description('Script folders: home’s scripts/, the ones in config.toml, and the one you are in')
+sources
+  .command('ls', { isDefault: true })
+  .description('Each script folder and how many scripts it has')
   .option('--json')
   .action((o: { json?: boolean }) => {
-    const root = findWorkspace(env)?.root ?? null
-    const s = loadSettings(env, root)
-    const keys = [...SETTINGS.map((d) => d.key), ...s.remotes.map((r) => `remotes.${r.name}.url`)]
-    const rows = keys.map((k) => ({ key: k, ...getSetting(env, root, k) }))
-    if (o.json)
-      return json({
-        settings: rows,
-        rules: s.rules,
-        files: { personal: personalPath(env), workspace: root ? workspaceConfigPath(root) : null },
-      })
+    const c = ctx()
+    const scripts = listScripts(c)
+    const rows = c.sources.map((x) => ({
+      ...x,
+      scripts: scripts.filter((s) => s.source === x.name).length,
+    }))
+    if (o.json) return json(rows)
     for (const r of rows)
-      say(`${r.key.padEnd(34)} ${r.value}${r.from === 'default' ? '  (default)' : `  (${r.from})`}`)
+      say(
+        `${r.name.padEnd(16)} ${tildePath(env, r.root).padEnd(48)} ${r.exists ? `${r.scripts} scripts` : 'not on this machine'}${r.how === 'here' ? '  (the folder you are in)' : ''}${r.need.length ? `  needs ${r.need.join(', ')}` : ''}`,
+      )
+  })
+sources
+  .command('add')
+  .description(
+    'List a script folder in config.toml (a git repo of scripts, such as underlay-scrapers)',
+  )
+  .argument('<path>')
+  .option('--name <name>', 'its short name in script names (default: the folder’s)')
+  .action((path: string, o: { name?: string }) => {
+    const s = addSource(env, path, o.name)
+    const has = existsSync(join(s.path, SOURCE_FILE))
+    say(
+      `${s.name}: ${tildePath(env, s.path)}${has ? '' : `  (no ${SOURCE_FILE}: the whole folder is searched)`}`,
+    )
+  })
+sources
+  .command('rm')
+  .description('Take a script folder out of config.toml (its files stay)')
+  .argument('<name>')
+  .action((name: string) =>
+    say(removeSource(env, name) ? `Removed ${name}` : `No script folder ${name}`),
+  )
+sources
+  .command('init')
+  .description(`Write an ${SOURCE_FILE} in a folder, so it is a script folder when you are in it`)
+  .argument('[dir]', 'folder', '.')
+  .action((dir: string) => {
+    const path = join(expandPath(env, dir), SOURCE_FILE)
+    if (existsSync(path)) return say(`${tildePath(env, path)} is there already`)
+    writeFileSync(
+      path,
+      SOURCE_HEADER +
+        `\n# scripts = ["sources"]          # where to look (default: the whole folder)\n` +
+        `# authority = "underlay.org"     # for collections named org/name\n\n` +
+        `# [runners]                      # how to run a file, by extension\n# ".ts" = "pnpm exec tsx"\n\n` +
+        `# [env]                          # secrets its scripts need: names only\n# need = ["ORCID_TOKEN"]\n`,
+    )
+    say(`Wrote ${tildePath(env, path)}`)
+  })
+
+const secret = program
+  .command('secret')
+  .description(
+    'Secrets that script folders need (their underlay.toml [env] need), kept in the keychain',
+  )
+secret
+  .command('set')
+  .argument('<name>')
+  .option('--value <value>', 'the value (otherwise asked for, without echo)')
+  .action(async (name: string, o: { value?: string }) => {
+    const v = o.value ?? (await askHidden(`${name}: `))
+    if (!v) throw new CliError('No value given')
+    env.keys.set(secretKey(name), v)
+    say(`${name} kept in the ${env.keys.kind}`)
+  })
+secret
+  .command('rm')
+  .argument('<name>')
+  .action((name: string) => {
+    env.keys.delete(secretKey(name))
+    say(`Forgot ${name}`)
+  })
+
+const config = program.command('config').description('Settings, in ~/.config/underlay/config.toml')
+config
+  .command('list', { isDefault: true })
+  .description('Every setting, its value, and whether it is set')
+  .option('--json')
+  .action((o: { json?: boolean }) => {
+    const s = loadSettings(env)
+    const keys = [...SETTINGS.map((d) => d.key), ...s.remotes.map((r) => `remotes.${r.name}.url`)]
+    const rows = keys.map((k) => ({ key: k, ...getSetting(env, k) }))
+    if (o.json)
+      return json({ settings: rows, rules: s.rules, sources: s.sources, file: personalPath(env) })
+    for (const r of rows)
+      say(`${r.key.padEnd(34)} ${r.value}${r.from === 'default' ? '  (default)' : ''}`)
+    if (env.homeDir) say(`${'home'.padEnd(34)} ${tildePath(env, env.homeDir)}  (UNDERLAY_HOME)`)
     if (s.rules.length) {
       say('\nStore rules (most specific wins):')
       for (const r of s.rules)
         say(
-          `  ${r.match.padEnd(32)} ${r.path ? `path ${tildePath(env, r.path)} ` : ''}${r.keep ? `keep ${r.keep}` : ''}  (${r.from})`,
+          `  ${r.match.padEnd(32)} ${r.path ? `path ${tildePath(env, r.path)} ` : ''}${r.keep ? `keep ${r.keep}` : ''}`,
         )
+    }
+    if (s.sources.length) {
+      say('\nScript folders:')
+      for (const x of s.sources) say(`  ${x.name.padEnd(16)} ${tildePath(env, x.path)}`)
     }
   })
 config
   .command('get')
   .description('A setting’s value')
   .argument('<key>')
-  .action((key: string) => say(getSetting(env, findWorkspace(env)?.root ?? null, key).value))
+  .action((key: string) => say(getSetting(env, key).value))
 config
   .command('set')
-  .description('Change a setting, in the file it belongs in')
+  .description('Change a setting')
   .argument('<key>')
   .argument('<value>')
-  .option('--personal', 'in config.toml, not the workspace')
-  .action((key: string, value: string, o: { personal?: boolean }) => {
-    const path = setSetting(
-      env,
-      findWorkspace(env)?.root ?? null,
-      key,
-      value,
-      o.personal ? 'personal' : undefined,
-    )
+  .action((key: string, value: string) => {
+    const path = setSetting(env, key, value)
     say(`${key} = ${value}  (${tildePath(env, path)})`)
   })
 config
   .command('unset')
   .description('Put a setting back to its default')
   .argument('<key>')
-  .option('--personal')
-  .action((key: string, o: { personal?: boolean }) => {
-    setSetting(
-      env,
-      findWorkspace(env)?.root ?? null,
-      key,
-      undefined,
-      o.personal ? 'personal' : undefined,
-    )
+  .action((key: string) => {
+    setSetting(env, key, undefined)
     say(`${key} reset to its default`)
   })
 config
   .command('edit')
-  .description('Open a config file in $EDITOR')
-  .option('--personal', 'config.toml rather than the workspace')
-  .action((o: { personal?: boolean }) => {
-    const root = findWorkspace(env)?.root ?? null
-    const path = o.personal || !root ? personalPath(env) : workspaceConfigPath(root)
-    spawnSync(process.env.EDITOR ?? 'vi', [path], { stdio: 'inherit' })
+  .description('Open config.toml in $EDITOR')
+  .action(() => {
+    spawnSync(process.env.EDITOR ?? 'vi', [personalPath(env)], { stdio: 'inherit' })
   })
 const rule = config
   .command('rule')
@@ -171,23 +248,17 @@ rule
   .command('add')
   .description('Send a collection’s records somewhere else, or set how much of it is kept')
   .argument('<match>', 'authority/org/name, with * at the end (underlay.org/mitp/*)')
-  .option('--path <path>', 'a store of its own (personal: kept in config.toml)')
+  .option('--path <path>', 'a store of its own')
   .addOption(keepOpt())
   .action((match: string, o: { path?: string; keep?: Keep }) => {
-    const path = setRule(env, findWorkspace(env)?.root ?? null, { match, ...o })
+    const path = setRule(env, { match, ...o })
     say(`Rule for ${match} in ${tildePath(env, path)}`)
   })
 rule
   .command('rm')
   .description('Remove a store rule')
   .argument('<match>')
-  .action((match: string) =>
-    say(
-      removeRule(env, findWorkspace(env)?.root ?? null, match)
-        ? `Removed ${match}`
-        : `No rule ${match}`,
-    ),
-  )
+  .action((match: string) => say(removeRule(env, match) ? `Removed ${match}` : `No rule ${match}`))
 
 // --- Remotes ---
 
@@ -197,8 +268,7 @@ program
   .argument('[remote]', 'underlay.org, staging.underlay.org, localhost:3000')
   .option('--key <key>', 'the key (otherwise asked for, without echo)')
   .action(async (name: string | undefined, o: { key?: string }) => {
-    const root = findWorkspace(env)?.root ?? null
-    const s = loadSettings(env, root)
+    const s = loadSettings(env)
     const remote = name ?? s.defaultRemote
     const url = Remote.open(env, s, remote).url
     const key = o.key ?? (await askHidden(`Make a key at ${url}/settings/keys and paste it: `))
@@ -214,7 +284,7 @@ program
   .description('Forget the key for a remote')
   .argument('[remote]')
   .action((name: string | undefined) => {
-    const remote = name ?? loadSettings(env, findWorkspace(env)?.root ?? null).defaultRemote
+    const remote = name ?? loadSettings(env).defaultRemote
     env.keys.delete(remote)
     say(`Signed out of ${remote}`)
   })
@@ -228,7 +298,7 @@ program
     const c = ctx()
     const rows = []
     for (const r of c.settings.remotes) {
-      const here = c.ws.collections().filter((x) => x.authority === r.name).length
+      const here = c.home.collections().filter((x) => x.authority === r.name).length
       let total: number | null = null
       let user: string | null = null
       const signedIn = env.keys.get(r.name) !== null
@@ -310,12 +380,13 @@ program
   .option('--public', 'public once pushed (default private)')
   .option('--title <title>')
   .action((r: string, o: { public?: boolean; title?: string }) => {
-    const meta = newCollection(ctx(), r, {
+    const c = ctx()
+    const meta = newCollection(c, r, {
       access: o.public ? 'public' : 'private',
       ...(o.title ? { title: o.title } : {}),
     })
     say(
-      `New: ${keyOf(meta)} (${meta.access}). Put its schemas in collections/${keyOf(meta)}/schemas/<Type>.json`,
+      `New: ${keyOf(meta)} (${meta.access}). Put its schemas in ${tildePath(env, c.home.collectionDir(meta))}/schemas/<Type>.json`,
     )
   })
 program
@@ -341,7 +412,7 @@ program
   .action(async (o: { json?: boolean; fetch?: boolean }) => {
     const c = ctx()
     const rows = []
-    for (const meta of c.ws.collections()) {
+    for (const meta of c.home.collections()) {
       const st = await collectionStatus(c, meta)
       let behind: number | null = null
       if (o.fetch && !meta.isNew) {
@@ -355,8 +426,9 @@ program
       rows.push({ ...st, behind })
     }
     const runs = listRuns(c)
-    const scripts = listScripts(c.ws).map((s) => {
-      const last = runs.find((r) => r.script === s.path)
+    const all = listScripts(c)
+    const scripts = all.map((s) => {
+      const last = runs.find((r) => r.script === s.name)
       return {
         ...s,
         last: last
@@ -366,13 +438,14 @@ program
     })
     if (o.json)
       return json({
-        workspace: c.ws.root,
+        home: c.home.root,
         store: c.settings.storePath,
+        sources: c.sources,
         collections: rows,
         scripts,
         runs: runs.slice(0, 20),
       })
-    say(`Workspace ${tildePath(env, c.ws.root)}   store ${tildePath(env, c.settings.storePath)}`)
+    say(`Home ${tildePath(env, c.home.root)}   store ${tildePath(env, c.settings.storePath)}`)
     let last = ''
     for (const r of rows) {
       if (r.authority !== last) say(`${(last = r.authority)}`)
@@ -384,9 +457,7 @@ program
           (x) =>
             x.status === 'running' &&
             x.saved.length === 0 &&
-            listScripts(c.ws)
-              .find((s) => s.path === x.script)
-              ?.writes.some((w) => w.endsWith(r.ref.org + '/' + r.ref.name)),
+            all.find((s) => s.name === x.script)?.writes.includes(keyOf(r.ref)),
         )
           ? '▶'
           : '',
@@ -402,7 +473,7 @@ program
       say('Scripts')
       for (const s of scripts)
         say(
-          `  ${s.last ? (s.last.status === 'ok' ? '✓' : s.last.status === 'running' ? '▶' : '✗') : ' '} ${s.name.padEnd(34)} ${s.kind === 'check' ? 'check ' : s.kind === 'import' ? 'import' : '      '} ${s.last ? ago(s.last.at) : ''}`,
+          `  ${s.last ? (s.last.status === 'ok' ? '✓' : s.last.status === 'running' ? '▶' : '✗') : ' '} ${s.name.padEnd(34)} ${kindLabel(s).padEnd(6)} ${s.last ? ago(s.last.at) : ''}`,
         )
     }
   })
@@ -414,8 +485,8 @@ program
   .action(async (names: string[]) => {
     const c = ctx()
     const metas = names.length
-      ? names.map((n) => c.ws.resolve(n))
-      : c.ws.collections().filter((m) => !m.isNew)
+      ? names.map((n) => c.home.resolve(n))
+      : c.home.collections().filter((m) => !m.isNew)
     for (const meta of metas) {
       const r = await pull(c, openColl(c, meta))
       const parts = [
@@ -453,7 +524,7 @@ program
   .option('--yes', 'skip the y/N question (never the typed one)')
   .action(async (names: string[], o: { yes?: boolean }) => {
     const c = ctx()
-    const metas = names.length ? names.map((n) => c.ws.resolve(n)) : c.ws.collections()
+    const metas = names.length ? names.map((n) => c.home.resolve(n)) : c.home.collections()
     const plans = (await Promise.all(metas.map((m) => pushPlan(openColl(c, m))))).filter(
       (p): p is PushPlan => p !== null,
     )
@@ -487,7 +558,7 @@ program
 program
   .command('run')
   .description('Run a script; save a version for each collection it changed')
-  .argument('<script>', 'path, or name under scripts/')
+  .argument('<script>', 'its name (scrapers/mitp/monthly, or monthly when unique) or its file')
   .argument('[args...]')
   .option('--detach', 'run in its own process and return (the terminal UI does this)')
   .addOption(new Option('--run-id <id>').hideHelp())
@@ -500,7 +571,7 @@ program
       o: { detach?: boolean; runId?: string; quiet?: boolean },
     ) => {
       const c = ctx()
-      const info = findScript(c.ws, script)
+      const info = findScript(c, script)
       if (o.detach) {
         const id = startDetached(c, info.path, args)
         return say(`Run ${id} started: underlay runs ${id}`)
@@ -660,7 +731,7 @@ program
     const r = await saveVersion(cl, {
       rows,
       mode,
-      schemas: c.ws.schemas(cl.meta),
+      schemas: c.home.schemas(cl.meta),
       message: o.message ?? null,
       now: env.now(),
     })
@@ -763,7 +834,7 @@ program
   .option('--where <field=value...>', 'with a whole set: the part of the type it is the whole of')
   .option('--column <column=field...>', 'map a column to a field ("column=" leaves it out)')
   .option('--personal', 'keep columns that look personal')
-  .option('--save <name>', 'name for scripts/imports/<name>.toml (default: the file’s)')
+  .option('--save <name>', 'name for home’s scripts/imports/<name>.toml (default: the file’s)')
   .option('--no-run', 'save the options without running')
   .action(async (file: string, o: Record<string, any>) => {
     const c = ctx()
@@ -796,8 +867,8 @@ program
         .pop()!
         .replace(/\.[^.]+$/, '')
         .replace(/[^A-Za-z0-9._-]/g, '-')
-    const rel = saveImport(c, name, opts)
-    say(`Saved ${rel}`)
+    const scriptName = saveImport(c, name, opts)
+    say(`Saved ${scriptName}`)
     const mapped = Object.entries(opts.columns)
     say(
       `  ${opts.id} → id; ${mapped
@@ -808,7 +879,7 @@ program
     const off = mapped.filter(([, f]) => !f).map(([col]) => col)
     if (off.length) say(`  left out: ${off.join(', ')}`)
     if (o.run === false) return
-    const info = findScript(c.ws, rel)
+    const info = findScript(c, scriptName)
     const r = await runScript(c, info, [file], {
       onOutput: (text) => process.stdout.write(text),
       importer: (i, a, out, log) => runImport(c, i, a, out, log),
@@ -857,9 +928,57 @@ program
   .argument('<import>')
   .action((name: string) => {
     const c = ctx()
-    const info = findScript(c.ws, name)
-    if (info.kind !== 'import') throw new CliError(`${info.path} is not an import`)
-    say(`Wrote ${eject(c, info)}; ${info.path} still runs the built-in until you remove it`)
+    const info = findScript(c, name)
+    if (info.kind !== 'import') throw new CliError(`${info.name} is not an import`)
+    say(`Wrote ${eject(c, info)}; ${info.name} still runs the built-in until you remove it`)
+  })
+
+program
+  .command('schema')
+  .description(
+    'A collection’s schemas as JSON, by type (or one type’s): for scripts that read them',
+  )
+  .argument('<collection>')
+  .argument('[type]')
+  .action((name: string, type: string | undefined) => {
+    const c = ctx()
+    const schemas = c.home.schemas(c.home.resolve(name))
+    if (!type) return json(schemas)
+    if (!(type in schemas))
+      throw new CliError(
+        `No schema for ${type} (types: ${Object.keys(schemas).join(', ') || 'none'})`,
+      )
+    json(schemas[type])
+  })
+
+program
+  .command('view')
+  .description(
+    'Open a view: a page in the browser, or a script that serves one (stopped with Ctrl-C)',
+  )
+  .argument('<view>', 'its name, or its file')
+  .option('--no-open', 'print the address without opening a browser')
+  .action(async (name: string, o: { open: boolean }) => {
+    const c = ctx()
+    const info = findScript(c, name)
+    if (info.kind !== 'view')
+      throw new CliError(`${info.name} is a ${info.kind}, not a view: underlay run ${info.name}`)
+    if (info.view === 'page') {
+      if (o.open) openInBrowser(info.path)
+      return say(info.path)
+    }
+    const v = await serveView(c, info, { onOutput: (t) => process.stdout.write(t) })
+    say(`${info.name} at ${v.url}  (Ctrl-C stops it)`)
+    if (o.open) openInBrowser(v.url)
+    await new Promise<void>((done) => {
+      const stop = () => {
+        v.stop()
+        done()
+      }
+      process.once('SIGINT', stop)
+      process.once('SIGTERM', stop)
+      v.child.once('exit', () => done())
+    })
   })
 
 program

@@ -1,7 +1,7 @@
 /**
  * A machine and a server for tests: the Underlay server's own app over a temp database and
  * an in-memory bucket (packages/server/test/harness.ts), reached through the CLI's fetch, and
- * a home, config, store and workspace in a temp folder. Never a real server.
+ * a machine's home folder, config, store and Underlay home in a temp folder. Never a real server.
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,8 +13,8 @@ import { cleanup, type Harness, harness } from '../../server/test/harness.js'
 import { TomlFile } from '../src/core/config.js'
 import { type Ctx, openCtx } from '../src/core/context.js'
 import type { Env, Fetch } from '../src/core/env.js'
+import { Home } from '../src/core/home.js'
 import { fileKeys } from '../src/core/keys.js'
-import { Workspace } from '../src/core/workspace.js'
 
 const temps: string[] = []
 afterAll(async () => {
@@ -58,11 +58,11 @@ export interface World {
   h: Harness
   env: Env
   ctx: Ctx
-  ws: Workspace
+  home: Home
   user: string
   lines: string[]
   /** A second machine, signed in to the same server as the same user. */
-  machine(): { env: Env; ctx: Ctx; ws: Workspace; lines: string[] }
+  machine(): { env: Env; ctx: Ctx; home: Home; lines: string[] }
 }
 
 function makeMachine(h: Harness, user: string | null) {
@@ -78,14 +78,15 @@ function makeMachine(h: Harness, user: string | null) {
     keys,
     now: () => new Date(),
   }
-  const ws = Workspace.init(join(home, 'Underlay'))
-  const file = TomlFile.read(join(ws.root, 'underlay.toml'))
+  const ul = Home.init(join(home, 'Underlay'))
+  const file = TomlFile.read(join(configDir, 'config.toml'))
+  file.data.home = ul.root
   file.data.remotes = { test: { url: 'http://test' } }
   file.data.defaults = { remote: 'test' }
   file.write()
   const lines: string[] = []
-  const ctx = openCtx(env, (l) => lines.push(l), ws.root)
-  return { env, ctx, ws, lines }
+  const ctx = openCtx(env, (l) => lines.push(l), ul.root)
+  return { env, ctx, home: ul, lines }
 }
 
 /** A server with org `org`, its member `u1`, and a machine signed in as them. */
