@@ -36,6 +36,30 @@ function drive(ui: ReturnType<typeof render>) {
   const frame = () => ui.lastFrame() ?? ''
   return {
     frame,
+    /** Click where some text is on screen (the nth time it appears), as a terminal reports it. */
+    async click(text: string | RegExp, nth = 0) {
+      const lines = frame().split('\n')
+      let seen = 0
+      for (let y = 0; y < lines.length; y++) {
+        const m =
+          typeof text === 'string' ? lines[y]!.indexOf(text) : (lines[y]!.match(text)?.index ?? -1)
+        if (m < 0) continue
+        if (seen++ < nth) continue
+        const x = [...lines[y]!.slice(0, m)].length + 2
+        ui.stdin.write(`\u001B[<0;${x};${y + 1}M`)
+        ui.stdin.write(`\u001B[<0;${x};${y + 1}m`)
+        await wait()
+        return
+      }
+      throw new Error(`Nothing on screen says ${text}:\n${frame()}`)
+    },
+    async wheel(text: string, down = true) {
+      const lines = frame().split('\n')
+      const y = lines.findIndex((l) => l.includes(text))
+      const x = [...lines[y]!.slice(0, lines[y]!.indexOf(text))].length + 2
+      ui.stdin.write(`\u001B[<${down ? 65 : 64};${x};${y + 1}M`)
+      await wait()
+    },
     async press(...keys: string[]) {
       for (const k of keys) {
         ui.stdin.write(k)
@@ -73,6 +97,46 @@ async function server() {
   await w.h.collection('old', { recordLayout: 'today' })
   return w
 }
+
+describe('the mouse', () => {
+  it('selects a row, gives a pane the keys, opens a tab, picks a version, and runs a key cap', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/notes')
+    w.home.writeSchemas(meta, { Thing })
+    const c = openColl(w.ctx, meta)
+    for (const names of [['a'], ['a', 'b']])
+      await saveVersion(c, {
+        rows: names.map((n) => v3.rowFromRecord(n, 'Thing', { name: n })),
+        mode: 'set',
+        schemas: { Thing },
+        message: names.join(','),
+        now: new Date(),
+      })
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('NOT PUSHED')
+    // A server's row: it is selected, and Servers has the keys.
+    await d.click('● test')
+    await d.until('Signed in.')
+    // Back to the collection, then its Versions tab.
+    await d.click('notes')
+    await d.until('NOT PUSHED')
+    await d.click('Versions')
+    let f = await d.until(/v1\.1\.0 CHANGED/)
+    // The older version, by clicking its row.
+    await d.click('v1.0.0')
+    f = await d.until(/v1\.0\.0 CHANGED/)
+    expect(f).toMatch(/\+ a\s+Thing/)
+    // The wheel over the pane moves through the versions too.
+    await d.wheel('v1.0.0', false)
+    await d.until(/v1\.1\.0 CHANGED/)
+    // A key cap does what its key does.
+    await d.click(' D ')
+    f = await d.until('It was never pushed')
+    await d.press(K.esc)
+    ui.unmount()
+  })
+})
 
 describe('a new collection', () => {
   it('checks the name as you type, makes it here, and says how to fill it', async () => {

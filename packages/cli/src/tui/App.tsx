@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, watch } from 'node:fs'
 import { join } from 'node:path'
 
-import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
+import { Box, type Key as InkKey, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -71,9 +71,10 @@ import {
   loadSnapshot,
   type Snapshot,
 } from './data.js'
-import { Frame, KeyBar, Lines, windowed } from './frame.js'
+import { Frame, KeyBar, Lines, windowed, windowStart } from './frame.js'
 import { helpView, type Section } from './help.js'
 import { C, type Key, type Line, type Pane } from './lines.js'
+import { type MouseEvent, parseMouse } from './mouse.js'
 import { fieldsOf, type NewForm, newPane, typedField } from './newform.js'
 import {
   collectionPane,
@@ -132,6 +133,17 @@ const sideWidth = (columns: number) =>
   Math.min(40, Math.max(columns >= 110 ? 37 : 30, Math.floor(columns * 0.27)))
 
 const QUIT = 'Press x again to quit'
+
+/** Where things were drawn, for the mouse: what is under a click depends on the screen. */
+type Geo =
+  | { mode: 'none' | 'help' }
+  | { mode: 'settings'; listW: number; count: number; start: number }
+  | {
+      mode: 'main'
+      sideW: number
+      cards: { card: SidePane; top: number; h: number; lines: Line[]; start: number }[]
+      pane: { left: number; lines: Line[]; start: number }
+    }
 
 const settingRows = (ctx: Ctx): SettingRow[] => {
   const rows: SettingRow[] = []
@@ -210,23 +222,28 @@ export function App({
   ctx,
   initial,
   setTitle,
+  mouse,
 }: {
   ctx: Ctx
   initial?: { sel?: string }
   /** Titles the terminal tab "Underlay" again; tests leave it out. */
   setTitle?: () => void
+  /** Turns mouse reporting on or off, around an editor or pager; tests leave it out. */
+  mouse?: (on: boolean) => void
 }) {
   const { exit, suspendTerminal: suspendInk } = useApp()
   // An editor or pager given the terminal may retitle the tab: title it again after.
   const suspendTerminal = useCallback(
     async (fn: () => Promise<void>) => {
+      mouse?.(false)
       try {
         await suspendInk(fn)
       } finally {
         setTitle?.()
+        mouse?.(true)
       }
     },
-    [suspendInk, setTitle],
+    [suspendInk, setTitle, mouse],
   )
   const size = useWindowSize()
   const columns = size.columns || 120
@@ -268,6 +285,9 @@ export function App({
   const [scroll, setScroll] = useState(0)
   // The version selected in the Versions tab, newest first.
   const [vCursor, setVCursor] = useState(0)
+  // The sidebar row under the pointer, and where things were last drawn, for the mouse.
+  const [hover, setHover] = useState<string | null>(null)
+  const geo = useRef<Geo>({ mode: 'none' })
   // The new-collection form, what made it open, and what to do once the collection is made.
   const [newForm, setNewForm] = useState<NewForm | null>(null)
   const newThen = useRef<{
@@ -861,7 +881,10 @@ export function App({
                     ? 'a script'
                     : 'anywhere'
 
-  useInput((input, key) => {
+  const onKey = (input: string, key: InkKey) => {
+    // The mouse comes in as input too: clicks, the wheel, and movement.
+    const mouseEvents = parseMouse(input)
+    if (mouseEvents) return onMouse(mouseEvents)
     if (prompt) {
       if (key.escape) return setPrompt(null)
       if (key.return) {
@@ -1723,7 +1746,107 @@ export function App({
         })
       }
     }
-  })
+  }
+  useInput(onKey)
+
+  // --- The mouse, as in Hopper: click to focus and select, hover, the wheel ---
+
+  /** A key cap clicked: what pressing that key does. */
+  const clickKey = (k: string) => {
+    const none = {} as InkKey
+    if (k === 'enter') return onKey('', { ...none, return: true })
+    if (k === 'esc') return onKey('', { ...none, escape: true })
+    if (k === 'tab') return onKey('', { ...none, tab: true })
+    if (k === 'space') return onKey(' ', none)
+    if ([...k].length === 1) return onKey(k, none)
+  }
+
+  function onMouse(events: MouseEvent[]) {
+    const g = geo.current
+    for (const ev of events) {
+      const up = ev.kind === 'wheel-up'
+      const wheel = up || ev.kind === 'wheel-down'
+      if (help) {
+        if (wheel) {
+          const { top, max } = helpAt.current
+          setHelp({ ...help, scroll: Math.max(0, Math.min(max, top + (up ? -3 : 3))) })
+        }
+        continue
+      }
+      if (g.mode === 'settings') {
+        const n = g.count
+        if (wheel)
+          setSettings((st) => ({
+            ...st,
+            cursor: Math.max(0, Math.min(n - 1, st.cursor + (up ? -1 : 1))),
+          }))
+        else if (ev.kind === 'press' && ev.x <= g.listW && settings.editing === null) {
+          const i = g.start + ev.y - 2
+          if (i >= 0 && i < n) setSettings((st) => ({ ...st, cursor: i }))
+        }
+        continue
+      }
+      if (g.mode !== 'main') continue
+      const inSide = ev.x <= g.sideW
+      const card = inSide ? g.cards.find((c) => ev.y >= c.top && ev.y < c.top + c.h) : undefined
+      // The line under the pointer: content starts on the line after a card's top edge.
+      const lineIn = (lines: Line[], start: number, top: number) => {
+        const i = ev.y - top - 1
+        return i >= 0 ? lines[start + i] : undefined
+      }
+      if (ev.kind === 'move') {
+        const h = (card && lineIn(card.lines, card.start, card.top)?.item) ?? null
+        setHover((cur) => (cur === h ? cur : h))
+        continue
+      }
+      if (wheel) {
+        if (card) {
+          const items = (side?.items ?? []).filter((i) => paneOf(itemId(i)) === card.card)
+          const at = items.findIndex((i) => itemId(i) === sel)
+          const next = items[Math.max(0, Math.min(items.length - 1, at + (up ? -1 : 1)))]
+          if (next && !overlay) setSel(itemId(next))
+        } else if (!inSide && collRow && tab === 'Versions' && !overlay) {
+          const n = detail?.key === collRow.key ? detail.d.versions.length : 0
+          setVCursor((i) => Math.max(0, Math.min(n - 1, i + (up ? -1 : 1))))
+        } else if (!inSide && shownRun)
+          setScroll((x) => (up ? Math.min(runLog.lines.length, x + 3) : Math.max(0, x - 3)))
+        continue
+      }
+      if (ev.kind !== 'press') continue
+      if (card) {
+        // A screen that takes letters (push, a form, a file) keeps the keys until esc.
+        if (overlay && overlay !== 'runs' && typeof overlay !== 'object') continue
+        const it = lineIn(card.lines, card.start, card.top)?.item
+        if (it) {
+          setSel(it)
+          setOverlay(null)
+          setFocus('side')
+          setScroll(0)
+        } else goPane(card.card)
+        continue
+      }
+      if (inSide) continue
+      // The main pane: a click gives it the keys, then a version, a tab, or a key cap.
+      setFocus('main')
+      const l = lineIn(g.pane.lines, g.pane.start, 1)
+      if (!l) continue
+      if (l.act?.startsWith('version:')) {
+        setVCursor(Number(l.act.slice('version:'.length)))
+        continue
+      }
+      let x = g.pane.left + 2
+      for (const sg of l.segs) {
+        const w = [...sg.t].length
+        if (ev.x >= x && ev.x < x + w) {
+          const t = sg.t.trim()
+          if (sg.bg === C.cap) clickKey(t)
+          else if (collRow && !overlay && (TABS as readonly string[]).includes(t)) setTab(t as Tab)
+          break
+        }
+        x += w
+      }
+    }
+  }
 
   // --- Layout ---
 
@@ -1798,8 +1921,37 @@ export function App({
     )
   const footer = pane.footer ?? []
   const paneRows = bodyH - 2 - footer.length
+  // Hover lights a sidebar row more faintly than the selection.
+  const lit2 = (ls: Line[]) =>
+    hover ? ls.map((l) => (l.item === hover && l.bg !== C.sel ? { ...l, bg: C.hover } : l)) : ls
   // Every line; the window below keeps the selected one in view, so a long pane scrolls to it.
   const paneLines = pane.lines
+  geo.current = {
+    mode: 'main',
+    sideW,
+    cards: [
+      { card: 'servers', top: 1, h: remotesH, lines: side.remotes, start: 0 },
+      {
+        card: 'collections',
+        top: 1 + remotesH,
+        h: colsH,
+        lines: side.cols,
+        start: windowStart(side.cols.length, colsH - 2, selLine(side.cols)),
+      },
+      {
+        card: 'scripts',
+        top: 1 + remotesH + colsH,
+        h: scriptsH,
+        lines: side.scripts,
+        start: windowStart(side.scripts.length, scriptsH - 2, selLine(side.scripts)),
+      },
+    ],
+    pane: {
+      left: sideW + 2,
+      lines: paneLines,
+      start: windowStart(paneLines.length, paneRows, selLine(paneLines)),
+    },
+  }
   const globalKeys: Key[] = [
     { k: 'c', l: 'collections' },
     { k: 's', l: 'servers' },
@@ -1842,6 +1994,7 @@ export function App({
       help.scroll,
     )
     helpAt.current = { top: v.top, max: v.maxScroll }
+    geo.current = { mode: 'help' }
     return (
       <Box flexDirection="column" width={columns} height={rows}>
         <Frame
@@ -1885,6 +2038,12 @@ export function App({
     const listW = Math.max(40, Math.round(columns * 0.58))
     const aboutW = columns - listW
     const list = settingsList(items, cursor, settings.editing)
+    geo.current = {
+      mode: 'settings',
+      listW,
+      count: items.length,
+      start: windowStart(list.length, bodyH - 2, cursor),
+    }
     return (
       <Box flexDirection="column" width={columns} height={rows}>
         <Box flexDirection="row" height={bodyH}>
@@ -1929,7 +2088,7 @@ export function App({
             width={sideW}
             height={remotesH}
           >
-            <Lines lines={side.remotes} width={sideW - 4} />
+            <Lines lines={lit2(side.remotes)} width={sideW - 4} />
           </Frame>
           <Frame
             title="Collections on this machine"
@@ -1940,7 +2099,10 @@ export function App({
             width={sideW}
             height={colsH}
           >
-            <Lines lines={windowed(side.cols, colsH - 2, selLine(side.cols))} width={sideW - 4} />
+            <Lines
+              lines={windowed(lit2(side.cols), colsH - 2, selLine(side.cols))}
+              width={sideW - 4}
+            />
           </Frame>
           <Frame
             title="Scripts and views"
@@ -1951,7 +2113,7 @@ export function App({
             height={scriptsH}
           >
             <Lines
-              lines={windowed(side.scripts, scriptsH - 2, selLine(side.scripts))}
+              lines={windowed(lit2(side.scripts), scriptsH - 2, selLine(side.scripts))}
               width={sideW - 4}
             />
           </Frame>

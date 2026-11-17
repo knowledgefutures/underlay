@@ -13,6 +13,8 @@ export const C = {
   rd: '#e8907f',
   wh: '#ffffff',
   sel: '#3a3830',
+  /** The row under the pointer: fainter than the selection. */
+  hover: '#2a2925',
   /** A key cap's ground, as Hopper draws the keys in a pane. */
   cap: '#3d3a33',
   bg: '#1a1a18',
@@ -29,6 +31,10 @@ export interface Seg {
 export interface Line {
   segs: Seg[]
   bg?: string
+  /** For the mouse: the sidebar item a click on this line selects. */
+  item?: string
+  /** For the mouse: what a click on this line does in the main pane (`version:2`). */
+  act?: string
 }
 
 export const S = (t: string, c: string = C.fg, b = false, bg?: string): Seg => ({

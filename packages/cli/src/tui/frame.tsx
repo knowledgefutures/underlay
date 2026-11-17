@@ -91,9 +91,13 @@ export function Frame(props: {
 }
 
 /** The lines that fit, keeping a line in view. */
+/** Where the lines that fit start, keeping a line in view (the mouse needs it too). */
+export const windowStart = (count: number, rows: number, keep: number) =>
+  count <= rows ? 0 : Math.min(Math.max(0, keep - Math.floor(rows / 2)), count - rows)
+
 export function windowed(lines: Line[], rows: number, keep: number): Line[] {
   if (lines.length <= rows) return lines
-  const start = Math.min(Math.max(0, keep - Math.floor(rows / 2)), lines.length - rows)
+  const start = windowStart(lines.length, rows, keep)
   return lines.slice(start, start + rows)
 }
 

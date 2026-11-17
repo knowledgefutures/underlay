@@ -464,6 +464,8 @@ underlay reword scratch "A better message"`}</CodeBlock>
       <h2>Keys</h2>
       <p>
         The keys for the screen you are on are along the bottom, and <code>?</code> shows them all.
+        Click a card, row, tab, or key to use it, and the wheel scrolls what is under the pointer.
+        To select text, hold Option (iTerm) or Shift.
       </p>
       <table className="border-collapse">
         <tbody>

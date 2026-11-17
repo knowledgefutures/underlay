@@ -77,6 +77,9 @@ export function scriptMark(s: ScriptRow): string {
   return st === 'ok' ? '✓' : st === 'running' ? '▶' : st === 'paused' ? '‖' : st ? '✗' : ' '
 }
 
+const withItem = (item: string, l: Line): Line => ({ ...l, item })
+const withAct = (act: string, l: Line): Line => ({ ...l, act })
+
 export function sidebar(
   snap: Snapshot,
   remotes: Record<string, RemoteListing | { error: string }>,
@@ -105,14 +108,17 @@ export function sidebar(
           : `${here} / ${total}`
     const mark = r.signedIn ? '●' : '○'
     const nameW = Math.max(8, inner - 3 - 11)
-    return L(
-      [
-        S(on ? '▌' : ' ', C.bl),
-        S(mark + ' ', markColor(mark)),
-        S(P(r.name.slice(0, nameW), nameW), on ? C.wh : r.signedIn ? C.fg : C.mu, on),
-        S(R(note, 11), C.mu),
-      ],
-      on ? C.sel : undefined,
+    return withItem(
+      itemId(item),
+      L(
+        [
+          S(on ? '▌' : ' ', C.bl),
+          S(mark + ' ', markColor(mark)),
+          S(P(r.name.slice(0, nameW), nameW), on ? C.wh : r.signedIn ? C.fg : C.mu, on),
+          S(R(note, 11), C.mu),
+        ],
+        on ? C.sel : undefined,
+      ),
     )
   })
 
@@ -143,15 +149,18 @@ export function sidebar(
               : S('')
       const extra = c.running && c.status.unpushed > 0 ? S(` ↑${c.status.unpushed}`, C.bl) : S('')
       cols.push(
-        L(
-          [
-            S(on ? '▌   ' : '    ', C.bl),
-            S(P(c.meta.name.slice(0, nameW), nameW), on ? C.wh : C.fg, on),
-            S(KEEP_MARK[c.meta.keep], keepColor(c.meta.keep)),
-            sync,
-            extra,
-          ],
-          on ? C.sel : undefined,
+        withItem(
+          itemId(item),
+          L(
+            [
+              S(on ? '▌   ' : '    ', C.bl),
+              S(P(c.meta.name.slice(0, nameW), nameW), on ? C.wh : C.fg, on),
+              S(KEEP_MARK[c.meta.keep], keepColor(c.meta.keep)),
+              sync,
+              extra,
+            ],
+            on ? C.sel : undefined,
+          ),
         ),
       )
     }
@@ -182,14 +191,20 @@ export function sidebar(
           : ''
     const label = folders.size > 1 ? s.name.slice(s.source.length + 1) : s.name
     scripts.push(
-      L(
-        [
-          S(on ? '▌ ' : '  ', C.bl),
-          S(mark + ' ', view ? C.bl : markColor(mark)),
-          S(P(label.slice(0, sw), sw), on ? C.wh : C.fg, on),
-          S(R(when.replace(' ago', '').replace('just now', 'now'), 6), mark === '▶' ? C.bl : C.mu),
-        ],
-        on ? C.sel : undefined,
+      withItem(
+        itemId(item),
+        L(
+          [
+            S(on ? '▌ ' : '  ', C.bl),
+            S(mark + ' ', view ? C.bl : markColor(mark)),
+            S(P(label.slice(0, sw), sw), on ? C.wh : C.fg, on),
+            S(
+              R(when.replace(' ago', '').replace('just now', 'now'), 6),
+              mark === '▶' ? C.bl : C.mu,
+            ),
+          ],
+          on ? C.sel : undefined,
+        ),
       ),
     )
   }
@@ -492,17 +507,20 @@ export function collectionPane(
     d.versions.forEach((v, i) => {
       const on = i === at
       lines.push(
-        L(
-          [
-            S(on ? '▌ ' : '  ', C.bl),
-            S(P(v.semver, 9), v.pushed ? (on ? C.wh : C.fg) : C.bl, on),
-            S(R(v.number, 5), C.mu),
-            S('  ' + P(shortId(v.id), 8), C.mu),
-            S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
-            S(P(ago(v.createdAt), 12), C.mu),
-            S((v.message ?? '').slice(0, 40)),
-          ],
-          on ? C.sel : undefined,
+        withAct(
+          `version:${i}`,
+          L(
+            [
+              S(on ? '▌ ' : '  ', C.bl),
+              S(P(v.semver, 9), v.pushed ? (on ? C.wh : C.fg) : C.bl, on),
+              S(R(v.number, 5), C.mu),
+              S('  ' + P(shortId(v.id), 8), C.mu),
+              S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
+              S(P(ago(v.createdAt), 12), C.mu),
+              S((v.message ?? '').slice(0, 40)),
+            ],
+            on ? C.sel : undefined,
+          ),
         ),
       )
     })
