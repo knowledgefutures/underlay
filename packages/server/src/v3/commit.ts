@@ -28,6 +28,7 @@ import { commitOutcome, type SessionCommitResult, settleSession } from '../push/
 import { mergeRuns, runCount } from '../push/runs.js'
 import { loadInputs, schemaSetError, sessionRuns, type SessionRow } from '../push/session.js'
 import { type CommitTrace, noTrace } from '../push/trace.js'
+import { ensureCollection } from './authority.js'
 import {
   type AssetData,
   assetsOf,
@@ -325,16 +326,7 @@ const refOf = (f: v3.FileRef): v3.FileRef => ({
   bytes: f.bytes,
 })
 
-/** Write the collection's description at its first commit (its D1 row came first). */
-export async function ensureCollection(store: Ports['stores']['v3'], id: string) {
-  if (await v3.readDescription(store, id)) return
-  try {
-    await v3.createCollection(store, id)
-  } catch (err) {
-    // Another commit wrote it first.
-    if (!(err instanceof v3.CollectionError)) throw err
-  }
-}
+export { ensureCollection }
 
 /**
  * Every row of the commit in key order: the reserved rows, then the session's runs merged

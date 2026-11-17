@@ -747,8 +747,8 @@ describe.skipIf(!onV3)('v3 collections', () => {
       forkedFrom: { version: 'v1.1.0' },
       version: { semver: 'v1.1.0', recordCount: 2 },
     })
-    // The description, two commits, the hint: no sorted-record-file is copied.
-    expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(5)
+    // The description, two commits with their receipts, the hint: no sorted-record-file is copied.
+    expect(h.bucket.puts - putsBefore).toBeLessThanOrEqual(7)
     const fb = '/api/collections/two/lib'
     const versions = await json(await h.request(`${fb}/versions`, { user: 'u2' }))
     expect(versions.map((v: { semver: string }) => v.semver)).toEqual(['v1.1.0', 'v1.0.0'])

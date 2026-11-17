@@ -1,0 +1,1 @@
+ALTER TABLE `v3_uploads` ADD `authored` integer DEFAULT false NOT NULL;

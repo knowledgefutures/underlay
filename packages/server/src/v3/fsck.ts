@@ -77,6 +77,8 @@ export async function v3FsckStep(
         files: true,
         filesFrom: (layout?.through ?? 0) + 1,
         serverKeys: [own],
+        // A commit its author built carries no signature of ours: its receipt does.
+        receipts: true,
       })
       report.versions = last?.commit.number ?? 0
     } catch (err) {

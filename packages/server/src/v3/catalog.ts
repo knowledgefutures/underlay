@@ -16,6 +16,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import * as schema from '../db/schema.js'
 import type { Ports, Store } from '../ports.js'
 import { summarize } from '../versions/commit.js'
+import { writeReceiptFor } from './authority.js'
 
 const dec = new TextDecoder()
 
@@ -392,6 +393,8 @@ export async function syncCatalog(ports: Ports, collectionId: string): Promise<n
       actorId: null,
       pushSessionId: null,
     })
+    // Whatever stopped its row may have stopped its receipt too (created only if absent).
+    await writeReceiptFor(ports, collectionId, stored)
     wrote++
   }
   return wrote

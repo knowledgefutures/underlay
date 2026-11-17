@@ -162,7 +162,12 @@ export async function v3MirrorStep(
     await dest.put(key, await obj.bytes(), json)
   }
   await copyObject(v3.descriptionKey(id))
-  for (let n = Math.max(1, p.syncedSeq + 1); n <= head; n++) await copyObject(v3.commitKey(id, n))
+  for (let n = Math.max(1, p.syncedSeq + 1); n <= head; n++) {
+    await copyObject(v3.commitKey(id, n))
+    // Its receipt with it (protocol-v3 4.6): what is signed of a commit its author built.
+    const receipt = await store.get(v3.receiptKey(id, n))
+    if (receipt) await dest.put(v3.receiptKey(id, n), await receipt.bytes(), json)
+  }
   if (layout) await copyObject(v3.layoutKey(id, layout.number))
   if (layout) await v3.writeLayoutHint(dest, id, layout.number)
   await v3.writeCommitHint(dest, id, head)

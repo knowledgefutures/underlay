@@ -105,7 +105,7 @@ export interface Ports {
    * This server's address as receipts and a collection's `authority` name it
    * (`underlay.org`, `localhost:4200`): `serverNameOf(APP_URL)`.
    */
-  serverName?: string
+  serverName: string
   /**
    * fetch for user-supplied URLs (webhooks). Workers have no private network to
    * reach; on Node this resolves the host and refuses private addresses.

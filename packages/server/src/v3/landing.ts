@@ -16,10 +16,11 @@
  * in-process queue (Node, tests).
  */
 import { createObject, v3 } from '@underlay/protocol'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
+import { authorityIn, ensureCollection, notAuthority, writeReceiptFor } from './authority.js'
 import {
   applyStats,
   type CommitStats,
@@ -74,6 +75,7 @@ async function storeAuthored(
   ports: Ports,
   l: Landing,
   head: v3.StoredCommit | null,
+  baseNumber: number | undefined,
 ): Promise<v3.StoredCommit | Landed> {
   const store = ports.stores.v3
   const bytes = enc.encode(l.authored!.commit)
@@ -85,6 +87,20 @@ async function storeAuthored(
   })
   if ('stale' in checked) return { status: 'base_moved', head: head?.id ?? null }
   if ('problem' in checked) return { status: 'invalid', problems: [checked.problem] }
+  // Its base is a version of this collection, as for a commit built here (`createCommit`):
+  // a commit is stored for good, and a log holding one with any other base never verifies.
+  const base = checked.commit.changes[0]!.base
+  if (base !== null) {
+    const at = !head
+      ? null
+      : head.id === base
+        ? head.commit.number
+        : await v3.findVersion(store, l.collectionId, base, head.commit.number, {
+            ...(baseNumber === undefined ? {} : { hint: baseNumber }),
+          })
+    if (at === null)
+      return { status: 'invalid', problems: [`Base ${base} is not a version of ${l.collectionId}`] }
+  }
   const won = await createObject(
     store,
     v3.commitKey(l.collectionId, checked.commit.number),
@@ -101,15 +117,52 @@ async function storeAuthored(
   return { commit: checked.commit, id: checked.id, bytes }
 }
 
-/** The authority's receipt beside a commit it accepted (protocol-v3 4.7). Written once. */
-export async function writeReceiptFor(ports: Ports, stored: v3.StoredCommit, at = new Date()) {
-  const receipt = await v3.makeReceipt(
-    stored,
-    ports.serverName ?? 'unknown',
-    await ports.signer(),
-    at,
+/** The upload's own copies of a change's files, now stored under their ids: cleared. */
+const clearCopies = (ports: Ports, l: Landing) =>
+  v3.inParallel(
+    l.change.files.map(
+      (f) => () => ports.stores.v3.delete(v3.uploadKey(l.sessions?.[f.id] ?? l.session, f.id)),
+    ),
+    16,
   )
-  await v3.writeReceipt(ports.stores.v3, receipt)
+
+/**
+ * An author-built commit that is already the head: a land stored it and stopped before it
+ * was recorded (the process ended, a write failed), and this is that land run again. The
+ * commit is the one sent, byte for byte, so it landed: what the first run left undone is
+ * done here. `syncCatalog` has written its row from the files; the row is given who pushed
+ * it, and what it changed where that was counted against the head before it.
+ */
+async function landedBefore(ports: Ports, l: Landing, head: v3.StoredCommit): Promise<Landed> {
+  await writeReceiptFor(ports, l.collectionId, head)
+  const [row] = await ports.db
+    .select()
+    .from(schema.versions)
+    .where(
+      and(
+        eq(schema.versions.collectionId, l.collectionId),
+        eq(schema.versions.seq, head.commit.number),
+      ),
+    )
+    .limit(1)
+  if (!row) throw new Error(`Commit ${head.commit.number} of ${l.collectionId} has no row`)
+  if (row.pushSessionId === null) {
+    await ports.db
+      .update(schema.versions)
+      .set({
+        pushedBy: l.pushedBy,
+        appId: l.appId,
+        actorId: l.actorId,
+        pushSessionId: l.pushSessionId,
+        // Counted against the head it was prepared on; that is the commit before only then.
+        ...(l.expectHead === head.commit.previous ? { changes: l.stats.changes } : {}),
+      })
+      .where(and(eq(schema.versions.id, row.id), isNull(schema.versions.pushSessionId)))
+    await ports.jobs.enqueue({ type: 'version.published', versionId: row.id, bump: l.bump })
+  }
+  await clearCopies(ports, l)
+  console.log(`[v3.land] ${l.collectionId} #${head.commit.number}: landed before, finished now`)
+  return { status: 'committed', versionId: row.id, number: head.commit.number, bump: l.bump }
 }
 
 export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
@@ -119,8 +172,19 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const mark = () => at.push(Date.now())
   await syncCatalog(ports, l.collectionId)
   mark()
-  const head = await v3.findHead(store, l.collectionId)
+  const [head, description] = await Promise.all([
+    v3.findHead(store, l.collectionId),
+    v3.readDescription(store, l.collectionId),
+  ])
   mark()
+  // Only a collection's authority accepts a version (protocol-v3 4.6), however it is sent.
+  const authority = authorityIn(ports, description)
+  if (authority !== ports.serverName)
+    return { status: 'invalid', problems: [notAuthority(authority)] }
+  // Its description, from its first commit however that is sent (an upload wrote none).
+  if (!description) await ensureCollection(store, l.collectionId)
+  if (l.authored && head && head.id === v3.versionId(enc.encode(l.authored.commit)))
+    return landedBefore(ports, l, head)
   if ((head?.id ?? null) !== l.expectHead) return { status: 'base_moved', head: head?.id ?? null }
   // Every file the change names is stored (its preparer installed it once checked).
   const files = l.change.files
@@ -153,7 +217,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const baseNumber = base?.seq ?? head?.commit.number
   let stored: v3.StoredCommit
   if (l.authored) {
-    const out = await storeAuthored(ports, l, head)
+    const out = await storeAuthored(ports, l, head, base?.seq)
     if ('status' in out) return out
     stored = out
   } else
@@ -172,7 +236,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
       }
       throw err
     }
-  await writeReceiptFor(ports, stored)
+  await writeReceiptFor(ports, l.collectionId, stored)
   mark()
   const before = await lastRow(ports, l.collectionId)
   const version = await recordCommit(ports, {
@@ -196,10 +260,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   mark()
   const step = (i: number) => at[i + 1]! - at[i]!
   // The upload's own copies, now stored under their ids: cleared (the sweep would, a day on).
-  await v3.inParallel(
-    files.map((f) => () => store.delete(v3.uploadKey(l.sessions?.[f.id] ?? l.session, f.id))),
-    16,
-  )
+  await clearCopies(ports, l)
   console.log(
     `[v3.land] ${l.collectionId} #${stored.commit.number}: sync ${step(0)}ms, head ${step(1)}ms, commit ${step(2)}ms, record ${step(3)}ms, queue ${step(4)}ms`,
   )

@@ -155,8 +155,7 @@ export function uploadRoutes() {
         access.collection.id,
         checked.files,
       )
-      if (typeof given === 'string')
-        return jsonError(c, given.startsWith('The authority') ? 409 : 400, given)
+      if ('error' in given) return jsonError(c, given.status, given.error)
       change = given.change
       authored = given.authored
     } else if (body.change !== undefined) {

@@ -730,6 +730,12 @@ export const v3Uploads = sqliteTable(
     /** At commit: the files the change names, and the change itself if the client signed it. */
     files: json<v3.FileRef[]>('files'),
     change: json<v3.Change>('change'),
+    /**
+     * The commit was built by its author (protocol-v3 4.6): its text is kept in the internal
+     * store until it lands. Set with the status that starts the commit, so a land never has
+     * to infer it from whether that object is there.
+     */
+    authored: bool('authored').notNull().default(false),
     /** The head the files were verified against, and the schemas in force for them. */
     expectHead: text('expect_head'),
     schemas: json<Record<string, unknown>>('schemas'),

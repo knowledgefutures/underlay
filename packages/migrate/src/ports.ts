@@ -29,6 +29,8 @@ export async function migrationPorts(
       repoPrefix: env.REPO_PREFIX ?? 'repo',
       internalPrefix: env.INTERNAL_PREFIX ?? 'internal',
     }),
+    // The deployment's address (its APP_URL's host, without `www.`), as receipts name it.
+    serverName: new URL(env.APP_URL ?? 'http://localhost:4200').host.replace(/^www\./, ''),
     jobs: new SqliteJobs(db),
     signer: async () => signer,
     outboundFetch: () => Promise.reject(new Error('No outbound requests during migration')),

@@ -777,6 +777,7 @@ const ports: Ports = {
   }),
   cache,
   signer: async () => signer,
+  serverName: 'memory',
   jobs: new SqliteJobs(db),
   waitUntil: (p) => void p.catch((err) => console.error(err)),
   outboundFetch: (url, init) => fetch(url, init),

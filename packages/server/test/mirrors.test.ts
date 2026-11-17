@@ -729,6 +729,12 @@ describe.skipIf(!onV3)('bucket mirrors of v3 collections', () => {
     const head = await v3.verifyLog(bucket, c.id, { files: true })
     expect(head?.commit.number).toBe(2)
     expect(head?.id).toBe(v2.hash)
+    // Each commit's receipt came with it (protocol-v3 4.6), and is this server's.
+    for (const n of [1, 2]) {
+      const receipt = await v3.readReceipt(bucket, c.id, n)
+      const stored = await v3.readCommit(bucket, c.id, n)
+      expect(await v3.verifyReceipt(receipt!, stored!, [h.signer.publicKey])).toBe(true)
+    }
     for (const version of [1, 2])
       expect(await records(bucket, c.id, version)).toEqual(
         await records(h.ports.stores.v3, c.id, version),

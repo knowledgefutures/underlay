@@ -73,6 +73,7 @@ describe('SQLite jobs', () => {
       signer: async () => {
         throw new Error('not used')
       },
+      serverName: 'test',
       jobs: new SqliteJobs(db),
       waitUntil: () => {},
     }

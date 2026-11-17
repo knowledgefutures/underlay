@@ -43,6 +43,7 @@ import { and, count, eq, inArray, sql } from 'drizzle-orm'
 import * as schema from '../db/schema.js'
 import { registerJob, runJob } from '../jobs.js'
 import type { JobMessage, Ports } from '../ports.js'
+import { authorityOf, notAuthority } from './authority.js'
 import {
   type CommitStats,
   emptyCommitStats,
@@ -516,12 +517,6 @@ export interface Authored {
   receivedAt: string
 }
 
-/** The address of a collection's authority: its description's `authority`, or this server. */
-export async function authorityOf(ports: Ports, collectionId: string): Promise<string> {
-  const d = await v3.readDescription(ports.stores.v3, collectionId)
-  return typeof d?.authority === 'string' ? d.authority : (ports.serverName ?? 'unknown')
-}
-
 /**
  * A commit its author built, checked as far as it can be before its files are: this server
  * is the collection's authority, and the commit is well formed, unsigned, for this
@@ -533,29 +528,28 @@ export async function checkAuthored(
   text: unknown,
   collectionId: string,
   files: v3.FileRef[],
-): Promise<{ change: v3.Change; authored: Authored } | string> {
-  if (typeof text !== 'string' || text.length > 16 * 1024 * 1024)
-    return '"commit" must be the commit\'s JSON text'
+): Promise<{ change: v3.Change; authored: Authored } | { status: 400 | 409; error: string }> {
+  const bad = (error: string) => ({ status: 400 as const, error })
+  if (typeof text !== 'string') return bad('"commit" must be the commit\'s JSON text')
   const authority = await authorityOf(ports, collectionId)
-  if (authority !== ports.serverName)
-    return `The authority for this collection is ${authority}: send its versions there`
+  if (authority !== ports.serverName) return { status: 409, error: notAuthority(authority) }
   let commit: v3.Commit
   try {
     commit = v3.parseCommit(new TextEncoder().encode(text))
   } catch (err) {
-    if (err instanceof v3.FormatError) return `"commit": ${err.message}`
+    if (err instanceof v3.FormatError) return bad(`"commit": ${err.message}`)
     throw err
   }
-  if (commit.collection !== collectionId) return '"commit" is for another collection'
+  if (commit.collection !== collectionId) return bad('"commit" is for another collection')
   if (commit.keyId !== null || commit.sig !== null)
-    return 'A signed commit is not accepted yet: send it unsigned'
-  if (commit.changes.length !== 1) return '"commit" must carry one change'
+    return bad('A signed commit is not accepted yet: send it unsigned')
+  if (commit.changes.length !== 1) return bad('"commit" must carry one change')
   const change = checkChange(commit.changes[0], collectionId, files)
-  if (typeof change === 'string') return change
+  if (typeof change === 'string') return bad(change)
   const now = new Date()
   const at = Date.parse(commit.createdAt)
   if (!Number.isFinite(at) || Math.abs(at - now.getTime()) > v3.CREATED_AT_SKEW_MS)
-    return `"commit": createdAt ${commit.createdAt} is not near now (${now.toISOString()})`
+    return bad(`"commit": createdAt ${commit.createdAt} is not near now (${now.toISOString()})`)
   return { change, authored: { commit: text, receivedAt: now.toISOString() } }
 }
 
@@ -571,15 +565,17 @@ export async function requestCommit(
     status: 'verifying',
     files,
     change,
+    // With the status, in one write: whether a commit's text is to be found at landing.
+    authored: authored !== null,
     verified: 0,
     attempts: 0,
     error: null,
     expiresAt: new Date(Date.now() + uploadLimits.idleMs),
   })
-  // Kept before the prepare job is queued, so the landing finds it (or finds it gone).
+  // Kept before the prepare job is queued, so the landing finds it. If this write fails the
+  // row still says a commit was sent, and the landing fails the upload for want of it.
   if (ok && authored)
     await ports.stores.internal.put(authoredKey(upload.id), JSON.stringify(authored))
-  else if (ok) await ports.stores.internal.delete(authoredKey(upload.id))
   if (ok) await ports.jobs.enqueue({ type: 'v3.uploadPrepare', uploadId: upload.id })
   return ok
 }
@@ -826,14 +822,11 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   }
   for (const t of Object.keys(headSchemas)) if (!(t in schemas)) schemaChanges.push([t, null])
   const metadata = reserved.metadata as Record<string, unknown> | null
-  // A file holds publisher rows exactly when its first or last key's type is not reserved.
-  const ordinary = files.some(
-    (f) => (f.first && !f.first[0].startsWith('$')) || (f.last && !f.last[0].startsWith('$')),
-  )
   const prepared: Prepared = {
     schemaChanges,
     metadata,
-    bump: schemaChanges.length > 0 ? 'major' : ordinary ? 'minor' : 'patch',
+    // The rule an author applies to a commit it builds (protocol-v3 4.4), from one place.
+    bump: v3.commitBump(files, schemaChanges.length > 0),
   }
   await ports.stores.internal.put(
     preparedKey(upload.id, head?.id ?? null),
@@ -1141,8 +1134,21 @@ async function landUpload(ports: Ports, uploadId: string) {
     })
     return
   }
-  const authoredObj = await internal.get(authoredKey(upload.id))
-  const authored = authoredObj ? (JSON.parse(await authoredObj.text()) as Authored) : null
+  // The row says whether the author built the commit; its text is in the internal store. A
+  // text that is gone fails the upload: landing it as a commit built here would give the
+  // version another id than the one its author holds.
+  let authored: Authored | null = null
+  if (upload.authored) {
+    const kept = await internal.get(authoredKey(upload.id))
+    if (!kept) {
+      await fail(ports, upload.id, {
+        statusCode: 500,
+        error: 'The commit sent with this upload is gone; open a new upload and commit again',
+      })
+      return
+    }
+    authored = JSON.parse(await kept.text()) as Authored
+  }
   const t1 = Date.now()
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,

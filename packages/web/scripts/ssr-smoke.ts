@@ -47,6 +47,7 @@ try {
     }),
     cache,
     signer: async () => signer,
+    serverName: 'smoke',
     jobs: new SqliteJobs(db),
     waitUntil: (p) => void p.catch((err) => console.error(err)),
     outboundFetch: async () => new Response('ok'),
