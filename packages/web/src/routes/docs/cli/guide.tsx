@@ -17,6 +17,7 @@ const KEYS: [string, string][] = [
   ['f', 'Add a file (or drop one on the terminal)'],
   ['h', 'Every run'],
   [',', 'Settings'],
+  ['?', 'Every key, with the ones for where you are lit'],
   ['c, C', 'Copy a prompt for an agent; send it to the handoff command'],
   ['o', 'Open the collection on its server'],
   ['q', 'Quit'],
@@ -153,6 +154,12 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
       <CodeBlock>{`underlay config
 underlay config set defaults.remote underlay.org
 underlay config set store.path /Volumes/Data/underlay`}</CodeBlock>
+      <p>
+        The woodpecker from the Underlay logo is drawn in the terminal on the keys screen, beside a
+        long push or pull, and after <code>underlay init</code>. It is never drawn when output goes
+        to a file or another program, or when <code>NO_COLOR</code> is set.{' '}
+        <code>underlay config set mascot off</code> turns it off.
+      </p>
       <p>
         A store rule sends some collections&apos; records somewhere else, or sets how much of them
         is kept. The most specific match wins.
@@ -392,12 +399,20 @@ underlay reword scratch "A better message"`}</CodeBlock>
         <li>
           The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
           Changes, Versions), a script&apos;s output as it runs, a finished run, the push screen, a
-          remote&apos;s list of collections to add, a file you added, or settings.
+          remote&apos;s list of collections to add, or a file you added.
+        </li>
+        <li>
+          <strong>Settings</strong> (<code>,</code>) and <strong>Keys</strong> (<code>?</code>) take
+          the whole window. Settings lists every setting by section, with what the selected one does
+          beside it: <code>enter</code> edits it, or steps through its choices; <code>d</code> puts
+          it back to its default; <code>o</code> opens <code>config.toml</code>.
         </li>
       </ul>
 
       <h2>Keys</h2>
-      <p>The keys for the screen you are on are along the bottom.</p>
+      <p>
+        The keys for the screen you are on are along the bottom, and <code>?</code> shows them all.
+      </p>
       <table className="border-collapse">
         <tbody>
           {KEYS.map(([k, v]) => (

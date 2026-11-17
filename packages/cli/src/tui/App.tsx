@@ -8,11 +8,12 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, watch } from 'node:fs'
 
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { addCollection, forget, keep, type RemoteListing } from '../core/collections.js'
 import { listPublic } from '../core/collections.js'
 import {
+  addSource,
   getSetting,
   personalPath,
   removeRule,
@@ -29,10 +30,12 @@ import { parseRef } from '../core/home.js'
 import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/importers.js'
 import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
-import { pull, push, pushPlan, StaleError } from '../core/sync.js'
+import { type FileProgress, pull, push, pushPlan, StaleError } from '../core/sync.js'
 import { checkForUpdate } from '../core/update.js'
 import { squash, undo, unpushedOf, cidOf } from '../core/versions.js'
 import { openInBrowser, serveView, type ServedView } from '../core/views.js'
+import { FULL_VERSION } from '../version.js'
+import { mascotOn } from './bird.js'
 import {
   type CollectionDetail,
   loadBehind,
@@ -42,6 +45,8 @@ import {
   loadSnapshot,
   type Snapshot,
 } from './data.js'
+import { Frame, KeyBar, Lines, windowed } from './frame.js'
+import { helpView, type Section } from './help.js'
 import { C, type Key, type Line, type Pane } from './lines.js'
 import {
   collectionPane,
@@ -59,12 +64,22 @@ import {
   runsPane,
   scriptPane,
   type SettingRow,
-  settingsPane,
   sidebar,
   type Tab,
   TABS,
   viewPane,
 } from './screens.js'
+import {
+  ADDS,
+  editable,
+  groupOf,
+  GROUPS,
+  resettable,
+  settingsAbout,
+  settingsItems,
+  settingsKeys,
+  settingsList,
+} from './settings.js'
 
 type Overlay = null | 'push' | 'pick' | 'settings' | 'file' | 'runs' | { run: string }
 
@@ -72,101 +87,6 @@ interface Prompt {
   label: string
   value: string
   submit: (v: string) => void | Promise<void>
-}
-
-const lineText = (l: Line) => l.segs.map((s) => s.t).join('')
-
-function Lines({ lines, width }: { lines: Line[]; width: number }) {
-  return (
-    <>
-      {lines.map((l, i) => {
-        const text = lineText(l)
-        return (
-          <Text key={i} wrap="truncate-end">
-            {text === '' ? ' ' : null}
-            {l.segs.map((s, j) =>
-              s.t ? (
-                <Text
-                  key={j}
-                  color={s.c ?? C.fg}
-                  bold={!!s.b}
-                  {...((s.bg ?? l.bg) ? { backgroundColor: s.bg ?? l.bg } : {})}
-                >
-                  {s.t}
-                </Text>
-              ) : null,
-            )}
-            {l.bg ? (
-              <Text backgroundColor={l.bg}>{' '.repeat(Math.max(0, width - text.length))}</Text>
-            ) : null}
-          </Text>
-        )
-      })}
-    </>
-  )
-}
-
-/** A card: a rounded box whose top edge carries its title, as a fieldset's legend. */
-function Frame(props: {
-  title: string
-  meta?: string
-  color?: string
-  border?: string
-  width: number
-  height: number
-  children?: ReactNode
-}) {
-  const { title, meta, color, border, width, height, children } = props
-  const edge = border ?? C.dim
-  const head = ` ${title} `
-  const room = Math.max(0, width - 4 - head.length)
-  const note =
-    meta && room > 6 ? ` ${meta.length > room - 3 ? meta.slice(0, room - 4) + '…' : meta} ` : ''
-  return (
-    <Box flexDirection="column" width={width} height={height} flexShrink={0}>
-      <Text wrap="truncate-end">
-        <Text color={edge}>╭─</Text>
-        <Text color={color ?? C.fg} bold>
-          {head}
-        </Text>
-        <Text color={C.mu}>{note}</Text>
-        <Text color={edge}>{'─'.repeat(Math.max(0, room - note.length)) + '─╮'}</Text>
-      </Text>
-      <Box
-        flexDirection="column"
-        flexGrow={1}
-        borderStyle="round"
-        borderTop={false}
-        borderColor={edge}
-        paddingX={1}
-        overflowY="hidden"
-      >
-        {children}
-      </Box>
-    </Box>
-  )
-}
-
-/** The lines that fit, keeping a line in view. */
-function windowed(lines: Line[], rows: number, keep: number): Line[] {
-  if (lines.length <= rows) return lines
-  const start = Math.min(Math.max(0, keep - Math.floor(rows / 2)), lines.length - rows)
-  return lines.slice(start, start + rows)
-}
-
-function KeyBar({ keys, width }: { keys: Key[]; width: number }) {
-  return (
-    <Box width={width} flexWrap="wrap" columnGap={2}>
-      {keys.map((k, i) => (
-        <Text key={i} color={C.mu}>
-          <Text color={C.fg} bold>
-            {k.k}
-          </Text>{' '}
-          {k.l}
-        </Text>
-      ))}
-    </Box>
-  )
 }
 
 const settingRows = (ctx: Ctx): SettingRow[] => {
@@ -181,6 +101,8 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
       value: v.value,
       from: v.from,
       about: d.about,
+      ...(d.help ? { help: d.help } : {}),
+      ...(d.choices ? { choices: d.choices } : {}),
       kind: 'setting',
     })
   }
@@ -236,12 +158,32 @@ const settingRows = (ctx: Ctx): SettingRow[] => {
       kind: 'remote',
     })
   }
-  const order = ['Home', 'Store', 'Rules', 'Remotes', 'Script folders', 'Handoff', 'Serve']
+  const order: readonly string[] = GROUPS
   return rows.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group))
 }
 
-export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) {
-  const { exit, suspendTerminal } = useApp()
+export function App({
+  ctx,
+  initial,
+  setTitle,
+}: {
+  ctx: Ctx
+  initial?: { sel?: string }
+  /** Titles the terminal tab "Underlay" again; tests leave it out. */
+  setTitle?: () => void
+}) {
+  const { exit, suspendTerminal: suspendInk } = useApp()
+  // An editor or pager given the terminal may retitle the tab: title it again after.
+  const suspendTerminal = useCallback(
+    async (fn: () => Promise<void>) => {
+      try {
+        await suspendInk(fn)
+      } finally {
+        setTitle?.()
+      }
+    },
+    [suspendInk, setTitle],
+  )
   const size = useWindowSize()
   const columns = size.columns || 120
   const rows = size.rows || 40
@@ -303,6 +245,16 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     editing: string | null
   }>({ rows: [], cursor: 0, editing: null })
   const [file, setFile] = useState<FileView | null>(null)
+  // The woodpecker pecks while a push runs.
+  useEffect(() => {
+    if (!push_.busy) return
+    const t = setInterval(() => setPush((v) => ({ ...v, frame: (v.frame ?? 0) + 1 })), 130)
+    return () => clearInterval(t)
+  }, [push_.busy])
+  // The help screen (?): over whatever was open, which it goes back to.
+  const [help, setHelp] = useState<{ from: Section; scroll: number | null } | null>(null)
+  // Where the help screen was drawn scrolled to, and how far it goes, for j and k.
+  const helpAt = useRef({ top: 0, max: 0 })
   const [runsCursor, setRunsCursor] = useState(0)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [status, setStatus] = useState('')
@@ -508,15 +460,23 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     const chosen = push_.plans.filter(
       (p) => push_.included.has(p.coll.key) && !push_.behind[p.coll.key],
     )
-    setPush((v) => ({ ...v, busy: true, typed: '' }))
+    setPush((v) => ({
+      ...v,
+      busy: true,
+      typed: '',
+      peck: null,
+      frame: 0,
+      bird: mascotOn(ctx.env, { isTTY: true }),
+    }))
     const progress: string[] = []
     const note = (t: string) => {
       progress.push(t)
       setPush((v) => ({ ...v, progress: [...progress] }))
     }
+    const onFile = (f: FileProgress) => setPush((v) => ({ ...v, peck: f }))
     for (const p of chosen) {
       try {
-        await push(ctx, p.coll, note)
+        await push(ctx, p.coll, note, onFile)
       } catch (err) {
         note(
           err instanceof StaleError
@@ -525,7 +485,7 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
         )
       }
     }
-    setPush((v) => ({ ...v, busy: false, plans: [] }))
+    setPush((v) => ({ ...v, busy: false, plans: [], peck: null }))
     note('Done. esc goes back.')
     void reload()
   }, [ctx, push_, reload])
@@ -678,6 +638,26 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     { isActive: true },
   )
 
+  /** Which section of the help screen is where you are. */
+  const hereSection = (): Section =>
+    overlay === 'settings'
+      ? 'settings'
+      : overlay === 'push'
+        ? 'push'
+        : overlay === 'pick'
+          ? 'adding from a remote'
+          : overlay === 'file'
+            ? 'a file'
+            : overlay === 'runs' || (typeof overlay === 'object' && overlay !== null)
+              ? 'a run'
+              : collRow
+                ? 'a collection'
+                : script?.kind === 'view'
+                  ? 'a view'
+                  : script
+                    ? 'a script'
+                    : 'anywhere'
+
   useInput((input, key) => {
     if (prompt) {
       if (key.escape) return setPrompt(null)
@@ -701,6 +681,19 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       return
     }
     if (key.ctrl && input === 'c') return exit()
+
+    // The help screen: j and k scroll it; any other key closes it.
+    if (help) {
+      const { top, max } = helpAt.current
+      if (key.downArrow || input === 'j')
+        return setHelp({ ...help, scroll: Math.min(max, top + 1) })
+      if (key.upArrow || input === 'k') return setHelp({ ...help, scroll: Math.max(0, top - 1) })
+      return setHelp(null)
+    }
+    const typing =
+      (overlay === 'settings' && settings.editing !== null) ||
+      (overlay === 'pick' && pick.searching)
+    if (input === '?' && !typing) return setHelp({ from: hereSection(), scroll: null })
 
     // The push screen takes typing.
     if (overlay === 'push') {
@@ -812,10 +805,20 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
 
     if (overlay === 'settings') {
       const s = settings
+      const items = settingsItems(s.rows)
+      const it = items[s.cursor]
+      const row = it?.kind === 'row' ? it.row : null
+      const refresh = (cursor = s.cursor) => {
+        const rows = settingRows(ctx)
+        setSettings({
+          rows,
+          cursor: Math.min(cursor, settingsItems(rows).length - 1),
+          editing: null,
+        })
+      }
       if (s.editing !== null) {
         if (key.escape) return setSettings({ ...s, editing: null })
-        if (key.return) {
-          const row = s.rows[s.cursor]!
+        if (key.return && row) {
           try {
             if (row.kind === 'rule') {
               const keepM = /keep (all|some|none)/.exec(s.editing)?.[1]
@@ -831,46 +834,101 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
             setStatus((err as Error).message)
           }
           void reload()
-          return setSettings({ rows: settingRows(ctx), cursor: s.cursor, editing: null })
+          return refresh()
         }
         if (key.backspace || key.delete)
           return setSettings((x) => ({ ...x, editing: (x.editing ?? '').slice(0, -1) }))
-        if (input) return setSettings((x) => ({ ...x, editing: (x.editing ?? '') + input }))
+        if (input && !key.ctrl && !key.meta)
+          return setSettings((x) => ({ ...x, editing: (x.editing ?? '') + input }))
         return
       }
       if (key.escape) return (setOverlay(null), setFocus('side'))
-      if (key.upArrow) return setSettings({ ...s, cursor: Math.max(0, s.cursor - 1) })
-      if (key.downArrow)
-        return setSettings({ ...s, cursor: Math.min(s.rows.length - 1, s.cursor + 1) })
-      const row = s.rows[s.cursor]
-      if (key.return && row && row.kind !== 'info' && row.kind !== 'source')
-        return setSettings({ ...s, editing: row.from === 'default' ? '' : row.value })
-      if (input === 'd' && row) {
+      if (key.upArrow || input === 'k')
+        return setSettings({ ...s, cursor: Math.max(0, s.cursor - 1) })
+      if (key.downArrow || input === 'j')
+        return setSettings({ ...s, cursor: Math.min(items.length - 1, s.cursor + 1) })
+      // J and K: to the next or previous section's own row.
+      if (input === 'J' || input === 'K') {
+        const starts = items.flatMap((x, i) => (x.kind === 'section' ? [i] : []))
+        const next =
+          input === 'J'
+            ? starts.find((i) => i > s.cursor)
+            : starts.filter((i) => i < s.cursor).at(-1)
+        return setSettings({ ...s, cursor: next ?? s.cursor })
+      }
+      if (key.return && row && editable(row)) {
+        if (row.choices) {
+          // A setting with a few values steps to the next, as Hopper's do.
+          const at = row.choices.indexOf(row.value)
+          const next = row.choices[(at + 1) % row.choices.length]!
+          try {
+            setSetting(ctx.env, row.key, next)
+            setStatus(`${row.label}: ${next}`)
+          } catch (err) {
+            setStatus((err as Error).message)
+          }
+          return refresh()
+        }
+        return setSettings({ ...s, editing: row.from === 'set' ? row.value : '' })
+      }
+      if (input === 'd' && row && resettable(row)) {
         if (row.kind === 'rule') removeRule(ctx.env, row.key)
         else if (row.kind === 'source') removeSource(ctx.env, row.key)
-        else if (row.kind !== 'info') setSetting(ctx.env, row.key, undefined)
+        else setSetting(ctx.env, row.key, undefined)
+        setStatus(
+          row.kind === 'rule' || row.kind === 'source'
+            ? `${row.label} removed`
+            : `${row.label} back to the default`,
+        )
         void reload()
-        return setSettings({ ...s, rows: settingRows(ctx) })
+        return refresh()
       }
-      if (input === 'a')
-        return setPrompt({
-          label:
+      const group = groupOf(it)
+      if (input === 'a' && ADDS[group]) {
+        const add = (label: string, apply: (v: string) => void) =>
+          setPrompt({
+            label,
+            value: '',
+            submit: (v) => {
+              if (!v.trim()) return
+              try {
+                apply(v.trim())
+              } catch (err) {
+                return setStatus((err as Error).message)
+              }
+              void reload()
+              refresh()
+            },
+          })
+        if (group === 'Rules')
+          return add(
             'New rule: authority/org/name (with * at the end), then path and keep, e.g. underlay.org/mitp/* keep all',
-          value: '',
-          submit: (v) => {
-            const [match, ...rest] = v.trim().split(/\s+/)
-            if (!match) return
-            const words = rest.join(' ')
-            const k = /keep (all|some|none)/.exec(words)?.[1] as 'all' | undefined
-            const p = /path (\S+)/.exec(words)?.[1]
-            setRule(ctx.env, {
-              match,
-              ...(p ? { path: p } : {}),
-              ...(k ? { keep: k } : {}),
-            })
-            setSettings((x) => ({ ...x, rows: settingRows(ctx) }))
-          },
-        })
+            (v) => {
+              const [match, ...rest] = v.split(/\s+/)
+              const words = rest.join(' ')
+              const k = /keep (all|some|none)/.exec(words)?.[1] as 'all' | undefined
+              const p = /path (\S+)/.exec(words)?.[1]
+              setRule(ctx.env, {
+                match: match!,
+                ...(p ? { path: p } : {}),
+                ...(k ? { keep: k } : {}),
+              })
+            },
+          )
+        if (group === 'Remotes')
+          return add(
+            'New remote: its name, then its URL, e.g. lab https://underlay.lab.org',
+            (v) => {
+              const [name, url] = v.split(/\s+/)
+              if (!name || !url) throw new CliError('A name, then a URL')
+              setSetting(ctx.env, `remotes.${name}.url`, url)
+            },
+          )
+        if (group === 'Script folders')
+          return add('A folder of scripts to add (its path)', (v) => {
+            addSource(ctx.env, v)
+          })
+      }
       if (input === 'o') return void editInEditor(personalPath(ctx.env))
       return
     }
@@ -1197,8 +1255,6 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     const inner = mainW - 4
     if (overlay === 'push') return pushPane(push_, side.user, inner)
     if (overlay === 'pick') return pickPane(pick, inner)
-    if (overlay === 'settings')
-      return settingsPane(settings.rows, settings.cursor, settings.editing, inner)
     if (overlay === 'file' && file) return filePane(file, inner)
     if (overlay === 'runs') return runsPane(snap.runs, runsCursor)
     if (shownRun)
@@ -1266,9 +1322,111 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
     { k: 'h', l: 'runs' },
     { k: 'f', l: 'file' },
     { k: ',', l: 'settings' },
+    { k: '?', l: 'keys' },
     { k: 'q', l: 'quit' },
   ]
   const userNote = side.user ?? ''
+  const statusLine = prompt ? (
+    <Text wrap="truncate-end">
+      <Text color={C.bl}>{prompt.label}: </Text>
+      <Text color={C.wh}>{prompt.value}▏</Text>
+    </Text>
+  ) : status ? (
+    <Text wrap="truncate-end" color={C.or}>
+      {status}
+    </Text>
+  ) : (
+    <Text> </Text>
+  )
+
+  if (help) {
+    const v = helpView(
+      help.from,
+      {
+        version: FULL_VERSION,
+        home: tildePath(ctx.env, ctx.home.root),
+        config: tildePath(ctx.env, personalPath(ctx.env)),
+        mascot: mascotOn(ctx.env, { isTTY: true }),
+      },
+      columns - 4,
+      bodyH - 2,
+      help.scroll,
+    )
+    helpAt.current = { top: v.top, max: v.maxScroll }
+    return (
+      <Box flexDirection="column" width={columns} height={rows}>
+        <Frame
+          title="Keys"
+          meta={v.maxScroll ? 'j k scroll · any other key closes' : 'any key closes'}
+          color={C.bl}
+          border={C.bl}
+          width={columns}
+          height={bodyH}
+        >
+          <Box flexDirection="row" flexGrow={1}>
+            {v.side ? (
+              <Box flexDirection="column" width={v.sideW} marginRight={v.gap} flexShrink={0}>
+                <Lines lines={v.side} width={v.sideW} />
+              </Box>
+            ) : null}
+            {v.cols.map((col, i) => (
+              <Box
+                key={i}
+                flexDirection="column"
+                width={v.colW}
+                marginLeft={i ? v.gap : 0}
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Lines lines={col} width={v.colW} />
+              </Box>
+            ))}
+          </Box>
+          <Lines lines={v.foot} width={columns - 4} />
+        </Frame>
+        <Text> </Text>
+        <KeyBar keys={[{ k: 'any key', l: 'close' }]} width={columns} />
+      </Box>
+    )
+  }
+
+  if (overlay === 'settings') {
+    const items = settingsItems(settings.rows)
+    const cursor = Math.min(settings.cursor, Math.max(0, items.length - 1))
+    const listW = Math.max(40, Math.round(columns * 0.58))
+    const aboutW = columns - listW
+    const list = settingsList(items, cursor, settings.editing)
+    return (
+      <Box flexDirection="column" width={columns} height={rows}>
+        <Box flexDirection="row" height={bodyH}>
+          <Frame
+            title="Settings"
+            meta="esc closes"
+            color={C.bl}
+            border={C.bl}
+            width={listW}
+            height={bodyH}
+          >
+            <Lines lines={windowed(list, bodyH - 2, cursor)} width={listW - 4} />
+          </Frame>
+          <Frame title="About" color={C.mu} width={aboutW} height={bodyH}>
+            <Lines
+              lines={settingsAbout(
+                items[cursor],
+                tildePath(ctx.env, personalPath(ctx.env)),
+                aboutW - 4,
+                settings.editing !== null,
+              )}
+              width={aboutW - 4}
+            />
+          </Frame>
+        </Box>
+        {statusLine}
+        <KeyBar keys={settingsKeys(items[cursor], settings.editing !== null)} width={columns} />
+      </Box>
+    )
+  }
+
   return (
     <Box flexDirection="column" width={columns} height={rows}>
       <Box flexDirection="row" height={bodyH} columnGap={1}>

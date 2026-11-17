@@ -2,7 +2,8 @@
  * What the CLI docs (/docs/cli) show of the CLI, made from the CLI itself at every web build
  * (packages/web/scripts/cli-assets.ts), so the page never shows an older CLI than it serves:
  *
- *   screenshot-collection.svg, screenshot-run.svg, screenshot-push.svg
+ *   screenshot-collection.svg, screenshot-run.svg, screenshot-push.svg, screenshot-help.svg,
+ *   screenshot-settings.svg
  *       the terminal UI, rendered by Ink into a fake terminal over a small made-up home
  *       (a campus library and a field station; no real organizations), at a fixed clock
  *   cli-reference.json
@@ -515,13 +516,13 @@ console.log('done')
       }
     }
     await until(['underlay.org', 'campus-library'])
+    // The remotes' counts and behind arrows arrive a moment after.
+    await until(['4 / 7'])
     for (const k of keys) {
       stdin.write(k)
       await new Promise((r) => setTimeout(r, 200))
     }
     await until(wants)
-    // The remotes' counts and behind arrows arrive a moment after.
-    await until(['4 / 7'])
     await new Promise((r) => setTimeout(r, 300))
     const frame = stdout.last
     app.unmount()
@@ -549,8 +550,10 @@ console.log('done')
     ['COPIED EXACTLY AS THEY ARE HERE'],
     ['p'],
   )
+  await shoot('help', 'c:underlay.org/campus-library/theses', ['you are here'], ['?'])
+  await shoot('settings', 'c:underlay.org/campus-library/theses', ['About'], [','])
   console.log(
-    `site-assets: 3 screenshots and the command reference (underlay ${reference.version})`,
+    `site-assets: 5 screenshots and the command reference (underlay ${reference.version})`,
   )
 } finally {
   rmSync(home, { recursive: true, force: true })

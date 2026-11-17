@@ -40,6 +40,8 @@ const SHOTS = [
   { key: 'collection', label: 'A collection' },
   { key: 'run', label: 'A finished run' },
   { key: 'push', label: 'Push' },
+  { key: 'help', label: 'Keys' },
+  { key: 'settings', label: 'Settings' },
 ] as const
 
 export function CliScreens({

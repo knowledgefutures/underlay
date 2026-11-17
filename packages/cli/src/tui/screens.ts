@@ -1,7 +1,3 @@
-/**
- * The terminal UI's panes, as pure functions of what is loaded: each gives a title, its
- * lines and its keys. Layouts follow the mockup's Terminal page.
- */
 import type { RemoteListing } from '../core/collections.js'
 import { KEEP_MARK } from '../core/collections.js'
 import type { Keep } from '../core/config.js'
@@ -9,7 +5,13 @@ import { ago, bytes, count, duration, shortId } from '../core/format.js'
 import type { ImportOptions, Shape } from '../core/importers.js'
 import type { RemoteCollection } from '../core/remote.js'
 import type { RunRecord } from '../core/runs.js'
+/**
+ * The terminal UI's panes, as pure functions of what is loaded: each gives a title, its
+ * lines and its keys. Layouts follow the mockup's Terminal page.
+ */
+import type { FileProgress } from '../core/sync.js'
 import type { PushPlan } from '../core/sync.js'
+import { beside, birdLines, PECK } from './bird.js'
 import type { CollectionDetail, CollectionRow, ScriptRow, Snapshot } from './data.js'
 import {
   blank,
@@ -693,6 +695,38 @@ export interface PushView {
   typed: string
   progress: string[]
   busy: boolean
+  /** The file going up now, while busy. */
+  peck?: FileProgress | null
+  /** The pecking frame, stepped while busy. */
+  frame?: number
+  /** Whether to draw the woodpecker beside the bar (the mascot setting). */
+  bird?: boolean
+}
+
+/** While a push runs: the woodpecker pecking beside what is going up and a bar of how much. */
+function peckLines(v: PushView): Line[] {
+  const p = v.peck
+  if (!v.busy || !p) return []
+  const w = 24
+  const filled = p.total ? Math.round((p.done / p.total) * w) : w
+  const text: Line[] = [
+    blank(),
+    L([S(`Pushing ${p.key} to ${p.authority}`, C.wh, true)]),
+    L([S(p.semver ? `version ${p.semver}` : '', C.mu)]),
+    blank(),
+    L([
+      S('█'.repeat(filled), C.gr),
+      S('░'.repeat(w - filled), C.dim),
+      S(
+        p.done < p.total
+          ? `  ${p.done} of ${p.total} files`
+          : `  ${p.total} files sent; committing`,
+        C.mu,
+      ),
+    ]),
+  ]
+  const lines = v.bird ? beside(birdLines(PECK[(v.frame ?? 0) % PECK.length]!), text) : text
+  return [...lines, blank()]
 }
 
 export function pushPane(v: PushView, user: string | null, width: number): Pane {
@@ -700,7 +734,7 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
   const authorities = [...new Set(v.plans.map((p) => p.coll.meta.authority))]
   const versions = inc.reduce((n, p) => n + p.versions.length, 0)
   const loud = inc.some((p) => p.access === 'public' || p.removed >= 1000)
-  const lines: Line[] = []
+  const lines: Line[] = peckLines(v)
   if (!v.plans.length) {
     if (v.progress.length)
       lines.push(
@@ -1055,69 +1089,11 @@ export interface SettingRow {
   value: string
   from: string
   about: string
+  /** The longer text for the About panel; about when absent. */
+  help?: string
+  /** Values enter steps through, for a setting with a few. */
+  choices?: string[]
   kind: 'setting' | 'rule' | 'remote' | 'source' | 'info'
-}
-
-export function settingsPane(
-  rows: SettingRow[],
-  cursor: number,
-  editing: string | null,
-  width: number,
-): Pane {
-  const lines: Line[] = []
-  let group = ''
-  rows.forEach((r, i) => {
-    if (r.group !== group) {
-      if (group) lines.push(blank())
-      lines.push(head((group = r.group).toUpperCase()))
-    }
-    const on = i === cursor
-    const val = on && editing !== null ? editing + '▏' : r.value
-    lines.push(
-      L(
-        [
-          S(on ? '› ' : '  ', C.gr, true),
-          S(P(r.label.slice(0, 28), 29), on ? C.wh : C.fg, on),
-          S(
-            P(val.slice(0, 40), 41),
-            on && editing !== null ? C.wh : r.from === 'default' ? C.mu : C.fg,
-          ),
-          S(P(r.from, 10), C.mu),
-          S(r.about.slice(0, Math.max(0, width - 84)), C.mu),
-        ],
-        on ? C.sel : undefined,
-      ),
-    )
-  })
-  lines.push(
-    blank(),
-    L([
-      S(
-        'The file is the source of truth: ~/.config/underlay/config.toml. Script folders are added with underlay sources add.',
-        C.mu,
-      ),
-    ]),
-  )
-  return {
-    title: 'Settings',
-    meta: 'every setting from config.toml',
-    color: C.bl,
-    border: C.bl,
-    lines,
-    keys:
-      editing !== null
-        ? [
-            { k: 'enter', l: 'save' },
-            { k: 'esc', l: 'cancel' },
-          ]
-        : [
-            { k: 'enter', l: 'edit' },
-            { k: 'd', l: 'reset / remove' },
-            { k: 'a', l: 'add rule' },
-            { k: 'o', l: 'open file in $EDITOR' },
-            { k: 'esc', l: 'back' },
-          ],
-  }
 }
 
 // --- A dropped file ---

@@ -26,8 +26,25 @@ export interface PullResult {
   schemas: string[]
 }
 
+/** A file going up in a push or coming down in a pull, for whatever shows progress. */
+export interface FileProgress {
+  key: string
+  authority: string
+  direction: 'up' | 'down'
+  /** The version being pushed; null for a pull. */
+  semver: string | null
+  done: number
+  total: number
+}
+export type OnFile = (p: FileProgress) => void
+
 /** Follow the authority's log, replay what is not pushed on top, and fetch what is kept. */
-export async function pull(ctx: Ctx, c: Coll, now = ctx.env.now()): Promise<PullResult> {
+export async function pull(
+  ctx: Ctx,
+  c: Coll,
+  now = ctx.env.now(),
+  onFile?: OnFile,
+): Promise<PullResult> {
   const result: PullResult = { fetched: 0, replayed: [], files: 0, schemas: [] }
   if (c.meta.isNew) return result
   const cid = cidOf(c)
@@ -100,7 +117,7 @@ export async function pull(ctx: Ctx, c: Coll, now = ctx.env.now()): Promise<Pull
     await v3.writeLayoutHint(fs, cid, layout.number)
   }
 
-  result.files = await fetchKept(c)
+  result.files = await fetchKept(c, onFile)
   // Schemas the authority changed come into home; others are left as edited here.
   if (incoming.length > 0) {
     const view = await viewOf(c, c.store.state(cid).remote!.number)
@@ -127,11 +144,11 @@ export async function pull(ctx: Ctx, c: Coll, now = ctx.env.now()): Promise<Pull
 }
 
 /** Fetch the files of the newest version that the collection keeps; how many were fetched. */
-export async function fetchKept(c: Coll): Promise<number> {
+export async function fetchKept(c: Coll, onFile?: OnFile): Promise<number> {
   if (c.meta.keep === 'none' || c.meta.isNew) return 0
   if ((await v3.headNumber(c.store.fs, cidOf(c))) === 0) return 0
   const view = await viewOf(c)
-  let n = 0
+  const need: string[] = []
   for (const f of view.files) {
     if (c.meta.keep === 'some') {
       const types = c.meta.types
@@ -145,8 +162,22 @@ export async function fetchKept(c: Coll): Promise<number> {
       if (!holds) continue
     }
     if (await c.store.fs.head(v3.recordKey(f.id))) continue
-    await c.data.head(v3.recordKey(f.id))
-    n++
+    need.push(f.id)
+  }
+  const tell = (done: number) =>
+    onFile?.({
+      key: c.key,
+      authority: c.meta.authority,
+      direction: 'down',
+      semver: null,
+      done,
+      total: need.length,
+    })
+  if (need.length) tell(0)
+  let n = 0
+  for (const id of need) {
+    await c.data.head(v3.recordKey(id))
+    tell(++n)
   }
   return n
 }
@@ -219,7 +250,12 @@ export class StaleError extends CliError {
 }
 
 /** Copy a collection's versions not yet pushed to its authority, in order. */
-export async function push(ctx: Ctx, c: Coll, say = ctx.say): Promise<v3.StoredCommit[]> {
+export async function push(
+  ctx: Ctx,
+  c: Coll,
+  say = ctx.say,
+  onFile?: OnFile,
+): Promise<v3.StoredCommit[]> {
   const cid = cidOf(c)
   const remote = c.remote()
   const { org, name } = c.meta
@@ -248,14 +284,24 @@ export async function push(ctx: Ctx, c: Coll, say = ctx.say): Promise<v3.StoredC
     const change = s.commit.changes[0]!
     const up = await remote.openUpload(org, name, { message: change.message, base: change.base })
     const present = new Set((await remote.uploadStatus(org, name, up.upload_id)).present ?? [])
+    const toSend = files.filter((f) => !present.has(f.id))
+    const tell = (done: number) =>
+      onFile?.({
+        key: c.key,
+        authority: c.meta.authority,
+        direction: 'up',
+        semver: s.commit.semver,
+        done,
+        total: toSend.length,
+      })
+    tell(0)
     let sent = 0
-    for (const f of files) {
-      if (present.has(f.id)) continue
+    for (const f of toSend) {
       const obj = await c.data.get(v3.recordKey(f.id))
       if (!obj)
         throw new CliError(`${c.key}: file ${f.id} of version ${s.commit.number} is missing here`)
       await remote.sendFile(org, name, up.upload_id, f.id, await obj.bytes())
-      sent++
+      tell(++sent)
     }
     say(`  ${s.commit.semver}: sent ${sent} of ${files.length} files; committing`)
     const st = await remote.commitUpload(org, name, up.upload_id, {

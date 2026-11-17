@@ -96,13 +96,36 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
     ui.stdin.write('\u001B')
     await wait()
 
-    // Settings: every setting, from both files.
+    // Settings: every setting in sections, and About for the one selected, as Hopper lays it out.
     ui.stdin.write(',')
     f = await until(ui.lastFrame, 'STORE')
     expect(f).toContain('REMOTES')
     expect(f).toContain('test')
+    expect(f).toContain('About')
+    expect(f).toContain('Where your collections')
+    // J goes section by section to Terminal; enter steps the mascot through its choices.
+    for (let i = 0; i < 8; i++) {
+      ui.stdin.write('J')
+      await wait(30)
+    }
+    ui.stdin.write('j')
+    f = await until(ui.lastFrame, 'enter steps through: on, off')
+    expect(f).toMatch(/mascot\s+on/)
+    ui.stdin.write('\r')
+    f = await until(ui.lastFrame, /mascot\s+off/)
+    expect(f).toMatch(/\bd default\b/)
+    ui.stdin.write('d')
+    f = await until(ui.lastFrame, 'mascot back to the default')
     ui.stdin.write('\u001B')
     await wait()
+
+    // ? shows every key, lit where you are; any other key goes back.
+    ui.stdin.write('?')
+    f = await until(ui.lastFrame, 'you are here')
+    expect(f).toMatch(/A SCRIPT\s+you are here/)
+    expect(f).toContain('any other key closes')
+    ui.stdin.write('x')
+    f = await until(ui.lastFrame, 'Scripts and views')
 
     // A file dropped on the terminal: its shape, what it matches, and the importer's options.
     const csv = join(w.home.root, '..', 'roster-2026.csv')

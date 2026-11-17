@@ -196,11 +196,15 @@ export function ruleFor(s: Settings, key: string): { path: string; keep: Keep | 
 /** A setting the settings screen and `underlay config` know. */
 export interface SettingDef {
   key: string
-  group: 'Home' | 'Store' | 'Remotes' | 'Handoff' | 'Serve'
+  group: 'Home' | 'Store' | 'Remotes' | 'Handoff' | 'Serve' | 'Terminal'
   /** The TOML path. */
   path: string[]
   default: string
   about: string
+  /** The longer version, for the settings screen's About panel. */
+  help?: string
+  /** A setting with a few values: enter in the settings screen steps through them. */
+  choices?: string[]
   parse?: (v: string) => unknown
 }
 
@@ -211,6 +215,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['home'],
     default: DEFAULT_HOME,
     about: 'Your collections, inputs and own scripts (UNDERLAY_HOME overrides it)',
+    help: 'The folder holding your collections (each with its schemas), the inputs scripts read, and your own scripts. underlay init makes it. UNDERLAY_HOME in the environment wins over this.',
   },
   {
     key: 'defaults.remote',
@@ -218,6 +223,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['defaults', 'remote'],
     default: 'underlay.org',
     about: 'The remote `underlay new`, `ls` and `login` use when none is named',
+    help: 'The remote that underlay new, ls and login use when you do not name one. A collection you add keeps its own authority whatever this says.',
   },
   {
     key: 'store.path',
@@ -225,6 +231,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['store', 'path'],
     default: '~/.local/share/underlay',
     about: 'Where record files, unpushed versions and run logs live: outside Dropbox and iCloud',
+    help: 'Where record files, versions not yet pushed, and run logs are kept. Keep it out of Dropbox and iCloud: they sync every file as it is written. Rules below can send some collections elsewhere.',
   },
   {
     key: 'store.limit',
@@ -232,6 +239,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['store', 'limit'],
     default: '(none)',
     about: 'Fetched data past this is let go; unpushed versions never are',
+    help: 'How much fetched data the store may hold, such as 20GB. Fetched data past it is let go; versions not yet pushed never are.',
     parse: (v) => (parseSize(v), v),
   },
   {
@@ -240,6 +248,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['handoff', 'send'],
     default: '(copy only)',
     about: 'A command that takes a handoff prompt on stdin (C in the app)',
+    help: 'A command that takes a handoff prompt on stdin, such as hopper draft new --project <key> -. In the terminal UI, C sends the prompt to it and c copies the prompt.',
   },
   {
     key: 'serve.port',
@@ -247,10 +256,24 @@ export const SETTINGS: SettingDef[] = [
     path: ['serve', 'port'],
     default: '4417',
     about: 'The port `underlay serve` listens on',
+    help: 'The port underlay serve listens on. A view that serves its own page is given a free port instead.',
     parse: (v) => {
       const n = Number(v)
       if (!Number.isInteger(n) || n < 1 || n > 65535) throw new CliError('A port is 1 to 65535')
       return n
+    },
+  },
+  {
+    key: 'mascot',
+    group: 'Terminal',
+    path: ['mascot'],
+    default: 'on',
+    about: 'The woodpecker: on the help screen, when pushing and pulling, and after underlay init',
+    help: 'The woodpecker from the Underlay logo, drawn in the terminal: on the help screen (?), beside the progress of a long push or pull, and after underlay init. It is never drawn when output goes to a file or another program, or when NO_COLOR is set.',
+    choices: ['on', 'off'],
+    parse: (v) => {
+      if (v !== 'on' && v !== 'off') throw new CliError('mascot is on or off')
+      return v
     },
   },
 ]

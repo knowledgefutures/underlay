@@ -72,6 +72,8 @@ export function parseFrame(frame: string): Run[][] {
 }
 
 const BOX = new Set(['─', '│', '╭', '╮', '╰', '╯'])
+/** Half and full blocks, which a terminal fills to the cell's edges: the woodpecker is drawn in them. */
+const BLOCK = new Set(['▀', '▄', '█'])
 
 /** A box-drawing character as a path in its cell, rounded corners as quarter circles. */
 function boxPath(ch: string, x: number, y: number, w: number, h: number): string | null {
@@ -139,10 +141,20 @@ export function frameToSvg(frame: string, o: SvgOptions): string {
           `<rect x="${(pad + r.col * cw).toFixed(1)}" y="${y}" width="${(n * cw).toFixed(1)}" height="${lh}" fill="${r.bg}"/>`,
         )
     }
-    // Box-drawing characters as lines, so borders join across rows with no gaps.
+    // Box-drawing characters as lines, so borders join across rows with no gaps; blocks as
+    // rectangles, so pixels meet as they do in a terminal.
     for (const r of runs) {
       ;[...r.text].forEach((ch, k) => {
-        const d = boxPath(ch, pad + (r.col + k) * cw, y, cw, lh)
+        const x = pad + (r.col + k) * cw
+        if (BLOCK.has(ch)) {
+          const top = ch === '▄' ? y + lh / 2 : y
+          const h = ch === '█' ? lh : lh / 2
+          out.push(
+            `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${(cw + 0.3).toFixed(1)}" height="${(h + 0.3).toFixed(1)}" fill="${r.fg ?? o.foreground}" shape-rendering="crispEdges"/>`,
+          )
+          return
+        }
+        const d = boxPath(ch, x, y, cw, lh)
         if (d)
           out.push(
             `<path d="${d}" stroke="${r.fg ?? o.foreground}" stroke-width="1.2" fill="none"/>`,
@@ -151,7 +163,7 @@ export function frameToSvg(frame: string, o: SvgOptions): string {
     }
     for (const r of runs) {
       // Only the visible part, at its own column: spaces are cells, not text to lay out.
-      const chars = [...r.text].map((c) => (BOX.has(c) ? ' ' : c))
+      const chars = [...r.text].map((c) => (BOX.has(c) || BLOCK.has(c) ? ' ' : c))
       const lead = chars.findIndex((c) => c !== ' ')
       if (lead < 0) continue
       let end = chars.length

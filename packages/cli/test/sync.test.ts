@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { addCollection, forget, keep, newCollection } from '../src/core/collections.js'
 import { type Coll, openColl } from '../src/core/context.js'
-import { pull, push, pushPlan, StaleError } from '../src/core/sync.js'
+import { type FileProgress, pull, push, pushPlan, StaleError } from '../src/core/sync.js'
 import {
   headOf,
   logOf,
@@ -63,8 +63,15 @@ describe('versions here, push and pull', () => {
     const plan = await pushPlan(a)
     expect(plan).toMatchObject({ isNew: true, from: null, access: 'private' })
     expect(plan!.versions.map((v) => v.semver)).toEqual(['v1.0.0', 'v1.1.0', 'v1.2.0'])
-    const pushed = await push(w.ctx, a)
+    const files: FileProgress[] = []
+    const pushed = await push(w.ctx, a, w.ctx.say, (p) => files.push(p))
     expect(pushed.map((s) => s.id)).toEqual((await logOf(a)).map((s) => s.id))
+    // Each version says how many files it sends, from none sent up to all of them.
+    for (const semver of ['v1.0.0', 'v1.1.0', 'v1.2.0']) {
+      const mine = files.filter((p) => p.semver === semver)
+      expect(mine[0]).toMatchObject({ direction: 'up', done: 0, key: a.key })
+      expect(mine.at(-1)!.done).toBe(mine.at(-1)!.total)
+    }
     // The authority holds the same versions, with receipts.
     const theirs = await v3.findHead(w.h.ports.stores.v3, meta.id)
     expect(theirs?.id).toBe(three.version!.id)

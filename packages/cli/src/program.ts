@@ -57,14 +57,11 @@ import { isLoud, pull, push, pushPlan, type PushPlan, remoteHead, StaleError } f
 import { update } from './core/update.js'
 import { cidOf, logOf, reword, saveVersion, squash, undo, viewOf } from './core/versions.js'
 import { openInBrowser, serveView } from './core/views.js'
+import { BIRD, birdAnsi, depthOf, mascotOn, visibleWidth } from './tui/bird.js'
+import { pecker } from './tui/pecker.js'
+import { FULL_VERSION, VERSION } from './version.js'
 
-/** Set by scripts/build.mjs to the commit the bundle was built from; absent when run from source. */
-declare const UNDERLAY_BUILD: string | undefined
-
-export const VERSION = '0.3.0'
-/** The version with its build: `0.3.0 (c52aea4)`. */
-export const FULL_VERSION =
-  typeof UNDERLAY_BUILD === 'string' ? `${VERSION} (${UNDERLAY_BUILD})` : VERSION
+export { FULL_VERSION, VERSION }
 const say = (line = '') => console.log(line)
 export const env: Env = defaultEnv()
 const ctx = (): Ctx => openCtx(env, say)
@@ -101,10 +98,43 @@ program
       if (env.homeDir) say(`UNDERLAY_HOME is set: it still wins over config.toml`)
       setSetting(env, 'home', tildePath(env, home.root))
     }
+    if (mascotOn(env, process.stdout) && (process.stdout.columns ?? 0) >= 84)
+      return welcome(tildePath(env, home.root))
     say(`Home in ${tildePath(env, home.root)}`)
     say(`Next: underlay login, then underlay ls, then underlay add <authority>/<org>/<name>`)
     say(`Shared scripts: underlay sources add <folder>`)
   })
+
+/** What underlay init says in a terminal: the woodpecker, what was made, and what to do next. */
+function welcome(root: string) {
+  const b = (t: string) => `\x1b[1m${t}\x1b[0m`
+  const d = (t: string) => `\x1b[2m${t}\x1b[0m`
+  const text = [
+    '',
+    `${b('Underlay')} ${d(FULL_VERSION)}`,
+    `Your home is ${root}`,
+    '',
+    `  collections/  ${d('one folder per collection, with its schemas')}`,
+    `  scripts/      ${d('your own scripts')}`,
+    `  inputs/       ${d('files scripts read')}`,
+    `  AGENTS.md     ${d('how this folder works, for agents')}`,
+    '',
+    d('Next'),
+    `  underlay login`,
+    `  underlay ls, then underlay add <authority>/<org>/<name>`,
+    `  underlay sources add <folder>   ${d('shared scripts')}`,
+    `  underlay                        ${d('the terminal UI')}`,
+  ]
+  const bird = birdAnsi(BIRD.L, depthOf())
+  const w = BIRD.L[0].length
+  say()
+  for (let i = 0; i < Math.max(bird.length, text.length); i++) {
+    const line = bird[i] ?? ''
+    const pad = ' '.repeat(Math.max(0, w - visibleWidth(line)))
+    say(`${line}${pad}   ${text[i] ?? ''}`.trimEnd())
+  }
+  say()
+}
 
 const sources = program
   .command('sources')
@@ -520,18 +550,24 @@ program
     const metas = names.length
       ? names.map((n) => c.home.resolve(n))
       : c.home.collections().filter((m) => !m.isNew)
-    for (const meta of metas) {
-      const r = await pull(c, openColl(c, meta))
-      const parts = [
-        `${r.fetched} new versions`,
-        r.files ? `${r.files} files` : '',
-        r.schemas.length ? `schemas: ${r.schemas.join(', ')}` : '',
-      ]
-      say(`${keyOf(meta)}: ${parts.filter(Boolean).join(', ')}`)
-      for (const x of r.replayed)
-        say(
-          `  replayed ${x.from.commit.semver} (${x.from.commit.number}) → ${x.to.commit.semver} (${x.to.commit.number}), not pushed`,
-        )
+    const peck = pecker(env)
+    const tell = peck ? peck.log : say
+    try {
+      for (const meta of metas) {
+        const r = await pull(c, openColl(c, meta), undefined, peck?.file)
+        const parts = [
+          `${r.fetched} new versions`,
+          r.files ? `${r.files} files` : '',
+          r.schemas.length ? `schemas: ${r.schemas.join(', ')}` : '',
+        ]
+        tell(`${keyOf(meta)}: ${parts.filter(Boolean).join(', ')}`)
+        for (const x of r.replayed)
+          tell(
+            `  replayed ${x.from.commit.semver} (${x.from.commit.number}) → ${x.to.commit.semver} (${x.to.commit.number}), not pushed`,
+          )
+      }
+    } finally {
+      peck?.stop()
     }
   })
 
@@ -572,17 +608,24 @@ program
         )
       : o.yes || (await confirm(`Push ${versions} versions?`))
     if (!ok) return say('Not pushed')
-    for (const p of plans) {
-      try {
-        await push(c, p.coll)
-      } catch (err) {
-        if (err instanceof StaleError) {
-          say(err.message)
-          process.exitCode = 1
-          continue
+    // The woodpecker pecks beside a push that takes a while, in a terminal.
+    const peck = pecker(env)
+    const tell = peck ? peck.log : say
+    try {
+      for (const p of plans) {
+        try {
+          await push(c, p.coll, tell, peck?.file)
+        } catch (err) {
+          if (err instanceof StaleError) {
+            tell(err.message)
+            process.exitCode = 1
+            continue
+          }
+          throw err
         }
-        throw err
       }
+    } finally {
+      peck?.stop()
     }
   })
 
