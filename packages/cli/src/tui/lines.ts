@@ -84,6 +84,8 @@ export interface Pane {
   keys: Key[]
   /** A line kept at the bottom of the pane, under its scrolling lines. */
   footer?: Line[]
+  /** Scrolled with ↑↓ rather than kept on a selected row: text to read, not a list. */
+  scrolls?: boolean
 }
 
 /** Wrap plain text to a width, as lines. */

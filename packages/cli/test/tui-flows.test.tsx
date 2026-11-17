@@ -138,13 +138,68 @@ describe('the mouse', () => {
   })
 })
 
+describe('inside a collection', () => {
+  it('keeps up and down in the pane, opens a record, and saves a file', async () => {
+    const w = await world()
+    const Paper = {
+      type: 'object',
+      properties: { name: { type: 'string' }, pdf: { type: 'object', required: ['$file'] } },
+    }
+    for (const name of ['aaa', 'zzz']) {
+      const meta = newCollection(w.ctx, `test/org/${name}`)
+      w.home.writeSchemas(meta, { Paper })
+    }
+    const meta = w.home.collection({ authority: 'test', org: 'org', name: 'aaa' })
+    const c = openColl(w.ctx, meta)
+    const pdf = join(w.home.root, '..', 'paper.pdf')
+    writeFileSync(pdf, 'a small pdf')
+    const { storeAssets } = await import('../src/core/assets.js')
+    const [file] = await storeAssets(c, [pdf])
+    await saveVersion(c, {
+      rows: [
+        v3.rowFromRecord('p1', 'Paper', { name: 'One', pdf: { $file: `sha256:${file!.hash}` } }),
+        v3.rowFromRecord('p2', 'Paper', { name: 'Two' }),
+      ],
+      mode: 'set',
+      schemas: { Paper },
+      message: 'two',
+      now: new Date(),
+      assets: [file!],
+    })
+    const ui = render(<App ctx={w.ctx} />)
+    const d = drive(ui)
+    await d.until('NOT PUSHED')
+    // The pane has the keys: down scrolls it, and the sidebar stays on aaa.
+    await d.press(K.tab, K.down, K.down)
+    expect(d.frame()).toMatch(/aaa ─/)
+    // Records: a cursor; enter opens the record whole, esc goes back to the list.
+    await d.press(K.right)
+    await d.until(/▌ Paper\s+p1/)
+    await d.press(K.down)
+    await d.until(/▌ Paper\s+p2/)
+    await d.press(K.up, K.enter)
+    let f = await d.until('"$file"')
+    expect(f).toContain('"name": "One"')
+    await d.press(K.esc)
+    await d.until(/▌ Paper\s+p1/)
+    expect(d.frame()).toMatch(/aaa ─/)
+    // Files: the file, the record that points to it, and w saves a copy.
+    await d.press(K.right, K.right)
+    f = await d.until('application/pdf')
+    expect(f).toMatch(/▌ ✓ [0-9a-f]{12}\s+application\/pdf\s+11 B\s+Paper p1/)
+    await d.press('w')
+    await d.until(/Saved .*paper-p1-[0-9a-f]{12}\.pdf/)
+    ui.unmount()
+  })
+})
+
 describe('a new collection', () => {
   it('checks the name as you type, makes it here, and says how to fill it', async () => {
     const w = await server()
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
-    await d.press('n')
+    await d.press('+')
     await d.until('New collection')
     // The org comes from the server's list once it is read.
     await d.until(/org\s+org/)
@@ -152,7 +207,7 @@ describe('a new collection', () => {
     await d.until('keeps "members" for itself; choose another name')
     for (let i = 0; i < 7; i++) await d.press(K.backspace)
     for (const ch of 'lib') await d.press(ch)
-    await d.until('already has org/lib: + adds it instead')
+    await d.until('already has org/lib: add it from Servers (s) instead')
     for (const ch of '-notes') await d.press(ch)
     await d.until('Makes test/org/lib-notes here')
     await d.press(K.enter)
@@ -230,7 +285,8 @@ describe('adding collections from a remote', () => {
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
-    await d.press('+')
+    // Servers starts on one you're signed in to; enter lists what it has to add.
+    await d.press('s', K.enter)
     await d.until(/▸ org/)
     await d.press(K.right)
     let f = await d.until('lib')
@@ -256,7 +312,8 @@ describe('adding collections from a remote', () => {
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
-    await d.press('+')
+    // Servers starts on one you're signed in to; enter lists what it has to add.
+    await d.press('s', K.enter)
     await d.until(/▸ org/)
     await d.press(K.right)
     await cursorTo(d, 'a-collection')
@@ -281,7 +338,8 @@ describe('adding collections from a remote', () => {
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
-    await d.press('+')
+    // Servers starts on one you're signed in to; enter lists what it has to add.
+    await d.press('s', K.enter)
     await d.until(/▸ org/)
     await d.press(K.right)
     const f = await d.until('a-collection-with-a-real')
@@ -500,7 +558,7 @@ describe('everyday flows in the terminal UI', () => {
     const ui = render(<App ctx={w.ctx} />)
     const d = drive(ui)
     await d.until('Servers')
-    await d.press('+')
+    await d.press('s', K.enter)
     await d.until('Your orgs')
     await d.press(K.tab)
     let f = await d.until('org/open-data')

@@ -165,8 +165,7 @@ export function sidebar(
       )
     }
   }
-  if (snap.collections.length === 0)
-    cols.push(L([S('Nothing here yet: + adds from a remote', C.mu)]))
+  if (snap.collections.length === 0) cols.push(L([S('Nothing here yet: + starts one', C.mu)]))
 
   const scripts: Line[] = []
   const sw = Math.max(8, inner - 4 - 6)
@@ -237,6 +236,11 @@ export interface CollectionExtra {
   behind: number
   /** The selected version in the Versions tab, newest first. */
   vCursor?: number
+  /** The selected record in Records, and whether it is open. */
+  rCursor?: number
+  recordOpen?: boolean
+  /** The selected file in Files. */
+  fCursor?: number
   /** Whether handoff.send is set, so A sends the prompt. */
   handoff?: boolean
 }
@@ -294,6 +298,8 @@ export function collectionPane(
   )
   const unpushed = d.versions.filter((v) => !v.pushed)
   if (tab === 'Overview') {
+    pane.scrolls = true
+    pane.keys = [{ k: '↑↓', l: 'scroll' }, ...pane.keys]
     if (d.readme) lines.push(...wrap(d.readme, width - 2), blank())
     capsAt = lines.length
     lines.push(head('HERE'))
@@ -411,19 +417,52 @@ export function collectionPane(
     )
     lines.push(L([S(`    its records and files are in ${x.storeRoot} (the store)`, C.mu)]))
   } else if (tab === 'Records') {
-    if (!x.records) lines.push(L([S('Loading…', C.mu)]))
-    else if (x.records.length === 0) lines.push(L([S('No records', C.mu)]))
-    for (const r of x.records ?? [])
-      lines.push(
-        L([
-          S(P(r.type, 12), C.mu),
-          S(P(r.id.slice(0, 24), 25)),
-          S(r.data.slice(0, Math.max(10, width - 40)), C.mu),
-        ]),
-      )
-    acts.push({ k: 'n', l: 'next page' })
-    pane.keys = [{ k: '↑↓', l: 'scroll' }, ...pane.keys]
+    const rs = x.records ?? []
+    const at = Math.min(x.rCursor ?? 0, Math.max(0, rs.length - 1))
+    const open = x.recordOpen ? rs[at] : undefined
+    if (open) {
+      // One record, whole: each field on its own line, the files it points to marked.
+      let data: unknown = open.data
+      try {
+        data = JSON.parse(open.data)
+      } catch {
+        // Withheld, or not JSON: shown as it is.
+      }
+      lines.push(L([S(open.type, C.mu), S('  '), S(open.id, C.wh, true)]), blank())
+      for (const t of JSON.stringify(data, null, 2).split('\n'))
+        lines.push(L([S('  ' + t, /"\$file"/.test(t) ? C.bl : C.fg)]))
+      pane.scrolls = true
+      pane.keys = [
+        { k: '↑↓', l: 'scroll' },
+        { k: 'esc', l: 'back to the list' },
+      ]
+    } else {
+      if (!x.records) lines.push(L([S('Loading…', C.mu)]))
+      else if (rs.length === 0) lines.push(L([S('No records', C.mu)]))
+      rs.forEach((r, i) => {
+        const on = i === at
+        lines.push(
+          withAct(
+            `record:${i}`,
+            L(
+              [
+                S(on ? '▌ ' : '  ', C.bl),
+                S(P(r.type, 12), C.mu),
+                S(P(r.id.slice(0, 24), 25), on ? C.wh : C.fg, on),
+                S(r.data.slice(0, Math.max(10, width - 42)), C.mu),
+              ],
+              on ? C.sel : undefined,
+            ),
+          ),
+        )
+      })
+      if (rs.length) acts.push({ k: 'enter', l: 'open the record' })
+      acts.push({ k: 'n', l: 'next page' })
+      pane.keys = [{ k: '↑↓', l: 'record' }, ...pane.keys]
+    }
   } else if (tab === 'Schemas') {
+    pane.scrolls = true
+    pane.keys = [{ k: '↑↓', l: 'scroll' }, ...pane.keys]
     for (const [t, s] of Object.entries(d.schemas)) {
       const props = (s as { properties?: Record<string, { type?: unknown }> }).properties ?? {}
       const req = new Set((s as { required?: string[] }).required ?? [])
@@ -468,16 +507,28 @@ export function collectionPane(
         ]),
         blank(),
       )
-      for (const f of a.slice(0, 200))
+      const at = Math.min(x.fCursor ?? 0, a.length - 1)
+      a.slice(0, 500).forEach((f, i) => {
+        const on = i === at
         lines.push(
-          L([
-            S(f.here ? '  ✓ ' : '  · ', f.here ? C.gr : C.mu),
-            S(P(f.hash.slice(0, 12), 14), C.mu),
-            S(P(f.mediaType ?? 'unknown type', 24)),
-            S(R(bytes(f.size), 9), C.mu),
-            S(f.pointedBy ? `  ${f.pointedBy}` : '', C.mu),
-          ]),
+          withAct(
+            `file:${i}`,
+            L(
+              [
+                S(on ? '▌' : ' ', C.bl),
+                S(f.here ? ' ✓ ' : ' · ', f.here ? C.gr : C.mu),
+                S(P(f.hash.slice(0, 12), 14), on ? C.wh : C.mu, on),
+                S(P(f.mediaType ?? 'unknown type', 24)),
+                S(R(bytes(f.size), 9), C.mu),
+                S(f.pointedBy ? `  ${f.pointedBy}` : '', C.mu),
+              ],
+              on ? C.sel : undefined,
+            ),
+          ),
         )
+      })
+      acts.push({ k: 'enter', l: 'open it' }, { k: 'w', l: 'save a copy to Downloads' })
+      pane.keys = [{ k: '↑↓', l: 'file' }, ...pane.keys]
     }
     lines.push(
       blank(),

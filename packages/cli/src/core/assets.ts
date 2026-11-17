@@ -230,3 +230,27 @@ export function runFiles(
   walk(dir)
   return out
 }
+
+/** An extension for a media type, for opening or saving a file named only by its SHA-256. */
+export const extOf = (mediaType: string | null) =>
+  Object.entries(MEDIA).find(([, m]) => m === mediaType)?.[0] ?? ''
+
+/**
+ * A file's bytes: from here when it is kept, else fetched from the authority (and not kept:
+ * how much is kept is the collection's level, which this doesn't change).
+ */
+export async function assetBytes(
+  c: Coll,
+  hash: string,
+): Promise<{ bytes: Uint8Array; fetched: boolean }> {
+  const obj = await c.store.fs.get(assetKey(hash))
+  if (obj) return { bytes: await obj.bytes(), fetched: false }
+  if (c.meta.isNew) throw new CliError(`File ${hash.slice(0, 12)} is not here`)
+  const remote = c.remote()
+  const url = (await remote.assetUrls(c.meta.org, c.meta.name, [hash])).get(hash)
+  if (!url) throw new CliError(`${c.meta.authority} has no file ${hash.slice(0, 12)}`)
+  const bytes = await remote.fetchAsset(url)
+  if (sha256(bytes) !== hash)
+    throw new CliError(`File ${hash.slice(0, 12)} came back with other bytes`)
+  return { bytes, fetched: true }
+}

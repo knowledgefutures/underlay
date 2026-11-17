@@ -5,12 +5,14 @@
  * shows up as it happens. Runs start detached, so closing the UI never stops one.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, watch } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Box, type Key as InkKey, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { assetBytes, type AssetRow, extOf } from '../core/assets.js'
 import {
   addCollection,
   KEEP_LABEL,
@@ -32,7 +34,7 @@ import {
   SETTINGS,
   type Keep,
 } from '../core/config.js'
-import { type Ctx, openColl } from '../core/context.js'
+import { type Coll, type Ctx, openColl } from '../core/context.js'
 import { type ColumnDraft, draftColumns, schemaFrom, TYPES } from '../core/draft.js'
 import { CliError, tildePath } from '../core/env.js'
 import { bytes, diffVersions } from '../core/format.js'
@@ -285,6 +287,17 @@ export function App({
   const [scroll, setScroll] = useState(0)
   // The version selected in the Versions tab, newest first.
   const [vCursor, setVCursor] = useState(0)
+  // The record and file selected in Records and Files, whether the record is open, and how far
+  // a pane of text (Overview, Schemas, a record) is scrolled; how far it can go is drawn below.
+  const [rCursor, setRCursor] = useState(0)
+  const [fCursor, setFCursor] = useState(0)
+  const [recordOpen, setRecordOpen] = useState(false)
+  const [pScroll, setPScroll] = useState(0)
+  const paneMax = useRef(0)
+  useEffect(() => {
+    setPScroll(0)
+    setRecordOpen(false)
+  }, [tab])
   // The sidebar row under the pointer, and where things were last drawn, for the mouse.
   const [hover, setHover] = useState<string | null>(null)
   const geo = useRef<Geo>({ mode: 'none' })
@@ -462,6 +475,10 @@ export function App({
     setRecords(undefined)
     setDiff(undefined)
     setVCursor(0)
+    setRCursor(0)
+    setFCursor(0)
+    setRecordOpen(false)
+    setPScroll(0)
     void loadCollection(ctx, collRow.meta).then(
       (d) => !gone && setDetail({ key: collRow.key, d }),
       (err) => !gone && setStatus((err as Error).message),
@@ -794,7 +811,12 @@ export function App({
   /** Give a sidebar card the keys, at its last selection; esc goes to Collections this way. */
   const goPane = (p: SidePane) => {
     const there = (side?.items ?? []).filter((i) => paneOf(itemId(i)) === p)
-    const to = there.find((i) => itemId(i) === lastSel.current[p]) ?? there[0]
+    // Servers start on one you're signed in to: a signed-out one's list is a dead end.
+    const signedIn = there.find((i) => i.kind === 'remote' && ctx.env.keys.get(i.name) !== null)
+    const to =
+      there.find((i) => itemId(i) === lastSel.current[p]) ??
+      (p === 'servers' ? signedIn : undefined) ??
+      there[0]
     if (!to && p === 'scripts') return setStatus('No scripts yet: put one in scripts/')
     setSel(to ? itemId(to) : '')
     setOverlay(null)
@@ -820,7 +842,7 @@ export function App({
       'orgs' in l &&
       l.orgs.some((o) => o.slug === f.org && o.collections.some((c) => c.slug === f.name))
     )
-      return `${f.server} already has ${f.org}/${f.name}: + adds it instead`
+      return `${f.server} already has ${f.org}/${f.name}: add it from Servers (s) instead`
     if (f.type !== null && !/^[A-Za-z][A-Za-z0-9_]*$/.test(f.type))
       return 'A type is letters, numbers, and underscores, starting with a letter'
     return null
@@ -860,6 +882,44 @@ export function App({
     setFocus('main')
     void refreshRemotes()
   }
+
+  /** Move within the collection pane: the selected version, record or file, or the scroll. */
+  const moveInPane = (delta: number) => {
+    const to = (n: number, max: number) => Math.max(0, Math.min(Math.max(0, max), n))
+    if (!collRow) return
+    const d = detail?.key === collRow.key ? detail.d : null
+    if (tab === 'Versions') return setVCursor((i) => to(i + delta, (d?.versions.length ?? 1) - 1))
+    if (tab === 'Records' && !recordOpen)
+      return setRCursor((i) => to(i + delta, (records?.length ?? 1) - 1))
+    if (tab === 'Files') return setFCursor((i) => to(i + delta, (d?.assets?.length ?? 1) - 1))
+    setPScroll((x) => to(x + delta, paneMax.current))
+  }
+
+  /** A file, opened in the app the system gives its type; fetched for this if it isn't here. */
+  const openAsset = (c: Coll, f: AssetRow) =>
+    attempt(`Opening ${f.hash.slice(0, 12)}`, async () => {
+      const { bytes: b, fetched } = await assetBytes(c, f.hash)
+      const dir = join(tmpdir(), 'underlay-files')
+      mkdirSync(dir, { recursive: true })
+      const path = join(dir, `${f.hash.slice(0, 12)}${extOf(f.mediaType)}`)
+      writeFileSync(path, b)
+      openInBrowser(path)
+      return `Opened ${f.hash.slice(0, 12)} (${bytes(f.size)})${fetched ? `: fetched for this, not kept here (k → everything keeps files)` : ''}`
+    })
+
+  /** A copy of a file in Downloads, named for the record that points to it where there is one. */
+  const saveAsset = (c: Coll, f: AssetRow & { pointedBy?: string }) =>
+    attempt(`Saving ${f.hash.slice(0, 12)}`, async () => {
+      const { bytes: b } = await assetBytes(c, f.hash)
+      const downloads = join(ctx.env.home, 'Downloads')
+      const dir = existsSync(downloads) ? downloads : ctx.env.home
+      const stem = f.pointedBy
+        ? `${f.pointedBy.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${f.hash.slice(0, 12)}`
+        : f.hash.slice(0, 12)
+      const path = join(dir, `${stem}${extOf(f.mediaType)}`)
+      writeFileSync(path, b)
+      return `Saved ${tildePath(ctx.env, path)}`
+    })
 
   /** Which section of the help screen is where you are. */
   const hereSection = (): Section =>
@@ -1524,19 +1584,8 @@ export function App({
     // n: a new collection, from the Collections card (in a collection's Records tab, n pages).
     if (input === 'n' && !overlay && card === 'collections' && (focus === 'side' || !collRow))
       return openNew()
-    if (input === '+') {
-      // The selected remote if you are signed in there; else your default, or the first
-      // server you are signed in to. A signed-out remote's list is a dead end.
-      const signedIn = (n: string) => ctx.env.keys.get(n) !== null
-      const remotes = snap?.remotes.map((r) => r.name) ?? []
-      const target =
-        item?.kind === 'remote' && signedIn(item.name)
-          ? item.name
-          : signedIn(ctx.settings.defaultRemote)
-            ? ctx.settings.defaultRemote
-            : (remotes.find(signedIn) ?? ctx.settings.defaultRemote)
-      return void openPick(target)
-    }
+    // + starts a new collection; adding one from a server is enter on the server (s).
+    if (input === '+') return openNew()
     if (input === 'h') return (setRunsCursor(0), setOverlay('runs'), setFocus('main'))
     if (input === 'f')
       return setPrompt({
@@ -1544,15 +1593,20 @@ export function App({
         value: '',
         submit: (v) => openFile(v),
       })
+    if (key.escape && recordOpen && focus === 'main') return setRecordOpen(false)
     if (key.escape) return goPane('collections')
     if (key.tab) return setFocus((f) => (f === 'side' ? 'main' : 'side'))
 
-    // In the Versions tab, with the pane's keys, up and down choose a version.
-    if (focus === 'main' && collRow && tab === 'Versions' && (key.upArrow || key.downArrow)) {
-      const n = detail?.key === collRow.key ? detail.d.versions.length : 0
-      return setVCursor((i) =>
-        Math.min(Math.max(0, n - 1), Math.max(0, i + (key.upArrow ? -1 : 1))),
-      )
+    // With the collection pane's keys, up and down (and page up and down) stay in the pane.
+    if (
+      focus === 'main' &&
+      collRow &&
+      !overlay &&
+      (key.upArrow || key.downArrow || key.pageUp || key.pageDown)
+    ) {
+      const page = Math.max(1, rows - 10)
+      moveInPane(key.upArrow ? -1 : key.downArrow ? 1 : key.pageUp ? -page : page)
+      return
     }
     // Up and down move through the card that has the keys, wherever the keys are.
     if (key.upArrow || key.downArrow) {
@@ -1613,6 +1667,11 @@ export function App({
     if (collRow) {
       const c = openColl(ctx, collRow.meta)
       if (key.return && focus === 'side') return setFocus('main')
+      if (key.return && tab === 'Records' && !recordOpen && records?.length)
+        return (setRecordOpen(true), setPScroll(0))
+      const fileRow = tab === 'Files' ? detail?.d.assets?.[fCursor] : undefined
+      if (fileRow && key.return) return void openAsset(c, fileRow)
+      if (fileRow && input === 'w') return void saveAsset(c, fileRow)
       if (focus === 'main' && (key.leftArrow || key.rightArrow)) {
         const i = TABS.indexOf(tab)
         return setTab(TABS[(i + (key.rightArrow ? 1 : TABS.length - 1)) % TABS.length]!)
@@ -1740,7 +1799,7 @@ export function App({
               goPane('collections')
               return m.isNew
                 ? `Removed ${name} from this machine`
-                : `Removed ${name} from this machine; + adds it again from ${m.authority}`
+                : `Removed ${name} from this machine; Servers (s) adds it again from ${m.authority}`
             })
           },
         })
@@ -1805,9 +1864,9 @@ export function App({
           const at = items.findIndex((i) => itemId(i) === sel)
           const next = items[Math.max(0, Math.min(items.length - 1, at + (up ? -1 : 1)))]
           if (next && !overlay) setSel(itemId(next))
-        } else if (!inSide && collRow && tab === 'Versions' && !overlay) {
-          const n = detail?.key === collRow.key ? detail.d.versions.length : 0
-          setVCursor((i) => Math.max(0, Math.min(n - 1, i + (up ? -1 : 1))))
+        } else if (!inSide && collRow && !overlay) {
+          const text = tab === 'Overview' || tab === 'Schemas' || recordOpen
+          moveInPane((up ? -1 : 1) * (text ? 3 : 1))
         } else if (!inSide && shownRun)
           setScroll((x) => (up ? Math.min(runLog.lines.length, x + 3) : Math.max(0, x - 3)))
         continue
@@ -1832,6 +1891,14 @@ export function App({
       if (!l) continue
       if (l.act?.startsWith('version:')) {
         setVCursor(Number(l.act.slice('version:'.length)))
+        continue
+      }
+      if (l.act?.startsWith('record:')) {
+        setRCursor(Number(l.act.slice('record:'.length)))
+        continue
+      }
+      if (l.act?.startsWith('file:')) {
+        setFCursor(Number(l.act.slice('file:'.length)))
         continue
       }
       let x = g.pane.left + 2
@@ -1883,6 +1950,9 @@ export function App({
           behind: behind[collRow.key] ?? 0,
           handoff: !!ctx.settings.handoffSend,
           vCursor,
+          rCursor,
+          recordOpen,
+          fCursor,
         },
         inner,
       )
@@ -1905,7 +1975,7 @@ export function App({
     }
     return messagePane(
       'Underlay',
-      'Nothing here yet. + adds collections from a remote; f adds a file; scripts go in your home’s scripts/ or a script folder (underlay sources add).',
+      'Nothing here yet. + starts a new collection; Servers (s), then enter on one, adds collections from it; f adds a file. Scripts go in your home’s scripts/ or a script folder (underlay sources add).',
       inner,
     )
   })()
@@ -1926,6 +1996,11 @@ export function App({
     hover ? ls.map((l) => (l.item === hover && l.bg !== C.sel ? { ...l, bg: C.hover } : l)) : ls
   // Every line; the window below keeps the selected one in view, so a long pane scrolls to it.
   const paneLines = pane.lines
+  // A pane of text scrolls by pScroll; a list keeps its selected row in view.
+  paneMax.current = pane.scrolls ? Math.max(0, paneLines.length - paneRows) : 0
+  const paneStart = pane.scrolls
+    ? Math.min(pScroll, paneMax.current)
+    : windowStart(paneLines.length, paneRows, selLine(paneLines))
   geo.current = {
     mode: 'main',
     sideW,
@@ -1949,14 +2024,14 @@ export function App({
     pane: {
       left: sideW + 2,
       lines: paneLines,
-      start: windowStart(paneLines.length, paneRows, selLine(paneLines)),
+      start: paneStart,
     },
   }
   const globalKeys: Key[] = [
     { k: 'c', l: 'collections' },
     { k: 's', l: 'servers' },
     { k: 'r', l: 'scripts' },
-    { k: '+', l: 'add' },
+    { k: '+', l: 'new' },
     { k: 'P', l: 'push all' },
     { k: 'h', l: 'runs' },
     { k: 'f', l: 'file' },
@@ -2093,7 +2168,7 @@ export function App({
           <Frame
             title="Collections on this machine"
             keyHint="c"
-            {...(lit('collections') ? { meta: 'n new' } : {})}
+            {...(lit('collections') ? { meta: '+ new' } : {})}
             color={lit('collections') ? C.bl : C.mu}
             border={lit('collections') ? C.bl : C.dim}
             width={sideW}
@@ -2128,7 +2203,7 @@ export function App({
           height={bodyH}
         >
           <Box flexDirection="column" flexGrow={1}>
-            <Lines lines={windowed(paneLines, paneRows, selLine(paneLines))} width={mainW - 4} />
+            <Lines lines={paneLines.slice(paneStart, paneStart + paneRows)} width={mainW - 4} />
           </Box>
           {footer.length ? <Lines lines={footer} width={mainW - 4} /> : null}
         </Frame>

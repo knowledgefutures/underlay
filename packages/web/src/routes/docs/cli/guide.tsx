@@ -5,12 +5,15 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
 const KEYS: [string, string][] = [
   ['c', 'Collections on this machine: where you start, and where esc takes you back to'],
-  ['n', 'A new collection: server, org, name, and access; the first push creates it on the server'],
   ['s', 'Servers'],
   ['r', 'Scripts and views'],
   ['↑ ↓', 'Move through the card that has the keys'],
   ['tab', 'Move between that card and the main pane'],
   ['← →', 'Switch a collection’s tabs'],
+  [
+    '↑ ↓ (in the pane)',
+    'Scroll, or choose a version, record or file; enter opens a record or a file, w saves a file to Downloads',
+  ],
   ['R', 'Run the selected script, or one that writes the selected collection'],
   ['X, space, R', 'While a script runs: cancel, pause or resume, restart'],
   ['u', 'Undo the newest version not yet pushed, or a finished run’s versions'],
@@ -21,7 +24,7 @@ const KEYS: [string, string][] = [
   ],
   ['p, P', 'Push the selected collection; push every collection'],
   ['D', 'Remove the selected collection from this machine; it asks first'],
-  ['+', 'Add collections from a remote'],
+  ['+', 'A new collection (Servers, then enter on one, adds one from it)'],
   ['f', 'Add a file (or drop one on the terminal)'],
   ['h', 'Every run'],
   [',', 'Settings'],

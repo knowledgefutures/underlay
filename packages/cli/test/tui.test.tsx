@@ -89,8 +89,10 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
     ui.stdin.write('\u001B')
     await wait()
 
-    // A remote's list: your orgs, with what is here.
-    ui.stdin.write('+')
+    // A remote's list: your orgs, with what is here (Servers, then enter on one).
+    ui.stdin.write('s')
+    await wait()
+    ui.stdin.write('\r')
     f = await until(ui.lastFrame, 'Your orgs')
     f = await until(ui.lastFrame, /org.*1 here/)
     ui.stdin.write('\u001B')
