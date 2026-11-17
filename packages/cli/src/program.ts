@@ -277,8 +277,18 @@ program
     const r = new Remote(remote, url, key, env.fetch)
     const me = await r.me()
     env.keys.set(remote, key)
+    // A server not known yet is remembered, so remotes, ls and the terminal UI list it.
+    if (!s.remotes.some((r) => r.name === remote)) setSetting(env, `remotes.${remote}.url`, url)
     say(`Signed in to ${remote} as ${me.name} (${me.email}); key kept in the ${env.keys.kind}`)
     say(`Your orgs: ${me.orgs.map((x) => x.slug).join(', ') || 'none'}`)
+    // A default server you are not signed in to helps nobody: this one takes its place, so
+    // `underlay ls` and `org/name` mean the server you just signed in to.
+    if (remote !== s.defaultRemote && env.keys.get(s.defaultRemote) === null) {
+      setSetting(env, 'defaults.remote', remote)
+      say(
+        `Your default server is now ${remote} (underlay config set defaults.remote <server> to change it)`,
+      )
+    }
   })
 program
   .command('logout')
@@ -322,7 +332,9 @@ program
   })
 program
   .command('ls')
-  .description('A remote’s collections: your orgs’, or public ones')
+  .description(
+    'Your orgs’ collections on each server you are signed in to (or one server), or public ones',
+  )
   .argument('[remote]')
   .option('--public [search]', 'public collections from any org')
   .option('--json')
@@ -338,19 +350,39 @@ program
         )
       return
     }
-    const l = await listRemote(c, remote)
-    if (o.json) return json(l)
-    if (!l.signedIn)
-      throw new CliError(`Not signed in to ${remote}: underlay login ${remote} (or --public)`)
-    for (const org of l.orgs) {
-      const here = org.collections.filter((x) => x.here).length
-      say(`${org.slug}  ${org.name}  (${here} of ${org.collections.length} here)`)
-      for (const x of org.collections)
-        say(
-          `  ${x.here ? KEEP_MARK[x.here.keep] : '+'} ${x.slug.padEnd(32)} ${x.public ? 'public ' : 'private'} ${count(x.recordCount).padStart(12)} ${bytes(x.totalBytes).padStart(8)}  ${x.latestVersion ?? ''}`,
-        )
+    // A server named: that one. None: every server you are signed in to.
+    const servers = name
+      ? [name]
+      : c.settings.remotes.map((r) => r.name).filter((r) => env.keys.get(r) !== null)
+    if (servers.length === 0)
+      throw new CliError(
+        'Not signed in to any server: underlay login <server> (for example underlay.org), or underlay ls --public',
+      )
+    const listings = []
+    for (const server of servers) {
+      const l = await listRemote(c, server)
+      if (!l.signedIn)
+        throw new CliError(`Not signed in to ${server}: underlay login ${server} (or --public)`)
+      listings.push(l)
     }
-    say(`\n■ all here  ◧ some  □ metadata only  + not here: underlay add ${remote}/<org>/<name>`)
+    if (o.json) return json(name ? listings[0] : listings)
+    for (const l of listings) {
+      if (listings.length > 1) say(`${l.remote}${l.user ? `  ${l.user.name}` : ''}`)
+      const pad = listings.length > 1 ? '  ' : ''
+      for (const org of l.orgs) {
+        const here = org.collections.filter((x) => x.here).length
+        say(`${pad}${org.slug}  ${org.name}  (${here} of ${org.collections.length} here)`)
+        for (const x of org.collections)
+          say(
+            `${pad}  ${x.here ? KEEP_MARK[x.here.keep] : '+'} ${x.slug.padEnd(32)} ${x.public ? 'public ' : 'private'} ${count(x.recordCount).padStart(12)} ${bytes(x.totalBytes).padStart(8)}  ${x.latestVersion ?? ''}`,
+          )
+      }
+      if (listings.length > 1) say('')
+    }
+    const example = listings.length === 1 ? listings[0]!.remote : '<server>'
+    say(
+      `${listings.length > 1 ? '' : '\n'}■ all here  ◧ some  □ metadata only  + not here: underlay add ${example}/<org>/<name>`,
+    )
   })
 
 // --- Collections ---
