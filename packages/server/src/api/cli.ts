@@ -67,7 +67,7 @@ say "  underlay login ${hostOf(origin)}"
 say "  underlay init ~/Underlay && cd ~/Underlay"
 say "  underlay"
 say ""
-say "More: $ORIGIN/cli"
+say "Docs: $ORIGIN/docs/cli"
 `
 }
 

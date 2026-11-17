@@ -213,10 +213,17 @@ export default function DocsApiSyncAndIntegrations() {
 
       <h2 id="tree-sync">Tree sync</h2>
       <p>
-        Reading a collection&rsquo;s log and fetching versions as packs, for mirrors and clients
-        that keep a full copy, is not available yet: <code>GET …/:owner/:slug/log</code> and{' '}
-        <code>GET …/:owner/:slug/versions/:n/pack</code> answer <code>501</code> with{' '}
-        <code>{'"code": "not_on_v3"'}</code>. To copy a version, use the export below, or{' '}
+        A mirror or client that keeps a copy follows a collection by its commits (
+        <code>GET …/:owner/:slug/commits?after=&lt;n&gt;</code>, each with its receipt), reads its
+        current layout (<code>GET …/:owner/:slug/layout</code>), and fetches the files a version
+        names (<code>GET …/:owner/:slug/record-files/:id</code>). These are the protocol&rsquo;s
+        routes:{' '}
+        <Link to="/docs/protocol/push-and-pull#pull" className="text-link underline">
+          Push and pull
+        </Link>
+        . <code>GET …/:owner/:slug/log</code> answers as the commits route for a v3 collection;
+        packs are v2&rsquo;s and answer <code>409</code>. To copy a version without following its
+        log, use the export below, or{' '}
         <Link
           to="/docs/api/versions#get-api-collections-owner-slug-versions-n-records-ndjson"
           className="text-link underline"

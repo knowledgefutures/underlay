@@ -8,7 +8,7 @@ build plan: `local-tool-build.md` beside it.
 build). It downloads the bundled CLI (one file, Node.js 22.6 or later) from the site it is served
 by, checks its SHA-256, and puts `underlay` in `~/.local/bin`. The site serves it because the web
 build copies it there (`packages/web/scripts/cli-assets.ts`); the script is
-`packages/server/src/api/cli.ts`; the page is `/cli`. Not on npm: the name `@underlay/cli`
+`packages/server/src/api/cli.ts`; the docs are `/docs/cli` (`packages/web/src/routes/docs/cli/`). Not on npm: the name `@underlay/cli`
 belongs to an unrelated 2023 package.
 
 From source:

@@ -57,6 +57,18 @@ const openMembers: [string, string][] = [
   ['strip_unknown_fields', 'Boolean; see Records and deletes.'],
 ]
 
+const uploadRoutes = `POST <collection>/uploads                         open an upload {message?, base?}
+POST <collection>/uploads/<id>/files              {id, size} → a presigned PUT, or parts
+POST <collection>/uploads/<id>/files/<fid>/complete   {upload_id, parts}
+POST <collection>/uploads/<id>/commit             {files, commit: "<the commit's JSON text>"}
+GET  <collection>/uploads/<id>                    status, until committed or failed`
+
+const pullRoutes = `GET <collection>/commits?after=<n>&limit=<k>   {collection: {id, authority}, head, more,
+                                               commits: [{number, id, commit, receipt}]}
+GET <collection>/commits/<n>                   one commit and its receipt
+GET <collection>/layout                        {layout}: the current layout file, or null
+GET <collection>/record-files/<file id>        a sorted-record-file's bytes (Range works)`
+
 export default function ProtocolPushPull() {
   return (
     <DocsLayout title="Push and pull" eyebrow="Protocol v3 · underlay.org today">
@@ -225,16 +237,72 @@ export default function ProtocolPushPull() {
         comparison against the new head.
       </p>
 
+      <h2 id="commits-built-by-their-author">Commits built by their author</h2>
+      <p>
+        A client can build a version itself: it writes the sorted-record-files with the reference
+        library, and builds the whole commit, naming the version it follows as <code>previous</code>
+        . The commit&apos;s number, semver and id are then settled before it is sent, and the server
+        stores it unchanged, so the version has the same id on the client and on every server that
+        later holds it. The <Link to="/docs/cli">Underlay CLI</Link> pushes this way.
+      </p>
+      <CodeBlock>{uploadRoutes}</CodeBlock>
+      <ul>
+        <li>
+          <strong>Authority.</strong> Each collection has one authority, the only server that
+          accepts its versions: <code>authority</code> in its description, or the server that holds
+          it. Any other server answers <code>409</code>.
+        </li>
+        <li>
+          <strong>Checks.</strong> The server checks the files as for any upload, that the commit is
+          the next number after its newest with that version as <code>previous</code>, that its base
+          is a version of the collection, that its semver is what its rows call for, and that its
+          time is within ten minutes of when it was sent. A signed commit is not accepted yet.
+        </li>
+        <li>
+          <strong>Someone pushed first.</strong> The upload fails with <code>409</code> and{' '}
+          <code>error.latest</code>, the server&apos;s newest version. The client builds its commits
+          again on that one (the same changes, new numbers and ids) and sends them again.
+        </li>
+        <li>
+          <strong>Receipts.</strong> For every commit it accepts, however it was built, the server
+          writes a signed receipt beside it, <code>commits/&lt;n&gt;.receipt.json</code>: the
+          version id, its number, when it was received, and the server&apos;s address. A reader that
+          checks signatures accepts a commit signed by a key it trusts, or one whose receipt is.
+        </li>
+      </ul>
+
       <h2 id="pull">Pull</h2>
       <p>
-        Copying a collection by its log and packs is not available yet: <code>GET …/log</code> and{' '}
-        <code>GET …/versions/&lt;v&gt;/pack</code> answer <code>501</code> with code{' '}
-        <code>not_on_v3</code>. To copy a version, read{' '}
-        <code>GET …/versions/&lt;v&gt;/records.ndjson.gz</code>. To follow changes, read the
-        manifest with <code>?since=&lt;version&gt;</code>, which lists the records added, updated,
-        and removed after that version, or the diff between two versions (
-        <Link to="/docs/api/versions">Versions API</Link>).
+        A client follows a collection by its commits, and fetches exactly the files a version names:
       </p>
+      <CodeBlock>{pullRoutes}</CodeBlock>
+      <ul>
+        <li>
+          Each commit comes as its exact text, so its id (the SHA-256 of those bytes) can be
+          checked, with its receipt. A page holds 100 commits unless <code>limit</code> asks for up
+          to 1,000; <code>more</code> says whether there are others.
+        </li>
+        <li>
+          To read a version, take the current layout&apos;s files and the files of the commits after
+          its <code>through</code>. <code>record-files</code> serves only those, and takes byte
+          ranges.
+        </li>
+        <li>
+          A file that holds a record the platform withholds answers <code>451</code>; read those
+          records through the records routes.
+        </li>
+        <li>
+          <code>GET …/log</code> answers as <code>GET …/commits</code> for a v3 collection. Packs (
+          <code>GET …/versions/&lt;v&gt;/pack</code>) are v2&apos;s, and answer <code>409</code> for
+          v3.
+        </li>
+        <li>
+          To copy a version without following its log, read{' '}
+          <code>GET …/versions/&lt;v&gt;/records.ndjson.gz</code>; to follow changes, the manifest
+          with <code>?since=&lt;version&gt;</code>, or the diff between two versions (
+          <Link to="/docs/api/versions">Versions API</Link>).
+        </li>
+      </ul>
 
       <h2 id="errors">Errors</h2>
       <p>

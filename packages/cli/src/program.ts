@@ -53,7 +53,13 @@ import { isLoud, pull, push, pushPlan, type PushPlan, remoteHead, StaleError } f
 import { cidOf, logOf, reword, saveVersion, squash, undo, viewOf } from './core/versions.js'
 import { keyOf, Workspace } from './core/workspace.js'
 
+/** Set by scripts/build.mjs to the commit the bundle was built from; absent when run from source. */
+declare const UNDERLAY_BUILD: string | undefined
+
 export const VERSION = '0.3.0'
+/** The version with its build: `0.3.0 (c52aea4)`. */
+export const FULL_VERSION =
+  typeof UNDERLAY_BUILD === 'string' ? `${VERSION} (${UNDERLAY_BUILD})` : VERSION
 const say = (line = '') => console.log(line)
 const env: Env = defaultEnv()
 const ctx = (): Ctx => openCtx(env, say)
@@ -71,7 +77,7 @@ export const program = new Command()
   .description(
     'The Underlay CLI: collections on your machine, scripts that make versions, and push.\nPlain `underlay` in a terminal opens the terminal UI.',
   )
-  .version(VERSION)
+  .version(FULL_VERSION)
   .showHelpAfterError()
 
 // --- Workspace and config ---

@@ -1,5 +1,5 @@
 /**
- * What underlay.org/cli shows of the CLI, made from the CLI itself at every web build
+ * What the CLI docs (/docs/cli) show of the CLI, made from the CLI itself at every web build
  * (packages/web/scripts/cli-assets.ts), so the page never shows an older CLI than it serves:
  *
  *   screenshot-collection.svg, screenshot-run.svg, screenshot-push.svg

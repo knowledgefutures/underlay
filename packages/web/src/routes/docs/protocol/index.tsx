@@ -145,16 +145,7 @@ export default function ProtocolOverview() {
 
       <h2 id="not-available-yet">Not available yet</h2>
       <ul>
-        <li>
-          Copying a collection by its log and packs: <code>GET …/log</code> and{' '}
-          <code>GET …/versions/:v/pack</code> answer <code>501</code> with code{' '}
-          <code>not_on_v3</code>.
-        </li>
-        <li>
-          Uploads of sorted-record-files built by a client. Today the server builds the files from a
-          push session.
-        </li>
-        <li>A command-line client.</li>
+        <li>Signed changes and commits: a server accepts them unsigned, and signs a receipt.</li>
         <li>Content roots and inclusion proofs.</li>
       </ul>
 

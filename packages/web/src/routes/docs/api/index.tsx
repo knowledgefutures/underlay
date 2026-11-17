@@ -276,8 +276,8 @@ export default function DocsApi() {
           otherwise read; any other file is <code>404</code>)
         </li>
         <li>
-          <code>501</code>: Not available yet, with <code>{'"code": "not_on_v3"'}</code> (for
-          example the log and pack routes)
+          <code>501</code>: Not available yet, with <code>{'"code": "not_on_v3"'}</code>: a route
+          not built for v3 collections yet
         </li>
         <li>
           <code>503</code>: Briefly unavailable: storage is busy while cleanup runs, or a deep page

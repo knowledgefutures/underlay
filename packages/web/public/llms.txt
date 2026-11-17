@@ -6,6 +6,7 @@ HTTPS API. Built by Knowledge Futures (501c3): https://www.knowledgefutures.org
 
 Base URL: https://www.underlay.org/api
 Protocol specification: https://www.underlay.org/docs/protocol
+Command-line client (the Underlay CLI): https://www.underlay.org/docs/cli
 
 ---
 
@@ -569,13 +570,10 @@ multi-member support).
 ## Not Available Yet
 
 These answer on www.underlay.org, but do not work yet:
-- Packs and the signed log (GET .../versions/:n/pack, GET .../log): 501 {"error": "Not
-  available for v3 collections yet", "code": "not_on_v3"}.
 - Lookups by record or file hash across collections (POST /api/records/batch,
   GET /api/records/:hash/provenance, GET /api/records/:hash/first,
   GET /api/collections/files/:hash, and the page /records/:hash): they answer as for an unknown
   hash (404, or left out of a batch). Read records through a collection instead.
-- A published command-line client, and uploads of files a client builds itself.
 
 ---
 

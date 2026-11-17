@@ -10,7 +10,7 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --platform=node --format=esm --outfile=dist/cli.js --external:@aws-sdk/client-s3 --alias:react-devtools-core=./src/tui/no-devtools.ts --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\"",
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
