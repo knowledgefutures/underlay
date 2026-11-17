@@ -141,6 +141,63 @@ writeFileSync(dir + '/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\
     expect(again.saved).toMatchObject([{ collection: 'test/org/papers', semver: 'v1.0.0' }])
   })
 
+  it('stores the files a run wrote that its records point to, and refuses a missing one', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/papers')
+    const Paper = {
+      type: 'object',
+      properties: { title: { type: 'string' }, pdf: { type: 'object', required: ['$file'] } },
+      required: ['title'],
+    }
+    w.home.writeSchemas(meta, { Paper })
+    mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
+    const script = (missing: boolean) => `// underlay: writes test/org/papers
+import { createHash } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+const out = process.env.UNDERLAY_OUT
+mkdirSync(out + '/test/org', { recursive: true })
+mkdirSync(out + '/files/pdfs', { recursive: true })
+const sha = (b) => createHash('sha256').update(b).digest('hex')
+const a = Buffer.from('first paper'), b = Buffer.from('second paper')
+writeFileSync(out + '/files/pdfs/a.pdf', a)
+writeFileSync(out + '/files/b.pdf', b)
+writeFileSync(out + '/files/stray.txt', 'nothing points here')
+const ref = (x) => ({ $file: 'sha256:' + sha(x) })
+const rows = [
+  { id: 'p1', type: 'Paper', data: { title: 'One', pdf: ref(a) } },
+  { id: 'p2', type: 'Paper', data: { title: 'Two', pdf: ref(b) } },
+  { id: 'p3', type: 'Paper', data: { title: 'Three', pdf: ref(a) } },
+  ${missing ? "{ id: 'p77', type: 'Paper', data: { title: 'Gone', pdf: ref(Buffer.from('never written')) } }," : ''}
+]
+writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\\n') + '\\n')
+`
+    writeFileSync(join(w.home.root, 'scripts', 'papers.mjs'), script(false))
+    let said = ''
+    const r = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {
+      onOutput: (t) => (said += t),
+    })
+    expect(r.status).toBe('ok')
+    expect(r.saved).toMatchObject([
+      { collection: 'test/org/papers', added: 3, files: { added: 2, bytes: 23, here: 0 } },
+    ])
+    expect(said).toContain('1 file in files/ that no record points to was left out')
+    const c = openColl(w.ctx, meta)
+    const { listAssets } = await import('../src/core/assets.js')
+    expect((await listAssets(c)).map((a) => a.mediaType)).toEqual([
+      'application/pdf',
+      'application/pdf',
+    ])
+
+    // A record pointing to a file the run didn't write: nothing is saved, and it says which.
+    writeFileSync(join(w.home.root, 'scripts', 'papers.mjs'), script(true))
+    const bad = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {})
+    expect(bad.status).toBe('failed')
+    expect(bad.error).toMatch(
+      /^org\/papers: 1 record points to a file the run didn't write: Paper p77  pdf  sha256:[0-9a-f]{6}… Write it to \$UNDERLAY_OUT\/files\/, or leave the field out\.$/,
+    )
+    expect(bad.saved).toEqual([])
+  })
+
   it('matches a dropped file to a collection by its ids, imports it, holds rows without ids', async () => {
     const w = await setup()
     const c = openColl(w.ctx, w.meta)

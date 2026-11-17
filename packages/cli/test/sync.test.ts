@@ -215,7 +215,7 @@ describe('versions here, push and pull', () => {
       now: new Date(),
       assets: stored,
     })
-    expect(added.stats.added).toBe(1)
+    expect(added.stats.files).toBe(1)
     expect((await unpushedAssets(a)).map((x) => x.hash)).toEqual([stored[0]!.hash])
 
     // The push sends the bytes first; the authority then takes the $asset row.

@@ -31,7 +31,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
-import { openColl, storeAt, type Ctx } from './context.js'
+import { type AssetRow, assetKey, fileRefsIn, listAssets, runFiles } from './assets.js'
+import { type Coll, openColl, storeAt, type Ctx } from './context.js'
 import { draftColumns, schemaFrom } from './draft.js'
 import { CliError } from './env.js'
 import { type CollectionMeta, keyOf, parseRef } from './home.js'
@@ -49,6 +50,8 @@ export interface SavedVersion {
   added: number
   changed: number
   removed: number
+  /** Files its records point to: stored new from the run, and already here. */
+  files?: { added: number; bytes: number; here: number }
 }
 
 export interface RunRecord {
@@ -225,6 +228,57 @@ function outputsOf(out: string): string[] {
   }
   walk(out, 0)
   return found.sort()
+}
+
+/**
+ * The files a collection's output points to, as `$asset` rows for its version: from the run's
+ * files/, or already in the store. A record pointing to a file that is neither stops the save.
+ */
+async function filesFor(
+  c: Coll,
+  output: string,
+  written: Map<string, { path: string; size: number; mediaType: string | null }>,
+  used: Set<string>,
+): Promise<{ add: AssetRow[]; here: number }> {
+  const refs = new Map<string, { type: string; id: string; field: string }>()
+  for await (const r of fileRows(output)) {
+    if (r.kind !== 'r') continue
+    for (const f of fileRefsIn((JSON.parse(r.line) as { data: unknown }).data))
+      if (!refs.has(f.hash)) refs.set(f.hash, { type: r.type, id: r.id, field: f.field })
+  }
+  if (!refs.size) return { add: [], here: 0 }
+  const named = new Set((await listAssets(c)).map((a) => a.hash))
+  const add: AssetRow[] = []
+  const missing: { hash: string; type: string; id: string; field: string }[] = []
+  let here = 0
+  for (const [hash, at] of refs) {
+    const w = written.get(hash)
+    if (w) used.add(hash)
+    if (named.has(hash)) {
+      here++
+      continue
+    }
+    if (w) {
+      await c.store.fs.put(assetKey(hash), new Uint8Array(readFileSync(w.path)), { ifAbsent: true })
+      add.push({ hash, size: w.size, mediaType: w.mediaType })
+      continue
+    }
+    const stored = await c.store.fs.head(assetKey(hash))
+    if (stored) {
+      here++
+      add.push({ hash, size: stored.size, mediaType: null })
+      continue
+    }
+    missing.push({ hash, ...at })
+  }
+  if (missing.length) {
+    const m = missing[0]!
+    const name = c.key.split('/').slice(1).join('/')
+    throw new CliError(
+      `${name}: ${missing.length} record${missing.length === 1 ? ' points' : 's point'} to a file the run didn't write: ${m.type} ${m.id}  ${m.field}  sha256:${m.hash.slice(0, 6)}… Write it to $UNDERLAY_OUT/files/, or leave the field out.`,
+    )
+  }
+  return { add, here }
 }
 
 /** How many records an output file holds, and of which types. */
@@ -419,6 +473,9 @@ export async function runScript(
       record.status = cancelled ? 'cancelled' : 'failed'
       record.error = cancelled ? 'Cancelled' : `Exited with ${code ?? 'a signal'}`
     } else {
+      // The files it wrote, for the records that point to them.
+      const written = runFiles(join(out, 'files'))
+      const used = new Set<string>()
       // Each collection it wrote, compared with the head.
       for (const key of outputsOf(out)) {
         const ref = parseRef(key, ctx.settings.defaultRemote)
@@ -433,7 +490,9 @@ export async function runScript(
         }
         if (!writes.includes(key)) releases.push(lock(ctx, key, id))
         const c = openColl(ctx, meta)
+        const files = await filesFor(c, join(out, `${key}.ndjson`), written, used)
         const res = await saveVersion(c, {
+          assets: files.add,
           rows: fileRows(join(out, `${key}.ndjson`)),
           mode,
           ...(info.types ? { types: info.types } : {}),
@@ -455,8 +514,22 @@ export async function runScript(
           id: v.id,
           change: c.store.state(meta.id).versions[v.id]!.change,
           ...{ added: res.stats.added, changed: res.stats.changed, removed: res.stats.removed },
+          ...(files.add.length || files.here
+            ? {
+                files: {
+                  added: files.add.length,
+                  bytes: files.add.reduce((n, a) => n + a.size, 0),
+                  here: files.here,
+                },
+              }
+            : {}),
         })
       }
+      const unused = [...written.keys()].filter((h) => !used.has(h)).length
+      if (unused)
+        emit(
+          `underlay: ${unused} file${unused === 1 ? '' : 's'} in files/ that no record points to ${unused === 1 ? 'was' : 'were'} left out\n`,
+        )
       record.status = 'ok'
     }
   } catch (err) {

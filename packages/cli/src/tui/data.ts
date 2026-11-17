@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
-import { type AssetRow, assetsHere, listAssets } from '../core/assets.js'
+import { type AssetRow, assetsHere, fileRefsIn, listAssets } from '../core/assets.js'
 import {
   collectionStatus,
   type CollectionStatus,
@@ -121,7 +121,7 @@ export interface CollectionDetail {
   filesTotal: number
   /** The assets the newest version names, each with whether it is here; null when its record
    * files aren't (listing them would fetch). */
-  assets: (AssetRow & { here: boolean })[] | null
+  assets: (AssetRow & { here: boolean; pointedBy?: string })[] | null
   schemas: Record<string, unknown>
   versions: {
     number: number
@@ -166,7 +166,7 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
   let filesHere = 0
   let filesTotal = 0
   let schemas: Record<string, unknown> = ctx.home.schemas(meta)
-  let assets: (AssetRow & { here: boolean })[] | null = []
+  let assets: (AssetRow & { here: boolean; pointedBy?: string })[] | null = []
   if (versions.length > 0) {
     const view = await viewOf(c)
     filesTotal = view.files.length
@@ -181,7 +181,22 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
       schemas = { ...(await schemasAt(c.store.fs, view)), ...schemas }
       const listed = await listAssets(c)
       const here = new Set((await assetsHere(c, listed)).map((a) => a.hash))
-      assets = listed.map((a) => ({ ...a, here: here.has(a.hash) }))
+      // Which record points to each file, read from the records where there aren't too many.
+      const by = new Map<string, string>()
+      if (listed.length && records <= 100_000) {
+        const dec = new TextDecoder()
+        for await (const r of v3.exportAll(c.store.fs, view, { from: PAST_RESERVED })) {
+          if (!r.line) continue
+          for (const f of fileRefsIn((JSON.parse(dec.decode(r.line)) as { data: unknown }).data))
+            if (!by.has(f.hash)) by.set(f.hash, `${r.type} ${r.id}`)
+          if (by.size >= listed.length) break
+        }
+      }
+      assets = listed.map((a) => ({
+        ...a,
+        here: here.has(a.hash),
+        ...(by.has(a.hash) ? { pointedBy: by.get(a.hash)! } : {}),
+      }))
     } else assets = null
   }
   return { readme, counts, records, bytes, filesHere, filesTotal, assets, schemas, versions }

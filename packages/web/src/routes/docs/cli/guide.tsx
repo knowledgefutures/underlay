@@ -210,6 +210,21 @@ const records = [
 ]
 writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).join('\\n'))`}</CodeBlock>
 
+      <h3>Files</h3>
+      <p>
+        A script attaches a file (a PDF, an image) by writing it into{' '}
+        <code>$UNDERLAY_OUT/files/</code>, under any name and folder, and pointing to it from a
+        record with <code>{'{"$file": "sha256:<hex>"}'}</code>, the file&apos;s SHA-256 in lowercase
+        hex. After the run, each file is stored here once, named in the version, and sent before
+        that version on push. A field that holds a file has the schema{' '}
+        <code>{'{"type": "object", "required": ["$file"]}'}</code>. A record pointing to a file the
+        run didn&apos;t write, and that isn&apos;t here already, stops the save and names the
+        record.
+      </p>
+      <CodeBlock>{`const sha = createHash('sha256').update(pdf).digest('hex')
+writeFileSync(\`\${process.env.UNDERLAY_OUT}/files/\${sha}.pdf\`, pdf)
+record.data.pdf = { $file: \`sha256:\${sha}\` }`}</CodeBlock>
+
       <h2>What a script declares</h2>
       <table className="border-collapse">
         <tbody>

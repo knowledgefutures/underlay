@@ -58,6 +58,7 @@ import {
   readRun,
   runScript,
   saveFromRun,
+  type SavedVersion,
   signalRun,
   startDetached,
 } from './core/runs.js'
@@ -544,7 +545,7 @@ asset
     for (const a of stored) say(`${a.hash}  ${a.from}`)
     say(
       r.version
-        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.added} files added`
+        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.files} files added`
         : `${cl.key}: it names these already`,
     )
   })
@@ -665,6 +666,17 @@ program
     }
   })
 
+/** A saved version's files, for a run's summary: "  files 38 new (61.4 MB), 2 already here". */
+const filesNote = (s: SavedVersion) =>
+  s.files
+    ? `\n    files  ${[
+        s.files.added ? `${count(s.files.added)} new (${bytes(s.files.bytes)})` : '',
+        s.files.here ? `${count(s.files.here)} already here` : '',
+      ]
+        .filter(Boolean)
+        .join(', ')}`
+    : ''
+
 function describePlan(p: PushPlan) {
   const loud = isLoud(p)
   say(
@@ -756,7 +768,7 @@ program
       )
       for (const s of r.saved)
         say(
-          `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}`,
+          `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${filesNote(s)}`,
         )
       for (const u of r.unchanged) say(`  ${u}  no changes`)
       if (r.git)
@@ -1056,7 +1068,7 @@ program
     })
     for (const s of r.saved)
       say(
-        `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}`,
+        `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${filesNote(s)}`,
       )
     for (const u of r.unchanged) say(`  ${u}  no changes`)
     if (r.status !== 'ok') {

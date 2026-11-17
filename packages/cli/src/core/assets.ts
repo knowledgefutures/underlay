@@ -6,8 +6,8 @@
  * sent to that collection.
  */
 import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
-import { basename, extname } from 'node:path'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, extname, join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
@@ -186,5 +186,47 @@ export async function storeAssets(
       from: basename(p),
     })
   }
+  return out
+}
+
+/** A file's media type from its extension, where it is a common one. */
+export const mediaOf = (path: string) => MEDIA[extname(path).toLowerCase()] ?? null
+
+/**
+ * The files a record points to: any object in its data, at any depth, whose `$file` is
+ * `sha256:<64 lowercase hex>` (the protocol's file reference), with the field it sits under.
+ */
+const FILE_REF = /^sha256:([0-9a-f]{64})$/
+export function fileRefsIn(data: unknown, field = ''): { hash: string; field: string }[] {
+  const out: { hash: string; field: string }[] = []
+  const walk = (v: unknown, at: string) => {
+    if (v === null || typeof v !== 'object') return
+    if (Array.isArray(v)) return v.forEach((x) => walk(x, at))
+    const o = v as Record<string, unknown>
+    const m = typeof o.$file === 'string' ? FILE_REF.exec(o.$file) : null
+    if (m) return void out.push({ hash: m[1]!, field: at })
+    for (const k in o) walk(o[k], at ? `${at}.${k}` : k)
+  }
+  walk(data, field)
+  return out
+}
+
+/** The files a run wrote into `$UNDERLAY_OUT/files/` (any names, any folders), by SHA-256. */
+export function runFiles(
+  dir: string,
+): Map<string, { path: string; size: number; mediaType: string | null }> {
+  const out = new Map<string, { path: string; size: number; mediaType: string | null }>()
+  const walk = (d: string) => {
+    if (!existsSync(d)) return
+    for (const n of readdirSync(d)) {
+      const abs = join(d, n)
+      if (statSync(abs).isDirectory()) walk(abs)
+      else {
+        const bytes = readFileSync(abs)
+        out.set(sha256(bytes), { path: abs, size: bytes.byteLength, mediaType: mediaOf(abs) })
+      }
+    }
+  }
+  walk(dir)
   return out
 }

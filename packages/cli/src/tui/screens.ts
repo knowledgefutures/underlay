@@ -460,6 +460,7 @@ export function collectionPane(
             S(P(f.hash.slice(0, 12), 14), C.mu),
             S(P(f.mediaType ?? 'unknown type', 24)),
             S(R(bytes(f.size), 9), C.mu),
+            S(f.pointedBy ? `  ${f.pointedBy}` : '', C.mu),
           ]),
         )
     }
@@ -609,7 +610,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
     lines.push(
       L([S('  ' + P('COLLECTION', 32) + R('ADDED', 7) + R('CHANGED', 9) + R('REMOVED', 9), C.mu)]),
     )
-    for (const s of r.saved)
+    for (const s of r.saved) {
       lines.push(
         L([
           S('  ' + P(`${s.collection.split('/').slice(1).join('/')} ${s.semver}`, 32)),
@@ -618,6 +619,21 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
           S(R(`−${count(s.removed)}`, 9), s.removed ? C.rd : C.mu),
         ]),
       )
+      if (s.files)
+        lines.push(
+          L([
+            S('    files  ', C.mu),
+            S(
+              [
+                s.files.added ? `${count(s.files.added)} new (${bytes(s.files.bytes)})` : '',
+                s.files.here ? `${count(s.files.here)} already here` : '',
+              ]
+                .filter(Boolean)
+                .join(', '),
+            ),
+          ]),
+        )
+    }
     for (const u of r.unchanged)
       lines.push(
         L([S('  ' + P(u.split('/').slice(1).join('/'), 32)), S('no changes, nothing saved', C.mu)]),
