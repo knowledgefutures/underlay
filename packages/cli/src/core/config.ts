@@ -247,8 +247,8 @@ export const SETTINGS: SettingDef[] = [
     group: 'Handoff',
     path: ['handoff', 'send'],
     default: '(copy only)',
-    about: 'A command that takes a handoff prompt on stdin (C in the app)',
-    help: 'A command that takes a handoff prompt on stdin, such as hopper draft new --project <key> -. In the terminal UI, C sends the prompt to it and c copies the prompt.',
+    about: 'A command that takes a handoff prompt on stdin (A in the terminal UI)',
+    help: 'A command that takes a handoff prompt on stdin, such as hopper draft new --project <key> -. In the terminal UI, A sends the prompt to it and a copies the prompt.',
   },
   {
     key: 'serve.port',

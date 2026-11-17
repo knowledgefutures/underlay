@@ -247,9 +247,9 @@ export function collectionPane(
       { k: 'u', l: 'undo last change' },
       { k: 'k', l: 'keep all / some / none' },
       { k: 'l', l: 'pull' },
-      { k: 'r', l: 'run a script' },
+      { k: 'R', l: 'run a script' },
       { k: '←→', l: 'tabs' },
-      { k: 'c', l: 'prompt for an agent' },
+      { k: 'a', l: 'prompt for an agent' },
       { k: 'o', l: `open on ${m.authority}` },
       { k: '+', l: 'add from a remote' },
     ],
@@ -464,7 +464,7 @@ export function collectionPane(
       )
     pane.keys = [
       { k: 'u', l: 'undo newest' },
-      { k: 's', l: 'squash not pushed' },
+      { k: 'S', l: 'squash not pushed' },
       { k: 'e', l: 'reword newest' },
       ...pane.keys.slice(5),
     ]
@@ -510,7 +510,7 @@ export function runPane(
       { k: 'space', l: r.status === 'paused' ? 'resume' : 'pause' },
       { k: 'R', l: 'restart' },
       { k: '↑↓', l: 'scroll' },
-      { k: 'c', l: 'prompt for an agent' },
+      { k: 'a', l: 'prompt for an agent' },
       { k: 'esc', l: 'back, keeps running' },
     ],
   }
@@ -598,7 +598,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
       { k: 'u', l: 'undo this run' },
       { k: 'enter', l: 'full output' },
       { k: 'R', l: 'run again' },
-      { k: 'c', l: 'prompt for an agent' },
+      { k: 'a', l: 'prompt for an agent' },
       { k: 'esc', l: 'back' },
     ],
   }
@@ -638,7 +638,7 @@ export function scriptPane(s: ScriptRow, width: number): Pane {
     meta: s.kind,
     lines,
     keys: [
-      { k: 'r', l: 'run' },
+      { k: 'R', l: 'run' },
       { k: 'h', l: 'all runs' },
       { k: 'esc', l: 'back' },
     ],
@@ -910,7 +910,7 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
       { k: 'space', l: 'include / leave out' },
       { k: 'd', l: 'changes' },
       { k: 'e', l: 'edit a message' },
-      { k: 's', l: 'squash here first' },
+      { k: 'S', l: 'squash here first' },
       { k: 'esc', l: 'cancel' },
     ],
   }
@@ -1265,7 +1265,7 @@ export function filePane(v: FileView, width: number): Pane {
       { k: 'tab', l: 'next option' },
       { k: '←→', l: 'change' },
       { k: 'x', l: 'eject to a .ts to edit' },
-      { k: 'C', l: 'hand to an agent' },
+      { k: 'A', l: 'hand to an agent' },
       { k: 'esc', l: 'back' },
     ],
   }
@@ -1291,7 +1291,7 @@ export function viewPane(s: ScriptRow, served: { url: string } | null, width: nu
     ],
     keys: [
       { k: 'v', l: served ? 'open again' : 'open in a browser' },
-      ...(served ? [{ k: 's', l: 'stop' }] : []),
+      ...(served ? [{ k: 'x', l: 'stop' }] : []),
       { k: 'esc', l: 'back' },
     ],
   }

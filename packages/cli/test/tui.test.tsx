@@ -59,16 +59,16 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
 
     const ui = render(<App ctx={w.ctx} />)
     let f = await until(ui.lastFrame, 'NOT PUSHED')
-    expect(f).toContain('Remotes')
-    expect(f).toContain('On this machine')
+    expect(f).toContain('Servers (s)')
+    expect(f).toMatch(/Collections on.* \(c\)/)
     expect(f).toMatch(/roster\s+■ ↑1/)
     expect(f).toContain('Scripts and views')
     expect(f).toContain('NOT PUSHED')
     expect(f).toMatch(/v1\.1\.0/)
     expect(f).toContain('AUTHORITY')
 
-    // Down to the script: its finished run, saved as a new version.
-    ui.stdin.write('\u001B[B')
+    // r to the scripts: its finished run, saved as a new version.
+    ui.stdin.write('r')
     f = await until(ui.lastFrame, 'SAVED HERE AS NEW VERSIONS')
     expect(f).toContain('fetched 2 members')
     expect(f).toMatch(/roster v1\.1\.0\s+\+1/)
@@ -122,10 +122,17 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
     // ? shows every key, lit where you are; any other key goes back.
     ui.stdin.write('?')
     f = await until(ui.lastFrame, 'you are here')
-    expect(f).toMatch(/A SCRIPT\s+you are here/)
+    expect(f).toMatch(/A COLLECTION\s+you are here/)
     expect(f).toContain('any other key closes')
     ui.stdin.write('x')
     f = await until(ui.lastFrame, 'Scripts and views')
+
+    // s gives Servers the keys; esc comes back to the same collection.
+    ui.stdin.write('s')
+    f = await until(ui.lastFrame, /Signed (in|out)\./)
+    ui.stdin.write('\u001B')
+    f = await until(ui.lastFrame, 'AUTHORITY')
+    expect(f).toMatch(/roster/)
 
     // A file dropped on the terminal: its shape, what it matches, and the importer's options.
     const csv = join(w.home.root, '..', 'roster-2026.csv')

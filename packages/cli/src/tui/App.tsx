@@ -89,6 +89,19 @@ interface Prompt {
   submit: (v: string) => void | Promise<void>
 }
 
+/** The sidebar's three cards; the one that has the keys is the one its selection is in. */
+type SidePane = 'servers' | 'collections' | 'scripts'
+const paneOf = (id: string): SidePane =>
+  id.startsWith('r:')
+    ? 'servers'
+    : id.startsWith('s:') || id.startsWith('v:')
+      ? 'scripts'
+      : 'collections'
+
+/** The sidebar's width: room for "Collections on this machine (c)" once the terminal has it. */
+const sideWidth = (columns: number) =>
+  Math.min(40, Math.max(columns >= 110 ? 37 : 30, Math.floor(columns * 0.27)))
+
 const settingRows = (ctx: Ctx): SettingRow[] => {
   const rows: SettingRow[] = []
   for (const d of SETTINGS) {
@@ -191,6 +204,11 @@ export function App({
   const [remotes, setRemotes] = useState<Record<string, RemoteListing | { error: string }>>({})
   const [behind, setBehind] = useState<Record<string, number>>({})
   const [sel, setSel] = useState(initial?.sel ?? '')
+  // Each card's last selection, so c, s and r go back to it.
+  const lastSel = useRef<Record<SidePane, string>>({ servers: '', collections: '', scripts: '' })
+  useEffect(() => {
+    lastSel.current[paneOf(sel)] = sel
+  }, [sel])
   const [focus, setFocus] = useState<'side' | 'main'>('side')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [tab, setTab] = useState<Tab>('Overview')
@@ -348,28 +366,16 @@ export function App({
   }, [ctx, reload, refreshRemotes])
 
   const side = useMemo(
-    () =>
-      snap
-        ? sidebar(
-            snap,
-            remotes,
-            behind,
-            sel,
-            Math.min(40, Math.max(30, Math.floor(columns * 0.27))),
-          )
-        : null,
+    () => (snap ? sidebar(snap, remotes, behind, sel, sideWidth(columns)) : null),
     [snap, remotes, behind, sel, columns],
   )
   useEffect(() => {
-    if (side && !side.items.some((i) => itemId(i) === sel)) {
-      // A collection, else a remote you are signed in to: not a signed-out one.
-      const first =
-        side.items.find((i) => i.kind === 'coll') ??
-        side.items.find((i) => i.kind === 'remote' && ctx.env.keys.get(i.name) !== null) ??
-        side.items[0]
-      if (first) setSel(itemId(first))
-    }
-  }, [side, sel, ctx])
+    // A selection that is gone: the first in its card, or in Collections, where you start.
+    if (!side || side.items.some((i) => itemId(i) === sel)) return
+    const first = side.items.find((i) => paneOf(itemId(i)) === paneOf(sel))
+    const next = first ? itemId(first) : ''
+    if (next !== sel) setSel(next)
+  }, [side, sel])
 
   const item = side?.items.find((i) => itemId(i) === sel) ?? null
   const collRow =
@@ -674,6 +680,18 @@ export function App({
     { isActive: true },
   )
 
+  const card = paneOf(sel)
+  /** Give a sidebar card the keys, at its last selection; esc goes to Collections this way. */
+  const goPane = (p: SidePane) => {
+    const there = (side?.items ?? []).filter((i) => paneOf(itemId(i)) === p)
+    const to = there.find((i) => itemId(i) === lastSel.current[p]) ?? there[0]
+    if (!to && p === 'scripts') return setStatus('No scripts yet: put one in scripts/')
+    setSel(to ? itemId(to) : '')
+    setOverlay(null)
+    setFocus('side')
+    setScroll(0)
+  }
+
   /** Which section of the help screen is where you are. */
   const hereSection = (): Section =>
     overlay === 'settings'
@@ -730,10 +748,16 @@ export function App({
       (overlay === 'settings' && settings.editing !== null) ||
       (overlay === 'pick' && pick.searching)
     if (input === '?' && !typing) return setHelp({ from: hereSection(), scroll: null })
+    // c, s and r give a card the keys, from anywhere but the screens that take letters.
+    if (!typing && (overlay === null || overlay === 'runs' || typeof overlay === 'object')) {
+      if (input === 'c') return goPane('collections')
+      if (input === 's') return goPane('servers')
+      if (input === 'r') return goPane('scripts')
+    }
 
     // The push screen takes typing.
     if (overlay === 'push') {
-      if (key.escape) return (setOverlay(null), setFocus('side'))
+      if (key.escape) return goPane('collections')
       if (push_.busy) return
       const loud = push_.plans.some(
         (p) => push_.included.has(p.coll.key) && (p.access === 'public' || p.removed >= 1000),
@@ -776,7 +800,7 @@ export function App({
       const p = push_.plans[push_.cursor]
       if (input === 'd' && p)
         return (setOverlay(null), setSel(`c:${p.coll.key}`), setTab('Changes'))
-      if (input === 's' && p)
+      if (input === 'S' && p)
         return void attempt('Squashing', async () => {
           const s = await squash(p.coll, undefined, null, ctx.env.now())
           await openPush()
@@ -813,7 +837,7 @@ export function App({
         if (input) return setPick((v) => ({ ...v, search: v.search + input }))
         return
       }
-      if (key.escape) return (setOverlay(null), setFocus('side'))
+      if (key.escape) return goPane('collections')
       if (key.upArrow) return setPick((v) => ({ ...v, cursor: Math.max(0, v.cursor - 1) }))
       if (key.downArrow)
         return setPick((v) => ({ ...v, cursor: Math.min(rowsP.length - 1, v.cursor + 1) }))
@@ -892,7 +916,7 @@ export function App({
           return setSettings((x) => ({ ...x, editing: (x.editing ?? '') + input }))
         return
       }
-      if (key.escape) return (setOverlay(null), setFocus('side'))
+      if (key.escape) return goPane('collections')
       if (key.upArrow || input === 'k')
         return setSettings({ ...s, cursor: Math.max(0, s.cursor - 1) })
       if (key.downArrow || input === 'j')
@@ -984,7 +1008,7 @@ export function App({
     }
 
     if (overlay === 'file' && file) {
-      if (key.escape) return (setOverlay(null), setFocus('side'))
+      if (key.escape) return goPane('collections')
       if (key.tab || key.downArrow)
         return setFile({ ...file, field: (file.field + 1) % FILE_FIELDS.length })
       if (key.upArrow)
@@ -1067,14 +1091,14 @@ export function App({
         }
         return void reload()
       }
-      if (input === 'c' || input === 'C')
-        return handoff(input === 'C', { kind: 'file', shape: file.shape })
+      if (input === 'a' || input === 'A')
+        return handoff(input === 'A', { kind: 'file', shape: file.shape })
       return
     }
 
     if (overlay === 'runs') {
       const runs = snap?.runs ?? []
-      if (key.escape) return (setOverlay(null), setFocus('side'))
+      if (key.escape) return goPane('collections')
       if (key.upArrow) return setRunsCursor((c) => Math.max(0, c - 1))
       if (key.downArrow) return setRunsCursor((c) => Math.min(runs.length - 1, c + 1))
       if (key.return && runs[runsCursor])
@@ -1131,9 +1155,9 @@ export function App({
         return void suspendTerminal(async () => {
           spawnSync(process.env.PAGER ?? 'less', ['+G', shownRun.log], { stdio: 'inherit' })
         })
-      if (input === 'c' || input === 'C')
-        return handoff(input === 'C', { kind: 'run', run: readRun(ctx, shownRun.id) })
-      if (key.escape && overlay) return (setOverlay(null), setFocus('side'))
+      if (input === 'a' || input === 'A')
+        return handoff(input === 'A', { kind: 'run', run: readRun(ctx, shownRun.id) })
+      if (key.escape && overlay) return goPane('collections')
     }
 
     // --- Everywhere else ---
@@ -1165,12 +1189,12 @@ export function App({
         value: '',
         submit: (v) => openFile(v),
       })
-    if (key.escape) return (setOverlay(null), setFocus('side'))
+    if (key.escape) return goPane('collections')
     if (key.tab) return setFocus((f) => (f === 'side' ? 'main' : 'side'))
 
-    // Up and down move through the sidebar, wherever the keys are.
+    // Up and down move through the card that has the keys, wherever the keys are.
     if (key.upArrow || key.downArrow) {
-      const items = side?.items ?? []
+      const items = (side?.items ?? []).filter((i) => paneOf(itemId(i)) === card)
       const at = items.findIndex((i) => itemId(i) === sel)
       const next = items[Math.min(items.length - 1, Math.max(0, at + (key.upArrow ? -1 : 1)))]
       if (next) {
@@ -1205,7 +1229,7 @@ export function App({
           return `${script.name} at ${v.url}`
         })
       }
-      if (input === 's' && served.current.has(script.path)) {
+      if (input === 'x' && served.current.has(script.path)) {
         served.current.get(script.path)!.stop()
         served.current.delete(script.path)
         setServedTick((n) => n + 1)
@@ -1214,7 +1238,7 @@ export function App({
       return
     }
     if (script) {
-      if (input === 'r')
+      if (input === 'R')
         return script.takes
           ? setPrompt({
               label: `${script.name} takes ${script.takes}: which file (empty for none)`,
@@ -1243,7 +1267,7 @@ export function App({
           const s = await undo(c)
           return `Dropped ${s.commit.semver}`
         })
-      if (input === 's' && tab === 'Versions')
+      if (input === 'S' && tab === 'Versions')
         return void attempt('Squashing', async () => {
           const s = await squash(c, undefined, null, ctx.env.now())
           return s ? `Squashed into ${s.commit.semver}` : 'They cancelled out'
@@ -1281,7 +1305,7 @@ export function App({
           (r) => setRecords(r.length ? r : records),
         )
       }
-      if (input === 'r') {
+      if (input === 'R') {
         const writers = (snap?.scripts ?? []).filter((s) =>
           s.writes.some((w) => w === collRow.key || collRow.key.endsWith('/' + w)),
         )
@@ -1301,8 +1325,8 @@ export function App({
         }).unref()
         return setStatus(`Opened ${url}`)
       }
-      if (input === 'c' || input === 'C')
-        return handoff(input === 'C', { kind: 'collection', key: collRow.key })
+      if (input === 'a' || input === 'A')
+        return handoff(input === 'A', { kind: 'collection', key: collRow.key })
     }
   })
 
@@ -1310,7 +1334,7 @@ export function App({
 
   if (!snap || !side) return <Text color={C.mu}>Reading {tildePath(ctx.env, ctx.home.root)}…</Text>
 
-  const sideW = Math.min(40, Math.max(30, Math.floor(columns * 0.27)))
+  const sideW = sideWidth(columns)
   const mainW = Math.max(40, columns - sideW - 1)
   const pane: Pane = (() => {
     const inner = mainW - 4
@@ -1387,6 +1411,8 @@ export function App({
     { k: 'q', l: 'quit' },
   ]
   const userNote = side.user ?? ''
+  // The card that has the keys is drawn lit, as Hopper's are.
+  const lit = (p: SidePane) => focus === 'side' && !overlay && card === p
   const statusLine = prompt ? (
     <Text wrap="truncate-end">
       <Text color={C.bl}>{prompt.label}: </Text>
@@ -1492,19 +1518,35 @@ export function App({
     <Box flexDirection="column" width={columns} height={rows}>
       <Box flexDirection="row" height={bodyH} columnGap={1}>
         <Box flexDirection="column" width={sideW}>
-          <Frame title="Remotes" meta={userNote} color={C.mu} width={sideW} height={remotesH}>
+          <Frame
+            title="Servers"
+            keyHint="s"
+            meta={userNote}
+            color={lit('servers') ? C.bl : C.mu}
+            border={lit('servers') ? C.bl : C.dim}
+            width={sideW}
+            height={remotesH}
+          >
             <Lines lines={side.remotes} width={sideW - 4} />
           </Frame>
           <Frame
-            title="On this machine"
-            color={focus === 'side' ? C.bl : C.mu}
-            border={focus === 'side' ? C.bl : C.dim}
+            title="Collections on this machine"
+            keyHint="c"
+            color={lit('collections') ? C.bl : C.mu}
+            border={lit('collections') ? C.bl : C.dim}
             width={sideW}
             height={colsH}
           >
             <Lines lines={windowed(side.cols, colsH - 2, selLine(side.cols))} width={sideW - 4} />
           </Frame>
-          <Frame title="Scripts and views" color={C.mu} width={sideW} height={scriptsH}>
+          <Frame
+            title="Scripts and views"
+            keyHint="r"
+            color={lit('scripts') ? C.bl : C.mu}
+            border={lit('scripts') ? C.bl : C.dim}
+            width={sideW}
+            height={scriptsH}
+          >
             <Lines
               lines={windowed(side.scripts, scriptsH - 2, selLine(side.scripts))}
               width={sideW - 4}

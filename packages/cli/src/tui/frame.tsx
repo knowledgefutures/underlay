@@ -36,9 +36,14 @@ export function Lines({ lines, width }: { lines: Line[]; width: number }) {
   )
 }
 
-/** A card: a rounded box whose top edge carries its title, as a fieldset's legend. */
+/**
+ * A card: a rounded box whose top edge carries its title, as a fieldset's legend, as Hopper's do:
+ * the title, the key that brings it up in brackets, and a note at the far end.
+ */
 export function Frame(props: {
   title: string
+  /** The key that gives this card the keys, shown after the title: (c). */
+  keyHint?: string
   meta?: string
   color?: string
   border?: string
@@ -46,12 +51,18 @@ export function Frame(props: {
   height: number
   children?: ReactNode
 }) {
-  const { title, meta, color, border, width, height, children } = props
+  const { title, keyHint, meta, color, border, width, height, children } = props
   const edge = border ?? C.dim
-  const head = ` ${title} `
-  const room = Math.max(0, width - 4 - head.length)
+  const key = keyHint ? `(${keyHint}) ` : ''
+  // A title too long for a narrow card is cut short, so its key still shows.
+  const fits = Math.max(4, width - 6 - key.length)
+  const head = ` ${title.length > fits ? title.slice(0, fits - 1) + '…' : title} `
+  const room = Math.max(0, width - 4 - head.length - key.length)
+  const metaMax = room - 3
   const note =
-    meta && room > 6 ? ` ${meta.length > room - 3 ? meta.slice(0, room - 4) + '…' : meta} ` : ''
+    meta && metaMax >= 2
+      ? ` ${meta.length > metaMax ? meta.slice(0, metaMax - 1) + '…' : meta} `
+      : ''
   return (
     <Box flexDirection="column" width={width} height={height} flexShrink={0}>
       <Text wrap="truncate-end">
@@ -59,8 +70,10 @@ export function Frame(props: {
         <Text color={color ?? C.fg} bold>
           {head}
         </Text>
+        {key ? <Text color={C.mu}>{key}</Text> : null}
+        <Text color={edge}>{'─'.repeat(Math.max(0, room - note.length))}</Text>
         <Text color={C.mu}>{note}</Text>
-        <Text color={edge}>{'─'.repeat(Math.max(0, room - note.length)) + '─╮'}</Text>
+        <Text color={edge}>─╮</Text>
       </Text>
       <Box
         flexDirection="column"

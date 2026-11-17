@@ -4,10 +4,13 @@ import { cliEyebrow, CliScreens } from '~/components/CliDocs'
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
 const KEYS: [string, string][] = [
-  ['↑ ↓', 'Move through the sidebar'],
-  ['tab', 'Move between the sidebar and the main pane'],
+  ['c', 'Collections on this machine: where you start, and where esc takes you back to'],
+  ['s', 'Servers'],
+  ['r', 'Scripts and views'],
+  ['↑ ↓', 'Move through the card that has the keys'],
+  ['tab', 'Move between that card and the main pane'],
   ['← →', 'Switch a collection’s tabs'],
-  ['r', 'Run the selected script, or one that writes the selected collection'],
+  ['R', 'Run the selected script, or one that writes the selected collection'],
   ['x, space, R', 'While a script runs: cancel, pause or resume, restart'],
   ['u', 'Undo the newest version not yet pushed, or a finished run’s versions'],
   ['l', 'Pull the selected collection'],
@@ -18,7 +21,7 @@ const KEYS: [string, string][] = [
   ['h', 'Every run'],
   [',', 'Settings'],
   ['?', 'Every key, with the ones for where you are lit'],
-  ['c, C', 'Copy a prompt for an agent; send it to the handoff command'],
+  ['a, A', 'Copy a prompt for an agent; send it to the handoff command'],
   ['o', 'Open the collection on its server'],
   ['q', 'Quit'],
 ]
@@ -387,16 +390,17 @@ underlay reword scratch "A better message"`}</CodeBlock>
 
       <ul>
         <li>
-          <strong>Remotes</strong>: the servers you can use, whether you are signed in, and how many
-          of your organizations&apos; collections there are on your machine.
+          <strong>Servers</strong> (<code>s</code>): the servers you can use, whether you are signed
+          in, and how many of your organizations&apos; collections there are on your machine.
         </li>
         <li>
-          <strong>On this machine</strong>: your collections, by authority and organization, with
-          what is kept and how each stands against its authority.
+          <strong>Collections on this machine</strong> (<code>c</code>): your collections, by
+          authority and organization, with what is kept and how each stands against its authority.
+          The UI opens here, and <code>esc</code> comes back here.
         </li>
         <li>
-          <strong>Scripts and views</strong>: each script with its last result, and your views,
-          under the name of the folder they come from. <code>v</code> opens a view.
+          <strong>Scripts and views</strong> (<code>r</code>): each script with its last result, and
+          your views, under the name of the folder they come from. <code>v</code> opens a view.
         </li>
         <li>
           The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
@@ -434,8 +438,8 @@ underlay reword scratch "A better message"`}</CodeBlock>
         of everything. Agents save versions; pushing is yours to do.
       </p>
       <p>
-        To hand work to an agent from the terminal UI, <code>c</code> copies a prompt about what you
-        are looking at, and <code>C</code> sends it to the command set in <code>handoff.send</code>,
+        To hand work to an agent from the terminal UI, <code>a</code> copies a prompt about what you
+        are looking at, and <code>A</code> sends it to the command set in <code>handoff.send</code>,
         which takes the prompt on its standard input.
       </p>
       <CodeBlock>{`underlay config set handoff.send 'your-agent-command -'`}</CodeBlock>
