@@ -27,6 +27,7 @@ import {
   commitKey,
   isVersionId,
   nextSemver,
+  notBefore,
   parseCommit,
   type StoredCommit,
   versionId,
@@ -34,7 +35,9 @@ import {
 import { type PublicKeyInfo, type Signer, signObject, verifyObject } from './sign.js'
 
 /** What an author needs of the commit it follows: null for a collection's first. */
-export type Previous = Pick<StoredCommit, 'id'> & { commit: Pick<Commit, 'number' | 'semver'> }
+export type Previous = Pick<StoredCommit, 'id'> & {
+  commit: Pick<Commit, 'number' | 'semver'> & Partial<Pick<Commit, 'createdAt'>>
+}
 
 export interface BuildCommitInput {
   collection: string
@@ -59,7 +62,8 @@ export async function buildCommit(i: BuildCommitInput, signer?: Signer): Promise
     number: (i.previous?.commit.number ?? 0) + 1,
     previous: i.previous?.id ?? null,
     semver: nextSemver(i.previous?.commit.semver ?? null, i.bump),
-    createdAt: (i.createdAt ?? new Date()).toISOString(),
+    // Never before the commit it follows (4.6): an authority refuses a time that goes back.
+    createdAt: notBefore(i.createdAt ?? new Date(), i.previous?.commit.createdAt).toISOString(),
     changes: [i.change],
     keyId: null,
     sig: null,
@@ -135,9 +139,14 @@ export const CREATED_AT_SKEW_MS = 10 * 60 * 1000
 
 /**
  * Check an author-built commit against the authority's newest: the next number, after
- * the newest id, with the semver its rows call for, a time near now, one unsigned change
- * naming exactly the upload's files. Returns the commit, or `{stale}` when another commit
- * got there first (the author replays and tries again), or the problem.
+ * the newest id, with the semver its rows call for, a time near now and not before the
+ * newest's, one unsigned change naming exactly the upload's files. Returns the commit, or
+ * `{stale}` when another commit got there first (the author replays and tries again), or
+ * the problem.
+ *
+ * Not checked here, since it needs the log: that the change's `base` is a version of the
+ * collection. The authority checks it before storing the commit (`findVersion`), as
+ * `createCommit` does for a commit it builds; `verifyLog` refuses a log with any other.
  */
 export function checkAuthorCommit(
   bytes: Uint8Array,
@@ -178,6 +187,9 @@ export function checkAuthorCommit(
     Math.abs(at - check.now.getTime()) > (check.skewMs ?? CREATED_AT_SKEW_MS)
   )
     return { problem: `createdAt ${commit.createdAt} is not near the time it was sent` }
+  const before = check.head?.commit.createdAt
+  if (before !== undefined && at < Date.parse(before))
+    return { problem: `createdAt ${commit.createdAt} is before the version it follows (${before})` }
   return { commit, id: versionId(bytes) }
 }
 
@@ -247,9 +259,17 @@ export function parseReceipt(text: string): Receipt {
   return o as unknown as Receipt
 }
 
-/** Write a commit's receipt, once: a receipt already there stands. */
-export async function writeReceipt(store: Store, r: Receipt): Promise<boolean> {
-  return createObject(store, receiptKey(r.collection, r.number), utf8(jcs(r)), {
+/**
+ * Write a commit's receipt, once: a receipt already there stands. `holder` is the
+ * collection whose log holds the commit, when that is not the one the commit was made for
+ * (a fork's earlier commits carry its parent's id, and so do their receipts).
+ */
+export async function writeReceipt(
+  store: Store,
+  r: Receipt,
+  holder: string = r.collection,
+): Promise<boolean> {
+  return createObject(store, receiptKey(holder, r.number), utf8(jcs(r)), {
     contentType: 'application/json',
   })
 }

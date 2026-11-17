@@ -183,4 +183,113 @@ describe('receipts', () => {
       v3.verifyLog(store, 'c1', { serverKeys: [stranger.publicKey], receipts: true }),
     ).rejects.toThrow(/nor its receipt/)
   })
+
+  it('goes with its commit into a fork, kept under the fork and still its commit’s', async () => {
+    const store = memoryStore()
+    const server = await ed25519Signer(seed(2))
+    await v3.createCollection(store, 'c1')
+    let prev: v3.StoredCommit | null = null
+    for (const id of ['a', 'b']) {
+      const c = await v3.buildCommit({
+        collection: 'c1',
+        previous: prev,
+        change: await change(store, id, prev?.id ?? null),
+        bump: 'minor',
+      })
+      await createObject(store, v3.commitKey('c1', c.commit.number), c.bytes)
+      await v3.writeReceipt(store, await v3.makeReceipt(c, 'underlay.org', server))
+      prev = c
+    }
+    await v3.writeCommitHint(store, 'c1', 2)
+    const fork = await v3.forkCollection(store, 'c1', 'f1')
+    // The description, two commits with their receipts, and the commit hint.
+    expect(fork.objects).toBe(1 + 2 + 2 + 1)
+    // The receipt names the collection its commit was made for; the fork's log holds it.
+    expect(await v3.readReceipt(store, 'f1', 2)).toMatchObject({ collection: 'c1', number: 2 })
+    expect(
+      (
+        await v3.verifyLog(store, 'f1', {
+          lineage: fork.description.lineage!,
+          serverKeys: [server.publicKey],
+          receipts: true,
+        })
+      )?.id,
+    ).toBe(prev!.id)
+    // A receipt written for a held commit goes under the holder, not the collection it names.
+    const third = await v3.buildCommit({
+      collection: 'c1',
+      previous: prev,
+      change: await change(store, 'c', prev!.id),
+      bump: 'minor',
+    })
+    const r = await v3.makeReceipt(third, 'underlay.org', server)
+    expect(await v3.writeReceipt(store, r, 'f1')).toBe(true)
+    expect(await v3.readReceipt(store, 'f1', 3)).toEqual(r)
+    expect(await v3.readReceipt(store, 'c1', 3)).toBeNull()
+  })
+})
+
+describe('a commit’s time', () => {
+  const head = (createdAt: string) => ({
+    id: `ulv3:${'0'.repeat(64)}`,
+    commit: { number: 1, semver: 'v1.0.0', createdAt },
+  })
+
+  it('is never before the commit it follows, built here or by a server', async () => {
+    const store = memoryStore()
+    const ahead = new Date('2026-11-16T12:05:00.000Z')
+    const now = new Date('2026-11-16T12:00:00.000Z')
+    expect(v3.notBefore(now, ahead.toISOString())).toEqual(ahead)
+    expect(v3.notBefore(ahead, now.toISOString())).toEqual(ahead)
+    expect(v3.notBefore(now, undefined)).toEqual(now)
+    // A first commit dated ahead (its author's clock), then one made at the true time.
+    const first = await v3.buildCommit({
+      collection: 'c1',
+      previous: null,
+      change: await change(store, 'a'),
+      bump: 'minor',
+      createdAt: ahead,
+    })
+    const second = await v3.buildCommit({
+      collection: 'c1',
+      previous: first,
+      change: await change(store, 'b', first.id),
+      bump: 'minor',
+      createdAt: now,
+    })
+    expect(second.commit.createdAt).toBe(ahead.toISOString())
+    await createObject(store, v3.commitKey('c1', 1), first.bytes)
+    const theirs = await v3.createCommit(
+      store,
+      'c1',
+      { change: await change(store, 'c', first.id), bump: 'minor' },
+      { now: () => now },
+    )
+    expect(theirs.commit.createdAt).toBe(ahead.toISOString())
+  })
+
+  it('is refused by an authority when it is before the newest commit’s', async () => {
+    const store = memoryStore()
+    const ch = await change(store, 'a')
+    const at = new Date('2026-11-16T12:00:00.000Z')
+    const built = await v3.buildCommit({
+      collection: 'c1',
+      previous: { id: head('').id, commit: { number: 1, semver: 'v1.0.0' } },
+      change: ch,
+      bump: 'minor',
+      createdAt: at,
+    })
+    const check = (createdAt: string) =>
+      v3.checkAuthorCommit(built.bytes, 'c1', {
+        head: head(createdAt),
+        files: ch.files,
+        bump: 'minor',
+        now: at,
+      })
+    expect(check('2026-11-16T11:59:59.000Z')).toMatchObject({ id: built.id })
+    expect(check('2026-11-16T12:00:00.000Z')).toMatchObject({ id: built.id })
+    expect(check('2026-11-16T12:00:01.000Z')).toMatchObject({
+      problem: expect.stringContaining('before the version it follows'),
+    })
+  })
 })

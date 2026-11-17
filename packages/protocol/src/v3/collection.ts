@@ -6,6 +6,7 @@
  */
 import { jcs } from '../jcs.js'
 import { createObject, type Store } from '../repo/types.js'
+import { receiptKey } from './author.js'
 import { recordKey } from './build.js'
 import { ASSET_TYPE } from './constants.js'
 import {
@@ -150,6 +151,7 @@ export async function forkCollection(
   }
   let bytes = descriptionBytes.length
   let objects = 1
+  let receipts = 0
   try {
     const copied = await inParallel(
       Array.from({ length: at }, (_, i) => async () => {
@@ -157,12 +159,18 @@ export async function forkCollection(
         if (!obj) throw new CollectionError(`${parent} lost commit ${i + 1} during the fork`)
         const body = await obj.bytes()
         await store.put(commitKey(fork, i + 1), body, { contentType: 'application/json' })
-        return body.byteLength
+        // Its receipt goes with it (4.6): a commit its author built is signed only there.
+        const receipt = await store.get(receiptKey(parent, i + 1))
+        if (!receipt) return body.byteLength
+        const signed = await receipt.bytes()
+        await store.put(receiptKey(fork, i + 1), signed, { contentType: 'application/json' })
+        receipts++
+        return body.byteLength + signed.byteLength
       }),
       16,
     )
     bytes += copied.reduce((n, b) => n + b, 0)
-    objects += at
+    objects += at + receipts
     if (layout) {
       const copy: Layout = {
         ...layout,

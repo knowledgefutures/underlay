@@ -313,8 +313,18 @@ authority:
   out (4.3), that the records satisfy the schemas (4.5), and that the semver is what the
   commit's rows call for (4.4), comparing `$schema` rows with the version before and counting
   every other row as a change;
+- MUST check that the change's `base`, if it has one, is a version of this collection (or of
+  one it was forked from), as for a commit it builds itself: a commit is stored for good, and
+  a log holding one with any other base does not verify (Section 9);
 - SHOULD refuse a `createdAt` far from when the commit was sent (the reference server allows
-  ten minutes either way).
+  ten minutes either way), and one before the `createdAt` of the commit it follows: times
+  never go back along a log. An author, and a server building a commit, date a commit no
+  earlier than the one before it.
+
+A commit the authority finds it already holds as its newest (the same bytes: a request sent
+again, or a landing that stopped after storing it) is accepted, not refused: the authority
+finishes what was left undone (its receipt, its record of the version) and answers as for a
+commit it has just stored.
 
 **Replaying.** An author whose commit was refused builds it again on the newest version: the
 change stays as it was, except a `base` that named one of the commits being replayed, which
@@ -336,17 +346,30 @@ signed as in 4.2, over every member but `sig`. A receipt is not hashed into anyt
 id never depends on the server that holds it. A reader that checks signatures accepts a commit
 signed by a key it trusts, or a commit whose receipt is.
 
+A receipt goes where its commit goes. A fork copies the receipts of the commits it copies, and
+a mirror those of the commits it takes, each under the holding collection's own
+`commits/<number>.receipt.json`; the receipt still names the collection its commit was made
+for, as the commit does. A commit a server built and signed needs no receipt to be verified,
+and may have none (one made before receipts were written, or by a conversion).
+
 ### 4.8 Following a collection
 
 Under a collection's URL, a server serves:
 
 - `GET …/commits?after=<n>&limit=<k>`: the commits after `n` in order, each as
   `{"number", "id", "commit": its exact text, "receipt": receipt | null}`, with `head` (the newest
-  number), `more`, and `collection` (`id` and `authority`);
+  number), `more`, and `collection` (`id` and `authority`). `after` and `limit` are whole
+  numbers. A page may hold fewer commits than `limit` (the reference server gives 100 unless
+  asked, at most 1,000, and stops a page at 4 MB of commit text), but at least one while
+  there are any: a client goes on from the last number it was given while `more` is true;
 - `GET …/commits/<n>`: one commit in the same form;
 - `GET …/layout`: `{"layout": the current layout file | null}`;
 - `GET …/record-files/<file id>`: a sorted-record-file's bytes, with byte ranges, for a file the
-  current layout or a commit after its `through` names, and no other.
+  current layout or a commit after its `through` names, and no other. A file's bytes never
+  change, but who may read them does, so a server SHOULD let a shared cache keep them only
+  briefly (the reference server: ten minutes for an anonymous read, as for a version's data).
+  A server that withholds a record refuses the whole file that holds it (451): a file cannot
+  be served with a row left out, since its id is the hash of its content.
 
 A client follows the log with the first, and reads any version it keeps by fetching the current
 layout and the files it and later commits name: exactly the files the version needs.
