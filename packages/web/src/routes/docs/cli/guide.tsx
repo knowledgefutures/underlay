@@ -26,25 +26,20 @@ export default function CliGuide() {
   return (
     <DocsLayout title="Guide" eyebrow={cliEyebrow}>
       <p>
-        How the CLI works: workspaces and what is kept on your machine, scripts and imports,
-        versions, pull and push, the terminal UI, and agents. For every command and option, see{' '}
-        <Link to="/docs/cli/commands">Commands</Link>.
+        How the CLI works: your home, script folders, what is kept on your machine, scripts and
+        imports, versions, pull and push, the terminal UI, and agents. For every command and option,
+        see <Link to="/docs/cli/commands">Commands</Link>.
       </p>
 
-      <h2>Workspaces</h2>
+      <h2>Home and script folders</h2>
       <p>
-        A workspace is a folder for your collections, scripts and views. It is plain files, so you
-        can commit it to git and share it. <code>underlay init</code> makes one.
+        Your collections live in your home, <code>~/Underlay</code> by default. It is yours and
+        isn&apos;t shared: the collections you follow, their schemas, the files you add, and your
+        own scripts. <code>underlay init</code> makes it.
       </p>
 
       <table className="border-collapse">
         <tbody>
-          <tr>
-            <td>
-              <code>underlay.toml</code>
-            </td>
-            <td>The workspace&apos;s remotes and defaults.</td>
-          </tr>
           <tr>
             <td>
               <code>collections/</code>
@@ -61,39 +56,60 @@ export default function CliGuide() {
               <code>scripts/</code>
             </td>
             <td>
-              Scripts that write collections, and saved imports in <code>scripts/imports/</code>.
+              Your own scripts and views, and saved imports in <code>scripts/imports/</code>.
             </td>
-          </tr>
-          <tr>
-            <td>
-              <code>views/</code>
-            </td>
-            <td>Small static pages for looking at results.</td>
           </tr>
           <tr>
             <td>
               <code>inputs/</code>
             </td>
-            <td>Files you add, and rows an import held back.</td>
+            <td>Files you add, rows an import held back, and choices a view saves.</td>
           </tr>
           <tr>
             <td>
               <code>AGENTS.md</code>
             </td>
-            <td>How the workspace works, for an agent working in it.</td>
+            <td>How your home works, for an agent working in it.</td>
           </tr>
           <tr>
             <td>
               <code>.underlay/</code>
             </td>
-            <td>This machine&apos;s run history and locks. Ignored by git.</td>
+            <td>Run history and locks.</td>
           </tr>
         </tbody>
       </table>
 
+      <p>
+        Scripts you share live in script folders: a git repo of scripts with its own dependencies,
+        such as one your team keeps. Add one, and its scripts appear beside yours, named after the
+        folder (<code>team/monthly</code>). Running <code>underlay</code> inside a folder that has
+        an <code>underlay.toml</code> picks it up too. A script folder has no collections or
+        schemas: each person pulls those into their own home.
+      </p>
+      <CodeBlock>{`underlay sources add ~/code/team-scripts --name team
+underlay sources              # home, and each script folder`}</CodeBlock>
+      <p>
+        A script folder&apos;s <code>underlay.toml</code> is optional and says only what belongs to
+        its code:
+      </p>
+      <CodeBlock>{`scripts = ["sources"]          # where to look (default: the whole folder)
+authority = "underlay.org"     # for collections its scripts name as org/name
+
+[runners]                      # how to run a file, when the defaults don't fit
+".ts" = "pnpm exec tsx"
+
+[env]                          # secrets its scripts need: names only
+need = ["ORCID_TOKEN"]`}</CodeBlock>
+      <p>
+        Each person keeps a secret&apos;s value with <code>underlay secret set ORCID_TOKEN</code>{' '}
+        (in the keychain on a Mac) or in their environment. A run that lacks one stops before it
+        starts.
+      </p>
+
       <h2>What is kept on your machine</h2>
       <p>
-        Records are not kept in the workspace. They live in the store,{' '}
+        Records are not kept in your home. They live in the store,{' '}
         <code>~/.local/share/underlay</code> by default, with versions not yet pushed and run logs.
         A record file is kept once however many collections name it.
       </p>
@@ -129,14 +145,14 @@ export default function CliGuide() {
 
       <h2>Settings</h2>
       <p>
-        Your own settings are in <code>~/.config/underlay/config.toml</code>: the store, your
-        workspaces, where keys are kept. The workspace&apos;s are in <code>underlay.toml</code> and
-        win where both set something, except paths, which stay yours. <code>underlay config</code>{' '}
-        lists every setting and where it is set.
+        Your settings are in <code>~/.config/underlay/config.toml</code>: where your home is, the
+        store, your remotes, your script folders, where keys are kept. <code>underlay config</code>{' '}
+        lists every setting and whether it is set. <code>UNDERLAY_HOME</code> points at another home
+        for one command.
       </p>
       <CodeBlock>{`underlay config
 underlay config set defaults.remote underlay.org
-underlay config set store.path /Volumes/Data/underlay --personal`}</CodeBlock>
+underlay config set store.path /Volumes/Data/underlay`}</CodeBlock>
       <p>
         A store rule sends some collections&apos; records somewhere else, or sets how much of them
         is kept. The most specific match wins.
@@ -147,12 +163,15 @@ underlay config rule add 'underlay.org/your-org/private' --path ~/Private/underl
       <h2>Scripts</h2>
       <p>
         A script is a <code>.ts</code>, <code>.js</code>, <code>.mjs</code>, <code>.py</code> or{' '}
-        <code>.sh</code> file in <code>scripts/</code>, or any executable. Its first lines name the
-        collections it writes. When it runs, <code>UNDERLAY_OUT</code> is a folder to write to: one
-        NDJSON file for each collection, at{' '}
-        <code>&lt;server&gt;/&lt;org&gt;/&lt;name&gt;.ndjson</code>, one record a line.
+        <code>.sh</code> file, or any executable, in your home&apos;s <code>scripts/</code> or a
+        script folder. Its first lines say what it does; files without them, such as helpers,
+        aren&apos;t scripts. It runs in its own folder, so its dependencies resolve. When it runs,{' '}
+        <code>UNDERLAY_OUT</code> is a folder to write to: one NDJSON file for each collection, at{' '}
+        <code>&lt;server&gt;/&lt;org&gt;/&lt;name&gt;.ndjson</code>, one record a line.{' '}
+        <code>UNDERLAY_HOME</code> is your home, and <code>underlay schema &lt;collection&gt;</code>{' '}
+        prints a collection&apos;s schemas for a script that needs them.
       </p>
-      <CodeBlock>{`// scripts/scratch.mjs
+      <CodeBlock>{`// ~/Underlay/scripts/scratch.mjs
 // underlay: writes underlay.org/your-org/scratch
 import { mkdirSync, writeFileSync } from 'node:fs'
 
@@ -173,7 +192,21 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
               <code>writes</code>
             </td>
             <td>
-              The collections it writes. A script that writes none is a check: it passes or fails.
+              The collections it writes, as <code>server/org/name</code> or <code>org/name</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>check</code>
+            </td>
+            <td>It writes nothing: it passes or fails.</td>
+          </tr>
+          <tr>
+            <td>
+              <code>view</code>, <code>serves</code>
+            </td>
+            <td>
+              A view: an <code>.html</code> page, or a script that serves a page (see Views).
             </td>
           </tr>
           <tr>
@@ -211,8 +244,10 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
       </table>
       <p>
         Each goes on a line of its own, as <code>// underlay: mode additions</code> (or with{' '}
-        <code>#</code> in Python and shell). They can also go in a <code>.toml</code> file beside
-        the script with the same name, which may set <code>run</code>, the command that runs it.
+        <code>#</code> in Python and shell, and <code>&lt;!-- --&gt;</code> in HTML), or several on
+        one line with commas: <code>// underlay: check, reads org/units</code>. They can also go in
+        a <code>.toml</code> file beside the script with the same name, which may set{' '}
+        <code>run</code>, the command that runs it.
       </p>
 
       <h2>Runs</h2>
@@ -244,8 +279,8 @@ underlay runs <id> --follow   # one run's output`}</CodeBlock>
       <h2>Imports</h2>
       <p>
         A spreadsheet, CSV, TSV, JSON, Parquet or SQLite file can be imported without a script.{' '}
-        <code>underlay add-file</code> copies it into <code>inputs/</code>, shows its sheets and
-        columns, and finds the collection whose ids it shares.
+        <code>underlay add-file</code> copies it into your home&apos;s <code>inputs/</code>, shows
+        its sheets and columns, and finds the collection whose ids it shares.
       </p>
       <CodeBlock>{`underlay add-file ~/Downloads/roster.xlsx
 underlay import inputs/roster.xlsx --collection underlay.org/your-org/staff \\
@@ -253,8 +288,9 @@ underlay import inputs/roster.xlsx --collection underlay.org/your-org/staff \\
       <ul>
         <li>
           <code>underlay import</code> saves its options as <code>scripts/imports/roster.toml</code>{' '}
-          and runs it. Next month,{' '}
-          <code>underlay run imports/roster inputs/roster-2026-12.xlsx</code>.
+          in your home and runs it. Next month,{' '}
+          <code>underlay run imports/roster inputs/roster-2026-12.xlsx</code>. Move the file into a
+          script folder to share it.
         </li>
         <li>
           Columns are matched to the schema&apos;s fields by name. Columns that look personal, such
@@ -271,6 +307,18 @@ underlay import inputs/roster.xlsx --collection underlay.org/your-org/staff \\
           written in. <code>underlay read</code> prints a file&apos;s rows as NDJSON.
         </li>
       </ul>
+
+      <h2>Views</h2>
+      <p>
+        A view is a page for looking at results, kept beside the scripts it goes with. An{' '}
+        <code>.html</code> file with <code>&lt;!-- underlay: view --&gt;</code> opens in your
+        browser as it is. A script that declares <code>serves</code> is given a free port as{' '}
+        <code>PORT</code>; the CLI waits until it listens, opens it, and stops it when you are done.
+        A view never writes records: it saves choices to a file in <code>inputs/</code> that a
+        script reads on its next run.
+      </p>
+      <CodeBlock>{`underlay view held-rows      # opens it; Ctrl-C stops one that serves`}</CodeBlock>
+
       <h2>Versions</h2>
       <p>
         A version is saved on your machine by a run, an import, or <code>underlay save</code>. It is
@@ -322,9 +370,9 @@ underlay reword scratch "A better message"`}</CodeBlock>
       </ul>
       <h2>Terminal UI</h2>
       <p>
-        Plain <code>underlay</code> in a terminal opens it, in the workspace you are in (or your
-        default one). It calls the same code as the commands and watches the workspace, so what a
-        command, another terminal, or an agent does shows up as it happens.
+        Plain <code>underlay</code> in a terminal opens it on your home and script folders. It calls
+        the same code as the commands and watches those folders, so what a command, another
+        terminal, or an agent does shows up as it happens.
       </p>
       <CliScreens />
 
@@ -338,7 +386,8 @@ underlay reword scratch "A better message"`}</CodeBlock>
           what is kept and how each stands against its authority.
         </li>
         <li>
-          <strong>Scripts and views</strong>: each script with its last result, and your views.
+          <strong>Scripts and views</strong>: each script with its last result, and your views,
+          under the name of the folder they come from. <code>v</code> opens a view.
         </li>
         <li>
           The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
@@ -363,7 +412,7 @@ underlay reword scratch "A better message"`}</CodeBlock>
       </table>
       <h2>Agents</h2>
       <p>
-        An agent works in a workspace with the same commands you use, and reads{' '}
+        An agent works in your home or a script folder with the same commands you use, and reads{' '}
         <code>AGENTS.md</code> to learn how. <code>underlay status --json</code> gives it the state
         of everything. Agents save versions; pushing is yours to do.
       </p>

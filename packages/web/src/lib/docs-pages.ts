@@ -91,15 +91,16 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Guide',
         href: '/docs/cli/guide',
-        blurb: 'Workspaces, scripts and imports, versions, push, the terminal UI',
+        blurb: 'Home and script folders, scripts and imports, versions, push, the terminal UI',
         headings: [
-          'Workspaces',
+          'Home and script folders',
           'What is kept on your machine',
           'Settings',
           'Scripts',
           'What a script declares',
           'Runs',
           'Imports',
+          'Views',
           'Versions',
           'Pull',
           'Push',

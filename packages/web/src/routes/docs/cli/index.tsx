@@ -26,7 +26,7 @@ export default function CliOverview() {
       <p>
         The CLI works with any server that speaks the{' '}
         <Link to="/docs/protocol">Underlay protocol</Link>: underlay.org, a staging server, or a
-        server on your own machine. You sign in to each one separately, and a workspace can hold
+        server on your own machine. You sign in to each one separately, and your home can hold
         collections from several. Each collection has an <em>authority</em>, the one server that
         accepts and numbers its versions, and the CLI pushes each collection to its own.
       </p>
@@ -48,7 +48,7 @@ export default function CliOverview() {
         <code>underlay</code> command in <code>~/.local/bin</code>. It tells you if that folder is
         not on your PATH. <a href="/cli/install.sh">Read the script</a> before you run it if you
         like. Run the same line again to update. To remove the CLI, delete those two paths; your
-        workspaces and their records stay.
+        home and its records stay.
       </p>
 
       <h2>Getting started</h2>
@@ -68,13 +68,12 @@ export default function CliOverview() {
       <CodeBlock>{`underlay login underlay.org
 underlay remotes          # where you are signed in`}</CodeBlock>
 
-      <h3>2. Make a workspace</h3>
+      <h3>2. Make your home</h3>
       <p>
-        A folder for your collections, scripts and views. Set the server your collections usually
-        come from, so you can leave it out of collection names.
+        A folder for your collections and your own scripts, at <code>~/Underlay</code>. Set the
+        server your collections usually come from, so you can leave it out of collection names.
       </p>
-      <CodeBlock>{`underlay init ~/Underlay
-cd ~/Underlay
+      <CodeBlock>{`underlay init
 underlay config set defaults.remote underlay.org`}</CodeBlock>
 
       <h3>3. Add a collection, or start one</h3>
@@ -85,10 +84,10 @@ underlay new underlay.org/your-org/scratch   # not there yet: your first push cr
       <h3>4. Write a script and run it</h3>
       <p>
         Put a JSON Schema for each type in the collection&apos;s folder, as{' '}
-        <code>collections/underlay.org/your-org/scratch/schemas/Thing.json</code>, and a script in{' '}
-        <code>scripts/</code>:
+        <code>~/Underlay/collections/underlay.org/your-org/scratch/schemas/Thing.json</code>, and a
+        script in <code>~/Underlay/scripts/</code>:
       </p>
-      <CodeBlock>{`// scripts/scratch.mjs
+      <CodeBlock>{`// ~/Underlay/scripts/scratch.mjs
 // underlay: writes underlay.org/your-org/scratch
 import { mkdirSync, writeFileSync } from 'node:fs'
 
