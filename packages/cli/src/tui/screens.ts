@@ -622,7 +622,29 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
       lines.push(
         L([S('  ' + P(u.split('/').slice(1).join('/'), 32)), S('no changes, nothing saved', C.mu)]),
       )
-    if (!r.saved.length && !r.unchanged.length)
+    // Collections it wrote that aren't here: their records wait with the run.
+    for (const m of r.missing ?? [])
+      lines.push(
+        L([
+          S('  ! ', C.or),
+          S(m.collection.split('/').slice(1).join('/')),
+          S(" isn't here", C.or),
+          S(`: ${count(m.records)} ${m.types.join(', ')} records kept with this run`, C.mu),
+        ]),
+      )
+    if (r.missing?.length)
+      lines.push(
+        ...caps(
+          [
+            {
+              k: 'n',
+              l: `make ${r.missing[0]!.collection.split('/').slice(1).join('/')} from them`,
+            },
+          ],
+          width - 2,
+        ),
+      )
+    if (!r.saved.length && !r.unchanged.length && !r.missing?.length)
       lines.push(L([S('  It wrote no collections: a check, and it passed.', C.mu)]))
   } else
     lines.push(

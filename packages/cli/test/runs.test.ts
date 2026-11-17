@@ -19,7 +19,7 @@ import {
   runImport,
   saveImport,
 } from '../src/core/importers.js'
-import { listRuns, lock, runScript } from '../src/core/runs.js'
+import { listRuns, lock, readRun, runScript, saveFromRun } from '../src/core/runs.js'
 import { findScript, listScripts, takesFile } from '../src/core/scripts.js'
 import { saveVersion, unpushedOf } from '../src/core/versions.js'
 import { tmp, world } from './world.js'
@@ -99,6 +99,48 @@ describe('scripts and runs', () => {
 })
 
 describe('built-in importers', () => {
+  it("keeps what a script wrote for a collection that isn't here, and makes it from that", async () => {
+    const w = await world()
+    mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
+    writeFileSync(
+      join(w.home.root, 'scripts', 'papers.mjs'),
+      `// underlay: writes test/org/papers
+import { mkdirSync, writeFileSync } from 'node:fs'
+const dir = process.env.UNDERLAY_OUT + '/test/org'
+mkdirSync(dir, { recursive: true })
+const rows = [
+  { id: 'p1', type: 'Paper', data: { title: 'One', year: 2024, open: true } },
+  { id: 'p2', type: 'Paper', data: { title: 'Two', year: 2025 } },
+]
+writeFileSync(dir + '/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\\n') + '\\n')
+`,
+    )
+    let said = ''
+    const r = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {
+      onOutput: (t) => (said += t),
+    })
+    expect(r.status).toBe('ok')
+    expect(r.saved).toEqual([])
+    expect(r.missing).toEqual([{ collection: 'test/org/papers', records: 2, types: ['Paper'] }])
+    expect(said).toContain('test/org/papers isn’t here: 2 Paper records kept with this run')
+    // Made, then filled from the run: a schema drafted from the records, and v1.0.0.
+    const meta = newCollection(w.ctx, 'test/org/papers')
+    const s = await saveFromRun(w.ctx, r.id, 'test/org/papers', meta)
+    expect(s).toMatchObject({ semver: 'v1.0.0', added: 2, types: ['Paper'] })
+    expect(w.home.schemas(meta).Paper).toEqual({
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        year: { type: 'integer' },
+        open: { type: 'boolean' },
+      },
+      required: ['title', 'year'],
+    })
+    const again = readRun(w.ctx, r.id)
+    expect(again.missing).toEqual([])
+    expect(again.saved).toMatchObject([{ collection: 'test/org/papers', semver: 'v1.0.0' }])
+  })
+
   it('matches a dropped file to a collection by its ids, imports it, holds rows without ids', async () => {
     const w = await setup()
     const c = openColl(w.ctx, w.meta)

@@ -47,7 +47,14 @@ import {
   saveImport,
 } from '../core/importers.js'
 import { nameFromFile, nameProblem, typeFromName } from '../core/names.js'
-import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
+import {
+  inputPath,
+  readRun,
+  type RunRecord,
+  saveFromRun,
+  signalRun,
+  startDetached,
+} from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
 import { type FileProgress, pull, push, pushPlan, StaleError } from '../core/sync.js'
 import { checkForUpdate } from '../core/update.js'
@@ -1426,6 +1433,32 @@ export function App({
       if (input === 'R') {
         if (live) signalRun(ctx, shownRun.id, 'cancel')
         return startRun(shownRun.path ?? shownRun.script, shownRun.args)
+      }
+      // n: make a collection the run wrote but that isn't here, from its records.
+      if (!live && input === 'n' && shownRun.missing?.length) {
+        const m = shownRun.missing[0]!
+        const ref = parseRef(m.collection, ctx.settings.defaultRemote)
+        const runId = shownRun.id
+        return openNew(
+          {
+            server: ref.authority,
+            org: ref.org,
+            name: ref.name,
+            from: `${shownRun.script}'s run ${runId}`,
+          },
+          {
+            back: overlay,
+            made: async (meta) => {
+              const s = await saveFromRun(ctx, runId, m.collection, meta)
+              await reload()
+              setSel(`c:${keyOf(meta)}`)
+              setOverlay(null)
+              setFocus('main')
+              setTab('Overview')
+              return `Made ${meta.org}/${meta.name} with this run's ${s.added.toLocaleString('en-US')} ${s.types.join(', ')} records as ${s.semver}, not pushed`
+            },
+          },
+        )
       }
       if (!live && input === 'u' && shownRun.saved.length)
         return void attempt('Undoing this run', async () => {

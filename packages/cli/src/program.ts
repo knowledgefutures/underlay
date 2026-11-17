@@ -52,7 +52,15 @@ import {
   saveImport,
 } from './core/importers.js'
 import { Remote } from './core/remote.js'
-import { listRuns, readLog, readRun, runScript, signalRun, startDetached } from './core/runs.js'
+import {
+  listRuns,
+  readLog,
+  readRun,
+  runScript,
+  saveFromRun,
+  signalRun,
+  startDetached,
+} from './core/runs.js'
 import { findScript, listScripts, type ScriptInfo } from './core/scripts.js'
 import { secretKey, SOURCE_FILE, SOURCE_HEADER } from './core/sources.js'
 import { isLoud, pull, push, pushPlan, type PushPlan, remoteHead, StaleError } from './core/sync.js'
@@ -447,12 +455,25 @@ program
   .argument('<collection>', 'authority/org/name (localhost:3000/… for one only you need)')
   .option('--public', 'public once pushed (default private)')
   .option('--title <title>')
-  .action((r: string, o: { public?: boolean; title?: string }) => {
+  .option('--from-run <id>', 'with what a run wrote for it: schemas drafted, records as v1.0.0')
+  .action(async (r: string, o: { public?: boolean; title?: string; fromRun?: string }) => {
     const c = ctx()
     const meta = newCollection(c, r, {
       access: o.public ? 'public' : 'private',
       ...(o.title ? { title: o.title } : {}),
     })
+    if (o.fromRun) {
+      const run = readRun(c, o.fromRun)
+      const from =
+        run.missing?.find((m) => m.collection === keyOf(meta))?.collection ??
+        run.missing?.[0]?.collection
+      if (!from)
+        throw new CliError(`Run ${o.fromRun} kept no records for a collection that isn't here`)
+      const s = await saveFromRun(c, o.fromRun, from, meta)
+      return say(
+        `Made ${keyOf(meta)} with run ${o.fromRun}'s ${count(s.added)} ${s.types.join(', ')} records as ${s.semver}, not pushed. Its schemas were drafted from them: see ${tildePath(env, c.home.collectionDir(meta))}/schemas/`,
+      )
+    }
     say(
       `New: ${keyOf(meta)} (${meta.access}). Put its schemas in ${tildePath(env, c.home.collectionDir(meta))}/schemas/<Type>.json`,
     )

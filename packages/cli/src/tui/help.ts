@@ -81,6 +81,7 @@ export const SECTIONS: [Section, Hint[]][] = [
       ['space', 'pause or resume'],
       ['R', 'restart, or run again'],
       ['u', 'undo a finished run'],
+      ['n', "make a collection it wrote that isn't here"],
       ['enter', 'full output'],
       ['a', 'prompt for an agent'],
       ['esc', 'back; it keeps running'],

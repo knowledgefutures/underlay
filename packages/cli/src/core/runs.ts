@@ -32,8 +32,10 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { v3 } from '@underlay/protocol'
 
 import { openColl, storeAt, type Ctx } from './context.js'
+import { draftColumns, schemaFrom } from './draft.js'
 import { CliError } from './env.js'
-import { parseRef } from './home.js'
+import { type CollectionMeta, keyOf, parseRef } from './home.js'
+import type { Row } from './importers.js'
 import { type ScriptInfo } from './scripts.js'
 import { secretsFor } from './sources.js'
 import { saveVersion } from './versions.js'
@@ -70,6 +72,8 @@ export interface RunRecord {
   saved: SavedVersion[]
   /** Collections the script wrote that nothing changed in. */
   unchanged: string[]
+  /** Collections it wrote that aren't here: their records stay in its output until one is made. */
+  missing?: { collection: string; records: number; types: string[] }[]
   error: string | null
 }
 
@@ -223,6 +227,82 @@ function outputsOf(out: string): string[] {
   return found.sort()
 }
 
+/** How many records an output file holds, and of which types. */
+async function outputSummary(path: string): Promise<{ records: number; types: string[] }> {
+  let records = 0
+  const types = new Set<string>()
+  for await (const r of fileRows(path)) {
+    if (r.kind !== 'r') continue
+    records++
+    types.add(r.type)
+  }
+  return { records, types: [...types] }
+}
+
+/**
+ * Save what a run wrote for a collection that wasn't here into one made since: schemas drafted
+ * from the records for types it has none of, then the records as its next version.
+ */
+export async function saveFromRun(
+  ctx: Ctx,
+  runId: string,
+  from: string,
+  into: CollectionMeta,
+): Promise<{ semver: string; added: number; types: string[] }> {
+  const run = readRun(ctx, runId)
+  const file = join(run.out, `${from}.ndjson`)
+  if (!existsSync(file)) throw new CliError(`Run ${runId} kept nothing for ${from}`)
+  // Each type's records, as rows of a table, for a schema drafted from them.
+  const byType = new Map<string, Row[]>()
+  for await (const r of fileRows(file)) {
+    if (r.kind !== 'r') continue
+    const data = (JSON.parse(r.line) as { data: Row }).data
+    const rows = byType.get(r.type) ?? []
+    rows.push({ $id: r.id, ...data })
+    byType.set(r.type, rows)
+  }
+  const have = ctx.home.schemas(into)
+  const drafted: Record<string, unknown> = {}
+  for (const [type, rows] of byType) {
+    if (have[type] !== undefined) continue
+    const columns = [
+      '$id',
+      ...new Set(rows.flatMap((x) => Object.keys(x).filter((k) => k !== '$id'))),
+    ]
+    // A script's fields are its own: keep them all, the personal-looking ones too.
+    const draft = draftColumns({ name: type, columns, rows }, '$id').map((d) => ({
+      ...d,
+      keep: true,
+    }))
+    drafted[type] = schemaFrom(draft, '$id')
+  }
+  ctx.home.writeSchemas(into, drafted)
+  const c = openColl(ctx, into)
+  const res = await saveVersion(c, {
+    rows: fileRows(file),
+    mode: 'set',
+    schemas: ctx.home.schemas(into),
+    message: `${run.script} (run ${run.id})`,
+    run: run.id,
+    now: ctx.env.now(),
+  })
+  if (!res.version) throw new CliError(`Run ${runId} wrote no records for ${from}`)
+  const v = res.version
+  run.missing = (run.missing ?? []).filter((m) => m.collection !== from)
+  run.saved.push({
+    collection: keyOf(into),
+    number: v.commit.number,
+    semver: v.commit.semver,
+    id: v.id,
+    change: c.store.state(into.id).versions[v.id]!.change,
+    added: res.stats.added,
+    changed: res.stats.changed,
+    removed: res.stats.removed,
+  })
+  writeRun(ctx, run)
+  return { semver: v.commit.semver, added: res.stats.added, types: [...byType.keys()] }
+}
+
 async function* fileRows(path: string) {
   yield* v3.parseUpload(createReadStream(path) as AsyncIterable<Uint8Array>)
 }
@@ -280,8 +360,11 @@ export async function runScript(
     error: null,
   }
   if (info.kind === 'view') throw new CliError(`${info.name} is a view: underlay view ${info.name}`)
-  const writes = info.writes
-  for (const w of writes) ctx.home.collection(parseRef(w, ctx.settings.defaultRemote))
+  // Collections it says it writes that aren't here still run: their records are kept with the
+  // run, to make the collection from (saveFromRun). Only those here are locked.
+  const writes = info.writes.filter((w) =>
+    ctx.home.readCollection(parseRef(w, ctx.settings.defaultRemote)),
+  )
   const releases: (() => void)[] = []
   try {
     for (const w of writes) releases.push(lock(ctx, w, id))
@@ -341,7 +424,11 @@ export async function runScript(
         const ref = parseRef(key, ctx.settings.defaultRemote)
         const meta = ctx.home.readCollection(ref)
         if (!meta) {
-          emit(`underlay: ${key} isn’t in your home; its output is left in ${out}\n`)
+          const kept = await outputSummary(join(out, `${key}.ndjson`))
+          ;(record.missing ??= []).push({ collection: key, ...kept })
+          emit(
+            `underlay: ${key} isn’t here: ${kept.records} ${kept.types.join(', ')} records kept with this run. underlay new ${key} --from-run ${id} makes it from them\n`,
+          )
           continue
         }
         if (!writes.includes(key)) releases.push(lock(ctx, key, id))

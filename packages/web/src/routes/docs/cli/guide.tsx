@@ -296,6 +296,12 @@ underlay runs <id> --follow   # one run's output`}</CodeBlock>
           versions it saved. Two runs never write one collection at once.
         </li>
         <li>
+          A collection a script writes that isn&apos;t here yet keeps its records with the run.{' '}
+          <code>underlay new &lt;collection&gt; --from-run &lt;id&gt;</code>, or <code>n</code> on
+          the run in the terminal UI, makes it from them: its schemas drafted from the records, and
+          the records as its first version.
+        </li>
+        <li>
           A run started from the terminal UI keeps running when you close it.{' '}
           <code>underlay pause</code>, <code>resume</code> and <code>cancel</code> take a run&apos;s
           id.
