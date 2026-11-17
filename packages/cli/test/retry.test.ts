@@ -1,6 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
-import { RemoteError, withRetry } from '../src/core/remote.js'
+import { Remote, RemoteError, withRetry } from '../src/core/remote.js'
+
+describe('commitUpload', () => {
+  /** A server whose upload is in `status`, and which refuses a commit of it with 409. */
+  const remote = (status: string) =>
+    new Remote('test', 'http://test', 'key', async (url, init) =>
+      init?.method === 'POST'
+        ? Response.json({ error: `Upload is ${status}`, statusCode: 409 }, { status: 409 })
+        : Response.json({ id: 'u', status, result: { hash: 'ulv3:x' } }),
+    )
+
+  it('takes the upload’s status as the answer when a commit sent twice is refused', async () => {
+    // The first send went through and its answer was lost; the second finds it committed.
+    const s = await remote('committed').commitUpload('o', 'c', 'u', { files: [], commit: '{}' })
+    expect(s).toMatchObject({ status: 'committed', result: { hash: 'ulv3:x' } })
+  })
+
+  it('still fails when the upload was never taken', async () => {
+    await expect(
+      remote('open').commitUpload('o', 'c', 'u', { files: [], commit: '{}' }),
+    ).rejects.toThrow(RemoteError)
+  })
+})
 
 describe('withRetry', () => {
   it('sends again after a dropped connection or a 5xx, and gives up on a 4xx', async () => {

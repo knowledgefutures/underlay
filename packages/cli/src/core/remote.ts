@@ -301,15 +301,22 @@ export class Remote {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const first = (await res.json().catch(() => null)) as
+    let first = (await res.json().catch(() => null)) as
       | UploadStatus
       | (Record<string, any> & { error?: string })
-    if (!res.ok && typeof (first as any)?.status !== 'string')
-      throw new RemoteError(
-        `Committing: ${res.status} ${(first as any)?.error ?? ''}`,
-        res.status,
-        first as any,
-      )
+    if (!res.ok && typeof (first as any)?.status !== 'string') {
+      // "The upload is not open" may answer a commit sent twice: the first send went through
+      // and its answer was lost (a dropped connection, a 5xx after the commit was taken), and
+      // `request` sent it again. The upload's own status says what became of it.
+      const now = res.status === 409 ? await this.uploadStatus(org, name, upload) : null
+      if (!now || ['open', 'expired'].includes(now.status))
+        throw new RemoteError(
+          `Committing: ${res.status} ${(first as any)?.error ?? ''}`,
+          res.status,
+          first as any,
+        )
+      first = now
+    }
     let s = first as UploadStatus
     for (
       let wait = 500;
