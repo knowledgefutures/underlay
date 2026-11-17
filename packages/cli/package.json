@@ -1,7 +1,7 @@
 {
   "name": "@underlay/cli",
-  "version": "0.2.0",
-  "description": "The Underlay command line: a local repository in .underlay/, pulled and pushed with a registry.",
+  "version": "0.3.0",
+  "description": "The Underlay CLI: collections on your machine, scripts that make versions, and push; commands, a terminal UI, and a local server.",
   "bin": {
     "underlay": "./dist/cli.js"
   },
@@ -10,7 +10,7 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js --banner:js=\"#!/usr/bin/env node\nimport { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js --external:@aws-sdk/client-s3 --external:react-devtools-core --banner:js=\"#!/usr/bin/env node\nimport { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\"",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

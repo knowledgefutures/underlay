@@ -269,7 +269,7 @@ export function settingDef(key: string): SettingDef {
       group: 'Remotes',
       file: 'workspace',
       path: ['remotes', m[1]!, 'url'],
-      default: urlOf(m[1]!),
+      default: BUILT_IN_REMOTES.find((r) => r.name === m[1])?.url ?? urlOf(m[1]!),
       about: `Where ${m[1]} is served`,
       parse: (v) => {
         try {
