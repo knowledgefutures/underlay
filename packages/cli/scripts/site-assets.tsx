@@ -70,7 +70,9 @@ const describe = (c: (typeof commands)[number], prefix = '') => ({
   usage:
     `underlay ${prefix}${c.name()} ${c.options.length ? c.usage() : c.usage().replace(/\[options\]\s*/, '')}`.trim(),
   description: c.description(),
-  options: c.options.map((o) => ({ flags: o.flags, description: o.description })),
+  options: c.options
+    .filter((o) => !o.hidden)
+    .map((o) => ({ flags: o.flags, description: o.description })),
 })
 const reference = {
   version: program.version(),

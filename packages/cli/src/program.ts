@@ -163,6 +163,7 @@ const rule = config
   .description('Where records go, and what is kept, by authority, org or collection')
 rule
   .command('add')
+  .description('Send a collection’s records somewhere else, or set how much of it is kept')
   .argument('<match>', 'authority/org/name, with * at the end (underlay.org/mitp/*)')
   .option('--path <path>', 'a store of its own (personal: kept in config.toml)')
   .addOption(keepOpt())
@@ -483,7 +484,7 @@ program
   .argument('<script>', 'path, or name under scripts/')
   .argument('[args...]')
   .option('--detach', 'run in its own process and return (the terminal UI does this)')
-  .option('--run-id <id>')
+  .addOption(new Option('--run-id <id>').hideHelp())
   .option('--quiet', 'do not echo the script’s output')
   .allowUnknownOption()
   .action(
