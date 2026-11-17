@@ -38,6 +38,14 @@ export function serverFetch(h: Harness): Fetch & { calls: string[] } {
       await h.bucket.put(url.slice('memory://put/'.length), body)
       return new Response(null, { status: 200, headers: { etag: '"etag"' } })
     }
+    if (url.startsWith('memory://get/')) {
+      // A presigned download (an asset), from the same bucket.
+      calls.push(`GET ${url}`)
+      const obj = await h.bucket.get(url.slice('memory://get/'.length))
+      return obj
+        ? new Response((await obj.bytes()) as BodyInit, { status: 200 })
+        : new Response(null, { status: 404 })
+    }
     const u = new URL(url)
     calls.push(`${init.method ?? 'GET'} ${u.pathname}${u.search}`)
     const headers = new Headers(init.headers)

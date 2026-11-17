@@ -61,7 +61,7 @@ writeFileSync(process.env.UNDERLAY_OUT + '/test/org/roster.ndjson', '{"id":"a","
     let f = await until(ui.lastFrame, 'NOT PUSHED')
     expect(f).toContain('Servers (s)')
     expect(f).toMatch(/Collections on.* \(c\)/)
-    expect(f).toMatch(/roster\s+■ ↑1/)
+    expect(f).toMatch(/roster\s+↑1/)
     expect(f).toContain('Scripts and views')
     expect(f).toContain('NOT PUSHED')
     expect(f).toMatch(/v1\.1\.0/)

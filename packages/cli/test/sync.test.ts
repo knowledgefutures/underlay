@@ -1,8 +1,20 @@
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 /** Versions saved here, pushed unchanged, pulled on another machine, and replayed after a race. */
 import { v3 } from '@underlay/protocol'
 import { describe, expect, it } from 'vitest'
 
-import { addCollection, forget, keep, newCollection } from '../src/core/collections.js'
+import { assetsHere, listAssets, storeAssets, unpushedAssets } from '../src/core/assets.js'
+import {
+  addCollection,
+  forget,
+  keep,
+  newCollection,
+  setKeep,
+  wouldLetGo,
+} from '../src/core/collections.js'
 import { type Coll, openColl } from '../src/core/context.js'
 import { type FileProgress, pull, push, pushPlan, StaleError } from '../src/core/sync.js'
 import {
@@ -182,5 +194,49 @@ describe('versions here, push and pull', () => {
     expect(dropped.id).toBe(sq!.id)
     expect((await headOf(a))?.commit.number).toBe(1)
     await expect(undo(a)).rejects.toThrow(/no versions that are not pushed/)
+  })
+
+  it('sends files (assets) before the push that names them, and keeps them by level', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/papers')
+    w.home.writeSchemas(meta, { Person })
+    const a = openColl(w.ctx, meta)
+    await save(a, { Person }, people('Ada'))
+    const dir = mkdtempSync(join(tmpdir(), 'ul-assets-'))
+    const pdf = join(dir, 'paper.pdf')
+    writeFileSync(pdf, 'a small pdf, as far as anyone checks')
+    const stored = await storeAssets(a, [pdf])
+    expect(stored[0]).toMatchObject({ mediaType: 'application/pdf', from: 'paper.pdf' })
+    const added = await saveVersion(a, {
+      rows: [],
+      mode: 'additions',
+      schemas: { Person },
+      message: 'a paper',
+      now: new Date(),
+      assets: stored,
+    })
+    expect(added.stats.added).toBe(1)
+    expect((await unpushedAssets(a)).map((x) => x.hash)).toEqual([stored[0]!.hash])
+
+    // The push sends the bytes first; the authority then takes the $asset row.
+    const files: FileProgress[] = []
+    await push(w.ctx, a, w.ctx.say, (p) => files.push(p))
+    expect(files.some((p) => p.semver === 'assets')).toBe(true)
+    expect(await unpushedAssets(a)).toEqual([])
+
+    // Another machine keeping everything fetches it; data without assets lets it go.
+    const m = w.machine()
+    const { coll: b } = await addCollection(m.ctx, 'test/org/papers')
+    expect(b.meta.keep).toBe('all')
+    expect((await assetsHere(b, await listAssets(b))).map((x) => x.hash)).toEqual([stored[0]!.hash])
+    expect(await wouldLetGo(b, 'records')).toMatchObject({ records: 0, assets: 1 })
+    const r = await setKeep(m.ctx, b, 'records')
+    expect(r.letGo).toBe(1)
+    const b2 = openColl(m.ctx, m.home.collection(b.meta))
+    expect(b2.meta.keep).toBe('records')
+    expect(await assetsHere(b2, await listAssets(b2))).toEqual([])
+    expect((await setKeep(m.ctx, b2, 'all')).fetched).toBe(1)
+    // The one that added it keeps its bytes whatever happens elsewhere.
+    expect(await a.store.fs.head(`assets/${stored[0]!.hash}`)).not.toBeNull()
   })
 })

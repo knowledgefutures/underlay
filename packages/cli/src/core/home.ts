@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
-import { type Keep, TomlFile } from './config.js'
+import { isKeep, type Keep, TomlFile } from './config.js'
 import { CliError } from './env.js'
 
 export interface CollectionRef {
@@ -116,7 +116,7 @@ export class Home {
     const path = join(this.collectionDir(c), 'collection.toml')
     if (!existsSync(path)) return null
     const t = TomlFile.read(path).data
-    const keep = t.keep === 'all' || t.keep === 'some' ? t.keep : 'none'
+    const keep = isKeep(t.keep) ? t.keep : 'none'
     return {
       ...c,
       id: String(t.id ?? ''),

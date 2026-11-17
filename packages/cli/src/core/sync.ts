@@ -12,6 +12,7 @@
  */
 import { createObject, v3 } from '@underlay/protocol'
 
+import { fetchAssets, sendAssets } from './assets.js'
 import type { Coll, Ctx } from './context.js'
 import { CliError } from './env.js'
 import { RemoteError } from './remote.js'
@@ -20,6 +21,8 @@ import { cidOf, headOf, logOf, replayOnto, schemasAt, unpushedOf, viewOf } from 
 const enc = new TextEncoder()
 
 export interface PullResult {
+  /** Assets fetched, for a collection that keeps everything. */
+  assets?: number
   fetched: number
   replayed: { from: v3.StoredCommit; to: v3.StoredCommit }[]
   files: number
@@ -118,6 +121,7 @@ export async function pull(
   }
 
   result.files = await fetchKept(c, onFile)
+  result.assets = await fetchAssets(c, onFile)
   // Schemas the authority changed come into home; others are left as edited here.
   if (incoming.length > 0) {
     const view = await viewOf(c, c.store.state(cid).remote!.number)
@@ -278,6 +282,9 @@ export async function push(
     ctx.home.writeCollection({ ...c.meta, isNew: false })
     c.meta.isNew = false
   }
+  // Assets first: the authority takes a `$asset` row only for bytes already sent to it.
+  const sentAssets = await sendAssets(c, onFile)
+  if (sentAssets) say(`  sent ${sentAssets} asset${sentAssets === 1 ? '' : 's'}`)
   const pushed: v3.StoredCommit[] = []
   for (const s of await unpushedOf(c)) {
     const files = v3.commitFiles(s.commit)

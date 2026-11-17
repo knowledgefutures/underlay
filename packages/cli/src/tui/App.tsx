@@ -10,7 +10,13 @@ import { existsSync, readFileSync, watch } from 'node:fs'
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { addCollection, forget, keep, type RemoteListing } from '../core/collections.js'
+import {
+  addCollection,
+  KEEP_LABEL,
+  type RemoteListing,
+  setKeep,
+  wouldLetGo,
+} from '../core/collections.js'
 import { listPublic } from '../core/collections.js'
 import {
   addSource,
@@ -21,10 +27,11 @@ import {
   setRule,
   setSetting,
   SETTINGS,
+  type Keep,
 } from '../core/config.js'
 import { type Ctx, openColl } from '../core/context.js'
 import { CliError, tildePath } from '../core/env.js'
-import { diffVersions } from '../core/format.js'
+import { bytes, diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
 import { parseRef } from '../core/home.js'
 import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/importers.js'
@@ -101,6 +108,8 @@ const paneOf = (id: string): SidePane =>
 /** The sidebar's width: room for "Collections on this machine (c)" once the terminal has it. */
 const sideWidth = (columns: number) =>
   Math.min(40, Math.max(columns >= 110 ? 37 : 30, Math.floor(columns * 0.27)))
+
+const QUIT = 'Press x again to quit'
 
 const settingRows = (ctx: Ctx): SettingRow[] => {
   const rows: SettingRow[] = []
@@ -558,7 +567,7 @@ export function App({
     const chosen = [...pick.selected.entries()]
     if (!chosen.length) return
     // Each on its own: one that fails doesn't stop the rest, and stays selected to retry.
-    const failed = new Map<string, 'all' | 'none'>()
+    const failed = new Map<string, Keep>()
     const problems: string[] = []
     let added = 0
     for (const [i, [name, k]] of chosen.entries()) {
@@ -735,6 +744,8 @@ export function App({
       return
     }
     if (key.ctrl && input === 'c') return exit()
+    // Any key but x takes back "Press x again to quit".
+    if (status === QUIT && input !== 'x') setStatus('')
 
     // The help screen: j and k scroll it; any other key closes it.
     if (help) {
@@ -869,7 +880,8 @@ export function App({
         }
         if (input === 'k' && pick.selected.has(name)) {
           const m = new Map(pick.selected)
-          m.set(name, m.get(name) === 'all' ? 'none' : 'all')
+          const order: Keep[] = ['all', 'records', 'none']
+          m.set(name, order[(order.indexOf(m.get(name) ?? 'all') + 1) % order.length]!)
           return setPick((v) => ({ ...v, selected: m }))
         }
       }
@@ -1113,7 +1125,7 @@ export function App({
     ) {
       const live = shownRun.status === 'running' || shownRun.status === 'paused'
       if (live) {
-        if (input === 'x')
+        if (input === 'X')
           return void attempt(
             'Cancelling',
             async () => (signalRun(ctx, shownRun.id, 'cancel'), 'Cancelled'),
@@ -1161,7 +1173,8 @@ export function App({
     }
 
     // --- Everywhere else ---
-    if (input === 'q') return exit()
+    // x twice quits, as in Hopper: the first says so.
+    if (input === 'x') return status === QUIT ? exit() : setStatus(QUIT)
     if (input === ',')
       return (
         setSettings({ rows: settingRows(ctx), cursor: 0, editing: null }),
@@ -1229,7 +1242,7 @@ export function App({
           return `${script.name} at ${v.url}`
         })
       }
-      if (input === 'x' && served.current.has(script.path)) {
+      if (input === 'X' && served.current.has(script.path)) {
         served.current.get(script.path)!.stop()
         served.current.delete(script.path)
         setServedTick((n) => n + 1)
@@ -1288,15 +1301,36 @@ export function App({
           })
         })()
       if (input === 'k') {
-        const order = ['all', 'some', 'none'] as const
-        const next = order[(order.indexOf(collRow.meta.keep) + 1) % 3]!
-        return void attempt(`Keeping ${next}`, async () => {
-          if (next === 'none') return `Let go of ${await forget(ctx, c)} files`
-          if (next === 'some') {
-            const types = Object.keys(ctx.home.schemas(collRow.meta)).slice(0, 1)
-            return `Fetched ${await keep(ctx, c, types)} files (some: ${types.join(', ')}; underlay keep --types to choose)`
-          }
-          return `Fetched ${await keep(ctx, c)} files`
+        // Choose a level; one that lets go of anything here asks first, saying how much.
+        const now = collRow.meta.keep
+        const levels: Record<string, Keep> = { e: 'all', d: 'records', m: 'none' }
+        return setPrompt({
+          label: `Keep here: e everything, d data without assets, m metadata only (now ${KEEP_LABEL[now]})`,
+          value: '',
+          submit: async (v) => {
+            const level = levels[v.trim().toLowerCase()]
+            if (!level) return setStatus('Kept as it was: type e, d or m')
+            if (level === now) return setStatus(`Already keeping ${KEEP_LABEL[level]}`)
+            const go = () =>
+              void attempt(`Keeping ${KEEP_LABEL[level]}`, async () => {
+                const r = await setKeep(ctx, c, level)
+                void reload()
+                return `${collRow.meta.name}: ${KEEP_LABEL[level]}${r.fetched ? `, fetched ${r.fetched}` : ''}${r.letGo ? `, let go of ${r.letGo} files here` : ''}`
+              })
+            const w = await wouldLetGo(c, level)
+            if (!w.records && !w.assets) return go()
+            const what = [
+              w.records ? `${w.records} record files (${bytes(w.recordBytes)})` : '',
+              w.assets ? `${w.assets} assets (${bytes(w.assetBytes)})` : '',
+            ]
+              .filter(Boolean)
+              .join(' and ')
+            setPrompt({
+              label: `Delete ${what} from this machine? They stay on ${collRow.meta.authority}. y to delete`,
+              value: '',
+              submit: (y) => (y.trim().toLowerCase() === 'y' ? go() : setStatus('Kept as it was')),
+            })
+          },
         })
       }
       if (input === 'n' && tab === 'Records' && records?.length) {
@@ -1408,7 +1442,7 @@ export function App({
     { k: 'f', l: 'file' },
     { k: ',', l: 'settings' },
     { k: '?', l: 'keys' },
-    { k: 'q', l: 'quit' },
+    { k: 'x x', l: 'quit' },
   ]
   const userNote = side.user ?? ''
   // The card that has the keys is drawn lit, as Hopper's are.

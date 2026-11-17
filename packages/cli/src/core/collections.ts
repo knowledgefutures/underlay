@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
+import { assetsHere, fetchAssets, forgetAssets, listAssets } from './assets.js'
 import { type Keep, ruleFor } from './config.js'
 import { type Coll, type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
@@ -18,7 +19,15 @@ import { cidOf, schemasAt, unpushedOf, viewOf } from './versions.js'
 /** Collections the CLI can sync: v3. A v2 collection is left out of every list. */
 const syncable = (c: RemoteCollection) => c.protocol === undefined || c.protocol === 3
 
-export const KEEP_MARK: Record<Keep, string> = { all: '■', some: '◧', none: '□' }
+/** What a collection keeps here, as a mark: nothing when all of it is here. */
+export const KEEP_MARK: Record<Keep, string> = { all: ' ', records: '◐', some: '◐', none: '○' }
+/** Each level in words. */
+export const KEEP_LABEL: Record<Keep, string> = {
+  all: 'everything',
+  records: 'data, no assets',
+  some: 'some types',
+  none: 'metadata only',
+}
 
 export interface RemoteListing {
   remote: string
@@ -171,13 +180,61 @@ export function newCollection(
 
 /** Keep all of a collection here (or only some types), fetching what is missing. */
 export async function keep(ctx: Ctx, c: Coll, types?: string[]): Promise<number> {
-  const meta: CollectionMeta = {
-    ...c.meta,
-    keep: types?.length ? 'some' : 'all',
-    types: types ?? [],
+  return (await setKeep(ctx, c, types?.length ? 'some' : 'all', types ?? [])).fetched
+}
+
+export interface KeepResult {
+  /** Record files and assets fetched. */
+  fetched: number
+  /** Record files and assets let go. */
+  letGo: number
+}
+
+/**
+ * Keep a collection here at a level: everything, records without assets, some types' records, or
+ * metadata only. Fetches what the level wants that is missing, and lets go of what it doesn't
+ * (never what a version not yet pushed needs, or another collection here keeps).
+ */
+export async function setKeep(
+  ctx: Ctx,
+  c: Coll,
+  level: Keep,
+  types: string[] = [],
+): Promise<KeepResult> {
+  if (level === 'none') {
+    const records = await forget(ctx, c)
+    return {
+      fetched: 0,
+      letGo: records + (await forgetAssets(ctx, openColl(ctx, ctx.home.collection(c.meta)))),
+    }
   }
+  const meta: CollectionMeta = { ...c.meta, keep: level, types: level === 'some' ? types : [] }
   ctx.home.writeCollection(meta)
-  return fetchKept(openColl(ctx, meta))
+  const now = openColl(ctx, meta)
+  const fetched = (await fetchKept(now)) + (await fetchAssets(now))
+  const letGo = level === 'all' ? 0 : await forgetAssets(ctx, now)
+  return { fetched, letGo }
+}
+
+/** What letting a collection go down to a level would remove here, for the question first. */
+export async function wouldLetGo(
+  c: Coll,
+  level: Keep,
+): Promise<{ records: number; recordBytes: number; assets: number; assetBytes: number }> {
+  const out = { records: 0, recordBytes: 0, assets: 0, assetBytes: 0 }
+  if (level === 'all' || (await v3.headNumber(c.store.fs, cidOf(c))) === 0) return out
+  for (const a of await assetsHere(c, await listAssets(c))) {
+    out.assets++
+    out.assetBytes += a.size
+  }
+  if (level === 'none')
+    for (const f of (await viewOf(c)).files) {
+      const h = await c.store.fs.head(v3.recordKey(f.id))
+      if (!h) continue
+      out.records++
+      out.recordBytes += h.size
+    }
+  return out
 }
 
 /** Keep only a collection's metadata here: its files go, unless something else names them. */

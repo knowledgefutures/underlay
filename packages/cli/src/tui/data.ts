@@ -8,6 +8,7 @@ import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
+import { type AssetRow, assetsHere, listAssets } from '../core/assets.js'
 import {
   collectionStatus,
   type CollectionStatus,
@@ -118,6 +119,9 @@ export interface CollectionDetail {
   bytes: number
   filesHere: number
   filesTotal: number
+  /** The assets the newest version names, each with whether it is here; null when its record
+   * files aren't (listing them would fetch). */
+  assets: (AssetRow & { here: boolean })[] | null
   schemas: Record<string, unknown>
   versions: {
     number: number
@@ -162,6 +166,7 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
   let filesHere = 0
   let filesTotal = 0
   let schemas: Record<string, unknown> = ctx.home.schemas(meta)
+  let assets: (AssetRow & { here: boolean })[] | null = []
   if (versions.length > 0) {
     const view = await viewOf(c)
     filesTotal = view.files.length
@@ -174,9 +179,12 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
       records = counts.reduce((n, [, x]) => n + x, 0)
       bytes = [...m.values()].reduce((n, x) => n + x.bytes, 0)
       schemas = { ...(await schemasAt(c.store.fs, view)), ...schemas }
-    }
+      const listed = await listAssets(c)
+      const here = new Set((await assetsHere(c, listed)).map((a) => a.hash))
+      assets = listed.map((a) => ({ ...a, here: here.has(a.hash) }))
+    } else assets = null
   }
-  return { readme, counts, records, bytes, filesHere, filesTotal, schemas, versions }
+  return { readme, counts, records, bytes, filesHere, filesTotal, assets, schemas, versions }
 }
 
 /** A page of a collection's records, from a key on. */

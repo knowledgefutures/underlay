@@ -15,7 +15,13 @@ import { parse, stringify } from 'smol-toml'
 
 import { CliError, type Env, expandPath, tildePath } from './env.js'
 
-export type Keep = 'all' | 'some' | 'none'
+/**
+ * How much of a collection is kept here: everything (records and assets), all records but no
+ * assets, some types' records, or metadata only.
+ */
+export type Keep = 'all' | 'records' | 'some' | 'none'
+export const KEEPS: readonly Keep[] = ['all', 'records', 'some', 'none']
+export const isKeep = (v: unknown): v is Keep => KEEPS.includes(v as Keep)
 
 export interface StoreRule {
   /** `authority/org/name`, with `*` for any one part at the end (`underlay.org/mitp/*`). */
@@ -136,7 +142,7 @@ export function loadSettings(env: Env): Settings {
       {
         match: r.match,
         ...(typeof r.path === 'string' ? { path: expandPath(env, r.path) } : {}),
-        ...(keep === 'all' || keep === 'some' || keep === 'none' ? { keep } : {}),
+        ...(isKeep(keep) ? { keep } : {}),
       },
     ]
   })

@@ -109,6 +109,9 @@ export type PresignedTarget =
       parts: { n: number; url: string }[]
     }
 
+/** Assets up to this go through the API (the server's SMALL_UPLOAD_BYTES). */
+const SMALL_ASSET_BYTES = 32 * 1024 * 1024
+
 export class Remote {
   readonly url: string
 
@@ -247,6 +250,97 @@ export class Remote {
     return (
       await this.json<{ layout: v3.Layout | null }>(`${this.collectionPath(org, name)}/layout`)
     ).layout
+  }
+
+  // --- Assets: the files a collection's `$asset` rows name, through the server's file routes ---
+
+  /** Download links for assets, at most 500 a call: null for one the collection doesn't name. */
+  async assetUrls(org: string, name: string, hashes: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>()
+    for (let i = 0; i < hashes.length; i += 500) {
+      const got = await this.post<Record<string, string | null>>(
+        `${this.collectionPath(org, name)}/files/presign`,
+        { hashes: hashes.slice(i, i + 500) },
+      )
+      for (const [h, url] of Object.entries(got)) if (url) out.set(h, url)
+    }
+    return out
+  }
+
+  /** An asset's bytes, from a download link. */
+  async fetchAsset(url: string): Promise<Uint8Array> {
+    const res = await withRetry(
+      'Fetching an asset',
+      async () => {
+        const r = await this.fetchImpl(url)
+        if (r.status >= 500 || r.status === 429)
+          throw new RemoteError(`Fetching an asset: ${r.status}`, r.status, null)
+        return r
+      },
+      this.say,
+    )
+    if (!res.ok) throw new RemoteError(`Fetching an asset: ${res.status}`, res.status, null)
+    return new Uint8Array(await res.arrayBuffer())
+  }
+
+  /** Whether the collection already reads this asset (it names it, or it was sent to it). */
+  async hasAsset(org: string, name: string, hash: string): Promise<boolean> {
+    const res = await this.request(`${this.collectionPath(org, name)}/files/${hash}`, {
+      method: 'HEAD',
+    })
+    return res.ok
+  }
+
+  /**
+   * Send an asset's bytes to a collection, so a push may name it. Up to 32 MB goes through the
+   * API; larger goes straight to storage, and the server checks it before saying it is there.
+   */
+  async sendAsset(
+    org: string,
+    name: string,
+    hash: string,
+    bytes: Uint8Array,
+    mediaType: string | null,
+  ): Promise<void> {
+    const base = `${this.collectionPath(org, name)}/files`
+    const type = mediaType ?? 'application/octet-stream'
+    if (bytes.byteLength <= SMALL_ASSET_BYTES) {
+      await this.json(`${base}/${hash}`, {
+        method: 'PUT',
+        headers: { 'content-type': type },
+        body: bytes as BodyInit,
+      })
+      return
+    }
+    const ticket = await this.post<{ id: string; url?: string; parts?: unknown }>(
+      `${base}/uploads`,
+      { hash, size: bytes.byteLength, mimeType: type },
+    )
+    if (!ticket.url)
+      throw new CliError(
+        `Asset ${hash.slice(0, 12)} is ${bytes.byteLength} bytes: the CLI sends assets up to 5 GB`,
+      )
+    await withRetry(
+      `Sending asset ${hash.slice(0, 12)}`,
+      async () => {
+        const res = await this.fetchImpl(ticket.url!, { method: 'PUT', body: bytes as BodyInit })
+        if (!res.ok) throw new RemoteError(`Sending an asset: ${res.status}`, res.status, null)
+      },
+      this.say,
+    )
+    await this.post(`${base}/uploads/${ticket.id}/complete`, {})
+    const until = Date.now() + 15 * 60_000
+    for (let wait = 500; ; wait = Math.min(wait * 2, 5000)) {
+      if (Date.now() > until)
+        throw new CliError(`Asset ${hash.slice(0, 12)} is still being checked; push again later`)
+      const st = await this.json<{ status: string; error?: string | null }>(
+        `${base}/uploads/${ticket.id}`,
+      )
+      if (st.status === 'verified') return
+      if (st.status === 'failed')
+        throw new CliError(`Asset ${hash.slice(0, 12)} was refused: ${st.error ?? 'failed'}`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
   }
 
   /** A sorted-record-file's bytes. */

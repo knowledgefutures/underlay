@@ -1,5 +1,5 @@
 import type { RemoteListing } from '../core/collections.js'
-import { KEEP_MARK } from '../core/collections.js'
+import { KEEP_LABEL, KEEP_MARK } from '../core/collections.js'
 import type { Keep } from '../core/config.js'
 import { ago, bytes, count, duration, shortId } from '../core/format.js'
 import type { ImportOptions, Shape } from '../core/importers.js'
@@ -68,7 +68,7 @@ export interface Sidebar {
   user: string | null
 }
 
-const keepColor = (k: Keep) => (k === 'none' ? C.mu : k === 'some' ? C.bl : C.fg)
+const keepColor = (k: Keep) => (k === 'none' ? C.mu : k === 'all' ? C.fg : C.bl)
 
 export function scriptMark(s: ScriptRow): string {
   const st = s.last?.status
@@ -102,9 +102,10 @@ export function sidebar(
           ? `${here} / …`
           : `${here} / ${total}`
     const mark = r.signedIn ? '●' : '○'
-    const nameW = Math.max(8, inner - 2 - 11)
+    const nameW = Math.max(8, inner - 3 - 11)
     return L(
       [
+        S(on ? '▌' : ' ', C.bl),
         S(mark + ' ', markColor(mark)),
         S(P(r.name.slice(0, nameW), nameW), on ? C.wh : r.signedIn ? C.fg : C.mu, on),
         S(R(note, 11), C.mu),
@@ -142,7 +143,7 @@ export function sidebar(
       cols.push(
         L(
           [
-            S(on ? '  › ' : '    ', C.gr, true),
+            S(on ? '▌   ' : '    ', C.bl),
             S(P(c.meta.name.slice(0, nameW), nameW), on ? C.wh : C.fg, on),
             S(KEEP_MARK[c.meta.keep], keepColor(c.meta.keep)),
             sync,
@@ -155,7 +156,6 @@ export function sidebar(
   }
   if (snap.collections.length === 0)
     cols.push(L([S('Nothing here yet: + adds from a remote', C.mu)]))
-  cols.push(L([S('■ all  ', C.mu), S('◧', C.bl), S(' some  □ metadata only', C.mu)]))
 
   const scripts: Line[] = []
   const sw = Math.max(8, inner - 4 - 6)
@@ -182,7 +182,7 @@ export function sidebar(
     scripts.push(
       L(
         [
-          S(on ? '› ' : '  ', C.gr, true),
+          S(on ? '▌ ' : '  ', C.bl),
           S(mark + ' ', view ? C.bl : markColor(mark)),
           S(P(label.slice(0, sw), sw), on ? C.wh : C.fg, on),
           S(R(when.replace(' ago', '').replace('just now', 'now'), 6), mark === '▶' ? C.bl : C.mu),
@@ -245,7 +245,7 @@ export function collectionPane(
     keys: [
       { k: 'p', l: 'push…' },
       { k: 'u', l: 'undo last change' },
-      { k: 'k', l: 'keep all / some / none' },
+      { k: 'k', l: 'keep…' },
       { k: 'l', l: 'pull' },
       { k: 'R', l: 'run a script' },
       { k: '←→', l: 'tabs' },
@@ -279,9 +279,7 @@ export function collectionPane(
       lines.push(
         L([
           S(`  ${KEEP_MARK[m.keep]} `, keepColor(m.keep)),
-          S(
-            `${m.keep === 'none' ? 'metadata only' : 'some data'} · ${d.filesHere} of ${d.filesTotal} files here`,
-          ),
+          S(`${KEEP_LABEL[m.keep]} · ${d.filesHere} of ${d.filesTotal} record files here`),
           S(' · records are fetched when opened', C.mu),
         ]),
       )
@@ -290,7 +288,11 @@ export function collectionPane(
         L([
           S(`  ${KEEP_MARK[m.keep]} `, keepColor(m.keep)),
           S(
-            `${m.keep === 'all' ? 'all data' : 'kept'} · ${count(d.records)} records · ${bytes(d.bytes)}`,
+            `${KEEP_LABEL[m.keep]} · ${count(d.records)} records · ${bytes(d.bytes)}${
+              d.assets?.length
+                ? ` · ${count(d.assets.length)} files, ${count(d.assets.filter((f) => f.here).length)} here`
+                : ''
+            }`,
           ),
         ]),
       )
@@ -352,7 +354,7 @@ export function collectionPane(
       }
       lines.push(blank())
     }
-    lines.push(head('FILES'))
+    lines.push(head('IN YOUR HOME'))
     lines.push(L([S(`  collections/${row.key}/`, C.mu)]))
     lines.push(
       L([
@@ -364,7 +366,7 @@ export function collectionPane(
         ),
       ]),
     )
-    lines.push(L([S(`    records: ${x.storeRoot} (the store), kept: ${m.keep}`, C.mu)]))
+    lines.push(L([S(`    its records and files are in ${x.storeRoot} (the store)`, C.mu)]))
   } else if (tab === 'Records') {
     if (!x.records) lines.push(L([S('Loading…', C.mu)]))
     else if (x.records.length === 0) lines.push(L([S('No records', C.mu)]))
@@ -394,16 +396,50 @@ export function collectionPane(
     if (!Object.keys(d.schemas).length)
       lines.push(L([S(`No schemas: put them in collections/${row.key}/schemas/<Type>.json`, C.mu)]))
   } else if (tab === 'Files') {
+    // Assets: the files the records point to, such as PDFs and images, as on the web.
+    const a = d.assets
+    if (a === null)
+      lines.push(
+        L([S('Its records are not here, so neither is its list of files. k keeps more.', C.mu)]),
+      )
+    else if (a.length === 0)
+      lines.push(
+        L([
+          S('No files. ', C.fg),
+          S(`underlay asset add ${m.org}/${m.name} <file> adds one.`, C.mu),
+        ]),
+      )
+    else {
+      const here = a.filter((f) => f.here)
+      lines.push(
+        L([
+          S(`${count(a.length)} file${a.length === 1 ? '' : 's'}`, C.fg, true),
+          S(
+            ` · ${bytes(a.reduce((n, f) => n + f.size, 0))} · ${here.length === a.length ? 'all here' : `${count(here.length)} here`}`,
+            C.mu,
+          ),
+          ...(m.keep !== 'all' && here.length < a.length
+            ? [S('  k → everything fetches them', C.mu)]
+            : []),
+        ]),
+        blank(),
+      )
+      for (const f of a.slice(0, 200))
+        lines.push(
+          L([
+            S(f.here ? '  ✓ ' : '  · ', f.here ? C.gr : C.mu),
+            S(P(f.hash.slice(0, 12), 14), C.mu),
+            S(P(f.mediaType ?? 'unknown type', 24)),
+            S(R(bytes(f.size), 9), C.mu),
+          ]),
+        )
+    }
     lines.push(
+      blank(),
       L([
-        S(
-          `${d.filesHere} of ${d.filesTotal} sorted-record-files of the newest version are here`,
-          C.fg,
-        ),
+        S(`Records: ${d.filesHere} of ${d.filesTotal} record files here, in ${x.storeRoot}`, C.dim),
       ]),
     )
-    lines.push(L([S(`store: ${x.storeRoot}`, C.mu)]))
-    lines.push(L([S(`on ${m.authority}: ${x.url}/${m.org}/${m.name}`, C.mu)]))
   } else if (tab === 'Changes') {
     if (!x.diff) lines.push(L([S('Loading…', C.mu)]))
     else {
@@ -436,6 +472,8 @@ export function collectionPane(
         )
     }
   } else {
+    // Wide enough for "✓ <server>" and a gap before the date.
+    const whereW = Math.max(14, m.authority.length + 4)
     lines.push(
       L([
         S(
@@ -444,7 +482,7 @@ export function collectionPane(
             R('#', 5) +
             '  ' +
             P('ID', 8) +
-            P('WHERE', 20) +
+            P('WHERE', whereW) +
             P('WHEN', 12) +
             'MESSAGE',
           C.mu,
@@ -457,7 +495,7 @@ export function collectionPane(
           S('  ' + P(v.semver, 9), v.pushed ? C.fg : C.bl),
           S(R(v.number, 5), C.mu),
           S('  ' + P(shortId(v.id), 8), C.mu),
-          S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', 20), v.pushed ? C.gr : C.bl),
+          S(P(v.pushed ? `✓ ${m.authority}` : 'not pushed', whereW), v.pushed ? C.gr : C.bl),
           S(P(ago(v.createdAt), 12), C.mu),
           S((v.message ?? '').slice(0, 40)),
         ]),
@@ -506,7 +544,7 @@ export function runPane(
       ]),
     ],
     keys: [
-      { k: 'x', l: 'cancel' },
+      { k: 'X', l: 'cancel' },
       { k: 'space', l: r.status === 'paused' ? 'resume' : 'pause' },
       { k: 'R', l: 'restart' },
       { k: '↑↓', l: 'scroll' },
@@ -926,7 +964,7 @@ export interface PickView {
   listing: RemoteListing | { error: string } | null
   public: (RemoteCollection & { here: unknown })[] | null
   open: Set<string>
-  selected: Map<string, 'all' | 'none'>
+  selected: Map<string, Keep>
   cursor: number
   search: string
   searching: boolean
@@ -1021,11 +1059,9 @@ export function pickPane(v: PickView, width: number): Pane {
     const key = `${r.org}/${c.slug}`
     const sel = v.selected.get(key)
     const here = c.here
-      ? `${KEEP_MARK[c.here.keep]} ${c.here.keep === 'all' ? 'all' : c.here.keep === 'some' ? 'some' : 'metadata'}`
+      ? `${KEEP_MARK[c.here.keep]} ${KEEP_LABEL[c.here.keep]}`
       : sel
-        ? sel === 'all'
-          ? 'add all data'
-          : 'add metadata only'
+        ? `add ${KEEP_LABEL[sel]}`
         : ''
     const name = v.tab === 'public' ? key : c.slug
     lines.push(
@@ -1048,14 +1084,17 @@ export function pickPane(v: PickView, width: number): Pane {
   const footer: Line[] = [rule(width)]
   if (v.status) footer.push(...wrap(v.status, width - 2, C.bl))
   else if (chosen.length) {
-    const all = chosen.filter(([, k]) => k === 'all').map(([n]) => n.split('/')[1])
-    const meta = chosen.filter(([, k]) => k === 'none').map(([n]) => n.split('/')[1])
+    const at = (level: Keep) => chosen.filter(([, k]) => k === level).map(([n]) => n.split('/')[1])
+    const all = at('all')
+    const data = at('records')
+    const meta = at('none')
     footer.push(
       L([
         S(`Adding ${chosen.length}: `, C.fg, true),
         S(
           [
-            all.length ? `${all.join(' and ')} with all data` : '',
+            all.length ? `${all.join(' and ')} with everything` : '',
+            data.length ? `${data.join(' and ')} with data, no assets` : '',
             meta.length ? `${meta.join(' and ')} metadata only` : '',
           ]
             .filter(Boolean)
@@ -1291,7 +1330,7 @@ export function viewPane(s: ScriptRow, served: { url: string } | null, width: nu
     ],
     keys: [
       { k: 'v', l: served ? 'open again' : 'open in a browser' },
-      ...(served ? [{ k: 'x', l: 'stop' }] : []),
+      ...(served ? [{ k: 'X', l: 'stop' }] : []),
       { k: 'esc', l: 'back' },
     ],
   }

@@ -11,10 +11,13 @@ const KEYS: [string, string][] = [
   ['tab', 'Move between that card and the main pane'],
   ['← →', 'Switch a collection’s tabs'],
   ['R', 'Run the selected script, or one that writes the selected collection'],
-  ['x, space, R', 'While a script runs: cancel, pause or resume, restart'],
+  ['X, space, R', 'While a script runs: cancel, pause or resume, restart'],
   ['u', 'Undo the newest version not yet pushed, or a finished run’s versions'],
   ['l', 'Pull the selected collection'],
-  ['k', 'Keep all, some, or none of the selected collection'],
+  [
+    'k',
+    'Keep everything, data without files, or metadata only; asks before deleting anything here',
+  ],
   ['p', 'Push'],
   ['+', 'Add collections from a remote'],
   ['f', 'Add a file (or drop one on the terminal)'],
@@ -23,7 +26,7 @@ const KEYS: [string, string][] = [
   ['?', 'Every key, with the ones for where you are lit'],
   ['a, A', 'Copy a prompt for an agent; send it to the handoff command'],
   ['o', 'Open the collection on its server'],
-  ['q', 'Quit'],
+  ['x x', 'Quit (the first x says so)'],
 ]
 
 export default function CliGuide() {
@@ -118,19 +121,28 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
         A record file is kept once however many collections name it.
       </p>
       <p>
-        <code>underlay add</code> keeps all of a collection&apos;s records. With{' '}
-        <code>--keep none</code>, only its schemas and history are kept, and records are fetched
-        from its authority when something reads them; <code>--keep some --types A,B</code> keeps
-        some types. <code>underlay keep</code> and <code>underlay forget</code> change this later.
-        <code>underlay remove</code> takes a collection off your machine altogether; it stays on its
-        server.
+        <code>underlay add</code> keeps everything: a collection&apos;s records and its files (the
+        PDFs, images and other assets its records point to, at <code>assets/</code> in the store).
+        With <code>--keep records</code>, its records but not its files; with{' '}
+        <code>--keep none</code>, only its schemas and history, and records are fetched from its
+        authority when something reads them; <code>--keep some --types A,B</code> keeps some types.
+        <code>underlay keep</code> (with <code>--records</code> or <code>--types</code>) and{' '}
+        <code>underlay forget</code> change this later, and <code>k</code> in the terminal UI asks
+        before it deletes anything here. <code>underlay remove</code> takes a collection off your
+        machine altogether; it stays on its server.
       </p>
+      <p>
+        <code>underlay asset add &lt;collection&gt; &lt;file&gt;</code> adds a file: a version that
+        names it, and its bytes are sent before that version on <code>underlay push</code>.{' '}
+        <code>underlay asset &lt;collection&gt;</code> lists a collection&apos;s files and which are
+        here.
+      </p>
+      <p>A collection with everything here has no mark.</p>
       <table className="border-collapse">
         <tbody>
           {[
-            ['■', 'All of the collection’s records are here'],
-            ['◧', 'Some of them'],
-            ['□', 'Its schemas and history only'],
+            ['◐', 'Some of it is here: its records but not its files, or some types'],
+            ['○', 'Its schemas and history only'],
             ['↑2', 'Two versions here that are not pushed'],
             [
               '↓1',

@@ -59,7 +59,7 @@ const { frameToSvg } = await import('./ansi-svg.js')
 const GROUPS: [string, string[]][] = [
   ['Set up', ['init', 'config', 'login', 'logout', 'remotes', 'update']],
   ['Script folders', ['sources', 'secret']],
-  ['Collections', ['ls', 'add', 'new', 'keep', 'forget', 'remove', 'status']],
+  ['Collections', ['ls', 'add', 'new', 'keep', 'forget', 'remove', 'asset', 'status']],
   ['Scripts and runs', ['run', 'runs', 'pause', 'resume', 'cancel', 'view', 'schema']],
   ['Versions', ['log', 'diff', 'export', 'save', 'undo', 'squash', 'reword']],
   ['Files and imports', ['add-file', 'import', 'read', 'eject']],

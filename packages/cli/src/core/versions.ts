@@ -100,6 +100,8 @@ export interface SaveInput {
   message: string | null
   run?: string
   now: Date
+  /** Assets the version names: `$asset` rows, for bytes already in the store (core/assets.ts). */
+  assets?: { hash: string; size: number; mediaType: string | null }[]
 }
 
 export interface SaveResult {
@@ -136,6 +138,15 @@ export async function saveVersion(c: Coll, input: SaveInput): Promise<SaveResult
   }
   const dropped = Object.keys(headSchemas).filter((t) => !(t in input.schemas))
   for (const type of dropped) schemaRows.push(v3.removalRow(type, v3.SCHEMA_TYPE))
+  // Assets: a `$asset` row for each the head doesn't already name.
+  for (const a of input.assets ?? []) {
+    const named = head && (await v3.getRecord(c.data, view, v3.ASSET_TYPE, a.hash))?.line
+    if (named) continue
+    schemaRows.push(
+      v3.rowFromRecord(a.hash, v3.ASSET_TYPE, { size: a.size, mediaType: a.mediaType }),
+    )
+    stats.added++
+  }
   schemaRows.sort(v3.compareKey)
   stats.schemas = schemaRows.length
 

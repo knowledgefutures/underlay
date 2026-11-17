@@ -37,7 +37,7 @@ export const SECTIONS: [Section, Hint[]][] = [
       ['f', 'add a file, or drop one'],
       [',', 'settings'],
       ['?', 'these keys'],
-      ['q', 'quit'],
+      ['x x', 'quit'],
     ],
   ],
   [
@@ -46,7 +46,7 @@ export const SECTIONS: [Section, Hint[]][] = [
       ['←→', 'tabs'],
       ['l', 'pull'],
       ['u', 'undo last change'],
-      ['k', 'keep all, some or none'],
+      ['k', 'keep everything, data, or metadata'],
       ['R', 'run its script'],
       ['o', 'open on its authority'],
       ['a', 'copy a prompt for an agent'],
@@ -67,13 +67,13 @@ export const SECTIONS: [Section, Hint[]][] = [
     'a view',
     [
       ['v', 'open in a browser'],
-      ['x', 'stop serving'],
+      ['X', 'stop serving'],
     ],
   ],
   [
     'a run',
     [
-      ['x', 'cancel'],
+      ['X', 'cancel'],
       ['space', 'pause or resume'],
       ['R', 'restart, or run again'],
       ['u', 'undo a finished run'],
@@ -98,7 +98,7 @@ export const SECTIONS: [Section, Hint[]][] = [
     'adding from a remote',
     [
       ['space', 'select'],
-      ['k', 'all data or metadata only'],
+      ['k', 'everything, data, or metadata'],
       ['←→', 'fold an org'],
       ['tab', 'your orgs or public'],
       ['/', 'search'],

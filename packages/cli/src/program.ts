@@ -14,16 +14,17 @@ import { v3 } from '@underlay/protocol'
 import { Command, Option } from 'commander'
 
 import { askHidden, confirm, confirmTyped } from './commands/prompt.js'
+import { assetsHere, listAssets, storeAssets } from './core/assets.js'
 import {
   addCollection,
   removeCollection,
   collectionStatus,
-  forget,
-  keep,
+  KEEP_LABEL,
   KEEP_MARK,
   listPublic,
   listRemote,
   newCollection,
+  setKeep,
 } from './core/collections.js'
 import {
   addSource,
@@ -68,7 +69,10 @@ export const env: Env = defaultEnv()
 const ctx = (): Ctx => openCtx(env, say)
 const json = (v: unknown) => say(JSON.stringify(v, null, 2))
 const keepOpt = () =>
-  new Option('--keep <keep>', 'how much to keep here').choices(['all', 'some', 'none'])
+  new Option(
+    '--keep <keep>',
+    'how much to keep here: all (records and files), records (no files), some types, none (metadata)',
+  ).choices(['all', 'records', 'some', 'none'])
 const kindLabel = (s: ScriptInfo) =>
   s.kind === 'script' ? '' : s.kind === 'view' ? (s.view === 'server' ? 'serves' : 'view') : s.kind
 const list = (v: string) =>
@@ -412,7 +416,7 @@ program
     }
     const example = listings.length === 1 ? listings[0]!.remote : '<server>'
     say(
-      `${listings.length > 1 ? '' : '\n'}■ all here  ◧ some  □ metadata only  + not here: underlay add ${example}/<org>/<name>`,
+      `${listings.length > 1 ? '' : '\n'}◐ some here  ○ metadata only  + not here: underlay add ${example}/<org>/<name>`,
     )
   })
 
@@ -455,18 +459,74 @@ program
   })
 program
   .command('keep')
-  .description('Keep all of a collection here (or some types), fetching what is missing')
+  .description(
+    'Keep all of a collection here, records and files (assets), fetching what is missing',
+  )
   .argument('<collection>')
-  .option('--types <types>', 'only these types', list)
-  .action(async (name: string, o: { types?: string[] }) => {
-    const n = await keep(ctx(), coll(ctx(), name), o.types)
-    say(`Fetched ${n} files`)
+  .option('--records', 'its records but not its files: lets go of files here')
+  .option('--types <types>', 'only these types’ records', list)
+  .action(async (name: string, o: { types?: string[]; records?: boolean }) => {
+    const level = o.types?.length ? 'some' : o.records ? 'records' : 'all'
+    const r = await setKeep(ctx(), coll(ctx(), name), level, o.types ?? [])
+    say(
+      `Keeping ${KEEP_LABEL[level]}: fetched ${r.fetched}${r.letGo ? `, let go of ${r.letGo}` : ''}`,
+    )
   })
 program
   .command('forget')
-  .description('Keep only metadata here; files go unless something else needs them')
+  .description('Keep only metadata here; records and files go unless something else needs them')
   .argument('<collection>')
-  .action(async (name: string) => say(`Let go of ${await forget(ctx(), coll(ctx(), name))} files`))
+  .action(async (name: string) => {
+    const r = await setKeep(ctx(), coll(ctx(), name), 'none')
+    say(`Let go of ${r.letGo} files`)
+  })
+
+const asset = program
+  .command('asset')
+  .description('A collection’s files (assets): PDFs, images and the like that records point to')
+asset
+  .command('ls', { isDefault: true })
+  .description('The files the newest version names, and which are here')
+  .argument('<collection>')
+  .action(async (name: string) => {
+    const c = coll(ctx(), name)
+    const rows = await listAssets(c)
+    const here = new Set((await assetsHere(c, rows)).map((a) => a.hash))
+    for (const a of rows)
+      say(
+        `${here.has(a.hash) ? '✓' : '·'} ${a.hash}  ${(a.mediaType ?? 'unknown type').padEnd(24)} ${bytes(a.size).padStart(9)}`,
+      )
+    say(
+      rows.length
+        ? `${rows.length} files, ${here.size} here${c.meta.keep === 'all' ? '' : ` (underlay keep ${c.key} fetches them)`}`
+        : 'No files',
+    )
+  })
+asset
+  .command('add')
+  .description('Add files to a collection: a version that names them, sent on push')
+  .argument('<collection>')
+  .argument('<files...>')
+  .option('-m, --message <message>')
+  .action(async (name: string, files: string[], o: { message?: string }) => {
+    const c = ctx()
+    const cl = coll(c, name)
+    const stored = await storeAssets(cl, files)
+    const r = await saveVersion(cl, {
+      rows: [],
+      mode: 'additions',
+      schemas: c.home.schemas(cl.meta),
+      message: o.message ?? `Add ${stored.map((a) => a.from).join(', ')}`,
+      now: env.now(),
+      assets: stored,
+    })
+    for (const a of stored) say(`${a.hash}  ${a.from}`)
+    say(
+      r.version
+        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.added} files added`
+        : `${cl.key}: it names these already`,
+    )
+  })
 
 program
   .command('remove')
@@ -569,7 +629,8 @@ program
         const r = await pull(c, openColl(c, meta), undefined, peck?.file)
         const parts = [
           `${r.fetched} new versions`,
-          r.files ? `${r.files} files` : '',
+          r.files ? `${r.files} record files` : '',
+          r.assets ? `${r.assets} assets` : '',
           r.schemas.length ? `schemas: ${r.schemas.join(', ')}` : '',
         ]
         tell(`${keyOf(meta)}: ${parts.filter(Boolean).join(', ')}`)
