@@ -5,7 +5,8 @@
  * `/cli/underlay.js` with its SHA-256 at `/cli/underlay.js.sha256` (the web build copies
  * both: packages/web/scripts/cli-assets.ts). This route gives the script that fetches it,
  * with this deployment's origin written in, so staging's script installs staging's build.
- * Running it again updates the CLI.
+ * It writes that origin beside the CLI (`origin`), so `underlay update` and the CLI's check
+ * for a newer build ask the same deployment. Running it again updates the CLI too.
  */
 import { Hono } from 'hono'
 
@@ -46,6 +47,7 @@ fi
 [ "$WANT" = "$HAVE" ] || fail "the download does not match its checksum; nothing was installed"
 
 mv "$TMP/underlay.js" "$DIR/underlay.js"
+printf '%s\\n' "$ORIGIN" > "$DIR/origin"
 cat > "$BIN/underlay" <<EOF
 #!/bin/sh
 exec node "$DIR/underlay.js" "\\$@"
@@ -64,10 +66,11 @@ esac
 say ""
 say "Next:"
 say "  underlay login ${hostOf(origin)}"
-say "  underlay init ~/Underlay && cd ~/Underlay"
+say "  underlay init"
 say "  underlay"
 say ""
 say "Docs: $ORIGIN/docs/cli"
+say "Later, underlay update gets the newest build from here."
 `
 }
 

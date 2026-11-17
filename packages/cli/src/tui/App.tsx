@@ -30,6 +30,7 @@ import { addFile, defaultOptions, eject, readTable, saveImport } from '../core/i
 import { inputPath, readRun, type RunRecord, signalRun, startDetached } from '../core/runs.js'
 import { findScript } from '../core/scripts.js'
 import { pull, push, pushPlan, StaleError } from '../core/sync.js'
+import { checkForUpdate } from '../core/update.js'
 import { squash, undo, unpushedOf, cidOf } from '../core/versions.js'
 import { openInBrowser, serveView, type ServedView } from '../core/views.js'
 import {
@@ -251,6 +252,11 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
   const [focus, setFocus] = useState<'side' | 'main'>('side')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [tab, setTab] = useState<Tab>('Overview')
+  // A newer CLI, shown where the status line is when it is empty.
+  const [updateOut, setUpdateOut] = useState(false)
+  useEffect(() => {
+    void checkForUpdate(ctx.env).then((a) => setUpdateOut(a !== null))
+  }, [ctx])
   // Views that serve, started from here: stopped when the UI closes.
   const served = useRef(new Map<string, ServedView>())
   const [, setServedTick] = useState(0)
@@ -1308,6 +1314,10 @@ export function App({ ctx, initial }: { ctx: Ctx; initial?: { sel?: string } }) 
       ) : status ? (
         <Text wrap="truncate-end" color={C.or}>
           {status}
+        </Text>
+      ) : updateOut ? (
+        <Text wrap="truncate-end" color={C.bl}>
+          A newer Underlay CLI is out: quit (q) and run underlay update
         </Text>
       ) : (
         <Text> </Text>

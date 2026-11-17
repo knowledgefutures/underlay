@@ -15,6 +15,8 @@ describe('/cli/install.sh', () => {
     const text = await res.text()
     expect(text).toContain('ORIGIN="http://test"')
     expect(text).toContain('/cli/underlay.js.sha256')
+    // Where it came from, for `underlay update`.
+    expect(text).toContain(`printf '%s\\n' "$ORIGIN" > "$DIR/origin"`)
     expect(installScript('https://www.underlay.org')).toContain('underlay login underlay.org')
   })
 })

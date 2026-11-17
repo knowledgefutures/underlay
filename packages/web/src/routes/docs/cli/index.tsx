@@ -47,8 +47,9 @@ export default function CliOverview() {
         <code>~/.local/share/underlay-cli</code>, checks it against its SHA-256, and puts an{' '}
         <code>underlay</code> command in <code>~/.local/bin</code>. It tells you if that folder is
         not on your PATH. <a href="/cli/install.sh">Read the script</a> before you run it if you
-        like. Run the same line again to update. To remove the CLI, delete those two paths; your
-        home and its records stay.
+        like. <code>underlay update</code> gets the newest build from the same server, and the CLI
+        tells you when there is one. To remove the CLI, delete those two paths; your home and its
+        records stay.
       </p>
 
       <h2>Getting started</h2>

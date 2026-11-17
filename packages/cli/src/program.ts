@@ -6,7 +6,7 @@
  * terminal UI (plain `underlay` in a terminal), and `underlay serve`. The commands and the
  * UI call the library in src/core directly.
  */
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -54,6 +54,7 @@ import { listRuns, readLog, readRun, runScript, signalRun, startDetached } from 
 import { findScript, listScripts, type ScriptInfo } from './core/scripts.js'
 import { secretKey, SOURCE_FILE, SOURCE_HEADER } from './core/sources.js'
 import { isLoud, pull, push, pushPlan, type PushPlan, remoteHead, StaleError } from './core/sync.js'
+import { update } from './core/update.js'
 import { cidOf, logOf, reword, saveVersion, squash, undo, viewOf } from './core/versions.js'
 import { openInBrowser, serveView } from './core/views.js'
 
@@ -65,7 +66,7 @@ export const VERSION = '0.3.0'
 export const FULL_VERSION =
   typeof UNDERLAY_BUILD === 'string' ? `${VERSION} (${UNDERLAY_BUILD})` : VERSION
 const say = (line = '') => console.log(line)
-const env: Env = defaultEnv()
+export const env: Env = defaultEnv()
 const ctx = (): Ctx => openCtx(env, say)
 const json = (v: unknown) => say(JSON.stringify(v, null, 2))
 const keepOpt = () =>
@@ -979,6 +980,23 @@ program
       process.once('SIGTERM', stop)
       v.child.once('exit', () => done())
     })
+  })
+
+program
+  .command('update')
+  .description(
+    'Update the CLI from where it was installed (staging or underlay.org), checked by its SHA-256',
+  )
+  .action(async () => {
+    const r = await update(env)
+    if (!r.changed) return say(`underlay ${FULL_VERSION} is the newest from ${r.origin}`)
+    let now = 'the newest'
+    try {
+      now = execFileSync(process.execPath, [r.file, '--version'], { encoding: 'utf8' }).trim()
+    } catch {
+      // It is in place; its version shows next time.
+    }
+    say(`Updated underlay ${FULL_VERSION} → ${now}, from ${r.origin}`)
   })
 
 program

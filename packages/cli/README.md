@@ -46,6 +46,8 @@ underlay import <file> --collection C --type T [--id col]   the built-in importe
                                           home's scripts/imports/<name>.toml and run
 underlay read <file> [--sheet S]          rows as NDJSON; underlay eject <import>
 underlay config [list|get|set|unset|edit|rule add|rule rm]
+underlay update                           the newest build from where it was installed (install.sh
+                                          writes an `origin` file beside it; checked once a day)
 ```
 
 Home (`~/Underlay`, or `home` in `~/.config/underlay/config.toml`, or `UNDERLAY_HOME`) is
