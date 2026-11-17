@@ -223,7 +223,7 @@ export const SETTINGS: SettingDef[] = [
     path: ['defaults', 'remote'],
     default: 'underlay.org',
     about: 'The remote `underlay new`, `ls` and `login` use when none is named',
-    help: 'The remote that underlay new, ls and login use when you do not name one. A collection you add keeps its own authority whatever this says.',
+    help: 'The remote that underlay new and login use when you do not name one. Signing in to another while signed out of this one makes that one the default. A collection you add keeps its own authority whatever this says.',
   },
   {
     key: 'store.path',
