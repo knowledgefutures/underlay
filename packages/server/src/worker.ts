@@ -24,7 +24,7 @@ import { readsAnyReplica } from './db/replicas.js'
 import { isBulk, QueueJobs, runJob, V3_POOLED_JOBS } from './jobs.js'
 import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
-import type { JobMessage, Ports, PublicAssets } from './ports.js'
+import { type JobMessage, type Ports, type PublicAssets, serverNameOf } from './ports.js'
 import { createStores, newCollectionsFrom } from './stores.js'
 import { landCommit, type Landing } from './v3/landing.js'
 import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
@@ -165,6 +165,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
     }),
     cache,
     signer: () => (signer ??= ed25519Signer(env.SIGNING_KEY)),
+    serverName: serverNameOf(env.APP_URL),
     jobs: new QueueJobs(
       env.JOBS as never,
       (env.JOBS_BULK ?? env.JOBS) as never,

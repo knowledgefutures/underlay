@@ -30,6 +30,7 @@ import type { AppEnv } from '../app.js'
 import { deniedHashes } from '../lib/limits.js'
 import { findVersion, loadView, typeRecords } from '../versions/view.js'
 import { jsonError, requireCollection } from './access.js'
+import { commitsAfter } from './commits.js'
 
 const MAX_LOG_ENTRIES = 1000
 
@@ -39,6 +40,13 @@ export function syncRoutes() {
   app.get('/:owner/:slug/versions/:n/pack', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    // A v3 collection has no packs: a client follows /commits and fetches /record-files.
+    if (access.collection.recordLayout === 'v3')
+      return jsonError(
+        c,
+        409,
+        'A v3 collection is synced through /commits, /layout and /record-files/:id',
+      )
     const sets = c.req.query('sets') ?? 'public'
     if (sets !== 'public' && sets !== 'all') return jsonError(c, 400, 'sets is public or all')
     if (sets === 'all' && !access.sets.includes('private')) {
@@ -95,6 +103,8 @@ export function syncRoutes() {
   app.get('/:owner/:slug/log', async (c) => {
     const access = await requireCollection(c, 'read')
     if (access instanceof Response) return access
+    // A v3 collection's log is its commits (api/commits.ts).
+    if (access.collection.recordLayout === 'v3') return commitsAfter(c, access)
     const after = Math.max(0, Number(c.req.query('after') ?? 0) || 0)
     const limit = Math.min(
       MAX_LOG_ENTRIES,

@@ -743,7 +743,13 @@ export const v3Uploads = sqliteTable(
     scanDone: bool('scan_done').notNull().default(false),
     /** Times its land found another commit had landed first, and it was prepared again. */
     attempts: integer('attempts').notNull().default(0),
-    error: json<{ statusCode: number; error: string; problems?: string[] }>('error'),
+    error: json<{
+      statusCode: number
+      error: string
+      problems?: string[]
+      /** An author-built commit that lost: the authority's newest, to replay on. */
+      latest?: { number: number; id: string; semver: string } | null
+    }>('error'),
     result: json<Record<string, unknown>>('result'),
     createdAt: createdAt(),
     updatedAt: ts('updated_at')

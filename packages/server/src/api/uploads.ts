@@ -5,7 +5,10 @@
  *   POST   /:owner/:slug/uploads                          open one {message?, base?, app_id?}
  *   POST   /:owner/:slug/uploads/:id/files                {id, size} → a presigned PUT, or parts
  *   POST   /:owner/:slug/uploads/:id/files/:fid/complete  {upload_id, parts: [{n, etag}]}
- *   POST   /:owner/:slug/uploads/:id/commit               {files: [FileRef…], change?} (a change unsigned)
+ *   POST   /:owner/:slug/uploads/:id/commit               {files: [FileRef…], change?} (a change unsigned),
+ *                                                         or {files, commit}: a commit its author built
+ *                                                         (protocol-v3 4.6), stored unchanged or refused
+ *                                                         with 409 and the newest version
  *   GET    /:owner/:slug/uploads/:id                      status, files present, result
  *   DELETE /:owner/:slug/uploads/:id                      abandon (while it is open)
  *
@@ -18,6 +21,8 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import {
   abandonUpload,
+  type Authored,
+  checkAuthored,
   checkChange,
   checkCommitBody,
   checkParts,
@@ -141,7 +146,20 @@ export function uploadRoutes() {
     if (typeof checked === 'string') return jsonError(c, 400, checked)
     // A change the client prepared names the same files, for this collection.
     let change: v3.Change | null = null
-    if (body.change !== undefined) {
+    let authored: Authored | null = null
+    if (body.commit !== undefined) {
+      if (body.change !== undefined) return jsonError(c, 400, 'Send a "commit" or a "change"')
+      const given = await checkAuthored(
+        c.var.ports,
+        body.commit,
+        access.collection.id,
+        checked.files,
+      )
+      if (typeof given === 'string')
+        return jsonError(c, given.startsWith('The authority') ? 409 : 400, given)
+      change = given.change
+      authored = given.authored
+    } else if (body.change !== undefined) {
       const given = checkChange(body.change, access.collection.id, checked.files)
       if (typeof given === 'string') return jsonError(c, 400, given)
       change = given
@@ -150,7 +168,7 @@ export function uploadRoutes() {
     const inline = (await smallCommit(c.var.ports, u.id, checked.files))
       ? inlineUpload(c.var.ports)
       : null
-    if (!(await requestCommit(inline?.ports ?? c.var.ports, u, checked.files, change))) {
+    if (!(await requestCommit(inline?.ports ?? c.var.ports, u, checked.files, change, authored))) {
       const now = await getUpload(c.var.ports, u.id)
       return jsonError(c, 409, `Upload is ${now?.status ?? 'gone'}`)
     }

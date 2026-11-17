@@ -91,6 +91,7 @@ export async function harness(opts: { newCollections?: CollectionLayout } = {}):
     }),
     cache,
     signer: async () => signer,
+    serverName: 'test',
     jobs: new SqliteJobs(db),
     waitUntil: (p) => void p.catch((err) => console.error(err)),
     outboundFetch: (url, init) => outbound(url, init),

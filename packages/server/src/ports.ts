@@ -102,6 +102,11 @@ export interface Ports {
   /** Signs version log entries (the deployment's Ed25519 key, imported once per isolate). */
   signer(): Promise<Signer>
   /**
+   * This server's address as receipts and a collection's `authority` name it
+   * (`underlay.org`, `localhost:4200`): `serverNameOf(APP_URL)`.
+   */
+  serverName?: string
+  /**
    * fetch for user-supplied URLs (webhooks). Workers have no private network to
    * reach; on Node this resolves the host and refuses private addresses.
    */
@@ -134,3 +139,6 @@ export interface RateLimiter {
   /** Spend `cost` (default 1) of the key's budget; false when it's spent. */
   check(kind: 'anon' | 'user' | 'page', key: string, cost?: number): Promise<boolean>
 }
+
+/** A server's address from its public URL: the host, without a leading `www.`. */
+export const serverNameOf = (url: string): string => new URL(url).host.replace(/^www\./, '')

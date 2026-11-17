@@ -46,7 +46,7 @@ import { inertBlobResponse } from '../files/files.js'
 import { drainSqliteJobs, SqliteJobs } from '../jobs.js'
 import { memoryRateLimiter } from '../lib/limits.js'
 import { requestInit } from '../locations/locations.js'
-import type { Ports, PresigningStore, PublicAssets } from '../ports.js'
+import { type Ports, type PresigningStore, type PublicAssets, serverNameOf } from '../ports.js'
 import { createStores, newCollectionsFrom } from '../stores.js'
 import { guardedFetch } from './guarded-fetch.js'
 
@@ -108,6 +108,7 @@ const ports: Ports = {
   }),
   cache,
   signer: () => signer,
+  serverName: serverNameOf(appUrl),
   jobs: {
     async enqueue(job, opts) {
       await jobsTable.enqueue(job, opts)

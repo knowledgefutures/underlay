@@ -15,7 +15,7 @@
  * A `Landing` is plain JSON, so a Durable Object can take it (Phase 2) as well as the
  * in-process queue (Node, tests).
  */
-import { v3 } from '@underlay/protocol'
+import { createObject, v3 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
@@ -51,12 +51,66 @@ export interface Landing {
   appId: string | null
   actorId: string | null
   pushSessionId: string | null
+  /**
+   * A commit its author built (protocol-v3 4.6): stored unchanged if it follows the head,
+   * never renumbered. Its text, and when it was asked for (its `createdAt` is checked
+   * against that).
+   */
+  authored?: { commit: string; receivedAt: string }
 }
 
 export type Landed =
   | { status: 'committed'; versionId: string; number: number; bump: 'major' | 'minor' | 'patch' }
   | { status: 'base_moved'; head: string | null }
   | { status: 'invalid'; problems: string[] }
+
+const enc = new TextEncoder()
+
+/**
+ * Store an author-built commit unchanged, if it is the next one: created only if absent,
+ * so of two authors who built on the same head, one wins and the other is told to replay.
+ */
+async function storeAuthored(
+  ports: Ports,
+  l: Landing,
+  head: v3.StoredCommit | null,
+): Promise<v3.StoredCommit | Landed> {
+  const store = ports.stores.v3
+  const bytes = enc.encode(l.authored!.commit)
+  const checked = v3.checkAuthorCommit(bytes, l.collectionId, {
+    head,
+    files: l.change.files,
+    bump: l.bump,
+    now: new Date(l.authored!.receivedAt),
+  })
+  if ('stale' in checked) return { status: 'base_moved', head: head?.id ?? null }
+  if ('problem' in checked) return { status: 'invalid', problems: [checked.problem] }
+  const won = await createObject(
+    store,
+    v3.commitKey(l.collectionId, checked.commit.number),
+    bytes,
+    {
+      contentType: 'application/json',
+    },
+  )
+  if (!won) {
+    const now = await v3.findHead(store, l.collectionId)
+    return { status: 'base_moved', head: now?.id ?? null }
+  }
+  await v3.writeCommitHint(store, l.collectionId, checked.commit.number)
+  return { commit: checked.commit, id: checked.id, bytes }
+}
+
+/** The authority's receipt beside a commit it accepted (protocol-v3 4.7). Written once. */
+export async function writeReceiptFor(ports: Ports, stored: v3.StoredCommit, at = new Date()) {
+  const receipt = await v3.makeReceipt(
+    stored,
+    ports.serverName ?? 'unknown',
+    await ports.signer(),
+    at,
+  )
+  await v3.writeReceipt(ports.stores.v3, receipt)
+}
 
 export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   const store = ports.stores.v3
@@ -98,21 +152,27 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
           )
   const baseNumber = base?.seq ?? head?.commit.number
   let stored: v3.StoredCommit
-  try {
-    stored = await v3.createCommit(
-      store,
-      l.collectionId,
-      { change: l.change, bump: l.bump, ...(baseNumber ? { baseNumber } : {}) },
-      { signer: await ports.signer(), attempts: 1 },
-    )
-  } catch (err) {
-    if (err instanceof v3.BaseError) return { status: 'invalid', problems: [err.message] }
-    if (err instanceof v3.CommitRaceError) {
-      const now = await v3.findHead(store, l.collectionId)
-      return { status: 'base_moved', head: now?.id ?? null }
+  if (l.authored) {
+    const out = await storeAuthored(ports, l, head)
+    if ('status' in out) return out
+    stored = out
+  } else
+    try {
+      stored = await v3.createCommit(
+        store,
+        l.collectionId,
+        { change: l.change, bump: l.bump, ...(baseNumber ? { baseNumber } : {}) },
+        { signer: await ports.signer(), attempts: 1 },
+      )
+    } catch (err) {
+      if (err instanceof v3.BaseError) return { status: 'invalid', problems: [err.message] }
+      if (err instanceof v3.CommitRaceError) {
+        const now = await v3.findHead(store, l.collectionId)
+        return { status: 'base_moved', head: now?.id ?? null }
+      }
+      throw err
     }
-    throw err
-  }
+  await writeReceiptFor(ports, stored)
   mark()
   const before = await lastRow(ports, l.collectionId)
   const version = await recordCommit(ports, {

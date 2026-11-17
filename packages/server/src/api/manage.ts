@@ -1,7 +1,7 @@
 /**
  * Creating and changing collections (v1 shapes).
  *
- *   POST   /api/accounts/:owner/collections            {slug, name?, description?, public?}
+ *   POST   /api/accounts/:owner/collections            {slug, name?, description?, public?, id?}
  *   PATCH  /api/collections/:owner/:slug               {name?, slug?, public?}
  *   DELETE /api/collections/:owner/:slug
  *   POST   /api/collections/:owner/:slug/transfer      {targetOrgSlug}
@@ -11,6 +11,7 @@
  * Collection settings are mutable rows; nothing here rewrites version data.
  * A metadata edit is a new version that reuses every set: one root object.
  */
+import { v3 } from '@underlay/protocol'
 import { and, count, eq, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 
@@ -60,6 +61,8 @@ export async function membership(c: Context<AppEnv>, orgSlug: string) {
 
 export { isAdmin }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
 export function manageRoutes() {
   const app = new Hono<AppEnv>()
 
@@ -73,7 +76,33 @@ export function manageRoutes() {
       name?: unknown
       description?: unknown
       public?: unknown
+      id?: unknown
     } | null
+    // A client that built commits before the collection existed here (the Underlay CLI's
+    // `underlay new`) names the id they carry. A v3 id, never one in use or used before.
+    let id: string | undefined
+    if (body?.id !== undefined) {
+      if (typeof body.id !== 'string' || !UUID.test(body.id))
+        return jsonError(c, 422, '"id" must be a UUID')
+      if (c.var.ports.stores.newCollections !== 'v3')
+        return jsonError(c, 422, 'A chosen id is only for v3 collections')
+      const [[used], [buried], page] = await Promise.all([
+        c.var.ports.db
+          .select({ id: schema.collections.id })
+          .from(schema.collections)
+          .where(eq(schema.collections.id, body.id))
+          .limit(1),
+        c.var.ports.db
+          .select({ id: schema.collectionTombstones.collectionId })
+          .from(schema.collectionTombstones)
+          .where(eq(schema.collectionTombstones.collectionId, body.id))
+          .limit(1),
+        c.var.ports.stores.v3.list(v3.collectionPrefix(body.id)),
+      ])
+      if (used || buried || page.keys.length > 0)
+        return jsonError(c, 409, 'That collection id is taken')
+      id = body.id
+    }
     const slugError = validateCollectionSlug(body?.slug)
     if (slugError) return jsonError(c, 422, slugError)
     const slug = body!.slug as string
@@ -97,6 +126,7 @@ export function manageRoutes() {
         name,
         public: body?.public === true,
         ...(description ? { summary: { description } } : {}),
+        ...(id ? { id } : {}),
       })
     } catch (err) {
       // Another request created the slug since the check above.

@@ -13,6 +13,7 @@ import { arkRoutes } from './api/ark.js'
 import { avatarRoutes } from './api/avatars.js'
 import { cleanupRoutes } from './api/cleanup.js'
 import { collectionRoutes } from './api/collections.js'
+import { commitRoutes } from './api/commits.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
 import { locationRoutes } from './api/locations.js'
@@ -346,6 +347,7 @@ export function createApp(setup: Setup) {
   app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())
   app.route('/api/collections', uploadRoutes())
+  app.route('/api/collections', commitRoutes())
   app.route('/api/collections', versionRoutes())
   app.route('/api/collections', syncRoutes())
   app.route('/api/collections', webhookRoutes())

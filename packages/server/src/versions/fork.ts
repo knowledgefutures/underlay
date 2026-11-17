@@ -31,9 +31,11 @@ export async function createCollectionRows(
     summary?: schema.CollectionSummary
     /** Its record layout: the platform's for new collections (`Stores.newCollections`). */
     recordLayout?: CollectionLayout
+    /** An id the client chose (a collection whose commits were built before it existed here). */
+    id?: string
   },
 ): Promise<typeof schema.collections.$inferSelect> {
-  const id = crypto.randomUUID()
+  const id = c.id ?? crypto.randomUUID()
   await ports.db.batch([
     ports.db.insert(schema.collections).values({
       id,

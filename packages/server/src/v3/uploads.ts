@@ -508,12 +508,64 @@ export function checkChange(
   }
 }
 
+/** Where an upload keeps the commit its author built, until it lands. */
+const authoredKey = (upload: string) => `v3-uploads/${upload}/authored.json`
+
+export interface Authored {
+  commit: string
+  receivedAt: string
+}
+
+/** The address of a collection's authority: its description's `authority`, or this server. */
+export async function authorityOf(ports: Ports, collectionId: string): Promise<string> {
+  const d = await v3.readDescription(ports.stores.v3, collectionId)
+  return typeof d?.authority === 'string' ? d.authority : (ports.serverName ?? 'unknown')
+}
+
+/**
+ * A commit its author built, checked as far as it can be before its files are: this server
+ * is the collection's authority, and the commit is well formed, unsigned, for this
+ * collection, with one change naming exactly the upload's files, made near now. Its number,
+ * `previous` and semver are checked when it lands. Gives its change and what landing needs.
+ */
+export async function checkAuthored(
+  ports: Ports,
+  text: unknown,
+  collectionId: string,
+  files: v3.FileRef[],
+): Promise<{ change: v3.Change; authored: Authored } | string> {
+  if (typeof text !== 'string' || text.length > 16 * 1024 * 1024)
+    return '"commit" must be the commit\'s JSON text'
+  const authority = await authorityOf(ports, collectionId)
+  if (authority !== ports.serverName)
+    return `The authority for this collection is ${authority}: send its versions there`
+  let commit: v3.Commit
+  try {
+    commit = v3.parseCommit(new TextEncoder().encode(text))
+  } catch (err) {
+    if (err instanceof v3.FormatError) return `"commit": ${err.message}`
+    throw err
+  }
+  if (commit.collection !== collectionId) return '"commit" is for another collection'
+  if (commit.keyId !== null || commit.sig !== null)
+    return 'A signed commit is not accepted yet: send it unsigned'
+  if (commit.changes.length !== 1) return '"commit" must carry one change'
+  const change = checkChange(commit.changes[0], collectionId, files)
+  if (typeof change === 'string') return change
+  const now = new Date()
+  const at = Date.parse(commit.createdAt)
+  if (!Number.isFinite(at) || Math.abs(at - now.getTime()) > v3.CREATED_AT_SKEW_MS)
+    return `"commit": createdAt ${commit.createdAt} is not near now (${now.toISOString()})`
+  return { change, authored: { commit: text, receivedAt: now.toISOString() } }
+}
+
 /** Start verifying a commit's files. The upload must be open. */
 export async function requestCommit(
   ports: Ports,
   upload: UploadRow,
   files: v3.FileRef[],
   change: v3.Change | null,
+  authored: Authored | null = null,
 ): Promise<boolean> {
   const ok = await setUpload(ports, upload.id, 'open', {
     status: 'verifying',
@@ -524,6 +576,10 @@ export async function requestCommit(
     error: null,
     expiresAt: new Date(Date.now() + uploadLimits.idleMs),
   })
+  // Kept before the prepare job is queued, so the landing finds it (or finds it gone).
+  if (ok && authored)
+    await ports.stores.internal.put(authoredKey(upload.id), JSON.stringify(authored))
+  else if (ok) await ports.stores.internal.delete(authoredKey(upload.id))
   if (ok) await ports.jobs.enqueue({ type: 'v3.uploadPrepare', uploadId: upload.id })
   return ok
 }
@@ -1085,6 +1141,8 @@ async function landUpload(ports: Ports, uploadId: string) {
     })
     return
   }
+  const authoredObj = await internal.get(authoredKey(upload.id))
+  const authored = authoredObj ? (JSON.parse(await authoredObj.text()) as Authored) : null
   const t1 = Date.now()
   const landed = await commitsOf(ports).land(ports, {
     collectionId: cid,
@@ -1101,6 +1159,7 @@ async function landUpload(ports: Ports, uploadId: string) {
     actorId: null,
     // The version row names the upload: recovery finds a commit a land job made and lost.
     pushSessionId: upload.id,
+    ...(authored ? { authored } : {}),
   })
   const t2 = Date.now()
   if (landed.status === 'committed') {
@@ -1118,7 +1177,20 @@ async function landUpload(ports: Ports, uploadId: string) {
     })
     return
   }
-  // Another commit landed first: the counts are made again against the new head.
+  // Another commit landed first. A commit its author built is never renumbered here: the
+  // author replays it on the newest and sends it again.
+  if (authored) {
+    const latest = await v3.findHead(ports.stores.v3, cid)
+    await fail(ports, upload.id, {
+      statusCode: 409,
+      error: 'Another commit landed first: pull, replay, and commit again',
+      latest: latest
+        ? { number: latest.commit.number, id: latest.id, semver: latest.commit.semver }
+        : null,
+    })
+    return
+  }
+  // The counts are made again against the new head.
   if (upload.attempts + 1 >= uploadLimits.landAttempts) {
     await fail(ports, upload.id, {
       statusCode: 409,
