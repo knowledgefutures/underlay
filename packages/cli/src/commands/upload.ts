@@ -35,6 +35,30 @@ export interface UploadOptions {
 
 type Say = (line: string) => void
 
+/**
+ * Run a send again on a network error or a 5xx or 429, with backoff: 1, 2, 4, 8, 16
+ * seconds. One dropped connection among many large files used to end the whole upload.
+ */
+export async function withRetry<T>(
+  what: string,
+  send: () => Promise<T>,
+  say: Say = () => {},
+  opts: { attempts?: number; baseMs?: number } = {},
+): Promise<T> {
+  const attempts = opts.attempts ?? 6
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await send()
+    } catch (err) {
+      const retryable = !(err instanceof CliError) || /: (5\d\d|429)\b/.test(err.message)
+      if (!retryable || attempt >= attempts) throw err
+      const wait = (opts.baseMs ?? 1000) * 2 ** (attempt - 1)
+      say(`  ${what} failed (${(err as Error).message}); trying again in ${wait / 1000}s`)
+      await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+}
+
 async function* input(path: string): AsyncGenerator<Uint8Array> {
   for await (const chunk of path === '-' ? process.stdin : createReadStream(path)) {
     yield chunk as Uint8Array
@@ -42,16 +66,40 @@ async function* input(path: string): AsyncGenerator<Uint8Array> {
 }
 
 export async function upload(path: string, o: UploadOptions, say: Say): Promise<void> {
+  let id = o.upload
+  try {
+    await uploadOnce(path, o, say, (opened) => (id = opened))
+  } catch (err) {
+    // Built files are made again from the same rows, and those already sent are skipped.
+    if (id) {
+      say(`The upload stopped. To take it up again:`)
+      say(
+        `  underlay upload ${path} --to ${o.to} --collection ${o.collection} --upload ${id}` +
+          (o.dir ? ` --dir ${o.dir}` : ''),
+      )
+    }
+    throw err
+  }
+}
+
+async function uploadOnce(
+  path: string,
+  o: UploadOptions,
+  say: Say,
+  opened: (id: string) => void,
+): Promise<void> {
   const token = o.token ?? process.env.UL_KEY
   if (!token) throw new CliError('An API key is needed: --token, or UL_KEY in the environment')
   const api = `${o.to.replace(/\/$/, '')}/api/collections/${o.collection}`
   const call = async (method: string, p: string, body?: unknown) => {
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch(`${api}${p}`, {
-        method,
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
+      const res = await withRetry(`${method} ${p}`, () =>
+        fetch(`${api}${p}`, {
+          method,
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+      )
       if ((res.status === 429 || res.status >= 500) && attempt < 5) {
         await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt))
         continue
@@ -87,10 +135,11 @@ export async function upload(path: string, o: UploadOptions, say: Say): Promise<
   // 2. Open an upload, or take one up again.
   let id = o.upload
   if (!id) {
-    const opened = await call('POST', '/uploads', o.message ? { message: o.message } : {})
-    id = opened.upload_id as string
+    const made = await call('POST', '/uploads', o.message ? { message: o.message } : {})
+    id = made.upload_id as string
     say(`Upload ${id}`)
   }
+  opened(id)
   const status = await call('GET', `/uploads/${id}`)
   const present = new Set<string>((status.present as string[] | undefined) ?? [])
 
@@ -101,18 +150,31 @@ export async function upload(path: string, o: UploadOptions, say: Say): Promise<
     const bytes = await readFile(join(dir, v3.uploadKey(session, f.id)))
     const target = await call('POST', `/uploads/${id}/files`, { id: f.id, size: bytes.byteLength })
     if (target.method === 'PUT') {
-      const res = await fetch(target.url, { method: 'PUT', body: bytes })
-      if (!res.ok) throw new CliError(`PUT ${f.id}: ${res.status} ${await res.text()}`)
+      await withRetry(
+        `Sending ${f.id.slice(0, 12)}`,
+        async () => {
+          const res = await fetch(target.url, { method: 'PUT', body: bytes })
+          if (!res.ok) throw new CliError(`PUT ${f.id}: ${res.status} ${await res.text()}`)
+        },
+        say,
+      )
     } else {
       const parts: { n: number; etag: string }[] = []
       for (const p of target.parts as { n: number; url: string }[]) {
         const from = (p.n - 1) * target.part_bytes
-        const res = await fetch(p.url, {
-          method: 'PUT',
-          body: bytes.subarray(from, from + target.part_bytes),
-        })
-        if (!res.ok) throw new CliError(`PUT ${f.id} part ${p.n}: ${res.status}`)
-        parts.push({ n: p.n, etag: res.headers.get('etag') ?? '' })
+        const etag = await withRetry(
+          `Sending ${f.id.slice(0, 12)} part ${p.n}`,
+          async () => {
+            const res = await fetch(p.url, {
+              method: 'PUT',
+              body: bytes.subarray(from, from + target.part_bytes),
+            })
+            if (!res.ok) throw new CliError(`PUT ${f.id} part ${p.n}: ${res.status}`)
+            return res.headers.get('etag') ?? ''
+          },
+          say,
+        )
+        parts.push({ n: p.n, etag })
       }
       await call('POST', `/uploads/${id}/files/${f.id}/complete`, {
         upload_id: target.upload_id,
