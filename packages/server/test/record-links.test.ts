@@ -102,6 +102,24 @@ describe.skipIf(!onV3)('record links and version ids', () => {
     // A second push follows the first, its commit naming it by bare hex.
     const two = await push(h, user, base, [{ id: 'w2', type: 'Work', data: { title: 'Two' } }])
     expect(two.status).toBe(201)
+    // A link followed to where it can be read.
+    const go = (q: string) =>
+      h.request(`/api/links/resolve?${q}`, { headers: { accept: 'application/json' } })
+    expect(await json(await go(`to=${id}&collection=${c.id}`))).toEqual({ url: '/org/lib/v/1.0.0' })
+    expect(await json(await go(`to=ul:rec:${h64}&collection=${c.id}&type=Work&id=w%201`))).toEqual({
+      url: `/org/lib/v/latest/records/Work/w%201?hash=${h64}`,
+    })
+    expect(await json(await go(`to=ul:asset:${h64}&collection=${c.id}`))).toEqual({
+      url: `/api/collections/_/${c.id}/files/${h64}`,
+    })
+    expect(await json(await go(`to=ul:rec:${h64}`))).toEqual({ url: `/records/${h64}` })
+    expect((await go(`to=${h64}`)).status).toBe(400)
+    expect((await go(`to=${id}`)).status).toBe(404)
+    expect((await go(`to=${id}&collection=nope`)).status).toBe(404)
+    const redirect = await h.request(`/api/links/resolve?to=${id}&collection=${c.id}`)
+    expect(redirect.status).toBe(302)
+    expect(redirect.headers.get('location')).toBe('/org/lib/v/1.0.0')
+
     const log = await json(await h.request(`${base}/commits?after=0`, { user }))
     expect(JSON.parse(log.commits[1].commit).previous).toBe(h64)
   })

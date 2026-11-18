@@ -17,6 +17,7 @@ import { collectionRoutes } from './api/collections.js'
 import { commitRoutes } from './api/commits.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
+import { linkRoutes } from './api/links.js'
 import { locationRoutes } from './api/locations.js'
 import { manageRoutes } from './api/manage.js'
 import { orgMemberRoutes } from './api/org-members.js'
@@ -346,6 +347,7 @@ export function createApp(setup: Setup) {
   app.route('/', agentRoutes())
   // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
   app.route('/', recordRoutes())
+  app.route('/', linkRoutes())
   app.route('/api/collections', fileRoutes())
   app.route('/api/collections', exportRoutes())
   app.route('/api/collections', pushRoutes())

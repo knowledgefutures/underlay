@@ -163,7 +163,7 @@ export function recordRoutes() {
   const app = new Hono<AppEnv>()
 
   app.get('/api/records/:hash/provenance', async (c) => {
-    const hash = c.req.param('hash').replace(/^sha256:/, '')
+    const hash = cleanHash(c.req.param('hash'))
     const items = await visiblePresence(c, hash, await memberOrgs(c))
     const records = items.filter((i) => i.p.kind === 'r')
     if (records.length === 0) return jsonError(c, 404, 'Record not found')
@@ -214,7 +214,7 @@ export function recordRoutes() {
    * they name, with no interval folding or fork expansion.
    */
   app.get('/api/records/:hash/first', async (c) => {
-    const hash = c.req.param('hash').replace(/^sha256:/, '')
+    const hash = cleanHash(c.req.param('hash'))
     const { db } = c.var.ports
     const adds = (await eventsFor(c.var.ports, hash)).filter((e) => e[5] === '+')
     if (adds.length === 0) return jsonError(c, 404, 'Not found')
