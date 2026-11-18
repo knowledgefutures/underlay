@@ -9,6 +9,7 @@ import {
   entryAt,
   getEntry,
   iterate,
+  parseHashInput,
   parseSemver,
   type PrivateSetObject,
   rankOf,
@@ -20,14 +21,17 @@ import {
   type TreeSummary,
   type VersionRoot,
 } from '@underlay/protocol'
-import { and, desc, eq, or } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Db } from '../ports.js'
 
 export type VersionRow = typeof schema.versions.$inferSelect
 
-/** Find a version by semver ("v1.2.3", "1.2"), "latest", or v2 hash. */
+/**
+ * Find a version by semver ("v1.2.3", "1.2"), "latest", or id: `ul:ver:<hex>`, bare hex,
+ * or the `ulv3:` and `ulv2:` aliases (record-references.md, decision 7).
+ */
 export async function findVersion(
   db: Db,
   collectionId: string,
@@ -35,17 +39,30 @@ export async function findVersion(
   headVersionId: string | null,
 ): Promise<VersionRow | null> {
   let where
+  const id = n === 'latest' ? null : parseHashInput(n)
   if (n === 'latest') {
     if (!headVersionId) return null
     where = eq(schema.versions.id, headVersionId)
-  } else if (n.startsWith('ulv2:')) {
+  } else if (id && id.form === 'ulv2') {
     // A converted version keeps its old id as an alias (v3-deploy-plan.md, decision 2).
+    const v2 = `ulv2:${id.hash}`
     where = and(
       eq(schema.versions.collectionId, collectionId),
-      or(eq(schema.versions.hash, n), eq(schema.versions.v2Hash, n)),
+      or(eq(schema.versions.hash, v2), eq(schema.versions.v2Hash, v2)),
     )
-  } else if (n.startsWith('ulv3:')) {
-    where = and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.hash, n))
+  } else if (id && (id.kind === 'ver' || id.form === 'hex')) {
+    // A v3 id in either spelling D1 may hold it; bare hex may also be a v2 hash.
+    const h = id.hash
+    where = and(
+      eq(schema.versions.collectionId, collectionId),
+      or(
+        inArray(schema.versions.hash, [`ul:ver:${h}`, `ulv3:${h}`, `ulv2:${h}`]),
+        ...(id.form === 'hex' ? [eq(schema.versions.v2Hash, `ulv2:${h}`)] : []),
+      ),
+    )
+  } else if (id) {
+    // A record, an asset, or a sha256: hash names no version.
+    return null
   } else {
     where = and(
       eq(schema.versions.collectionId, collectionId),

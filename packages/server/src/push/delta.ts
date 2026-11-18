@@ -8,6 +8,7 @@
  * them in the repository (changes.ts).
  */
 import {
+  checkLinks,
   checkRecordId,
   checkTypeSlug,
   compileSchema,
@@ -181,6 +182,12 @@ export async function prepareRecords(
     const errs = typeof validate === 'string' ? [validate] : validate(data)
     if (errs.length > 0) {
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: errs })
+      continue
+    }
+    // A malformed link is refused, not stored as data that looks like one (Section 2.2).
+    const linkProblem = canonical.includes('"$link"') ? checkLinks(data) : null
+    if (linkProblem) {
+      fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: [linkProblem] })
       continue
     }
     const hash = sha256Hex(canonical)

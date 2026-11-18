@@ -110,7 +110,11 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     const stored = await v3.readCommit(h.ports.stores.v3, c.id, 1)
     expect(stored!.id).toBe(first.built.id)
     const receipt = await v3.readReceipt(h.ports.stores.v3, c.id, 1)
-    expect(receipt).toMatchObject({ number: 1, version: first.built.id, server: 'test' })
+    expect(receipt).toMatchObject({
+      number: 1,
+      version: v3.versionHex(first.built.id),
+      server: 'test',
+    })
     expect(await v3.verifyReceipt(receipt!, stored!, [h.signer.publicKey])).toBe(true)
 
     const second = await push(
@@ -138,7 +142,7 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     expect(log).toMatchObject({ head: 2, more: false, collection: { id: c.id, authority: 'test' } })
     expect(log.commits.map((x: any) => x.id)).toEqual([first.built.id, second.built.id])
     expect(v3.versionId(new TextEncoder().encode(log.commits[1].commit))).toBe(second.built.id)
-    expect(log.commits[1].receipt.version).toBe(second.built.id)
+    expect(log.commits[1].receipt.version).toBe(v3.versionHex(second.built.id))
     expect(await json(await h.request(`${base}/log?after=1`, { user }))).toMatchObject({
       head: 2,
       commits: [{ number: 2 }],
@@ -174,7 +178,10 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     // Replayed on the newest, it lands with its new number.
     const ch = late.built.commit.changes[0]!
     const { commits } = await v3.replayCommits([late.built], first.built, () => 'minor')
-    expect(commits[0]!.commit).toMatchObject({ number: 2, previous: first.built.id })
+    expect(commits[0]!.commit).toMatchObject({
+      number: 2,
+      previous: v3.versionHex(first.built.id),
+    })
     const files = await build([...rows, v3.rowFromRecord('a9', 'Author', { name: 'Late' })])
     expect(files.map((f) => f.ref)).toEqual(ch.files)
     const id = await sendFiles(h, user, base, files)

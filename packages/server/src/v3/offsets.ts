@@ -107,7 +107,7 @@ export async function offsetStart(
   let index = loaded.get(key)
   if (index === undefined) {
     index = await readJson<OffsetIndex>(ports, key).catch(() => null)
-    if (index && index.hash !== version.hash) index = null
+    if (index && !v3.sameVersion(index.hash, version.hash)) index = null
     // A miss is not remembered: the job may write the index a moment later.
     if (index) {
       if (loaded.size > 200) loaded.clear()
@@ -256,7 +256,7 @@ async function indexType(
   // are queued once, by it, and the last range to finish writes the index.
   const pk = planKey(collectionId, seq, type)
   const existing = await readJson<Plan>(ports, pk)
-  if (existing?.hash === hash) return false
+  if (existing && v3.sameVersion(existing.hash, hash)) return false
   if (existing) await internal.delete(pk)
   const [row] = await ports.db
     .select({ typeCounts: schema.versions.typeCounts })

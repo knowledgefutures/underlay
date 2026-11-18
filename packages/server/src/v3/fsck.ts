@@ -111,7 +111,8 @@ export async function v3FsckStep(
       for (const [i, r] of rows.entries()) {
         const c = commits[i]
         if (!c) problem(`D1 has version ${r.seq}, which the log does not`)
-        else if (c.id !== r.hash) problem(`Version ${r.seq} is ${c.id} in the log, ${r.hash} in D1`)
+        else if (!v3.sameVersion(c.id, r.hash))
+          problem(`Version ${r.seq} is ${c.id} in the log, ${r.hash} in D1`)
       }
     })
 

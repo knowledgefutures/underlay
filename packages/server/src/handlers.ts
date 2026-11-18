@@ -45,6 +45,7 @@ import { v3FsckStep, type V3FsckCursor } from './v3/fsck.js'
 import './v3/jobs.js'
 import './v3/offsets.js'
 import { expireUploads, recoverUploads } from './v3/uploads.js'
+import { backfillVersionIds } from './v3/version-ids.js'
 import { queueInfoBackfill } from './versions/collection-info.js'
 import { appendVersionLog } from './versions/commit.js'
 import { enqueueDeliveries, purgeOldDeliveries } from './webhooks/webhooks.js'
@@ -151,6 +152,7 @@ registerJob('maintenance.sweep', async (_job, ports) => {
     ['recover uploads', () => recoverUploads(ports)],
     ['queue conversions', () => queueConversions(ports)],
     ['queue the sweep', () => ports.jobs.enqueue({ type: 'v3.sweep' })],
+    ['move version ids to ul:ver:', () => backfillVersionIds(ports)],
   ] as const) {
     await step().catch((err) => console.error(`[v3] cron: ${what} failed:`, err))
   }

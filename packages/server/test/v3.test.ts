@@ -112,7 +112,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(res.status).toBe(201)
     const v1 = await json(res)
     expect(v1).toMatchObject({ semver: 'v1.0.0', recordCount: 121, changes: { added: 121 } })
-    expect(v1.hash).toMatch(/^ulv3:[0-9a-f]{64}$/)
+    expect(v1.hash).toMatch(/^ul:ver:[0-9a-f]{64}$/)
 
     // The bucket has the commit; its id is the D1 row's.
     const head = await v3.findHead(h.ports.stores.v3, c.id)
@@ -905,7 +905,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     await h.ports.stores.v3.put(key, bytes.subarray(0, bytes.byteLength - 10))
     const broken = await check(true)
     expect(broken.ok).toBe(false)
-    expect(broken.errors.join('\n')).toMatch(/Version 1 is ulv3:[0-9a-f]+ in the log/)
+    expect(broken.errors.join('\n')).toMatch(/Version 1 is ul:ver:[0-9a-f]+ in the log/)
     expect(broken.errors.length).toBeGreaterThanOrEqual(2)
   })
 

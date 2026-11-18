@@ -25,6 +25,7 @@
  * the bytes installed, whatever the client sends meanwhile.
  */
 import {
+  checkLinks,
   checkPatternSafety,
   checkSchemaFull,
   compileSchema,
@@ -64,6 +65,7 @@ import {
   startScan,
   tightenedTypes,
 } from './scans.js'
+import { versionIdIs } from './version-ids.js'
 
 export const uploadLimits = {
   /**
@@ -499,10 +501,14 @@ export function checkChange(
   }
   if ((c.keyId ?? null) !== null || (c.sig ?? null) !== null)
     return 'A signed change is not accepted yet: send it unsigned ("keyId" and "sig" null)'
+  // A change holds its base as bare hex; one given as ul:ver: or ulv3: is taken as that.
+  const base = c.base ?? null
+  if (base !== null && v3.versionHex(base) === null)
+    return '"change.base" must be a version id: ul:ver:<hex>, or its bare hex'
   return {
     collection: collectionId,
     files,
-    base: c.base ?? null,
+    base: base === null ? null : v3.versionHex(base),
     message: c.message ?? null,
     keyId: null,
     sig: null,
@@ -790,7 +796,9 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
     const [row] = await ports.db
       .select({ typeCounts: schema.versions.typeCounts })
       .from(schema.versions)
-      .where(and(eq(schema.versions.collectionId, cid), eq(schema.versions.hash, head!.id)))
+      .where(
+        and(eq(schema.versions.collectionId, cid), versionIdIs(schema.versions.hash, head!.id)),
+      )
     const records = tight.reduce((n, t) => n + (row?.typeCounts[t.type] ?? 0), 0)
     if (records <= scanConfig.inlineRecords) {
       const found = await scanInline(ports, view, scanUpload, units)
@@ -907,6 +915,9 @@ registerJob('v3.uploadVerify', async (job, ports) => {
     if (!v) validators.set(type, (v = compileSchema(s)))
     const errs = v(data)
     if (errs.length > 0) problems.push(`${type} ${JSON.stringify(id)}: ${errs[0]}`)
+    // A malformed link is refused, not stored as data that looks like one (Section 2.2).
+    const linkProblem = checkLinks(data)
+    if (linkProblem) problems.push(`${type} ${JSON.stringify(id)}: ${linkProblem}`)
   }
   let content: v3.FileContent
   try {
@@ -966,7 +977,9 @@ async function headViewAt(ports: Ports, collectionId: string, id: string) {
   const [row] = await ports.db
     .select({ seq: schema.versions.seq })
     .from(schema.versions)
-    .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.hash, id)))
+    .where(
+      and(eq(schema.versions.collectionId, collectionId), versionIdIs(schema.versions.hash, id)),
+    )
   return row ? viewOf(ports.stores.v3, collectionId, row.seq) : null
 }
 

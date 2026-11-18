@@ -30,6 +30,7 @@ import {
   statsOfRow,
   syncCatalog,
 } from './catalog.js'
+import { versionIdIs } from './version-ids.js'
 
 export interface Landing {
   collectionId: string
@@ -93,7 +94,7 @@ async function storeAuthored(
   if (base !== null) {
     const at = !head
       ? null
-      : head.id === base
+      : v3.sameVersion(head.id, base)
         ? head.commit.number
         : await v3.findVersion(store, l.collectionId, base, head.commit.number, {
             ...(baseNumber === undefined ? {} : { hint: baseNumber }),
@@ -155,7 +156,13 @@ async function landedBefore(ports: Ports, l: Landing, head: v3.StoredCommit): Pr
         actorId: l.actorId,
         pushSessionId: l.pushSessionId,
         // Counted against the head it was prepared on; that is the commit before only then.
-        ...(l.expectHead === head.commit.previous ? { changes: l.stats.changes } : {}),
+        ...((
+          l.expectHead === null
+            ? head.commit.previous === null
+            : v3.sameVersion(l.expectHead, head.commit.previous)
+        )
+          ? { changes: l.stats.changes }
+          : {}),
       })
       .where(and(eq(schema.versions.id, row.id), isNull(schema.versions.pushSessionId)))
     await ports.jobs.enqueue({ type: 'version.published', versionId: row.id, bump: l.bump })
@@ -185,7 +192,10 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   if (!description) await ensureCollection(store, l.collectionId)
   if (l.authored && head && head.id === v3.versionId(enc.encode(l.authored.commit)))
     return landedBefore(ports, l, head)
-  if ((head?.id ?? null) !== l.expectHead) return { status: 'base_moved', head: head?.id ?? null }
+  // The head the change was prepared on, in either spelling (a landing queued before
+  // 2026-11-18 holds a ulv3: id).
+  const sameHead = head === null ? l.expectHead === null : v3.sameVersion(head.id, l.expectHead)
+  if (!sameHead) return { status: 'base_moved', head: head?.id ?? null }
   // Every file the change names is stored (its preparer installed it once checked).
   const files = l.change.files
   const absent = (
@@ -211,7 +221,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
           .where(
             and(
               eq(schema.versions.collectionId, l.collectionId),
-              eq(schema.versions.hash, l.change.base),
+              versionIdIs(schema.versions.hash, l.change.base),
             ),
           )
   const baseNumber = base?.seq ?? head?.commit.number

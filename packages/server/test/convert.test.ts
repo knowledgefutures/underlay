@@ -164,7 +164,7 @@ describe('converting a v2 collection to v3', () => {
       .from(schema.versions)
       .where(eq(schema.versions.collectionId, c.id))
       .orderBy(schema.versions.seq)
-    expect(rows.every((r) => r.hash.startsWith('ulv3:'))).toBe(true)
+    expect(rows.every((r) => r.hash.startsWith('ul:ver:'))).toBe(true)
     expect(rows.map((r) => r.v2Hash).sort()).toEqual([...v2Ids].sort())
     const alias = await json(await h.request(`${base}/versions/${rows[0]!.v2Hash}`, { user }))
     expect(alias.semver).toBe('v1.0.0')
