@@ -613,14 +613,14 @@ sweep/                            the sweep's own state
 
 ## 10. Constants
 
-| Name                 | Value             |
-| -------------------- | ----------------- |
-| `RECORD_BLOCK_BYTES` | 262,144           |
-| `KEY_BLOCK_ENTRIES`  | 1,024             |
-| `MAX_FILE_ENTRIES`   | 1,048,576         |
-| Trailer magic        | `UL3SRF\n\0`      |
-| Version id prefix    | `ul:ver:`         |
+| Name                 | Value                 |
+| -------------------- | --------------------- |
+| `RECORD_BLOCK_BYTES` | 262,144               |
+| `KEY_BLOCK_ENTRIES`  | 1,024                 |
+| `MAX_FILE_ENTRIES`   | 1,048,576             |
+| Trailer magic        | `UL3SRF\n\0`          |
+| Version id prefix    | `ul:ver:`             |
 | Underlay id kinds    | `rec`, `asset`, `ver` |
-| Number width in keys | 16 decimal digits |
+| Number width in keys | 16 decimal digits     |
 
 Limits on ids, types, record size, depth, and schemas are v2's (Section 12).
