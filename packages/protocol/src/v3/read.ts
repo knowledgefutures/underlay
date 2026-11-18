@@ -36,6 +36,7 @@ import {
   readLayoutAtHint,
   readLayoutHint,
   readLog,
+  sameVersion,
 } from './log.js'
 import {
   EntryCursor,
@@ -728,12 +729,11 @@ export async function* changedSinceBase(
     // A null base is "from nothing": every earlier commit counts.
     let base = 0
     if (change.base !== null) {
-      const found =
-        commit.commit.previous === change.base
-          ? number - 1
-          : await findVersion(store, collection, change.base, number - 1, {
-              ...(opts.search === undefined ? {} : { search: opts.search }),
-            })
+      const found = sameVersion(commit.commit.previous, change.base)
+        ? number - 1
+        : await findVersion(store, collection, change.base, number - 1, {
+            ...(opts.search === undefined ? {} : { search: opts.search }),
+          })
       if (found === null) throw new VersionError(`Commit ${number}'s base is not in the log`)
       base = found
     }

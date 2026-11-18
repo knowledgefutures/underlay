@@ -12,7 +12,7 @@ import { createObject, type Store } from '../repo/types.js'
 import { type BumpType, parseSemver } from '../semver.js'
 import { sha256Hex } from '../sha256.js'
 import { utf8 } from '../utf8.js'
-import { NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
+import { LEGACY_VERSION_ID_PREFIX, NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
 import type { FileRef, KeyPair } from './file.js'
 import { compareKeys, FormatError } from './lines.js'
 import { type PublicKeyInfo, type Signer, signObject, verifyObject } from './sign.js'
@@ -26,7 +26,10 @@ import { inParallel } from './util.js'
 export interface Change {
   collection: string
   files: FileRef[]
-  /** The version id the author was working from, or null. Recorded, never enforced. */
+  /**
+   * The version the author was working from, as bare hex, or null. Recorded, never
+   * enforced. (`ulv3:` and the hex in changes committed before 2026-11-18.)
+   */
   base: string | null
   message: string | null
   /** The author's key and signature; both null for an unsigned change. */
@@ -38,7 +41,10 @@ export interface Commit {
   underlay: 3
   collection: string
   number: number
-  /** The version id of the commit before, null for the first. */
+  /**
+   * The commit before, as the bare hex of its version id; null for the first. (`ulv3:` and
+   * the hex in commits written before 2026-11-18.)
+   */
   previous: string | null
   semver: string
   createdAt: string
@@ -84,7 +90,7 @@ export interface Latest {
 
 export interface StoredCommit {
   commit: Commit
-  /** The version id: `ulv3:` and the SHA-256 of the commit's bytes. */
+  /** The version id: `ul:ver:` and the SHA-256 of the commit's bytes. */
   id: string
   bytes: Uint8Array
 }
@@ -113,9 +119,46 @@ const isNumber = (v: unknown): v is number =>
 const isKeyPair = (v: unknown): v is KeyPair =>
   Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string'
 const nullOrString = (v: unknown) => v === null || typeof v === 'string'
-const VERSION_ID = /^ulv3:[0-9a-f]{64}$/
-/** Whether a string has the shape of a version id. */
+const VERSION_ID = /^ul:ver:[0-9a-f]{64}$/
+const HEX = /^[0-9a-f]{64}$/
+const LEGACY_IN_COMMIT = /^ulv3:[0-9a-f]{64}$/
+/** Whether a string is a version id as written outside commits: `ul:ver:<hex>`. */
 export const isVersionId = (v: unknown): v is string => typeof v === 'string' && VERSION_ID.test(v)
+
+/**
+ * The hash a version id names: from `ul:ver:<hex>`, bare hex (as a commit holds it), or the
+ * old `ulv3:<hex>`. Null for anything else, a `ulv2:` hash included (that names a v2 root).
+ */
+export function versionHex(id: string | null | undefined): string | null {
+  if (typeof id !== 'string') return null
+  if (HEX.test(id)) return id
+  for (const prefix of [VERSION_ID_PREFIX, LEGACY_VERSION_ID_PREFIX]) {
+    if (id.startsWith(prefix) && HEX.test(id.slice(prefix.length))) return id.slice(prefix.length)
+  }
+  return null
+}
+
+/** The `ul:ver:` id of a version given in any form `versionHex` reads; null if none. */
+export function toVersionId(id: string | null | undefined): string | null {
+  const hex = versionHex(id)
+  return hex === null ? null : VERSION_ID_PREFIX + hex
+}
+
+/** Whether two version ids, in any of the forms `versionHex` reads, name the same version. */
+export function sameVersion(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = versionHex(a)
+  return x !== null && x === versionHex(b)
+}
+
+/** How a commit holds a version: bare hex, or `ulv3:` and hex in one written before 2026-11-18. */
+const isCommitRef = (v: unknown): v is string =>
+  typeof v === 'string' && (HEX.test(v) || LEGACY_IN_COMMIT.test(v))
+
+/** Whether a commit was written before 2026-11-18, with `ulv3:` ids in `previous` or `base`. */
+export const hasLegacyIds = (c: Commit): boolean =>
+  [c.previous, ...c.changes.map((ch) => ch.base)].some(
+    (v) => typeof v === 'string' && LEGACY_IN_COMMIT.test(v),
+  )
 
 /** The members of a file entry as a commit is written with (Section 4). */
 const FILE_REF_MEMBERS = 'bytes,entries,first,id,last,records,removals'
@@ -154,7 +197,7 @@ export function parseCommit(bytes: Uint8Array): Commit {
     !/^v\d+\.\d+\.\d+$/.test(c.semver) ||
     typeof c.createdAt !== 'string' ||
     !Array.isArray(c.changes) ||
-    !(c.number === 1 || isVersionId(c.previous)) ||
+    !(c.number === 1 || isCommitRef(c.previous)) ||
     !nullOrString(c.keyId) ||
     !nullOrString(c.sig) ||
     (c.keyId === null) !== (c.sig === null) ||
@@ -169,7 +212,7 @@ export function parseCommit(bytes: Uint8Array): Commit {
       Object.keys(ch).sort().join() !== 'base,collection,files,keyId,message,sig' ||
       ch.collection !== c.collection ||
       !Array.isArray(ch.files) ||
-      !(ch.base === null || isVersionId(ch.base)) ||
+      !(ch.base === null || isCommitRef(ch.base)) ||
       !nullOrString(ch.message) ||
       !nullOrString(ch.keyId) ||
       !nullOrString(ch.sig) ||
@@ -477,12 +520,20 @@ export async function makeChange(
       removals: f.removals,
       bytes: f.bytes,
     })),
-    base: parts.base ?? null,
+    base: changeBase(parts.base),
     message: parts.message ?? null,
     keyId: null,
     sig: null,
   }
   return signer ? signObject(change, signer) : change
+}
+
+/** A base as a change holds it: the bare hex of a version id given in any form. */
+function changeBase(base: string | null | undefined): string | null {
+  if (base === null || base === undefined) return null
+  const hex = versionHex(base)
+  if (hex === null) throw new BaseError(`Base ${base} is not a version id`)
+  return hex
 }
 
 /** Does one of these keys sign the change (the author) or the commit (the server)? */
@@ -510,15 +561,15 @@ export async function findVersion(
 ): Promise<number | null> {
   if (opts.hint !== undefined && opts.hint >= 1 && opts.hint <= from) {
     const c = await readCommit(store, collection, opts.hint)
-    if (c?.id === id) return opts.hint
+    if (c && sameVersion(c.id, id)) return opts.hint
   }
   const stop = Math.max(1, from - (opts.search ?? 1000) + 1)
   for (let n = from; n >= stop; n--) {
     const c = await readCommit(store, collection, n)
     if (!c) return null
-    if (c.id === id) return n
+    if (sameVersion(c.id, id)) return n
     // Each commit names the one before it, so a match is found one read early.
-    if (c.commit.previous === id) return n - 1
+    if (sameVersion(c.commit.previous, id)) return n - 1
   }
   return null
 }
@@ -559,6 +610,9 @@ export async function createCommit(
   if (change.collection !== collection) {
     throw new BaseError(`The change is for collection ${change.collection}, not ${collection}`)
   }
+  if (change.base !== null && !HEX.test(change.base)) {
+    throw new BaseError(`The change's base must be the bare hex of a version id`)
+  }
   if (opts.authorKeys && !(await verifyChange(change, opts.authorKeys))) {
     throw new BaseError('The change is not signed by a key this collection accepts')
   }
@@ -573,7 +627,7 @@ export async function createCommit(
       // The base is recorded as given, but it has to be a version of this collection or of
       // the collections it was forked from. Newer commits never make it invalid, so once.
       const find = async (from: StoredCommit | null) =>
-        from && from.id === change.base
+        from && sameVersion(from.id, change.base)
           ? from.commit.number
           : from
             ? findVersion(store, collection, change.base!, from.commit.number, {
@@ -604,7 +658,7 @@ export async function createCommit(
       underlay: 3,
       collection,
       number: (head?.commit.number ?? 0) + 1,
-      previous: head?.id ?? null,
+      previous: versionHex(head?.id),
       semver: nextSemver(head?.commit.semver ?? null, bump),
       createdAt: notBefore(opts.now?.() ?? new Date(), head?.commit.createdAt).toISOString(),
       // The author's change goes in as it came, signature and all, at whatever number is free.

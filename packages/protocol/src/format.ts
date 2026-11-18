@@ -15,6 +15,18 @@ export {
 } from './input-rules.js'
 export { fileRefs } from './file-refs.js'
 export {
+  type HashInput,
+  isHex64,
+  isUlId,
+  parseHashInput,
+  parseUlId,
+  UL_KINDS,
+  type UlId,
+  ulId,
+  type UlKind,
+} from './ids.js'
+export { checkLinks, type Link, LINK_MEMBER, LINK_PLACE_MEMBERS, links, makeLink } from './links.js'
+export {
   checkSchema,
   checkSchemaBounds,
   checkPatternSafety,

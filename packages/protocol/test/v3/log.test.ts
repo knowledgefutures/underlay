@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  createObject,
   ed25519Signer,
   hashRecord,
   jcs,
@@ -14,6 +15,9 @@ import {
 import commitVectors from '../vectors/v3-commits.json' with { type: 'json' }
 import { putFile, rec, rem } from './helpers.js'
 
+/** A version id as a commit holds it. */
+const hex = (id: string) => v3.versionHex(id)!
+
 async function fileOf(store: MemoryStore, id: string, n = 3): Promise<v3.FileRef> {
   const f = await putFile(
     store,
@@ -25,6 +29,52 @@ async function fileOf(store: MemoryStore, id: string, n = 3): Promise<v3.FileRef
 const at = (iso: string) => ({ now: () => new Date(iso) })
 
 describe('commits', () => {
+  it('reads commits written with ulv3: ids, and follows them with bare hex', async () => {
+    const store = memoryStore()
+    const first = await v3.createCommit(store, 'old', { files: [], bump: 'minor' })
+    // As commit 2 was written before 2026-11-18: previous and base as ulv3: ids.
+    const legacy: v3.Commit = {
+      underlay: 3,
+      collection: 'old',
+      number: 2,
+      previous: `ulv3:${hex(first.id)}`,
+      semver: 'v1.0.1',
+      createdAt: new Date(Date.parse(first.commit.createdAt) + 1000).toISOString(),
+      changes: [
+        {
+          collection: 'old',
+          files: [],
+          base: `ulv3:${hex(first.id)}`,
+          message: null,
+          keyId: null,
+          sig: null,
+        },
+      ],
+      keyId: null,
+      sig: null,
+    }
+    await createObject(store, v3.commitKey('old', 2), v3.commitBytes(legacy))
+    const two = (await v3.readCommit(store, 'old', 2))!
+    expect(v3.hasLegacyIds(two.commit)).toBe(true)
+    const three = await v3.createCommit(store, 'old', {
+      files: [],
+      base: `ulv3:${hex(two.id)}`,
+      bump: 'minor',
+    })
+    expect(three.commit.previous).toBe(hex(two.id))
+    expect(three.commit.changes[0]!.base).toBe(hex(two.id))
+    expect(v3.hasLegacyIds(three.commit)).toBe(false)
+    expect((await v3.verifyLog(store, 'old'))!.id).toBe(three.id)
+    expect(await v3.findVersion(store, 'old', first.id, 3)).toBe(1)
+    // A change built elsewhere with an old base is refused, not committed as it came.
+    await expect(
+      v3.createCommit(store, 'old', {
+        change: { ...three.commit.changes[0]!, base: `ulv3:${hex(two.id)}` },
+        bump: 'minor',
+      }),
+    ).rejects.toThrow(/bare hex/)
+  })
+
   it('chains commits by version id and numbers them from 1', async () => {
     const store = memoryStore()
     const a = await v3.createCommit(
@@ -50,7 +100,7 @@ describe('commits', () => {
       keyId: null,
       sig: null,
     })
-    expect(a.id).toBe('ulv3:' + sha256Hex(jcs(a.commit)))
+    expect(a.id).toBe('ul:ver:' + sha256Hex(jcs(a.commit)))
     const b = await v3.createCommit(store, 'c1', {
       files: [await fileOf(store, 'b')],
       bump: 'minor',
@@ -68,8 +118,8 @@ describe('commits', () => {
       [3, 'v1.1.1'],
       [4, 'v2.0.0'],
     ])
-    expect(b.commit.previous).toBe(a.id)
-    expect(d.commit.previous).toBe(c.id)
+    expect(b.commit.previous).toBe(hex(a.id))
+    expect(d.commit.previous).toBe(hex(c.id))
     expect((await v3.findHead(store, 'c1'))!.id).toBe(d.id)
     expect(await v3.readLatest(store, 'c1')).toEqual({ commit: 4, layout: 0 })
     expect(await v3.readCommitHint(store, 'c1')).toBe(4)
@@ -298,7 +348,7 @@ describe('checking the log', () => {
     }
     const forked = await v3.createCommit(store, 'fork', { files: [], bump: 'patch' })
     expect(forked.commit.number).toBe(3)
-    expect(forked.commit.previous).toBe((await v3.readCommit(store, 'c', 2))!.id)
+    expect(forked.commit.previous).toBe(hex((await v3.readCommit(store, 'c', 2))!.id))
     await expect(v3.verifyLog(store, 'fork')).rejects.toThrow(/carries collection c/)
     await v3.verifyLog(store, 'fork', { lineage: [['c', 2]] })
   })
@@ -360,8 +410,8 @@ describe('base and the two signatures', () => {
     expect(change.keyId).toBe(k.author.keyId)
     const made = await v3.createCommit(store, 'c', { change, bump: 'minor' }, { signer: k.server })
     expect(made.commit.changes[0]).toEqual(change)
-    expect(made.commit).toMatchObject({ number: 2, previous: first.id, keyId: k.server.keyId })
-    expect(made.id).toBe('ulv3:' + sha256Hex(jcs(made.commit)))
+    expect(made.commit).toMatchObject({ number: 2, previous: hex(first.id), keyId: k.server.keyId })
+    expect(made.id).toBe('ul:ver:' + sha256Hex(jcs(made.commit)))
     // Each signature verifies under its own key, and not under the other's.
     expect(await v3.verifyChange(made.commit.changes[0]!, [k.author.publicKey])).toBe(true)
     expect(await v3.verifyChange(made.commit.changes[0]!, [k.server.publicKey])).toBe(false)
@@ -425,12 +475,12 @@ describe('base and the two signatures', () => {
       expect(await v3.verifyChange(landed.changes[0]!, [k.author.publicKey])).toBe(true)
       expect(await v3.verifyCommit(landed, [k.server.publicKey])).toBe(true)
       // Only one of them followed its base directly.
-      expect(landed.changes[0]!.base).toBe(first.id)
+      expect(landed.changes[0]!.base).toBe(hex(first.id))
     }
-    expect(made.filter((m) => m.commit.previous === first.id).length).toBe(1)
+    expect(made.filter((m) => m.commit.previous === hex(first.id)).length).toBe(1)
     await v3.verifyLog(store, 'c', {
       from: 2,
-      previous: first.id,
+      previous: hex(first.id),
       serverKeys: [k.server.publicKey],
       authorKeys: [k.author.publicKey],
     })
@@ -452,15 +502,15 @@ describe('base and the two signatures', () => {
     // An old base is fine: nothing refuses a commit because of its base.
     const old = await v3.createCommit(store, 'c', { files: [], base: made[1]!.id, bump: 'minor' })
     expect(old.commit.number).toBe(7)
-    expect(old.commit.changes[0]!.base).toBe(made[1]!.id)
-    expect(old.commit.previous).toBe(made[5]!.id)
+    expect(old.commit.changes[0]!.base).toBe(hex(made[1]!.id))
+    expect(old.commit.previous).toBe(hex(made[5]!.id))
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7)).toBe(2)
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7, { hint: 2 })).toBe(2)
     expect(await v3.findVersion(store, 'c', made[1]!.id, 7, { search: 2 })).toBe(null)
     // A base newer than a stale hint's commit is still found.
     await store.put(v3.latestKey('c'), jcs({ commit: 3 }))
     const fresh = await v3.createCommit(store, 'c', { files: [], base: old.id, bump: 'minor' })
-    expect(fresh.commit).toMatchObject({ number: 8, previous: old.id })
+    expect(fresh.commit).toMatchObject({ number: 8, previous: hex(old.id) })
     await store.delete(v3.latestKey('c'))
     const noHint = await v3.createCommit(store, 'c', { files: [], base: fresh.id, bump: 'minor' })
     expect(noHint.commit.number).toBe(9)
@@ -508,7 +558,7 @@ describe('base and the two signatures', () => {
     const fork = await v3.forkCollection(store, 'p', 'f', { at: 2 })
     // The fork's log holds the parent's first two commits, so either is a base; the third is not.
     const ok = await v3.createCommit(store, 'f', { files: [], base: parent[0]!.id, bump: 'minor' })
-    expect(ok.commit).toMatchObject({ number: 3, previous: parent[1]!.id })
+    expect(ok.commit).toMatchObject({ number: 3, previous: hex(parent[1]!.id) })
     await expect(
       v3.createCommit(store, 'f', { files: [], base: parent[2]!.id, bump: 'minor' }),
     ).rejects.toThrow(/not a version of f/)

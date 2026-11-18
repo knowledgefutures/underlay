@@ -25,11 +25,13 @@ import {
   commitBytes,
   commitFiles,
   commitKey,
-  isVersionId,
+  hasLegacyIds,
   nextSemver,
   notBefore,
   parseCommit,
+  sameVersion,
   type StoredCommit,
+  versionHex,
   versionId,
 } from './log.js'
 import { type PublicKeyInfo, type Signer, signObject, verifyObject } from './sign.js'
@@ -56,11 +58,13 @@ export interface BuildCommitInput {
 export async function buildCommit(i: BuildCommitInput, signer?: Signer): Promise<StoredCommit> {
   if (i.change.collection !== i.collection)
     throw new FormatError(`The change is for ${i.change.collection}, not ${i.collection}`)
+  if (i.change.base !== null && !/^[0-9a-f]{64}$/.test(i.change.base))
+    throw new FormatError(`The change's base must be bare hex (makeChange writes it so)`)
   const unsigned: Commit = {
     underlay: 3,
     collection: i.collection,
     number: (i.previous?.commit.number ?? 0) + 1,
-    previous: i.previous?.id ?? null,
+    previous: versionHex(i.previous?.id),
     semver: nextSemver(i.previous?.commit.semver ?? null, i.bump),
     // Never before the commit it follows (4.6): an authority refuses a time that goes back.
     createdAt: notBefore(i.createdAt ?? new Date(), i.previous?.commit.createdAt).toISOString(),
@@ -93,7 +97,8 @@ export function commitBump(files: FileRef[], schemaChanged: boolean): BumpType {
  * order. Each change stays as it was, except a `base` that named one of the commits being
  * replayed, which names its replayed id. `bump` gives each commit's kind of change against
  * what it now follows (a schema row may no longer change anything). Returns the new
- * commits and a map from each old version id to its new one.
+ * commits and a map from each old version's hash to its new one (bare hex, as commits
+ * hold them).
  */
 export async function replayCommits(
   commits: StoredCommit[],
@@ -107,7 +112,8 @@ export async function replayCommits(
   for (const c of commits) {
     if (c.commit.changes.length !== 1) throw new FormatError('Only a commit of one change replays')
     const ch = c.commit.changes[0]!
-    const change: Change = { ...ch, base: ch.base === null ? null : (ids.get(ch.base) ?? ch.base) }
+    const base = versionHex(ch.base)
+    const change: Change = { ...ch, base: base === null ? null : (ids.get(base) ?? base) }
     const next = await buildCommit({
       collection: c.commit.collection,
       previous,
@@ -115,7 +121,7 @@ export async function replayCommits(
       bump: await bump(c, previous),
       createdAt: now(),
     })
-    ids.set(c.id, next.id)
+    ids.set(versionHex(c.id)!, versionHex(next.id)!)
     out.push(next)
     previous = next
   }
@@ -161,8 +167,15 @@ export function checkAuthorCommit(
     throw err
   }
   if (commit.collection !== collection) return { problem: `The commit is for ${commit.collection}` }
+  if (hasLegacyIds(commit))
+    return {
+      problem:
+        'previous and base are bare hex, not ulv3: ids: update the client that built this commit',
+    }
   const wantNumber = (check.head?.commit.number ?? 0) + 1
-  if (commit.number !== wantNumber || commit.previous !== (check.head?.id ?? null)) {
+  const follows =
+    check.head === null ? commit.previous === null : sameVersion(commit.previous, check.head.id)
+  if (commit.number !== wantNumber || !follows) {
     // Built on a version that is not the newest: either the author is behind (the usual
     // case) or it names a number past the newest, which is never right.
     if (commit.number > wantNumber) return { problem: `Commit ${commit.number} skips a number` }
@@ -176,7 +189,6 @@ export function checkAuthorCommit(
     return { problem: 'A signed change is not accepted yet: send it unsigned' }
   if (jcs(ch.files) !== jcs(check.files))
     return { problem: "The commit's change must name exactly the upload's files" }
-  if (ch.base !== null && !isVersionId(ch.base)) return { problem: 'Bad base' }
   const semver = nextSemver(check.head?.commit.semver ?? null, check.bump)
   if (commit.semver !== semver)
     return { problem: `The semver is ${semver} for this change, not ${commit.semver}` }
@@ -202,6 +214,7 @@ export interface Receipt {
   underlay: 3
   collection: string
   number: number
+  /** The commit's version id as bare hex, like a commit's `previous`. */
   version: string
   receivedAt: string
   /** Who signs it: the server, by its address (`underlay.org`). */
@@ -223,7 +236,7 @@ export async function makeReceipt(
     underlay: 3,
     collection: stored.commit.collection,
     number: stored.commit.number,
-    version: stored.id,
+    version: versionHex(stored.id)!,
     receivedAt: receivedAt.toISOString(),
     server,
     keyId: null,
@@ -249,7 +262,9 @@ export function parseReceipt(text: string): Receipt {
     o.underlay !== 3 ||
     typeof o.collection !== 'string' ||
     !Number.isSafeInteger(o.number) ||
-    !isVersionId(o.version) ||
+    // Bare hex; `ulv3:` and hex in receipts written before 2026-11-18.
+    versionHex(o.version as string) === null ||
+    String(o.version).startsWith('ul:') ||
     typeof o.receivedAt !== 'string' ||
     typeof o.server !== 'string' ||
     !(o.keyId === null || typeof o.keyId === 'string') ||
@@ -292,7 +307,7 @@ export async function verifyReceipt(
   return (
     r.collection === stored.commit.collection &&
     r.number === stored.commit.number &&
-    r.version === stored.id &&
+    sameVersion(r.version, stored.id) &&
     verifyObject(r, keys)
   )
 }

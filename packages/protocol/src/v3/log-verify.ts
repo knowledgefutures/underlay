@@ -12,9 +12,11 @@ import {
   headNumber,
   nextSemver,
   readLog,
+  sameVersion,
   type StoredCommit,
   verifyChange,
   verifyCommit,
+  versionHex,
 } from './log.js'
 import { SortedFile } from './reader.js'
 import type { PublicKeyInfo } from './sign.js'
@@ -69,12 +71,15 @@ export async function verifyLog(
     const owner = opts.lineage?.find(([, through]) => n <= through)?.[0] ?? collection
     if (c.commit.collection !== owner) throw bad(`carries collection ${c.commit.collection}`)
     const wantPrev = prev ? prev.id : n === 1 ? null : opts.previous
-    if (wantPrev !== undefined && c.commit.previous !== wantPrev)
+    if (
+      wantPrev !== undefined &&
+      (wantPrev === null ? c.commit.previous !== null : !sameVersion(c.commit.previous, wantPrev))
+    )
       throw bad('previous does not match')
     for (const ch of c.commit.changes) {
       // A base is a version of this log before the commit. What it names is recorded as
       // given: nothing requires it to be the commit before.
-      if (ch.base !== null && from === 1 && !seen.has(ch.base)) {
+      if (ch.base !== null && from === 1 && !seen.has(versionHex(ch.base) ?? ch.base)) {
         throw bad(`base ${ch.base} is not an earlier version of this collection`)
       }
       if (opts.authorKeys && !(await verifyChange(ch, opts.authorKeys))) {
@@ -86,7 +91,7 @@ export async function verifyLog(
       if (!receipt || !(await verifyReceipt(receipt, c, opts.serverKeys)))
         throw bad('neither the commit nor its receipt is signed by an accepted server key')
     }
-    seen.add(c.id)
+    seen.add(versionHex(c.id)!)
     if (prev) {
       const ok = (['major', 'minor', 'patch'] as const).some(
         (b) => nextSemver(prev!.commit.semver, b) === c.commit.semver,

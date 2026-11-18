@@ -1,0 +1,299 @@
+{
+  "underlay": 3,
+  "note": "Section 2.1 and 2.2. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, `$file` included.",
+  "ids": [
+    {
+      "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": {
+        "kind": "rec",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "typed": {
+        "kind": "rec",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "form": "ul"
+      }
+    },
+    {
+      "input": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "id": {
+        "kind": "asset",
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "typed": {
+        "kind": "asset",
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "form": "ul"
+      }
+    },
+    {
+      "input": "ul:ver:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "id": {
+        "kind": "ver",
+        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "typed": {
+        "kind": "ver",
+        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "form": "ul"
+      }
+    },
+    {
+      "input": "ul:REC:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": null,
+      "typed": {
+        "kind": "rec",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "form": "ul"
+      }
+    },
+    {
+      "input": "ul:rec:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "id": null,
+      "typed": {
+        "kind": "rec",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "form": "ul"
+      }
+    },
+    {
+      "input": "ul:col:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": null,
+      "typed": null
+    },
+    {
+      "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": null,
+      "typed": null
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": null,
+      "typed": {
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": null,
+        "form": "hex"
+      }
+    },
+    {
+      "input": "ulv3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "id": null,
+      "typed": {
+        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "kind": "ver",
+        "form": "ulv3"
+      }
+    },
+    {
+      "input": "ulv2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "id": null,
+      "typed": {
+        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "kind": "ver",
+        "form": "ulv2"
+      }
+    },
+    {
+      "input": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "id": null,
+      "typed": {
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": null,
+        "form": "sha256"
+      }
+    },
+    {
+      "input": " ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+      "id": null,
+      "typed": {
+        "kind": "rec",
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "form": "ul"
+      }
+    }
+  ],
+  "links": [
+    {
+      "data": {
+        "source": {
+          "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "rec",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "/source"
+        }
+      ]
+    },
+    {
+      "data": {
+        "derivedFrom": [
+          {
+            "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "c-1",
+            "type": "work",
+            "id": "10.1234/x",
+            "rel": "copy"
+          },
+          {
+            "$link": "ul:ver:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "collection": "c-1"
+          }
+        ]
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "rec",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "/derivedFrom/0",
+          "collection": "c-1",
+          "type": "work",
+          "id": "10.1234/x"
+        },
+        {
+          "kind": "ver",
+          "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "path": "/derivedFrom/1",
+          "collection": "c-1"
+        }
+      ]
+    },
+    {
+      "data": {
+        "pdf": {
+          "$file": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "paper.pdf"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/pdf",
+          "file": true
+        }
+      ]
+    },
+    {
+      "data": {
+        "a": {
+          "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "inner": {
+            "$link": "not checked"
+          }
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "rec",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "/a"
+        }
+      ]
+    },
+    {
+      "data": {
+        "a/b~c": {
+          "$link": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a~1b~0c"
+        }
+      ]
+    },
+    {
+      "data": {
+        "$file": "sha256:short",
+        "note": {
+          "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "rec",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "path": "/note"
+        }
+      ]
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:asset:<hex> or ul:ver:<hex>",
+      "links": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "ulv3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "problem": "$link at /x is a ulv3: id: write ul:ver:<hex>",
+      "links": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "problem": "$link at /x is a sha256: hash: write ul:asset:<hex>",
+      "links": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "UL:REC:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "problem": "$link at /x must be lowercase",
+      "links": []
+    },
+    {
+      "data": {
+        "x": [
+          {
+            "$link": 7
+          }
+        ]
+      },
+      "problem": "$link at /x/0 must be a string",
+      "links": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "collection": "has space"
+        }
+      },
+      "problem": "$link at /x: \"collection\" must be a collection id",
+      "links": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "type": ""
+        }
+      },
+      "problem": "$link at /x: \"type\" must be a string of 1 to 1024 characters",
+      "links": []
+    }
+  ]
+}

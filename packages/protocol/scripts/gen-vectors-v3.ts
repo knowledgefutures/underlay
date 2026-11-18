@@ -9,7 +9,16 @@ import { writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { ed25519Signer, hashRecord, sha256Hex, v3 } from '../src/index.js'
+import {
+  checkLinks,
+  ed25519Signer,
+  hashRecord,
+  links,
+  parseHashInput,
+  parseUlId,
+  sha256Hex,
+  v3,
+} from '../src/index.js'
 
 const rec = (type: string, id: string, data: unknown, commit?: number) => ({
   kind: 'r' as const,
@@ -131,7 +140,7 @@ const signedCommit = await v3.signObject(
     underlay: 3,
     collection: 'vectors',
     number: 2,
-    previous: firstId,
+    previous: v3.versionHex(firstId),
     semver: 'v1.0.1',
     createdAt: '2026-11-10T00:00:01.000Z',
     changes: [signedChange],
@@ -153,7 +162,7 @@ writeFileSync(
   JSON.stringify(
     {
       underlay: 3,
-      note: 'A commit is the JCS of `commit`; its version id is ulv3: and the SHA-256 of those bytes. Signatures are Ed25519 over the JCS of the signed object without `sig`; the private keys are 32 bytes of 0x01 (author) and 0x02 (server).',
+      note: 'A commit is the JCS of `commit`; its version id is ul:ver: and the SHA-256 of those bytes, which `previous` and `base` hold as bare hex. Signatures are Ed25519 over the JCS of the signed object without `sig`; the private keys are 32 bytes of 0x01 (author) and 0x02 (server).',
       keys: { author: author.publicKey, server: server.publicKey },
       commits,
     },
@@ -162,3 +171,64 @@ writeFileSync(
   ) + '\n',
 )
 console.log(`wrote ${commits.length} commits to ${commitsPath}`)
+
+// --- Underlay ids and links: what a reader takes, and what a server refuses ---
+
+const h = (c: string) => c.repeat(64)
+const idCases = [
+  `ul:rec:${h('a')}`,
+  `ul:asset:${h('b')}`,
+  `ul:ver:${h('c')}`,
+  `ul:REC:${h('a')}`,
+  `ul:rec:${h('A')}`,
+  `ul:col:${h('a')}`,
+  `ul:rec:${h('a').slice(1)}`,
+  h('a'),
+  `ulv3:${h('c')}`,
+  `ulv2:${h('c')}`,
+  `sha256:${h('b')}`,
+  ` ul:rec:${h('a')} `,
+].map((input) => ({ input, id: parseUlId(input), typed: parseHashInput(input) }))
+const linkCases = [
+  { data: { source: { $link: `ul:rec:${h('a')}` } } },
+  {
+    data: {
+      derivedFrom: [
+        {
+          $link: `ul:rec:${h('a')}`,
+          collection: 'c-1',
+          type: 'work',
+          id: '10.1234/x',
+          rel: 'copy',
+        },
+        { $link: `ul:ver:${h('c')}`, collection: 'c-1' },
+      ],
+    },
+  },
+  { data: { pdf: { $file: `sha256:${h('b')}`, name: 'paper.pdf' } } },
+  { data: { a: { $link: `ul:rec:${h('a')}`, inner: { $link: 'not checked' } } } },
+  { data: { 'a/b~c': { $link: `ul:asset:${h('b')}` } } },
+  { data: { $file: 'sha256:short', note: { $link: `ul:rec:${h('a')}` } } },
+  { data: { x: { $link: h('a') } } },
+  { data: { x: { $link: `ulv3:${h('c')}` } } },
+  { data: { x: { $link: `sha256:${h('b')}` } } },
+  { data: { x: { $link: `UL:REC:${h('A')}` } } },
+  { data: { x: [{ $link: 7 }] } },
+  { data: { x: { $link: `ul:rec:${h('a')}`, collection: 'has space' } } },
+  { data: { x: { $link: `ul:rec:${h('a')}`, type: '' } } },
+].map(({ data }) => ({ data, problem: checkLinks(data), links: links(data) }))
+const linksPath = resolve(dirname(fileURLToPath(import.meta.url)), '../test/vectors/v3-links.json')
+writeFileSync(
+  linksPath,
+  JSON.stringify(
+    {
+      underlay: 3,
+      note: 'Section 2.1 and 2.2. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, `$file` included.',
+      ids: idCases,
+      links: linkCases,
+    },
+    null,
+    1,
+  ) + '\n',
+)
+console.log(`wrote ${idCases.length} ids and ${linkCases.length} link cases to ${linksPath}`)

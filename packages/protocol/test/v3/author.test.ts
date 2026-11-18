@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest'
 import { createObject, ed25519Signer, memoryStore, type MemoryStore, v3 } from '../../src/index.js'
 import { putFile, rec } from './helpers.js'
 
+/** A version id as a commit holds it. */
+const hex = (id: string) => v3.versionHex(id)!
+
 const seed = (n: number) =>
   btoa(String.fromCharCode(...new Uint8Array(32).fill(n)))
     .replace(/\+/g, '-')
@@ -44,7 +47,7 @@ describe('author-built commits', () => {
       change: await change(store, 'b', mine.id),
       bump: 'major',
     })
-    expect(second.commit).toMatchObject({ number: 2, previous: mine.id, semver: 'v2.0.0' })
+    expect(second.commit).toMatchObject({ number: 2, previous: hex(mine.id), semver: 'v2.0.0' })
   })
 
   it('takes the bump a server finds from the files', async () => {
@@ -94,13 +97,13 @@ describe('author-built commits', () => {
       [3, 'v1.2.0'],
       [4, 'v1.2.1'],
     ])
-    expect(commits[0]!.commit.previous).toBe(theirs2.id)
-    expect(commits[1]!.commit.previous).toBe(commits[0]!.id)
+    expect(commits[0]!.commit.previous).toBe(hex(theirs2.id))
+    expect(commits[1]!.commit.previous).toBe(hex(commits[0]!.id))
     // The first change's base still names commit 1; the second's names its replayed parent.
-    expect(commits[0]!.commit.changes[0]!.base).toBe(one.id)
-    expect(commits[1]!.commit.changes[0]!.base).toBe(commits[0]!.id)
+    expect(commits[0]!.commit.changes[0]!.base).toBe(hex(one.id))
+    expect(commits[1]!.commit.changes[0]!.base).toBe(hex(commits[0]!.id))
     expect(commits[0]!.commit.changes[0]!.files).toEqual(mine2.commit.changes[0]!.files)
-    expect(ids.get(mine2.id)).toBe(commits[0]!.id)
+    expect(ids.get(hex(mine2.id))).toBe(hex(commits[0]!.id))
   })
 
   it('checks an author-built commit against the newest, as an authority does', async () => {
@@ -129,6 +132,14 @@ describe('author-built commits', () => {
       v3.checkAuthorCommit(one.bytes, 'c1', { ...ok, now: new Date('2026-11-16T13:00:00Z') }),
     ).toHaveProperty('problem')
     expect(v3.checkAuthorCommit(one.bytes, 'c1', { ...ok, files: [] })).toHaveProperty('problem')
+    // A commit built by a client from before 2026-11-18, with a ulv3: base, is refused.
+    const oldStyle = v3.commitBytes({
+      ...one.commit,
+      changes: [{ ...ch, base: `ulv3:${'0'.repeat(64)}` }],
+    })
+    expect(v3.checkAuthorCommit(oldStyle, 'c1', ok)).toEqual({
+      problem: expect.stringMatching(/bare hex/),
+    })
     // A number past the newest is never right.
     const two = await v3.buildCommit({
       collection: 'c1',
