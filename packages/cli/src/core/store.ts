@@ -45,6 +45,19 @@ export interface CollectionState {
   versions: Record<string, VersionNote>
 }
 
+/**
+ * A state file as this CLI writes it: version ids as `ul:ver:<hex>`. One written before
+ * 2026-11-18 keys its notes by `ulv3:<hex>`, the same versions.
+ */
+function currentIds(s: CollectionState): CollectionState {
+  const id = (k: string) => v3.toVersionId(k) ?? k
+  return {
+    ...s,
+    remote: s.remote ? { ...s.remote, id: id(s.remote.id) } : null,
+    versions: Object.fromEntries(Object.entries(s.versions).map(([k, v]) => [id(k), v])),
+  }
+}
+
 export class LocalStore {
   readonly fs: FileStore
 
@@ -60,7 +73,7 @@ export class LocalStore {
   state(cid: string): CollectionState {
     const p = this.statePath(cid)
     if (!existsSync(p)) return { remote: null, versions: {} }
-    return JSON.parse(readFileSync(p, 'utf8')) as CollectionState
+    return currentIds(JSON.parse(readFileSync(p, 'utf8')) as CollectionState)
   }
 
   setState(cid: string, s: CollectionState): void {

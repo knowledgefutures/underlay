@@ -29,7 +29,7 @@ export function bytes(n: number | null | undefined): string {
 export const count = (n: number | null | undefined) =>
   n === null || n === undefined ? '–' : n.toLocaleString('en-US')
 
-export const shortId = (id: string) => id.replace(/^ulv3:/, '').slice(0, 6)
+export const shortId = (id: string) => id.replace(/^(ul:ver:|ulv3:)/, '').slice(0, 6)
 
 export function duration(fromIso: string, toIso: string | null, now = new Date()): string {
   const s = Math.max(0, ((toIso ? Date.parse(toIso) : now.getTime()) - Date.parse(fromIso)) / 1000)

@@ -371,6 +371,17 @@ export async function reword(c: Coll, number: number | undefined, message: strin
   return first
 }
 
+/**
+ * A change's base for a commit built again: the new id of a version that was itself built
+ * again (`ids` maps old version ids to new ones), as the bare hex a commit holds. A base
+ * written `ulv3:` by a CLI from before 2026-11-18 comes out as bare hex too.
+ */
+function mapBase(base: string | null, ids: Map<string, string>): string | null {
+  if (base === null) return null
+  const id = v3.toVersionId(base)
+  return v3.versionHex((id && ids.get(id)) ?? base)
+}
+
 /** Build `rest` again on `onto`, each with its own bump, bases mapped through `ids`. */
 async function rebase(
   c: Coll,
@@ -385,7 +396,7 @@ async function rebase(
     const s = rest[i]!
     const before = i === 0 ? null : rest[i - 1]!
     const ch = s.commit.changes[0]!
-    const base = ch.base === null ? null : (ids.get(ch.base) ?? ch.base)
+    const base = mapBase(ch.base, ids)
     const prevSemver = before
       ? before.commit.semver
       : ((await previousOf(c, s.commit.number))?.commit.semver ?? null)
@@ -512,7 +523,7 @@ export async function replayOnto(
     const next = await v3.buildCommit({
       collection: cid,
       previous,
-      change: { ...ch, base: ch.base === null ? null : (ids.get(ch.base) ?? ch.base) },
+      change: { ...ch, base: mapBase(ch.base, ids) },
       bump: await bumpAgainst(c.data, view, v3.commitFiles(s.commit)),
       createdAt: now,
     })

@@ -130,7 +130,9 @@ describe('versions here, push and pull', () => {
     // The authority holds the same versions, with receipts.
     const theirs = await v3.findHead(w.h.ports.stores.v3, meta.id)
     expect(theirs?.id).toBe(three.version!.id)
-    expect(await v3.readReceipt(a.store.fs, meta.id, 3)).toMatchObject({ version: theirs!.id })
+    expect(await v3.readReceipt(a.store.fs, meta.id, 3)).toMatchObject({
+      version: v3.versionHex(theirs!.id),
+    })
     expect(await unpushedOf(a)).toEqual([])
     expect(w.home.collection(meta).isNew).toBe(false)
 
@@ -223,8 +225,8 @@ describe('versions here, push and pull', () => {
       'three, reworded',
       'four',
     ])
-    expect(after[2]!.commit.previous).toBe(re.id)
-    expect(after[2]!.commit.changes[0]!.base).toBe(re.id)
+    expect(after[2]!.commit.previous).toBe(v3.versionHex(re.id))
+    expect(after[2]!.commit.changes[0]!.base).toBe(v3.versionHex(re.id))
 
     const sq = await squash(a, undefined, 'all of it', new Date())
     expect(sq?.commit).toMatchObject({ number: 2, semver: 'v1.1.0' })

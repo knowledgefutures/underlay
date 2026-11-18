@@ -74,11 +74,19 @@ export async function pull(
   for (const [i, e] of page.commits.entries()) {
     const bytes = enc.encode(e.commit)
     const stored = { commit: v3.parseCommit(bytes), id: v3.versionId(bytes), bytes }
-    if (stored.id !== e.id)
+    // Ids compare by hash: a server or a state file from before 2026-11-18 writes ulv3:.
+    if (!v3.sameVersion(stored.id, e.id))
       throw new CliError(`${c.key}: commit ${e.number} is not what its id says`)
-    if (stored.commit.number !== known + 1 + i || stored.commit.previous !== previous)
+    const follows =
+      previous === null
+        ? stored.commit.previous === null
+        : v3.sameVersion(stored.commit.previous, previous)
+    if (stored.commit.number !== known + 1 + i || !follows)
       throw new CliError(`${c.key}: commit ${e.number} does not follow the one pulled before it`)
-    if (e.receipt && (e.receipt.version !== stored.id || e.receipt.number !== stored.commit.number))
+    if (
+      e.receipt &&
+      (!v3.sameVersion(e.receipt.version, stored.id) || e.receipt.number !== stored.commit.number)
+    )
       throw new CliError(`${c.key}: commit ${e.number}'s receipt is for another version`)
     incoming.push({ stored, receipt: e.receipt })
     previous = stored.id
@@ -286,6 +294,21 @@ export async function push(
     }
     ctx.home.writeCollection({ ...c.meta, isNew: false })
     c.meta.isNew = false
+  }
+  // Versions saved by a CLI from before 2026-11-18 name the ones before them by ulv3: ids,
+  // which an authority refuses: build them again first, the same changes on the same base.
+  const pending = await unpushedOf(c)
+  if (pending.some((s) => v3.hasLegacyIds(s.commit))) {
+    const first = pending[0]!.commit.number
+    const onto = first > 1 ? await v3.readCommit(c.store.fs, cid, first - 1) : null
+    for (const s of pending) {
+      await c.store.fs.delete(v3.commitKey(cid, s.commit.number))
+      await c.store.fs.delete(v3.receiptKey(cid, s.commit.number))
+    }
+    await replayOnto(c, pending, onto, new Date())
+    say(
+      `  rebuilt ${pending.length} version${pending.length === 1 ? '' : 's'} saved by an older CLI`,
+    )
   }
   // Assets first: the authority takes a `$asset` row only for bytes already sent to it.
   const sentAssets = await sendAssets(c, onFile)

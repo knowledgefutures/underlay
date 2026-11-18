@@ -29,7 +29,7 @@ import {
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
-import { v3 } from '@underlay/protocol'
+import { checkLinks, v3 } from '@underlay/protocol'
 
 import { type AssetRow, assetKey, fileRefsIn, listAssets, runFiles } from './assets.js'
 import { type Coll, openColl, storeAt, type Ctx } from './context.js'
@@ -246,7 +246,14 @@ async function filesFor(
   const refs = new Map<string, { type: string; id: string; field: string }>()
   for await (const r of fileRows(output)) {
     if (r.kind !== 'r') continue
-    for (const f of fileRefsIn((JSON.parse(r.line) as { data: unknown }).data))
+    const data = (JSON.parse(r.line) as { data: unknown }).data
+    // An authority refuses a record with a malformed link: say so before the version is saved.
+    const linkProblem = checkLinks(data)
+    if (linkProblem)
+      throw new CliError(
+        `${c.key.split('/').slice(-2).join('/')}: ${r.type} ${r.id}: ${linkProblem}`,
+      )
+    for (const f of fileRefsIn(data))
       if (!refs.has(f.hash)) refs.set(f.hash, { type: r.type, id: r.id, field: f.field })
   }
   if (!refs.size) return { add: [], here: 0 }
