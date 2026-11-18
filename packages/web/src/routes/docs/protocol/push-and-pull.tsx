@@ -30,7 +30,7 @@ POST <collection>/push/<sid>/deletes
 → 200 {"received": 1}
 
 POST <collection>/push/<sid>/commit
-→ 201 {"semver": "v1.3.0", "hash": "ulv3:...", "recordCount": 4, "fileCount": 1,
+→ 201 {"semver": "v1.3.0", "hash": "ul:ver:...", "recordCount": 4, "fileCount": 1,
        "changes": {"added": 2, "removed": 1, "updated": 0}}
 → 202 {"session_id": "...", "status": "committing"}         (background commit)`
 
@@ -221,7 +221,7 @@ export default function ProtocolPushPull() {
         </li>
         <li>Committing a session that has already committed answers 201 with the same body.</li>
         <li>
-          <code>hash</code> in the response is the new version&rsquo;s <code>ulv3:</code> id.
+          <code>hash</code> in the response is the new version&rsquo;s <code>ul:ver:</code> id.
         </li>
       </ul>
       <CodeBlock>{exchange}</CodeBlock>

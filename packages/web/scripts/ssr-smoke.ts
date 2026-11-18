@@ -113,7 +113,7 @@ try {
   const base = '/api/collections/org/authors'
   const Author = {
     type: 'object',
-    properties: { name: { type: 'string' }, born: { type: 'integer' } },
+    properties: { name: { type: 'string' }, born: { type: 'integer' }, influence: {} },
     required: ['name'],
   }
   let res = await call(
@@ -138,7 +138,15 @@ try {
       headers: { 'content-type': 'application/x-ndjson' },
       body: [
         { id: 'ada', type: 'Author', data: { name: 'Ada Lovelace', born: 1815 } },
-        { id: 'alan', type: 'Author', data: { name: 'Alan Turing', born: 1912 } },
+        {
+          id: 'alan',
+          type: 'Author',
+          data: {
+            name: 'Alan Turing',
+            born: 1912,
+            influence: { $link: `ul:rec:${'a'.repeat(64)}`, type: 'Author', id: 'ada' },
+          },
+        },
         { id: 'kurt', type: 'Author', data: { name: 'Kurt Gödel' }, private: true },
       ]
         .map((r) => JSON.stringify(r))
@@ -262,7 +270,11 @@ try {
       status: 200,
       has: ['Versions — org/authors', 'v1.0.0', 'First load of authors', 'ulv2:'],
     },
-    { path: '/org/authors/v/1.0.0/records', status: 200, has: ['Ada Lovelace'] },
+    {
+      path: '/org/authors/v/1.0.0/records',
+      status: 200,
+      has: ['Ada Lovelace', `ul:rec:${'a'.repeat(8)}…`],
+    },
     // A record's page: its data and history; rows link to it. It no longer links to where
     // else the record appears (the reference index does not cover v3 collections yet).
     {
@@ -270,6 +282,12 @@ try {
       status: 200,
       has: ['Ada Lovelace', 'History in this collection', 'added'],
       lacks: ['where else it appears'],
+    },
+    // A record with a link: its ul: id, the copy buttons, and the link listed to follow.
+    {
+      path: '/org/authors/v/1.0.0/records/Author/alan',
+      status: 200,
+      has: ['ul:rec:', 'Copy as $link', 'Links', `ul:rec:${'a'.repeat(12)}`, '/api/links/resolve?'],
     },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 404 },
     { path: '/org/authors/v/1.0.0/records/Author/kurt', status: 200, has: ['Kurt'], user: 'u1' },
@@ -294,7 +312,8 @@ try {
       has: ['The Underlay protocol', 'docs-nav', 'Protocol v3', 'Push and pull'],
     },
     { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
-    { path: '/docs/protocol/versions', status: 200, has: ['ulv3:', 'Sorted-record-files'] },
+    { path: '/docs/protocol/versions', status: 200, has: ['ul:ver:', 'Sorted-record-files'] },
+    { path: '/docs/protocol/records', status: 200, has: ['Underlay ids', 'ul:asset:'] },
     { path: '/docs/protocol/repositories', status: 200, has: ['Layout files', 'Rebuilds'] },
     {
       path: '/docs/protocol/push-and-pull',

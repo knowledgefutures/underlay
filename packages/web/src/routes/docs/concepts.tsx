@@ -15,6 +15,8 @@ const recordExample = `{
 }`
 
 const fileRef = '{"$file": "sha256:..."}'
+const linkExample = `"derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...",
+                "type": "work", "id": "10.1234/abc"}`
 
 export default function DocsConcepts() {
   return (
@@ -69,11 +71,12 @@ export default function DocsConcepts() {
       </ul>
       <p>
         Each version also has an <strong>id</strong> (the <code>hash</code> field in API responses):{' '}
-        <code>ulv3:</code> followed by the SHA-256 of its commit. A commit names the commit before
-        it, so the id fixes the version&rsquo;s content and its whole history. Versions converted
-        from Underlay&rsquo;s earlier format kept their semvers, and their old <code>ulv2:</code>{' '}
-        ids still work wherever the read API takes a version; responses show the <code>ulv3:</code>{' '}
-        id.
+        <code>ul:ver:</code> followed by the SHA-256 of its commit. A commit names the commit before
+        it, so the id fixes the version&rsquo;s content and its whole history. Wherever the API
+        takes a version it also takes the id&rsquo;s bare hex, and the same hash written{' '}
+        <code>ulv3:</code>, as ids were before November 18, 2026. Versions converted from
+        Underlay&rsquo;s earlier format kept their semvers, and their old <code>ulv2:</code> ids
+        still work too; responses show the <code>ul:ver:</code> id.
       </p>
 
       <h2>Record</h2>
@@ -131,6 +134,28 @@ export default function DocsConcepts() {
         uploaded to it, or already in its current version. A commit refused for missing files
         answers <code>422</code> with the hashes in <code>filesNeeded</code>, and the push stays
         open: upload them and commit again.
+      </p>
+
+      <h2>Links</h2>
+      <p>
+        Every record, file and version has an <strong>Underlay id</strong> built from its hash:{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:&lt;hash&gt;</code> and{' '}
+        <code>ul:ver:&lt;hash&gt;</code>. Use them to cite exact data, and to link records across
+        collections. A <strong>link</strong> is an object in a record&rsquo;s data:
+      </p>
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+        <code>{linkExample}</code>
+      </pre>
+      <p>
+        The hash pins exactly what you pointed at; <code>collection</code> (the collection&rsquo;s
+        id), <code>type</code> and <code>id</code> say where you found it, so readers can open it. A
+        record page&rsquo;s <em>Copy as $link</em> button gives you the whole object. A{' '}
+        <code>$link</code> that isn&rsquo;t a <code>ul:</code> id is refused when you push, but its
+        target is never checked: it may be private or on another server. See{' '}
+        <Link to="/docs/protocol/records#links" className="text-link underline">
+          Links
+        </Link>
+        .
       </p>
 
       <h2>Accounts</h2>

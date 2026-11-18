@@ -28,7 +28,8 @@ export default function ProtocolOverview() {
       <p>
         Collections on underlay.org moved from protocol v2 to v3 on 2026-11-13. Their versions kept
         their semvers, and their old <code>ulv2:</code> version ids still resolve wherever the API
-        takes a version id. Responses give the <code>ulv3:</code> id.
+        takes a version id. Responses give the <code>ul:ver:</code> id (written <code>ulv3:</code>{' '}
+        before November 18, 2026, which also still resolves).
       </p>
 
       <h2 id="conformance">Conformance</h2>
@@ -65,7 +66,7 @@ export default function ProtocolOverview() {
         </li>
         <li>
           <strong>Version</strong>: the commits of a collection up to and including one commit. Its{' '}
-          <strong>version id</strong> is <code>ulv3:</code> followed by the SHA-256 of that
+          <strong>version id</strong> is <code>ul:ver:</code> followed by the SHA-256 of that
           commit&rsquo;s bytes.
         </li>
         <li>

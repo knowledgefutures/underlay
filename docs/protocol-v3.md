@@ -1,10 +1,13 @@
 # Underlay protocol, version 3 (draft)
 
 **Status:** Draft, 2026-11-12; authority, author-built commits, receipts and the routes that
-follow a collection added 2026-11-16 (Sections 4.6 to 4.8). Not stable. Implemented in `packages/protocol/src/v3/`. Where this
-document and the code disagree while both are drafts, fix whichever is wrong and say so in the
-commit. Test vectors for files and commits are in `packages/protocol/test/vectors/`
-(`v3-files.json`, `v3-commits.json`), written by `packages/protocol/scripts/gen-vectors-v3.ts`.
+follow a collection added 2026-11-16 (Sections 4.6 to 4.8); Underlay ids, links, and bare-hex
+versions inside commits added 2026-11-18 (Sections 2.1, 2.2 and 4). Not stable. Implemented in
+`packages/protocol/src/v3/`, with ids and links in `packages/protocol/src/ids.ts` and
+`links.ts`. Where this document and the code disagree while both are drafts, fix whichever is
+wrong and say so in the commit. Test vectors for files, commits, ids and links are in
+`packages/protocol/test/vectors/` (`v3-files.json`, `v3-commits.json`, `v3-links.json`),
+written by `packages/protocol/scripts/gen-vectors-v3.ts`.
 
 Version 3 defines four things: the **sorted-record-file**, the **commit**, the **layout file**,
 and the **collection** that holds them. It does not define how a server keeps those objects,
@@ -55,6 +58,62 @@ with a lone surrogate is not valid.
 An upload's input lines are a record, `{"id", "type", "data"}`, or a removal,
 `{"id", "type", "removed": true}`, with exactly those members. Unlike v2, a line with any other
 member is refused: there is no `private`.
+
+### 2.1 Underlay ids
+
+Outside the protocol's own objects (in record data, URLs, API responses and citations), a record,
+an asset or a version is named by an **Underlay id**:
+
+```
+ul:rec:<hex>      a record: the hash of its line (Section 2)
+ul:asset:<hex>    an asset: the SHA-256 of its bytes
+ul:ver:<hex>      a version: its version id (Section 4)
+```
+
+`<hex>` is 64 lowercase hexadecimal characters. An id is exact: lowercase, with no other
+spelling. A schema is a `$schema` record, so `ul:rec:` names schemas too. Other kinds are
+reserved.
+
+Inside a commit, a layout file, a file entry or a receipt, a hash is bare hex: the member it is
+in says what it is. So no way of writing an id is part of what is hashed.
+
+There is no version number in an id. Every kind is the SHA-256 of stored bytes, which a reader
+checks by hashing what it fetched, and those bytes say their own format.
+
+Informative: a server SHOULD take an id wherever a person gives one (a URL, a version selector,
+a search) as a `ul:` id or as bare hex, and MAY take the older forms `sha256:<hex>`, `ulv3:<hex>`
+(a version id as written before 2026-11-18, the same hash) and `ulv2:<hex>` (a v2 version hash).
+
+### 2.2 Links
+
+A record points at another record, an asset or a version with a **link**: an object, at any
+depth of its `data`, with a `$link` member.
+
+```
+{"$link": "ul:rec:<hex>", "collection": collection id, "type": string, "id": string}
+```
+
+- `$link` is an Underlay id (2.1).
+- `collection`, `type` and `id` are optional. They say where the target was found: the id (not
+  the handle) of a collection that holds it, and for a record its key there. A reader can use
+  them to find the target; the hash is what the link points at.
+- Any other member is the publisher's (a label, a relation such as `"rel": "derivedFrom"`).
+- A link object is not searched for further links.
+- A server MUST refuse a record whose data has an object with a `$link` member whose value is not
+  an Underlay id, or whose `collection` is not a collection id, or whose `type` or `id` is not a
+  string of 1 to 1,024 characters. A pasted hash or an old prefix is refused, not stored as data
+  that looks like a link.
+- A server MUST NOT refuse a link because of its target: it may be private, held elsewhere,
+  taken down, or never published. A link is a claim made by the record that holds it. Its hash
+  says which content it points at, not that the record came from there.
+- A link to an asset does not make a collection hold that asset; `$asset` rows do (4.3).
+
+v2's file reference, `{"$file": "sha256:<hex>"}` (v2 Section 4), is read as a link to
+`ul:asset:<hex>`. It is not checked: as in v2, a `$file` with any other value is not a reference.
+
+Informative: what a server builds from links (an index of what points at a record, a graph of
+where data came from) is not part of this protocol. Because a link names its target by hash, a
+record cannot link to itself through a chain of links, so following links always ends.
 
 ## 3. Sorted-record-file
 
@@ -186,12 +245,12 @@ A commit is the JCS of:
 {"underlay": 3,
  "collection": collection id,
  "number": n,                       1 for the first commit
- "previous": version id | null,     of commit n − 1
+ "previous": hex | null,            the hash of commit n − 1
  "semver": "v1.0.0",
  "createdAt": ISO 8601 UTC,
  "changes": [{"collection": collection id,
               "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
-              "base": version id | null,
+              "base": hex | null,
               "message": string | null,
               "keyId": string | null, "sig": string | null}, …],
  "keyId": string | null, "sig": string | null}
@@ -205,7 +264,10 @@ Either the server builds the commit around a change it was sent, or the author b
 commit and the collection's authority stores it unchanged (4.6). A commit is the same object
 either way, and its id is the hash of its bytes as built.
 
-- **Version id** = `ulv3:` + SHA-256 hex of the commit's bytes.
+- **Version id** = `ul:ver:` + SHA-256 hex of the commit's bytes (2.1). Inside commits and
+  receipts a version is its bare hex: `previous` and `base` hold the 64 hex characters of a
+  version id, without `ul:ver:`. A commit written before 2026-11-18 holds `ulv3:` and the hex
+  there instead; a reader MUST accept that in a commit it reads, and a writer MUST NOT write it.
 - The files a commit names MUST be unlabeled: files as their author built them, with no commit
   numbers inside. A server MUST refuse a change that names a labeled file. Within one commit
   their key ranges MUST NOT overlap. Every row in them counts as written by this commit.
@@ -214,7 +276,7 @@ either way, and its id is the hash of its bytes as built.
   written can change at the cost of a rebuild. A change to a line, an unlabeled file, or a
   commit means a second format beside the first.
 - A commit with number `n` exists only once. A writer creates it only if no commit `n` exists,
-  and only if commit `n − 1` exists and has version id `previous`.
+  and only if commit `n − 1` exists and hashes to `previous`.
 - `first` and `last` are each file's first and last keys, and `bytes` its footer's `bytes`.
   With them the commit's rows can be cut into the same files again (Section 7).
 - A commit, each change, and each file entry has exactly the members shown. A writer MUST NOT
@@ -226,11 +288,12 @@ either way, and its id is the hash of its bytes as built.
 
 ### 4.1 Base
 
-`base` is the version id the author was working from when they prepared the upload, or `null`.
+`base` is the version the author was working from when they prepared the upload, as the bare
+hex of its version id, or `null`.
 The author sets it; the server sets `previous`. The two are equal unless another commit landed
 in between.
 
-- The server records `base` as given. It MUST refuse a base that is not the version id of an
+- The server records `base` as given. It MUST refuse a base that is not the hash of an
   earlier commit in this collection's log (which, for a fork, includes the commits of the
   collections it was forked from).
 - Nothing else depends on it. A commit is never refused because of its base, and reading is
@@ -337,12 +400,14 @@ When the authority accepts a commit, whoever built it, it writes a **receipt** b
 `commits/<number>.receipt.json`, created only if absent:
 
 ```
-{"underlay": 3, "collection": collection id, "number": n, "version": version id,
+{"underlay": 3, "collection": collection id, "number": n, "version": hex,
  "receivedAt": ISO 8601 UTC, "server": the authority's address,
  "keyId": string | null, "sig": string | null}
 ```
 
-signed as in 4.2, over every member but `sig`. A receipt is not hashed into anything: a version
+signed as in 4.2, over every member but `sig`. `version` is the bare hex of the commit's
+version id (`ulv3:` and the hex in a receipt written before 2026-11-18). A receipt is not hashed
+into anything: a version
 id never depends on the server that holds it. A reader that checks signatures accepts a commit
 signed by a key it trusts, or a commit whose receipt is.
 
@@ -554,7 +619,8 @@ sweep/                            the sweep's own state
 | `KEY_BLOCK_ENTRIES`  | 1,024             |
 | `MAX_FILE_ENTRIES`   | 1,048,576         |
 | Trailer magic        | `UL3SRF\n\0`      |
-| Version id prefix    | `ulv3:`           |
+| Version id prefix    | `ul:ver:`         |
+| Underlay id kinds    | `rec`, `asset`, `ver` |
 | Number width in keys | 16 decimal digits |
 
 Limits on ids, types, record size, depth, and schemas are v2's (Section 12).

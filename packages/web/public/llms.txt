@@ -75,16 +75,19 @@ per data center and is approximate.
   or private as a whole: anyone may read every version of a public collection, and only members
   of the owning organization may read a private one.
 - Version: an immutable state of a collection: schemas, records, files and metadata. Identified
-  by semver ("v1.2.0"), by version id ("ulv3:<64 hex>"), or as "latest". A collection is a log of
-  commits, and a version is the log up to one commit; its id is "ulv3:" + the SHA-256 of that
-  commit. Versions converted from the earlier format on 2026-11-13 kept their old "ulv2:<hex>"
-  ids as aliases: anywhere the API takes a version, an old ulv2: id still resolves, but
-  responses always give the ulv3: id.
-- Record: {id, type, data}. Its hash is the SHA-256 of its canonical form (see "Record Hashing").
-  Within a version, (type, id) identifies one record; the same id may appear under two types.
+  by semver ("v1.2.0"), by version id ("ul:ver:<64 hex>"), or as "latest". A collection is a log
+  of commits, and a version is the log up to one commit; its id is "ul:ver:" + the SHA-256 of
+  that commit. Anywhere the API takes a version it also takes the bare 64 hex, the same hash
+  written "ulv3:<hex>" (how ids were written before 2026-11-18), and, for versions converted
+  from the earlier format on 2026-11-13, their old "ulv2:<hex>" ids. Responses give ul:ver:.
+- Record: {id, type, data}. Its hash is the SHA-256 of its canonical form (see "Record Hashing");
+  its id for citing and linking is "ul:rec:<hash>". Within a version, (type, id) identifies one
+  record; the same id may appear under two types.
 - Type: a class of records with one JSON Schema (draft-07).
-- File: bytes identified by their SHA-256, referenced from record data as
-  {"$file": "sha256:<hex>"}.
+- File (asset): bytes identified by their SHA-256, "ul:asset:<hex>"; referenced from record data
+  as {"$file": "sha256:<hex>"} or {"$link": "ul:asset:<hex>"}.
+- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset) or a version
+  (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
   cross-collection discovery.
 
@@ -155,10 +158,10 @@ GET /api/collections/:owner/:slug/versions          → [version summary], newes
     (?limit= default 50, max 100; &offset=)
 GET /api/collections/:owner/:slug/versions/latest   → latest version (404 when there is none)
 GET /api/collections/:owner/:slug/versions/:n       → one version
-    (:n = v1.2.0, 1.2.0, ulv3:<hex>, or an old ulv2:<hex> id)
+    (:n = v1.2.0, 1.2.0, ul:ver:<hex>, its bare hex, or an old ulv3:<hex> or ulv2:<hex> id)
     → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, fileCount,
        totalBytes, typeCounts, createdAt, ark, metadata, schemas: {type: schema}}
-    hash is the version id (ulv3:...). Members also get pushedBy, pushedByName and actorId.
+    hash is the version id (ul:ver:...). Members also get pushedBy, pushedByName and actorId.
 
 ### Records
 GET .../versions/:n/records                → a page of records
@@ -216,7 +219,7 @@ HEAD /api/collections/:owner/:slug/files/:hash   → 200 with content-length and
 POST /api/collections/:owner/:slug/files/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
 
-:hash is 64 hex characters; a "sha256:" prefix is accepted.
+:hash is 64 hex characters; a "sha256:" or "ul:asset:" prefix is accepted.
 
 ### Export
 GET /api/collections/:owner/:slug/export   → an archive of the latest version
@@ -397,7 +400,7 @@ collection before the commit.
 POST /api/collections/:owner/:slug/push/:sessionId/commit
 Authorization: Bearer ul_<key>
 
-→ 201 {"semver": "v1.3.0", "hash": "ulv3:def456...", "recordCount": 1203, "fileCount": 1,
+→ 201 {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 1203, "fileCount": 1,
        "changes": {"added": 2, "removed": 1, "updated": 1}}
 
 Rebase: the body {"rebase": true} commits onto the head as it is now, even if someone published
@@ -421,7 +424,7 @@ Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committe
   "expires_at": "...",
   "created_at": "...",
   "finalize_started_at": "...",
-  "result": {"semver": "v1.3.0", "hash": "ulv3:def456...", "recordCount": 3110000, "fileCount": 0, "changes": {...}},
+  "result": {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 3110000, "fileCount": 0, "changes": {...}},
   "error": null
 }
 While the session is open or committing, the status also has "progress" (the commit's phase and
@@ -439,7 +442,7 @@ published after you opened)
 → Re-read the head (and the manifest, if you diff), then open a new session, or commit with
   "rebase": true if your changes allow it.
 
-No changes (409): {"error": "No changes detected", "hash": "ulv3:..."}
+No changes (409): {"error": "No changes detected", "hash": "ul:ver:..."}
 → Nothing to do.
 
 Session not open (409): {"error": "Session is not open"} on an upload, or {"error": "Session is
@@ -592,9 +595,49 @@ These answer on www.underlay.org, but do not work yet:
 - id: a stable string, unique per type within the collection. Use your app's primary key.
 - type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
 - data: any JSON value its schema allows. Refer to other records by id; refer to files with
-  {"$file": "sha256:<hex>"}.
+  {"$file": "sha256:<hex>"}; point at an exact record, asset or version anywhere on Underlay with
+  a link (next section).
 
-Keep relationships as ids (no joins); readers resolve them with the schema and records together.
+Keep relationships within a collection as ids (no joins); readers resolve them with the schema
+and records together.
+
+---
+
+## Links between records
+
+To say "this record came from (or cites, or is about) that exact record", put a link in data:
+
+  {"$link": "ul:rec:<64 hex>", "collection": "<collection id>", "type": "Work", "id": "10.1234/abc"}
+
+- "$link" is required: an Underlay id, "ul:rec:<hash>" (a record), "ul:asset:<sha256>" (a file)
+  or "ul:ver:<hex>" (a version). Lowercase, exactly 64 hex digits.
+- "collection", "type" and "id" are optional and say where you found the target: the collection
+  id (from x-underlay-collection or the collection's "id", never its slug) and the record's key.
+  Include them: they let readers find the record; the hash pins its exact content.
+- Any other member is yours ("rel": "derivedFrom", "label": ...). Readers tell links apart by the
+  field they are in, so name the field for what it means (derivedFrom, cites, sameAs).
+- A link can sit at any depth (in arrays, nested objects). A link object isn't searched inside.
+- A record's hash is in every read response ("hash"), and the record page has "Copy as $link".
+- The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:..." and
+  "ulv3:..." are refused with a message saying what to write. It never checks that the target
+  exists or that you can read it: the target may be private or on another server.
+- {"$file": "sha256:<hex>"} still works, and means the same as {"$link": "ul:asset:<hex>"}.
+- Follow a link: GET /api/links/resolve?to=<ul: id>&collection=<id>&type=<type>&id=<id>
+  redirects to the page (or, for an asset, the download) where you can read the target; send
+  Accept: application/json for {"url"} instead. Without a collection, a ul:rec: id goes to
+  /records/<hash>.
+- Linking to a version (ul:ver:) pins a whole collection state, e.g. the dataset an analysis used.
+
+Example: a curated record that copies a Crossref work and cites another:
+
+  {"id": "w1", "type": "Work", "data": {
+     "title": "...",
+     "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
+     "cites": [{"$link": "ul:rec:41d0...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.5678/xyz"}]}}
+
+In a JSON Schema, describe a link field as an object with a "$link" string, e.g.
+  {"type": "object", "properties": {"$link": {"type": "string", "pattern": "^ul:rec:[0-9a-f]{64}$"}},
+   "required": ["$link"]}
 
 ---
 
@@ -748,7 +791,7 @@ A delivery is sent for each new version (pushes and metadata edits) whose bump i
 Each delivery is a POST with headers x-underlay-event, x-underlay-delivery and
 x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
 {event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
-patch, recordCount, fileCount}, bumpType}. version.hash is the ulv3: id.
+patch, recordCount, fileCount}, bumpType}. version.hash is the ul:ver: id.
 
 Mirrors to your own bucket (owners and admins: session or admin key):
 GET|POST /api/orgs/:org/locations         → list, or add an S3-compatible bucket {"name", "endpoint",

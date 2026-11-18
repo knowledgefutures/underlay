@@ -54,7 +54,7 @@ const getRes = `{
   "createdAt": "2026-01-15T00:00:00.000Z",
   "updatedAt": "2026-04-01T00:00:00.000Z",
   "versionCount": 14,
-  "head": { "semver": "v3.2.0", "hash": "ulv3:e5f6..." },
+  "head": { "semver": "v3.2.0", "hash": "ul:ver:e5f6..." },
   "public": true,
   "ownerSlug": "knowledge-futures",
   "ownerName": "Knowledge Futures",
@@ -63,7 +63,7 @@ const getRes = `{
     "major": 3,
     "minor": 2,
     "patch": 0,
-    "hash": "ulv3:e5f6...",
+    "hash": "ul:ver:e5f6...",
     "baseSemver": "v3.1.0",
     "message": "April sync",
     "appId": null,
@@ -114,7 +114,7 @@ const metadataReq = `{
 
 const metadataRes = `{
   "semver": "v3.2.1",
-  "hash": "ulv3:e5f6a7b8...",
+  "hash": "ul:ver:e5f6a7b8...",
   "status": "completed"
 }`
 

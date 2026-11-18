@@ -48,7 +48,7 @@ const deletesReq = `{"type":"Publication","id":"pub-old"}`
 
 const commitRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv3:a1b2c3d4...",
+  "hash": "ul:ver:a1b2c3d4...",
   "recordCount": 3,
   "fileCount": 1,
   "changes": {"added": 2, "removed": 1, "updated": 0}
@@ -69,7 +69,7 @@ const sessionPollRes = `{
   "finalize_started_at": "2026-10-04T12:20:00.000Z",
   "result": {
     "semver": "v1.1.0",
-    "hash": "ulv3:a1b2c3d4...",
+    "hash": "ul:ver:a1b2c3d4...",
     "recordCount": 3110000,
     "fileCount": 0,
     "changes": {"added": 3110000, "removed": 0, "updated": 0}
@@ -94,7 +94,7 @@ const listRes = `[
     "major": 1,
     "minor": 1,
     "patch": 0,
-    "hash": "ulv3:a1b2c3d4...",
+    "hash": "ul:ver:a1b2c3d4...",
     "baseSemver": "v1.0.0",
     "message": "Add new publications",
     "appId": "pubpub-sync",
@@ -166,7 +166,7 @@ X-Underlay-Record-Count: 3110000
 
 const manifestRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv3:a1b2c3d4...",
+  "hash": "ul:ver:a1b2c3d4...",
   "schemas": {"Publication": "abc123..."},
   "records": [
     {"id": "pub-001", "type": "Publication", "hash": "def456..."},
@@ -182,7 +182,7 @@ const manifestRes = `{
 
 const manifestDeltaRes = `{
   "semver": "v1.1.0",
-  "hash": "ulv3:a1b2c3d4...",
+  "hash": "ul:ver:a1b2c3d4...",
   "since": "v1.0.0",
   "schemas": {"Publication": "abc123..."},
   "delta": {
@@ -243,13 +243,15 @@ export default function DocsApiVersions() {
         and the ids you delete, and commit.
       </p>
       <p>
-        <strong>Version ids</strong> are <code>ulv3:&lt;sha256&gt;</code>, the SHA-256 of the
-        version&rsquo;s commit, and are the same for every reader. Versions published before
-        Underlay moved to protocol v3, on November 13, 2026, also answer to the <code>ulv2:</code>{' '}
-        ids they had then, anywhere a version id is accepted; responses always give the{' '}
-        <code>ulv3:</code> id. Wherever a version is named in a path (<code>:n</code>), it can be a
-        semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record, schema and file
-        hashes are bare hex with no prefix.
+        <strong>Version ids</strong> are <code>ul:ver:&lt;sha256&gt;</code>, the SHA-256 of the
+        version&rsquo;s commit, and are the same for every reader. Anywhere a version id is
+        accepted, so is its bare hex and the same hash written <code>ulv3:</code> (as ids were
+        before November 18, 2026). Versions published before Underlay moved to protocol v3, on
+        November 13, 2026, also answer to the <code>ulv2:</code> ids they had then; responses always
+        give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),
+        it can be a semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record,
+        schema and file hashes are bare hex in responses; to cite or link to a record write{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, and to a file <code>ul:asset:&lt;hash&gt;</code>.
       </p>
       <p>
         A version never changes, so responses under <code>.../versions/:n</code> are cached when{' '}

@@ -192,8 +192,8 @@ export default function DocsApiRecords() {
                 <code>version</code>
               </td>
               <td>
-                A semver (<code>v1.2.0</code>), a version id (<code>ulv3:…</code>), or{' '}
-                <code>latest</code> (the default)
+                A semver (<code>v1.2.0</code>), a version id (<code>ul:ver:…</code>, or its bare
+                hex), or <code>latest</code> (the default)
               </td>
             </tr>
             <tr>

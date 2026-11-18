@@ -2,7 +2,7 @@
 
 Underlay is a protocol for giving structured data a permanent address. You push JSON records and a JSON Schema. You get back a versioned, content-addressed snapshot you can point to forever.
 
-Records, schemas, and files are each identified by their SHA-256 hash. A collection is a log of commits, each naming immutable sorted-record-files, and a version is the log up to one commit, identified by that commit's hash (`ulv3:…`). Versions share the files they have in common.
+Records, schemas, and files are each identified by their SHA-256 hash. A collection is a log of commits, each naming immutable sorted-record-files, and a version is the log up to one commit, identified by that commit's hash. Each has an Underlay id built from its hash (`ul:rec:…`, `ul:asset:…`, `ul:ver:…`), and a record can point at exact data anywhere on Underlay with a link, `{"$link": "ul:rec:…", "collection": …, "type": …, "id": …}`. Versions share the files they have in common.
 
 Schemas are first-class objects: inspectable, comparable, and alignable across independently authored datasets. Two collections that independently publish an identical Author schema share its schema hash — alignment falls out of the data model automatically. The infrastructure doesn't need to solve interoperability. It provides enough structure that interoperability can be solved dynamically by the tools and models that consume the data.
 

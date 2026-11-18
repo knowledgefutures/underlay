@@ -14,6 +14,17 @@ const example = `{"id":"collection","type":"$meta","data":{"readme":"Weekly snap
 {"id":"pub-001","type":"Publication","data":{"title":"Notes"}}
 {"id":"pub-002","removed":true,"type":"Publication"}`
 
+const ids = `ul:rec:<hex>      a record: the hash of its line
+ul:asset:<hex>    an asset: the SHA-256 of its bytes
+ul:ver:<hex>      a version: the SHA-256 of its commit
+
+<hex> = 64 lowercase hex characters`
+
+const link = `{"title": "Notes on a dataset",
+ "derivedFrom": {"$link": "ul:rec:9f2c…", "collection": "4f7d1c2e-…",
+                 "type": "work", "id": "10.1234/abc", "rel": "copy"},
+ "usedVersion": {"$link": "ul:ver:41d0…", "collection": "4f7d1c2e-…"}}`
+
 const reserved: [string, string, string][] = [
   ['$schema', 'a type name', 'that type’s JSON Schema'],
   ['$asset', 'an asset’s SHA-256, hex', '{"size": n, "mediaType": string or null}'],
@@ -286,6 +297,69 @@ export default function ProtocolRecords() {
         <code>data</code>, whose <code>$file</code> member is <code>sha256:</code> followed by 64
         lowercase hex characters. A push adds a <code>$asset</code> row for each asset its records
         refer to, or it declares, that the version before did not name.
+      </p>
+
+      <h2 id="underlay-ids">Underlay ids</h2>
+      <p>
+        Outside the protocol&rsquo;s own objects (in record data, URLs, API responses and citations)
+        a record, an asset or a version is named by an Underlay id:
+      </p>
+      <CodeBlock>{ids}</CodeBlock>
+      <p>
+        An id is exact: lowercase, with no other spelling. A schema is a <code>$schema</code>{' '}
+        record, so <code>ul:rec:</code> names schemas too; other kinds are reserved. Inside a
+        commit, layout, file entry or receipt a hash is bare hex, since the member it is in says
+        what it is, so no way of writing an id is part of anything hashed. There is no version
+        number in an id: every kind is the SHA-256 of stored bytes, and those bytes say their own
+        format.
+      </p>
+      <p>
+        Informative. underlay.org takes an id wherever a person gives one as a <code>ul:</code> id
+        or as bare hex, and also the older <code>sha256:</code>, <code>ulv3:</code> and{' '}
+        <code>ulv2:</code> forms.
+      </p>
+
+      <h2 id="links">Links</h2>
+      <p>
+        A record points at another record, an asset or a version with a link: an object, at any
+        depth of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay
+        id.
+      </p>
+      <CodeBlock>{link}</CodeBlock>
+      <ul>
+        <li>
+          <code>collection</code>, <code>type</code> and <code>id</code> are optional and say where
+          the target was found: the id (not the handle) of a collection that holds it, and for a
+          record its key there. The hash is what the link points at.
+        </li>
+        <li>
+          Any other member is the publisher&rsquo;s, such as a label or a relation. Name the field
+          for what the link means (<code>derivedFrom</code>, <code>cites</code>): readers tell links
+          apart by where they are.
+        </li>
+        <li>A link object is not searched for further links.</li>
+        <li>
+          A server MUST refuse a record with an object whose <code>$link</code> is not an Underlay
+          id, whose <code>collection</code> is not a collection id, or whose <code>type</code> or{' '}
+          <code>id</code> is not a string of 1 to 1,024 characters. A pasted hash or an old prefix
+          is refused, not stored as data that looks like a link.
+        </li>
+        <li>
+          A server MUST NOT refuse a link because of its target, which may be private, held
+          elsewhere, taken down, or never published. A link is a claim made by the record that holds
+          it.
+        </li>
+        <li>
+          A link to an asset does not make the collection hold it; <code>$asset</code> rows do. The{' '}
+          <code>$file</code> reference above is read as a link to <code>ul:asset:</code>.
+        </li>
+      </ul>
+      <p>
+        Informative. What a server builds from links (what points at a record, where data came from)
+        is not part of the protocol. Since links name targets by hash, following them always ends.
+        On underlay.org, <code>GET /api/links/resolve?to=&lt;id&gt;&amp;collection=&lt;id&gt;</code>{' '}
+        (with <code>type</code> and <code>id</code> for a record) redirects to where the target can
+        be read, and a record&rsquo;s page has <em>Copy as $link</em>.
       </p>
     </DocsLayout>
   )

@@ -38,7 +38,8 @@ const commit = `{"underlay": 3,
               "keyId": string | null, "sig": string | null}, …],
  "keyId": string | null, "sig": string | null}
 
-version id = "ulv3:" + SHA-256(JCS(commit)), lowercase hex`
+version id = "ul:ver:" + SHA-256(JCS(commit)), lowercase hex
+previous, base = that SHA-256 alone (bare hex)`
 
 export default function ProtocolVersions() {
   return (
@@ -210,15 +211,18 @@ export default function ProtocolVersions() {
 
       <h2 id="version-id">Version id</h2>
       <p>
-        A version&rsquo;s id is <code>ulv3:</code> followed by the SHA-256, in lowercase hex, of its
-        commit&rsquo;s bytes. Version ids and signatures rest on commits, and through them on the
-        unlabeled files commits name, and on nothing else. None rests on a labeled file or a layout
-        file, so how those are written can change at the cost of a rebuild.
+        A version&rsquo;s id is <code>ul:ver:</code> followed by the SHA-256, in lowercase hex, of
+        its commit&rsquo;s bytes. Inside a commit, <code>previous</code> and <code>base</code> hold
+        the bare hex alone: the member says what it is, so no way of writing an id is hashed. A
+        commit written before November 18, 2026 holds <code>ulv3:</code> and the hex there, which a
+        reader still accepts and a writer never writes. Version ids and signatures rest on commits,
+        and through them on the unlabeled files commits name, and on nothing else. None rests on a
+        labeled file or a layout file, so how those are written can change at the cost of a rebuild.
       </p>
       <p>
-        On underlay.org, the API takes a version as its semver, its <code>ulv3:</code> id, or{' '}
-        <code>latest</code>. A version converted from v2 also answers to its old <code>ulv2:</code>{' '}
-        id.
+        On underlay.org, the API takes a version as its semver, its <code>ul:ver:</code> id, the
+        id&rsquo;s bare hex, or <code>latest</code>, and the same hash written <code>ulv3:</code>. A
+        version converted from v2 also answers to its old <code>ulv2:</code> id.
       </p>
 
       <h2 id="base">Base</h2>

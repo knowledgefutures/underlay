@@ -262,7 +262,8 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Records and schemas',
         href: '/docs/protocol/records',
-        blurb: 'Canonical JSON, record and removal lines, reserved types, input rules, schemas',
+        blurb:
+          'Canonical JSON, record and removal lines, reserved types, input rules, schemas, ids and links',
         headings: [
           'Canonical JSON',
           'Records and lines',
@@ -272,6 +273,8 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
           'Schemas',
           'Validation',
           'Assets',
+          'Underlay ids',
+          'Links',
         ],
       },
       {

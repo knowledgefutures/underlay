@@ -75,7 +75,7 @@ curl -X POST .../push/SESSION_ID/deletes \\
 # 5. Commit
 curl -X POST .../push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.3.0","hash":"ulv3:...","recordCount":...,"fileCount":...,"changes":{...}}`
+# → 201 {"semver":"v1.3.0","hash":"ul:ver:...","recordCount":...,"fileCount":...,"changes":{...}}`
 
 const snapshotDiff = `// hashRecord(record) → hex, as defined under "Record Hashing" below.
 const key = (r) => JSON.stringify([r.type, r.id])
@@ -150,8 +150,8 @@ export default function DocsIntegration() {
         <li>
           <strong>Version</strong>: The collection as of one commit in its log, and immutable: a
           JSON Schema per type, records, file references and metadata. Identified by semver (e.g.{' '}
-          <code>v1.0.0</code>) or by its <code>ulv3:</code> id. Versions converted from the earlier
-          format also answer to their old <code>ulv2:</code> ids.
+          <code>v1.0.0</code>) or by its <code>ul:ver:</code> id. Versions converted from the
+          earlier format also answer to their old <code>ulv2:</code> ids.
         </li>
         <li>
           <strong>Record</strong>: An <code>id</code>, a <code>type</code> and a <code>data</code>{' '}

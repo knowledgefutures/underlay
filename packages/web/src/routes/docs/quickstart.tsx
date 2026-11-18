@@ -57,7 +57,7 @@ EOF
 
 const commitCode = `curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.0.0","hash":"ulv3:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.0.0","hash":"ul:ver:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const readCode = `# A public collection needs no key. For a private one, add
 # -H "Authorization: Bearer $KEY" to each request.
@@ -93,7 +93,7 @@ curl -X POST .../push/SESSION_ID/deletes \\
   --data-binary '{"type":"Book","id":"book-2"}'
 
 curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.1.0","hash":"ulv3:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.1.0","hash":"ul:ver:...","recordCount":2,"fileCount":0,"changes":{...}}`
 
 const diffCode = `curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.1.0/diff?from=v1.0.0
 # → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],
