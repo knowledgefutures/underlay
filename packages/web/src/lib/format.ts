@@ -7,7 +7,7 @@ export function bareSemver(semver: string): string {
 }
 
 /**
- * A hash with its algorithm prefix. v2 version hashes carry one (`ulv2:<hex>`);
+ * A hash with its prefix. Version ids carry one (`ul:ver:<hex>`, and `ulv2:<hex>` for v2);
  * v1's were bare SHA-256 hex, so those get `sha256:`.
  */
 export function prefixedHash(hash: string): string {
@@ -17,7 +17,7 @@ export function prefixedHash(hash: string): string {
 /** The prefix and the first `n` hex digits of a hash, for display. */
 export function shortHash(hash: string, n: number): string {
   const full = prefixedHash(hash)
-  return `${full.slice(0, full.indexOf(':') + 1 + n)}…`
+  return `${full.slice(0, full.lastIndexOf(':') + 1 + n)}…`
 }
 
 /** A URL slug typed or derived from a name: lowercase, hyphens, a-z0-9 only. */

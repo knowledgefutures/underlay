@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigation, useSearchParams } from 'react-router'
 
 import { formatBytes, formatCount, formatDate, prefixedHash, shortHash } from '~/lib/format'
+import { asLink, linkUrl, shortUlId, ulId } from '~/lib/links'
 import { RECORDS_PAGE_SIZE, type RecordsPage } from '~/lib/records-page'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
@@ -304,6 +305,20 @@ export function RecordsView({
                                   />
                                 </svg>
                                 {label}
+                              </a>
+                            </td>
+                          )
+                        }
+                        const link = asLink(val)
+                        if (link && !link.file) {
+                          return (
+                            <td
+                              key={f}
+                              className="border-rule max-w-56 truncate border-b p-2 font-mono"
+                              title={ulId(link.kind, link.hash)}
+                            >
+                              <a href={linkUrl(link)} className="text-link hover:underline">
+                                {shortUlId(link.kind, link.hash, 8)}
                               </a>
                             </td>
                           )

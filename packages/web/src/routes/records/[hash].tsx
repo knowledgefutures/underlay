@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { Link, useLoaderData, useParams } from 'react-router'
 
 import BaseLayout from '~/components/BaseLayout'
+import { CopyButton } from '~/components/copy-button'
 import { Badge } from '~/components/ui'
 import { formatDate, plural } from '~/lib/format'
 
@@ -34,7 +35,8 @@ export default function RecordDetailPage() {
 
 function RecordDetail({ record }: { record: RecordData }) {
   const params = useParams()
-  const hash = params.hash!
+  // The path may name it as bare hex, sha256:<hex> or ul:rec:<hex>.
+  const hash = params.hash!.toLowerCase().replace(/^(sha256:|ul:rec:)/, '')
 
   const fields = Object.entries(record.data)
 
@@ -67,8 +69,9 @@ function RecordDetail({ record }: { record: RecordData }) {
         {/* Header */}
         <div className="mb-6">
           <div className="mb-2 flex items-center gap-3">
-            <h1 className="font-mono text-lg font-semibold">{hash.slice(0, 16)}…</h1>
+            <h1 className="font-mono text-lg font-semibold">ul:rec:{hash.slice(0, 16)}…</h1>
             <Badge>{record.type}</Badge>
+            <CopyButton text={`ul:rec:${hash}`} label="Copy id" />
           </div>
           <div className="text-ink-muted flex items-center gap-4 text-xs">
             <span>
