@@ -67,7 +67,11 @@ pnpm --filter @underlay/web build
 cd packages/server
 npx wrangler d1 migrations apply underlay-staging --env staging --remote   # new migrations only
 npx wrangler deploy --env staging
+npx wrangler deploy -c wrangler.bulk.jsonc --env staging   # the bulk Worker: same code, bulk, compact and v3 queues
 ```
+
+Deploy both Workers at the same commit. The bulk Worker runs the long jobs, the v3 jobs and the
+cron's `maintenance.sweep`, so a change to any of those reaches staging only once it is deployed.
 
 Secrets are SOPS-encrypted per deployment (`.env.staging.enc`); decrypt them into the shell, never
 to a file. Add migrations with `cd packages/server && npx drizzle-kit generate --name <name>`;
