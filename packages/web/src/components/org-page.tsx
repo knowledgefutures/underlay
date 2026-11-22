@@ -8,6 +8,7 @@ import { Link } from 'react-router'
 
 import { ButtonLink, EmptyState, Input, Select } from '~/components/ui'
 import { formatBytesFixed, formatCount, formatDate, tagLabel } from '~/lib/format'
+import { useSizedImage } from '~/lib/images'
 import { renderMarkdown } from '~/lib/markdown'
 
 export interface OrgAccount {
@@ -98,6 +99,38 @@ export function initials(name: string): string {
     .join('')
 }
 
+/** The logo tile's width at each size (its box below), for picking an image width. */
+const LOGO_SIZES = {
+  xs: '20px',
+  sm: '40px',
+  md: '64px',
+  lg: '(min-width: 640px) 112px, 96px',
+}
+
+function LogoImage({
+  url,
+  alt,
+  sizes,
+  className,
+}: {
+  url: string
+  alt: string
+  sizes: string
+  className: string
+}) {
+  const img = useSizedImage(url, [64, 128, 256], sizes)
+  return <img {...img} alt={alt} className={className} />
+}
+
+/**
+ * A cover runs the page's width at 112 to 160px tall. On a phone it's cropped from a
+ * wider image (object-cover), so a narrow screen still asks for 640px.
+ */
+function CoverImage({ url, className }: { url: string; className: string }) {
+  const img = useSizedImage(url, [640, 1280, 1920, 2560], '(max-width: 640px) 640px, 100vw')
+  return <img {...img} alt="" className={className} />
+}
+
 /**
  * An org's logo, the same tile everywhere it shows: a white rounded square with a thin
  * rule, holding the uploaded image or, without one, the org's initials in its cover
@@ -121,7 +154,12 @@ export function OrgLogo({
   const tile = `border-rule shrink-0 overflow-hidden border bg-white ${box} ${className}`
   if (account.avatarUrl)
     return (
-      <img src={account.avatarUrl} alt={account.displayName} className={`${tile} object-cover`} />
+      <LogoImage
+        url={account.avatarUrl}
+        alt={account.displayName}
+        sizes={LOGO_SIZES[size]}
+        className={`${tile} object-cover`}
+      />
     )
   return (
     <div
@@ -155,9 +193,8 @@ export function Cover({
       style={{ backgroundColor: coverColorFor(account) }}
     >
       {account.coverImageUrl && (
-        <img
-          src={account.coverImageUrl}
-          alt=""
+        <CoverImage
+          url={account.coverImageUrl}
           className={`absolute inset-0 h-full w-full object-cover ${
             account.coverTint ? 'opacity-80 mix-blend-luminosity' : ''
           }`}

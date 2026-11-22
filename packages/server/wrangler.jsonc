@@ -79,6 +79,8 @@
         { "binding": "BUCKET", "bucket_name": "underlay-staging" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-staging-public" },
       ],
+      // Sizes org logos and covers for /img (api/images.ts).
+      "images": { "binding": "IMAGES" },
       "durable_objects": {
         "bindings": [
           { "name": "COMMITS", "class_name": "CollectionCommits" },
@@ -157,6 +159,8 @@
         { "binding": "BUCKET", "bucket_name": "underlay-prod" },
         { "binding": "PUBLIC_ASSETS", "bucket_name": "underlay-prod-public" },
       ],
+      // Sizes org logos and covers for /img (api/images.ts).
+      "images": { "binding": "IMAGES" },
       "durable_objects": {
         "bindings": [
           { "name": "COMMITS", "class_name": "CollectionCommits" },

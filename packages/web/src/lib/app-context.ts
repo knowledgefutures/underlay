@@ -7,5 +7,7 @@ export function useAppContext() {
     kfAuthUrl: string
     /** This deployment's host, like underlay.org or staging.underlay.org. */
     siteHost?: string
+    /** This deployment's public assets bucket (org logos and covers), or null. */
+    assetsBaseUrl?: string | null
   }
 }

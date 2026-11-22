@@ -126,6 +126,8 @@ export function collectionRoutes() {
       kfAuthUrl: c.var.config.kfAuthUrl ?? '',
       // The deployment's host, for "this becomes the URL" hints.
       siteHost: new URL(c.var.config.appUrl).host,
+      // Org logos and covers under this are served sized through /img (web lib/images.ts).
+      assetsBaseUrl: c.var.ports.publicAssets?.baseUrl ?? null,
     })
   })
 

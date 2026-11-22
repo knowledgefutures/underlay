@@ -84,6 +84,17 @@ export interface PublicAssets {
   baseUrl: string
 }
 
+/** A format a sized image is served in (api/images.ts). */
+export type SizedFormat = 'avif' | 'webp' | 'jpeg' | 'png'
+
+/**
+ * Resizes and re-encodes images: on Workers, the Images binding (IMAGES). Never
+ * enlarges: an image narrower than `width` keeps its size and is only re-encoded.
+ */
+export interface ImageResizer {
+  resize(bytes: Uint8Array, opts: { width: number; format: SizedFormat }): Promise<Uint8Array>
+}
+
 export interface Ports {
   stores: Stores
   /**
@@ -123,6 +134,8 @@ export interface Ports {
   locationFetch?: (req: Request) => Promise<Response>
   /** The deployment's public assets bucket; absent when it has none (avatar routes answer 503). */
   publicAssets?: PublicAssets
+  /** Resizes public assets for /img (api/images.ts); absent: /img redirects to the original. */
+  images?: ImageResizer
   /** Run work after the response (Workers: ctx.waitUntil; Node: fire and forget with logging). */
   waitUntil(p: Promise<unknown>): void
   /**

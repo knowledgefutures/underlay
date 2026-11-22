@@ -34,7 +34,14 @@ export function sniffRaster(b: Uint8Array): { type: string; ext: string } | null
 export const avatarFolder = (orgId: string) => `avatars/${orgId}/`
 
 /**
- * Delete a logo this deployment stored for this org. Anything else (another
+ * Where /img keeps a sized copy of an org image (api/images.ts): beside it in the
+ * org's folder, so deleting the org's folder deletes them too.
+ *   avatars/<orgId>/<name>  →  avatars/<orgId>/sized/<name>/<width>.<format>
+ */
+export const sizedFolder = (orgId: string, name: string) => `${avatarFolder(orgId)}sized/${name}/`
+
+/**
+ * Delete a logo this deployment stored for this org, and its sized copies. Anything else (another
  * host, another org's folder, an unexpected key) is left alone. Non-fatal: an
  * orphaned logo is harmless, so storage errors are logged, not thrown.
  */
@@ -49,6 +56,9 @@ export async function deleteOwnedAvatar(
   if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9]+$/.test(name)) return
   try {
     await assets.store.delete(avatarFolder(orgId) + name)
+    for await (const key of listAll(assets.store, sizedFolder(orgId, name))) {
+      await assets.store.delete(key)
+    }
   } catch (err) {
     console.error(`[avatars] Failed to delete ${url}:`, err)
   }

@@ -5,6 +5,7 @@ import { OrgLogo } from '~/components/org-page'
 import SettingsLayout, { orgSettingsRail } from '~/components/SettingsLayout'
 import { Alert, Button, Input, SectionHeading, Select, Textarea } from '~/components/ui'
 import { useAppContext } from '~/lib/app-context'
+import { shrinkImage } from '~/lib/images'
 
 export default function OwnerSettings() {
   const { owner } = useParams()
@@ -96,7 +97,7 @@ export default function OwnerSettings() {
     setSubmitting('avatar')
     try {
       const formData = new FormData()
-      formData.append('avatar', file)
+      formData.append('avatar', await shrinkImage(file, 512))
       const res = await fetch(`/api/accounts/${owner}/avatar`, {
         method: 'POST',
         credentials: 'include',
@@ -251,7 +252,9 @@ export default function OwnerSettings() {
                 </Button>
               )}
             </div>
-            <p className="text-ink-muted mt-1 text-xs">JPEG, PNG, GIF or WebP, up to 1 MiB.</p>
+            <p className="text-ink-muted mt-1 text-xs">
+              JPEG, PNG, GIF or WebP. Large images are scaled down; GIFs must be 1 MiB or smaller.
+            </p>
           </div>
         </div>
       )}

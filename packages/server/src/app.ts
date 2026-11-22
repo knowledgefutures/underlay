@@ -17,6 +17,7 @@ import { collectionRoutes } from './api/collections.js'
 import { commitRoutes } from './api/commits.js'
 import { exportRoutes } from './api/export.js'
 import { fileRoutes } from './api/files.js'
+import { imageRoutes } from './api/images.js'
 import { linkRoutes } from './api/links.js'
 import { locationRoutes } from './api/locations.js'
 import { manageRoutes } from './api/manage.js'
@@ -115,6 +116,12 @@ export function createApp(setup: Setup) {
   )
   app.post('/api/auth/organization/delete', (c) =>
     c.json({ error: 'Delete an organization with DELETE /api/accounts/:slug' }, 404),
+  )
+
+  // Sized org images: public, so before the session is read (api/images.ts).
+  app.route(
+    '/',
+    imageRoutes((c) => setup(c as Context<AppEnv>).ports),
   )
 
   // The auth routes come before the principal is known: their budget is the IP's.

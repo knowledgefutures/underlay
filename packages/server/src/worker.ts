@@ -5,6 +5,7 @@
 import type {
   D1Database,
   ExecutionContext,
+  ImagesBinding,
   MessageBatch,
   Queue,
   ScheduledController,
@@ -24,7 +25,13 @@ import { readsAnyReplica } from './db/replicas.js'
 import { isBulk, QueueJobs, runJob, V3_POOLED_JOBS } from './jobs.js'
 import { isolateTag } from './lib/isolate.js'
 import { bindingRateLimiter, type RateLimitBinding } from './lib/limits.js'
-import { type JobMessage, type Ports, type PublicAssets, serverNameOf } from './ports.js'
+import {
+  type ImageResizer,
+  type JobMessage,
+  type Ports,
+  type PublicAssets,
+  serverNameOf,
+} from './ports.js'
 import { createStores, newCollectionsFrom } from './stores.js'
 import { landCommit, type Landing } from './v3/landing.js'
 import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
@@ -97,6 +104,8 @@ export interface Env {
   ASSETS_BUCKET?: string
   ASSETS_ACCESS_KEY_ID?: string
   ASSETS_SECRET_ACCESS_KEY?: string
+  /** Cloudflare Images, which sizes org logos and covers for /img (api/images.ts). */
+  IMAGES?: ImagesBinding
 }
 
 /** Interactive jobs one invocation runs at once. */
@@ -135,6 +144,20 @@ function publicAssets(env: Env): PublicAssets | undefined {
     region: 'auto',
   })
   return { store, baseUrl }
+}
+
+/** The Images binding as a resizer: scaled down to `width`, never up. */
+function imagesResizer(images: ImagesBinding): ImageResizer {
+  return {
+    async resize(bytes, { width, format }) {
+      const input = new Blob([bytes as Uint8Array<ArrayBuffer>]).stream()
+      const result = await images
+        .input(input as never)
+        .transform({ width, fit: 'scale-down' })
+        .output({ format: `image/${format}`, quality: 80 })
+      return new Uint8Array(await result.response().arrayBuffer())
+    },
+  }
 }
 
 function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
@@ -197,6 +220,7 @@ function makePorts(env: Env, ctx: ExecutionContext, req?: Request): Ports {
         }
       : {}),
     ...(assets ? { publicAssets: assets } : {}),
+    ...(env.IMAGES ? { images: imagesResizer(env.IMAGES) } : {}),
   }
 }
 
