@@ -441,11 +441,16 @@ try {
       lacks: ['Sync now', 'Add mirror'],
       user: 'u2',
     },
-    // The org's settings: the logo it has, and the upload form for owners.
+    // The org's settings: the logo it has (sized through /img), and the upload form for owners.
     {
       path: '/org/settings',
       status: 200,
-      has: [`src="${avatarUrl}"`, 'Replace logo', 'Remove', 'up to 1 MiB'],
+      has: [
+        `src="/img/256/${avatarUrl.slice('https://assets.smoke.test/'.length)}"`,
+        'Replace logo',
+        'Remove',
+        'GIFs must be 1 MiB or smaller',
+      ],
       user: 'u1',
     },
     { path: '/org', status: 200, has: [avatarUrl] },
