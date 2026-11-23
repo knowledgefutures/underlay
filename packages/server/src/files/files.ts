@@ -74,12 +74,12 @@ export const safeMimeType = (mime: string | undefined) =>
   !mime || UNSAFE_MIME.test(mime.trim()) ? 'application/octet-stream' : mime.trim()
 
 const HEX64 = /^[0-9a-f]{64}$/
-/** A record or asset hash as given in a path or body: bare hex, `sha256:`, or `ul:rec:`/`ul:file:`. */
+/** A record or asset hash as given in a path or body: bare hex, `sha256:`, or `ul:rec:`/`ul:asset:`. */
 export const cleanHash = (h: string) =>
   h
     .trim()
     .toLowerCase()
-    .replace(/^(sha256:|ul:rec:|ul:file:)/, '')
+    .replace(/^(sha256:|ul:rec:|ul:asset:)/, '')
 export const isHash = (h: string) => HEX64.test(h)
 
 /**

@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  assetRefs,
   checkLinks,
   ed25519Signer,
   hashRecord,
@@ -177,7 +178,7 @@ console.log(`wrote ${commits.length} commits to ${commitsPath}`)
 const h = (c: string) => c.repeat(64)
 const idCases = [
   `ul:rec:${h('a')}`,
-  `ul:file:${h('b')}`,
+  `ul:asset:${h('b')}`,
   `ul:ver:${h('c')}`,
   `ul:REC:${h('a')}`,
   `ul:rec:${h('A')}`,
@@ -207,7 +208,7 @@ const linkCases = [
   },
   { data: { pdf: { $file: `sha256:${h('b')}`, name: 'paper.pdf' } } },
   { data: { a: { $link: `ul:rec:${h('a')}`, inner: { $link: 'not checked' } } } },
-  { data: { 'a/b~c': { $link: `ul:file:${h('b')}` } } },
+  { data: { 'a/b~c': { $link: `ul:asset:${h('b')}` } } },
   { data: { $file: 'sha256:short', note: { $link: `ul:rec:${h('a')}` } } },
   { data: { x: { $link: h('a') } } },
   { data: { x: { $link: `ulv3:${h('c')}` } } },
@@ -216,14 +217,28 @@ const linkCases = [
   { data: { x: [{ $link: 7 }] } },
   { data: { x: { $link: `ul:rec:${h('a')}`, collection: 'has space' } } },
   { data: { x: { $link: `ul:rec:${h('a')}`, type: '' } } },
-].map(({ data }) => ({ data, problem: checkLinks(data), links: links(data) }))
+  // Asset references (Section 2.3): `$asset` attaches; `$file` is the older form.
+  { data: { cover: { $asset: `ul:asset:${h('b')}`, fileName: 'cover.png' } } },
+  { data: { figures: [{ $asset: `ul:asset:${h('b')}` }, { $file: `sha256:${h('d')}` }] } },
+  { data: { x: { $asset: h('b') } } },
+  { data: { x: { $asset: `sha256:${h('b')}` } } },
+  { data: { x: { $asset: `ul:rec:${h('a')}` } } },
+  { data: { x: { $asset: `UL:ASSET:${h('B')}` } } },
+  { data: { x: { $asset: null } } },
+  { data: { x: { $link: `ul:asset:${h('b')}`, $asset: `ul:asset:${h('b')}` } } },
+].map(({ data }) => ({
+  data,
+  problem: checkLinks(data),
+  links: links(data),
+  assets: assetRefs(data),
+}))
 const linksPath = resolve(dirname(fileURLToPath(import.meta.url)), '../test/vectors/v3-links.json')
 writeFileSync(
   linksPath,
   JSON.stringify(
     {
       underlay: 3,
-      note: 'Section 2.1 and 2.2. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, `$file` included.',
+      note: 'Sections 2.1 to 2.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`, and the older `$file`).',
       ids: idCases,
       links: linkCases,
     },

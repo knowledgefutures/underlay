@@ -1,17 +1,17 @@
 /**
- * Underlay ids (docs/protocol-v3.md, Section 2.1): how a record, a file, or a version is
+ * Underlay ids (docs/protocol-v3.md, Section 2.1): how a record, an asset, or a version is
  * named by its hash outside the protocol's own objects, in record data, URLs, API
  * responses and citations.
  *
  *   ul:rec:<hex>     a record: the SHA-256 of its line (schemas are `$schema` records)
- *   ul:file:<hex>    a file (the spec's asset): the SHA-256 of its bytes
+ *   ul:asset:<hex>   an asset: the SHA-256 of its bytes
  *   ul:ver:<hex>     a version: the SHA-256 of its commit
  *
  * Inside a commit, layout or file entry a hash is bare hex: the member it sits in says
  * what it is, so no display spelling ends up in hashed bytes.
  */
 
-export const UL_KINDS = ['rec', 'file', 'ver'] as const
+export const UL_KINDS = ['rec', 'asset', 'ver'] as const
 export type UlKind = (typeof UL_KINDS)[number]
 
 export interface UlId {
@@ -21,7 +21,7 @@ export interface UlId {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/
-const UL_ID = /^ul:(rec|file|ver):([0-9a-f]{64})$/
+const UL_ID = /^ul:(rec|asset|ver):([0-9a-f]{64})$/
 
 /** Whether a value is a SHA-256 in lowercase hex: how protocol objects hold a hash. */
 export const isHex64 = (v: unknown): v is string => typeof v === 'string' && HEX64.test(v)

@@ -455,7 +455,7 @@ export function collectionPane(
       }
       lines.push(L([S(open.type, C.mu), S('  '), S(open.id, C.wh, true)]), blank())
       for (const t of JSON.stringify(data, null, 2).split('\n'))
-        lines.push(L([S('  ' + t, /"\$file"/.test(t) ? C.bl : C.fg)]))
+        lines.push(L([S('  ' + t, /"\$(asset|file)"/.test(t) ? C.bl : C.fg)]))
       pane.scrolls = true
       pane.keys = [
         { k: '↑↓', l: 'scroll' },

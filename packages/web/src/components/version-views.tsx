@@ -274,8 +274,9 @@ export function RecordsView({
                       </td>
                       {currentTypeFields.map((f: string) => {
                         const val = r.data?.[f]
-                        if (val && typeof val === 'object' && '$file' in val) {
-                          const hash = ((val as any).$file as string).replace('sha256:', '')
+                        const ref = asLink(val)
+                        if (ref?.attached) {
+                          const hash = ref.hash
                           // Route through the API so access is checked and
                           // a presigned URL is minted (files are private).
                           const fileUrl = withToken(
@@ -309,8 +310,8 @@ export function RecordsView({
                             </td>
                           )
                         }
-                        const link = asLink(val)
-                        if (link && !link.file) {
+                        const link = ref
+                        if (link) {
                           return (
                             <td
                               key={f}

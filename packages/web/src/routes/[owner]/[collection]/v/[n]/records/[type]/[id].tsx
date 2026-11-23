@@ -104,8 +104,8 @@ export default function RecordPage() {
                         {shortUlId(l.kind, l.hash)}
                       </td>
                       <td className="text-ink-muted p-2">
-                        {l.file
-                          ? 'file in this collection'
+                        {l.attached
+                          ? 'asset in this collection'
                           : [l.type, l.id].filter(Boolean).join(' ') ||
                             (l.collection ? 'in another collection' : '')}
                       </td>

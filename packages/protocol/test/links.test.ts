@@ -1,7 +1,8 @@
-/** Underlay ids and links in record data (docs/protocol-v3.md, Sections 2.1 and 2.2). */
+/** Underlay ids, links, and asset references in record data (docs/protocol-v3.md, Sections 2.1 to 2.3). */
 import { describe, expect, it } from 'vitest'
 
 import {
+  assetRefs,
   checkLinks,
   isUlId,
   links,
@@ -19,7 +20,7 @@ const b = 'b'.repeat(64)
 describe('ul: ids', () => {
   it('names records, assets and versions, exactly', () => {
     expect(ulId('rec', a)).toBe(`ul:rec:${a}`)
-    expect(parseUlId(`ul:file:${b}`)).toEqual({ kind: 'file', hash: b })
+    expect(parseUlId(`ul:asset:${b}`)).toEqual({ kind: 'asset', hash: b })
     expect(isUlId(`ul:ver:${a}`, 'ver')).toBe(true)
     expect(isUlId(`ul:ver:${a}`, 'rec')).toBe(false)
     for (const bad of [
@@ -64,7 +65,7 @@ describe('links', () => {
       derivedFrom: [
         { $link: `ul:rec:${a}`, collection: 'c-1', type: 'work', id: '10.1/x', rel: 'copy' },
       ],
-      cover: { $link: `ul:file:${b}` },
+      cover: { $link: `ul:asset:${b}` },
     }
     expect(checkLinks(data)).toBeNull()
     expect(links(data)).toEqual([
@@ -76,14 +77,14 @@ describe('links', () => {
         id: '10.1/x',
         path: '/derivedFrom/0',
       },
-      { kind: 'file', hash: b, path: '/cover' },
+      { kind: 'asset', hash: b, path: '/cover' },
     ])
   })
 
   it('refuses a pasted hash or an old prefix, saying what to write', () => {
     expect(checkLinks({ x: { $link: a } })).toMatch(/at \/x is bare hex: write ul:rec:/)
     expect(checkLinks({ x: [{ $link: `ulv3:${a}` }] })).toMatch(/at \/x\/0 .*write ul:ver:/)
-    expect(checkLinks({ $link: `sha256:${a}` })).toMatch(/at \/ .*write ul:file:/)
+    expect(checkLinks({ $link: `sha256:${a}` })).toMatch(/at \/ .*write ul:asset:/)
     expect(checkLinks({ x: { $link: `UL:REC:${a}` } })).toMatch(/lowercase/)
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, collection: 'a b' } })).toMatch(/collection/)
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, id: 7 } })).toMatch(/"id"/)
@@ -96,8 +97,8 @@ describe('links', () => {
       l: { $link: `ul:rec:${a}`, note: { $link: 'not searched' } },
     }
     expect(checkLinks(data)).toBeNull()
-    expect(links(data).map((l) => [l.path, l.kind, l.file ?? false])).toEqual([
-      ['/pdf', 'file', true],
+    expect(links(data).map((l) => [l.path, l.kind, l.attached ?? false])).toEqual([
+      ['/pdf', 'asset', true],
       ['/bad/inner', 'rec', false],
       ['/l', 'rec', false],
     ])
@@ -122,6 +123,7 @@ describe('links', () => {
     for (const c of vectors.links) {
       expect(checkLinks(c.data)).toBe(c.problem)
       expect(links(c.data)).toEqual(c.links)
+      expect(assetRefs(c.data)).toEqual(c.assets)
     }
   })
 })

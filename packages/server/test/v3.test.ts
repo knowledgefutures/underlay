@@ -414,6 +414,41 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(diff.meta).toMatchObject({ filesRemoved: 1, filesAdded: 0 })
   })
 
+  it('attaches an asset a $asset reference names, and refuses a malformed one', async () => {
+    const { h, user, base } = await setup()
+    const cover = 'a cover'
+    const never = 'never uploaded'
+    expect(
+      (await h.request(`${base}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
+    ).toBe(201)
+    const book = (ref: unknown) => [{ id: 'x', type: 'Book', data: { title: 'X', cover: ref } }]
+    // An asset never sent is missing, as with $file.
+    let res = await push(
+      h,
+      user,
+      base,
+      { schemas: { Book } },
+      book({ $asset: `ul:asset:${sha(never)}` }),
+    )
+    expect(res.status).toBe(422)
+    expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(never)] })
+    // A pasted hash is refused, not stored as data that looks like a reference.
+    res = await push(h, user, base, { schemas: { Book } }, book({ $asset: `sha256:${sha(cover)}` }))
+    expect(res.status).toBe(422)
+    expect(JSON.stringify(await json(res))).toMatch(/\$asset at \/cover is a sha256: hash/)
+    res = await push(
+      h,
+      user,
+      base,
+      { schemas: { Book } },
+      book({ $asset: `ul:asset:${sha(cover)}`, fileName: 'cover.png' }),
+    )
+    expect(res.status).toBe(201)
+    expect(await json(res)).toMatchObject({ fileCount: 1 })
+    const files = await json(await h.request(`${base}/versions/latest/files`))
+    expect(files.map((f: { hash: string }) => f.hash)).toEqual([sha(cover)])
+  })
+
   it('rebuilds after commits, prunes old layouts, and sweeps only the v3 area', async () => {
     const { h, user, c, base } = await setup()
     let semver: string | null = null

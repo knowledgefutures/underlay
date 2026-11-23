@@ -12,9 +12,10 @@ import {
   checkRecordId,
   checkTypeSlug,
   compileSchema,
+  assetRefs,
   emptySet,
-  fileRefs,
   InputRuleError,
+  mayHoldAssetRefs,
   OUT_OF_LINE_BYTES,
   parseRecordLine,
   parseStrict,
@@ -184,8 +185,10 @@ export async function prepareRecords(
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: errs })
       continue
     }
-    // A malformed link is refused, not stored as data that looks like one (Section 2.2).
-    const linkProblem = canonical.includes('"$link"') ? checkLinks(data) : null
+    // A malformed link or asset reference is refused, not stored as data that looks like one
+    // (Sections 2.2 and 2.3).
+    const linkProblem =
+      canonical.includes('"$link"') || canonical.includes('"$asset"') ? checkLinks(data) : null
     if (linkProblem) {
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: [linkProblem] })
       continue
@@ -198,8 +201,8 @@ export async function prepareRecords(
         : canonical
     const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
     // A packed record's body leaves its entry (push/packs.ts): the commit counts its
-    // file references from these.
-    const refs = opts.packed && canonical.includes('"$file"') ? fileRefs(data) : []
+    // asset references from these: `$asset`, or `$file` as records wrote it before.
+    const refs = opts.packed && mayHoldAssetRefs(canonical) ? assetRefs(data) : []
     const entry: RunEntry = {
       t: rec.type,
       k: rec.id,

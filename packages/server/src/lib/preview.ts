@@ -6,15 +6,15 @@
  * it whole.
  *
  * A string longer than `PREVIEW_CHARS` is cut and ends in `…`; an object or array whose
- * JSON is longer becomes `{"$preview": "<its JSON, cut>"}`; a file reference (`$file`) and
- * anything shorter are kept as they are.
+ * JSON is longer becomes `{"$preview": "<its JSON, cut>"}`; an asset reference (`$asset`, or
+ * `$file` before it) and anything shorter are kept as they are.
  */
 export const PREVIEW_CHARS = 200
 
 function previewValue(v: unknown): unknown {
   if (typeof v === 'string') return v.length > PREVIEW_CHARS ? `${v.slice(0, PREVIEW_CHARS)}…` : v
   if (v === null || typeof v !== 'object') return v
-  if (!Array.isArray(v) && '$file' in v) return v
+  if (!Array.isArray(v) && ('$asset' in v || '$file' in v)) return v
   const json = JSON.stringify(v)
   return json.length > PREVIEW_CHARS ? { $preview: `${json.slice(0, PREVIEW_CHARS)}…` } : v
 }

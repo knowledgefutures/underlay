@@ -8,7 +8,7 @@ import { join } from 'node:path'
 
 import { v3 } from '@underlay/protocol'
 
-import { type AssetRow, assetsHere, fileRefsIn, listAssets } from '../core/assets.js'
+import { type AssetRow, assetsHere, assetRefsIn, listAssets } from '../core/assets.js'
 import {
   collectionStatus,
   type CollectionStatus,
@@ -187,7 +187,7 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
         const dec = new TextDecoder()
         for await (const r of v3.exportAll(c.store.fs, view, { from: PAST_RESERVED })) {
           if (!r.line) continue
-          for (const f of fileRefsIn((JSON.parse(dec.decode(r.line)) as { data: unknown }).data))
+          for (const f of assetRefsIn((JSON.parse(dec.decode(r.line)) as { data: unknown }).data))
             if (!by.has(f.hash)) by.set(f.hash, `${r.type} ${r.id}`)
           if (by.size >= listed.length) break
         }

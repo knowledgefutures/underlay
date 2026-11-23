@@ -1,6 +1,6 @@
 {
   "underlay": 3,
-  "note": "Section 2.1 and 2.2. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, `$file` included.",
+  "note": "Sections 2.1 to 2.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`, and the older `$file`).",
   "ids": [
     {
       "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -15,13 +15,13 @@
       }
     },
     {
-      "input": "ul:file:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "input": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "id": {
-        "kind": "file",
+        "kind": "asset",
         "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       "typed": {
-        "kind": "file",
+        "kind": "asset",
         "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "form": "ul"
       }
@@ -126,7 +126,8 @@
           "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "path": "/source"
         }
-      ]
+      ],
+      "assets": []
     },
     {
       "data": {
@@ -160,7 +161,8 @@
           "path": "/derivedFrom/1",
           "collection": "c-1"
         }
-      ]
+      ],
+      "assets": []
     },
     {
       "data": {
@@ -172,12 +174,13 @@
       "problem": null,
       "links": [
         {
-          "kind": "file",
+          "kind": "asset",
           "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "path": "/pdf",
-          "file": true
+          "attached": true
         }
-      ]
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
     },
     {
       "data": {
@@ -195,22 +198,24 @@
           "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "path": "/a"
         }
-      ]
+      ],
+      "assets": []
     },
     {
       "data": {
         "a/b~c": {
-          "$link": "ul:file:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          "$link": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       },
       "problem": null,
       "links": [
         {
-          "kind": "file",
+          "kind": "asset",
           "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "path": "/a~1b~0c"
         }
-      ]
+      ],
+      "assets": []
     },
     {
       "data": {
@@ -226,7 +231,8 @@
           "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "path": "/note"
         }
-      ]
+      ],
+      "assets": []
     },
     {
       "data": {
@@ -234,8 +240,9 @@
           "$link": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:file:<hex> or ul:ver:<hex>",
-      "links": []
+      "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:asset:<hex>, or ul:ver:<hex>",
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -244,7 +251,8 @@
         }
       },
       "problem": "$link at /x is a ulv3: id: write ul:ver:<hex>",
-      "links": []
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -252,8 +260,9 @@
           "$link": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       },
-      "problem": "$link at /x is a sha256: hash: write ul:file:<hex>",
-      "links": []
+      "problem": "$link at /x is a sha256: hash: write ul:asset:<hex>",
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -262,7 +271,8 @@
         }
       },
       "problem": "$link at /x must be lowercase",
-      "links": []
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -273,7 +283,8 @@
         ]
       },
       "problem": "$link at /x/0 must be a string",
-      "links": []
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -283,7 +294,8 @@
         }
       },
       "problem": "$link at /x: \"collection\" must be a collection id",
-      "links": []
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -293,7 +305,124 @@
         }
       },
       "problem": "$link at /x: \"type\" must be a string of 1 to 1024 characters",
-      "links": []
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "cover": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fileName": "cover.png"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/cover",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    },
+    {
+      "data": {
+        "figures": [
+          {
+            "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "$file": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ]
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/figures/0",
+          "attached": true
+        },
+        {
+          "kind": "asset",
+          "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "path": "/figures/1",
+          "attached": true
+        }
+      ],
+      "assets": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      ]
+    },
+    {
+      "data": {
+        "x": {
+          "$asset": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "problem": "$asset at /x is bare hex: write ul:asset:<hex>",
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "x": {
+          "$asset": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "problem": "$asset at /x is a sha256: hash: write ul:asset:<hex>",
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "x": {
+          "$asset": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "problem": "$asset at /x names a record: $asset takes ul:asset:<hex>",
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "x": {
+          "$asset": "UL:ASSET:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        }
+      },
+      "problem": "$asset at /x must be lowercase",
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "x": {
+          "$asset": null
+        }
+      },
+      "problem": "$asset at /x must be a string",
+      "links": [],
+      "assets": []
+    },
+    {
+      "data": {
+        "x": {
+          "$link": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "problem": "$link at /x also holds $asset: a link points at an asset, $asset attaches it",
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/x"
+        }
+      ],
+      "assets": []
     }
   ]
 }

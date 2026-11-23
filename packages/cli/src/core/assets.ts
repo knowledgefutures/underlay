@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 
-import { v3 } from '@underlay/protocol'
+import { assetRefIn, v3 } from '@underlay/protocol'
 
 import { type Coll, type Ctx, openColl } from './context.js'
 import { CliError } from './env.js'
@@ -193,18 +193,22 @@ export async function storeAssets(
 export const mediaOf = (path: string) => MEDIA[extname(path).toLowerCase()] ?? null
 
 /**
- * The files a record points to: any object in its data, at any depth, whose `$file` is
- * `sha256:<64 lowercase hex>` (the protocol's file reference), with the field it sits under.
+ * The assets a record attaches: any object in its data, at any depth, whose `$asset` is
+ * `ul:asset:<64 lowercase hex>` (or whose `$file` is `sha256:<hex>`, as records wrote it before
+ * 2026-11-22), with the field it sits under. A `$link` object only points, so it is skipped.
  */
-const FILE_REF = /^sha256:([0-9a-f]{64})$/
-export function fileRefsIn(data: unknown, field = ''): { hash: string; field: string }[] {
+export function assetRefsIn(data: unknown, field = ''): { hash: string; field: string }[] {
   const out: { hash: string; field: string }[] = []
   const walk = (v: unknown, at: string) => {
     if (v === null || typeof v !== 'object') return
     if (Array.isArray(v)) return v.forEach((x) => walk(x, at))
     const o = v as Record<string, unknown>
-    const m = typeof o.$file === 'string' ? FILE_REF.exec(o.$file) : null
-    if (m) return void out.push({ hash: m[1]!, field: at })
+    if (Object.hasOwn(o, '$link')) return
+    const ref = assetRefIn(o)
+    if (ref) {
+      if ('hash' in ref) out.push({ hash: ref.hash, field: at })
+      return
+    }
     for (const k in o) walk(o[k], at ? `${at}.${k}` : k)
   }
   walk(data, field)

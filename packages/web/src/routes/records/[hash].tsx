@@ -5,6 +5,7 @@ import BaseLayout from '~/components/BaseLayout'
 import { CopyButton } from '~/components/copy-button'
 import { Badge } from '~/components/ui'
 import { formatDate, plural } from '~/lib/format'
+import { asLink } from '~/lib/links'
 
 interface Reference {
   owner: string
@@ -205,8 +206,9 @@ function RecordDetail({ record }: { record: RecordData }) {
 }
 
 function FieldValue({ name, value }: { name: string; value: unknown }) {
-  if (value && typeof value === 'object' && '$file' in (value as any)) {
-    const fileHash = ((value as any).$file as string).replace('sha256:', '')
+  const ref = asLink(value)
+  if (ref?.attached) {
+    const fileHash = ref.hash
     // Routes through the API so access is checked and a presigned URL is minted.
     const fileUrl = `/api/collections/files/${fileHash}`
     const label = name === 'pdf' ? 'PDF' : 'File'

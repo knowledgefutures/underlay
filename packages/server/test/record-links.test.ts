@@ -59,7 +59,7 @@ describe.skipIf(!onV3)('record links and version ids', () => {
       derivedFrom: [
         { $link: `ul:rec:${hex('a')}`, collection: 'c-1', type: 'work', id: '10.1/x', rel: 'copy' },
       ],
-      cover: { $link: `ul:file:${hex('b')}` },
+      cover: { $link: `ul:asset:${hex('b')}` },
     }
     const res = await push(h, user, base, [{ id: 'w1', type: 'Work', data }])
     expect(res.status).toBe(201)
@@ -108,7 +108,7 @@ describe.skipIf(!onV3)('record links and version ids', () => {
     expect(await json(await go(`to=ul:rec:${h64}&collection=${c.id}&type=Work&id=w%201`))).toEqual({
       url: `/org/lib/v/latest/records/Work/w%201?hash=${h64}`,
     })
-    expect(await json(await go(`to=ul:file:${h64}&collection=${c.id}`))).toEqual({
+    expect(await json(await go(`to=ul:asset:${h64}&collection=${c.id}`))).toEqual({
       url: `/api/collections/_/${c.id}/files/${h64}`,
     })
     expect(await json(await go(`to=ul:rec:${h64}`))).toEqual({ url: `/records/${h64}` })

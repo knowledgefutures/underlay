@@ -31,7 +31,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import { checkLinks, v3 } from '@underlay/protocol'
 
-import { type AssetRow, assetKey, fileRefsIn, listAssets, runFiles } from './assets.js'
+import { type AssetRow, assetKey, assetRefsIn, listAssets, runFiles } from './assets.js'
 import { type Coll, openColl, storeAt, type Ctx } from './context.js'
 import { draftColumns, schemaFrom } from './draft.js'
 import { CliError } from './env.js'
@@ -253,7 +253,7 @@ async function filesFor(
       throw new CliError(
         `${c.key.split('/').slice(-2).join('/')}: ${r.type} ${r.id}: ${linkProblem}`,
       )
-    for (const f of fileRefsIn(data))
+    for (const f of assetRefsIn(data))
       if (!refs.has(f.hash)) refs.set(f.hash, { type: r.type, id: r.id, field: f.field })
   }
   if (!refs.size) return { add: [], here: 0 }

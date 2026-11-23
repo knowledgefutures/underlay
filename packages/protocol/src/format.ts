@@ -13,6 +13,13 @@ export {
   type RecordInput,
   scanJson,
 } from './input-rules.js'
+export {
+  ASSET_MEMBER,
+  assetRefIn,
+  assetRefs,
+  LEGACY_FILE_MEMBER,
+  mayHoldAssetRefs,
+} from './asset-refs.js'
 export { fileRefs } from './file-refs.js'
 export {
   type HashInput,
