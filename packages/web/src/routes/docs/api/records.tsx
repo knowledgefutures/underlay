@@ -9,26 +9,11 @@ const linkExample = `{"id": "w1", "type": "Work", "data": {
   "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
 }}`
 
-/** Each kind of link: what it points at, its `$link`, where the hex comes from, what to add. */
-const linkKinds: [string, string, string, string][] = [
-  [
-    'A record',
-    'ul:rec:<hash>',
-    'The record’s hash, which every read returns',
-    'collection, type, and id: the record’s page',
-  ],
-  [
-    'A file',
-    'ul:asset:<sha256>',
-    'The file’s SHA-256, as the files routes list it',
-    'collection: the file’s download',
-  ],
-  [
-    'A version',
-    'ul:ver:<hex>',
-    'The version’s hash, from GET …/versions/:version',
-    'collection: the version’s page',
-  ],
+/** Each kind of link: what it points at, its `$link`, where its hash comes from. */
+const linkKinds: [string, string, string][] = [
+  ['A record', 'ul:rec:<hash>', 'The record’s hash, which every read returns'],
+  ['A file', 'ul:asset:<sha256>', 'The file’s SHA-256, as the files routes list it'],
+  ['A version', 'ul:ver:<hex>', 'The version’s hash, from GET …/versions/:version'],
 ]
 
 const resolveExample = `curl -H 'Accept: application/json' \\
@@ -333,19 +318,17 @@ export default function DocsApiRecords() {
             <th>
               <code>$link</code>
             </th>
-            <th>The hex</th>
-            <th>Add, so it can be followed to</th>
+            <th>Hash</th>
           </tr>
         </thead>
         <tbody>
-          {linkKinds.map(([target, value, hex, add]) => (
+          {linkKinds.map(([target, value, hash]) => (
             <tr key={value}>
               <td>{target}</td>
               <td>
                 <code>{value}</code>
               </td>
-              <td>{hex}</td>
-              <td>{add}</td>
+              <td>{hash}</td>
             </tr>
           ))}
         </tbody>

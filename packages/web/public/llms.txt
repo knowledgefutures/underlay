@@ -609,10 +609,10 @@ To say "this record came from (or cites, or is about) that exact record, file, o
 link in data: an object, at any depth, whose "$link" is an Underlay id. The prefix says what it
 points at:
 
-  Points at   "$link"              The hex                        Add, to follow it
-  a record    ul:rec:<hash>        the record's "hash"            collection, type, id
-  a file      ul:asset:<sha256>    the file's SHA-256             collection
-  a version   ul:ver:<hex>         the version's "hash"           collection
+  Points at   "$link"              Hash
+  a record    ul:rec:<hash>        the record's "hash"
+  a file      ul:asset:<sha256>    the file's SHA-256
+  a version   ul:ver:<hex>         the version's "hash"
 
   {"$link": "ul:rec:<64 hex>", "collection": "<collection id>", "type": "Work", "id": "10.1234/abc"}
   {"$link": "ul:asset:<64 hex>", "collection": "<collection id>"}

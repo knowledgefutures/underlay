@@ -366,7 +366,7 @@ export default function ProtocolRecords() {
             <th>
               <code>$link</code>
             </th>
-            <th>The hex is</th>
+            <th>Hash</th>
             <th>Members that say where it is</th>
           </tr>
         </thead>
