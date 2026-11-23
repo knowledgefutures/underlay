@@ -161,6 +161,17 @@ export default function DocsIntegration() {
           <strong>File</strong>: A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced
           in records via <code>{fileRef}</code>.
         </li>
+        <li>
+          <strong>Link</strong>: A pointer from a record to an exact record, file or version
+          anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:</code>,{' '}
+          <code>ul:ver:</code>):{' '}
+          <code>{'{"$link": "ul:rec:...", "collection": "<id>", "type": "...", "id": "..."}'}</code>
+          . Use it to record where derived data came from. See{' '}
+          <Link to="/docs/api/records#links-in-records" className="text-link underline">
+            Links in records
+          </Link>
+          .
+        </li>
       </ul>
 
       <h2>Authentication</h2>

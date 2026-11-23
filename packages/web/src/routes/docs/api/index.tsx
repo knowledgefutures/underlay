@@ -317,7 +317,7 @@ export default function DocsApi() {
           <Link to="/docs/api/records" className="text-link underline">
             Records and schemas
           </Link>
-          : schema discovery and labels
+          : schema discovery and labels, links between records
         </div>
         <div>
           <Link to="/docs/api/sync-and-integrations" className="text-link underline">

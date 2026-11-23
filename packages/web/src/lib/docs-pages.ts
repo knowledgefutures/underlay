@@ -214,7 +214,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Records and schemas API',
         label: 'Records and schemas',
         href: '/docs/api/records',
-        blurb: 'Schema discovery and labels',
+        blurb: 'Schema discovery and labels; links between records',
         headings: [
           'Visibility',
           'GET /api/schemas',
@@ -222,6 +222,8 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
           'GET /api/collections/:owner/:slug/schemas',
           'POST /api/schemas/:id/labels',
           'DELETE /api/schemas/:id/labels/:label',
+          'Links in records',
+          'GET /api/links/resolve',
         ],
       },
       {

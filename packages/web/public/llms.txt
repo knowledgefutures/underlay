@@ -84,8 +84,8 @@ per data center and is approximate.
   its id for citing and linking is "ul:rec:<hash>". Within a version, (type, id) identifies one
   record; the same id may appear under two types.
 - Type: a class of records with one JSON Schema (draft-07).
-- File (asset): bytes identified by their SHA-256, "ul:asset:<hex>"; referenced from record data
-  as {"$file": "sha256:<hex>"} or {"$link": "ul:asset:<hex>"}.
+- File (asset): bytes identified by their SHA-256, "ul:asset:<hex>"; attached to a record with
+  {"$file": "sha256:<hex>"}, or pointed at from anywhere with {"$link": "ul:asset:<hex>"}.
 - Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset) or a version
   (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
@@ -621,7 +621,10 @@ To say "this record came from (or cites, or is about) that exact record", put a 
 - The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:..." and
   "ulv3:..." are refused with a message saying what to write. It never checks that the target
   exists or that you can read it: the target may be private or on another server.
-- {"$file": "sha256:<hex>"} still works, and means the same as {"$link": "ul:asset:<hex>"}.
+- {"$file": "sha256:<hex>"} and {"$link": "ul:asset:<hex>"} name the same file, but only $file
+  attaches it: a push requires a $file's file to be held by the collection (see Files). A
+  $link to a file only points at it, wherever it is.
+- The CLI checks links the same way before it saves a version.
 - Follow a link: GET /api/links/resolve?to=<ul: id>&collection=<id>&type=<type>&id=<id>
   redirects to the page (or, for an asset, the download) where you can read the target; send
   Accept: application/json for {"url"} instead. Without a collection, a ul:rec: id goes to

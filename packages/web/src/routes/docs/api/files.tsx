@@ -1,3 +1,5 @@
+import { Link } from 'react-router'
+
 import DocsLayout from '~/components/DocsLayout'
 
 const fileRefInline = '{"$file": "sha256:<hash>"}'
@@ -429,6 +431,16 @@ export default function DocsApiFiles() {
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{missingFilesRes}</code>
       </pre>
+      <p>
+        <code>{'{"$link": "ul:asset:<hex>"}'}</code> names the same file but only points at it: it
+        attaches nothing, and the file need not be held here. Use it for a file in another
+        collection (see{' '}
+        <Link to="/docs/api/records#links-in-records" className="text-link underline">
+          Links in records
+        </Link>
+        ). Wherever a route takes a file hash, <code>sha256:</code> and <code>ul:asset:</code>{' '}
+        prefixes are accepted.
+      </p>
     </DocsLayout>
   )
 }

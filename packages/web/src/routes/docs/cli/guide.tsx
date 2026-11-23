@@ -227,6 +227,16 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
       <CodeBlock>{`const sha = createHash('sha256').update(pdf).digest('hex')
 writeFileSync(\`\${process.env.UNDERLAY_OUT}/files/\${sha}.pdf\`, pdf)
 record.data.pdf = { $file: \`sha256:\${sha}\` }`}</CodeBlock>
+      <p>
+        To point at an exact record elsewhere (where a record came from, what it cites), write a
+        link:{' '}
+        <code>
+          {'{"$link": "ul:rec:<hash>", "collection": "<id>", "type": "...", "id": "..."}'}
+        </code>
+        , with the record&apos;s <code>hash</code> and its collection&apos;s id. A{' '}
+        <code>$link</code> that isn&apos;t a <code>ul:</code> id (a bare hash, say) stops the save
+        and names the record. See <Link to="/docs/protocol/records#links">Links</Link>.
+      </p>
 
       <h2>What a script declares</h2>
       <table className="border-collapse">

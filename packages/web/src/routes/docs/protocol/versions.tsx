@@ -28,12 +28,12 @@ trailer = 55 4C 33 53 52 46 0A 00 ("UL3SRF\\n\\0"), then the footer's compressed
 const commit = `{"underlay": 3,
  "collection": collection id,
  "number": n,                       1 for the first commit
- "previous": version id | null,     of commit n − 1
+ "previous": hex | null,            the SHA-256 of commit n − 1
  "semver": "v1.0.0",
  "createdAt": ISO 8601 UTC,
  "changes": [{"collection": collection id,
               "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
-              "base": version id | null,
+              "base": hex | null,
               "message": string | null,
               "keyId": string | null, "sig": string | null}, …],
  "keyId": string | null, "sig": string | null}

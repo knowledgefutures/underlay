@@ -314,6 +314,7 @@ try {
     { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
     { path: '/docs/protocol/versions', status: 200, has: ['ul:ver:', 'Sorted-record-files'] },
     { path: '/docs/protocol/records', status: 200, has: ['Underlay ids', 'ul:asset:'] },
+    { path: '/docs/api/records', status: 200, has: ['Links in records', 'GET /api/links/resolve'] },
     { path: '/docs/protocol/repositories', status: 200, has: ['Layout files', 'Rebuilds'] },
     {
       path: '/docs/protocol/push-and-pull',

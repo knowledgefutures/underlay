@@ -2,6 +2,16 @@ import { Link } from 'react-router'
 
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
+const linkExample = `{"id": "w1", "type": "Work", "data": {
+  "title": "Notes on a dataset",
+  "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
+  "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
+}}`
+
+const resolveExample = `curl -H 'Accept: application/json' \\
+  'https://www.underlay.org/api/links/resolve?to=ul:ver:41d0...&collection=4f7d1c2e-...'
+# → {"url": "/acme/works/v/1.2.0"}`
+
 const schemasRes = `[
   {
     "id": "b41c07...",
@@ -66,10 +76,14 @@ export default function DocsApiRecords() {
   return (
     <DocsLayout title="Records and schemas API">
       <p>
-        These endpoints find the schemas collections use, and label them. Looking records up by hash
-        across collections (a record&rsquo;s provenance, where it first appeared, or fetching
-        records by hash in a batch) is not available yet: read records through their collection with
-        the{' '}
+        These endpoints find the schemas collections use, label them, and follow links between
+        records (
+        <a href="#links-in-records" className="text-link underline">
+          below
+        </a>
+        ). Looking records up by hash across collections (a record&rsquo;s provenance, where it
+        first appeared, or fetching records by hash in a batch) is not available yet: read records
+        through their collection with the{' '}
         <Link to="/docs/api/versions" className="text-link underline">
           Versions API
         </Link>
@@ -277,6 +291,103 @@ export default function DocsApiRecords() {
           key, or a key confined to collections or held by an organization, is <code>401</code>.
           Returns <code>{'{"ok": true}'}</code>, also when the schema didn&rsquo;t have the label.
         </p>
+      </div>
+
+      <hr className="border-rule my-6" />
+
+      <h2 id="links-in-records" className="font-sans !text-base">
+        Links in records
+      </h2>
+      <p>
+        A record points at an exact record, file or version anywhere on Underlay with a link in its{' '}
+        <code>data</code>:
+      </p>
+      <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+        <code>{linkExample}</code>
+      </pre>
+      <ul>
+        <li>
+          <code>$link</code> is an Underlay id: <code>ul:rec:</code> and a record&rsquo;s{' '}
+          <code>hash</code> (as every read returns it), <code>ul:asset:</code> and a file&rsquo;s
+          SHA-256, or <code>ul:ver:</code> and a version id. Lowercase, 64 hex digits.
+        </li>
+        <li>
+          <code>collection</code> (the collection&rsquo;s id, from its <code>id</code> or the{' '}
+          <code>x-underlay-collection</code> header, never its slug), <code>type</code> and{' '}
+          <code>id</code> are optional and say where you found the target. Other members are yours,
+          such as <code>rel</code> or <code>label</code>.
+        </li>
+        <li>
+          A push with a record whose <code>$link</code> is not an Underlay id (bare hex,{' '}
+          <code>sha256:</code>, <code>ulv3:</code>) is refused with <code>422</code>, naming the
+          record and what to write. The target is never checked: it may be private, or on another
+          server.
+        </li>
+        <li>
+          A link to a file does not attach it to the collection; <code>$file</code> does (see the{' '}
+          <Link to="/docs/api/files#file-references-in-records" className="text-link underline">
+            Files API
+          </Link>
+          ).
+        </li>
+      </ul>
+      <p>
+        The rules are in the protocol,{' '}
+        <Link to="/docs/protocol/records#links" className="text-link underline">
+          Links
+        </Link>
+        .
+      </p>
+
+      <hr className="border-rule my-6" />
+
+      <div className="endpoint">
+        <h2 id="get-api-links-resolve">GET /api/links/resolve</h2>
+        <p className="scope">No auth for public collections</p>
+        <p>
+          Follows a link: redirects (<code>302</code>) to the page where the target can be read, or,
+          for a file, to its download through the collection. Send{' '}
+          <code>Accept: application/json</code> for <code>{'{"url": "..."}'}</code> instead.
+        </p>
+        <h3>Query parameters</h3>
+        <table className="w-full text-sm">
+          <tbody>
+            <tr>
+              <td className="pr-4 align-top">
+                <code>to</code>
+              </td>
+              <td>
+                The Underlay id. <code>ulv3:</code> and <code>ulv2:</code> version ids are taken
+                too.
+              </td>
+            </tr>
+            <tr>
+              <td className="pr-4 align-top">
+                <code>collection</code>
+              </td>
+              <td>
+                The collection id. Needed for a version or a file; for a record without it, the
+                answer is <code>/records/&lt;hash&gt;</code>.
+              </td>
+            </tr>
+            <tr>
+              <td className="pr-4 align-top">
+                <code>type</code>, <code>id</code>
+              </td>
+              <td>
+                A record&rsquo;s key: its page, at the newest version, with the version the link
+                names marked in its history.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          <code>400</code> if <code>to</code> is not an Underlay id; <code>404</code> for a
+          collection you can&rsquo;t read, or a version it doesn&rsquo;t have.
+        </p>
+        <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
+          <code>{resolveExample}</code>
+        </pre>
       </div>
     </DocsLayout>
   )
