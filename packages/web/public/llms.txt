@@ -209,7 +209,7 @@ GET .../versions/:n/diff?from=v1.0.0       → records added, updated, and remov
     removed carries no hashes; when you need them, use manifest?since= instead.
 
 ### Assets
-GET .../versions/:n/assets                 → [{hash, size, mimeType, createdAt, referenceCount, references}]
+GET .../versions/:n/assets                 → [{hash, size, mediaType, createdAt, referenceCount, references}]
                                              (at most 10,000; referenceCount and references are
                                              not tracked yet: always 0 and [])
 GET /api/collections/:owner/:slug/assets/:hash
@@ -217,7 +217,8 @@ GET /api/collections/:owner/:slug/assets/:hash
       the collection may read any asset one of its versions named. Members (key or session) also
       get assets uploaded to the collection and verified but not committed yet. The API path is
       the durable locator: never store the redirect target. An asset you can't read is 404; 451
-      if an asset you can read is withheld.
+      if an asset you can read is withheld. It downloads as the collection's mediaType for it,
+      saved under its hash, or under ?fileName=<name> (an asset reference's fileName) if given.
 HEAD /api/collections/:owner/:slug/assets/:hash  → 200 with content-length and content-type if
                                                    you may read the asset (the same rule), else 404 or 451
 POST /api/collections/:owner/:slug/assets/presign → {"hashes": [...]} (up to 500)
@@ -384,7 +385,7 @@ Content-Type: application/x-ndjson
 
 ### Step 5: Upload new assets (if any)
 PUT /api/collections/:owner/:slug/assets/:hash
-Content-Type: application/octet-stream
+Content-Type: application/pdf   (what the bytes are; application/octet-stream if you don't know)
 Authorization: Bearer ul_<key>
 Body: the raw bytes (or multipart/form-data with an "asset" part; "file" also works)
 
@@ -392,7 +393,7 @@ Body: the raw bytes (or multipart/form-data with an "asset" part; "file" also wo
 limits.asset_bytes.
 
 Larger assets (up to 5 TiB) go straight to storage:
-POST .../assets/uploads {"hash", "size", "mimeType"?}
+POST .../assets/uploads {"hash", "size", "mediaType"?}
   → 201 {id, url, expiresIn}: PUT the bytes to url
   → above 5 GiB: {id, partBytes, partCount, parts: [{partNumber, url}], expiresIn}: PUT each part
 GET  .../assets/uploads/:id/parts?from=<n>         → the next page of part URLs
@@ -596,15 +597,22 @@ These answer on www.underlay.org, but do not work yet:
   "data": {
     "title": "Some value",
     "authorId": "author-123",
-    "attachment": {"$asset": "ul:asset:abc123def456...", "fileName": "report.pdf"}
+    "attachment": {"$asset": "ul:asset:abc123def456...", "mediaType": "application/pdf",
+                   "fileName": "report.pdf"}
   }
 }
 
 - id: a stable string, unique per type within the collection. Use your app's primary key.
 - type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
 - data: any JSON value its schema allows. Refer to other records by id; attach assets with
-  {"$asset": "ul:asset:<hex>"} (other members of that object, such as a file name, are yours);
-  point at an exact record, asset, or version anywhere on Underlay with a link (next section).
+  {"$asset": "ul:asset:<hex>", "mediaType": "<type/subtype>", "fileName": "<name>"}; point at
+  an exact record, asset, or version anywhere on Underlay with a link (next section).
+- On an asset reference, give "mediaType" (what the bytes are, an IANA media type such as
+  "application/pdf") and "fileName" (what they're saved as, no / or \). The collection serves
+  the asset as the mediaType its records declare, over the Content-Type it was uploaded with,
+  and the type is that collection's alone: another collection holding the same bytes declares
+  its own. A malformed mediaType or fileName is ignored, not refused. Any other member of the
+  reference is yours.
 
 Keep relationships within a collection as ids (no joins); readers resolve them with the schema
 and records together.

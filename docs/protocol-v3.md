@@ -129,10 +129,28 @@ A record **attaches** an asset with an **asset reference**: an object, at any de
 `data`, with a `$asset` member whose value is the asset's Underlay id.
 
 ```
-{"cover": {"$asset": "ul:asset:<hex>", "fileName": "cover.png", "mediaType": "image/png"}}
+{"cover": {"$asset": "ul:asset:<hex>", "mediaType": "image/png", "fileName": "cover.png"}}
 ```
 
-- Any other member is the publisher's (a file name, a media type, where the bytes came from).
+Two other members have a meaning. Both are optional, and a publisher SHOULD give them:
+
+| Member      | Value                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `mediaType` | what the bytes are: an IANA media type, `type/subtype` (RFC 6838), with optional parameters        |
+| `fileName`  | what to call the bytes when they're saved: a file name, with no `/` or `\`, at most 255 characters |
+
+- A collection's `$asset` row takes its `mediaType` from the records that attach the asset:
+  a server that builds a commit sets the row's `mediaType` to the one a reference in the
+  commit's records declares (the first, when they differ), over the type the bytes were
+  uploaded with, for an asset the collection holds already as well as a new one. A client
+  that builds its own commits SHOULD do the same. The type is the collection's: another
+  collection holding the same bytes declares its own.
+- A `mediaType` or `fileName` that isn't well formed declares nothing; the record is not
+  refused for it.
+- A reader saving an asset SHOULD name it by the reference's `fileName`. A server serves an
+  asset with its collection's `mediaType`, except that it MAY serve a type a browser would
+  render or run (HTML, SVG, XML) as `application/octet-stream`.
+- Any other member is the publisher's (where the bytes came from, a caption).
 - An asset reference is read as a link to its asset (2.2). It is not searched for links or
   further references.
 - A server MUST refuse a record whose data has an object with a `$asset` member whose value is

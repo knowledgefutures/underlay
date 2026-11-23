@@ -9,9 +9,10 @@ const headExample = `curl -I https://www.underlay.org/api/collections/kf/archive
 # Content-Length: 1048576
 # Content-Type: application/pdf`
 
-const getExample = `# -L follows the 302 redirect to the short-lived presigned URL
-curl -L -o paper.pdf \\
-  https://www.underlay.org/api/collections/kf/archive/assets/ul:asset:a1b2c3...`
+const getExample = `# -L follows the 302 redirect to the short-lived presigned URL;
+# -J saves it under the name ?fileName= gives
+curl -L -J -O \\
+  "https://www.underlay.org/api/collections/kf/archive/assets/ul:asset:a1b2c3...?fileName=paper.pdf"`
 
 const presignReq = `{ "hashes": ["ul:asset:a1b2c3...", "ul:asset:f6e5d4..."] }`
 
@@ -39,7 +40,7 @@ const putRes = `{
 const uploadReq = `{
   "hash": "sha256:a1b2c3d4e5f6...",
   "size": 21474836480,
-  "mimeType": "video/mp4"
+  "mediaType": "video/mp4"
 }`
 
 const singleTicket = `{
@@ -87,8 +88,9 @@ const assetRefExample = `{
   "type": "Publication",
   "data": {
     "title": "An Example Paper",
-    "pdf": {"$asset": "ul:asset:a1b2c3d4e5f6...", "fileName": "paper.pdf"},
-    "thumbnail": {"$asset": "ul:asset:f6e5d4c3b2a1..."}
+    "pdf": {"$asset": "ul:asset:a1b2c3d4e5f6...", "mediaType": "application/pdf",
+            "fileName": "paper.pdf"},
+    "thumbnail": {"$asset": "ul:asset:f6e5d4c3b2a1...", "mediaType": "image/webp"}
   }
 }`
 
@@ -224,12 +226,16 @@ export default function DocsApiAssets() {
           asset that has been withheld returns <code>451</code>.
         </p>
         <p>
-          The presigned URL lasts 300 seconds and downloads the asset as an attachment. The redirect
-          carries <code>Cache-Control: private, max-age=240</code>, so a browser may reuse it until
-          shortly before the URL expires. This API path is the durable locator for the asset; the
-          redirect target is <strong>ephemeral and must not be persisted or shared</strong>, so
-          always re-fetch through the API path. To resolve many assets in one request, see the
-          presign endpoint below. Downloading an asset by its hash alone, outside a collection (
+          The presigned URL lasts 300 seconds and downloads the asset as an attachment, with the
+          collection&rsquo;s <code>mediaType</code> for it. It&rsquo;s saved under its hash, or
+          under <code>?fileName=</code> when you give one, such as an asset reference&rsquo;s{' '}
+          <code>fileName</code> (no <code>/</code> or <code>\</code>, at most 255 characters;
+          anything else is ignored). The redirect carries{' '}
+          <code>Cache-Control: private, max-age=240</code>, so a browser may reuse it until shortly
+          before the URL expires. This API path is the durable locator for the asset; the redirect
+          target is <strong>ephemeral and must not be persisted or shared</strong>, so always
+          re-fetch through the API path. To resolve many assets in one request, see the presign
+          endpoint below. Downloading an asset by its hash alone, outside a collection (
           <code>GET /api/collections/assets/:hash</code>), is not available yet.
         </p>
         <h3>Example</h3>
@@ -426,8 +432,9 @@ export default function DocsApiAssets() {
       </h2>
       <p>
         A record attaches an asset with an asset reference, an object whose <code>$asset</code> is
-        the asset&rsquo;s <code>ul:asset:</code> id. Any other member is yours, such as a file name
-        or a media type:
+        the asset&rsquo;s <code>ul:asset:</code> id. Give it a <code>mediaType</code>, what the
+        bytes are (<code>application/pdf</code>), and a <code>fileName</code>, what they&rsquo;re
+        saved as. Any other member is yours:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{assetRefExample}</code>
@@ -439,6 +446,13 @@ export default function DocsApiAssets() {
         holds does not count. If any are missing, the commit returns <code>422</code> listing up to
         100 of them in <code>assetsNeeded</code> (and, under its older name,{' '}
         <code>filesNeeded</code>), and the session stays open: upload them and commit it again.
+      </p>
+      <p>
+        The collection serves an asset as the <code>mediaType</code> its records declare, over the{' '}
+        <code>Content-Type</code> it was uploaded with, and changing the declared type changes it at
+        the next commit. It is this collection&rsquo;s type only: another collection holding the
+        same bytes declares its own. A <code>mediaType</code> or <code>fileName</code> that
+        isn&rsquo;t well formed is ignored, not refused.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{missingAssetsRes}</code>

@@ -231,7 +231,7 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
       </p>
       <CodeBlock>{`const sha = createHash('sha256').update(pdf).digest('hex')
 writeFileSync(\`\${process.env.UNDERLAY_OUT}/assets/\${sha}.pdf\`, pdf)
-record.data.pdf = { $asset: \`ul:asset:\${sha}\`, fileName: 'paper.pdf' }`}</CodeBlock>
+record.data.pdf = { $asset: \`ul:asset:\${sha}\`, mediaType: 'application/pdf', fileName: 'paper.pdf' }`}</CodeBlock>
       <p>
         To point at an exact record elsewhere (where a record came from, what it cites), write a
         link:{' '}

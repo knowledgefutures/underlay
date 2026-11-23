@@ -31,7 +31,8 @@ const pushExample = `{
   }
 }`
 
-const assetRef = '{"$asset": "ul:asset:<hex>"}'
+const assetRef =
+  '{"$asset": "ul:asset:<hex>", "mediaType": "application/pdf", "fileName": "paper.pdf"}'
 
 const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- table name → type name
@@ -300,9 +301,10 @@ export default function DocsIntegration() {
           Relationships are plain ID strings (e.g. <code>"authorId": "author-1"</code>)
         </li>
         <li>
-          Assets are attached as <code>{assetRef}</code>; other members of that object (a file name,
-          a media type) are yours. Records written with the older{' '}
-          <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way
+          Assets are attached as <code>{assetRef}</code>. <code>mediaType</code> says what the bytes
+          are and sets the type the collection serves them as; <code>fileName</code> is what
+          they&rsquo;re saved as. Give both. Any other member of that object is yours. Records
+          written with the older <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way
         </li>
         <li>No joins. Prefer flat records; nesting is allowed up to 64 levels</li>
       </ul>

@@ -226,7 +226,7 @@ const assetsRes = `[
   {
     "hash": "a1b2c3...",
     "size": 1048576,
-    "mimeType": "application/pdf",
+    "mediaType": "application/pdf",
     "createdAt": "2026-04-01T00:00:00.000Z",
     "referenceCount": 0,
     "references": []

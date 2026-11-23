@@ -10,7 +10,7 @@ const recordExample = `{
     "title": "The Structure of Scientific Revolutions",
     "doi": "10.1234/example",
     "authors": ["author-001", "author-002"],
-    "pdf": { "$asset": "ul:asset:a1b2c3...", "fileName": "paper.pdf" }
+    "pdf": { "$asset": "ul:asset:a1b2c3...", "mediaType": "application/pdf", "fileName": "paper.pdf" }
   }
 }`
 

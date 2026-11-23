@@ -692,7 +692,7 @@ records that differ between version `from` and version `<v>`, one page at a time
 that the caller may read, in key order:
 
 ```
-[{"hash", "size", "mimeType", "referenceCount"}, ...]
+[{"hash", "size", "mediaType", "referenceCount"}, ...]
 ```
 
 `referenceCount` is the number of records the caller may read that reference the file. A server

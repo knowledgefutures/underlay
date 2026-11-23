@@ -59,17 +59,23 @@ const linkRefused: [string, string][] = [
 ]
 
 const assetRef = `{"title": "Notes on a dataset",
- "cover": {"$asset": "ul:asset:7b1e…", "fileName": "cover.png",
-           "mediaType": "image/png"}}`
+ "cover": {"$asset": "ul:asset:7b1e…", "mediaType": "image/png",
+           "fileName": "cover.png"}}`
 
 /** An asset reference's members. */
 const assetRefMembers: [string, string, string][] = [
   ['$asset', 'Required', 'The asset’s Underlay id: ul:asset:<hex>'],
   [
-    'Any other',
-    'Optional',
-    'The publisher’s, such as a file name, a media type, or where the bytes came from',
+    'mediaType',
+    'Recommended',
+    'What the bytes are: an IANA media type, type/subtype (RFC 6838), such as image/png',
   ],
+  [
+    'fileName',
+    'Recommended',
+    'What to call the bytes when they’re saved: a file name, with no / or \\, at most 255 characters',
+  ],
+  ['Any other', 'Optional', 'The publisher’s, such as where the bytes came from'],
 ]
 
 /** `$asset` values a server refuses, and what to write instead. */
@@ -531,6 +537,24 @@ export default function ProtocolRecords() {
           doesn&rsquo;t hold yet, and refuses the change if that asset&rsquo;s bytes were never sent
           to the collection (see <a href="#assets">Assets</a>). A client that builds its own commits
           SHOULD do the same.
+        </li>
+        <li>
+          A collection&rsquo;s <code>$asset</code> row takes its <code>mediaType</code> from the
+          records that attach the asset: a server that builds a commit sets it to the one a
+          reference in the commit&rsquo;s records declares (the first, when they differ), over the
+          type the bytes were uploaded with, for an asset the collection holds already as well as a
+          new one. A client that builds its own commits SHOULD do the same. The type is the
+          collection&rsquo;s: another collection holding the same bytes declares its own.
+        </li>
+        <li>
+          A <code>mediaType</code> or <code>fileName</code> that isn&rsquo;t well formed declares
+          nothing; the record is not refused for it.
+        </li>
+        <li>
+          A reader saving an asset SHOULD name it by the reference&rsquo;s <code>fileName</code>. A
+          server serves an asset with its collection&rsquo;s <code>mediaType</code>, except that it
+          MAY serve a type a browser would render or run (HTML, SVG, XML) as{' '}
+          <code>application/octet-stream</code>.
         </li>
       </ul>
 
