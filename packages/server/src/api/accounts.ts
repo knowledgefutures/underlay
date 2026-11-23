@@ -8,7 +8,8 @@
  *   DELETE /api/accounts/me/sessions/:id
  *   GET    /api/accounts/available-kf-orgs        KF orgs a new org may link to
  *   POST   /api/accounts/invitations/accept       {token}: an invitation id
- *   PATCH  /api/accounts/:slug                    org profile and page (owners: session or admin key)
+ *   PATCH  /api/accounts/:slug                    org profile and page (owners and admins: session
+ *                                                 or admin key; slug and KF account: owners)
  *   DELETE /api/accounts/:slug                    an org (owners: session or admin key)
  *
  * Sessions, invitation acceptance and the guards on deletion are new in v2;
@@ -26,7 +27,7 @@ import { isUniqueViolation } from '../db/errors.js'
 import * as schema from '../db/schema.js'
 import { deleteOrgAvatars } from '../lib/avatars.js'
 import { validateOrgSlug } from '../lib/slug.js'
-import { capRole, jsonError } from './access.js'
+import { capRole, isAdmin, jsonError } from './access.js'
 
 /**
  * The calling user, for account routes: a session or an unscoped personal key
@@ -241,11 +242,17 @@ export function accountRoutes() {
     if (userId instanceof Response) return userId
     const org = await orgBySlug(c, c.req.param('slug'))
     if (!org) return jsonError(c, 404, 'Organization not found')
-    // An owner acting with a session or an admin key: a write key acts as a member.
-    if (capRole(c.var.principal!, await roleIn(c, org.id, userId)) !== 'owner') {
-      return jsonError(c, 403, 'Must be an owner to update the organization')
+    // An owner or admin acting with a session or an admin key: a write key acts as a member.
+    const role = capRole(c.var.principal!, await roleIn(c, org.id, userId))
+    if (!isAdmin(role)) {
+      return jsonError(c, 403, 'Must be an owner or admin to update the organization')
     }
     const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>
+    // The slug moves every URL and did:web, and the KF account is what the org is counted
+    // against: those stay with owners.
+    if ((body.slug !== undefined || body.kfOrgId !== undefined) && role !== 'owner') {
+      return jsonError(c, 403, "Must be an owner to change the organization's slug or KF account")
+    }
     if (body.slug !== undefined) {
       const bad = await slugProblem(c, body.slug, org.id)
       if (bad) return bad

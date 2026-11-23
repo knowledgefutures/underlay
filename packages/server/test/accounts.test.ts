@@ -135,7 +135,7 @@ describe('account routes', () => {
     expect((await accept('u2', 'inv')).status).toBe(404)
   })
 
-  it('updates and deletes orgs for owners only', async () => {
+  it('updates orgs for owners and admins, and deletes them for owners only', async () => {
     const { h, call, db, user } = await setup()
     await h.member('u1')
     await user('u2')
@@ -143,7 +143,19 @@ describe('account routes', () => {
     const patch = (u: string, json: unknown) =>
       call('/api/accounts/org', { method: 'PATCH', user: u, json })
 
-    expect((await patch('u2', { displayName: 'X' })).status).toBe(403)
+    // An admin edits the profile and page; the slug and KF account stay with owners.
+    expect((await patch('u2', { displayName: 'X', tagline: 'T' })).status).toBe(200)
+    expect((await patch('u2', { slug: 'renamed' })).status).toBe(403)
+    expect((await patch('u2', { kfOrgId: 'kf-1' })).status).toBe(403)
+    expect((await patch('u2', { tagline: 'U', slug: 'renamed' })).status).toBe(403)
+    const [edited] = await db
+      .select()
+      .from(schema.organization)
+      .where(eq(schema.organization.id, 'org1'))
+    expect(edited).toMatchObject({ slug: 'org', name: 'X', tagline: 'T' })
+    await user('u3')
+    await db.insert(schema.member).values({ organizationId: 'org1', userId: 'u3', role: 'member' })
+    expect((await patch('u3', { tagline: 'V' })).status).toBe(403)
     // An owner's write key acts as a member; an admin key keeps the role.
     const asKey = (key: string, method: string, json?: unknown) =>
       call('/api/accounts/org', { method, user: 'u1', key, ...(json ? { json } : {}) })

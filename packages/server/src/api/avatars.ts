@@ -20,7 +20,7 @@ import type { AppEnv } from '../app.js'
 import * as schema from '../db/schema.js'
 import { avatarFolder, deleteOwnedAvatar, sniffRaster } from '../lib/avatars.js'
 import type { PublicAssets } from '../ports.js'
-import { jsonError } from './access.js'
+import { isAdmin, jsonError } from './access.js'
 import { orgBySlug, requireUser, roleIn } from './accounts.js'
 import { BodyTooLarge, readBytes } from './body.js'
 
@@ -56,14 +56,14 @@ const KINDS: ImageKind[] = [
   },
 ]
 
-/** The org, when the caller owns it; otherwise the error response. */
+/** The org, when the caller is its owner or admin; otherwise the error response. */
 async function ownedOrg(c: Context<AppEnv>, noun: string): Promise<Org | Response> {
   const userId = requireUser(c, true)
   if (userId instanceof Response) return userId
   const org = await orgBySlug(c, c.req.param('owner') ?? '')
   if (!org) return jsonError(c, 404, 'Organization not found')
-  if ((await roleIn(c, org.id, userId)) !== 'owner')
-    return jsonError(c, 403, `Must be an owner to update the organization ${noun}`)
+  if (!isAdmin(await roleIn(c, org.id, userId)))
+    return jsonError(c, 403, `Must be an owner or admin to update the organization ${noun}`)
   return org
 }
 

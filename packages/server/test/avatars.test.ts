@@ -206,10 +206,9 @@ describe('org avatars', () => {
     expect(store.objects.get(avatarUrl.slice(BASE.length + 1))?.contentType).toBe('image/png')
   })
 
-  it('owners only: admins, members, strangers, read, scoped and org keys are refused', async () => {
+  it('owners and admins only: members, strangers, read, scoped and org keys are refused', async () => {
     expect((await upload(png(), 'image/png', {})).status).toBe(401)
     for (const o of [
-      { user: 'u-admin' },
       { user: 'u-member' },
       { user: 'stranger' },
       { user: 'u1', scope: 'read' },
@@ -222,8 +221,10 @@ describe('org avatars', () => {
       expect((await remove(o)).status, JSON.stringify(o)).toBe(403)
     }
     expect(store.objects.size).toBe(0)
-    // An owner's unscoped personal key can.
+    // An owner's unscoped personal key can, and so can an admin.
     expect((await upload(png(), 'image/png', { user: 'u1', scope: 'write' })).status).toBe(200)
+    expect((await upload(png(), 'image/png', { user: 'u-admin' })).status).toBe(200)
+    expect((await remove({ user: 'u-admin' })).status).toBe(200)
   })
 
   it("deleting an org deletes its logos in this deployment's bucket, and no one else's", async () => {
@@ -350,10 +351,12 @@ describe('org cover images', () => {
     expect((await cover(png(2, COVER_MAX_BYTES + 1))).status).toBe(413)
   })
 
-  it('owners only', async () => {
-    expect((await cover(png(), { user: 'u-admin' })).status).toBe(403)
+  it('owners and admins only', async () => {
+    expect((await cover(png(), { user: 'u-member' })).status).toBe(403)
     expect((await remove({ user: 'u-member' }, 'cover')).status).toBe(403)
     expect(await coverImageUrl()).toBeNull()
+    expect((await cover(png(), { user: 'u-admin' })).status).toBe(200)
+    expect(await coverImageUrl()).not.toBeNull()
   })
 })
 

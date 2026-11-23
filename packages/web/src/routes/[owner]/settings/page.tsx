@@ -16,7 +16,7 @@ export default function OwnerPageSettings() {
   }
 
   const org = currentUser?.orgs?.find((o: any) => o.slug === owner)
-  const isOwner = org?.role === 'owner'
+  const isAdmin = org?.role === 'owner' || org?.role === 'admin'
 
   // Not a member: send them to the public page. In an effect, not during render.
   const notMember = !!currentUser && !org
@@ -39,7 +39,7 @@ export default function OwnerPageSettings() {
       description="How the organization's public page looks."
       groups={orgSettingsRail(owner!)}
     >
-      {isOwner ? (
+      {isAdmin ? (
         <OrgPageSettings
           owner={owner!}
           org={{ displayName: orgData.displayName ?? owner!, avatarUrl: orgData.avatarUrl ?? null }}
@@ -53,7 +53,9 @@ export default function OwnerPageSettings() {
           collections={collections}
         />
       ) : (
-        <p className="text-ink-muted text-sm">Only organization owners can change the page.</p>
+        <p className="text-ink-muted text-sm">
+          Only organization owners and admins can change the page.
+        </p>
       )}
     </SettingsLayout>
   )

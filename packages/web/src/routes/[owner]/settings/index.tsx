@@ -208,7 +208,7 @@ export default function OwnerSettings() {
         </Alert>
       )}
 
-      {isOwner && (
+      {isAdmin && (
         <div className="mb-8 flex items-start gap-4">
           <OrgLogo
             account={{
@@ -259,7 +259,7 @@ export default function OwnerSettings() {
         </div>
       )}
 
-      {isOwner ? (
+      {isAdmin ? (
         <form onSubmit={handleUpdateProfile} className="mb-10 space-y-4">
           <div>
             <label htmlFor="displayName" className="mb-1 block text-sm font-medium">
@@ -329,33 +329,35 @@ export default function OwnerSettings() {
               />
             </div>
           </div>
-          <div>
-            <label htmlFor="slug" className="mb-1 block text-sm font-medium">
-              Slug
-            </label>
-            <Input
-              type="text"
-              id="slug"
-              value={slugValue}
-              onChange={(e) =>
-                setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
-              }
-              pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
-              className="font-mono"
-            />
-            {slugValue !== owner && (
-              <p className="mt-1 text-xs text-amber-700">
-                Changing the slug will update all URLs for this account.
-              </p>
-            )}
-          </div>
+          {isOwner && (
+            <div>
+              <label htmlFor="slug" className="mb-1 block text-sm font-medium">
+                Slug
+              </label>
+              <Input
+                type="text"
+                id="slug"
+                value={slugValue}
+                onChange={(e) =>
+                  setSlugValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+                }
+                pattern="[a-z0-9][-a-z0-9]*[a-z0-9]"
+                className="font-mono"
+              />
+              {slugValue !== owner && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Changing the slug will update all URLs for this account.
+                </p>
+              )}
+            </div>
+          )}
           <Button type="submit" disabled={submitting === 'profile'}>
             {submitting === 'profile' ? 'Saving…' : 'Save changes'}
           </Button>
         </form>
       ) : (
         <div className="text-ink-muted text-sm">
-          <p>Only organization owners can update the profile.</p>
+          <p>Only organization owners and admins can update the profile.</p>
         </div>
       )}
 
