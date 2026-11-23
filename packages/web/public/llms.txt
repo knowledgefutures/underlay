@@ -84,9 +84,9 @@ per data center and is approximate.
   its id for citing and linking is "ul:rec:<hash>". Within a version, (type, id) identifies one
   record; the same id may appear under two types.
 - Type: a class of records with one JSON Schema (draft-07).
-- File (asset): bytes identified by their SHA-256, "ul:asset:<hex>"; attached to a record with
-  {"$file": "sha256:<hex>"}, or pointed at from anywhere with {"$link": "ul:asset:<hex>"}.
-- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset), or a version
+- File (asset): bytes identified by their SHA-256, "ul:file:<hex>"; attached to a record with
+  {"$file": "sha256:<hex>"}, or pointed at from anywhere with {"$link": "ul:file:<hex>"}.
+- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), a file (file), or a version
   (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
   cross-collection discovery.
@@ -219,7 +219,7 @@ HEAD /api/collections/:owner/:slug/files/:hash   → 200 with content-length and
 POST /api/collections/:owner/:slug/files/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
 
-:hash is 64 hex characters; a "sha256:" or "ul:asset:" prefix is accepted.
+:hash is 64 hex characters; a "sha256:" or "ul:file:" prefix is accepted.
 
 ### Export
 GET /api/collections/:owner/:slug/export   → an archive of the latest version
@@ -595,7 +595,7 @@ These answer on www.underlay.org, but do not work yet:
 - id: a stable string, unique per type within the collection. Use your app's primary key.
 - type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
 - data: any JSON value its schema allows. Refer to other records by id; refer to files with
-  {"$file": "sha256:<hex>"}; point at an exact record, asset, or version anywhere on Underlay with
+  {"$file": "sha256:<hex>"}; point at an exact record, file, or version anywhere on Underlay with
   a link (next section).
 
 Keep relationships within a collection as ids (no joins); readers resolve them with the schema
@@ -611,11 +611,11 @@ points at:
 
   Points at   "$link"              Hash
   a record    ul:rec:<hash>        the record's "hash"
-  a file      ul:asset:<sha256>    the file's SHA-256
+  a file      ul:file:<sha256>    the file's SHA-256
   a version   ul:ver:<hex>         the version's "hash"
 
   {"$link": "ul:rec:<64 hex>", "collection": "<collection id>", "type": "Work", "id": "10.1234/abc"}
-  {"$link": "ul:asset:<64 hex>", "collection": "<collection id>"}
+  {"$link": "ul:file:<64 hex>", "collection": "<collection id>"}
   {"$link": "ul:ver:<64 hex>", "collection": "<collection id>"}
 
 - "$link" is required: lowercase, exactly 64 hex digits after the prefix.
@@ -629,12 +629,12 @@ points at:
 - The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:...", and
   "ulv3:..." are refused with a message saying what to write. It never checks that the target
   exists or that you can read it: the target may be private or on another server.
-- {"$file": "sha256:<hex>"} and {"$link": "ul:asset:<hex>"} name the same file, but only $file
+- {"$file": "sha256:<hex>"} and {"$link": "ul:file:<hex>"} name the same file, but only $file
   attaches it: a push requires a $file's file to be held by the collection (see Files). A
   $link to a file only points at it, wherever it is.
 - The CLI checks links the same way before it saves a version.
 - Follow a link: GET /api/links/resolve?to=<ul: id>&collection=<id>&type=<type>&id=<id>
-  redirects to the page (or, for an asset, the download) where you can read the target; send
+  redirects to the page (or, for a file, the download) where you can read the target; send
   Accept: application/json for {"url"} instead. Without a collection (or without type and id),
   a ul:rec: id goes to /records/<hash>, which is not available yet (see Not Available Yet).
 - Linking to a version (ul:ver:) pins a whole collection state, e.g. the dataset an analysis used.

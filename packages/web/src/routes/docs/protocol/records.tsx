@@ -15,7 +15,7 @@ const example = `{"id":"collection","type":"$meta","data":{"readme":"Weekly snap
 {"id":"pub-002","removed":true,"type":"Publication"}`
 
 const ids = `ul:rec:<hex>      a record: the hash of its line
-ul:asset:<hex>    an asset: the SHA-256 of its bytes
+ul:file:<hex>     a file (an asset): the SHA-256 of its bytes
 ul:ver:<hex>      a version: the SHA-256 of its commit
 
 <hex> = 64 lowercase hex characters`
@@ -23,13 +23,13 @@ ul:ver:<hex>      a version: the SHA-256 of its commit
 const link = `{"title": "Notes on a dataset",
  "derivedFrom": {"$link": "ul:rec:9f2c…", "collection": "4f7d1c2e-…",
                  "type": "work", "id": "10.1234/abc"},
- "figure":      {"$link": "ul:asset:7b1e…", "collection": "4f7d1c2e-…"},
+ "figure":      {"$link": "ul:file:7b1e…", "collection": "4f7d1c2e-…"},
  "usedVersion": {"$link": "ul:ver:41d0…", "collection": "4f7d1c2e-…"}}`
 
 /** What a link can point at: target, `$link`, what the hex is, the members that place it. */
 const linkTargets: [string, string, string, string][] = [
   ['A record', 'ul:rec:<hex>', 'the record’s hash (the hash of its line)', 'collection, type, id'],
-  ['An asset (a file)', 'ul:asset:<hex>', 'the SHA-256 of its bytes', 'collection'],
+  ['A file (an asset)', 'ul:file:<hex>', 'the SHA-256 of its bytes', 'collection'],
   ['A version', 'ul:ver:<hex>', 'the SHA-256 of its commit (the version id)', 'collection'],
 ]
 
@@ -51,8 +51,8 @@ const linkMembers: [string, string, string][] = [
 
 /** `$link` values a server refuses, and what to write instead. */
 const linkRefused: [string, string][] = [
-  ['9f2c…', 'ul:rec:9f2c…, ul:asset:9f2c…, or ul:ver:9f2c…: bare hex doesn’t say its kind'],
-  ['sha256:9f2c…', 'ul:asset:9f2c…'],
+  ['9f2c…', 'ul:rec:9f2c…, ul:file:9f2c…, or ul:ver:9f2c…: bare hex doesn’t say its kind'],
+  ['sha256:9f2c…', 'ul:file:9f2c…'],
   ['ulv3:9f2c…', 'ul:ver:9f2c…'],
   ['UL:REC:9F2C…', 'ul:rec:9f2c…: ids are lowercase'],
   ['42, {}, null', 'a string'],
@@ -319,11 +319,12 @@ export default function ProtocolRecords() {
 
       <h2 id="assets">Assets</h2>
       <p>
-        An asset is a byte string named by its SHA-256. A collection holds an asset when a{' '}
-        <code>$asset</code> row names it; the row&rsquo;s <code>size</code> MUST be the length of
-        the bytes. A <code>$asset</code> row that adds an asset to a collection is accepted only if
-        the asset&rsquo;s bytes were sent to that collection, or one of its versions already names
-        it. That the server stores the bytes for another collection is never enough.
+        An asset is a byte string named by its SHA-256: what the API and the site call a file. A
+        collection holds an asset when a <code>$asset</code> row names it; the row&rsquo;s{' '}
+        <code>size</code> MUST be the length of the bytes. A <code>$asset</code> row that adds an
+        asset to a collection is accepted only if the asset&rsquo;s bytes were sent to that
+        collection, or one of its versions already names it. That the server stores the bytes for
+        another collection is never enough.
       </p>
       <p>
         Informative. On underlay.org a record refers to an asset by an object, at any depth of{' '}
@@ -335,7 +336,7 @@ export default function ProtocolRecords() {
       <h2 id="underlay-ids">Underlay ids</h2>
       <p>
         Outside the protocol&rsquo;s own objects (in record data, URLs, API responses, and
-        citations) a record, an asset, or a version is named by an Underlay id:
+        citations) a record, a file, or a version is named by an Underlay id:
       </p>
       <CodeBlock>{ids}</CodeBlock>
       <p>
@@ -355,9 +356,9 @@ export default function ProtocolRecords() {
 
       <h2 id="links">Links</h2>
       <p>
-        A record points at another record, an asset, or a version with a link: an object, at any
-        depth of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay
-        id. The prefix says what kind of thing the link points at:
+        A record points at another record, a file, or a version with a link: an object, at any depth
+        of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay id.
+        The prefix says what kind of thing the link points at:
       </p>
       <table>
         <thead>
@@ -453,10 +454,10 @@ export default function ProtocolRecords() {
 
       <h3 id="links-and-files">Links and files</h3>
       <p>
-        A link to an asset points at it; it does not make the collection hold it. A collection holds
+        A link to a file points at it; it does not make the collection hold it. A collection holds
         an asset when a <code>$asset</code> row names it (see <a href="#assets">Assets</a>). On
         underlay.org, a <code>{'{"$file": "sha256:<hex>"}'}</code> reference adds that row when you
-        push, and is also read as a link to <code>ul:asset:</code>.
+        push, and is also read as a link to <code>ul:file:</code>.
       </p>
       <p>
         Informative. What a server builds from links (what points at a record, where data came from)

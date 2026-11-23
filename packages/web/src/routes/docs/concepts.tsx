@@ -139,7 +139,7 @@ export default function DocsConcepts() {
       <h2>Links</h2>
       <p>
         Every record, file, and version has an <strong>Underlay id</strong> built from its hash:{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:&lt;hash&gt;</code>, and{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:file:&lt;hash&gt;</code>, and{' '}
         <code>ul:ver:&lt;hash&gt;</code>. Use them to cite exact data, and to link records across
         collections. A <strong>link</strong> is an object in a record&rsquo;s data:
       </p>
@@ -147,7 +147,7 @@ export default function DocsConcepts() {
         <code>{linkExample}</code>
       </pre>
       <p>
-        The prefix says what a link points at: <code>ul:rec:</code> a record, <code>ul:asset:</code>{' '}
+        The prefix says what a link points at: <code>ul:rec:</code> a record, <code>ul:file:</code>{' '}
         a file, <code>ul:ver:</code> a version. The hash pins exactly what you pointed at;{' '}
         <code>collection</code> (the collection&rsquo;s id) says where you found it, and for a
         record so do <code>type</code> and <code>id</code>, so readers can open it. A record

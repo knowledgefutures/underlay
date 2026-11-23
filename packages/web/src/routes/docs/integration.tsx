@@ -163,7 +163,7 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Link</strong>: A pointer from a record to an exact record, file, or version
-          anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:</code>,{' '}
+          anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:file:</code>,{' '}
           <code>ul:ver:</code>):{' '}
           <code>{'{"$link": "ul:rec:...", "collection": "<id>", "type": "...", "id": "..."}'}</code>
           . Use it to record where derived data came from. See{' '}

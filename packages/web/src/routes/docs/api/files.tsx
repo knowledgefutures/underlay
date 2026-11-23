@@ -432,13 +432,13 @@ export default function DocsApiFiles() {
         <code>{missingFilesRes}</code>
       </pre>
       <p>
-        <code>{'{"$link": "ul:asset:<hex>"}'}</code> names the same file but only points at it: it
+        <code>{'{"$link": "ul:file:<hex>"}'}</code> names the same file but only points at it: it
         attaches nothing, and the file need not be held here. Use it for a file in another
         collection (see{' '}
         <Link to="/docs/api/records#links-in-records" className="text-link underline">
           Links in records
         </Link>
-        ). Wherever a route takes a file hash, <code>sha256:</code> and <code>ul:asset:</code>{' '}
+        ). Wherever a route takes a file hash, <code>sha256:</code> and <code>ul:file:</code>{' '}
         prefixes are accepted.
       </p>
     </DocsLayout>

@@ -2,10 +2,10 @@
  * Links in record data, for the pages (docs/protocol-v3.md, Section 2.2). The rule is
  * `@underlay/protocol`'s `links`; it is repeated here so the page bundle doesn't carry the
  * protocol package. An object with `$link: "ul:<kind>:<hex>"` is a link, with where it was
- * found in `collection`, `type` and `id`; v2's `{"$file": "sha256:<hex>"}` is an asset link.
+ * found in `collection`, `type` and `id`; v2's `{"$file": "sha256:<hex>"}` is a file link.
  */
 
-export type LinkKind = 'rec' | 'asset' | 'ver'
+export type LinkKind = 'rec' | 'file' | 'ver'
 
 export interface DataLink {
   kind: LinkKind
@@ -15,11 +15,11 @@ export interface DataLink {
   id?: string
   /** Where it is in the record's data, as a JSON Pointer. */
   path: string
-  /** Written as v2's `$file`: an asset of the collection the record is in. */
+  /** Written as v2's `$file`: a file of the collection the record is in. */
   file?: boolean
 }
 
-const UL_ID = /^ul:(rec|asset|ver):([0-9a-f]{64})$/
+const UL_ID = /^ul:(rec|file|ver):([0-9a-f]{64})$/
 const FILE_REF = /^sha256:([0-9a-f]{64})$/
 
 const pointer = (path: string, key: string | number) =>
@@ -37,7 +37,7 @@ export function asLink(v: unknown, path = ''): DataLink | null {
     return link
   }
   const f = typeof o.$file === 'string' ? FILE_REF.exec(o.$file) : null
-  return f ? { kind: 'asset', hash: f[1]!, path, file: true } : null
+  return f ? { kind: 'file', hash: f[1]!, path, file: true } : null
 }
 
 /** Every link in a record's data, in document order. A link object is not searched further. */
@@ -63,7 +63,7 @@ export const shortUlId = (kind: LinkKind, hash: string, n = 12) => `ul:${kind}:$
 /**
  * Where to follow a link: the server's resolver, which redirects to the page or file. A `$file`
  * reference and a link without a collection are looked for in `here`, the record's own
- * collection, when the target is an asset or version (they are found through a collection).
+ * collection, when the target is a file or version (they are found through a collection).
  */
 export function linkUrl(link: DataLink, here?: string): string {
   const collection = link.collection ?? (link.kind === 'rec' ? undefined : here)

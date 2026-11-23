@@ -15,13 +15,13 @@
       }
     },
     {
-      "input": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "input": "ul:file:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "id": {
-        "kind": "asset",
+        "kind": "file",
         "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       "typed": {
-        "kind": "asset",
+        "kind": "file",
         "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "form": "ul"
       }
@@ -172,7 +172,7 @@
       "problem": null,
       "links": [
         {
-          "kind": "asset",
+          "kind": "file",
           "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "path": "/pdf",
           "file": true
@@ -200,13 +200,13 @@
     {
       "data": {
         "a/b~c": {
-          "$link": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          "$link": "ul:file:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       },
       "problem": null,
       "links": [
         {
-          "kind": "asset",
+          "kind": "file",
           "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "path": "/a~1b~0c"
         }
@@ -234,7 +234,7 @@
           "$link": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:asset:<hex> or ul:ver:<hex>",
+      "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:file:<hex> or ul:ver:<hex>",
       "links": []
     },
     {
@@ -252,7 +252,7 @@
           "$link": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         }
       },
-      "problem": "$link at /x is a sha256: hash: write ul:asset:<hex>",
+      "problem": "$link at /x is a sha256: hash: write ul:file:<hex>",
       "links": []
     },
     {

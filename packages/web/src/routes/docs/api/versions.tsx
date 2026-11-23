@@ -251,7 +251,7 @@ export default function DocsApiVersions() {
         give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),
         it can be a semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record,
         schema, and file hashes are bare hex in responses; to cite or link to a record write{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, and to a file <code>ul:asset:&lt;hash&gt;</code>.
+        <code>ul:rec:&lt;hash&gt;</code>, and to a file <code>ul:file:&lt;hash&gt;</code>.
       </p>
       <p>
         A version never changes, so responses under <code>.../versions/:n</code> are cached when{' '}

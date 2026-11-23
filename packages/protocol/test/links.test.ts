@@ -19,7 +19,7 @@ const b = 'b'.repeat(64)
 describe('ul: ids', () => {
   it('names records, assets and versions, exactly', () => {
     expect(ulId('rec', a)).toBe(`ul:rec:${a}`)
-    expect(parseUlId(`ul:asset:${b}`)).toEqual({ kind: 'asset', hash: b })
+    expect(parseUlId(`ul:file:${b}`)).toEqual({ kind: 'file', hash: b })
     expect(isUlId(`ul:ver:${a}`, 'ver')).toBe(true)
     expect(isUlId(`ul:ver:${a}`, 'rec')).toBe(false)
     for (const bad of [
@@ -64,7 +64,7 @@ describe('links', () => {
       derivedFrom: [
         { $link: `ul:rec:${a}`, collection: 'c-1', type: 'work', id: '10.1/x', rel: 'copy' },
       ],
-      cover: { $link: `ul:asset:${b}` },
+      cover: { $link: `ul:file:${b}` },
     }
     expect(checkLinks(data)).toBeNull()
     expect(links(data)).toEqual([
@@ -76,14 +76,14 @@ describe('links', () => {
         id: '10.1/x',
         path: '/derivedFrom/0',
       },
-      { kind: 'asset', hash: b, path: '/cover' },
+      { kind: 'file', hash: b, path: '/cover' },
     ])
   })
 
   it('refuses a pasted hash or an old prefix, saying what to write', () => {
     expect(checkLinks({ x: { $link: a } })).toMatch(/at \/x is bare hex: write ul:rec:/)
     expect(checkLinks({ x: [{ $link: `ulv3:${a}` }] })).toMatch(/at \/x\/0 .*write ul:ver:/)
-    expect(checkLinks({ $link: `sha256:${a}` })).toMatch(/at \/ .*write ul:asset:/)
+    expect(checkLinks({ $link: `sha256:${a}` })).toMatch(/at \/ .*write ul:file:/)
     expect(checkLinks({ x: { $link: `UL:REC:${a}` } })).toMatch(/lowercase/)
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, collection: 'a b' } })).toMatch(/collection/)
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, id: 7 } })).toMatch(/"id"/)
@@ -97,7 +97,7 @@ describe('links', () => {
     }
     expect(checkLinks(data)).toBeNull()
     expect(links(data).map((l) => [l.path, l.kind, l.file ?? false])).toEqual([
-      ['/pdf', 'asset', true],
+      ['/pdf', 'file', true],
       ['/bad/inner', 'rec', false],
       ['/l', 'rec', false],
     ])

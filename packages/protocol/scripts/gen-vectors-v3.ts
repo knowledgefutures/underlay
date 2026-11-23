@@ -177,7 +177,7 @@ console.log(`wrote ${commits.length} commits to ${commitsPath}`)
 const h = (c: string) => c.repeat(64)
 const idCases = [
   `ul:rec:${h('a')}`,
-  `ul:asset:${h('b')}`,
+  `ul:file:${h('b')}`,
   `ul:ver:${h('c')}`,
   `ul:REC:${h('a')}`,
   `ul:rec:${h('A')}`,
@@ -207,7 +207,7 @@ const linkCases = [
   },
   { data: { pdf: { $file: `sha256:${h('b')}`, name: 'paper.pdf' } } },
   { data: { a: { $link: `ul:rec:${h('a')}`, inner: { $link: 'not checked' } } } },
-  { data: { 'a/b~c': { $link: `ul:asset:${h('b')}` } } },
+  { data: { 'a/b~c': { $link: `ul:file:${h('b')}` } } },
   { data: { $file: 'sha256:short', note: { $link: `ul:rec:${h('a')}` } } },
   { data: { x: { $link: h('a') } } },
   { data: { x: { $link: `ulv3:${h('c')}` } } },

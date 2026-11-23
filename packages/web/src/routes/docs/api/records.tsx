@@ -5,14 +5,14 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 const linkExample = `{"id": "w1", "type": "Work", "data": {
   "title": "Notes on a dataset",
   "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
-  "figure": {"$link": "ul:asset:7b1e...", "collection": "4f7d1c2e-..."},
+  "figure": {"$link": "ul:file:7b1e...", "collection": "4f7d1c2e-..."},
   "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
 }}`
 
 /** Each kind of link: what it points at, its `$link`, where its hash comes from. */
 const linkKinds: [string, string, string][] = [
   ['A record', 'ul:rec:<hash>', 'The record’s hash, which every read returns'],
-  ['A file', 'ul:asset:<sha256>', 'The file’s SHA-256, as the files routes list it'],
+  ['A file', 'ul:file:<sha256>', 'The file’s SHA-256, as the files routes list it'],
   ['A version', 'ul:ver:<hex>', 'The version’s hash, from GET …/versions/:version'],
 ]
 
@@ -355,7 +355,7 @@ export default function DocsApiRecords() {
         <li>
           A push with a malformed link is refused with <code>422</code>, naming the record and what
           to write: bare hex (write it with its prefix), <code>sha256:…</code> (write{' '}
-          <code>ul:asset:…</code>), <code>ulv3:…</code> (write <code>ul:ver:…</code>), or an
+          <code>ul:file:…</code>), <code>ulv3:…</code> (write <code>ul:ver:…</code>), or an
           uppercase id. The target is never checked: it may be private, or on another server.
         </li>
         <li>

@@ -11,7 +11,7 @@
  * A server refuses a record with a malformed link (`checkLinks`). It never checks that a
  * target exists or can be read: a link is a claim made by the record that holds it.
  *
- * v2's file reference, `{"$file": "sha256:<hex>"}`, is read as a link to `ul:asset:<hex>`
+ * v2's file reference, `{"$file": "sha256:<hex>"}`, is read as a link to `ul:file:<hex>`
  * by `links`, so that records written before `$link` keep their meaning. It is not
  * checked: as in v2, a `$file` with any other value is not a reference.
  */
@@ -48,11 +48,11 @@ function linkValueProblem(v: unknown): string {
   if (typeof v !== 'string') return 'must be a string'
   const s: string = v
   if (/^[0-9a-f]{64}$/.test(s))
-    return 'is bare hex: write ul:rec:<hex>, ul:asset:<hex> or ul:ver:<hex>'
+    return 'is bare hex: write ul:rec:<hex>, ul:file:<hex> or ul:ver:<hex>'
   if (/^ulv3:[0-9a-f]{64}$/.test(s)) return 'is a ulv3: id: write ul:ver:<hex>'
-  if (/^sha256:[0-9a-f]{64}$/.test(s)) return 'is a sha256: hash: write ul:asset:<hex>'
+  if (/^sha256:[0-9a-f]{64}$/.test(s)) return 'is a sha256: hash: write ul:file:<hex>'
   if (/^ul:/i.test(s) && parseUlId(s.toLowerCase())) return 'must be lowercase'
-  return 'must be ul:rec:<hex>, ul:asset:<hex> or ul:ver:<hex>, with 64 lowercase hex digits'
+  return 'must be ul:rec:<hex>, ul:file:<hex> or ul:ver:<hex>, with 64 lowercase hex digits'
 }
 
 function placeProblem(o: Record<string, unknown>): string | null {
@@ -106,7 +106,7 @@ export function checkLinks(data: unknown): string | null {
 }
 
 /**
- * Every link in a record's data, in document order, with `$file` references read as asset
+ * Every link in a record's data, in document order, with `$file` references read as file
  * links. A malformed `$link` is skipped (a server has refused it before it is stored).
  */
 export function links(data: unknown): Link[] {
@@ -129,7 +129,7 @@ export function links(data: unknown): Link[] {
     if (typeof v.$file === 'string') {
       const m = FILE_REF.exec(v.$file)
       if (m) {
-        out.push({ kind: 'asset', hash: m[1]!, path, file: true })
+        out.push({ kind: 'file', hash: m[1]!, path, file: true })
         return
       }
     }
