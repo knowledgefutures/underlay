@@ -87,6 +87,22 @@ describe('validating records', () => {
     expect(await v3.headNumber(store, 'c')).toBe(1)
   })
 
+  it('refuses a record with a malformed link, and takes a well-formed one', async () => {
+    const store = memoryStore()
+    const linked = { type: 'object', properties: { title: { type: 'string' }, source: {} } }
+    await upload(store, [
+      schema('work', linked),
+      work('a', {
+        title: 'A',
+        source: { $link: `ul:rec:${'a'.repeat(64)}`, type: 'work', id: 'x' },
+      }),
+    ])
+    await expect(
+      upload(store, [work('b', { title: 'B', source: { $link: 'a'.repeat(64) } })]),
+    ).rejects.toThrow(/work "b": \$link at \/source is bare hex/)
+    expect(await v3.headNumber(store, 'c')).toBe(1)
+  })
+
   it('refuses records of a type with no schema, and a schema that is not acceptable', async () => {
     const store = memoryStore()
     await expect(upload(store, [rec('book', 'a', {})])).rejects.toThrow(

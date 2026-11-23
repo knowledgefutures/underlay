@@ -11,6 +11,7 @@
 import { MAX_JSON_DEPTH } from '../constants.js'
 import { parseStrict } from '../input-rules.js'
 import { jcs } from '../jcs.js'
+import { checkLinks } from '../links.js'
 import type { Store } from '../repo/types.js'
 import { schemaRelaxes } from '../schema-relax.js'
 import { type BumpType, parseSemver } from '../semver.js'
@@ -232,6 +233,9 @@ export async function checkUpload(
     validated++
     const errors = v(data)
     if (errors.length > 0) fail(`${type} ${JSON.stringify(id)}: ${errors[0]}`)
+    // A malformed link is refused, as a server refuses it (Section 2.2).
+    const linkProblem = checkLinks(data)
+    if (linkProblem) fail(`${type} ${JSON.stringify(id)}: ${linkProblem}`)
   }
 
   // One pass over the files: structure, canonical form, and each record against its schema.
