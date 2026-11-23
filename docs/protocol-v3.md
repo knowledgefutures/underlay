@@ -90,11 +90,11 @@ a search) as a `ul:` id or as bare hex, and MAY take the older forms `sha256:<he
 A record points at another record, a file, or a version with a **link**: an object, at any
 depth of its `data`, with a `$link` member. The id's prefix says what the link points at:
 
-| Target    | `$link`          | Members that say where it is |
-| --------- | ---------------- | ---------------------------- |
-| a record  | `ul:rec:<hex>`   | `collection`, `type`, `id`   |
-| a file    | `ul:file:<hex>`  | `collection`                 |
-| a version | `ul:ver:<hex>`   | `collection`                 |
+| Target    | `$link`         | Members that say where it is |
+| --------- | --------------- | ---------------------------- |
+| a record  | `ul:rec:<hex>`  | `collection`, `type`, `id`   |
+| a file    | `ul:file:<hex>` | `collection`                 |
+| a version | `ul:ver:<hex>`  | `collection`                 |
 
 ```
 {"$link": "ul:rec:<hex>", "collection": collection id, "type": string, "id": string}
@@ -622,14 +622,14 @@ sweep/                            the sweep's own state
 
 ## 10. Constants
 
-| Name                 | Value                 |
-| -------------------- | --------------------- |
-| `RECORD_BLOCK_BYTES` | 262,144               |
-| `KEY_BLOCK_ENTRIES`  | 1,024                 |
-| `MAX_FILE_ENTRIES`   | 1,048,576             |
-| Trailer magic        | `UL3SRF\n\0`          |
-| Version id prefix    | `ul:ver:`             |
-| Underlay id kinds    | `rec`, `file`, `ver`  |
-| Number width in keys | 16 decimal digits     |
+| Name                 | Value                |
+| -------------------- | -------------------- |
+| `RECORD_BLOCK_BYTES` | 262,144              |
+| `KEY_BLOCK_ENTRIES`  | 1,024                |
+| `MAX_FILE_ENTRIES`   | 1,048,576            |
+| Trailer magic        | `UL3SRF\n\0`         |
+| Version id prefix    | `ul:ver:`            |
+| Underlay id kinds    | `rec`, `file`, `ver` |
+| Number width in keys | 16 decimal digits    |
 
 Limits on ids, types, record size, depth, and schemas are v2's (Section 12).
