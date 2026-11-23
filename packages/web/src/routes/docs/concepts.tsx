@@ -10,11 +10,11 @@ const recordExample = `{
     "title": "The Structure of Scientific Revolutions",
     "doi": "10.1234/example",
     "authors": ["author-001", "author-002"],
-    "pdf": { "$file": "sha256:a1b2c3..." }
+    "pdf": { "$asset": "ul:asset:a1b2c3...", "fileName": "paper.pdf" }
   }
 }`
 
-const fileRef = '{"$file": "sha256:..."}'
+const assetRef = '{"$asset": "ul:asset:..."}'
 const linkExample = `"derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...",
                 "type": "work", "id": "10.1234/abc"}`
 
@@ -40,7 +40,7 @@ export default function DocsConcepts() {
       <p>
         A collection&rsquo;s history is a log of <strong>commits</strong>. Each push, and each
         metadata edit, adds one commit, which holds only what it changed: records added, changed, or
-        removed, and changes to schemas, metadata, and files. A <strong>version</strong> is the
+        removed, and changes to schemas, metadata, and assets. A <strong>version</strong> is the
         collection as of one commit: what the commits up to it add up to, with the newest change to
         each record winning. A published version never changes. Each version contains:
       </p>
@@ -52,7 +52,7 @@ export default function DocsConcepts() {
           A set of <strong>records</strong> (the actual data)
         </li>
         <li>
-          References to <strong>files</strong> (binary assets)
+          The <strong>assets</strong> its records attach (PDFs, images, and other bytes)
         </li>
         <li>
           A <strong>metadata</strong> object that can contain <code>readme</code>,{' '}
@@ -67,7 +67,7 @@ export default function DocsConcepts() {
       <ul>
         <li>A type added or removed, or a schema changed → major bump</li>
         <li>Records added, removed, or changed → minor bump</li>
-        <li>Metadata or file changes only (readme, license, etc.) → patch bump</li>
+        <li>Metadata or asset changes only (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
         Each version also has an <strong>id</strong> (the <code>hash</code> field in API responses):{' '}
@@ -117,29 +117,33 @@ export default function DocsConcepts() {
         push to drop them instead.
       </p>
       <p>
-        Binary data is referenced via <code>{fileRef}</code>, a pointer to a content-addressed file.
-        The wire format for records is NDJSON, one record per line, independently hashable and
+        A record attaches binary data with <code>{assetRef}</code>, a reference to an asset. The
+        wire format for records is NDJSON, one record per line, independently hashable and
         streamable.
       </p>
 
-      <h2>File</h2>
+      <h2>Asset</h2>
       <p>
-        A <strong>file</strong> is a binary blob (PDF, image, dataset, anything) stored by its
-        SHA-256 hash. Files are content-addressed: the same bytes always produce the same hash, so
-        identical files are stored only once regardless of how many records reference them.
+        An <strong>asset</strong> is a binary blob (PDF, image, dataset, anything) a collection
+        holds beside its records, stored by its SHA-256 hash and named{' '}
+        <code>ul:asset:&lt;hash&gt;</code>. Assets are content-addressed: the same bytes always
+        produce the same hash, so identical assets are stored only once regardless of how many
+        records attach them.
       </p>
       <p>
-        Files are uploaded before the commit that references them. The commit is refused unless
-        every <code>$file</code> reference in your records points to a file this collection holds:
-        uploaded to it, or already in its current version. A commit refused for missing files
-        answers <code>422</code> with the hashes in <code>filesNeeded</code>, and the push stays
-        open: upload them and commit again.
+        Assets are uploaded before the commit whose records attach them. The commit is refused
+        unless every <code>$asset</code> reference in your records names an asset this collection
+        holds: uploaded to it, or already in its current version. A commit refused for missing
+        assets answers <code>422</code> with the hashes in <code>assetsNeeded</code>, and the push
+        stays open: upload them and commit again. A <code>$asset</code> that isn&rsquo;t a{' '}
+        <code>ul:asset:</code> id is refused when you push. Records written before November 22, 2026
+        attach with <code>{'{"$file": "sha256:..."}'}</code>, which is still read the same way.
       </p>
 
       <h2>Links</h2>
       <p>
-        Every record, file, and version has an <strong>Underlay id</strong> built from its hash:{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:file:&lt;hash&gt;</code>, and{' '}
+        Every record, asset, and version has an <strong>Underlay id</strong> built from its hash:{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:&lt;hash&gt;</code>, and{' '}
         <code>ul:ver:&lt;hash&gt;</code>. Use them to cite exact data, and to link records across
         collections. A <strong>link</strong> is an object in a record&rsquo;s data:
       </p>
@@ -147,13 +151,14 @@ export default function DocsConcepts() {
         <code>{linkExample}</code>
       </pre>
       <p>
-        The prefix says what a link points at: <code>ul:rec:</code> a record, <code>ul:file:</code>{' '}
-        a file, <code>ul:ver:</code> a version. The hash pins exactly what you pointed at;{' '}
+        The prefix says what a link points at: <code>ul:rec:</code> a record, <code>ul:asset:</code>{' '}
+        an asset, <code>ul:ver:</code> a version. The hash pins exactly what you pointed at;{' '}
         <code>collection</code> (the collection&rsquo;s id) says where you found it, and for a
         record so do <code>type</code> and <code>id</code>, so readers can open it. A record
         page&rsquo;s <em>Copy as $link</em> button gives you the whole object. A <code>$link</code>{' '}
         that isn&rsquo;t a <code>ul:</code> id is refused when you push, but its target is never
-        checked: it may be private or on another server. See{' '}
+        checked: it may be private or on another server. A link to an asset only points at it; to
+        attach an asset to your collection, use <code>$asset</code>. See{' '}
         <Link to="/docs/protocol/records#links" className="text-link underline">
           Links
         </Link>
@@ -187,7 +192,7 @@ export default function DocsConcepts() {
         Privacy is set per collection. A collection is <strong>public</strong> (listed in browse,
         readable by anyone) or <strong>private</strong> (readable only by members of the
         organization that owns it). The setting covers the whole collection: every version, record,
-        schema, and file in it, earlier versions included. Only an organization&rsquo;s owners and
+        schema, and asset in it, earlier versions included. Only an organization&rsquo;s owners and
         admins can change it. A collection created through the API is private unless the request
         sends <code>"public": true</code>.
       </p>

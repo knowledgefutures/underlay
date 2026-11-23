@@ -5,14 +5,14 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 const linkExample = `{"id": "w1", "type": "Work", "data": {
   "title": "Notes on a dataset",
   "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
-  "figure": {"$link": "ul:file:7b1e...", "collection": "4f7d1c2e-..."},
+  "figure": {"$link": "ul:asset:7b1e...", "collection": "4f7d1c2e-..."},
   "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
 }}`
 
 /** Each kind of link: what it points at, its `$link`, where its hash comes from. */
 const linkKinds: [string, string, string][] = [
   ['A record', 'ul:rec:<hash>', 'The record’s hash, which every read returns'],
-  ['A file', 'ul:file:<sha256>', 'The file’s SHA-256, as the files routes list it'],
+  ['An asset', 'ul:asset:<sha256>', 'The asset’s SHA-256, as the asset routes list it'],
   ['A version', 'ul:ver:<hex>', 'The version’s hash, from GET …/versions/:version'],
 ]
 
@@ -307,7 +307,7 @@ export default function DocsApiRecords() {
         Links in records
       </h2>
       <p>
-        A record points at an exact record, file, or version anywhere on Underlay with a link: an
+        A record points at an exact record, asset, or version anywhere on Underlay with a link: an
         object in its <code>data</code>, at any depth, whose <code>$link</code> is an Underlay id.
         The prefix says what the link points at:
       </p>
@@ -355,15 +355,16 @@ export default function DocsApiRecords() {
         <li>
           A push with a malformed link is refused with <code>422</code>, naming the record and what
           to write: bare hex (write it with its prefix), <code>sha256:…</code> (write{' '}
-          <code>ul:file:…</code>), <code>ulv3:…</code> (write <code>ul:ver:…</code>), or an
+          <code>ul:asset:…</code>), <code>ulv3:…</code> (write <code>ul:ver:…</code>), or an
           uppercase id. The target is never checked: it may be private, or on another server.
         </li>
         <li>
-          A link to a file does not attach it to the collection; <code>$file</code> does (see the{' '}
-          <Link to="/docs/api/files#file-references-in-records" className="text-link underline">
-            Files API
+          A link to an asset does not attach it to the collection;{' '}
+          <code>{'{"$asset": "ul:asset:<hex>"}'}</code> does (see the{' '}
+          <Link to="/docs/api/assets#asset-references-in-records" className="text-link underline">
+            Assets API
           </Link>
-          ).
+          ). An object with both <code>$link</code> and <code>$asset</code> is refused.
         </li>
       </ul>
       <p>
@@ -381,7 +382,8 @@ export default function DocsApiRecords() {
         <p className="scope">No auth for public collections</p>
         <p>
           Follows a link: redirects (<code>302</code>) to the page where the target can be read, or,
-          for a file, to its download through the collection. Send{' '}
+          for an asset, to its download through the collection (
+          <code>/api/collections/_/&lt;collection id&gt;/assets/&lt;hex&gt;</code>). Send{' '}
           <code>Accept: application/json</code> for <code>{'{"url": "..."}'}</code> instead.
         </p>
         <h3>Query parameters</h3>
@@ -401,7 +403,7 @@ export default function DocsApiRecords() {
                 <code>collection</code>
               </td>
               <td>
-                The collection id. Needed for a version or a file (<code>404</code> without it). A
+                The collection id. Needed for a version or an asset (<code>404</code> without it). A
                 record without it, or without <code>type</code> and <code>id</code>, goes to{' '}
                 <code>/records/&lt;hash&gt;</code>, which is not available yet.
               </td>

@@ -46,13 +46,13 @@ const manifestRes = `{
     "hash": "ul:ver:e5f6...",
     "message": "April sync",
     "recordCount": 4521,
-    "fileCount": 892,
+    "assetCount": 892,
     "totalBytes": 1073741824,
     "createdAt": "2026-04-01T00:00:00.000Z"
   },
   "schemas": { "Author": { "type": "object" }, "Publication": { "type": "object" } },
-  "files_missing": [],
-  "files_withheld": []
+  "assets_missing": [],
+  "assets_withheld": []
 }`
 
 const webhookCreateReq = `curl -X POST https://www.underlay.org/api/collections/kf/archive/webhooks \\
@@ -105,7 +105,7 @@ X-Underlay-Signature: sha256=5d41402abc4b2a76b9719d911017c592...
     "minor": 2,
     "patch": 0,
     "recordCount": 4521,
-    "fileCount": 892
+    "assetCount": 892
   },
   "bumpType": "minor",
   "delivery": { "id": "0b6f...", "timestamp": "2026-04-01T00:00:01.000Z" }
@@ -254,7 +254,7 @@ export default function DocsApiSyncAndIntegrations() {
               <td>
                 <code>manifest.json</code>
               </td>
-              <td>Always first: the collection, the version, its schemas, and file notes</td>
+              <td>Always first: the collection, the version, its schemas, and asset notes</td>
             </tr>
             <tr>
               <td>
@@ -277,17 +277,18 @@ export default function DocsApiSyncAndIntegrations() {
               <td>
                 <code>files/&lt;hash&gt;</code>
               </td>
-              <td>The bytes of each file, named by its SHA-256 hash</td>
+              <td>The bytes of each asset, named by its SHA-256 hash</td>
             </tr>
           </tbody>
         </table>
         <CodeBlock>{exportExample}</CodeBlock>
         <p>
-          <code>manifest.json</code>: <code>files_missing</code> lists files the version references
-          whose bytes the platform doesn&rsquo;t hold, and <code>files_withheld</code> files that
+          <code>manifest.json</code>: <code>assets_missing</code> lists assets the version names
+          whose bytes the platform doesn&rsquo;t hold, and <code>assets_withheld</code> assets that
           have been blocked; neither is in <code>files/</code>. Blocked records are left out of the
-          NDJSON. <code>totalBytes</code> is the records&rsquo; canonical size plus the files&rsquo;
-          size.
+          NDJSON. <code>totalBytes</code> is the records&rsquo; canonical size plus the
+          assets&rsquo; size. The manifest also carries the older names, <code>fileCount</code>,{' '}
+          <code>files_missing</code>, and <code>files_withheld</code>, with the same values.
         </p>
         <CodeBlock>{manifestRes}</CodeBlock>
         <p>
@@ -381,6 +382,7 @@ export default function DocsApiSyncAndIntegrations() {
       </p>
       <CodeBlock>{deliveryBody}</CodeBlock>
       <p>
+        The version also carries <code>fileCount</code>, the older name for <code>assetCount</code>.{' '}
         <code>X-Underlay-Delivery</code> is the same for every attempt of one delivery, so you can
         use it to ignore repeats. <code>X-Underlay-Signature</code> is <code>sha256=</code> followed
         by the hex HMAC-SHA256 of the raw request body, keyed with the webhook&rsquo;s secret. Check
@@ -491,7 +493,7 @@ export default function DocsApiSyncAndIntegrations() {
       <p>
         An organization can add its own S3-compatible buckets as <strong>locations</strong> and{' '}
         <strong>mirror</strong> collections to them: Underlay keeps a copy of each collection there,
-        its signed commits, current layout, record files, and files, at the keys the protocol uses
+        its signed commits, current layout, record files, and assets, at the keys the protocol uses
         (see <Link to="/docs/protocol/repositories">Layouts and collections</Link>), so anyone with
         access to the bucket can read every version without Underlay. A new version is copied after
         it is published. The credentials must be able to both write and read the bucket. Managing
@@ -597,8 +599,8 @@ export default function DocsApiSyncAndIntegrations() {
       <Endpoint route="POST /api/abuse-reports" scope="No auth required">
         <p>
           Report content that shouldn&rsquo;t be served. Body:{' '}
-          <code>{'{"hash"?, "url"?, "reason", "contact"?}'}</code>. Name the content with a file or
-          record <code>hash</code> (64 hex characters, <code>sha256:</code> prefix optional), a{' '}
+          <code>{'{"hash"?, "url"?, "reason", "contact"?}'}</code>. Name the content with an asset
+          or record <code>hash</code> (64 hex characters, <code>sha256:</code> prefix optional), a{' '}
           <code>url</code>, or both. <code>reason</code> is required (up to 4,000 characters);{' '}
           <code>contact</code> is how to reach you (up to 320). Returns <code>201</code>{' '}
           <code>{'{"ok": true, "id"}'}</code>.

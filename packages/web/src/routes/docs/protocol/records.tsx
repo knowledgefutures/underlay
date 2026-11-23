@@ -15,7 +15,7 @@ const example = `{"id":"collection","type":"$meta","data":{"readme":"Weekly snap
 {"id":"pub-002","removed":true,"type":"Publication"}`
 
 const ids = `ul:rec:<hex>      a record: the hash of its line
-ul:file:<hex>     a file (an asset): the SHA-256 of its bytes
+ul:asset:<hex>    an asset: the SHA-256 of its bytes
 ul:ver:<hex>      a version: the SHA-256 of its commit
 
 <hex> = 64 lowercase hex characters`
@@ -23,13 +23,13 @@ ul:ver:<hex>      a version: the SHA-256 of its commit
 const link = `{"title": "Notes on a dataset",
  "derivedFrom": {"$link": "ul:rec:9f2c…", "collection": "4f7d1c2e-…",
                  "type": "work", "id": "10.1234/abc"},
- "figure":      {"$link": "ul:file:7b1e…", "collection": "4f7d1c2e-…"},
+ "figure":      {"$link": "ul:asset:7b1e…", "collection": "4f7d1c2e-…"},
  "usedVersion": {"$link": "ul:ver:41d0…", "collection": "4f7d1c2e-…"}}`
 
 /** What a link can point at: target, `$link`, what the hex is, the members that place it. */
 const linkTargets: [string, string, string, string][] = [
   ['A record', 'ul:rec:<hex>', 'the record’s hash (the hash of its line)', 'collection, type, id'],
-  ['A file (an asset)', 'ul:file:<hex>', 'the SHA-256 of its bytes', 'collection'],
+  ['An asset', 'ul:asset:<hex>', 'the SHA-256 of its bytes', 'collection'],
   ['A version', 'ul:ver:<hex>', 'the SHA-256 of its commit (the version id)', 'collection'],
 ]
 
@@ -51,10 +51,36 @@ const linkMembers: [string, string, string][] = [
 
 /** `$link` values a server refuses, and what to write instead. */
 const linkRefused: [string, string][] = [
-  ['9f2c…', 'ul:rec:9f2c…, ul:file:9f2c…, or ul:ver:9f2c…: bare hex doesn’t say its kind'],
-  ['sha256:9f2c…', 'ul:file:9f2c…'],
+  ['9f2c…', 'ul:rec:9f2c…, ul:asset:9f2c…, or ul:ver:9f2c…: bare hex doesn’t say its kind'],
+  ['sha256:9f2c…', 'ul:asset:9f2c…'],
   ['ulv3:9f2c…', 'ul:ver:9f2c…'],
   ['UL:REC:9F2C…', 'ul:rec:9f2c…: ids are lowercase'],
+  ['42, {}, null', 'a string'],
+]
+
+const assetRef = `{"title": "Notes on a dataset",
+ "cover": {"$asset": "ul:asset:7b1e…", "fileName": "cover.png",
+           "mediaType": "image/png"}}`
+
+/** An asset reference's members. */
+const assetRefMembers: [string, string, string][] = [
+  ['$asset', 'Required', 'The asset’s Underlay id: ul:asset:<hex>'],
+  [
+    'Any other',
+    'Optional',
+    'The publisher’s, such as a file name, a media type, or where the bytes came from',
+  ],
+]
+
+/** `$asset` values a server refuses, and what to write instead. */
+const assetRefused: [string, string][] = [
+  ['9f2c…', 'ul:asset:9f2c…'],
+  ['sha256:9f2c…', 'ul:asset:9f2c…'],
+  ['UL:ASSET:9F2C…', 'ul:asset:9f2c…: ids are lowercase'],
+  [
+    'ul:rec:9f2c…, ul:ver:9f2c…',
+    'a ul:asset: id: $asset attaches only assets; use $link to point at a record or a version',
+  ],
   ['42, {}, null', 'a string'],
 ]
 
@@ -319,24 +345,24 @@ export default function ProtocolRecords() {
 
       <h2 id="assets">Assets</h2>
       <p>
-        An asset is a byte string named by its SHA-256: what the API and the site call a file. A
-        collection holds an asset when a <code>$asset</code> row names it; the row&rsquo;s{' '}
-        <code>size</code> MUST be the length of the bytes. A <code>$asset</code> row that adds an
-        asset to a collection is accepted only if the asset&rsquo;s bytes were sent to that
-        collection, or one of its versions already names it. That the server stores the bytes for
-        another collection is never enough.
+        An asset is a byte string named by its SHA-256, held by a collection beside its records: a
+        PDF, an image, a dataset&rsquo;s attachments. A collection holds an asset when a{' '}
+        <code>$asset</code> row names it; the row&rsquo;s <code>size</code> MUST be the length of
+        the bytes. A <code>$asset</code> row that adds an asset to a collection is accepted only if
+        the asset&rsquo;s bytes were sent to that collection, or one of its versions already names
+        it. That the server stores the bytes for another collection is never enough.
       </p>
       <p>
-        Informative. On underlay.org a record refers to an asset by an object, at any depth of{' '}
-        <code>data</code>, whose <code>$file</code> member is <code>sha256:</code> followed by 64
-        lowercase hex characters. A push adds a <code>$asset</code> row for each asset its records
-        refer to, or it declares, that the version before did not name.
+        Records attach assets with asset references (see{' '}
+        <a href="#asset-references">Asset references</a>). Informative. On underlay.org a push adds
+        a <code>$asset</code> row for each asset its records attach, or it declares, that the
+        version before did not name.
       </p>
 
       <h2 id="underlay-ids">Underlay ids</h2>
       <p>
         Outside the protocol&rsquo;s own objects (in record data, URLs, API responses, and
-        citations) a record, a file, or a version is named by an Underlay id:
+        citations) a record, an asset, or a version is named by an Underlay id:
       </p>
       <CodeBlock>{ids}</CodeBlock>
       <p>
@@ -356,9 +382,9 @@ export default function ProtocolRecords() {
 
       <h2 id="links">Links</h2>
       <p>
-        A record points at another record, a file, or a version with a link: an object, at any depth
-        of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay id.
-        The prefix says what kind of thing the link points at:
+        A record points at another record, an asset, or a version with a link: an object, at any
+        depth of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay
+        id. The prefix says what kind of thing the link points at:
       </p>
       <table>
         <thead>
@@ -452,12 +478,12 @@ export default function ProtocolRecords() {
         taken down, or never published. A link is a claim made by the record that holds it.
       </p>
 
-      <h3 id="links-and-files">Links and files</h3>
+      <h3 id="links-and-asset-references">Links and asset references</h3>
       <p>
-        A link to a file points at it; it does not make the collection hold it. A collection holds
-        an asset when a <code>$asset</code> row names it (see <a href="#assets">Assets</a>). On
-        underlay.org, a <code>{'{"$file": "sha256:<hex>"}'}</code> reference adds that row when you
-        push, and is also read as a link to <code>ul:file:</code>.
+        A link to an asset only points at it, wherever it is; it does not make the record&rsquo;s
+        collection hold it. Attaching an asset is what an asset reference does (see{' '}
+        <a href="#asset-references">Asset references</a>). An object with both <code>$link</code>{' '}
+        and <code>$asset</code> is refused.
       </p>
       <p>
         Informative. What a server builds from links (what points at a record, where data came from)
@@ -465,6 +491,95 @@ export default function ProtocolRecords() {
         On underlay.org, <code>GET /api/links/resolve?to=&lt;id&gt;&amp;collection=&lt;id&gt;</code>{' '}
         (with <code>type</code> and <code>id</code> for a record) redirects to where the target can
         be read, and a record&rsquo;s page has <em>Copy as $link</em>.
+      </p>
+
+      <h2 id="asset-references">Asset references</h2>
+      <p>
+        A record attaches an asset with an asset reference: an object, at any depth of its{' '}
+        <code>data</code>, with a <code>$asset</code> member whose value is the asset&rsquo;s
+        Underlay id.
+      </p>
+      <CodeBlock>{assetRef}</CodeBlock>
+
+      <h3 id="asset-reference-members">Members</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th></th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assetRefMembers.map(([member, need, value]) => (
+            <tr key={member}>
+              <td>{member === 'Any other' ? member : <code>{member}</code>}</td>
+              <td>{need}</td>
+              <td>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <ul>
+        <li>
+          An asset reference is read as a link to its asset. It is not searched for links or further
+          references.
+        </li>
+        <li>
+          The collection must hold what its records attach. A server that builds a commit from
+          records adds a <code>$asset</code> row for each attached asset the collection
+          doesn&rsquo;t hold yet, and refuses the change if that asset&rsquo;s bytes were never sent
+          to the collection (see <a href="#assets">Assets</a>). A client that builds its own commits
+          SHOULD do the same.
+        </li>
+      </ul>
+
+      <h3 id="asset-references-refused">What a server refuses</h3>
+      <p>
+        A server MUST refuse a record with an object whose <code>$asset</code> is not a{' '}
+        <code>ul:asset:</code> id, or that has both <code>$link</code> and <code>$asset</code>. A
+        pasted hash is refused, not stored as data that looks like a reference:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <code>$asset</code> given
+            </th>
+            <th>Write instead</th>
+          </tr>
+        </thead>
+        <tbody>
+          {assetRefused.map(([given, instead]) => (
+            <tr key={given}>
+              <td>
+                <code>{given}</code>
+              </td>
+              <td>{instead}</td>
+            </tr>
+          ))}
+          <tr>
+            <td>
+              <code>$link</code> and <code>$asset</code> together
+            </td>
+            <td>
+              one of them: <code>$link</code> points at an asset, <code>$asset</code> attaches it
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Informative. On underlay.org the push refuses such a record with <code>422</code> and a
+        message that says where it is, such as{' '}
+        <code>$asset at /cover is a sha256: hash: write ul:asset:&lt;hex&gt;</code>.
+      </p>
+
+      <h3 id="file-references">$file references</h3>
+      <p>
+        Records written before 2026-11-22 attach with <code>{'{"$file": "sha256:<hex>"}'}</code> (v2
+        Section 4). It is read the same way as <code>{'{"$asset": "ul:asset:<hex>"}'}</code>, and is
+        not checked: as in v2, a <code>$file</code> with any other value is not a reference. New
+        records SHOULD use <code>$asset</code>.
       </p>
     </DocsLayout>
   )

@@ -275,7 +275,7 @@ export function recordRoutes() {
     const cols = new Map<string, { c: Item['c']; owner: Item['owner'] }>()
     const lines: string[] = []
     for (const h of hashes) {
-      const hash = h.replace(/^sha256:/, '')
+      const hash = h.replace(/^(sha256:|ul:rec:|ul:asset:)/, '')
       const items = await visiblePresence(c, hash, orgs, cols)
       const rec = await firstBody(
         c,

@@ -152,7 +152,7 @@ export default function ProtocolRepositories() {
           it, and so is an asset. An upload always sends its files&rsquo; bytes into its own
           session; the commit checks them where the uploader cannot write and installs them from
           there. A file already stored under that id is left as it is, and the uploader is not told.
-          An asset&rsquo;s bytes are sent to a collection through the file routes, apart from the
+          An asset&rsquo;s bytes are sent to a collection through the asset routes, apart from the
           upload, and copied in when a commit first names it.
         </li>
         <li>

@@ -12,7 +12,7 @@ const KEYS: [string, string][] = [
   ['← →', 'Switch a collection’s tabs'],
   [
     '↑ ↓ (in the pane)',
-    'Scroll, or choose a version, record, or file; enter opens a record or a file, w saves a file to Downloads',
+    'Scroll, or choose a version, record, or asset; enter opens a record or an asset, w saves an asset to Downloads',
   ],
   ['R', 'Run the selected script, or one that writes the selected collection'],
   [
@@ -23,7 +23,7 @@ const KEYS: [string, string][] = [
   ['l', 'Pull the selected collection'],
   [
     'k',
-    'Keep everything, data without files, or metadata only; asks before deleting anything here',
+    'Keep everything, data without assets, or metadata only; asks before deleting anything here',
   ],
   ['p, P', 'Push the selected collection; push every collection'],
   ['D', 'Remove the selected collection from this machine; it asks first'],
@@ -129,9 +129,9 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
         A record file is kept once however many collections name it.
       </p>
       <p>
-        <code>underlay add</code> keeps everything: a collection&apos;s records and its files (the
-        PDFs, images, and other assets its records point to, at <code>assets/</code> in the store).
-        With <code>--keep records</code>, its records but not its files; with{' '}
+        <code>underlay add</code> keeps everything: a collection&apos;s records and its assets (the
+        PDFs, images, and other bytes its records attach, at <code>assets/</code> in the store).
+        With <code>--keep records</code>, its records but not its assets; with{' '}
         <code>--keep none</code>, only its schemas and history, and records are fetched from its
         authority when something reads them; <code>--keep some --types A,B</code> keeps some types.{' '}
         <code>underlay keep</code> (with <code>--records</code> or <code>--types</code>) and{' '}
@@ -140,16 +140,16 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
         machine altogether; it stays on its server.
       </p>
       <p>
-        <code>underlay asset add &lt;collection&gt; &lt;file&gt;</code> adds a file: a version that
-        names it, and its bytes are sent before that version on <code>underlay push</code>.{' '}
-        <code>underlay asset &lt;collection&gt;</code> lists a collection&apos;s files and which are
-        here.
+        <code>underlay asset add &lt;collection&gt; &lt;file&gt;</code> adds a local file as an
+        asset: a version that names it, and its bytes are sent before that version on{' '}
+        <code>underlay push</code>. <code>underlay asset &lt;collection&gt;</code> lists a
+        collection&apos;s assets and which are here.
       </p>
       <p>A collection with everything here has no mark.</p>
       <table className="border-collapse">
         <tbody>
           {[
-            ['◐', 'Some of it is here: its records but not its files, or some types'],
+            ['◐', 'Some of it is here: its records but not its assets, or some types'],
             ['○', 'Its schemas and history only'],
             ['↑2', 'Two versions here that are not pushed'],
             [
@@ -216,20 +216,22 @@ const records = [
 ]
 writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).join('\\n'))`}</CodeBlock>
 
-      <h3>Files</h3>
+      <h3>Assets</h3>
       <p>
-        A script attaches a file (a PDF, an image) by writing it into{' '}
-        <code>$UNDERLAY_OUT/files/</code>, under any name and folder, and pointing to it from a
-        record with <code>{'{"$file": "sha256:<hex>"}'}</code>, the file&apos;s SHA-256 in lowercase
-        hex. After the run, each file is stored here once, named in the version, and sent before
-        that version on push. A field that holds a file has the schema{' '}
-        <code>{'{"type": "object", "required": ["$file"]}'}</code>. A record pointing to a file the
+        A script attaches an asset (a PDF, an image) by writing its bytes into{' '}
+        <code>$UNDERLAY_OUT/assets/</code>, under any name and folder, and attaching it to a record
+        with <code>{'{"$asset": "ul:asset:<hex>"}'}</code>, the SHA-256 of the bytes in lowercase
+        hex. Other members of that object, such as a file name, are yours. After the run, each asset
+        is stored here once, named in the version, and sent before that version on push. A field
+        that holds an asset has the schema{' '}
+        <code>{'{"type": "object", "required": ["$asset"]}'}</code>. A record attaching an asset the
         run didn&apos;t write, and that isn&apos;t here already, stops the save and names the
-        record.
+        record. The older <code>$UNDERLAY_OUT/files/</code> folder and{' '}
+        <code>{'{"$file": "sha256:<hex>"}'}</code> still work.
       </p>
       <CodeBlock>{`const sha = createHash('sha256').update(pdf).digest('hex')
-writeFileSync(\`\${process.env.UNDERLAY_OUT}/files/\${sha}.pdf\`, pdf)
-record.data.pdf = { $file: \`sha256:\${sha}\` }`}</CodeBlock>
+writeFileSync(\`\${process.env.UNDERLAY_OUT}/assets/\${sha}.pdf\`, pdf)
+record.data.pdf = { $asset: \`ul:asset:\${sha}\`, fileName: 'paper.pdf' }`}</CodeBlock>
       <p>
         To point at an exact record elsewhere (where a record came from, what it cites), write a
         link:{' '}
@@ -237,8 +239,9 @@ record.data.pdf = { $file: \`sha256:\${sha}\` }`}</CodeBlock>
           {'{"$link": "ul:rec:<hash>", "collection": "<id>", "type": "...", "id": "..."}'}
         </code>
         , with the record&apos;s <code>hash</code> and its collection&apos;s id. A{' '}
-        <code>$link</code> that isn&apos;t a <code>ul:</code> id (a bare hash, say) stops the save
-        and names the record. See <Link to="/docs/protocol/records#links">Links</Link>.
+        <code>$link</code> that isn&apos;t a <code>ul:</code> id (a bare hash, say), or a{' '}
+        <code>$asset</code> that isn&apos;t a <code>ul:asset:</code> id, stops the save and names
+        the record. See <Link to="/docs/protocol/records#links">Links</Link>.
       </p>
 
       <h2>What a script declares</h2>
@@ -466,7 +469,7 @@ underlay reword scratch "A better message"`}</CodeBlock>
           your views, under the name of the folder they come from. <code>v</code> opens a view.
         </li>
         <li>
-          The main pane shows what is selected: a collection (Overview, Records, Schemas, Files,
+          The main pane shows what is selected: a collection (Overview, Records, Schemas, Assets,
           Versions, where choosing a version shows what it changed), a script&apos;s output as it
           runs, a finished run, the push screen, a remote&apos;s list of collections to add, or a
           file you added.

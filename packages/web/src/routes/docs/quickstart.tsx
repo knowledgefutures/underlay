@@ -43,7 +43,7 @@ curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push \
       }
     }
   }'
-# → {"session_id":"SESSION_ID","base":null,"needed_files":[],"expires_at":"...","limits":{...}}`
+# → {"session_id":"SESSION_ID","base":null,"needed_assets":[],"expires_at":"...","limits":{...}}`
 
 const sendRecordsCode = `# Upload records as NDJSON, one per line
 curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push/SESSION_ID/records \\
@@ -57,7 +57,7 @@ EOF
 
 const commitCode = `curl -X POST https://www.underlay.org/api/collections/your-org/my-dataset/push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.0.0","hash":"ul:ver:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.0.0","hash":"ul:ver:...","recordCount":2,"assetCount":0,"changes":{...}}`
 
 const readCode = `# A public collection needs no key. For a private one, add
 # -H "Authorization: Bearer $KEY" to each request.
@@ -93,27 +93,27 @@ curl -X POST .../push/SESSION_ID/deletes \\
   --data-binary '{"type":"Book","id":"book-2"}'
 
 curl -X POST .../push/SESSION_ID/commit -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.1.0","hash":"ul:ver:...","recordCount":2,"fileCount":0,"changes":{...}}`
+# → 201 {"semver":"v1.1.0","hash":"ul:ver:...","recordCount":2,"assetCount":0,"changes":{...}}`
 
 const diffCode = `curl https://www.underlay.org/api/collections/your-org/my-dataset/versions/v1.1.0/diff?from=v1.0.0
 # → {"from":"v1.0.0","to":"v1.1.0","added":[{"id":"book-3",...}],"updated":[],
 #    "removed":[{"id":"book-2","type":"Book"}],"pagination":{...},"meta":{...}}
 # Without ?from=, the diff is against the version before (here v1.0.0).`
 
-const filesCode = `# Compute hash
+const assetsCode = `# Compute hash
 HASH=$(shasum -a 256 paper.pdf | cut -d' ' -f1)
 
-# Upload (up to 32 MiB this way; larger files use POST .../files/uploads)
-curl -X PUT "https://www.underlay.org/api/collections/your-org/my-dataset/files/sha256:$HASH" \\
+# Upload (up to 32 MiB this way; larger assets use POST .../assets/uploads)
+curl -X PUT "https://www.underlay.org/api/collections/your-org/my-dataset/assets/$HASH" \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
 # → 201 {"hash":"...","status":"stored","size":...}
 
-# Reference in a record
-# {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$file": "sha256:..."}}}
-# A commit whose records reference a file this collection doesn't hold is refused
-# (422, filesNeeded). The session stays open: upload those files and commit again.
+# Attach it in a record
+# {"id": "book-1", "type": "Book", "data": {"title": "...", "pdf": {"$asset": "ul:asset:..."}}}
+# A commit whose records attach an asset this collection doesn't hold is refused
+# (422, assetsNeeded). The session stays open: upload those assets and commit again.
 # The Book schema above lists "pdf", so the field is accepted.`
 
 const hashingNote = `// Record hashing: SHA-256 of the canonical form
@@ -285,11 +285,19 @@ export default function DocsQuickstart() {
         <code>{hashingNote}</code>
       </pre>
 
-      <h2>Working with files</h2>
-      <p>To attach files (PDFs, images, etc.) to records, upload them first by hash:</p>
+      <h2>Working with assets</h2>
+      <p>
+        To attach assets (PDFs, images, etc.) to records, upload them first by hash, then attach
+        each with <code>{'{"$asset": "ul:asset:<hex>"}'}</code>:
+      </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-        <code>{filesCode}</code>
+        <code>{assetsCode}</code>
       </pre>
+      <p>
+        The older <code>…/files/…</code> paths and file-named fields (<code>needed_files</code>,{' '}
+        <code>fileCount</code>) still work, and records written with{' '}
+        <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way.
+      </p>
 
       <h2>Next steps</h2>
       <ul>

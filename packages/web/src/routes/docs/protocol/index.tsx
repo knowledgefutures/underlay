@@ -78,7 +78,10 @@ export default function ProtocolOverview() {
           sorted-record-files that hold everything through a commit.
         </li>
         <li>
-          <strong>Asset</strong>: a byte string named by its SHA-256.
+          <strong>Asset</strong>: a byte string named by its SHA-256, held by a collection beside
+          its records: a PDF, an image, a dataset&rsquo;s attachments. Records attach assets with{' '}
+          <code>$asset</code> references, and a collection&rsquo;s <code>$asset</code> rows say
+          which it holds.
         </li>
         <li>
           <strong>Collection</strong>: a description, its commits, its layouts, and the files and
@@ -126,7 +129,7 @@ export default function ProtocolOverview() {
         <li>
           <Link to="/docs/protocol/records">Records and schemas</Link> (§2; v2 §§2–5, 7): canonical
           JSON, input rules, record and removal lines, reserved types, key order, schemas,
-          validation, and assets.
+          validation, assets, Underlay ids, links, and asset references.
         </li>
         <li>
           <Link to="/docs/protocol/versions">Files and versions</Link> (§§3, 4, 6): the

@@ -15,7 +15,7 @@ const browseRes = `{
       "tags": ["publishing"],
       "latestVersion": "v3.2.0",
       "recordCount": 4521,
-      "fileCount": 892,
+      "assetCount": 892,
       "totalBytes": 1073741824,
       "lastPushAt": "2026-04-01T00:00:00.000Z"
     }
@@ -68,7 +68,7 @@ const getRes = `{
     "message": "April sync",
     "appId": null,
     "recordCount": 4521,
-    "fileCount": 892,
+    "assetCount": 892,
     "totalBytes": 1073741824,
     "typeCounts": [{ "type": "Publication", "count": 4521 }],
     "createdAt": "2026-04-01T00:00:00.000Z",
@@ -314,6 +314,10 @@ export default function DocsApiCollections() {
           null when the collection&rsquo;s ARK is off. <code>head</code> and{' '}
           <code>latestVersion</code> are null before the first push.
         </p>
+        <p>
+          <code>assetCount</code> is the number of assets (PDFs, images) the version holds.
+          Responses on this page also carry it as <code>fileCount</code>, its older name.
+        </p>
       </div>
 
       <hr className="border-rule my-6" />
@@ -379,8 +383,8 @@ export default function DocsApiCollections() {
         </p>
         <p>
           Delete a collection with its versions, push sessions, and webhooks. Its stored data is
-          deleted later, after a grace period; records and files that another collection still uses,
-          such as a fork, are kept.
+          deleted later, after a grace period; records and assets that another collection still
+          uses, such as a fork, are kept.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
@@ -568,7 +572,7 @@ export default function DocsApiCollections() {
           Fork any collection you can read into a target organization. The fork is a new, private
           collection that keeps the source&rsquo;s history up to its latest version: the same
           versions, with the same semvers and version ids. The next push to the fork follows on from
-          there. Records, schemas, and files are shared, not copied, so a fork takes no additional
+          there. Records, schemas, and assets are shared, not copied, so a fork takes no additional
           storage. Whoever can read the source forks all of it.
         </p>
         <h3>Request</h3>

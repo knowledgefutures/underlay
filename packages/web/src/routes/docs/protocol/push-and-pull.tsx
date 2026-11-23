@@ -5,23 +5,23 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 const endpoints = `POST   <collection>/push                  open a session
 POST   <collection>/push/<sid>/records    upload records (NDJSON)
 POST   <collection>/push/<sid>/deletes    upload deletes (NDJSON)
-PUT    <collection>/files/<sha256>        upload a file
+PUT    <collection>/assets/<sha256>       upload an asset
 POST   <collection>/push/<sid>/commit     commit (?async=true for the background)
 GET    <collection>/push/<sid>            session status
 DELETE <collection>/push/<sid>            abandon the session`
 
 const exchange = `POST <collection>/push
 {"base": "v1.2.0", "schemas": {"Publication": {...}}, "metadata_patch": {"readme": "..."},
- "files": {"add": ["9f86d0..."]}, "message": "Weekly update"}
-→ 200 {"session_id": "...", "base": "v1.2.0", "needed_files": ["9f86d0..."],
+ "assets": {"add": ["9f86d0..."]}, "message": "Weekly update"}
+→ 200 {"session_id": "...", "base": "v1.2.0", "needed_assets": ["9f86d0..."],
        "expires_at": "...", "limits": {"open_bytes": ..., "batch_bytes": ..., "batch_lines": ...,
-       "session_idle_seconds": ..., "open_sessions": ..., "file_bytes": ...}}
+       "session_idle_seconds": ..., "open_sessions": ..., "asset_bytes": ...}}
 
-PUT <collection>/files/9f86d0...                       (file bytes)
+PUT <collection>/assets/9f86d0...                      (the asset's bytes)
 → 201
 
 POST <collection>/push/<sid>/records
-{"id":"pub-004","type":"Publication","data":{"title":"Notes","pdf":{"$file":"sha256:9f86d0..."}}}
+{"id":"pub-004","type":"Publication","data":{"title":"Notes","pdf":{"$asset":"ul:asset:9f86d0..."}}}
 {"id":"pub-005","type":"Publication","data":{"title":"Draft"}}
 → 200 {"received": 2}
 
@@ -30,7 +30,7 @@ POST <collection>/push/<sid>/deletes
 → 200 {"received": 1}
 
 POST <collection>/push/<sid>/commit
-→ 201 {"semver": "v1.3.0", "hash": "ul:ver:...", "recordCount": 4, "fileCount": 1,
+→ 201 {"semver": "v1.3.0", "hash": "ul:ver:...", "recordCount": 4, "assetCount": 1,
        "changes": {"added": 2, "removed": 1, "updated": 0}}
 → 202 {"session_id": "...", "status": "committing"}         (background commit)`
 
@@ -49,8 +49,8 @@ const openMembers: [string, string][] = [
     'An object whose top-level members are merged into the head’s metadata. Ignored if metadata is present.',
   ],
   [
-    'files',
-    '{"add": [sha256, …], "remove": [sha256, …]}: files declared or removed beyond those records refer to.',
+    'assets',
+    '{"add": [sha256, …], "remove": [sha256, …]}: assets declared or removed beyond those records attach. The older name, files, is also taken, but not both at once.',
   ],
   ['message', 'The change’s message.'],
   ['app_id, actor_id', 'Strings the server records with the version, outside the commit.'],
@@ -58,9 +58,9 @@ const openMembers: [string, string][] = [
 ]
 
 const uploadRoutes = `POST <collection>/uploads                         open an upload {message?, base?}
-POST <collection>/uploads/<id>/files              {id, size} → a presigned PUT, or parts
-POST <collection>/uploads/<id>/files/<fid>/complete   {upload_id, parts}
-POST <collection>/uploads/<id>/commit             {files, commit: "<the commit's JSON text>"}
+POST <collection>/uploads/<id>/record-files       {id, size} → a presigned PUT, or parts
+POST <collection>/uploads/<id>/record-files/<fid>/complete   {upload_id, parts}
+POST <collection>/uploads/<id>/commit             {record_files, commit: "<the commit's JSON text>"}
 GET  <collection>/uploads/<id>                    status, until committed or failed`
 
 const pullRoutes = `GET <collection>/commits?after=<n>&limit=<k>   {collection: {id, authority}, head, more,
@@ -87,7 +87,8 @@ export default function ProtocolPushPull() {
         collection URL,{' '}
         <code>https://www.underlay.org/api/collections/&lt;owner&gt;/&lt;slug&gt;</code>. The{' '}
         <Link to="/docs/api/versions">Versions API</Link> and{' '}
-        <Link to="/docs/api/files">Files API</Link> give the full request and response shapes.
+        <Link to="/docs/api/assets">Assets API</Link> give the full request and response shapes. The
+        older <code>…/files/…</code> paths and file-named fields still work.
       </p>
       <CodeBlock>{endpoints}</CodeBlock>
 
@@ -119,12 +120,12 @@ export default function ProtocolPushPull() {
       </p>
       <p>
         The response is 200 with <code>session_id</code>; <code>base</code> (the semver the session
-        is against, or <code>null</code>); <code>needed_files</code>, the declared files the
+        is against, or <code>null</code>); <code>needed_assets</code>, the declared assets the
         collection does not yet hold, which the client MUST upload before committing;{' '}
         <code>expires_at</code>, extended by each records or deletes request; and{' '}
         <code>limits</code>, by which a client sizes its requests: <code>open_bytes</code>,{' '}
         <code>batch_bytes</code>, <code>batch_lines</code>, <code>session_idle_seconds</code>,{' '}
-        <code>open_sessions</code> (per user, open or committing), and <code>file_bytes</code>.
+        <code>open_sessions</code> (per user, open or committing), and <code>asset_bytes</code>.
       </p>
 
       <h3 id="records-and-deletes">Records and deletes</h3>
@@ -162,14 +163,19 @@ export default function ProtocolPushPull() {
         </li>
       </ul>
 
-      <h3>Files</h3>
+      <h3>Assets</h3>
       <p>
-        <code>PUT …/files/&lt;sha256&gt;</code> stores a file for the collection: 201, or 400 if the
-        bytes do not hash to <code>&lt;sha256&gt;</code>. Larger files go through the upload routes
-        of the <Link to="/docs/api/files">Files API</Link>. A file counts as held only if the head
-        names it in a <code>$asset</code> row or it was uploaded to this collection. A file held for
-        another collection is not held, and each upload is hashed, even of a file the server already
-        stores.
+        <code>PUT …/assets/&lt;sha256&gt;</code> stores an asset for the collection: 201, or 400 if
+        the bytes do not hash to <code>&lt;sha256&gt;</code>. Larger assets go through the upload
+        routes of the <Link to="/docs/api/assets">Assets API</Link>. An asset counts as held only if
+        the head names it in a <code>$asset</code> row or it was uploaded to this collection. An
+        asset held for another collection is not held, and each upload is hashed, even of an asset
+        the server already stores.
+      </p>
+      <p>
+        Records attach assets with <code>{'{"$asset": "ul:asset:<hex>"}'}</code> (see{' '}
+        <Link to="/docs/protocol/records#asset-references">Asset references</Link>). Records written
+        with the older <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way.
       </p>
 
       <h3 id="what-a-commit-holds">What a commit holds</h3>
@@ -184,10 +190,10 @@ export default function ProtocolPushPull() {
           now <code>null</code>);
         </li>
         <li>
-          a <code>$asset</code> row, <code>{'{"size", "mediaType"}'}</code>, for each file the
-          session declares or its records refer to that the head does not name, and a removal for
-          each file in <code>files.remove</code> that the head names and the session&rsquo;s records
-          do not refer to;
+          a <code>$asset</code> row, <code>{'{"size", "mediaType"}'}</code>, for each asset the
+          session declares or its records attach that the head does not name, and a removal for each
+          asset in <code>assets.remove</code> that the head names and the session&rsquo;s records do
+          not attach;
         </li>
         <li>the session&rsquo;s records and removals, the last upload of each key winning.</li>
       </ul>
@@ -215,9 +221,10 @@ export default function ProtocolPushPull() {
           schemas and metadata replace the head&rsquo;s.
         </li>
         <li>
-          A commit refused because files are not held (422 with <code>filesNeeded</code>) leaves the
-          session open: the client uploads the files and commits the same session again. A polling
-          client sees <code>status</code> <code>open</code>, with the refusal in <code>error</code>.
+          A commit refused because assets are not held (422 with <code>assetsNeeded</code>) leaves
+          the session open: the client uploads the assets and commits the same session again. A
+          polling client sees <code>status</code> <code>open</code>, with the refusal in{' '}
+          <code>error</code>.
         </li>
         <li>Committing a session that has already committed answers 201 with the same body.</li>
         <li>
@@ -246,6 +253,11 @@ export default function ProtocolPushPull() {
         that later holds it. The <Link to="/docs/cli">Underlay CLI</Link> pushes this way.
       </p>
       <CodeBlock>{uploadRoutes}</CodeBlock>
+      <p>
+        The sorted-record-file routes and the commit&rsquo;s <code>record_files</code> were first
+        named <code>…/uploads/&lt;id&gt;/files</code> and <code>files</code>; those names still
+        work.
+      </p>
       <ul>
         <li>
           <strong>Authority.</strong> Each collection has one authority, the only server that
@@ -253,10 +265,11 @@ export default function ProtocolPushPull() {
           it. Any other server answers <code>409</code>.
         </li>
         <li>
-          <strong>Checks.</strong> The server checks the files as for any upload, that the commit is
-          the next number after its newest with that version as <code>previous</code>, that its base
-          is a version of the collection, that its semver is what its rows call for, and that its
-          time is within ten minutes of when it was sent. A signed commit is not accepted yet.
+          <strong>Checks.</strong> The server checks the sorted-record-files as for any upload, that
+          the commit is the next number after its newest with that version as <code>previous</code>,
+          that its base is a version of the collection, that its semver is what its rows call for,
+          and that its time is within ten minutes of when it was sent. A signed commit is not
+          accepted yet.
         </li>
         <li>
           <strong>Someone pushed first.</strong> The upload fails with <code>409</code> and{' '}
@@ -327,12 +340,13 @@ export default function ProtocolPushPull() {
         </li>
         <li>
           <code>413</code>: a body over <code>open_bytes</code> or <code>batch_bytes</code>, a
-          request over <code>batch_lines</code>, or a file over <code>file_bytes</code>.
+          request over <code>batch_lines</code>, or an asset over <code>asset_bytes</code>.
         </li>
         <li>
           <code>422</code>: records or deletes that fail; a refused schema or type; a private mark
           in a public collection; records carried over from the head that fail a changed schema (
-          <code>validationErrors</code>); or a commit lacking files (<code>filesNeeded</code>).
+          <code>validationErrors</code>); a malformed <code>$link</code> or <code>$asset</code>; or
+          a commit lacking assets (<code>assetsNeeded</code>).
         </li>
         <li>
           <code>429</code>: <code>open_sessions</code> sessions already in progress, or a rate limit
@@ -350,7 +364,7 @@ export default function ProtocolPushPull() {
           A server MUST NOT accept a change that names a file or asset unless its bytes came with
           the upload or the collection already holds it (
           <Link to="/docs/protocol/versions#naming-a-file">Naming a file</Link>). On underlay.org
-          records are always uploaded in full, and a file counts only if it is held for the
+          records are always uploaded in full, and an asset counts only if it is held for the
           collection.
         </li>
         <li>
@@ -367,8 +381,8 @@ export default function ProtocolPushPull() {
           specified.
         </li>
         <li>
-          File bytes are served from an origin separate from the server&rsquo;s pages, with{' '}
-          <code>Content-Disposition: attachment</code>, so that an uploaded HTML or SVG file cannot
+          Asset bytes are served from an origin separate from the server&rsquo;s pages, with{' '}
+          <code>Content-Disposition: attachment</code>, so that an uploaded HTML or SVG asset cannot
           run in the server&rsquo;s origin.
         </li>
       </ul>

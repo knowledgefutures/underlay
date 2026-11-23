@@ -30,7 +30,7 @@ expired API key"}; it is never treated as anonymous.
 
 What a key may do:
 - read: read what its holder may read.
-- write: also publish (push, files, metadata, fork). Acts as a plain member of the org.
+- write: also publish (push, assets, metadata, fork). Acts as a plain member of the org.
 - admin: keeps its holder's full role (owners and admins may then change visibility, delete,
   transfer, and manage webhooks, mirrors, and ARK settings). A member's admin key is still a member's.
   Changing or deleting an organization, setting its NAAN, and deleting your account also need a
@@ -74,7 +74,7 @@ per data center and is approximate.
   :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). A collection is public
   or private as a whole: anyone may read every version of a public collection, and only members
   of the owning organization may read a private one.
-- Version: an immutable state of a collection: schemas, records, files, and metadata. Identified
+- Version: an immutable state of a collection: schemas, records, assets, and metadata. Identified
   by semver ("v1.2.0"), by version id ("ul:ver:<64 hex>"), or as "latest". A collection is a log
   of commits, and a version is the log up to one commit; its id is "ul:ver:" + the SHA-256 of
   that commit. Anywhere the API takes a version it also takes the bare 64 hex, the same hash
@@ -84,10 +84,14 @@ per data center and is approximate.
   its id for citing and linking is "ul:rec:<hash>". Within a version, (type, id) identifies one
   record; the same id may appear under two types.
 - Type: a class of records with one JSON Schema (draft-07).
-- File (asset): bytes identified by their SHA-256, "ul:file:<hex>"; attached to a record with
-  {"$file": "sha256:<hex>"}, or pointed at from anywhere with {"$link": "ul:file:<hex>"}.
-- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), a file (file), or a version
-  (ver) by its hash. See "Links between records".
+- Asset: bytes a collection holds beside its records (a PDF, an image), identified by their
+  SHA-256, "ul:asset:<hex>"; attached to a record with {"$asset": "ul:asset:<hex>"}, or
+  pointed at from anywhere with {"$link": "ul:asset:<hex>"}. Records written before 2026-11-22
+  attach with {"$file": "sha256:<hex>"}, which is still read the same way and is not checked.
+  The API first called assets files: the older .../files/... paths and file-named fields
+  (fileCount, needed_files, filesNeeded, and so on) still work, beside the asset names.
+- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset), or a
+  version (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
   cross-collection discovery.
 
@@ -103,14 +107,14 @@ https://www.underlay.org/:owner                                   → organizati
 https://www.underlay.org/:owner/:slug                             → collection overview (latest)
 https://www.underlay.org/:owner/:slug/records                     → browse records (?type=TypeName)
 https://www.underlay.org/:owner/:slug/schemas                     → schemas (latest)
-https://www.underlay.org/:owner/:slug/files                       → files (latest)
+https://www.underlay.org/:owner/:slug/assets                      → assets (latest)
 https://www.underlay.org/:owner/:slug/versions                    → version history
 https://www.underlay.org/:owner/:slug/versions/compare?from=v1.0.0&to=v1.1.0 → diff two versions
 https://www.underlay.org/:owner/:slug/v/1.2.0                     → overview at v1.2.0
 https://www.underlay.org/:owner/:slug/v/1.2.0/records             → records at v1.2.0 (?type=TypeName)
 https://www.underlay.org/:owner/:slug/v/1.2.0/records/:type/:id   → one record at v1.2.0
 https://www.underlay.org/:owner/:slug/v/1.2.0/schemas             → schemas at v1.2.0
-https://www.underlay.org/:owner/:slug/v/1.2.0/files               → files at v1.2.0
+https://www.underlay.org/:owner/:slug/v/1.2.0/assets              → assets at v1.2.0
 https://www.underlay.org/schemas/:id                              → a schema and the collections using it
 
 Prefer a version-pinned URL when citing data: unpinned URLs follow the latest version. ARK
@@ -159,7 +163,7 @@ GET /api/collections/:owner/:slug/versions          → [version summary], newes
 GET /api/collections/:owner/:slug/versions/latest   → latest version (404 when there is none)
 GET /api/collections/:owner/:slug/versions/:n       → one version
     (:n = v1.2.0, 1.2.0, ul:ver:<hex>, its bare hex, or an old ulv3:<hex> or ulv2:<hex> id)
-    → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, fileCount,
+    → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, assetCount,
        totalBytes, typeCounts, createdAt, ark, metadata, schemas: {type: schema}}
     hash is the version id (ul:ver:...). Members also get pushedBy, pushedByName, and actorId.
 
@@ -179,8 +183,8 @@ GET .../versions/:n/manifest
     ?limit= (default 10000, max 25000), cursor=
     → {semver, hash, schemas: {type: schemaHash},
        records: [{id, type, hash}],
-       files: [fileHash, ...],              (first page only, [] on later pages; at most 25,000,
-                                             then filesTruncated: true)
+       assets: [assetHash, ...],            (first page only, [] on later pages; at most 25,000,
+                                             then assetsTruncated: true)
        pagination: {limit, hasMore, nextCursor}}
 GET .../versions/:n/manifest?since=v1.0.0  → only the changes since that version (a semver or id):
     {..., since, delta: {added: [{id, type, hash}],
@@ -197,41 +201,43 @@ GET .../versions/:n/diff?from=v1.0.0       → records added, updated, and remov
     ?limit= (default 500, max 5000), cursor=
     → {from, to, added: [{id, type, data}], updated: [{id, type, data}], removed: [{id, type}],
        pagination: {limit, hasMore, nextCursor},
-       meta: {schemaChanged, metadataChanged, filesAdded, filesRemoved}}
+       meta: {schemaChanged, metadataChanged, assetsAdded, assetsRemoved}}
     Without from=, the diff is against the version before :n, which "from" names. The first
     version diffs against an empty version: every record is added and "from" is null. from must
     be at or before :n (400 otherwise). A page also ends at about 4 MiB of record bodies, so it
     can hold fewer than limit changes: follow nextCursor.
     removed carries no hashes; when you need them, use manifest?since= instead.
 
-### Files
-GET .../versions/:n/files                  → [{hash, size, mimeType, createdAt, referenceCount, references}]
+### Assets
+GET .../versions/:n/assets                 → [{hash, size, mimeType, createdAt, referenceCount, references}]
                                              (at most 10,000; referenceCount and references are
                                              not tracked yet: always 0 and [])
-GET /api/collections/:owner/:slug/files/:hash
+GET /api/collections/:owner/:slug/assets/:hash
     → 302 to a presigned URL valid for 5 minutes (follow it, e.g. curl -L). Anyone who may read
-      the collection may read any file one of its versions named. Members (key or session) also
-      get files uploaded to the collection and verified but not committed yet. The API path is
-      the durable locator: never store the redirect target. A file you can't read is 404; 451
-      if a file you can read is withheld.
-HEAD /api/collections/:owner/:slug/files/:hash   → 200 with content-length and content-type if
-                                                   you may read the file (the same rule), else 404 or 451
-POST /api/collections/:owner/:slug/files/presign → {"hashes": [...]} (up to 500)
+      the collection may read any asset one of its versions named. Members (key or session) also
+      get assets uploaded to the collection and verified but not committed yet. The API path is
+      the durable locator: never store the redirect target. An asset you can't read is 404; 451
+      if an asset you can read is withheld.
+HEAD /api/collections/:owner/:slug/assets/:hash  → 200 with content-length and content-type if
+                                                   you may read the asset (the same rule), else 404 or 451
+POST /api/collections/:owner/:slug/assets/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
 
-:hash is 64 hex characters; a "sha256:" or "ul:file:" prefix is accepted.
+:hash is 64 hex characters; a "ul:asset:" or "sha256:" prefix is accepted. Each of these routes
+also answers at its older path, with files in place of assets.
 
 ### Export
 GET /api/collections/:owner/:slug/export   → an archive of the latest version
     ?version=v2.0.0 (a specific version), format=tar.gz|tar (default tar.gz)
 
 Archive entries: manifest.json first, README.md if the metadata has a readme,
-records/<Type>.ndjson (one per type that has records), files/<hash>.
+records/<Type>.ndjson (one per type that has records), files/<hash> (each asset's bytes).
 manifest.json = {collection: {id, owner, slug, name, description},
-                 version: {semver, hash, message, recordCount, fileCount, totalBytes, createdAt},
-                 schemas, files_missing, files_withheld}
-The archive streams as it is produced: pipe it to disk or into tar. files_missing lists files
-with no stored copy; files_withheld lists files that may not be served. A failure partway
+                 version: {semver, hash, message, recordCount, assetCount, totalBytes, createdAt},
+                 schemas, assets_missing, assets_withheld}
+(it also carries fileCount, files_missing, and files_withheld, the older names, with the same
+values). The archive streams as it is produced: pipe it to disk or into tar. assets_missing
+lists assets with no stored copy; assets_withheld lists assets that may not be served. A failure partway
 through cuts the response off, so an archive that unpacks without error is complete. Entries
 are dated with the version's creation time, so the same version exports to byte-identical
 archives. For bulk record reads, records.ndjson is cheaper.
@@ -256,7 +262,7 @@ proportional to the change, not to the collection's size.
 
 ### Step 1: Get the current head
 GET /api/collections/:owner/:slug/versions/latest
-→ {semver, hash, recordCount, fileCount, ...}
+→ {semver, hash, recordCount, assetCount, ...}
 404 means no versions yet: the first push uses "base": null.
 
 ### Step 2: Work out what changed
@@ -296,7 +302,7 @@ Authorization: Bearer ul_<key>
     }
   },
   "metadata_patch": {"description": "Daily archive of publications"},
-  "files": {"add": ["7a8b9c..."]}
+  "assets": {"add": ["7a8b9c..."]}
 }
 
 Every field is optional:
@@ -310,11 +316,11 @@ Every field is optional:
   null; anything else is 400.
 - metadata_patch: an object (anything else is 400); merges its top-level fields into the base's
   metadata. Ignored when metadata is given. With neither, the metadata is kept.
-- files: {"add": [hex, ...], "remove": [hex, ...]}: files to add or drop beyond those your
-  records reference. Bare 64-character lowercase hex; other strings are ignored. A file belongs
-  to the version whether or not a record references it, and stays in later versions until you
-  remove it. Files your records reference are added for you; they are not removed when no record
-  references them any more.
+- assets: {"add": [hex, ...], "remove": [hex, ...]}: assets to add or drop beyond those your
+  records attach. Bare 64-character lowercase hex; other strings are ignored. An asset belongs
+  to the version whether or not a record attaches it, and stays in later versions until you
+  remove it. Assets your records attach are added for you; they are not removed when no record
+  attaches them any more. The older name, "files", is taken too; sending both is 400.
 - message, app_id, actor_id: strings recorded with the version. actor_id is shown to members only.
 - strip_unknown_fields: true drops top-level data fields the type's schema doesn't list in
   "properties" before hashing. Default false: such records are refused (422).
@@ -323,7 +329,7 @@ Response (200):
 {
   "session_id": "uuid",
   "base": "v1.2.0",
-  "needed_files": ["7a8b9c..."],
+  "needed_assets": ["7a8b9c..."],
   "expires_at": "2026-04-27T13:00:00.000Z",
   "limits": {
     "open_bytes": 8388608,
@@ -331,16 +337,17 @@ Response (200):
     "batch_lines": 10000,
     "session_idle_seconds": 43200,
     "open_sessions": 20,
-    "file_bytes": 33554432
+    "asset_bytes": 33554432
   }
 }
+(The response also carries needed_files and limits.file_bytes, the older names.)
 
-- needed_files: files in files.add that this collection doesn't hold yet (files already
+- needed_assets: assets in assets.add that this collection doesn't hold yet (assets already
   uploaded and verified for it are held). Upload them before the commit.
 - limits: this server's limits. Size requests by them rather than hard-coding numbers:
   open_bytes (this request's body), batch_bytes and batch_lines (each records or deletes
   request), session_idle_seconds (each upload moves expires_at back), open_sessions (sessions
-  you may have open or committing at once), file_bytes (largest PUT .../files/:hash).
+  you may have open or committing at once), asset_bytes (largest PUT .../assets/:hash).
 
 ### Step 4: Upload records and deletes
 POST /api/collections/:owner/:slug/push/:sessionId/records
@@ -372,35 +379,36 @@ Content-Type: application/x-ndjson
   the session's type set; failures answer the same way (validationErrors, totalErrors).
 - Within a session, the later upload of a (type, id) wins, whether a record or a delete.
 - Deleting a pair the base doesn't hold is not an error.
+- A record whose $link or $asset is malformed is refused (422; see "Links between records").
 - You don't send hashes: the server canonicalizes and hashes what you upload.
 
-### Step 5: Upload new files (if any)
-PUT /api/collections/:owner/:slug/files/:hash
+### Step 5: Upload new assets (if any)
+PUT /api/collections/:owner/:slug/assets/:hash
 Content-Type: application/octet-stream
 Authorization: Bearer ul_<key>
-Body: raw file bytes (or multipart/form-data with a "file" field)
+Body: the raw bytes (or multipart/form-data with an "asset" part; "file" also works)
 
 → 201 {"hash", "status": "stored", "size"}; 400 if the bytes don't hash to :hash; 413 over
-limits.file_bytes.
+limits.asset_bytes.
 
-Larger files (up to 5 TiB) go straight to storage:
-POST .../files/uploads {"hash", "size", "mimeType"?}
+Larger assets (up to 5 TiB) go straight to storage:
+POST .../assets/uploads {"hash", "size", "mimeType"?}
   → 201 {id, url, expiresIn}: PUT the bytes to url
   → above 5 GiB: {id, partBytes, partCount, parts: [{partNumber, url}], expiresIn}: PUT each part
-GET  .../files/uploads/:id/parts?from=<n>          → the next page of part URLs
-POST .../files/uploads/:id/complete {"parts"?: [{partNumber, etag}]}   → 202 {id, status: "verifying"}
+GET  .../assets/uploads/:id/parts?from=<n>         → the next page of part URLs
+POST .../assets/uploads/:id/complete {"parts"?: [{partNumber, etag}]}  → 202 {id, status: "verifying"}
      (parts is required, and non-empty, for a multipart upload: 400 otherwise)
-GET  .../files/uploads/:id                         → {id, hash, size, status: pending|verifying|verified|failed, error}
-The server hashes the uploaded bytes; the file counts as held once status is "verified".
+GET  .../assets/uploads/:id                        → {id, hash, size, status: pending|verifying|verified|failed, error}
+The server hashes the uploaded bytes; the asset counts as held once status is "verified".
 
-Every file a new record references, and every file in files.add, must be held for the
+Every asset a new record attaches, and every asset in assets.add, must be held for the
 collection before the commit.
 
 ### Step 6: Commit
 POST /api/collections/:owner/:slug/push/:sessionId/commit
 Authorization: Bearer ul_<key>
 
-→ 201 {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 1203, "fileCount": 1,
+→ 201 {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 1203, "assetCount": 1,
        "changes": {"added": 2, "removed": 1, "updated": 1}}
 
 Rebase: the body {"rebase": true} commits onto the head as it is now, even if someone published
@@ -424,7 +432,7 @@ Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committe
   "expires_at": "...",
   "created_at": "...",
   "finalize_started_at": "...",
-  "result": {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 3110000, "fileCount": 0, "changes": {...}},
+  "result": {"semver": "v1.3.0", "hash": "ul:ver:def456...", "recordCount": 3110000, "assetCount": 0, "changes": {...}},
   "error": null
 }
 While the session is open or committing, the status also has "progress" (the commit's phase and
@@ -462,13 +470,13 @@ Refused schema (422 at open): {"error": "<why>"} → fix the schema and open aga
 Schema change invalidates existing records (422 at commit): {"error": "Schema validation failed",
 "validationErrors": [...], "totalErrors": n}
 
-Missing files (422 at commit): {"error": "Missing files", "filesNeeded": ["abc..."]} (bare hex,
-at most 100 listed)
-→ The session stays open: upload the listed files, then commit the same session again. After a
+Missing assets (422 at commit): {"error": "Missing files", "assetsNeeded": ["abc..."],
+"filesNeeded": ["abc..."]} (the same list under both names; bare hex, at most 100 listed)
+→ The session stays open: upload the listed assets, then commit the same session again. After a
   background commit, polling shows status "open" with this body in "error".
 
-Too large (413): a body over open_bytes or batch_bytes, a request over batch_lines, a file over
-file_bytes → split it, or use the presigned upload.
+Too large (413): a body over open_bytes or batch_bytes, a request over batch_lines, an asset over
+asset_bytes → split it, or use the presigned upload.
 
 Too many sessions (429): you have open_sessions sessions open or committing → commit or abandon
 one (DELETE .../push/:sessionId), or let it expire.
@@ -493,7 +501,7 @@ v1.0.0.
 The server assigns it from what changed against the base:
 - major: a type added or removed, or a schema changed
 - minor: otherwise, any record added, removed, or changed
-- patch: otherwise (metadata or files only)
+- patch: otherwise (metadata or assets only)
 A push that changes nothing makes no version (409 "No changes detected").
 
 ### Metadata only
@@ -573,9 +581,9 @@ multi-member support).
 ## Not Available Yet
 
 These answer on www.underlay.org, but do not work yet:
-- Lookups by record or file hash across collections (POST /api/records/batch,
+- Lookups by record or asset hash across collections (POST /api/records/batch,
   GET /api/records/:hash/provenance, GET /api/records/:hash/first,
-  GET /api/collections/files/:hash, and the page /records/:hash): they answer as for an unknown
+  GET /api/collections/assets/:hash, and the page /records/:hash): they answer as for an unknown
   hash (404, or left out of a batch). Read records through a collection instead.
 
 ---
@@ -588,15 +596,15 @@ These answer on www.underlay.org, but do not work yet:
   "data": {
     "title": "Some value",
     "authorId": "author-123",
-    "attachment": {"$file": "sha256:abc123def456..."}
+    "attachment": {"$asset": "ul:asset:abc123def456...", "fileName": "report.pdf"}
   }
 }
 
 - id: a stable string, unique per type within the collection. Use your app's primary key.
 - type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
-- data: any JSON value its schema allows. Refer to other records by id; refer to files with
-  {"$file": "sha256:<hex>"}; point at an exact record, file, or version anywhere on Underlay with
-  a link (next section).
+- data: any JSON value its schema allows. Refer to other records by id; attach assets with
+  {"$asset": "ul:asset:<hex>"} (other members of that object, such as a file name, are yours);
+  point at an exact record, asset, or version anywhere on Underlay with a link (next section).
 
 Keep relationships within a collection as ids (no joins); readers resolve them with the schema
 and records together.
@@ -605,17 +613,17 @@ and records together.
 
 ## Links between records
 
-To say "this record came from (or cites, or is about) that exact record, file, or version", put a
+To say "this record came from (or cites, or is about) that exact record, asset, or version", put a
 link in data: an object, at any depth, whose "$link" is an Underlay id. The prefix says what it
 points at:
 
   Points at   "$link"              Hash
   a record    ul:rec:<hash>        the record's "hash"
-  a file      ul:file:<sha256>    the file's SHA-256
+  an asset    ul:asset:<sha256>    the asset's SHA-256
   a version   ul:ver:<hex>         the version's "hash"
 
   {"$link": "ul:rec:<64 hex>", "collection": "<collection id>", "type": "Work", "id": "10.1234/abc"}
-  {"$link": "ul:file:<64 hex>", "collection": "<collection id>"}
+  {"$link": "ul:asset:<64 hex>", "collection": "<collection id>"}
   {"$link": "ul:ver:<64 hex>", "collection": "<collection id>"}
 
 - "$link" is required: lowercase, exactly 64 hex digits after the prefix.
@@ -629,12 +637,15 @@ points at:
 - The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:...", and
   "ulv3:..." are refused with a message saying what to write. It never checks that the target
   exists or that you can read it: the target may be private or on another server.
-- {"$file": "sha256:<hex>"} and {"$link": "ul:file:<hex>"} name the same file, but only $file
-  attaches it: a push requires a $file's file to be held by the collection (see Files). A
-  $link to a file only points at it, wherever it is.
+- {"$asset": "ul:asset:<hex>"} and {"$link": "ul:asset:<hex>"} name the same asset, but only
+  $asset attaches it: a push requires an attached asset to be held by the collection (see
+  Assets). A $link to an asset only points at it, wherever it is.
+- The server refuses (422) a $asset that is not a ul:asset: id, with a message such as
+  "$asset at /cover is a sha256: hash: write ul:asset:<hex>", and an object with both $link and
+  $asset.
 - The CLI checks links the same way before it saves a version.
 - Follow a link: GET /api/links/resolve?to=<ul: id>&collection=<id>&type=<type>&id=<id>
-  redirects to the page (or, for a file, the download) where you can read the target; send
+  redirects to the page (or, for an asset, the download) where you can read the target; send
   Accept: application/json for {"url"} instead. Without a collection (or without type and id),
   a ul:rec: id goes to /records/<hash>, which is not available yet (see Not Available Yet).
 - Linking to a version (ul:ver:) pins a whole collection state, e.g. the dataset an analysis used.
@@ -737,7 +748,7 @@ with ?raw=true).
 ## Privacy & Visibility
 
 Privacy is set per collection, never per record, type, or field:
-- A public collection: anyone may read every version of it, records, schemas, and files.
+- A public collection: anyone may read every version of it, records, schemas, and assets.
 - A private collection: a 404 to everyone but members of the owning organization, who read all
   of it.
 
@@ -756,7 +767,7 @@ Rules to design around:
 1. VISIBILITY COVERS EVERY VERSION. Making a private collection public publishes all of its
    versions, not only the latest.
 2. REMOVAL IS FORWARD-ONLY. Deleting a record in a new version removes it there. Earlier
-   versions are immutable and still serve it, and a file any version named stays downloadable
+   versions are immutable and still serve it, and an asset any version named stays downloadable
    from the collection.
 3. Making a collection private stops anonymous reads within about 11 minutes (cached responses
    expire); making it public takes effect at once.
@@ -803,7 +814,8 @@ A delivery is sent for each new version (pushes and metadata edits) whose bump i
 Each delivery is a POST with headers x-underlay-event, x-underlay-delivery, and
 x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
 {event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
-patch, recordCount, fileCount}, bumpType}. version.hash is the ul:ver: id.
+patch, recordCount, assetCount, fileCount}, bumpType}. version.hash is the ul:ver: id; fileCount
+is the older name for assetCount.
 
 Mirrors to your own bucket (owners and admins: session or admin key):
 GET|POST /api/orgs/:org/locations         → list, or add an S3-compatible bucket {"name", "endpoint",
@@ -816,7 +828,7 @@ GET    /api/collections/:owner/:slug/placements          → the primary and eac
 POST   /api/collections/:owner/:slug/placements          → {"locationId", "sets"} → 201
 POST   /api/collections/:owner/:slug/placements/:id/sync → catch up again → 202
 DELETE /api/collections/:owner/:slug/placements/:id      → stop (what was copied stays)
-A mirror holds the collection's signed commits, current layout, record files, and files, at the
+A mirror holds the collection's signed commits, current layout, record files, and assets, at the
 keys the protocol uses, so the bucket reads with no Underlay server. sets is "public" (the
 default: public collections only; a private collection is 422, or "error" once made private)
 or "public+private" (needs a bucket that doesn't serve objects without credentials). New versions
@@ -849,11 +861,11 @@ Errors are JSON: {"error": "<message>", "statusCode": <status>, ...}.
 403: the key's scope or role doesn't allow it, or another user's push session
 404: not found, or not readable by you (a private collection is never a 403)
 409: version conflict, no changes, or a session that isn't open
-413: a body, batch, or file over the server's limits
-422: records failing the input rules or schema, a refused schema, a private mark in a public
-     collection, or missing files at commit
+413: a body, batch, or asset over the server's limits
+422: records failing the input rules or schema, a malformed $link or $asset, a refused schema,
+     a private mark in a public collection, or missing assets at commit
 429: rate limited, or too many push sessions open (Retry-After)
-451: a file or record withheld (a file you couldn't read anyway is 404)
+451: an asset or record withheld (an asset you couldn't read anyway is 404)
 501: not available yet (code "not_on_v3"; see "Not Available Yet")
 503: temporarily unavailable (a deep offset page being indexed); retry after Retry-After
 

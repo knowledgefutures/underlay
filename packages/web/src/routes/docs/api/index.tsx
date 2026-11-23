@@ -12,8 +12,8 @@ export default function DocsApi() {
     <DocsLayout title="API Overview">
       <p>
         The Underlay API is a JSON REST API served at <code>/api</code>. All request and response
-        bodies are JSON (except file uploads/downloads). A machine-readable reference is available
-        at{' '}
+        bodies are JSON (except asset uploads and downloads). A machine-readable reference is
+        available at{' '}
         <a href="/llms.txt" className="text-link underline">
           /llms.txt
         </a>
@@ -46,7 +46,7 @@ export default function DocsApi() {
       <p>
         <code>GET</code> and <code>HEAD</code> requests need no authentication to read public data.
         Writes (<code>POST</code>, <code>PATCH</code>, <code>PUT</code>, <code>DELETE</code>)
-        require authentication, with two exceptions. <code>POST .../files/presign</code> is a read
+        require authentication, with two exceptions. <code>POST .../assets/presign</code> is a read
         sent as a POST, because its hash list is too long for a query string; it is reachable
         anonymously and makes the same access checks as the matching <code>GET</code>.{' '}
         <code>POST /api/abuse-reports</code> is open to anyone.
@@ -75,7 +75,7 @@ export default function DocsApi() {
           <code>read</code>: list and download what the key&rsquo;s holder can see
         </li>
         <li>
-          <code>write</code>: also push versions, upload files, and create and edit collections, as
+          <code>write</code>: also push versions, upload assets, and create and edit collections, as
           a member of the owning organization
         </li>
         <li>
@@ -231,7 +231,7 @@ export default function DocsApi() {
       <h2 id="error-responses">Error Responses</h2>
       <p>
         Errors return a JSON body with <code>error</code> and <code>statusCode</code>. Some add
-        fields of their own, such as <code>filesNeeded</code> on a missing-files <code>422</code>:
+        fields of their own, such as <code>assetsNeeded</code> on a missing-assets <code>422</code>:
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{`{
@@ -239,6 +239,11 @@ export default function DocsApi() {
   "statusCode": 401
 }`}</code>
       </pre>
+      <p>
+        Assets (PDFs, images) were first called files in the API. The older <code>…/files/…</code>{' '}
+        paths and file-named fields (<code>filesNeeded</code>, <code>fileCount</code>) still work,
+        beside the asset names.
+      </p>
 
       <p>Common status codes:</p>
       <ul>
@@ -255,25 +260,26 @@ export default function DocsApi() {
         </li>
         <li>
           <code>404</code>: Resource not found, <em>or</em> not visible to you. Private collections
-          and inaccessible files return 404 rather than 403, so a response cannot confirm they exist
+          and inaccessible assets return 404 rather than 403, so a response cannot confirm they
+          exist
         </li>
         <li>
           <code>409</code>: Version conflict (re-fetch and retry), a slug that is already taken, or
           no changes: the push has the same content as the latest version
         </li>
         <li>
-          <code>413</code>: Payload too large (a body or file over its size limit)
+          <code>413</code>: Payload too large (a body or asset over its size limit)
         </li>
         <li>
-          <code>422</code>: Validation error (e.g. missing files)
+          <code>422</code>: Validation error (e.g. missing assets)
         </li>
         <li>
           <code>429</code>: Rate limited, or too many push sessions open at once; wait for{' '}
           <code>Retry-After</code> and retry
         </li>
         <li>
-          <code>451</code>: The file has been withheld and is not served (only for a file you could
-          otherwise read; any other file is <code>404</code>)
+          <code>451</code>: The asset has been withheld and is not served (only for an asset you
+          could otherwise read; any other asset is <code>404</code>)
         </li>
         <li>
           <code>501</code>: Not available yet, with <code>{'"code": "not_on_v3"'}</code>: a route
@@ -308,10 +314,10 @@ export default function DocsApi() {
           : push snapshots, browse history, diff
         </div>
         <div>
-          <Link to="/docs/api/files" className="text-link underline">
-            Files
+          <Link to="/docs/api/assets" className="text-link underline">
+            Assets
           </Link>
-          : upload and download content-addressed files
+          : upload and download a collection&rsquo;s PDFs, images, and other bytes
         </div>
         <div>
           <Link to="/docs/api/records" className="text-link underline">

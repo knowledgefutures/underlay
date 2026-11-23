@@ -31,7 +31,7 @@ const pushExample = `{
   }
 }`
 
-const fileRef = '{"$file": "sha256:<hex>"}'
+const assetRef = '{"$asset": "ul:asset:<hex>"}'
 
 const sqlIntrospect = `-- For each table, generate a JSON Schema type:
 -- table name → type name
@@ -50,12 +50,12 @@ curl -X POST https://www.underlay.org/api/collections/:owner/:slug/push \\
   -d '{
     "base": "v1.2.0",
     "message": "Daily sync",
-    "files": {"add": ["9f86d0..."]}
+    "assets": {"add": ["9f86d0..."]}
   }'
-# → {"session_id":"...","base":"v1.2.0","needed_files":["9f86d0..."],"limits":{...},...}
+# → {"session_id":"...","base":"v1.2.0","needed_assets":["9f86d0..."],"limits":{...},...}
 
-# 2. Upload the files the server doesn't have yet
-curl -X PUT "https://www.underlay.org/api/collections/:owner/:slug/files/sha256:9f86d0..." \\
+# 2. Upload the assets the collection doesn't hold yet
+curl -X PUT "https://www.underlay.org/api/collections/:owner/:slug/assets/9f86d0..." \\
   -H "Authorization: Bearer $KEY" \\
   -H "Content-Type: application/pdf" \\
   --data-binary @paper.pdf
@@ -75,7 +75,7 @@ curl -X POST .../push/SESSION_ID/deletes \\
 # 5. Commit
 curl -X POST .../push/SESSION_ID/commit \\
   -H "Authorization: Bearer $KEY"
-# → 201 {"semver":"v1.3.0","hash":"ul:ver:...","recordCount":...,"fileCount":...,"changes":{...}}`
+# → 201 {"semver":"v1.3.0","hash":"ul:ver:...","recordCount":...,"assetCount":...,"changes":{...}}`
 
 const snapshotDiff = `// hashRecord(record) → hex, as defined under "Record Hashing" below.
 const key = (r) => JSON.stringify([r.type, r.id])
@@ -149,7 +149,7 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Version</strong>: The collection as of one commit in its log, and immutable: a
-          JSON Schema per type, records, file references, and metadata. Identified by semver (e.g.{' '}
+          JSON Schema per type, records, assets, and metadata. Identified by semver (e.g.{' '}
           <code>v1.0.0</code>) or by its <code>ul:ver:</code> id. Versions converted from the
           earlier format also answer to their old <code>ulv2:</code> ids.
         </li>
@@ -158,12 +158,12 @@ export default function DocsIntegration() {
           payload conforming to the type&rsquo;s schema. Content-addressed by SHA-256 hash.
         </li>
         <li>
-          <strong>File</strong>: A binary blob (PDF, image, etc.) stored by SHA-256 hash. Referenced
-          in records via <code>{fileRef}</code>.
+          <strong>Asset</strong>: A binary blob (PDF, image, etc.) a collection holds, stored by
+          SHA-256 hash. Attached in records with <code>{assetRef}</code>.
         </li>
         <li>
-          <strong>Link</strong>: A pointer from a record to an exact record, file, or version
-          anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:file:</code>,{' '}
+          <strong>Link</strong>: A pointer from a record to an exact record, asset, or version
+          anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:</code>,{' '}
           <code>ul:ver:</code>):{' '}
           <code>{'{"$link": "ul:rec:...", "collection": "<id>", "type": "...", "id": "..."}'}</code>
           . Use it to record where derived data came from. See{' '}
@@ -205,17 +205,17 @@ export default function DocsIntegration() {
         <li>
           <strong>Open a session</strong> with <code>base</code> set to the semver you diffed
           against (<code>null</code> for the first push; <code>null</code> means no conflict check),
-          plus any schemas, metadata, and files to declare. <code>schemas</code>, when sent, is the
+          plus any schemas, metadata, and assets to declare. <code>schemas</code>, when sent, is the
           full type set: a type left out is removed, with its records. <code>metadata</code>{' '}
           replaces the metadata, <code>metadata_patch</code> merges into it. The response lists{' '}
-          <code>needed_files</code> and the server&rsquo;s <code>limits</code>. Files go in{' '}
-          <code>files.add</code> (or <code>files.remove</code>) as bare hex hashes, without{' '}
-          <code>sha256:</code>.
+          <code>needed_assets</code> and the server&rsquo;s <code>limits</code>. Assets go in{' '}
+          <code>assets.add</code> (or <code>assets.remove</code>) as bare hex hashes, without a
+          prefix.
         </li>
         <li>
-          <strong>Upload files</strong> listed in <code>needed_files</code>, by hash. Files your
-          records reference are added to the version whether or not you declared them; declaring
-          them tells you up front which ones to upload.
+          <strong>Upload assets</strong> listed in <code>needed_assets</code>, by hash. Assets your
+          records attach are added to the version whether or not you declared them; declaring them
+          tells you up front which ones to upload.
         </li>
         <li>
           <strong>Upload records</strong> that are new or changed, as NDJSON, in batches within{' '}
@@ -230,10 +230,14 @@ export default function DocsIntegration() {
           against the new head and push again. If your changes don&rsquo;t depend on the base (a
           load of upserts), commit with the body <code>{'{"rebase": true}'}</code> instead: the
           session&rsquo;s records and deletes apply on top of the current head, and its schemas and
-          metadata replace the head&rsquo;s. On <code>422</code> with <code>filesNeeded</code>,
-          upload those files and commit the same session again.
+          metadata replace the head&rsquo;s. On <code>422</code> with <code>assetsNeeded</code>,
+          upload those assets and commit the same session again.
         </li>
       </ol>
+      <p>
+        The older <code>…/files/…</code> paths and file-named fields (<code>files</code>,{' '}
+        <code>needed_files</code>, <code>filesNeeded</code>, <code>fileCount</code>) still work.
+      </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
@@ -243,8 +247,8 @@ export default function DocsIntegration() {
         100,000 existing records) the commit runs in the background: it answers <code>202</code>,
         and you poll <code>GET .../push/SESSION_ID</code> until its <code>status</code> is{' '}
         <code>committed</code> or <code>failed</code>. Add <code>?async=true</code> to ask for that
-        at any size. A background commit refused for missing files goes back to <code>open</code>,
-        with <code>filesNeeded</code> in its <code>error</code>.
+        at any size. A background commit refused for missing assets goes back to <code>open</code>,
+        with <code>assetsNeeded</code> in its <code>error</code>.
       </p>
 
       <h2>Pushing a Full Export</h2>
@@ -296,7 +300,9 @@ export default function DocsIntegration() {
           Relationships are plain ID strings (e.g. <code>"authorId": "author-1"</code>)
         </li>
         <li>
-          Files are referenced as <code>{fileRef}</code>
+          Assets are attached as <code>{assetRef}</code>; other members of that object (a file name,
+          a media type) are yours. Records written with the older{' '}
+          <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way
         </li>
         <li>No joins. Prefer flat records; nesting is allowed up to 64 levels</li>
       </ul>
@@ -348,7 +354,7 @@ export default function DocsIntegration() {
         </li>
         <li>Foreign keys become string ID references</li>
         <li>
-          Binary columns (BLOBs) → upload as files, replace with <code>$file</code> references
+          Binary columns (BLOBs) → upload as assets, replace with <code>$asset</code> references
         </li>
         <li>Generate a JSON Schema from your column types</li>
       </ul>
@@ -366,7 +372,7 @@ export default function DocsIntegration() {
           Record changes (added, changed, or removed) → <strong>minor</strong> bump
         </li>
         <li>
-          Metadata or file changes only → <strong>patch</strong> bump
+          Metadata or asset changes only → <strong>patch</strong> bump
         </li>
       </ul>
       <p>
@@ -487,9 +493,9 @@ export default function DocsIntegration() {
           </tr>
           <tr>
             <td>
-              <code>PUT .../files/:hash</code>
+              <code>PUT .../assets/:hash</code>
             </td>
-            <td>Upload a file</td>
+            <td>Upload an asset</td>
           </tr>
           <tr>
             <td>
@@ -519,15 +525,15 @@ export default function DocsIntegration() {
           nothing. Diff against the new head and push again.
         </li>
         <li>
-          <code>413 Payload Too Large</code>: A batch or file is over the session&rsquo;s{' '}
+          <code>413 Payload Too Large</code>: A batch or asset is over the session&rsquo;s{' '}
           <code>limits</code>. Split it.
         </li>
         <li>
           <code>422 Unprocessable</code>: Records or deletes fail the input rules or their schema (
           <code>validationErrors</code>, by line), a schema is refused when the session opens, a
-          record or type is marked private in a public collection, or the commit references files
-          that haven&rsquo;t been uploaded (<code>filesNeeded</code>; upload them and commit the
-          same session again).
+          record or type is marked private in a public collection, a <code>$link</code> or{' '}
+          <code>$asset</code> is malformed, or the commit attaches assets that haven&rsquo;t been
+          uploaded (<code>assetsNeeded</code>; upload them and commit the same session again).
         </li>
         <li>
           <code>429 Too Many Requests</code>: Too many push sessions open at once (

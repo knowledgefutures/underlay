@@ -322,8 +322,24 @@ try {
     },
     { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
     { path: '/docs/protocol/versions', status: 200, has: ['ul:ver:', 'Sorted-record-files'] },
-    { path: '/docs/protocol/records', status: 200, has: ['Underlay ids', 'ul:asset:'] },
+    {
+      path: '/docs/protocol/records',
+      status: 200,
+      has: ['Underlay ids', 'ul:asset:', 'Asset references', '$file references'],
+      lacks: ['ul:file:'],
+    },
     { path: '/docs/api/records', status: 200, has: ['Links in records', 'GET /api/links/resolve'] },
+    // The Files API page is now the Assets API page: its old URL redirects.
+    { path: '/docs/api/files', status: 301, location: '/docs/api/assets' },
+    {
+      path: '/docs/api/assets',
+      status: 200,
+      has: [
+        'Assets API',
+        'POST /api/collections/:owner/:slug/assets/presign',
+        'Asset references in records',
+      ],
+    },
     { path: '/docs/protocol/repositories', status: 200, has: ['Layout files', 'Rebuilds'] },
     {
       path: '/docs/protocol/push-and-pull',
@@ -340,7 +356,12 @@ try {
     {
       path: '/docs/cli/guide',
       status: 200,
-      has: ['What is kept on your machine', 'What a script declares', 'Keys'],
+      has: [
+        'What is kept on your machine',
+        'What a script declares',
+        'Keys',
+        '$UNDERLAY_OUT/assets/',
+      ],
     },
     { path: '/docs/cli/commands', status: 200, has: ['underlay push'] },
     { path: '/docs/api/records', status: 200, has: ['/api/schemas', 'Visibility'] },

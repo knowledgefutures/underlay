@@ -12,14 +12,14 @@ const openReq = `{
     }
   },
   "metadata_patch": {"description": "PubPub archive"},
-  "files": {"add": ["7a8b9c..."]},
+  "assets": {"add": ["7a8b9c..."]},
   "message": "Add new publications"
 }`
 
 const openRes = `{
   "session_id": "uuid",
   "base": "v1.0.0",
-  "needed_files": ["7a8b9c..."],
+  "needed_assets": ["7a8b9c..."],
   "expires_at": "2026-10-05T00:00:00.000Z",
   "limits": {
     "open_bytes": 8388608,
@@ -27,7 +27,7 @@ const openRes = `{
     "batch_lines": 10000,
     "session_idle_seconds": 43200,
     "open_sessions": 20,
-    "file_bytes": 33554432
+    "asset_bytes": 33554432
   }
 }`
 
@@ -50,7 +50,7 @@ const commitRes = `{
   "semver": "v1.1.0",
   "hash": "ul:ver:a1b2c3d4...",
   "recordCount": 3,
-  "fileCount": 1,
+  "assetCount": 1,
   "changes": {"added": 2, "removed": 1, "updated": 0}
 }`
 
@@ -71,7 +71,7 @@ const sessionPollRes = `{
     "semver": "v1.1.0",
     "hash": "ul:ver:a1b2c3d4...",
     "recordCount": 3110000,
-    "fileCount": 0,
+    "assetCount": 0,
     "changes": {"added": 3110000, "removed": 0, "updated": 0}
   },
   "error": null
@@ -102,7 +102,7 @@ const listRes = `[
     "pushedByName": "Ada Lovelace",
     "actorId": "user-42",
     "recordCount": 150,
-    "fileCount": 12,
+    "assetCount": 12,
     "totalBytes": 52428800,
     "typeCounts": {"Publication": 150},
     "createdAt": "2026-04-01T00:00:00.000Z",
@@ -172,7 +172,7 @@ const manifestRes = `{
     {"id": "pub-001", "type": "Publication", "hash": "def456..."},
     {"id": "pub-002", "type": "Publication", "hash": "789abc..."}
   ],
-  "files": ["a1b2c3...", "d4e5f6..."],
+  "assets": ["a1b2c3...", "d4e5f6..."],
   "pagination": {
     "limit": 2,
     "hasMore": true,
@@ -191,7 +191,7 @@ const manifestDeltaRes = `{
                  "previousHash": "abc123..."}],
     "removed": [{"id": "pub-old", "type": "Publication", "hash": "def456..."}]
   },
-  "files": ["a1b2c3..."],
+  "assets": ["a1b2c3..."],
   "pagination": {
     "limit": 10000,
     "hasMore": false,
@@ -217,12 +217,12 @@ const diffRes = `{
   "meta": {
     "schemaChanged": false,
     "metadataChanged": false,
-    "filesAdded": 0,
-    "filesRemoved": 0
+    "assetsAdded": 0,
+    "assetsRemoved": 0
   }
 }`
 
-const filesRes = `[
+const assetsRes = `[
   {
     "hash": "a1b2c3...",
     "size": 1048576,
@@ -238,9 +238,9 @@ export default function DocsApiVersions() {
     <DocsLayout title="Versions API">
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
-        schemas, records, and file references. You publish one with a <strong>delta push</strong>:
-        open a session against the version you started from, upload the records you add or change
-        and the ids you delete, and commit.
+        schemas, records, and assets. You publish one with a <strong>delta push</strong>: open a
+        session against the version you started from, upload the records you add or change and the
+        ids you delete, and commit.
       </p>
       <p>
         <strong>Version ids</strong> are <code>ul:ver:&lt;sha256&gt;</code>, the SHA-256 of the
@@ -250,8 +250,15 @@ export default function DocsApiVersions() {
         November 13, 2026, also answer to the <code>ulv2:</code> ids they had then; responses always
         give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),
         it can be a semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record,
-        schema, and file hashes are bare hex in responses; to cite or link to a record write{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, and to a file <code>ul:file:&lt;hash&gt;</code>.
+        schema, and asset hashes are bare hex in responses; to cite or link to a record write{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, and to an asset <code>ul:asset:&lt;hash&gt;</code>.
+      </p>
+      <p>
+        Assets (PDFs, images) were first called files in the API. The older <code>…/files/…</code>{' '}
+        paths and file-named fields still work: request fields (<code>files</code> when opening a
+        push) are taken under either name, but not both at once, and responses carry both names with
+        the same value (<code>fileCount</code> beside <code>assetCount</code>,{' '}
+        <code>needed_files</code> beside <code>needed_assets</code>, and so on).
       </p>
       <p>
         A version never changes, so responses under <code>.../versions/:n</code> are cached when{' '}
@@ -322,13 +329,13 @@ export default function DocsApiVersions() {
             </tr>
             <tr>
               <td>
-                <code>files</code>
+                <code>assets</code>
               </td>
               <td>
-                <code>{'{"add": [hash, …], "remove": [hash, …]}'}</code>: files to declare or drop
-                beyond those your records reference. Each hash is bare 64-character lowercase hex.
-                Any other string, including one with a <code>sha256:</code> prefix, is ignored
-                without an error.
+                <code>{'{"add": [hash, …], "remove": [hash, …]}'}</code>: assets to declare or drop
+                beyond those your records attach. Each hash is bare 64-character lowercase hex. Any
+                other string, including one with a <code>ul:asset:</code> or <code>sha256:</code>{' '}
+                prefix, is ignored without an error.
               </td>
             </tr>
             <tr>
@@ -359,11 +366,11 @@ export default function DocsApiVersions() {
           <code>{openRes}</code>
         </pre>
         <p>
-          <code>needed_files</code> are the declared files this collection doesn&rsquo;t hold yet
-          (files already uploaded and verified for it are held): upload them before you commit.{' '}
+          <code>needed_assets</code> are the declared assets this collection doesn&rsquo;t hold yet
+          (assets already uploaded and verified for it are held): upload them before you commit.{' '}
           <code>limits</code> are this node&rsquo;s; size your batches by them. The session expires
           after <code>session_idle_seconds</code> without an upload. Each records or deletes batch
-          pushes <code>expires_at</code> back; file uploads don&rsquo;t.
+          pushes <code>expires_at</code> back; asset uploads don&rsquo;t.
         </p>
 
         <h3>POST .../push/:sid/records</h3>
@@ -419,13 +426,16 @@ export default function DocsApiVersions() {
           An empty batch is <code>400</code>; a session that is no longer open is <code>409</code>.
         </p>
 
-        <h3>PUT .../files/:hash</h3>
+        <h3>PUT .../assets/:hash</h3>
         <p className="scope">Auth: write scope</p>
         <p>
-          Upload a file&rsquo;s bytes under its SHA-256 hash: <code>201</code>, or <code>400</code>{' '}
-          if the bytes don&rsquo;t match the hash. Files over <code>file_bytes</code> are a{' '}
-          <code>413</code>; upload those through <a href="/docs/api/files">the Files API</a>. Every
-          file a new record references must be uploaded before the commit.
+          Upload an asset&rsquo;s bytes under its SHA-256 hash: <code>201</code>, or{' '}
+          <code>400</code> if the bytes don&rsquo;t match the hash. Assets over{' '}
+          <code>asset_bytes</code> are a <code>413</code>; upload those through{' '}
+          <a href="/docs/api/assets">the Assets API</a>. Every asset a new record attaches with{' '}
+          <code>{'{"$asset": "ul:asset:<hex>"}'}</code> must be uploaded before the commit; so must
+          one attached with the older <code>{'{"$file": "sha256:<hex>"}'}</code>. A malformed{' '}
+          <code>$asset</code> is refused when the record is uploaded (<code>422</code>).
         </p>
 
         <h3>POST .../push/:sid/commit</h3>
@@ -444,15 +454,15 @@ export default function DocsApiVersions() {
           <code>{commitRes}</code>
         </pre>
         <p>
-          <code>recordCount</code> and <code>fileCount</code> count the whole version, not only what
-          this push changed; <code>changes</code> counts the records this push added, removed, and
-          updated.
+          <code>recordCount</code> and <code>assetCount</code> count the whole version, not only
+          what this push changed; <code>changes</code> counts the records this push added, removed,
+          and updated.
         </p>
         <p>
           The semver follows from what changed against the base: <strong>major</strong> when a type
           was added or removed or a schema changed, otherwise <strong>minor</strong> when any record
-          was added, removed, or changed, otherwise <strong>patch</strong> (metadata or files only).
-          A push that changes nothing makes no version and answers <code>409</code>.
+          was added, removed, or changed, otherwise <strong>patch</strong> (metadata or assets
+          only). A push that changes nothing makes no version and answers <code>409</code>.
         </p>
         <p>
           Committing a session that is already committed answers its <code>201</code> result again.
@@ -496,9 +506,9 @@ export default function DocsApiVersions() {
             <code>hash</code>.
           </li>
           <li>
-            <code>422</code> <code>"Missing files"</code>: <code>filesNeeded</code> lists up to 100
-            files not uploaded, as bare hex. The session stays open: upload them and commit the same
-            session again.
+            <code>422</code> <code>"Missing files"</code>: <code>assetsNeeded</code> lists up to 100
+            assets not uploaded, as bare hex (and so does <code>filesNeeded</code>, its older name).
+            The session stays open: upload them and commit the same session again.
           </li>
           <li>
             <code>422</code> <code>"Schema validation failed"</code>, with{' '}
@@ -554,8 +564,9 @@ export default function DocsApiVersions() {
               <td>
                 A body that isn&rsquo;t a JSON object, <code>metadata</code> that isn&rsquo;t an
                 object or <code>null</code>, <code>metadata_patch</code> that isn&rsquo;t an object,{' '}
-                <code>rebase</code> that isn&rsquo;t a boolean, an empty records or deletes batch,
-                or file bytes that don&rsquo;t match their hash.
+                <code>rebase</code> that isn&rsquo;t a boolean, both <code>assets</code> and{' '}
+                <code>files</code> when opening, an empty records or deletes batch, or asset bytes
+                that don&rsquo;t match their hash.
               </td>
             </tr>
             <tr>
@@ -596,7 +607,7 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 A body over <code>open_bytes</code> or <code>batch_bytes</code>, a batch over{' '}
-                <code>batch_lines</code>, or a file over <code>file_bytes</code>.
+                <code>batch_lines</code>, or an asset over <code>asset_bytes</code>.
               </td>
             </tr>
             <tr>
@@ -606,9 +617,10 @@ export default function DocsApiVersions() {
               <td>
                 Records or deletes that fail (<code>validationErrors</code>), a line whose type
                 isn&rsquo;t in the session&rsquo;s type set, a schema or type name that is refused
-                (at open), a type or record marked private in a public collection, a commit with
-                files not uploaded (<code>filesNeeded</code>), or a schema change that base records
-                fail (<code>"Schema validation failed"</code>).
+                (at open), a type or record marked private in a public collection, a malformed{' '}
+                <code>$link</code> or <code>$asset</code>, a commit with assets not uploaded (
+                <code>assetsNeeded</code>), or a schema change that base records fail (
+                <code>"Schema validation failed"</code>).
               </td>
             </tr>
             <tr>
@@ -625,7 +637,7 @@ export default function DocsApiVersions() {
                 <code>503</code>
               </td>
               <td>
-                Storage cleanup held up a file upload; retry after <code>Retry-After</code>.
+                Storage cleanup held up an asset upload; retry after <code>Retry-After</code>.
               </td>
             </tr>
           </tbody>
@@ -753,7 +765,7 @@ export default function DocsApiVersions() {
           <code>{listRes}</code>
         </pre>
         <p>
-          <code>recordCount</code>, <code>fileCount</code>, <code>totalBytes</code>, and{' '}
+          <code>recordCount</code>, <code>assetCount</code>, <code>totalBytes</code>, and{' '}
           <code>typeCounts</code> count the whole version. <code>baseSemver</code> is the version
           before it (<code>null</code> for the first). <code>pushedBy</code>,{' '}
           <code>pushedByName</code>, and <code>actorId</code> are for the collection&rsquo;s members
@@ -1037,8 +1049,8 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 Entries per page (default 10000, max 25000). The first page also lists the
-                version&rsquo;s files, at most 25,000, with <code>filesTruncated: true</code> past
-                that; later pages have <code>files: []</code>.
+                version&rsquo;s assets, at most 25,000, with <code>assetsTruncated: true</code> past
+                that; later pages have <code>assets: []</code>.
               </td>
             </tr>
             <tr>
@@ -1080,8 +1092,8 @@ export default function DocsApiVersions() {
           <code>cursor=pagination.nextCursor</code> until <code>hasMore</code> is false.
         </p>
         <p>
-          <code>files</code> in a delta is the full file list of <code>:n</code> (first page only),
-          not a file delta.
+          <code>assets</code> in a delta is the full asset list of <code>:n</code> (first page
+          only), not an asset delta.
         </p>
       </div>
 
@@ -1146,21 +1158,22 @@ export default function DocsApiVersions() {
       <hr className="border-rule my-6" />
 
       <div className="endpoint">
-        <h2 id="get-api-collections-owner-slug-versions-n-files">
-          GET /api/collections/:owner/:slug/versions/:n/files
+        <h2 id="get-api-collections-owner-slug-versions-n-assets">
+          GET /api/collections/:owner/:slug/versions/:n/assets
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          The version&rsquo;s files, sorted by hash, at most 10,000. Which records reference a file
+          The version&rsquo;s assets, sorted by hash, at most 10,000. Which records attach an asset
           isn&rsquo;t indexed, so <code>referenceCount</code> is always 0 and{' '}
-          <code>references</code> always empty. <code>createdAt</code> is when the file was first
-          uploaded, or <code>null</code>.
+          <code>references</code> always empty. <code>createdAt</code> is when the asset was first
+          uploaded, or <code>null</code>. The older path, <code>…/versions/:n/files</code>, answers
+          the same.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>
         </h3>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
-          <code>{filesRes}</code>
+          <code>{assetsRes}</code>
         </pre>
       </div>
     </DocsLayout>
