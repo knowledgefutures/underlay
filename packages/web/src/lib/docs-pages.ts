@@ -91,7 +91,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Guide',
         href: '/docs/cli/guide',
-        blurb: 'Home and script folders, scripts and imports, versions, push, the terminal UI',
+        blurb: 'Home and script folders, scripts and imports, versions, push, and the terminal UI',
         headings: [
           'Home and script folders',
           'What is kept on your machine',
@@ -265,7 +265,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Records and schemas',
         href: '/docs/protocol/records',
         blurb:
-          'Canonical JSON, record and removal lines, reserved types, input rules, schemas, ids and links',
+          'Canonical JSON, record and removal lines, reserved types, input rules, schemas, ids, and links',
         headings: [
           'Canonical JSON',
           'Records and lines',

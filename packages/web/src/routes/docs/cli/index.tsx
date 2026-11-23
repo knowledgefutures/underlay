@@ -12,7 +12,7 @@ export default function CliOverview() {
         <code>underlay</code> is a command-line client for Underlay collections. It keeps
         collections on your machine, runs the scripts that write new versions of them, shows what
         changed, and pushes the versions to the server the collection lives on. Every action is a
-        command, so scripts, cron jobs and agents can use it as you do. Run plain{' '}
+        command, so scripts, cron jobs, and agents can use it as you do. Run plain{' '}
         <code>underlay</code> in a terminal to open its terminal UI.
       </p>
       <p>
@@ -105,7 +105,7 @@ underlay ls               # your organizations' collections, to add with underla
 
       <h3>5. Publish and push</h3>
       <p>
-        Publishing gives the collection its server, org and name there. Its first push creates it
+        Publishing gives the collection its server, org, and name there. Its first push creates it
         with the versions you made, unchanged. Push lists what it will send and asks first.
       </p>
       <CodeBlock>{`underlay publish scratch underlay.org/your-org/scratch

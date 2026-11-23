@@ -392,7 +392,7 @@ export default function DocsApiAccounts() {
         <p>
           Create an organization, with you as its owner. Managed by better-auth&rsquo;s organization
           plugin; the slug must be a valid, unused account slug, and <code>kfOrgId</code> a
-          Knowledge Futures account you belong to (<code>GET /api/accounts/available-kf-orgs</code>
+          Knowledge Futures account you belong to (<code>GET /api/accounts/available-kf-orgs</code>{' '}
           lists them). Without one the request is refused with <code>403</code>; email{' '}
           <a href={`mailto:${HELP_EMAIL}`} className="text-link hover:underline">
             {HELP_EMAIL}

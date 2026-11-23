@@ -206,7 +206,7 @@ export default function DocsApiSyncAndIntegrations() {
         whole-version exports, webhooks, ARK identifiers, and a couple of service endpoints. Paths
         below that start <code>…/:owner/:slug</code> are under <code>/api/collections</code>. Where
         a <code>version</code> is asked for, it is a semver (<code>v1.2.0</code>), a version id (
-        <code>ul:ver:…</code>) or <code>latest</code>.
+        <code>ul:ver:…</code>, or its bare hex), or <code>latest</code>.
       </p>
 
       <hr className="border-rule my-6" />

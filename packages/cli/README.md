@@ -4,7 +4,7 @@ One program, `underlay`, for collections on your machine: commands, a terminal U
 `underlay` in a terminal), and later `underlay serve`. Design: `_meta/planning/kf/underlay/local-tool.md`;
 build plan: `local-tool-build.md` beside it.
 
-**Install:** `curl -fsSL https://underlay.org/cli/install.sh | sh` (or staging's, for staging's
+**Install:** `curl -fsSL https://www.underlay.org/cli/install.sh | sh` (or staging's, for staging's
 build). It downloads the bundled CLI (one file, Node.js 22.6 or later) from the site it is served
 by, checks its SHA-256, and puts `underlay` in `~/.local/bin`. The site serves it because the web
 build copies it there (`packages/web/scripts/cli-assets.ts`); the script is
@@ -26,10 +26,10 @@ Pushing and pulling need the server routes from phase 0 (author-built commits, r
 ```
 underlay init [dir]                       your home (~/Underlay): collections, scripts, inputs, AGENTS.md
 underlay sources [add <path>|rm|init]     script folders: shared git repos of scripts
-underlay secret set <NAME>                a secret a script folder needs, kept in the keychain
-underlay login [remote]                   an API key from <remote>/settings/keys, kept in the keychain
-underlay ls [remote] [--public [q]]       your orgs' collections (■ ◧ □ here, + not)
-underlay add underlay.org/mitp/mit-ai     its folder, schemas and log; its files unless --keep none
+underlay secret set <NAME>                a secret a script folder needs, kept in the keychain (a 0600 file off a Mac)
+underlay login [remote]                   an API key from <remote>/settings/keys, kept in the keychain (a 0600 file off a Mac)
+underlay ls [remote] [--public [q]]       your orgs' collections (◐ ○ part here, blank all, + not)
+underlay add underlay.org/mitp/mit-ai     its folder, schemas, log, records, and files (less with --keep)
 underlay new scratch                      one on this machine only: no server, org or sign-in
 underlay new underlay.org/mitp/x          one that isn't on its authority yet; push creates it
 underlay publish scratch mitp/scratch     a local one to a server; its first push creates it

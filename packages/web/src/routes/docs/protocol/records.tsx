@@ -314,9 +314,10 @@ export default function ProtocolRecords() {
         format.
       </p>
       <p>
-        Informative. underlay.org takes an id wherever a person gives one as a <code>ul:</code> id
-        or as bare hex, and also the older <code>sha256:</code>, <code>ulv3:</code> and{' '}
-        <code>ulv2:</code> forms.
+        Informative. In URL paths and version selectors, underlay.org takes a <code>ul:</code> id or
+        bare hex, and also the older <code>sha256:</code>, <code>ulv3:</code>, and{' '}
+        <code>ulv2:</code> forms. <code>/api/links/resolve</code> needs a <code>ul:</code> id, since
+        bare hex doesn&rsquo;t say what kind of thing it names.
       </p>
 
       <h2 id="links">Links</h2>

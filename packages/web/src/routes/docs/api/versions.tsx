@@ -245,7 +245,7 @@ export default function DocsApiVersions() {
       <p>
         <strong>Version ids</strong> are <code>ul:ver:&lt;sha256&gt;</code>, the SHA-256 of the
         version&rsquo;s commit, and are the same for every reader. Anywhere a version id is
-        accepted, so is its bare hex and the same hash written <code>ulv3:</code> (as ids were
+        accepted, so are its bare hex and the same hash written <code>ulv3:</code> (as ids were
         before November 18, 2026). Versions published before Underlay moved to protocol v3, on
         November 13, 2026, also answer to the <code>ulv2:</code> ids they had then; responses always
         give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),

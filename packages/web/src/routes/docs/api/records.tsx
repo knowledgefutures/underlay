@@ -366,8 +366,9 @@ export default function DocsApiRecords() {
                 <code>collection</code>
               </td>
               <td>
-                The collection id. Needed for a version or a file; for a record without it, the
-                answer is <code>/records/&lt;hash&gt;</code>.
+                The collection id. Needed for a version or a file (<code>404</code> without it). A
+                record without it, or without <code>type</code> and <code>id</code>, goes to{' '}
+                <code>/records/&lt;hash&gt;</code>, which is not available yet.
               </td>
             </tr>
             <tr>

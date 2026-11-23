@@ -1,7 +1,6 @@
 # Underlay protocol, version 3 (draft)
 
-**Status:** Draft, 2026-11-12; authority, author-built commits, receipts and the routes that
-follow a collection added 2026-11-16 (Sections 4.6 to 4.8); Underlay ids, links, and bare-hex
+**Status:** Draft, 2026-11-12; authority, author-built commits, receipts, and the routes a client follows a collection by, added 2026-11-16 (Sections 4.6 to 4.8); Underlay ids, links, and bare-hex
 versions inside commits added 2026-11-18 (Sections 2.1, 2.2 and 4). Not stable. Implemented in
 `packages/protocol/src/v3/`, with ids and links in `packages/protocol/src/ids.ts` and
 `links.ts`. Where this document and the code disagree while both are drafts, fix whichever is

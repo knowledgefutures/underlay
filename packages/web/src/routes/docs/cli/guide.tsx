@@ -130,7 +130,7 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
         PDFs, images and other assets its records point to, at <code>assets/</code> in the store).
         With <code>--keep records</code>, its records but not its files; with{' '}
         <code>--keep none</code>, only its schemas and history, and records are fetched from its
-        authority when something reads them; <code>--keep some --types A,B</code> keeps some types.
+        authority when something reads them; <code>--keep some --types A,B</code> keeps some types.{' '}
         <code>underlay keep</code> (with <code>--records</code> or <code>--types</code>) and{' '}
         <code>underlay forget</code> change this later, and <code>k</code> in the terminal UI asks
         before it deletes anything here. <code>underlay remove</code> takes a collection off your
@@ -267,7 +267,7 @@ record.data.pdf = { $file: \`sha256:\${sha}\` }`}</CodeBlock>
             <td>
               <code>reads</code>
             </td>
-            <td>Collections it reads, for the record.</td>
+            <td>Collections it reads, noted with each run.</td>
           </tr>
           <tr>
             <td>
@@ -338,7 +338,7 @@ underlay runs <id> --follow   # one run's output`}</CodeBlock>
 
       <h2>Imports</h2>
       <p>
-        A spreadsheet, CSV, TSV, JSON, Parquet or SQLite file can be imported without a script.{' '}
+        A spreadsheet, CSV, TSV, JSON, Parquet, or SQLite file can be imported without a script.{' '}
         <code>underlay add-file</code> copies it into your home&apos;s <code>inputs/</code>, shows
         its sheets and columns, and finds the collection whose ids it shares.
       </p>

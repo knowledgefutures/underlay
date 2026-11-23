@@ -279,8 +279,9 @@ export default function ProtocolPushPull() {
       <ul>
         <li>
           Each commit comes as its exact text, so its id (the SHA-256 of those bytes) can be
-          checked, with its receipt. A page holds 100 commits unless <code>limit</code> asks for up
-          to 1,000; <code>more</code> says whether there are others.
+          checked, with its receipt. A page holds up to 100 commits, or up to <code>limit</code> (at
+          most 1,000), and stops at 4 MB of commit text; while <code>more</code> is true, ask again
+          after the last number given.
         </li>
         <li>
           To read a version, take the current layout&apos;s files and the files of the commits after

@@ -35,19 +35,17 @@ export default function CollectionPage() {
             <div className="bg-ink text-parchment rounded-surface mx-auto max-w-md overflow-hidden text-left font-mono text-[13px] leading-relaxed">
               <div className="p-4">
                 <div className="text-ink-muted mb-1 text-[11px] select-none">
-                  # initialize and push
+                  # with the Underlay CLI, signed in (underlay login)
                 </div>
                 <div>
-                  <span className="text-parchment-dark">$</span> underlay init --remote {owner}/
-                  {collection}
+                  <span className="text-parchment-dark">$</span> underlay add {owner}/{collection}
+                </div>
+                <div className="text-ink-muted text-[11px] select-none">
+                  # a JSON Schema per type in its schemas/ folder, then
                 </div>
                 <div>
-                  <span className="text-parchment-dark">$</span> underlay add --schema ./schema.json
-                  ./records.jsonl
-                </div>
-                <div>
-                  <span className="text-parchment-dark">$</span> underlay commit -m &quot;Initial
-                  version&quot;
+                  <span className="text-parchment-dark">$</span> underlay save {owner}/{collection}{' '}
+                  --from records.ndjson
                 </div>
                 <div>
                   <span className="text-parchment-dark">$</span> underlay push
@@ -57,6 +55,10 @@ export default function CollectionPage() {
             <div className="mt-4 flex items-center justify-center gap-4 text-xs">
               <Link to="/docs/quickstart" className="text-link hover:underline">
                 Read the quickstart
+              </Link>
+              <span className="text-rule">&middot;</span>
+              <Link to="/docs/cli" className="text-link hover:underline">
+                CLI
               </Link>
               <span className="text-rule">&middot;</span>
               <span className="text-ink-muted">

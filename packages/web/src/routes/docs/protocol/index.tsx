@@ -146,7 +146,10 @@ export default function ProtocolOverview() {
 
       <h2 id="not-available-yet">Not available yet</h2>
       <ul>
-        <li>Signed changes and commits: a server accepts them unsigned, and signs a receipt.</li>
+        <li>
+          Signed changes and author-built commits: underlay.org takes them only unsigned. It signs
+          the commits it builds, and a receipt for each commit it accepts.
+        </li>
         <li>Content roots and inclusion proofs.</li>
       </ul>
 

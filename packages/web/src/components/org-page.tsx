@@ -693,13 +693,13 @@ export function UseThisData({
         {example && (
           <CopyLine
             label="Command line"
-            text={`underlay clone ${origin} ${owner}/${example.slug}`}
+            text={`underlay add ${origin.replace(/^https?:\/\//, '')}/${owner}/${example.slug}`}
           />
         )}
         <CopyLine label="API" text={`GET ${origin}/api/accounts/${owner}/collections`} />
         <CopyLine label="AT Protocol" text={`at://did:web:underlay.org:${owner}`} />
         <p className="text-ink-muted text-xs">
-          Every version has a permanent ARK for citation.{' '}
+          Every version has a permanent id, <code>ul:ver:…</code>, for citation.{' '}
           <Link to="/docs" className="text-link hover:underline">
             Docs
           </Link>

@@ -627,8 +627,8 @@ To say "this record came from (or cites, or is about) that exact record", put a 
 - The CLI checks links the same way before it saves a version.
 - Follow a link: GET /api/links/resolve?to=<ul: id>&collection=<id>&type=<type>&id=<id>
   redirects to the page (or, for an asset, the download) where you can read the target; send
-  Accept: application/json for {"url"} instead. Without a collection, a ul:rec: id goes to
-  /records/<hash>.
+  Accept: application/json for {"url"} instead. Without a collection (or without type and id),
+  a ul:rec: id goes to /records/<hash>, which is not available yet (see Not Available Yet).
 - Linking to a version (ul:ver:) pins a whole collection state, e.g. the dataset an analysis used.
 
 Example: a curated record that copies a Crossref work and cites another:
@@ -771,7 +771,8 @@ POST   /api/accounts/:slug/invitations/:id/email → KF Auth emails a pending in
 GET    /api/accounts/:slug/activity    → recent versions across its collections, newest first
     (?limit= default 20, max 50): [{collectionSlug, collectionName, semver, message, recordCount, createdAt}]
 PATCH  /api/accounts/:slug             → {slug?, displayName?, bio?, website?, tagline?, location?,
-    coverColor? (#rrggbb), coverTint? (boolean), provenanceNote?, pinned? (up to 4 of its collection ids)} (owners: session or admin key)
+    coverColor? (#rrggbb), coverTint? (boolean), provenanceNote?, pinned? (up to 4 of its collection ids)}
+    (owners and admins: session or admin key; slug and KF account owners only)
 DELETE /api/accounts/:slug             → (owners: session or admin key; 409 while it holds collections)
 PATCH  /api/accounts/:slug/ark         → {"naan": "<digits>" | null} (owners and admins: session or admin key)
 GET    /api/accounts/me                → you and your memberships (session or unscoped personal key)
