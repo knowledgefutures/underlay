@@ -283,12 +283,12 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion
     const repo = await h.ports.stores.forCollection(c.id)
     await h.ports.db
       .insert(schema.files)
-      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+      .values({ hash: FILE, size: 1234, mediaType: 'image/png', storageKey: `files/${FILE}` })
     await h.ports.db.insert(schema.fileUploads).values({
       collectionId: c.id,
       hash: FILE,
       size: 1234,
-      mimeType: 'image/png',
+      mediaType: 'image/png',
       storageKey: `files/${FILE}`,
       status: 'verified',
     })
@@ -340,12 +340,12 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion
     const repo = await h.ports.stores.forCollection(c.id)
     await h.ports.db
       .insert(schema.files)
-      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+      .values({ hash: FILE, size: 1234, mediaType: 'image/png', storageKey: `files/${FILE}` })
     await h.ports.db.insert(schema.fileUploads).values({
       collectionId: c.id,
       hash: FILE,
       size: 1234,
-      mimeType: 'image/png',
+      mediaType: 'image/png',
       storageKey: `files/${FILE}`,
       status: 'verified',
     })
@@ -413,12 +413,12 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion
     const repo = await h.ports.stores.forCollection(c.id)
     await h.ports.db
       .insert(schema.files)
-      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+      .values({ hash: FILE, size: 1234, mediaType: 'image/png', storageKey: `files/${FILE}` })
     await h.ports.db.insert(schema.fileUploads).values({
       collectionId: c.id,
       hash: FILE,
       size: 1234,
-      mimeType: 'image/png',
+      mediaType: 'image/png',
       storageKey: `files/${FILE}`,
       status: 'verified',
     })
@@ -476,7 +476,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion
     // A file row alone isn't enough: the bytes must have been uploaded under this collection.
     await h.ports.db
       .insert(schema.files)
-      .values({ hash: FILE, size: 1234, mimeType: 'image/png', storageKey: `files/${FILE}` })
+      .values({ hash: FILE, size: 1234, mediaType: 'image/png', storageKey: `files/${FILE}` })
     expect(
       await commitVersion(h.ports, {
         collectionId: c.id,
@@ -489,7 +489,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('commitVersion
       collectionId: c.id,
       hash: FILE,
       size: 1234,
-      mimeType: 'image/png',
+      mediaType: 'image/png',
       storageKey: `files/${FILE}`,
       status: 'verified',
     })

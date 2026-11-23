@@ -175,8 +175,10 @@ async function prepareSession(
     if (parts === 'waiting') return { status: 'parallel' }
     await setPhase(ports, session.id, null)
     const refs = new Set(parts.flatMap((p) => p.refs))
+    const types: Record<string, string> = {}
+    for (const p of parts) for (const [h, t] of Object.entries(p.types ?? {})) types[h] ??= t
     const assetRows = await trace.step('v3.assets', () =>
-      assetChanges(ports, session, collection.id, view, read, trace, refs),
+      assetChanges(ports, session, collection.id, view, read, trace, { refs, types }),
     )
     if ('missing' in assetRows) throw new MissingFilesError(assetRows.missing)
     reserved.push(...assetRows.rows)
@@ -371,12 +373,19 @@ async function assetChanges(
   view: v3.View | null,
   read: v3.ReadOptions,
   trace: CommitTrace = noTrace,
-  /** The files the session's records reference, if known (a build in parts collects them). */
-  refs?: Set<string>,
+  /**
+   * The files the session's records reference and the media types they declare, if known (a
+   * build in parts collects them).
+   */
+  known?: { refs: Set<string>; types: Record<string, string> },
 ): Promise<{ rows: v3.LineRow[]; sizes: Map<string, number> } | { missing: string[] }> {
   const store = ports.stores.v3
   const inputs = await loadInputs(ports, session.id)
   const wanted = new Set(inputs.files && 'add' in inputs.files ? inputs.files.add : [])
+  const refs = known?.refs
+  // What the records say each asset is (`mediaType` on its reference): the collection's
+  // `$asset` row takes it, over the type the bytes were uploaded with.
+  const declared = new Map(Object.entries(known?.types ?? {}))
   for (const h of refs ?? []) wanted.add(h)
   // Files the session's records reference (`r` on each run entry, read at upload).
   const recordRuns = refs ? [] : await sessionRuns(ports, session.id, 'records')
@@ -385,6 +394,7 @@ async function assetChanges(
   for (const ix of recordRuns) {
     for await (const e of mergeRuns(ports.stores.internal, session.id, [ix])) {
       for (const h of e.r ?? []) wanted.add(h)
+      for (const [h, t] of Object.entries(e.m ?? {})) if (!declared.has(h)) declared.set(h, t)
       if (++seen % 4096 === 0)
         await trace.progress(`${fmt(seen)} of ${fmt(total)} rows read for files`, {
           rows_read: seen,
@@ -405,14 +415,14 @@ async function assetChanges(
   if (fresh.length > 0) {
     const byHash = new Map<
       string,
-      { hash: string; size: number; mimeType: string; storageKey: string }
+      { hash: string; size: number; mediaType: string; storageKey: string }
     >()
     for (const part of chunks(fresh, JSON_CHUNK)) {
       const uploaded = await ports.db
         .select({
           hash: schema.files.hash,
           size: schema.files.size,
-          mimeType: schema.files.mimeType,
+          mediaType: schema.files.mediaType,
           storageKey: schema.files.storageKey,
         })
         .from(schema.files)
@@ -434,8 +444,19 @@ async function assetChanges(
       }
       await copyAsset(ports, u.storageKey, h, u.size)
       sizes.set(h, u.size)
-      rows.push(v3.rowFromRecord(h, v3.ASSET_TYPE, { size: u.size, mediaType: u.mimeType }))
+      rows.push(
+        v3.rowFromRecord(h, v3.ASSET_TYPE, {
+          size: u.size,
+          mediaType: declared.get(h) ?? u.mediaType,
+        }),
+      )
     }
+  }
+  // An asset the collection holds already takes a newly declared type: only its row changes.
+  for (const [h, type] of declared) {
+    const a = held.get(h)
+    if (a && a.mediaType !== type)
+      rows.push(v3.rowFromRecord(h, v3.ASSET_TYPE, { size: a.size, mediaType: type }))
   }
   if (missing.length > 0) return { missing: missing.sort() }
   for (const h of removed) {

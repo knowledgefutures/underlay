@@ -70,7 +70,7 @@ export async function presignParts(
 
 // Types that render or run in a browser are stored as inert bytes (v1 rule).
 const UNSAFE_MIME = /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml)/i
-export const safeMimeType = (mime: string | undefined) =>
+export const safeMediaType = (mime: string | undefined) =>
   !mime || UNSAFE_MIME.test(mime.trim()) ? 'application/octet-stream' : mime.trim()
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -201,7 +201,7 @@ export async function presignDownloads(
         await ports.stores.fileBytes.presigner.presignGet(f.storageKey, {
           expiresIn: PRESIGN_SECONDS,
           disposition: `attachment; filename="${f.hash}"`,
-          contentType: f.mimeType,
+          contentType: f.mediaType,
         }),
       )
     }
@@ -234,7 +234,7 @@ export async function storeSmallFile(
       await ports.stores.fileBytes.put(key, bytes, { contentType: mime, ifAbsent: true })
       await recordFile(
         ports.db,
-        { hash, size: bytes.byteLength, mimeType: mime, storageKey: key },
+        { hash, size: bytes.byteLength, mediaType: mime, storageKey: key },
         fence,
       )
     }
@@ -259,7 +259,7 @@ export async function storeSmallFile(
             sessionId: lit<string | null>(null).as('session_id'),
             hash: lit<string>(hash).as('hash'),
             size: lit<number>(bytes.byteLength).as('size'),
-            mimeType: lit<string>(mime).as('mime_type'),
+            mediaType: lit<string>(mime).as('mime_type'),
             storageKey: lit<string>(key).as('storage_key'),
             multipartUploadId: lit<string | null>(null).as('multipart_upload_id'),
             status: lit<string>('verified').as('status'),
@@ -281,7 +281,7 @@ export async function storeSmallFile(
  */
 export async function recordFile(
   db: Db,
-  f: { hash: string; size: number; mimeType: string; storageKey: string },
+  f: { hash: string; size: number; mediaType: string; storageKey: string },
   fence: number,
 ): Promise<void> {
   const lit = <T>(v: unknown) => sql<T>`${v}`
@@ -293,7 +293,7 @@ export async function recordFile(
         .select({
           hash: lit<string>(f.hash).as('hash'),
           size: lit<number>(f.size).as('size'),
-          mimeType: lit<string>(f.mimeType).as('mime_type'),
+          mediaType: lit<string>(f.mediaType).as('mime_type'),
           storageKey: lit<string>(f.storageKey).as('storage_key'),
           verifiedAt: lit<number>(now).as('verified_at'),
           createdAt: lit<number>(now).as('created_at'),
@@ -320,7 +320,7 @@ export interface UploadTicket {
 export async function startUpload(
   ports: Ports,
   collectionId: string,
-  req: { hash: string; size: number; mimeType: string },
+  req: { hash: string; size: number; mediaType: string },
 ): Promise<UploadTicket> {
   const id = crypto.randomUUID()
   const key = ports.stores.stagingKey(id)
@@ -330,7 +330,7 @@ export async function startUpload(
   if (req.size <= SINGLE_PUT_BYTES) {
     ticket.url = await blobs.presigner.presignPut(key, { expiresIn: 3600 })
   } else {
-    multipartUploadId = await blobs.presigner.createMultipart(key, req.mimeType)
+    multipartUploadId = await blobs.presigner.createMultipart(key, req.mediaType)
     ticket.partBytes = partBytesFor(req.size)
     ticket.partCount = Math.ceil(req.size / ticket.partBytes)
     ticket.parts = await presignParts(
@@ -344,7 +344,7 @@ export async function startUpload(
     collectionId,
     hash: req.hash,
     size: req.size,
-    mimeType: req.mimeType,
+    mediaType: req.mediaType,
     storageKey: key,
     multipartUploadId,
   })
@@ -427,7 +427,7 @@ export async function verifyUpload(ports: Ports, uploadId: string): Promise<void
       const storageKey = ports.stores.canonicalFileKey(u.hash)
       // With the size, a store copies past CopyObject's 5 GiB in parts (UploadPartCopy).
       await copyObject(blobs, checked, storageKey, size)
-      await recordFile(ports.db, { hash: u.hash, size, mimeType: u.mimeType, storageKey }, fence)
+      await recordFile(ports.db, { hash: u.hash, size, mediaType: u.mediaType, storageKey }, fence)
     }
     const done = await ports.db
       .update(schema.fileUploads)

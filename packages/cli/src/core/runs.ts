@@ -29,7 +29,7 @@ import {
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
-import { checkLinks, v3 } from '@underlay/protocol'
+import { assetMediaTypes, checkLinks, v3 } from '@underlay/protocol'
 
 import { type AssetRow, assetKey, assetRefsIn, listAssets, runFiles } from './assets.js'
 import { type Coll, openColl, storeAt, type Ctx } from './context.js'
@@ -247,6 +247,9 @@ async function assetsFor(
   used: Set<string>,
 ): Promise<{ add: AssetRow[]; here: number }> {
   const refs = new Map<string, { type: string; id: string; field: string }>()
+  // What the records say each asset is (`mediaType` on its reference): its `$asset` row
+  // takes it, over what the file's extension suggests.
+  const declared = new Map<string, string>()
   for await (const r of fileRows(output)) {
     if (r.kind !== 'r') continue
     const data = (JSON.parse(r.line) as { data: unknown }).data
@@ -258,28 +261,34 @@ async function assetsFor(
       )
     for (const f of assetRefsIn(data))
       if (!refs.has(f.hash)) refs.set(f.hash, { type: r.type, id: r.id, field: f.field })
+    for (const [h, t] of Object.entries(assetMediaTypes(data)))
+      if (!declared.has(h)) declared.set(h, t)
   }
   if (!refs.size) return { add: [], here: 0 }
-  const named = new Set((await listAssets(c)).map((a) => a.hash))
+  const held = new Map((await listAssets(c)).map((a) => [a.hash, a]))
   const add: AssetRow[] = []
   const missing: { hash: string; type: string; id: string; field: string }[] = []
   let here = 0
   for (const [hash, at] of refs) {
     const w = written.get(hash)
     if (w) used.add(hash)
-    if (named.has(hash)) {
+    const type = declared.get(hash)
+    const had = held.get(hash)
+    if (had) {
       here++
+      // Held already: only a newly declared type changes its row.
+      if (type && type !== had.mediaType) add.push({ hash, size: had.size, mediaType: type })
       continue
     }
     if (w) {
       await c.store.fs.put(assetKey(hash), new Uint8Array(readFileSync(w.path)), { ifAbsent: true })
-      add.push({ hash, size: w.size, mediaType: w.mediaType })
+      add.push({ hash, size: w.size, mediaType: type ?? w.mediaType })
       continue
     }
     const stored = await c.store.fs.head(assetKey(hash))
     if (stored) {
       here++
-      add.push({ hash, size: stored.size, mediaType: null })
+      add.push({ hash, size: stored.size, mediaType: type ?? null })
       continue
     }
     missing.push({ hash, ...at })

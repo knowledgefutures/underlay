@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigation, useSearchParams } from 'react-router'
 
 import { formatBytes, formatCount, formatDate, prefixedHash, shortHash } from '~/lib/format'
-import { asLink, linkUrl, shortUlId, ulId } from '~/lib/links'
+import { asLink, assetDownloadUrl, linkUrl, shortUlId, ulId } from '~/lib/links'
 import { RECORDS_PAGE_SIZE, type RecordsPage } from '~/lib/records-page'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
@@ -276,14 +276,13 @@ export function RecordsView({
                         const val = r.data?.[f]
                         const ref = asLink(val)
                         if (ref?.attached) {
-                          const hash = ref.hash
                           // Route through the API so access is checked and
                           // a presigned URL is minted (assets are private).
                           const assetUrl = withToken(
-                            `/api/collections/${owner}/${collection}/assets/${hash}`,
+                            assetDownloadUrl(owner!, collection!, ref),
                             shareToken,
                           )
-                          const label = f === 'pdf' ? 'PDF' : 'Asset'
+                          const label = ref.fileName ?? (f === 'pdf' ? 'PDF' : 'Asset')
                           return (
                             <td key={f} className="border-rule border-b p-2">
                               <a
@@ -501,8 +500,8 @@ export function AssetsView({
           <tbody>
             {assets.map((f: any) => {
               const refs: any[] = f.references ?? []
-              const isPdf = f.mimeType === 'application/pdf'
-              const isImage = f.mimeType?.startsWith('image/')
+              const isPdf = f.mediaType === 'application/pdf'
+              const isImage = f.mediaType?.startsWith('image/')
               return (
                 <tr key={f.hash} className="border-rule hover:bg-parchment-dark/50 border-t">
                   <td className="p-2.5">
@@ -554,7 +553,7 @@ export function AssetsView({
                         <code className="text-ink-muted font-mono text-[11px]">
                           {f.hash.slice(0, 12)}…
                         </code>
-                        <span className="text-ink-muted ml-2">{f.mimeType}</span>
+                        <span className="text-ink-muted ml-2">{f.mediaType}</span>
                       </div>
                     </div>
                   </td>

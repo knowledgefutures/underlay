@@ -10,7 +10,7 @@
  */
 import { v3 } from '@underlay/protocol'
 
-import { presignDownloads, safeMimeType, uploadedFiles } from '../files/files.js'
+import { presignDownloads, safeMediaType, uploadedFiles } from '../files/files.js'
 import { deniedHashes } from '../lib/limits.js'
 import type { Ports } from '../ports.js'
 import { type AssetData, dataOf, headView } from './catalog.js'
@@ -55,11 +55,26 @@ export async function v3ReadableFiles(
   return out
 }
 
-/** Presigned download URLs for assets, from the v3 area; blocked files get none. */
+/**
+ * A download's Content-Disposition: saved as `name` (an asset reference's `fileName`, checked
+ * by `fileNameOf`), or else as the hash. RFC 6266: an ASCII `filename`, and the exact name as
+ * `filename*`.
+ */
+export function attachment(hash: string, name?: string | null): string {
+  if (!name) return `attachment; filename="${hash}"`
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, '_')
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
+
+/**
+ * Presigned download URLs for assets, from the v3 area; blocked files get none. `names` saves
+ * an asset under the file name a reference gives it.
+ */
 export async function v3PresignDownloads(
   ports: Ports,
   files: Map<string, AssetData | null>,
   expiresIn: number,
+  names?: Map<string, string>,
 ): Promise<Map<string, string>> {
   const denied = await deniedHashes(ports.db)
   // Bytes uploaded but not committed yet are still where the upload put them.
@@ -71,9 +86,9 @@ export async function v3PresignDownloads(
       hash,
       await ports.stores.fileBytes.presigner.presignGet(ports.stores.v3BucketKey(assetKey(hash)), {
         expiresIn,
-        disposition: `attachment; filename="${hash}"`,
+        disposition: attachment(hash, names?.get(hash)),
         // As v2 does: a type a browser would render or run is served as bytes.
-        ...(data.mediaType ? { contentType: safeMimeType(data.mediaType) } : {}),
+        ...(data.mediaType ? { contentType: safeMediaType(data.mediaType) } : {}),
       }),
     )
   }

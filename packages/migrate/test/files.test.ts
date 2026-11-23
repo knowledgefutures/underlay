@@ -27,7 +27,7 @@ describe('copyFiles', () => {
       await h.ports.db.insert(schema.files).values({
         hash: sha(body),
         size: body.length,
-        mimeType: 'text/plain',
+        mediaType: 'text/plain',
         storageKey: v1Key(sha(body)),
       })
       if (name === 'good') await source.put(v1Key(sha(body)), body)

@@ -134,6 +134,7 @@ async function copyTable(
   mode: CopyMode = 'add',
 ) {
   const columns = getTableColumns(v2) as Record<string, SQLiteColumn>
+  const byName = new Map(Object.entries(columns).map(([prop, c]) => [c.name, prop]))
   const pk = primaryKey(v2)
   const keyOf = (r: Record<string, unknown>) => JSON.stringify(pk.map((k) => String(r[k.prop])))
   const rows = await v1.query(`SELECT * FROM "${v1Table}"`)
@@ -144,7 +145,11 @@ async function copyTable(
       .slice(i, i + 50)
       .map((r) => {
         const out: Record<string, unknown> = {}
-        for (const [k, v] of Object.entries(r)) if (columns[camel(k)]) out[camel(k)] = v
+        for (const [k, v] of Object.entries(r)) {
+          // v1's column, by its name in v2 (files.mime_type is `mediaType`), or camel-cased.
+          const prop = byName.get(k) ?? (columns[camel(k)] ? camel(k) : undefined)
+          if (prop) out[prop] = v
+        }
         return map ? map(out) : out
       })
       .filter((r): r is Record<string, unknown> => r !== null)
@@ -238,7 +243,7 @@ export async function recordPossession(
       collectionId,
       hash: f.hash,
       size: f.size,
-      mimeType: f.mimeType,
+      mediaType: f.mediaType,
       storageKey: ports.stores.canonicalFileKey(f.hash),
       status: 'verified' as const,
     }))

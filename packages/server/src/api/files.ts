@@ -2,7 +2,7 @@
  * Asset routes (a collection's PDFs, images: `ul:asset:<hex>`), mounted at /api/collections.
  * Each answers at `/assets/…` and at its old path, `/files/…`, which clients still call.
  *
- *   HEAD|GET /:owner/:slug/assets/:hash              302 to a presigned URL (v1 contract)
+ *   HEAD|GET /:owner/:slug/assets/:hash              302 to a presigned URL (v1 contract); ?fileName= names the download
  *   POST     /:owner/:slug/assets/presign            {hashes} → {hash: url|null} (read-only)
  *   PUT      /:owner/:slug/assets/:hash              small upload through the API
  *   POST     /:owner/:slug/assets/uploads            start a direct upload → presigned PUT or parts
@@ -10,6 +10,7 @@
  *   GET      /:owner/:slug/assets/uploads/:id/parts  presigned parts from ?from=
  *   GET      /:owner/:slug/assets/uploads/:id        pending | verifying | verified | failed
  */
+import { fileNameOf } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -27,7 +28,7 @@ import {
   presignDownloads,
   PRESIGN_SECONDS,
   readableFiles,
-  safeMimeType,
+  safeMediaType,
   SMALL_UPLOAD_BYTES,
   startUpload,
   storeSmallFile,
@@ -61,12 +62,19 @@ export function fileRoutes() {
         if (head)
           return c.body(null, 200, {
             'content-length': String(size),
-            'content-type': safeMimeType(data?.mediaType ?? undefined),
+            'content-type': safeMediaType(data?.mediaType ?? undefined),
           })
         meter(c.var.meter, 'file_downloads', 1)
         meter(c.var.meter, 'file_bytes', size)
         c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
-        const urls = await v3PresignDownloads(c.var.ports, found, PRESIGN_SECONDS)
+        // ?fileName= saves it under the name an asset reference gives it (its `fileName`).
+        const name = fileNameOf(c.req.query('fileName'))
+        const urls = await v3PresignDownloads(
+          c.var.ports,
+          found,
+          PRESIGN_SECONDS,
+          name ? new Map([[hash, name]]) : undefined,
+        )
         const url = urls.get(hash)
         return url ? c.redirect(url, 302) : jsonError(c, 404, 'Asset not found')
       }
@@ -87,7 +95,7 @@ export function fileRoutes() {
         .limit(1)
       if (!f) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
       if (head)
-        return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mimeType })
+        return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mediaType })
       meter(c.var.meter, 'file_downloads', 1)
       meter(c.var.meter, 'file_bytes', f.size)
       // The presigned URL lasts PRESIGN_SECONDS: a browser may reuse the redirect until shortly before.
@@ -161,7 +169,7 @@ export function fileRoutes() {
         access.collection.id,
         hash,
         bytes,
-        safeMimeType(mime),
+        safeMediaType(mime),
       )
       if (result === 'mismatch') return jsonError(c, 400, 'Hash mismatch', { expected: hash })
       return c.json({ hash, status: 'stored', size: bytes.byteLength }, 201)
@@ -173,8 +181,11 @@ export function fileRoutes() {
       const body = (await c.req.json().catch(() => null)) as {
         hash?: unknown
         size?: unknown
+        mediaType?: unknown
+        /** What CLIs before 2026-11-23 send for `mediaType`: still read, not documented. */
         mimeType?: unknown
       } | null
+      const declared = body?.mediaType ?? body?.mimeType
       const hash = typeof body?.hash === 'string' ? cleanHash(body.hash) : ''
       const size = Number(body?.size)
       if (!isHash(hash)) return jsonError(c, 400, '"hash" must be a sha256 asset hash')
@@ -184,7 +195,7 @@ export function fileRoutes() {
       const ticket = await startUpload(c.var.ports, access.collection.id, {
         hash,
         size,
-        mimeType: safeMimeType(typeof body?.mimeType === 'string' ? body.mimeType : undefined),
+        mediaType: safeMediaType(typeof declared === 'string' ? declared : undefined),
       })
       return c.json(ticket, 201)
     })

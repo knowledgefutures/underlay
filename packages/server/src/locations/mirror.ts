@@ -182,7 +182,7 @@ async function copyFileBytes(ports: Ports, dest: Store, hash: string, size: numb
     dest,
     keys.file(hash),
     readParts(ports.stores.fileBytes, row.storageKey, size, mirrorConfig.partBytes),
-    { contentType: row.mimeType },
+    { contentType: row.mediaType },
   )
 }
 

@@ -159,7 +159,7 @@ describe('asset names', () => {
     let res = await h.request(`${base}/assets/uploads`, {
       method: 'POST',
       user,
-      json: { hash: sha(good), size: good.length, mimeType: 'application/pdf' },
+      json: { hash: sha(good), size: good.length, mediaType: 'application/pdf' },
     })
     expect(res.status).toBe(201)
     const ticket = await json(res)

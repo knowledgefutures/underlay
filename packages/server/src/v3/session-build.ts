@@ -191,6 +191,8 @@ export interface PartResult {
   read: number
   /** Files its records reference (`r` on the run entries). */
   refs: string[]
+  /** The media types its records declare for them (`m`), by hash. */
+  types?: Record<string, string>
   ms: number
 }
 
@@ -313,9 +315,11 @@ export async function buildPart(
     const indexes = await Promise.all(plan.seqs.map((s) => readRunIndex(internal, sessionId, s)))
     const slices = indexes.map((ix) => sliceRun(ix, range)).filter((ix) => ix.parts.length > 0)
     const refs = new Set<string>()
+    const types: Record<string, string> = {}
     const rows = (async function* () {
       for await (const e of mergeRuns(internal, sessionId, slices, range)) {
         for (const h of e.r ?? []) refs.add(h)
+        for (const [h, t] of Object.entries(e.m ?? {})) types[h] ??= t
         yield runRow(e)
       }
     })()
@@ -343,6 +347,7 @@ export async function buildPart(
       rows: built.rows,
       read: readRows,
       refs: [...refs].sort(),
+      types,
       ms: Date.now() - started,
     }
     await internal.put(key, JSON.stringify(result), {

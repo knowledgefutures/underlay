@@ -532,7 +532,7 @@ export async function v3Files(c: Context<AppEnv>, access: CollectionAccess) {
     hashes.map((h) => ({
       hash: h,
       size: assets.get(h)!.size,
-      mimeType: assets.get(h)!.mediaType,
+      mediaType: assets.get(h)!.mediaType,
       createdAt: created.get(h) ?? null,
       referenceCount: 0,
       references: [],

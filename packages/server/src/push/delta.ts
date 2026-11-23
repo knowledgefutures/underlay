@@ -12,6 +12,7 @@ import {
   checkRecordId,
   checkTypeSlug,
   compileSchema,
+  assetMediaTypes,
   assetRefs,
   emptySet,
   InputRuleError,
@@ -203,6 +204,7 @@ export async function prepareRecords(
     // A packed record's body leaves its entry (push/packs.ts): the commit counts its
     // asset references from these: `$asset`, or `$file` as records wrote it before.
     const refs = opts.packed && mayHoldAssetRefs(canonical) ? assetRefs(data) : []
+    const types = refs.length ? assetMediaTypes(data) : {}
     const entry: RunEntry = {
       t: rec.type,
       k: rec.id,
@@ -211,6 +213,7 @@ export async function prepareRecords(
       b: body,
       ...(isPrivate ? { p: true } : {}),
       ...(refs.length ? { r: refs } : {}),
+      ...(Object.keys(types).length ? { m: types } : {}),
     }
     // A batch with an invalid record is refused whole: nothing more is packed.
     if (opts.place && total === 0) await opts.place(entry, i + 1)

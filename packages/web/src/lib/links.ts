@@ -19,6 +19,19 @@ export interface DataLink {
   path: string
   /** An asset reference (`$asset`, or `$file`): an asset of the collection the record is in. */
   attached?: boolean
+  /** An asset reference's `mediaType`: what the bytes are. */
+  mediaType?: string
+  /** An asset reference's `fileName`: what to save them as. */
+  fileName?: string
+}
+
+/**
+ * Where to download an attached asset: the collection's asset route, saved under the
+ * reference's `fileName` when it gives one.
+ */
+export function assetDownloadUrl(owner: string, collection: string, link: DataLink): string {
+  const base = `/api/collections/${owner}/${collection}/assets/${link.hash}`
+  return link.fileName ? `${base}?${new URLSearchParams({ fileName: link.fileName })}` : base
 }
 
 const UL_ID = /^ul:(rec|asset|ver):([0-9a-f]{64})$/
@@ -45,7 +58,12 @@ export function asLink(v: unknown, path = ''): DataLink | null {
       : typeof o.$file === 'string'
         ? FILE_REF.exec(o.$file)
         : null
-  return a ? { kind: 'asset', hash: a[1]!, path, attached: true } : null
+  if (!a) return null
+  const ref: DataLink = { kind: 'asset', hash: a[1]!, path, attached: true }
+  if (typeof o.mediaType === 'string' && o.mediaType.includes('/')) ref.mediaType = o.mediaType
+  if (typeof o.fileName === 'string' && o.fileName.trim() && !/[/\\]/.test(o.fileName))
+    ref.fileName = o.fileName.trim()
+  return ref
 }
 
 /** Every link in a record's data, in document order. A link object is not searched further. */

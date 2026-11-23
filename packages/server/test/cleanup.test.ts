@@ -118,7 +118,7 @@ describe('storage cleanup, step 1: sessions and uploads', () => {
     const ticket = await startUpload(h.ports, c.id, {
       hash: sha('never'),
       size: 5,
-      mimeType: 'text/plain',
+      mediaType: 'text/plain',
     })
     const [upload] = await h.ports.db
       .select()

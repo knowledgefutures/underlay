@@ -317,7 +317,7 @@ export class Remote {
     }
     const ticket = await this.post<{ id: string; url?: string; parts?: unknown }>(
       `${base}/uploads`,
-      { hash, size: bytes.byteLength, mimeType: type },
+      { hash, size: bytes.byteLength, mediaType: type },
     )
     if (!ticket.url)
       throw new CliError(

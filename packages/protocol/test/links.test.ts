@@ -2,11 +2,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  assetMediaTypes,
   assetRefs,
   checkLinks,
+  fileNameOf,
   isUlId,
   links,
   makeLink,
+  mediaTypeOf,
   parseHashInput,
   parseUlId,
   ulId,
@@ -125,5 +128,30 @@ describe('links', () => {
       expect(links(c.data)).toEqual(c.links)
       expect(assetRefs(c.data)).toEqual(c.assets)
     }
+  })
+})
+
+describe('asset reference members', () => {
+  it('reads the media types references declare, the first one winning', () => {
+    const data = {
+      cover: { $asset: ulId('asset', a), mediaType: 'image/png', fileName: 'cover.png' },
+      again: { $asset: ulId('asset', a), mediaType: 'image/webp' },
+      old: { $file: `sha256:${b}`, mediaType: 'application/pdf; charset=binary' },
+      bad: { $asset: ulId('asset', 'c'.repeat(64)), mediaType: 'not a type' },
+      linked: { $link: ulId('asset', 'd'.repeat(64)), mediaType: 'image/gif' },
+    }
+    expect(assetMediaTypes(data)).toEqual({
+      [a]: 'image/png',
+      [b]: 'application/pdf; charset=binary',
+    })
+  })
+
+  it('takes a media type or a file name only when it is one', () => {
+    expect(mediaTypeOf(' text/csv ')).toBe('text/csv')
+    for (const v of ['png', 'image/', '/png', 'image png', 42, null])
+      expect(mediaTypeOf(v)).toBeNull()
+    expect(fileNameOf('Report (final).pdf')).toBe('Report (final).pdf')
+    for (const v of ['', ' ', '..', 'a/b.pdf', 'a\\b.pdf', 'a\nb', 7])
+      expect(fileNameOf(v)).toBeNull()
   })
 })

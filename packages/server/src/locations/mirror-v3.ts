@@ -138,12 +138,12 @@ export async function v3MirrorStep(
     const at = await located(store, key)
     if (!at) throw new Error(`Asset ${hash} is listed but not stored`)
     const [row] = await db
-      .select({ mimeType: schema.files.mimeType })
+      .select({ mediaType: schema.files.mediaType })
       .from(schema.files)
       .where(eq(schema.files.hash, hash))
       .limit(1)
     await putFromParts(dest, key, readParts(store, at.key, at.size, mirrorConfig.partBytes), {
-      ...(row?.mimeType ? { contentType: row.mimeType } : {}),
+      ...(row?.mediaType ? { contentType: row.mediaType } : {}),
     })
     doneAssets.add(hash)
     bytes += at.size

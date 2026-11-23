@@ -105,13 +105,13 @@ async function* reservedRows(
   const nowFiles = await filesOf(now)
   const prevFiles = prev ? await filesOf(prev) : new Map<string, number>()
   const added = [...nowFiles.keys()].filter((h) => !prevFiles.has(h))
-  const stored = new Map<string, { size: number; mimeType: string; storageKey: string }>()
+  const stored = new Map<string, { size: number; mediaType: string; storageKey: string }>()
   for (const part of chunks(added, JSON_CHUNK)) {
     const rows = await ports.db
       .select({
         hash: schema.files.hash,
         size: schema.files.size,
-        mimeType: schema.files.mimeType,
+        mediaType: schema.files.mediaType,
         storageKey: schema.files.storageKey,
       })
       .from(schema.files)
@@ -131,7 +131,7 @@ async function* reservedRows(
   )
   const assets: v3.LineRow[] = added.map((h) => {
     const f = stored.get(h)!
-    return v3.rowFromRecord(h, v3.ASSET_TYPE, { size: f.size, mediaType: f.mimeType })
+    return v3.rowFromRecord(h, v3.ASSET_TYPE, { size: f.size, mediaType: f.mediaType })
   })
   for (const h of prevFiles.keys())
     if (!nowFiles.has(h)) assets.push(v3.removalRow(h, v3.ASSET_TYPE))

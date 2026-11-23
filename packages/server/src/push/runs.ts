@@ -68,6 +68,8 @@ export interface RunEntry {
   l?: string
   /** With `l`: the files the record references, read at upload. */
   r?: string[]
+  /** With `r`: the media types the record declares for them, by hash (`mediaType`). */
+  m?: Record<string, string>
   /** A delete (delta deletes runs). */
   x?: boolean
   /** Precedence: the seq of the upload this entry came from (compacted runs only). */

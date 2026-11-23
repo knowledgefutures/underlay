@@ -42,7 +42,7 @@ describe('files', () => {
     expect(f).toMatchObject({
       hash: sha(bytes),
       size: 10,
-      mimeType: 'application/octet-stream',
+      mediaType: 'application/octet-stream',
       storageKey: `repo/files/${sha(bytes)}`,
     })
     expect(h.bucket.objects.has(`repo/files/${sha(bytes)}`)).toBe(true)
@@ -87,7 +87,7 @@ describe('files', () => {
     let res = await h.request(`${base}/files/uploads`, {
       method: 'POST',
       user,
-      json: { hash: sha(good), size: good.length, mimeType: 'application/pdf' },
+      json: { hash: sha(good), size: good.length, mediaType: 'application/pdf' },
     })
     expect(res.status).toBe(201)
     const ticket = await json(res)

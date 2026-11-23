@@ -15,10 +15,15 @@ export {
 } from './input-rules.js'
 export {
   ASSET_MEMBER,
+  assetMediaTypes,
   assetRefIn,
   assetRefs,
+  FILE_NAME_MEMBER,
+  fileNameOf,
   LEGACY_FILE_MEMBER,
   mayHoldAssetRefs,
+  MEDIA_TYPE_MEMBER,
+  mediaTypeOf,
 } from './asset-refs.js'
 export { fileRefs } from './file-refs.js'
 export {

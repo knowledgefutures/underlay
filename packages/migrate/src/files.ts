@@ -101,7 +101,7 @@ export async function copyFiles(
         if (hash !== f.hash || bytes.byteLength !== f.size) {
           report.mismatched.push(f.hash)
         } else {
-          await target.put(key, bytes, { contentType: f.mimeType, ifAbsent: true })
+          await target.put(key, bytes, { contentType: f.mediaType, ifAbsent: true })
           await repoint(f.hash, key)
           report.copied++
           report.bytes += f.size

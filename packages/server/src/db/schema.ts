@@ -580,7 +580,7 @@ export const placements = sqliteTable(
 export const files = sqliteTable('files', {
   hash: text('hash').primaryKey(),
   size: integer('size').notNull(),
-  mimeType: text('mime_type').notNull(),
+  mediaType: text('mime_type').notNull(),
   storageKey: text('storage_key').notNull(),
   verifiedAt: ts('verified_at'),
   createdAt: createdAt(),
@@ -595,7 +595,7 @@ export const fileUploads = sqliteTable(
     sessionId: text('session_id'),
     hash: text('hash').notNull(),
     size: integer('size').notNull(),
-    mimeType: text('mime_type').notNull(),
+    mediaType: text('mime_type').notNull(),
     storageKey: text('storage_key').notNull(),
     multipartUploadId: text('multipart_upload_id'),
     status: text('status', { enum: ['pending', 'verifying', 'verified', 'failed'] })

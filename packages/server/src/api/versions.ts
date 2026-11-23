@@ -729,7 +729,7 @@ export function versionRoutes() {
         hashes.map((h) => ({
           hash: h,
           size: byHash.get(h)?.size ?? null,
-          mimeType: byHash.get(h)?.mimeType ?? null,
+          mediaType: byHash.get(h)?.mediaType ?? null,
           createdAt: byHash.get(h)?.createdAt ?? null,
           referenceCount: counts.get(h) ?? 0,
           references: [],

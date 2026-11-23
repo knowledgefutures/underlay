@@ -210,7 +210,7 @@ function FieldValue({ name, value }: { name: string; value: unknown }) {
   if (ref?.attached) {
     // Routes through the API so access is checked and a presigned URL is minted.
     const assetUrl = `/api/collections/assets/${ref.hash}`
-    const label = name === 'pdf' ? 'PDF' : 'Asset'
+    const label = ref.fileName ?? (name === 'pdf' ? 'PDF' : 'Asset')
     return (
       <a
         href={assetUrl}
