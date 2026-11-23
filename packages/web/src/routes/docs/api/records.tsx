@@ -5,8 +5,31 @@ import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 const linkExample = `{"id": "w1", "type": "Work", "data": {
   "title": "Notes on a dataset",
   "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
+  "figure": {"$link": "ul:asset:7b1e...", "collection": "4f7d1c2e-..."},
   "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
 }}`
+
+/** Each kind of link: what it points at, its `$link`, where the hex comes from, what to add. */
+const linkKinds: [string, string, string, string][] = [
+  [
+    'A record',
+    'ul:rec:<hash>',
+    'The record’s hash, which every read returns',
+    'collection, type, and id: the record’s page',
+  ],
+  [
+    'A file',
+    'ul:asset:<sha256>',
+    'The file’s SHA-256, as the files routes list it',
+    'collection: the file’s download',
+  ],
+  [
+    'A version',
+    'ul:ver:<hex>',
+    'The version’s hash, from GET …/versions/:version',
+    'collection: the version’s page',
+  ],
+]
 
 const resolveExample = `curl -H 'Accept: application/json' \\
   'https://www.underlay.org/api/links/resolve?to=ul:ver:41d0...&collection=4f7d1c2e-...'
@@ -299,29 +322,58 @@ export default function DocsApiRecords() {
         Links in records
       </h2>
       <p>
-        A record points at an exact record, file or version anywhere on Underlay with a link in its{' '}
-        <code>data</code>:
+        A record points at an exact record, file, or version anywhere on Underlay with a link: an
+        object in its <code>data</code>, at any depth, whose <code>$link</code> is an Underlay id.
+        The prefix says what the link points at:
       </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Points at</th>
+            <th>
+              <code>$link</code>
+            </th>
+            <th>The hex</th>
+            <th>Add, so it can be followed to</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linkKinds.map(([target, value, hex, add]) => (
+            <tr key={value}>
+              <td>{target}</td>
+              <td>
+                <code>{value}</code>
+              </td>
+              <td>{hex}</td>
+              <td>{add}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>One of each:</p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{linkExample}</code>
       </pre>
       <ul>
         <li>
-          <code>$link</code> is an Underlay id: <code>ul:rec:</code> and a record&rsquo;s{' '}
-          <code>hash</code> (as every read returns it), <code>ul:asset:</code> and a file&rsquo;s
-          SHA-256, or <code>ul:ver:</code> and a version id. Lowercase, 64 hex digits.
+          <code>$link</code> is required: lowercase, with 64 hex digits after the prefix.
         </li>
         <li>
-          <code>collection</code> (the collection&rsquo;s id, from its <code>id</code> or the{' '}
-          <code>x-underlay-collection</code> header, never its slug), <code>type</code> and{' '}
-          <code>id</code> are optional and say where you found the target. Other members are yours,
-          such as <code>rel</code> or <code>label</code>.
+          <code>collection</code>, <code>type</code>, and <code>id</code> are optional, and say
+          where you found the target. <code>collection</code> is the collection&rsquo;s id (its{' '}
+          <code>id</code>, or the <code>x-underlay-collection</code> header), never its slug;{' '}
+          <code>type</code> and <code>id</code> are a record&rsquo;s key. Include them: the hash
+          pins the content, and these let a reader open it.
         </li>
         <li>
-          A push with a record whose <code>$link</code> is not an Underlay id (bare hex,{' '}
-          <code>sha256:</code>, <code>ulv3:</code>) is refused with <code>422</code>, naming the
-          record and what to write. The target is never checked: it may be private, or on another
-          server.
+          Other members are yours, such as <code>rel</code> or <code>label</code>. Name the field
+          that holds a link for what it means (<code>derivedFrom</code>, <code>cites</code>).
+        </li>
+        <li>
+          A push with a malformed link is refused with <code>422</code>, naming the record and what
+          to write: bare hex (write it with its prefix), <code>sha256:…</code> (write{' '}
+          <code>ul:asset:…</code>), <code>ulv3:…</code> (write <code>ul:ver:…</code>), or an
+          uppercase id. The target is never checked: it may be private, or on another server.
         </li>
         <li>
           A link to a file does not attach it to the collection; <code>$file</code> does (see the{' '}

@@ -22,8 +22,41 @@ ul:ver:<hex>      a version: the SHA-256 of its commit
 
 const link = `{"title": "Notes on a dataset",
  "derivedFrom": {"$link": "ul:rec:9f2c…", "collection": "4f7d1c2e-…",
-                 "type": "work", "id": "10.1234/abc", "rel": "copy"},
+                 "type": "work", "id": "10.1234/abc"},
+ "figure":      {"$link": "ul:asset:7b1e…", "collection": "4f7d1c2e-…"},
  "usedVersion": {"$link": "ul:ver:41d0…", "collection": "4f7d1c2e-…"}}`
+
+/** What a link can point at: target, `$link`, what the hex is, the members that place it. */
+const linkTargets: [string, string, string, string][] = [
+  ['A record', 'ul:rec:<hex>', 'the record’s hash (the hash of its line)', 'collection, type, id'],
+  ['An asset (a file)', 'ul:asset:<hex>', 'the SHA-256 of its bytes', 'collection'],
+  ['A version', 'ul:ver:<hex>', 'the SHA-256 of its commit (the version id)', 'collection'],
+]
+
+/** A link's members. */
+const linkMembers: [string, string, string][] = [
+  ['$link', 'Required', 'An Underlay id, as above'],
+  [
+    'collection',
+    'Optional',
+    'The id of a collection that holds the target, never its handle: letters, digits, ., _, or -, up to 128 characters',
+  ],
+  [
+    'type, id',
+    'Optional',
+    'For a record, its type and id in that collection: strings of 1 to 1,024 characters',
+  ],
+  ['Any other', 'Optional', 'The publisher’s, such as a label or a relation'],
+]
+
+/** `$link` values a server refuses, and what to write instead. */
+const linkRefused: [string, string][] = [
+  ['9f2c…', 'ul:rec:9f2c…, ul:asset:9f2c…, or ul:ver:9f2c…: bare hex doesn’t say its kind'],
+  ['sha256:9f2c…', 'ul:asset:9f2c…'],
+  ['ulv3:9f2c…', 'ul:ver:9f2c…'],
+  ['UL:REC:9F2C…', 'ul:rec:9f2c…: ids are lowercase'],
+  ['42, {}, null', 'a string'],
+]
 
 const reserved: [string, string, string][] = [
   ['$schema', 'a type name', 'that type’s JSON Schema'],
@@ -322,39 +355,109 @@ export default function ProtocolRecords() {
 
       <h2 id="links">Links</h2>
       <p>
-        A record points at another record, an asset or a version with a link: an object, at any
+        A record points at another record, an asset, or a version with a link: an object, at any
         depth of its <code>data</code>, with a <code>$link</code> member whose value is an Underlay
-        id.
+        id. The prefix says what kind of thing the link points at:
       </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Target</th>
+            <th>
+              <code>$link</code>
+            </th>
+            <th>The hex is</th>
+            <th>Members that say where it is</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linkTargets.map(([target, value, hex, place]) => (
+            <tr key={value}>
+              <td>{target}</td>
+              <td>
+                <code>{value}</code>
+              </td>
+              <td>{hex}</td>
+              <td>
+                <code>{place}</code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>One of each, in a record&rsquo;s data:</p>
       <CodeBlock>{link}</CodeBlock>
+
+      <h3 id="link-members">Members</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th></th>
+            <th>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linkMembers.map(([member, need, value]) => (
+            <tr key={member}>
+              <td>{member === 'Any other' ? member : <code>{member}</code>}</td>
+              <td>{need}</td>
+              <td>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       <ul>
         <li>
-          <code>collection</code>, <code>type</code> and <code>id</code> are optional and say where
-          the target was found: the id (not the handle) of a collection that holds it, and for a
-          record its key there. The hash is what the link points at.
+          The hash is what the link points at. <code>collection</code>, <code>type</code>, and{' '}
+          <code>id</code> only say where the target was found, so a reader can open it.
         </li>
         <li>
-          Any other member is the publisher&rsquo;s, such as a label or a relation. Name the field
-          for what the link means (<code>derivedFrom</code>, <code>cites</code>): readers tell links
-          apart by where they are.
+          Name the field that holds a link for what it means (<code>derivedFrom</code>,{' '}
+          <code>cites</code>): readers tell links apart by where they are.
         </li>
         <li>A link object is not searched for further links.</li>
-        <li>
-          A server MUST refuse a record with an object whose <code>$link</code> is not an Underlay
-          id, whose <code>collection</code> is not a collection id, or whose <code>type</code> or{' '}
-          <code>id</code> is not a string of 1 to 1,024 characters. A pasted hash or an old prefix
-          is refused, not stored as data that looks like a link.
-        </li>
-        <li>
-          A server MUST NOT refuse a link because of its target, which may be private, held
-          elsewhere, taken down, or never published. A link is a claim made by the record that holds
-          it.
-        </li>
-        <li>
-          A link to an asset does not make the collection hold it; <code>$asset</code> rows do. The{' '}
-          <code>$file</code> reference above is read as a link to <code>ul:asset:</code>.
-        </li>
       </ul>
+
+      <h3 id="links-refused">What a server refuses</h3>
+      <p>
+        A server MUST refuse a record with an object whose <code>$link</code> is not an Underlay id,
+        whose <code>collection</code> is not a collection id, or whose <code>type</code> or{' '}
+        <code>id</code> is not a string of 1 to 1,024 characters. A pasted hash or an old prefix is
+        refused, not stored as data that looks like a link:
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>
+              <code>$link</code> given
+            </th>
+            <th>Write instead</th>
+          </tr>
+        </thead>
+        <tbody>
+          {linkRefused.map(([given, instead]) => (
+            <tr key={given}>
+              <td>
+                <code>{given}</code>
+              </td>
+              <td>{instead}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        A server MUST NOT refuse a link because of its target, which may be private, held elsewhere,
+        taken down, or never published. A link is a claim made by the record that holds it.
+      </p>
+
+      <h3 id="links-and-files">Links and files</h3>
+      <p>
+        A link to an asset points at it; it does not make the collection hold it. A collection holds
+        an asset when a <code>$asset</code> row names it (see <a href="#assets">Assets</a>). On
+        underlay.org, a <code>{'{"$file": "sha256:<hex>"}'}</code> reference adds that row when you
+        push, and is also read as a link to <code>ul:asset:</code>.
+      </p>
       <p>
         Informative. What a server builds from links (what points at a record, where data came from)
         is not part of the protocol. Since links name targets by hash, following them always ends.

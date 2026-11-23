@@ -605,15 +605,23 @@ and records together.
 
 ## Links between records
 
-To say "this record came from (or cites, or is about) that exact record", put a link in data:
+To say "this record came from (or cites, or is about) that exact record, file, or version", put a
+link in data: an object, at any depth, whose "$link" is an Underlay id. The prefix says what it
+points at:
+
+  Points at   "$link"              The hex                        Add, to follow it
+  a record    ul:rec:<hash>        the record's "hash"            collection, type, id
+  a file      ul:asset:<sha256>    the file's SHA-256             collection
+  a version   ul:ver:<hex>         the version's "hash"           collection
 
   {"$link": "ul:rec:<64 hex>", "collection": "<collection id>", "type": "Work", "id": "10.1234/abc"}
+  {"$link": "ul:asset:<64 hex>", "collection": "<collection id>"}
+  {"$link": "ul:ver:<64 hex>", "collection": "<collection id>"}
 
-- "$link" is required: an Underlay id, "ul:rec:<hash>" (a record), "ul:asset:<sha256>" (a file)
-  or "ul:ver:<hex>" (a version). Lowercase, exactly 64 hex digits.
-- "collection", "type" and "id" are optional and say where you found the target: the collection
-  id (from x-underlay-collection or the collection's "id", never its slug) and the record's key.
-  Include them: they let readers find the record; the hash pins its exact content.
+- "$link" is required: lowercase, exactly 64 hex digits after the prefix.
+- "collection", "type", and "id" are optional, and say where you found the target: the collection
+  id (from x-underlay-collection or the collection's "id", never its slug) and, for a record, its
+  key. Include them: they let readers find the target; the hash pins its exact content.
 - Any other member is yours ("rel": "derivedFrom", "label": ...). Readers tell links apart by the
   field they are in, so name the field for what it means (derivedFrom, cites, sameAs).
 - A link can sit at any depth (in arrays, nested objects). A link object isn't searched inside.

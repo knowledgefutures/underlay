@@ -147,11 +147,13 @@ export default function DocsConcepts() {
         <code>{linkExample}</code>
       </pre>
       <p>
-        The hash pins exactly what you pointed at; <code>collection</code> (the collection&rsquo;s
-        id), <code>type</code> and <code>id</code> say where you found it, so readers can open it. A
-        record page&rsquo;s <em>Copy as $link</em> button gives you the whole object. A{' '}
-        <code>$link</code> that isn&rsquo;t a <code>ul:</code> id is refused when you push, but its
-        target is never checked: it may be private or on another server. See{' '}
+        The prefix says what a link points at: <code>ul:rec:</code> a record, <code>ul:asset:</code>{' '}
+        a file, <code>ul:ver:</code> a version. The hash pins exactly what you pointed at;{' '}
+        <code>collection</code> (the collection&rsquo;s id) says where you found it, and for a
+        record so do <code>type</code> and <code>id</code>, so readers can open it. A record
+        page&rsquo;s <em>Copy as $link</em> button gives you the whole object. A <code>$link</code>{' '}
+        that isn&rsquo;t a <code>ul:</code> id is refused when you push, but its target is never
+        checked: it may be private or on another server. See{' '}
         <Link to="/docs/protocol/records#links" className="text-link underline">
           Links
         </Link>

@@ -85,15 +85,23 @@ a search) as a `ul:` id or as bare hex, and MAY take the older forms `sha256:<he
 
 ### 2.2 Links
 
-A record points at another record, an asset or a version with a **link**: an object, at any
-depth of its `data`, with a `$link` member.
+A record points at another record, an asset, or a version with a **link**: an object, at any
+depth of its `data`, with a `$link` member. The id's prefix says what the link points at:
+
+| Target    | `$link`          | Members that say where it is |
+| --------- | ---------------- | ---------------------------- |
+| a record  | `ul:rec:<hex>`   | `collection`, `type`, `id`   |
+| an asset  | `ul:asset:<hex>` | `collection`                 |
+| a version | `ul:ver:<hex>`   | `collection`                 |
 
 ```
 {"$link": "ul:rec:<hex>", "collection": collection id, "type": string, "id": string}
+{"$link": "ul:asset:<hex>", "collection": collection id}
+{"$link": "ul:ver:<hex>", "collection": collection id}
 ```
 
 - `$link` is an Underlay id (2.1).
-- `collection`, `type` and `id` are optional. They say where the target was found: the id (not
+- `collection`, `type`, and `id` are optional. They say where the target was found: the id (not
   the handle) of a collection that holds it, and for a record its key there. A reader can use
   them to find the target; the hash is what the link points at.
 - Any other member is the publisher's (a label, a relation such as `"rel": "derivedFrom"`).
